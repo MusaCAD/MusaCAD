@@ -12,6 +12,8 @@ class QTimer;
 class QLabel;
 class QAction;
 class QToolButton;
+class QEvent;
+class QObject;
 
 namespace musacad::command {
 class CommandProcessor;
@@ -37,6 +39,15 @@ public:
     /// Prints the widget tree and fires the Line/Circle ribbon buttons (for
     /// headless structural verification).
     void dump_ui();
+
+    /// Real-window self-test: select an entity, post a Delete key event, and
+    /// confirm it is erased. Returns true on success.
+    bool selftest_delete();
+
+protected:
+    /// Application-wide Delete/Backspace handling (erase selection unless a text
+    /// field is focused).
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void seed_demo_scene();

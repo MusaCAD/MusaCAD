@@ -35,6 +35,14 @@ public:
 
     void focus_input();
 
+    /// True only when the user is actively editing the command-line field (it has
+    /// focus AND contains text). Used to decide whether Delete should edit text
+    /// or erase the selection. An empty, idle field does NOT count as typing.
+    [[nodiscard]] bool is_typing() const;
+
+    /// Test hook: focus the input and set its text (used by MUSACAD_SELFTEST).
+    void debug_set_input(const QString& text);
+
     /// When true, ENTER always accepts the highlighted suggestion. Default false
     /// (AutoCAD behavior: ENTER runs the typed command if complete, else accepts
     /// the highlighted suggestion).

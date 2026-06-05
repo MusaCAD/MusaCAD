@@ -130,7 +130,8 @@ button dropdown).
 | Window select (left→right, enclosed) | Implemented |
 | Crossing select (right→left, touched) | Implemented |
 | Shift to add / Esc to clear / Select all | Implemented |
-| Selected-entity highlight | Implemented |
+| Selected-entity highlight (orange) | Implemented |
+| Rollover (hover) highlight (light blue) | Implemented |
 | Live cursor preview (Line/Circle/Rect/PLine/Arc) | Implemented |
 | Move/Mirror ghost preview | Implemented |
 | Ortho/Polar/grid-snap honored by preview | Implemented |

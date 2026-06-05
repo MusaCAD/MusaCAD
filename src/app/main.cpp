@@ -1,3 +1,5 @@
+#include <cstdio>
+
 #include <QApplication>
 #include <QTimer>
 
@@ -22,6 +24,15 @@ int main(int argc, char* argv[]) {
                 window.grab().save(path);
             }
             app.quit();
+        });
+    }
+
+    // Real-window self-test for the Delete-key route (Phase 9).
+    if (qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const bool ok = window.selftest_delete();
+            std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
+            app.exit(ok ? 0 : 1);
         });
     }
 

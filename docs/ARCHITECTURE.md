@@ -423,6 +423,38 @@ preview + ghost + selection rectangle all active.
   ~4900-entity scene (one query per frame, on the geometry thread — cursor and
   crosshair stay render-side and zero-lag).
 
+## Delete fix, snap-marker visibility & hover (Phase 9)
+
+* **Delete-key fix (focus/routing).** Two problems. (1) The Phase-8 `Delete`
+  handler lived in the viewport `QWindow::keyPressEvent`, which the embedded
+  native GL child window does not reliably receive. (2) More importantly, the
+  command-line `QLineEdit` holds keyboard focus by default, so a naive
+  "skip Delete when a text field is focused" guard blocked the binding *always*.
+  Fixed with an **application-wide event filter** (`qApp->installEventFilter` in
+  `MainWindow`) catching `Delete`/`Backspace` regardless of which window has
+  focus, guarded by `CommandLineWidget::is_typing()` — which is true only when the
+  field is focused **and non-empty** (i.e. actively being edited). An empty, idle
+  command line therefore does not block Delete-erases-selection, while a command
+  being typed keeps Delete for text editing. Verified on the **real window**
+  (Wayland) via `MUSACAD_SELFTEST` (posts real Delete `QKeyEvent`s): erase with
+  the command line empty+focused PASS, and the typing guard PASS.
+* **Snap markers** are centralized in `render_theme.hpp` (one place for all
+  render colors/sizes; three documented entity states — normal `kScene`,
+  hover `kHover`, selected `kSelected`). Markers are now bright lime, larger, and
+  bold (overdrawn at small offsets, since core-GL line width is unreliable),
+  drawn on top, keeping the distinct per-type glyphs. Still one bounded draw call.
+* **Rollover (hover) highlight.** On each coalesced cursor update the geometry
+  thread computes the entity under the pick-box with the **same** `pick_nearest`
+  query a click uses, and publishes it in the snapshot (`hover` handle +
+  `hover_line_vertices`); the renderer highlights it in the hover color beneath
+  the selection highlight. It's visual only — the selection set changes only on
+  click — and a selected entity is not also hover-highlighted. Same
+  snapshot-based, render-side, no-extra-handoff pattern as snap candidates. The
+  pick aperture is always sent in `SetCursorCommand` (decoupled from the OSNAP
+  on/off flag) so hover works with OSNAP off. Cost: hover pick ~0.7 µs/query;
+  combined cursor-frame geometry-side cost (snap + hover) ~34 µs on a ~4900-entity
+  scene — cursor/crosshair stay render-side and zero-lag.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -463,6 +495,11 @@ preview + ghost + selection rectangle all active.
   centroid/nearest) with distinct render-side markers, a toggleable running-osnap
   mask, and documented precedence. 110 unit tests pass under ASan + TSan.
 
+* **Phase 9 — complete:** Delete/Backspace erase fixed via an app-wide event
+  filter (verified on the real window); snap markers strengthened (bright/bold/
+  larger, centralized theme); rollover hover-highlight (render-side, three
+  distinct states). 112 unit tests pass under ASan + TSan.
+
 ## Known deferrals
 
 * **Vertex-pool compaction** — removed polylines/splines leave vertices in the
@@ -478,4 +515,7 @@ preview + ghost + selection rectangle all active.
 * **In-command "Select objects:" prompting** — Modify commands consume a
   pre-existing selection (buttons gate on it); selecting *during* a Modify
   command is deferred.
+* **Snap tooltip text label** (e.g. "Endpoint" next to the marker) — deferred;
+  the render-side stroke font currently has only digits + a few glyphs, so a full
+  alphabet (or a Qt text overlay) is needed first.
 * **Windows** — build is configured per docs/BUILD.md but verified only on Linux.

@@ -67,6 +67,7 @@ add_executable(musacad_tests
     test_kernel_offset.cpp
     test_osnap_types.cpp
     test_delete_selection.cpp
+    test_hover.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

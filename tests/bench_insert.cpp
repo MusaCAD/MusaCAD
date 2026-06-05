@@ -77,5 +77,28 @@ int main() {
                 "(found=%zu)\n",
                 kQueries, kSide * kSide, snap_us / kQueries, hits);
 
+    // Hover (rollover) pick cost: same grid query + closest-point the click uses.
+    std::size_t hover_hits = 0;
+    std::vector<EntityHandle> cand;
+    const auto h0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kQueries; ++i) {
+        const double t = static_cast<double>(i % 1000) * 0.2;
+        const Vec2 cursor{50.0 + t, 50.0 + t};
+        cand.clear();
+        g2.query({cursor.x - 2.0, cursor.y - 2.0}, {cursor.x + 2.0, cursor.y + 2.0}, cand);
+        double best = 2.0 * 2.0;
+        Vec2 cp;
+        for (const EntityHandle e : cand) {
+            if (kernel.closest_point(s2, e, cursor, cp) && length_squared(cp - cursor) <= best) {
+                best = length_squared(cp - cursor);
+                ++hover_hits;
+            }
+        }
+    }
+    const auto h1 = std::chrono::steady_clock::now();
+    const double hover_us = std::chrono::duration<double, std::micro>(h1 - h0).count();
+    std::printf("Hover pick   : %d queries -> %.3f us/query (candidates checked=%zu)\n", kQueries,
+                hover_us / kQueries, hover_hits);
+
     return (store.live_count() == kCount && grid.entity_count() == kCount) ? 0 : 1;
 }

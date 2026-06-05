@@ -69,6 +69,15 @@ CommandLineWidget::CommandLineWidget(QWidget* parent) : QWidget(parent) {
 
 void CommandLineWidget::focus_input() { input_->setFocus(); }
 
+bool CommandLineWidget::is_typing() const {
+    return input_->hasFocus() && !input_->text().isEmpty();
+}
+
+void CommandLineWidget::debug_set_input(const QString& text) {
+    input_->setFocus();
+    input_->setText(text);
+}
+
 void CommandLineWidget::append_line(const std::string& line) {
     scrollback_->appendPlainText(QString::fromStdString(line));
 }

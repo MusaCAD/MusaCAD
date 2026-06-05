@@ -629,6 +629,25 @@ void GeometryEngine::rebuild_and_publish() {
         }
     }
 
+    // Rollover (hover) candidate: the entity under the cursor's pick-box. Same
+    // pick query as a single click; render-side highlight, no extra handoff.
+    buf.has_hover = false;
+    buf.hover = EntityHandle{};
+    buf.hover_line_vertices.clear();
+    if (pick_radius_ > 0.0) {
+        const EntityHandle hv = pick_nearest(cursor_, pick_radius_);
+        if (!hv.is_null() && !sel_contains(hv)) { // don't hover-highlight selected entities
+            buf.hover = hv;
+            buf.has_hover = true;
+            std::vector<Vec2> tess;
+            kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
+            for (std::size_t s = 1; s < tess.size(); ++s) {
+                buf.hover_line_vertices.push_back(tess[s - 1]);
+                buf.hover_line_vertices.push_back(tess[s]);
+            }
+        }
+    }
+
     buf.has_snap = false;
     buf.snap_type = SnapType::None;
     if (osnap_enabled_ && pick_radius_ > 0.0) {

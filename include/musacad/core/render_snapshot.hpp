@@ -47,6 +47,13 @@ struct RenderSnapshot {
     std::vector<EntityHandle> selection;
     std::vector<Vec2> selected_line_vertices;
 
+    // Rollover (hover) candidate: the entity under the cursor's pick-box. Visual
+    // only -- it does not change `selection` until the user clicks. Interaction
+    // state, not part of the checksum.
+    EntityHandle hover;
+    bool has_hover = false;
+    std::vector<Vec2> hover_line_vertices;
+
     void clear() noexcept {
         version = 0;
         geometry_version = 0;
@@ -61,6 +68,9 @@ struct RenderSnapshot {
         snap_type = SnapType::None;
         selection.clear();
         selected_line_vertices.clear();
+        hover = EntityHandle{};
+        has_hover = false;
+        hover_line_vertices.clear();
     }
 
     /// FNV-1a over the version and payload. Cheap and order-sensitive; enough to

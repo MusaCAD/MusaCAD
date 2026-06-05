@@ -245,7 +245,9 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     constexpr double kApertonPx = 10.0;
     const std::uint32_t mask =
         modes_ ? modes_->snap_mask.load(std::memory_order_relaxed) : core::kAllSnaps;
-    core::SetCursorCommand cmd{world, osnap ? kApertonPx / scale : 0.0, osnap, mask, {}, false};
+    // The pick aperture is always sent (it drives the rollover hover-pick too);
+    // the `osnap` flag gates only the snap-point computation.
+    core::SetCursorCommand cmd{world, kApertonPx / scale, osnap, mask, {}, false};
     if (processor_ != nullptr) {
         if (const auto from = processor_->active_from()) {
             cmd.from = *from;
@@ -412,20 +414,13 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
         QWindow::keyPressEvent(event);
         return;
     }
-    switch (event->key()) {
-    case Qt::Key_Delete:
-    case Qt::Key_Backspace:
-        // Delete the current selection (when idle) -- one undoable group.
-        if (!processor_->has_active_command() && selection_count() > 0) {
-            processor_->delete_selection();
-        }
-        return;
-    case Qt::Key_Escape:
+    // Delete/Backspace are handled by the application-wide event filter in
+    // MainWindow (so they work regardless of which window holds focus, while
+    // still leaving text-entry keys to the command-line field).
+    if (event->key() == Qt::Key_Escape) {
         // Cancel the active command, or clear the selection when idle.
         processor_->cancel();
         return;
-    default:
-        break;
     }
     QWindow::keyPressEvent(event);
 }

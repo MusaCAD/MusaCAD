@@ -6,12 +6,21 @@
 #include <cstdlib>
 #include <utility>
 
+#include <chrono>
+#include <thread>
+
 #include <QAbstractButton>
 #include <QAction>
+#include <QApplication>
+#include <QCoreApplication>
 #include <QDockWidget>
+#include <QEvent>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
+#include <QPlainTextEdit>
 #include <QStatusBar>
 #include <QString>
 #include <QTabBar>
@@ -63,6 +72,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     command_widget_->set_processor(processor_.get());
     viewport_->set_processor(processor_.get());
     command_widget_->focus_input();
+
+    // Application-wide Delete/Backspace -> erase selection. An event filter on
+    // the app catches the key no matter which window holds focus (the native GL
+    // viewport included), while still letting the command-line field keep Delete
+    // for text editing (see eventFilter()).
+    qApp->installEventFilter(this);
 
     build_ribbon();
     build_status_bar();
@@ -360,6 +375,89 @@ void MainWindow::dump_ui() {
     };
     fire("ribbon.cmd.L", "Line");
     fire("ribbon.cmd.C", "Circle");
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_Delete || ke->key() == Qt::Key_Backspace) {
+            // Block only when the user is actively editing the command-line field
+            // (focused AND non-empty). An empty/idle command line -- which is the
+            // usual state, since it holds focus by default -- must NOT block the
+            // Delete-erases-selection binding.
+            const bool typing = command_widget_ != nullptr && command_widget_->is_typing();
+            if (!typing && processor_ != nullptr && viewport_ != nullptr &&
+                !processor_->has_active_command() && viewport_->selection_count() > 0) {
+                processor_->delete_selection();
+                return true; // consume: erased the selection
+            }
+            // actively typing, or nothing selected -> let the key through
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+bool MainWindow::selftest_delete() {
+    using core::AddLineCommand;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 600; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+
+    // Sends a real Delete key event to whichever widget currently holds focus
+    // (mirroring an actual keystroke), so it traverses the app event filter.
+    const auto send_delete = [this] {
+        QWidget* target = QApplication::focusWidget();
+        QObject* receiver = target != nullptr ? static_cast<QObject*>(target) : this;
+        QKeyEvent ev(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+        QApplication::sendEvent(receiver, &ev);
+    };
+    const auto select_two = [&] {
+        engine_->submit(AddLineCommand{Vec2{0, 0}, Vec2{10, 0}, 9001});
+        engine_->submit(AddLineCommand{Vec2{0, 20}, Vec2{10, 20}, 9002});
+        engine_->submit(core::SelectAllCommand{});
+        return pump([this] { return viewport_->selection_count() == 2; });
+    };
+
+    if (!select_two()) {
+        std::printf("[selftest] FAIL: selection did not reach 2\n");
+        return false;
+    }
+
+    // Realistic main path: the command line holds focus but is EMPTY (the default
+    // idle state). Delete must erase the selection.
+    command_widget_->debug_set_input(QString());
+    command_widget_->focus_input();
+    QCoreApplication::processEvents();
+    send_delete();
+    const bool erased = pump([this] { return viewport_->selection_count() == 0; });
+    std::printf("[selftest] Delete erases selection, command line empty+focused: %s\n",
+                erased ? "PASS" : "FAIL");
+
+    // Guard: while actively typing in the command line (focused AND non-empty),
+    // Delete must edit text, NOT erase the selection.
+    if (!select_two()) {
+        std::printf("[selftest] FAIL: re-selection did not reach 2\n");
+        return false;
+    }
+    command_widget_->debug_set_input(QStringLiteral("LIN"));
+    QCoreApplication::processEvents();
+    send_delete();
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    QCoreApplication::processEvents();
+    const bool guard_held = viewport_->selection_count() == 2;
+    std::printf("[selftest] guard (Delete while typing leaves selection): %s\n",
+                guard_held ? "PASS" : "FAIL");
+    command_widget_->debug_set_input(QString());
+
+    return erased && guard_held;
 }
 
 void MainWindow::seed_demo_scene() {
