@@ -1,0 +1,22 @@
+# LeakSanitizer suppressions for third-party libraries used by the GUI/GL stack.
+# These are leaks inside the windowing/driver libraries (not Musa CAD code);
+# suppressing them lets the ASan smoke run surface only our own leaks.
+leak:libwayland-client
+leak:libwayland-cursor
+leak:libwayland-egl
+leak:WaylandClient
+leak:libQt6
+leak:libGLX
+leak:libEGL
+leak:libGLdispatch
+leak:libGL.so
+leak:swrast
+leak:iris_dri
+leak:i965_dri
+leak:libgallium
+leak:libLLVM
+leak:libffi
+leak:fontconfig
+leak:libglib
+leak:libgobject
+leak:dri

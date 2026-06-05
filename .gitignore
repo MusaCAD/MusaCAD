@@ -1,0 +1,38 @@
+# ---- Build output ----
+/build/
+build*/
+out/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.spv
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+_deps/
+CMakeUserPresets.json
+
+# ---- Editor / IDE ----
+.cache/
+.vscode/
+.idea/
+*.user
+*.swp
+*~
+
+# ---- Profiling / logs ----
+perf.data*
+*.log
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
