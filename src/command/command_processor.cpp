@@ -117,6 +117,12 @@ void CommandProcessor::redo() {
     output_.append_line("Redo");
 }
 
+void CommandProcessor::delete_selection() {
+    current_group_ = ++group_counter_;
+    submit(core::EraseSelectionCommand{current_group_});
+    output_.append_line("Erased selection.");
+}
+
 void CommandProcessor::start_command(const std::string& alias) {
     std::unique_ptr<ICommand> cmd = registry_.create(alias);
     if (!cmd) {

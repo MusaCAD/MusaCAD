@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <variant>
 
@@ -557,6 +558,22 @@ void GeometryEngine::apply(const Command& command) {
                 cursor_ = c.world;
                 pick_radius_ = c.pick_radius;
                 osnap_enabled_ = c.osnap;
+                snap_mask_ = c.snap_mask;
+                has_from_ = c.has_from;
+                from_ = c.from;
+            } else if constexpr (std::is_same_v<T, EraseSelectionCommand>) {
+                const std::vector<EntityHandle> sel = selection_;
+                for (const EntityHandle h : sel) {
+                    if (!store_.is_valid(h)) {
+                        continue;
+                    }
+                    Command restore = capture_entity(h);
+                    remove_indexed(h);
+                    push_erase_item(c.group, std::move(restore));
+                }
+                selection_.clear();
+                redo_.clear();
+                geom_dirty_ = true;
             } else if constexpr (std::is_same_v<T, SelectPickCommand>) {
                 if (!c.additive) {
                     selection_.clear();
@@ -615,7 +632,9 @@ void GeometryEngine::rebuild_and_publish() {
     buf.has_snap = false;
     buf.snap_type = SnapType::None;
     if (osnap_enabled_ && pick_radius_ > 0.0) {
-        const SnapResult s = compute_snap(store_, kernel_, grid_, cursor_, pick_radius_);
+        const std::optional<Vec2> from = has_from_ ? std::optional<Vec2>(from_) : std::nullopt;
+        const SnapResult s =
+            compute_snap(store_, kernel_, grid_, cursor_, pick_radius_, snap_mask_, from);
         if (s.found) {
             buf.has_snap = true;
             buf.snap_point = s.point;

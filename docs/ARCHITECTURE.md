@@ -395,6 +395,34 @@ Draw-call count stays bounded and constant (not per-primitive): 4 for the scene,
 6 with crosshair+pick-box+snap-marker, up to ~10 with selection highlight +
 preview + ghost + selection rectangle all active.
 
+## Empty startup, Delete, and full OSNAP (Phase 8)
+
+* **Empty Model space on launch** — `MainWindow` only seeds the demo/benchmark
+  scene when `MUSACAD_DEMO` is set; normal launch is empty. The perf harnesses
+  (`bench_insert`, `render_offscreen`) build their own scenes, so they are
+  unaffected.
+* **Delete erases the selection** — `Delete`/`Backspace` in the viewport (when a
+  selection exists and no command is active) submit `EraseSelectionCommand`,
+  which captures + removes each selected entity as one undo group (reusing the
+  op-log erase path) and clears the selection. `Esc` still clears the selection
+  without deleting. Context-sensitive: handled in the viewport's key handler, so
+  `Delete` still edits text in the command line.
+* **Full OSNAP set** — the Phase-5 engine gained Quadrant, Node, Perpendicular,
+  Tangent and a Musa-extension Centroid (closed-polyline centre). Everything
+  still runs geometry-side through `compute_snap` against the spatial index and
+  rides the existing snapshot (`has_snap`/`snap_point`/`snap_type`); markers are
+  render-side, one bounded draw call. Each type is individually toggleable via a
+  running-osnap mask (`SetCursorCommand::snap_mask`, set from the OSNAP button's
+  dropdown). The deferred snaps (Perpendicular, Tangent) need the active
+  command's previous point, passed as `SetCursorCommand::from` from
+  `CommandProcessor::active_from()`. Precedence (lower wins) is the `SnapType`
+  enum value: Endpoint < Midpoint < Center < Node < Quadrant < Intersection <
+  Perpendicular < Tangent < Centroid < Nearest. To keep cursor-move publishes
+  cheap the renderer still gates scene upload on `geometry_version`, so snapping
+  costs no scene re-upload. Measured snap cost: ~31 µs/query with all types on a
+  ~4900-entity scene (one query per frame, on the geometry thread — cursor and
+  crosshair stay render-side and zero-lag).
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -428,6 +456,12 @@ preview + ghost + selection rectangle all active.
   Esc-clear, select-all) with highlight; Modify panel — MOVE, COPY, MIRROR,
   OFFSET, and TRIM (line subset) with cursor preview/ghost and undo/redo;
   selection-driven button enablement. 100 unit tests pass under ASan + TSan.
+
+* **Phase 8 — complete:** empty Model space on launch (demo behind `MUSACAD_DEMO`);
+  Delete/Backspace erases the selection (one undo group); full OSNAP set
+  (endpoint/midpoint/center/node/quadrant/intersection/perpendicular/tangent/
+  centroid/nearest) with distinct render-side markers, a toggleable running-osnap
+  mask, and documented precedence. 110 unit tests pass under ASan + TSan.
 
 ## Known deferrals
 

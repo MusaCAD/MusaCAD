@@ -110,7 +110,17 @@ suggests both); aliases are case-insensitive.
 | Center | Implemented |
 | Intersection | Implemented |
 | Nearest | Implemented |
-| Perpendicular / Tangent / Quadrant / Node | Planned (Phase 9) |
+| Quadrant (circle/arc N/E/S/W) | Implemented |
+| Node (Point entities) | Implemented |
+| Perpendicular (deferred; line + circle/arc) | Implemented |
+| Tangent (deferred; circle/arc) | Implemented |
+| Centroid of closed polyline — **Musa extension** (no AutoCAD equivalent) | Implemented |
+| Apparent intersection / Insertion / Parallel | Planned (Phase 9) |
+
+OSNAP precedence (highest→lowest, within the aperture): Endpoint, Midpoint,
+Center, Node, Quadrant, Intersection, Perpendicular, Tangent, Centroid, Nearest.
+Each type is individually toggleable via the running-osnap mask (OSNAP status-bar
+button dropdown).
 
 ## Selection & live preview
 
@@ -136,6 +146,8 @@ suggests both); aliases are case-insensitive.
 | Snap (grid snap) | F9 | Implemented |
 | Polar tracking | F10 | Implemented |
 | Undo / Redo | Ctrl+Z / Ctrl+Y | Implemented |
+| Delete selection | Delete / Backspace | Implemented |
+| Clear selection | Esc | Implemented |
 
 ## Coordinate entry
 

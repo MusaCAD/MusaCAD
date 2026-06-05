@@ -16,6 +16,7 @@ class QExposeEvent;
 class QMouseEvent;
 class QWheelEvent;
 class QResizeEvent;
+class QKeyEvent;
 
 namespace musacad::command {
 class CommandProcessor;
@@ -66,6 +67,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private:
     void start_render_thread();

@@ -17,6 +17,7 @@
 #include <QOpenGLContext>
 #include <QResizeEvent>
 #include <QSurfaceFormat>
+#include <QKeyEvent>
 #include <QWheelEvent>
 
 #include "musacad/render/frame_stats.hpp"
@@ -242,7 +243,16 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     // synchronous query.
     const bool osnap = modes_ == nullptr || modes_->osnap.load(std::memory_order_relaxed);
     constexpr double kApertonPx = 10.0;
-    engine_.submit(core::SetCursorCommand{world, osnap ? kApertonPx / scale : 0.0, osnap});
+    const std::uint32_t mask =
+        modes_ ? modes_->snap_mask.load(std::memory_order_relaxed) : core::kAllSnaps;
+    core::SetCursorCommand cmd{world, osnap ? kApertonPx / scale : 0.0, osnap, mask, {}, false};
+    if (processor_ != nullptr) {
+        if (const auto from = processor_->active_from()) {
+            cmd.from = *from;
+            cmd.has_from = true;
+        }
+    }
+    engine_.submit(cmd);
 
     if (panning_) {
         const double dx = event->position().x() - last_x_;
@@ -395,6 +405,29 @@ void ViewportWindow::rebuild_overlay() {
 
     std::scoped_lock lock(overlay_mutex_);
     overlay_ = std::move(ov);
+}
+
+void ViewportWindow::keyPressEvent(QKeyEvent* event) {
+    if (processor_ == nullptr) {
+        QWindow::keyPressEvent(event);
+        return;
+    }
+    switch (event->key()) {
+    case Qt::Key_Delete:
+    case Qt::Key_Backspace:
+        // Delete the current selection (when idle) -- one undoable group.
+        if (!processor_->has_active_command() && selection_count() > 0) {
+            processor_->delete_selection();
+        }
+        return;
+    case Qt::Key_Escape:
+        // Cancel the active command, or clear the selection when idle.
+        processor_->cancel();
+        return;
+    default:
+        break;
+    }
+    QWindow::keyPressEvent(event);
 }
 
 void ViewportWindow::wheelEvent(QWheelEvent* event) {

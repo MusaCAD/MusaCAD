@@ -64,6 +64,9 @@ struct SetCursorCommand {
     Vec2 world;
     double pick_radius = 0.0; ///< snap aperture in world units (0 disables)
     bool osnap = true;
+    std::uint32_t snap_mask = 0xFFFFFFFFu; ///< running-osnap mask (which types are on)
+    Vec2 from{};                           ///< previous command point (deferred snaps)
+    bool has_from = false;
 };
 
 /// Erases the entity nearest `world` within `pick_radius` (cursor-pick, via the
@@ -97,6 +100,11 @@ struct SelectWindowCommand {
 
 struct SelectAllCommand {};
 struct ClearSelectionCommand {};
+
+/// Erases all currently-selected entities as one undo group (Delete key).
+struct EraseSelectionCommand {
+    std::uint64_t group = 0;
+};
 
 /// Translate all selected entities by `delta` (one undo group).
 struct MoveSelectionCommand {
@@ -138,7 +146,7 @@ using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
                  ErasePickCommand, UndoLastGroupCommand, RedoLastGroupCommand, UndoLastOpCommand,
                  SetCursorCommand, SelectPickCommand, SelectWindowCommand, SelectAllCommand,
-                 ClearSelectionCommand, MoveSelectionCommand, CopySelectionCommand,
-                 MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand>;
+                 ClearSelectionCommand, EraseSelectionCommand, MoveSelectionCommand,
+                 CopySelectionCommand, MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand>;
 
 } // namespace musacad::core

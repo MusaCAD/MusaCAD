@@ -1,6 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+
+#include "musacad/core/snap.hpp"
 
 namespace musacad::ui {
 
@@ -13,6 +16,7 @@ struct ViewportModes {
     std::atomic<bool> ortho{false}; // F8 - ortho constraint
     std::atomic<bool> snap{false};  // F9 - grid snap
     std::atomic<bool> polar{false}; // F10 - polar tracking
+    std::atomic<std::uint32_t> snap_mask{core::kAllSnaps}; // running-osnap type mask
 };
 
 } // namespace musacad::ui

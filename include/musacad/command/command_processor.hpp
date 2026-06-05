@@ -42,6 +42,15 @@ public:
     void undo();
     void redo();
 
+    /// Erase the current selection as one undo group (Delete key).
+    void delete_selection();
+
+    /// The active command's previous point, if any -- enables deferred OSNAPs
+    /// (perpendicular/tangent) on the render-side preview path.
+    [[nodiscard]] std::optional<core::Vec2> active_from() const {
+        return active_ ? last_point_ : std::nullopt;
+    }
+
     // Drawing-aid modes (set from the UI toggles).
     void set_ortho(bool on) { ortho_ = on; }
     void set_polar(bool on) { polar_ = on; }

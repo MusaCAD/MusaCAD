@@ -1,13 +1,17 @@
 #include "musacad/ui/main_window.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <utility>
 
 #include <QAbstractButton>
 #include <QAction>
 #include <QDockWidget>
 #include <QKeySequence>
 #include <QLabel>
+#include <QMenu>
 #include <QStatusBar>
 #include <QString>
 #include <QTabBar>
@@ -18,6 +22,7 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/snap.hpp"
 #include "musacad/core/version.hpp"
 #include "musacad/ui/command_icons.hpp"
 #include "musacad/ui/command_line_widget.hpp"
@@ -33,7 +38,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     engine_ = std::make_unique<core::GeometryEngine>();
     engine_->start();
-    seed_demo_scene();
+    // Normal launch opens an empty Model space. The demo/benchmark scene is only
+    // seeded when MUSACAD_DEMO is set (perf harnesses build their own scenes).
+    if (std::getenv("MUSACAD_DEMO") != nullptr) {
+        seed_demo_scene();
+    }
 
     viewport_ = new ViewportWindow(*engine_);
     viewport_->set_initial_view({0.0, 0.0}, {100.0, 100.0});
@@ -258,12 +267,35 @@ void MainWindow::build_status_bar() {
         auto* b = new QToolButton(this);
         b->setDefaultAction(act);
         statusBar()->addWidget(b);
+        return b;
     };
-    add_toggle(osnap_action_);
+    QToolButton* osnap_btn = add_toggle(osnap_action_);
     add_toggle(grid_action_);
     add_toggle(ortho_action_);
     add_toggle(snap_action_);
     add_toggle(polar_action_);
+
+    // OSNAP button dropdown: per-type running-osnap toggles (drive snap_mask).
+    auto* osnap_menu = new QMenu(this);
+    const std::pair<const char*, core::SnapType> kSnapTypes[] = {
+        {"Endpoint", core::SnapType::Endpoint},     {"Midpoint", core::SnapType::Midpoint},
+        {"Center", core::SnapType::Center},         {"Node", core::SnapType::Node},
+        {"Quadrant", core::SnapType::Quadrant},     {"Intersection", core::SnapType::Intersection},
+        {"Perpendicular", core::SnapType::Perpendicular}, {"Tangent", core::SnapType::Tangent},
+        {"Centroid (Musa)", core::SnapType::Centroid},    {"Nearest", core::SnapType::Nearest}};
+    for (const auto& [label, type] : kSnapTypes) {
+        QAction* a = osnap_menu->addAction(QString::fromUtf8(label));
+        a->setCheckable(true);
+        a->setChecked((modes_.snap_mask.load() & core::snap_bit(type)) != 0);
+        const std::uint32_t bit = core::snap_bit(type);
+        connect(a, &QAction::toggled, this, [this, bit](bool on) {
+            std::uint32_t m = modes_.snap_mask.load();
+            m = on ? (m | bit) : (m & ~bit);
+            modes_.snap_mask.store(m);
+        });
+    }
+    osnap_btn->setMenu(osnap_menu);
+    osnap_btn->setPopupMode(QToolButton::MenuButtonPopup);
 
     coord_label_ = new QLabel(QStringLiteral("0.000, 0.000"), this);
     coord_label_->setObjectName(QStringLiteral("CoordReadout"));

@@ -124,6 +124,9 @@ private:
     Vec2 cursor_{};
     double pick_radius_ = 0.0;
     bool osnap_enabled_ = false;
+    std::uint32_t snap_mask_ = kAllSnaps;
+    Vec2 from_{};
+    bool has_from_ = false;
 
     std::atomic<std::uint64_t> version_{0};
     std::jthread worker_;

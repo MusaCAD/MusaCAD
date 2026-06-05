@@ -112,6 +112,51 @@ void append_marker(std::vector<core::Vec2>& seg, core::SnapType type, double cx,
         edge(seg, {cx - s, cy - s}, {cx + s, cy + s});
         edge(seg, {cx + s, cy - s}, {cx - s, cy + s});
         break;
+    case core::SnapType::Quadrant: // diamond
+        edge(seg, {cx, cy - s}, {cx + s, cy});
+        edge(seg, {cx + s, cy}, {cx, cy + s});
+        edge(seg, {cx, cy + s}, {cx - s, cy});
+        edge(seg, {cx - s, cy}, {cx, cy - s});
+        break;
+    case core::SnapType::Node: // square with an X
+        edge(seg, {cx - s, cy - s}, {cx + s, cy - s});
+        edge(seg, {cx + s, cy - s}, {cx + s, cy + s});
+        edge(seg, {cx + s, cy + s}, {cx - s, cy + s});
+        edge(seg, {cx - s, cy + s}, {cx - s, cy - s});
+        edge(seg, {cx - s, cy - s}, {cx + s, cy + s});
+        edge(seg, {cx - s, cy + s}, {cx + s, cy - s});
+        break;
+    case core::SnapType::Perpendicular: { // right-angle symbol
+        edge(seg, {cx - s, cy - s}, {cx - s, cy + s}); // left
+        edge(seg, {cx - s, cy + s}, {cx + s, cy + s}); // bottom
+        const double q = s * 0.45;
+        edge(seg, {cx - s, cy + q}, {cx - q, cy + q});
+        edge(seg, {cx - q, cy + q}, {cx - q, cy + s});
+        break;
+    }
+    case core::SnapType::Tangent: { // circle with a tangent line on top
+        const int n = 8;
+        for (int i = 0; i < n; ++i) {
+            const double a0 = (static_cast<double>(i) / n) * core::kTwoPi;
+            const double a1 = (static_cast<double>(i + 1) / n) * core::kTwoPi;
+            edge(seg, {cx + s * std::cos(a0), cy + s * std::sin(a0)},
+                 {cx + s * std::cos(a1), cy + s * std::sin(a1)});
+        }
+        edge(seg, {cx - s, cy - s}, {cx + s, cy - s});
+        break;
+    }
+    case core::SnapType::Centroid: { // octagon with a plus
+        const int n = 8;
+        for (int i = 0; i < n; ++i) {
+            const double a0 = (static_cast<double>(i) / n) * core::kTwoPi;
+            const double a1 = (static_cast<double>(i + 1) / n) * core::kTwoPi;
+            edge(seg, {cx + s * std::cos(a0), cy + s * std::sin(a0)},
+                 {cx + s * std::cos(a1), cy + s * std::sin(a1)});
+        }
+        edge(seg, {cx, cy - s}, {cx, cy + s});
+        edge(seg, {cx - s, cy}, {cx + s, cy});
+        break;
+    }
     case core::SnapType::None:
         break;
     }
