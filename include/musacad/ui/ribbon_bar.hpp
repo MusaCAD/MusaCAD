@@ -1,0 +1,61 @@
+#pragma once
+
+#include <vector>
+
+#include <QFrame>
+#include <QWidget>
+
+class QAction;
+class QHBoxLayout;
+class QIcon;
+class QPushButton;
+class QStackedWidget;
+class QTabBar;
+class QToolButton;
+
+namespace musacad::ui {
+
+/// A labelled group of icon+label buttons inside a ribbon tab (e.g. "Draw").
+class RibbonPanel : public QFrame {
+    Q_OBJECT
+
+public:
+    explicit RibbonPanel(const QString& title, QWidget* parent = nullptr);
+
+    /// Adds an enabled icon+label button. The caller connects its clicked()
+    /// signal to an existing command/action.
+    QToolButton* add_button(const QIcon& icon, const QString& label);
+
+    /// Adds a disabled icon+label button for a not-yet-implemented feature.
+    QToolButton* add_placeholder(const QIcon& icon, const QString& label);
+
+private:
+    QToolButton* make_button(const QIcon& icon, const QString& label, bool enabled);
+    QHBoxLayout* content_;
+};
+
+/// AutoCAD-style ribbon: a Quick Access Toolbar strip on top, a row of tabs, and
+/// a stacked set of pages -- each page a horizontal row of RibbonPanels.
+class RibbonBar : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit RibbonBar(QWidget* parent = nullptr);
+
+    QPushButton* app_button() const noexcept { return app_button_; }
+    void add_qat_action(QAction* action);
+
+    /// Adds a tab and returns its index.
+    int add_tab(const QString& title);
+    /// Adds a panel to the given tab and returns it.
+    RibbonPanel* add_panel(int tab_index, const QString& title);
+
+private:
+    QPushButton* app_button_ = nullptr;
+    QHBoxLayout* qat_layout_ = nullptr;
+    QTabBar* tabs_ = nullptr;
+    QStackedWidget* pages_ = nullptr;
+    std::vector<QHBoxLayout*> page_layouts_;
+};
+
+} // namespace musacad::ui

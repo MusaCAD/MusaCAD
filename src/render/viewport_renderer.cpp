@@ -250,13 +250,21 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
     cmd.bind_pipeline(*line_pipeline_);
     cmd.set_uniform_mat3("u_transform", screen);
 
-    // Crosshair: pure render-side, from the raw cursor -> always smooth.
+    // AutoCAD-style cursor: full-screen crosshair + a center pick-box. Pure
+    // render-side, from the raw cursor -> always smooth, no geometry round-trip.
     if (cursor_visible_) {
+        constexpr double kPickBoxHalfPx = 6.0; // pick-box half-extent (adjustable)
+        const double cx = static_cast<double>(cursor_x_);
+        const double cy = static_cast<double>(cursor_y_);
         std::vector<core::Vec2> seg;
-        edge(seg, {0.0, static_cast<double>(cursor_y_)},
-             {static_cast<double>(width), static_cast<double>(cursor_y_)});
-        edge(seg, {static_cast<double>(cursor_x_), 0.0},
-             {static_cast<double>(cursor_x_), static_cast<double>(height)});
+        edge(seg, {0.0, cy}, {static_cast<double>(width), cy});  // horizontal
+        edge(seg, {cx, 0.0}, {cx, static_cast<double>(height)}); // vertical
+        // Center pick-box (square).
+        const double h = kPickBoxHalfPx;
+        edge(seg, {cx - h, cy - h}, {cx + h, cy - h});
+        edge(seg, {cx + h, cy - h}, {cx + h, cy + h});
+        edge(seg, {cx + h, cy + h}, {cx - h, cy + h});
+        edge(seg, {cx - h, cy + h}, {cx - h, cy - h});
         const std::size_t n = pack_segments(seg, scratch_);
         aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
         cmd.set_uniform_vec4("u_color", kCrosshairColor[0], kCrosshairColor[1], kCrosshairColor[2],

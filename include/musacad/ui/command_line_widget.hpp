@@ -11,6 +11,7 @@
 class QPlainTextEdit;
 class QLineEdit;
 class QLabel;
+class QListWidget;
 class QEvent;
 class QObject;
 
@@ -34,6 +35,11 @@ public:
 
     void focus_input();
 
+    /// When true, ENTER always accepts the highlighted suggestion. Default false
+    /// (AutoCAD behavior: ENTER runs the typed command if complete, else accepts
+    /// the highlighted suggestion).
+    void set_enter_picks_first(bool on) { enter_picks_first_ = on; }
+
     // CommandOutput
     void append_line(const std::string& line) override;
     void set_prompt(const std::string& prompt) override;
@@ -43,13 +49,20 @@ protected:
 
 private:
     void on_return();
+    void update_suggestions();
+    void hide_suggestions();
+    [[nodiscard]] bool suggestions_visible() const;
+    void move_selection(int delta);
+    void accept_highlighted();
 
     command::CommandProcessor* processor_ = nullptr;
     QPlainTextEdit* scrollback_ = nullptr;
     QLabel* prompt_label_ = nullptr;
     QLineEdit* input_ = nullptr;
+    QListWidget* suggest_popup_ = nullptr;
     std::vector<QString> history_;
     int history_index_ = 0;
+    bool enter_picks_first_ = false;
     QString prompt_text_ = QStringLiteral("Command: ");
 };
 

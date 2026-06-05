@@ -18,8 +18,15 @@ std::string upper(std::string_view s) {
 
 void CommandRegistry::register_command(std::initializer_list<std::string_view> aliases,
                                        Factory factory) {
+    // Instantiate once to capture the command's full name for suggestions.
+    std::string name;
+    if (std::unique_ptr<ICommand> probe = factory()) {
+        name = probe->name();
+    }
     for (const std::string_view a : aliases) {
-        table_[upper(a)] = factory;
+        const std::string key = upper(a);
+        table_[key] = factory;
+        entries_.push_back(CommandSuggestion{key, name});
     }
 }
 
@@ -30,6 +37,41 @@ std::unique_ptr<ICommand> CommandRegistry::create(std::string_view alias) const 
 
 bool CommandRegistry::contains(std::string_view alias) const {
     return table_.find(upper(alias)) != table_.end();
+}
+
+std::vector<CommandSuggestion> CommandRegistry::suggest(std::string_view prefix) const {
+    const std::string p = upper(prefix);
+    std::vector<CommandSuggestion> out;
+    if (p.empty()) {
+        return out;
+    }
+    const auto starts_with = [](const std::string& s, const std::string& pre) {
+        return s.size() >= pre.size() && s.compare(0, pre.size(), pre) == 0;
+    };
+    for (const CommandSuggestion& e : entries_) {
+        if (starts_with(e.alias, p) || starts_with(upper(e.name), p)) {
+            out.push_back(e);
+        }
+    }
+    // Order: alias-prefix matches first, then by alias length (short aliases
+    // first), then alphabetically. Stable, deterministic for the dropdown.
+    std::sort(out.begin(), out.end(), [&](const CommandSuggestion& a, const CommandSuggestion& b) {
+        const bool ap = starts_with(a.alias, p);
+        const bool bp = starts_with(b.alias, p);
+        if (ap != bp) {
+            return ap;
+        }
+        if (a.alias.size() != b.alias.size()) {
+            return a.alias.size() < b.alias.size();
+        }
+        return a.alias < b.alias;
+    });
+    out.erase(std::unique(out.begin(), out.end(),
+                          [](const CommandSuggestion& a, const CommandSuggestion& b) {
+                              return a.alias == b.alias;
+                          }),
+              out.end());
+    return out;
 }
 
 CommandRegistry CommandRegistry::make_default() {

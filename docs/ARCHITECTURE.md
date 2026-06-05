@@ -312,6 +312,38 @@ Function keys toggle modes app-wide: **F3** OSNAP, **F7** grid, **F8** ortho,
 picks (`ErasePickCommand` → `pick_nearest` via the shared index), closing the
 Phase-4 selection gap, in addition to `Last`/`All`.
 
+## Ribbon frame, cursor & autocomplete (Phase 6)
+
+Presentation-only phase; no command logic changed.
+
+* **Ribbon UI** — `RibbonBar` (Quick Access Toolbar + tab bar + stacked pages)
+  and `RibbonPanel` (labelled icon+label button groups) replace the flat
+  toolbar. The frame is set as the `QMainWindow` menu widget; the central widget
+  stacks file tabs / viewport / layout tabs. Every ribbon button calls an
+  **existing** command (`processor_->submit_line("L")`, `undo()/redo()`,
+  `viewport_->zoom_extents()`); unbacked slots (Move/Copy/Trim/Layers/Dim…) are
+  **disabled placeholders**. Status-bar mode toggles are `QToolButton`s bound to
+  the F3/F7/F8/F9/F10 actions. All styling lives in one place
+  (`theme.cpp::dark_theme_qss()`) plus object names — swappable, nothing
+  hardcoded per widget. Icons are drawn at runtime (`command_icons.cpp`), so no
+  binary assets ship.
+* **AutoCAD cursor** — the render-side crosshair gained a center **pick-box**;
+  it remains pure render-side (cursor atomics → drawn every frame), zero-lag, and
+  folds into the existing single crosshair draw call (viewport stays at 4 scene /
+  6 with aids).
+* **Command autocomplete** — `CommandRegistry::suggest(prefix)` matches the
+  prefix against aliases **and** full names, driven entirely by the existing
+  alias table (single source of command truth). The command-line widget shows a
+  dropdown while idle; Down/Tab and Up navigate, Esc closes, Enter runs the typed
+  command if complete else accepts the highlighted suggestion, and empty-line
+  Enter still repeats the last command. A `set_enter_picks_first()` flag switches
+  to "Enter always picks the highlighted suggestion".
+
+The threading invariants are unchanged: the UI thread still never touches the
+store, commands still cross only via the MPSC queue, and the crosshair/pick-box
+need no geometry round-trip. See [COMMANDS.md](COMMANDS.md) for the living
+command roadmap.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -334,6 +366,11 @@ Phase-4 selection gap, in addition to `Last`/`All`.
   render-side crosshairs; snap markers; ortho/polar/grid-snap; F3/F7/F8/F9/F10
   and Ctrl+Z/Ctrl+Y; status-bar indicators; toolbar. 80 unit tests pass under
   ASan + TSan.
+
+* **Phase 6 — complete:** AutoCAD-2023-style Ribbon frame (QAT + tabbed panels +
+  file/layout tabs + status-bar mode toggles), full-crosshair-with-pick-box
+  cursor, and registry-driven command autocomplete. 85 unit tests pass under
+  ASan + TSan; presentation-only (no command logic changes).
 
 ## Known deferrals
 

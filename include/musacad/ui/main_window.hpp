@@ -19,10 +19,12 @@ namespace musacad::ui {
 
 class ViewportWindow;
 class CommandLineWidget;
+class RibbonBar;
 
-/// The application's top-level window: an OpenGL viewport (driven by a render
-/// thread) hosted in the central area, with the window title showing live FPS.
-/// The ribbon, command line, and status bar arrive in later phases.
+/// The application's top-level window: an AutoCAD-2023-style Ribbon frame
+/// (Quick Access Toolbar + tabbed ribbon panels + file/layout tabs), an OpenGL
+/// viewport in the centre, the command-line palette, and a status bar with mode
+/// toggle buttons and the live coordinate readout.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -30,18 +32,23 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
+    /// Prints the widget tree and fires the Line/Circle ribbon buttons (for
+    /// headless structural verification).
+    void dump_ui();
+
 private:
     void seed_demo_scene();
-    void build_toolbar();
+    void build_ribbon();
+    QWidget* build_central();
     void build_status_bar();
-    void update_mode_indicators();
+    QAction* make_mode_action(const QString& text, int func_key, bool initial);
 
     std::unique_ptr<core::GeometryEngine> engine_;
     std::unique_ptr<command::CommandProcessor> processor_;
+    RibbonBar* ribbon_ = nullptr;
     ViewportWindow* viewport_ = nullptr;          // owned by the window-container widget
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
     QLabel* coord_label_ = nullptr;
-    QLabel* mode_label_ = nullptr;
     QTimer* title_timer_ = nullptr;
 
     ViewportModes modes_;
