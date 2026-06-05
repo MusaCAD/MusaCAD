@@ -49,6 +49,17 @@ public:
     void set_grid_spacing(double s) { grid_spacing_ = s; }
     void set_pick_radius(double world_radius) { pick_radius_ = world_radius; }
 
+    /// Resolves a raw cursor point exactly as a commit would: OSNAP point wins,
+    /// otherwise ortho/polar/grid-snap relative to the anchor. Used by both the
+    /// commit path and the render-side preview so they always agree.
+    [[nodiscard]] core::Vec2 resolve_pick(core::Vec2 world, std::optional<core::Vec2> snap) const;
+
+    /// The active command's preview request (None when idle).
+    [[nodiscard]] const PreviewSpec& preview() const noexcept { return preview_; }
+
+    /// Cached selection count, fed from the published snapshot by the UI.
+    void set_selection_count(int n) noexcept { selection_count_ = n; }
+
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
     [[nodiscard]] const std::string& last_command() const noexcept { return last_command_alias_; }
     [[nodiscard]] const CommandRegistry& registry() const noexcept { return registry_; }
@@ -62,6 +73,10 @@ public:
     [[nodiscard]] std::optional<core::Vec2> last_point() const override { return last_point_; }
     void set_last_point(core::Vec2 p) override { last_point_ = p; }
     void clear_last_point() override { last_point_.reset(); }
+    void set_preview(PreviewSpec spec) override { preview_ = std::move(spec); }
+    void clear_preview() override { preview_ = PreviewSpec{}; }
+    [[nodiscard]] int selection_count() const override { return selection_count_; }
+    [[nodiscard]] double pick_radius() const override { return pick_radius_; }
     [[nodiscard]] ViewControl* view() override { return view_; }
 
 private:
@@ -87,6 +102,8 @@ private:
     bool grid_snap_ = false;
     double grid_spacing_ = 1.0;
     double pick_radius_ = 0.0;
+    int selection_count_ = 0;
+    PreviewSpec preview_;
 };
 
 } // namespace musacad::command

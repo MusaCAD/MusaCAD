@@ -78,6 +78,7 @@ void LineCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             points_.push_back(*p);
             ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {points_.back()}});
             ctx.set_prompt("Specify next point or [Undo]: ");
         }
         return;
@@ -91,10 +92,12 @@ void LineCommand::input(CommandContext& ctx, const std::string& text) {
             points_.pop_back();
             ctx.submit(core::UndoLastOpCommand{});
             ctx.set_last_point(points_.back());
+            ctx.set_preview({PreviewKind::Segment, {points_.back()}});
             ctx.echo("Undo last segment");
         } else {
             points_.clear();
             ctx.clear_last_point();
+            ctx.clear_preview();
             ctx.set_prompt("Specify first point: ");
         }
         return;
@@ -103,6 +106,7 @@ void LineCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.submit(core::AddLineCommand{points_.back(), *p, ctx.group_id()});
         points_.push_back(*p);
         ctx.set_last_point(*p);
+        ctx.set_preview({PreviewKind::Segment, {points_.back()}});
     }
 }
 
@@ -124,6 +128,7 @@ void CircleCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
             ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Circle, {center_}});
             state_ = State::Radius;
             ctx.set_prompt("Specify radius: ");
         }
@@ -173,6 +178,7 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             points_.push_back(*p);
             ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Polyline, points_});
             prompt_next(ctx);
         }
         return;
@@ -199,9 +205,11 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
         points_.pop_back();
         if (points_.empty()) {
             ctx.clear_last_point();
+            ctx.clear_preview();
             ctx.set_prompt("Specify start point: ");
         } else {
             ctx.set_last_point(points_.back());
+            ctx.set_preview({PreviewKind::Polyline, points_});
             prompt_next(ctx);
         }
         return;
@@ -209,6 +217,7 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
     if (const auto p = read_point(ctx, text)) {
         points_.push_back(*p);
         ctx.set_last_point(*p);
+        ctx.set_preview({PreviewKind::Polyline, points_});
     }
 }
 
@@ -233,10 +242,12 @@ void ArcCommand::input(CommandContext& ctx, const std::string& text) {
     points_.push_back(*p);
     ctx.set_last_point(*p);
     if (points_.size() == 1) {
+        ctx.set_preview({PreviewKind::Segment, {points_[0]}});
         ctx.set_prompt("Specify second point of arc: ");
         return;
     }
     if (points_.size() == 2) {
+        ctx.set_preview({PreviewKind::Arc, {points_[0], points_[1]}});
         ctx.set_prompt("Specify end point of arc: ");
         return;
     }
@@ -290,6 +301,7 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             first_ = *p;
             ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Rectangle, {first_}});
             state_ = State::Second;
             ctx.set_prompt("Specify other corner point: ");
         }
@@ -395,6 +407,196 @@ void ZoomCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void ZoomCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// MOVE
+// ---------------------------------------------------------------------------
+void MoveCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run MOVE.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify base point: ");
+}
+
+void MoveCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (!base_) {
+        base_ = *p;
+        ctx.set_last_point(*p);
+        ctx.set_preview({PreviewKind::Move, {*p}});
+        ctx.set_prompt("Specify second point: ");
+        return;
+    }
+    ctx.submit(core::MoveSelectionCommand{*p - *base_, ctx.group_id()});
+    ctx.echo("Moved.");
+    done_ = true;
+}
+
+void MoveCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// COPY (leaves originals; repeats until Enter/Esc)
+// ---------------------------------------------------------------------------
+void CopyCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run COPY.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify base point: ");
+}
+
+void CopyCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!base_) {
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Move, {*p}});
+            ctx.set_prompt("Specify second point or [Exit]: ");
+        }
+        return;
+    }
+    if (t.empty()) {
+        done_ = true; // Enter ends COPY
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::CopySelectionCommand{*p - *base_, ctx.group_id()});
+        ctx.echo("Copy placed.");
+    }
+}
+
+void CopyCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// MIRROR
+// ---------------------------------------------------------------------------
+void MirrorCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run MIRROR.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify first point of mirror line: ");
+}
+
+void MirrorCommand::input(CommandContext& ctx, const std::string& text) {
+    if (state_ == State::Ask) {
+        const std::string u = upper(trimmed(text));
+        const bool erase = (u == "Y" || u == "YES");
+        ctx.submit(core::MirrorSelectionCommand{p1_, p2_, erase, ctx.group_id()});
+        ctx.echo(erase ? "Mirrored (source erased)." : "Mirrored.");
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::First) {
+        p1_ = *p;
+        ctx.set_last_point(*p);
+        ctx.set_preview({PreviewKind::Mirror, {*p}});
+        state_ = State::Second;
+        ctx.set_prompt("Specify second point of mirror line: ");
+    } else {
+        p2_ = *p;
+        ctx.clear_preview();
+        state_ = State::Ask;
+        ctx.set_prompt("Erase source objects? [Yes/No] <No>: ");
+    }
+}
+
+void MirrorCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// OFFSET (distance -> pick object -> pick side; repeats)
+// ---------------------------------------------------------------------------
+void OffsetCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Specify offset distance: ");
+}
+
+void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (state_ == State::Distance) {
+        double d = 0.0;
+        if (!parse_number(t, d) || d <= 0.0) {
+            ctx.echo("Enter a positive offset distance.");
+            return;
+        }
+        distance_ = d;
+        state_ = State::Object;
+        ctx.set_prompt("Select object to offset: ");
+        return;
+    }
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::Object) {
+        object_pick_ = *p;
+        state_ = State::Side;
+        ctx.set_prompt("Specify point on side to offset: ");
+    } else {
+        ctx.submit(core::OffsetPickCommand{object_pick_, ctx.pick_radius(), distance_, *p,
+                                           ctx.group_id()});
+        ctx.echo("Offset created.");
+        state_ = State::Object;
+        ctx.set_prompt("Select object to offset: ");
+    }
+}
+
+void OffsetCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// TRIM (line subset; repeats)
+// ---------------------------------------------------------------------------
+void TrimCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Select line to trim: ");
+}
+
+void TrimCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+    ctx.echo("Trimmed.");
+}
+
+void TrimCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

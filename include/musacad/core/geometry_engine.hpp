@@ -59,18 +59,19 @@ public:
     [[nodiscard]] bool running() const noexcept { return worker_.joinable(); }
 
 private:
-    // An undo/redo group is one command-line invocation's worth of changes. A
-    // `create` group's entities exist after the action (undo removes them, redo
-    // recreates them); an `erase` group's entities are absent after the action
-    // (undo recreates, redo removes). Each item carries the Add* command that
-    // recreates the entity and its current live handle (null when removed).
+    // An undo/redo group is one command invocation's worth of entity changes.
+    // Each item is either a creation (undo removes it, redo recreates it) or an
+    // erasure (undo recreates it, redo removes it); a group may mix both, which
+    // is how MOVE/MIRROR/TRIM (erase originals + create results) are one
+    // undoable step. `data` is the Add* command that recreates the entity;
+    // `handle` is its current live handle (null when removed).
     struct Item {
         Command data;
         EntityHandle handle;
+        bool is_create = true;
     };
     struct Group {
         std::uint64_t id = 0;
-        bool is_create = true;
         std::vector<Item> items;
     };
 
@@ -94,6 +95,18 @@ private:
     void do_redo_group();
     void do_undo_op();
 
+    // --- selection ---
+    [[nodiscard]] bool sel_contains(EntityHandle h) const;
+    void sel_add(EntityHandle h);
+    void prune_selection();
+    void select_window(Vec2 min, Vec2 max, bool crossing, bool additive);
+
+    // --- modify (operate on the selection / a pick) ---
+    void apply_move(Vec2 delta, bool copy, std::uint64_t group);
+    void apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group);
+    void apply_offset(Vec2 pick, double radius, double distance, Vec2 side, std::uint64_t group);
+    void apply_trim(Vec2 pick, double radius, std::uint64_t group);
+
     GeometryStore store_;
     NativeKernel2D kernel_;
     SpatialGrid grid_;
@@ -102,9 +115,11 @@ private:
 
     std::vector<Group> undo_;
     std::vector<Group> redo_;
+    std::vector<EntityHandle> selection_;
 
     RenderSnapshot geom_cache_; // payload rebuilt only when geometry changes
     bool geom_dirty_ = true;
+    std::uint64_t geom_version_ = 0; // bumps only when geometry changes
 
     Vec2 cursor_{};
     double pick_radius_ = 0.0;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <QMainWindow>
 
@@ -10,6 +11,7 @@
 class QTimer;
 class QLabel;
 class QAction;
+class QToolButton;
 
 namespace musacad::command {
 class CommandProcessor;
@@ -50,6 +52,7 @@ private:
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
     QLabel* coord_label_ = nullptr;
     QTimer* title_timer_ = nullptr;
+    std::vector<QToolButton*> selection_required_buttons_;
 
     ViewportModes modes_;
     QAction* osnap_action_ = nullptr;

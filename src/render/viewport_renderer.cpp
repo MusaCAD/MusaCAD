@@ -16,6 +16,11 @@ namespace {
 constexpr ClearColor kBackground{0.09f, 0.10f, 0.12f, 1.0f};
 constexpr float kCrosshairColor[4] = {0.55f, 0.60f, 0.66f, 1.0f};
 constexpr float kSnapColor[4] = {0.20f, 1.0f, 0.45f, 1.0f};
+constexpr float kSelectColor[4] = {1.0f, 0.55f, 0.10f, 1.0f};   // selected highlight
+constexpr float kPreviewColor[4] = {0.90f, 0.90f, 0.40f, 1.0f}; // rubber-band preview
+constexpr float kGhostColor[4] = {0.55f, 0.80f, 1.0f, 1.0f};    // move/mirror ghost
+constexpr float kWindowColor[4] = {0.35f, 0.55f, 1.0f, 1.0f};   // window select (blue)
+constexpr float kCrossingColor[4] = {0.35f, 0.90f, 0.45f, 1.0f}; // crossing select (green)
 constexpr float kGridMinor[4] = {0.17f, 0.18f, 0.21f, 1.0f};
 constexpr float kGridMajor[4] = {0.30f, 0.32f, 0.37f, 1.0f};
 constexpr float kSceneColor[4] = {0.85f, 0.90f, 0.96f, 1.0f};
@@ -140,7 +145,7 @@ void ViewportRenderer::upload_scene(const core::RenderSnapshot& snapshot) {
     point_count_ = snapshot.points.size();
     point_instances_->upload(scratch_.data(), scratch_.size() * sizeof(float));
 
-    uploaded_version_ = snapshot.version;
+    uploaded_version_ = snapshot.geometry_version;
     stats_.scene_uploaded_bytes = line_bytes + scratch_.size() * sizeof(float);
 }
 
@@ -153,8 +158,9 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
     cmd_->set_viewport(0, 0, target.width(), target.height());
     cmd_->clear(kBackground);
 
-    // Scene geometry: re-upload only when the snapshot version changed.
-    if (snapshot.version != uploaded_version_) {
+    // Scene geometry: re-upload only when the scene geometry changed (not on
+    // cursor/selection/snap-only publishes).
+    if (snapshot.geometry_version != uploaded_version_) {
         upload_scene(snapshot);
     }
     stats_.uploaded_version = uploaded_version_;
@@ -208,6 +214,7 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         ++stats_.draw_calls;
     }
 
+    draw_selection_and_interaction(*cmd_, snapshot, view);
     draw_crosshair_and_snap(*cmd_, target.width(), target.height(), snapshot, camera);
     draw_overlay(*cmd_, target.width(), target.height());
 
@@ -241,6 +248,68 @@ void ViewportRenderer::draw_overlay(GpuCommandBuffer& cmd, int width, int height
     cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
     cmd.draw_instanced(2, static_cast<std::uint32_t>(count));
     ++stats_.draw_calls;
+}
+
+void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
+                                                      const core::RenderSnapshot& snapshot,
+                                                      const core::Mat3& view) {
+    cmd.bind_pipeline(*line_pipeline_);
+    cmd.set_uniform_mat3("u_transform", view);
+
+    const auto draw_world = [&](const std::vector<core::Vec2>& seg, const float (&color)[4]) {
+        const std::size_t n = pack_segments(seg, scratch_);
+        if (n == 0) {
+            return;
+        }
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", color[0], color[1], color[2], color[3]);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    };
+
+    // Selected geometry highlight.
+    if (!snapshot.selected_line_vertices.empty()) {
+        draw_world(snapshot.selected_line_vertices, kSelectColor);
+    }
+
+    // Move/mirror ghost: transform the selected geometry render-side.
+    if (overlay_.ghost_mode != 0 && !snapshot.selected_line_vertices.empty()) {
+        std::vector<core::Vec2> ghost;
+        ghost.reserve(snapshot.selected_line_vertices.size());
+        if (overlay_.ghost_mode == 1) {
+            const core::Vec2 d = overlay_.ghost_b - overlay_.ghost_a;
+            for (const core::Vec2& v : snapshot.selected_line_vertices) {
+                ghost.push_back(v + d);
+            }
+        } else { // mirror across ghost_a..ghost_b
+            const core::Vec2 dir = core::normalized(overlay_.ghost_b - overlay_.ghost_a);
+            for (const core::Vec2& v : snapshot.selected_line_vertices) {
+                const core::Vec2 ap = v - overlay_.ghost_a;
+                const double t = core::dot(ap, dir);
+                const core::Vec2 proj = overlay_.ghost_a + dir * t;
+                ghost.push_back(proj * 2.0 - v);
+            }
+        }
+        draw_world(ghost, kGhostColor);
+    }
+
+    // Live command preview (rubber-band).
+    if (!overlay_.preview_segments.empty()) {
+        draw_world(overlay_.preview_segments, kPreviewColor);
+    }
+
+    // Selection rubber-band rectangle.
+    if (overlay_.rect_mode != 0) {
+        const core::Vec2 a = overlay_.rect_a;
+        const core::Vec2 b = overlay_.rect_b;
+        std::vector<core::Vec2> rect;
+        edge(rect, {a.x, a.y}, {b.x, a.y});
+        edge(rect, {b.x, a.y}, {b.x, b.y});
+        edge(rect, {b.x, b.y}, {a.x, b.y});
+        edge(rect, {a.x, b.y}, {a.x, a.y});
+        draw_world(rect, overlay_.rect_mode == 2 ? kCrossingColor : kWindowColor);
+    }
 }
 
 void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,

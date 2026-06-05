@@ -57,8 +57,12 @@ void CommandProcessor::cancel() {
     if (active_) {
         active_->cancel(*this);
         active_.reset();
+        preview_ = PreviewSpec{};
         show_ready();
+        return;
     }
+    // ESC while idle clears the current selection.
+    submit(core::ClearSelectionCommand{});
 }
 
 core::Vec2 CommandProcessor::resolve_constraints(core::Vec2 world) const {
@@ -82,6 +86,11 @@ core::Vec2 CommandProcessor::resolve_constraints(core::Vec2 world) const {
     return p;
 }
 
+core::Vec2 CommandProcessor::resolve_pick(core::Vec2 world, std::optional<core::Vec2> snap) const {
+    // OSNAP wins; otherwise apply ortho/polar/grid-snap to the free cursor point.
+    return snap ? *snap : resolve_constraints(world);
+}
+
 void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> snap) {
     if (!active_) {
         return; // nothing to receive a point
@@ -92,8 +101,7 @@ void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> sn
         finalize_if_done();
         return;
     }
-    // OSNAP wins; otherwise apply ortho/polar/grid-snap to the free cursor point.
-    const core::Vec2 p = snap ? *snap : resolve_constraints(world);
+    const core::Vec2 p = resolve_pick(world, snap);
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%.10g,%.10g", p.x, p.y);
     submit_line(buf); // feed as an absolute coordinate to the active command
@@ -127,6 +135,7 @@ void CommandProcessor::start_command(const std::string& alias) {
 void CommandProcessor::finalize_if_done() {
     if (active_ && active_->done()) {
         active_.reset();
+        preview_ = PreviewSpec{}; // drop any preview when the command ends
         show_ready();
     }
 }

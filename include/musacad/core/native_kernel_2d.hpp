@@ -19,6 +19,9 @@ public:
 
     void intersect(const GeometryStore& store, EntityHandle a, EntityHandle b,
                    std::vector<Vec2>& out) const override;
+
+    bool offset(const GeometryStore& store, EntityHandle entity, double distance, Vec2 side,
+                Command& out) const override;
 };
 
 } // namespace musacad::core

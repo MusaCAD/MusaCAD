@@ -299,6 +299,78 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     return false;
 }
 
+bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, double distance,
+                            Vec2 side, Command& out) const {
+    if (!store.is_valid(entity) || distance <= 0.0) {
+        return false;
+    }
+    switch (entity.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store.line(entity);
+        const Vec2 dir = normalized(l->b - l->a);
+        const Vec2 normal{-dir.y, dir.x};
+        const double sign = dot(side - l->a, normal) >= 0.0 ? 1.0 : -1.0;
+        const Vec2 d = normal * (sign * distance);
+        out = AddLineCommand{l->a + d, l->b + d, 0};
+        return true;
+    }
+    case EntityKind::Circle: {
+        const CircleData* c = store.circle(entity);
+        const bool outward = length(side - c->center) > c->radius;
+        const double r = outward ? c->radius + distance : c->radius - distance;
+        if (r <= 0.0) {
+            return false;
+        }
+        out = AddCircleCommand{c->center, r, 0};
+        return true;
+    }
+    case EntityKind::Arc: {
+        const ArcData* arc = store.arc(entity);
+        const bool outward = length(side - arc->center) > arc->radius;
+        const double r = outward ? arc->radius + distance : arc->radius - distance;
+        if (r <= 0.0) {
+            return false;
+        }
+        out = AddArcCommand{arc->center, r, arc->start_angle, arc->end_angle, 0};
+        return true;
+    }
+    case EntityKind::Polyline: {
+        const PolylineData* p = store.polyline(entity);
+        const std::span<const Vec2> v = store.vertices_of(*p);
+        if (v.size() < 2) {
+            return false;
+        }
+        // Determine offset side from the first segment, then offset every vertex
+        // along its averaged adjacent-segment normal (simple miter -- adequate
+        // for gentle polylines; sharp corners are approximate).
+        const Vec2 d0 = normalized(v[1] - v[0]);
+        const Vec2 n0{-d0.y, d0.x};
+        const double sign = dot(side - v[0], n0) >= 0.0 ? 1.0 : -1.0;
+        std::vector<Vec2> out_pts;
+        out_pts.reserve(v.size());
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            Vec2 n{0.0, 0.0};
+            if (i > 0) {
+                const Vec2 d = normalized(v[i] - v[i - 1]);
+                n += Vec2{-d.y, d.x};
+            }
+            if (i + 1 < v.size()) {
+                const Vec2 d = normalized(v[i + 1] - v[i]);
+                n += Vec2{-d.y, d.x};
+            }
+            n = normalized(n);
+            out_pts.push_back(v[i] + n * (sign * distance));
+        }
+        out = AddPolylineCommand{std::move(out_pts), p->closed, 0};
+        return true;
+    }
+    case EntityKind::Point:
+    case EntityKind::Spline:
+        break;
+    }
+    return false;
+}
+
 void NativeKernel2D::intersect(const GeometryStore& store, EntityHandle a, EntityHandle b,
                                std::vector<Vec2>& out) const {
     if (!store.is_valid(a) || !store.is_valid(b)) {

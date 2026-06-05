@@ -31,20 +31,21 @@ suggests both); aliases are case-insensitive.
 | ERASE (Last / All / pick) | E | Implemented |
 | UNDO | U | Implemented |
 | REDO | — (Ctrl+Y) | Implemented |
-| MOVE | M | Planned (Phase 7) |
-| COPY | CO | Planned (Phase 7) |
-| ROTATE | RO | Planned (Phase 7) |
-| SCALE | SC | Planned (Phase 7) |
-| MIRROR | MI | Planned (Phase 7) |
-| OFFSET | O | Planned (Phase 7) |
-| TRIM | TR | Planned (Phase 7) |
-| EXTEND | EX | Planned (Phase 7) |
-| FILLET | F | Planned (Phase 7) |
-| CHAMFER | CHA | Planned (Phase 7) |
-| ARRAY | AR | Planned (Phase 7) |
-| STRETCH | S | Planned (Phase 7) |
-| EXPLODE | X | Planned (Phase 7) |
-| JOIN | J | Planned (Phase 7) |
+| MOVE | M | Implemented |
+| COPY | CO / CP | Implemented |
+| MIRROR | MI | Implemented |
+| OFFSET (line/circle/arc/polyline) | O | Implemented |
+| TRIM (lines, to nearest intersection) | TR | Implemented (subset) |
+| TRIM (arcs/circles/curves) | TR | Planned (Phase 8) |
+| ROTATE | RO | Planned (Phase 8) |
+| SCALE | SC | Planned (Phase 8) |
+| EXTEND | EX | Planned (Phase 8) |
+| FILLET | F | Planned (Phase 8) |
+| CHAMFER | CHA | Planned (Phase 8) |
+| ARRAY | AR | Planned (Phase 8) |
+| STRETCH | S | Planned (Phase 8) |
+| EXPLODE | X | Planned (Phase 8) |
+| JOIN | J | Planned (Phase 8) |
 
 ## Annotate / Dimensions
 
@@ -110,6 +111,20 @@ suggests both); aliases are case-insensitive.
 | Intersection | Implemented |
 | Nearest | Implemented |
 | Perpendicular / Tangent / Quadrant / Node | Planned (Phase 9) |
+
+## Selection & live preview
+
+| Feature | Status |
+|---|---|
+| Single-click pick (pick-box) | Implemented |
+| Window select (left→right, enclosed) | Implemented |
+| Crossing select (right→left, touched) | Implemented |
+| Shift to add / Esc to clear / Select all | Implemented |
+| Selected-entity highlight | Implemented |
+| Live cursor preview (Line/Circle/Rect/PLine/Arc) | Implemented |
+| Move/Mirror ghost preview | Implemented |
+| Ortho/Polar/grid-snap honored by preview | Implemented |
+| Grips (square handles on selection) | Planned (Phase 9) |
 
 ## Status-bar modes & keys
 

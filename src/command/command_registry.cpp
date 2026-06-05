@@ -86,6 +86,12 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"E", "ERASE"}, [] { return std::make_unique<EraseCommand>(); });
     r.register_command({"U", "UNDO"}, [] { return std::make_unique<UndoCommand>(); });
     r.register_command({"Z", "ZOOM"}, [] { return std::make_unique<ZoomCommand>(); });
+    // Modify (Phase 7).
+    r.register_command({"M", "MOVE"}, [] { return std::make_unique<MoveCommand>(); });
+    r.register_command({"CO", "CP", "COPY"}, [] { return std::make_unique<CopyCommand>(); });
+    r.register_command({"MI", "MIRROR"}, [] { return std::make_unique<MirrorCommand>(); });
+    r.register_command({"O", "OFFSET"}, [] { return std::make_unique<OffsetCommand>(); });
+    r.register_command({"TR", "TRIM"}, [] { return std::make_unique<TrimCommand>(); });
     return r;
 }
 

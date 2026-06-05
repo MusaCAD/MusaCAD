@@ -344,6 +344,57 @@ store, commands still cross only via the MPSC queue, and the crosshair/pick-box
 need no geometry round-trip. See [COMMANDS.md](COMMANDS.md) for the living
 command roadmap.
 
+## Live preview, selection & modify (Phase 7)
+
+### Transient overlays are render-side, never real geometry
+
+The command preview (rubber-band) and the selection rubber-band rectangle are
+**transient render-side visuals**, composed on the UI thread from the active
+command's `PreviewSpec` + the live (constrained) cursor and handed to the
+renderer in a mutex-shared `RenderOverlay` -- the same UI->render pattern as the
+camera and crosshair. They never create entities, never touch the store, op-log,
+undo stack, or spatial index, and involve no synchronous per-move geometry
+query. A draw commits exactly once, on the click, via the existing command
+message. (Proven by `tests/test_preview_no_mutation.cpp`: anchoring + dragging a
+preview emits zero geometry commands; the commit emits exactly one.) Move/mirror
+"ghosts" are drawn by the renderer applying the overlay's transform to the
+snapshot's `selected_line_vertices` -- still render-side, still zero round-trip.
+Previews honor ortho/polar/grid-snap by resolving the cursor through the same
+`CommandProcessor::resolve_pick` the commit uses, so preview == commit.
+
+### Selection set (geometry-side, one index)
+
+The selection set lives on the geometry thread (it is about entities) and is
+published in the snapshot as `selection` (the queryable handle set -- the clean
+API for the command layer and future scripting) plus `selected_line_vertices`
+(for the highlight and ghosts). Single-pick, window (fully enclosed) and crossing
+(touched) tests all run against the **existing Phase-5 spatial index**; the
+rectangle visual is render-side. Drag direction (left->right vs right->left)
+chooses window vs crossing, per AutoCAD. The selection is pruned of stale handles
+on every rebuild.
+
+To keep cursor/selection publishes cheap, the snapshot now carries a separate
+`geometry_version` that bumps only when scene geometry changes; the renderer
+keys its scene re-upload on that, so cursor moves, snapping and selection changes
+cost no scene re-upload (constraint B still holds: 0 bytes over 300 camera
+frames, ~470 FPS on the 1M scene).
+
+### Modify operations
+
+MOVE/COPY/MIRROR consume the selection; OFFSET/TRIM are pick-based. The op-log
+undo model was generalized so a group's items each carry a create/erase flag --
+MOVE/MIRROR/TRIM (erase originals + create results) are therefore a single
+undoable group. OFFSET added `IGeometryKernel::offset` (line/circle/arc/polyline)
+-- the first and only caller, per the minimal-interface rule. TRIM implements the
+solid subset: trimming a **line** to its nearest intersections (cutting edges =
+all nearby entities, via the index); trimming arcs/circles is marked Planned in
+COMMANDS.md. Modify-panel buttons that need a selection (Move/Copy/Mirror) are
+disabled until one exists, driven by the published selection count.
+
+Draw-call count stays bounded and constant (not per-primitive): 4 for the scene,
+6 with crosshair+pick-box+snap-marker, up to ~10 with selection highlight +
+preview + ghost + selection rectangle all active.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -372,6 +423,12 @@ command roadmap.
   cursor, and registry-driven command autocomplete. 85 unit tests pass under
   ASan + TSan; presentation-only (no command logic changes).
 
+* **Phase 7 — complete:** render-side live preview (rubber-banding) for all draw
+  commands; AutoCAD selection (single-pick / window / crossing, Shift-add,
+  Esc-clear, select-all) with highlight; Modify panel — MOVE, COPY, MIRROR,
+  OFFSET, and TRIM (line subset) with cursor preview/ghost and undo/redo;
+  selection-driven button enablement. 100 unit tests pass under ASan + TSan.
+
 ## Known deferrals
 
 * **Vertex-pool compaction** — removed polylines/splines leave vertices in the
@@ -381,4 +438,10 @@ command roadmap.
 * **Vulkan backend** — the GPU seam exists; only the OpenGL 4.6 backend is
   implemented.
 * **Adaptive spatial-index cell size** — currently a fixed uniform grid.
+* **TRIM of arcs/circles/curves** — only line trimming is implemented; curve
+  trimming and the broader Modify suite (ROTATE/SCALE/EXTEND/FILLET/...) are
+  Planned (Phase 8) in COMMANDS.md.
+* **In-command "Select objects:" prompting** — Modify commands consume a
+  pre-existing selection (buttons gate on it); selecting *during* a Modify
+  command is deferred.
 * **Windows** — build is configured per docs/BUILD.md but verified only on Linux.

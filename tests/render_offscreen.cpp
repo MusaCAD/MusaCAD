@@ -98,6 +98,7 @@ int main(int argc, char* argv[]) {
     core::RenderSnapshot snap;
     core::build_render_snapshot(store, kernel, snap);
     snap.version = 1;
+    snap.geometry_version = 1;
     cam.frame_bounds(Vec2{0.0, 0.0}, Vec2{static_cast<double>(side), static_cast<double>(side)}, 0.05);
     std::printf("Scene    : %zu lines (%zu line-instances)\n", kCount, snap.line_vertices.size() / 2);
 
@@ -166,6 +167,7 @@ int main(int argc, char* argv[]) {
     s2.add_line(Vec2{0, 0}, Vec2{1, 0}); // baseline
     core::build_render_snapshot(s2, kernel, snapA);
     snapA.version = 10;
+    snapA.geometry_version = 10;
     renderer.render(*target, snapA, cam);
     const std::size_t baseline = renderer.stats().line_instances;
 
@@ -176,6 +178,7 @@ int main(int argc, char* argv[]) {
     }
     core::build_render_snapshot(s2, kernel, snapA);
     snapA.version = 11;
+    snapA.geometry_version = 11;
     renderer.render(*target, snapA, cam);
     const std::size_t high = renderer.stats().line_instances;
 
@@ -184,6 +187,7 @@ int main(int argc, char* argv[]) {
     }
     core::build_render_snapshot(s2, kernel, snapA);
     snapA.version = 12;
+    snapA.geometry_version = 12;
     renderer.render(*target, snapA, cam);
     const std::size_t after = renderer.stats().line_instances;
     std::printf("Line instances: baseline=%zu  with-polylines=%zu  after-delete=%zu\n", baseline,

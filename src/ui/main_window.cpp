@@ -64,8 +64,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         setWindowTitle(QStringLiteral("%1  —  %2 FPS")
                            .arg(QString::fromUtf8(n.data(), static_cast<int>(n.size())))
                            .arg(static_cast<int>(viewport_->fps() + 0.5)));
+        // Drive selection-dependent UI from the published selection count.
+        const int sel = viewport_->selection_count();
+        processor_->set_selection_count(sel);
+        for (QToolButton* b : selection_required_buttons_) {
+            b->setEnabled(sel > 0);
+        }
     });
-    title_timer_->start(250);
+    title_timer_->start(100);
 }
 
 MainWindow::~MainWindow() {
@@ -138,13 +144,14 @@ void MainWindow::build_ribbon() {
 
     // Wires a panel button to an existing command (typed alias).
     const auto add_cmd = [&](RibbonPanel* panel, const QString& kind, const QString& label,
-                             const char* alias) {
+                             const char* alias) -> QToolButton* {
         QToolButton* b = panel->add_button(make_icon(kind), label);
         b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(alias)));
         connect(b, &QToolButton::clicked, this, [this, alias] {
             command_widget_->focus_input();
             processor_->submit_line(alias);
         });
+        return b;
     };
 
     // --- Home tab ---
@@ -158,10 +165,16 @@ void MainWindow::build_ribbon() {
 
     RibbonPanel* modify = ribbon_->add_panel(home, QStringLiteral("Modify"));
     add_cmd(modify, QStringLiteral("erase"), QStringLiteral("Erase"), "ERASE");
-    modify->add_placeholder(make_icon(QStringLiteral("move")), QStringLiteral("Move"));
-    modify->add_placeholder(make_icon(QStringLiteral("copy")), QStringLiteral("Copy"));
-    modify->add_placeholder(make_icon(QStringLiteral("offset")), QStringLiteral("Offset"));
-    modify->add_placeholder(make_icon(QStringLiteral("trim")), QStringLiteral("Trim"));
+    QToolButton* move_btn = add_cmd(modify, QStringLiteral("move"), QStringLiteral("Move"), "M");
+    QToolButton* copy_btn = add_cmd(modify, QStringLiteral("copy"), QStringLiteral("Copy"), "CO");
+    QToolButton* mirror_btn = add_cmd(modify, QStringLiteral("mirror"), QStringLiteral("Mirror"), "MI");
+    add_cmd(modify, QStringLiteral("offset"), QStringLiteral("Offset"), "O"); // pick-based
+    add_cmd(modify, QStringLiteral("trim"), QStringLiteral("Trim"), "TR");    // pick-based
+    // Move/Copy/Mirror require an existing selection.
+    selection_required_buttons_ = {move_btn, copy_btn, mirror_btn};
+    for (QToolButton* b : selection_required_buttons_) {
+        b->setEnabled(false);
+    }
 
     RibbonPanel* layers = ribbon_->add_panel(home, QStringLiteral("Layers"));
     layers->add_placeholder(make_icon(QStringLiteral("layers")), QStringLiteral("Layer\nProperties"));

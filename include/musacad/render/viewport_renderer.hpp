@@ -7,6 +7,7 @@
 
 #include "musacad/core/render_snapshot.hpp"
 #include "musacad/render/camera.hpp"
+#include "musacad/render/overlay.hpp"
 #include "musacad/render/gpu/buffer.hpp"
 #include "musacad/render/gpu/command_buffer.hpp"
 #include "musacad/render/gpu/device.hpp"
@@ -51,6 +52,10 @@ public:
     }
     void set_grid_visible(bool visible) { grid_visible_ = visible; }
 
+    /// Transient interaction overlay (preview, selection rect, ghost), composed
+    /// on the UI thread and handed in each frame.
+    void set_overlay(RenderOverlay overlay) { overlay_ = std::move(overlay); }
+
     [[nodiscard]] const RenderStats& stats() const noexcept { return stats_; }
 
 private:
@@ -58,6 +63,8 @@ private:
     void draw_overlay(GpuCommandBuffer& cmd, int width, int height);
     void draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,
                                  const core::RenderSnapshot& snapshot, const Camera2D& camera);
+    void draw_selection_and_interaction(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,
+                                        const core::Mat3& view);
 
     GpuDevice& device_;
     std::unique_ptr<GpuPipeline> line_pipeline_;
@@ -77,6 +84,7 @@ private:
     float cursor_x_ = 0.0f;
     float cursor_y_ = 0.0f;
     bool grid_visible_ = true;
+    RenderOverlay overlay_;
 
     std::uint64_t uploaded_version_ = ~0ull;
     std::size_t line_count_ = 0;  ///< scene line instances currently on GPU

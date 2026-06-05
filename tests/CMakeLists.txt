@@ -61,6 +61,10 @@ add_executable(musacad_tests
     test_erase_pick.cpp
     test_redo.cpp
     test_ortho.cpp
+    test_preview_no_mutation.cpp
+    test_selection.cpp
+    test_modify.cpp
+    test_kernel_offset.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

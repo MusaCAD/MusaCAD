@@ -1,5 +1,7 @@
 #include "musacad/core/geometry_engine.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <utility>
 #include <variant>
@@ -9,6 +11,26 @@
 #include "musacad/core/scene_snapshot.hpp"
 
 namespace musacad::core {
+
+namespace {
+/// Segment-segment intersection (returns the crossing point if within both).
+bool segment_intersection(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2& out) {
+    const Vec2 r = p2 - p1;
+    const Vec2 s = p4 - p3;
+    const double rxs = cross(r, s);
+    if (std::abs(rxs) < 1e-12) {
+        return false;
+    }
+    const Vec2 qp = p3 - p1;
+    const double t = cross(qp, s) / rxs;
+    const double u = cross(qp, r) / rxs;
+    if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0) {
+        out = p1 + r * t;
+        return true;
+    }
+    return false;
+}
+} // namespace
 
 void GeometryEngine::start() {
     if (worker_.joinable()) {
@@ -102,11 +124,8 @@ Command GeometryEngine::capture_entity(EntityHandle h) const {
 
 EntityHandle GeometryEngine::most_recent_live() const {
     for (auto git = undo_.rbegin(); git != undo_.rend(); ++git) {
-        if (!git->is_create) {
-            continue;
-        }
         for (auto it = git->items.rbegin(); it != git->items.rend(); ++it) {
-            if (store_.is_valid(it->handle)) {
+            if (it->is_create && store_.is_valid(it->handle)) {
                 return it->handle;
             }
         }
@@ -155,17 +174,17 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
 }
 
 void GeometryEngine::push_create_item(std::uint64_t group, EntityHandle handle, Command data) {
-    if (undo_.empty() || undo_.back().id != group || !undo_.back().is_create) {
-        undo_.push_back(Group{group, true, {}});
+    if (undo_.empty() || undo_.back().id != group) {
+        undo_.push_back(Group{group, {}});
     }
-    undo_.back().items.push_back(Item{std::move(data), handle});
+    undo_.back().items.push_back(Item{std::move(data), handle, true});
 }
 
 void GeometryEngine::push_erase_item(std::uint64_t group, Command data) {
-    if (undo_.empty() || undo_.back().id != group || undo_.back().is_create) {
-        undo_.push_back(Group{group, false, {}});
+    if (undo_.empty() || undo_.back().id != group) {
+        undo_.push_back(Group{group, {}});
     }
-    undo_.back().items.push_back(Item{std::move(data), EntityHandle::null()});
+    undo_.back().items.push_back(Item{std::move(data), EntityHandle::null(), false});
 }
 
 void GeometryEngine::do_undo_group() {
@@ -174,14 +193,14 @@ void GeometryEngine::do_undo_group() {
     }
     Group g = std::move(undo_.back());
     undo_.pop_back();
-    if (g.is_create) {
-        for (Item& it : g.items) {
-            remove_indexed(it.handle);
-            it.handle = EntityHandle::null();
-        }
-    } else {
-        for (Item& it : g.items) {
-            it.handle = create_indexed(it.data);
+    // Reverse the items in reverse order so a mixed (erase+create) group undoes
+    // cleanly.
+    for (auto it = g.items.rbegin(); it != g.items.rend(); ++it) {
+        if (it->is_create) {
+            remove_indexed(it->handle);
+            it->handle = EntityHandle::null();
+        } else {
+            it->handle = create_indexed(it->data);
         }
     }
     redo_.push_back(std::move(g));
@@ -193,12 +212,10 @@ void GeometryEngine::do_redo_group() {
     }
     Group g = std::move(redo_.back());
     redo_.pop_back();
-    if (g.is_create) {
-        for (Item& it : g.items) {
+    for (Item& it : g.items) {
+        if (it.is_create) {
             it.handle = create_indexed(it.data);
-        }
-    } else {
-        for (Item& it : g.items) {
+        } else {
             remove_indexed(it.handle);
             it.handle = EntityHandle::null();
         }
@@ -217,7 +234,7 @@ void GeometryEngine::do_undo_op() {
     Group& g = undo_.back();
     Item it = std::move(g.items.back());
     g.items.pop_back();
-    if (g.is_create) {
+    if (it.is_create) {
         remove_indexed(it.handle);
     } else {
         create_indexed(it.data);
@@ -225,6 +242,271 @@ void GeometryEngine::do_undo_op() {
     if (g.items.empty()) {
         undo_.pop_back();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Selection
+// ---------------------------------------------------------------------------
+
+bool GeometryEngine::sel_contains(EntityHandle h) const {
+    return std::find(selection_.begin(), selection_.end(), h) != selection_.end();
+}
+
+void GeometryEngine::sel_add(EntityHandle h) {
+    if (!h.is_null() && store_.is_valid(h) && !sel_contains(h)) {
+        selection_.push_back(h);
+    }
+}
+
+void GeometryEngine::prune_selection() {
+    std::erase_if(selection_, [this](EntityHandle h) { return !store_.is_valid(h); });
+}
+
+namespace {
+bool point_in_rect(Vec2 p, Vec2 mn, Vec2 mx) {
+    return p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y;
+}
+// True if segment a-b intersects the axis-aligned rect [mn,mx].
+bool segment_hits_rect(Vec2 a, Vec2 b, Vec2 mn, Vec2 mx) {
+    if (point_in_rect(a, mn, mx) || point_in_rect(b, mn, mx)) {
+        return true;
+    }
+    Vec2 hit{};
+    const Vec2 c1{mn.x, mn.y};
+    const Vec2 c2{mx.x, mn.y};
+    const Vec2 c3{mx.x, mx.y};
+    const Vec2 c4{mn.x, mx.y};
+    return segment_intersection(a, b, c1, c2, hit) || segment_intersection(a, b, c2, c3, hit) ||
+           segment_intersection(a, b, c3, c4, hit) || segment_intersection(a, b, c4, c1, hit);
+}
+} // namespace
+
+void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additive) {
+    if (!additive) {
+        selection_.clear();
+    }
+    std::vector<EntityHandle> candidates;
+    grid_.query(mn, mx, candidates);
+    std::vector<Vec2> tess;
+    for (const EntityHandle h : candidates) {
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+        if (tess.empty()) {
+            continue;
+        }
+        bool selected = false;
+        if (crossing) {
+            for (std::size_t i = 1; i < tess.size() && !selected; ++i) {
+                selected = segment_hits_rect(tess[i - 1], tess[i], mn, mx);
+            }
+            if (!selected && tess.size() == 1) {
+                selected = point_in_rect(tess[0], mn, mx);
+            }
+        } else {
+            selected = true; // window: every point must be inside
+            for (const Vec2& p : tess) {
+                if (!point_in_rect(p, mn, mx)) {
+                    selected = false;
+                    break;
+                }
+            }
+        }
+        if (selected) {
+            sel_add(h);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Modify
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void translate_cmd(Command& c, Vec2 d) {
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand>) {
+                x.a += d;
+                x.b += d;
+            } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
+                x.center += d;
+            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
+                x.center += d;
+            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
+                for (Vec2& p : x.points) {
+                    p += d;
+                }
+            }
+        },
+        c);
+}
+
+void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
+    const Vec2 dir = normalized(B - A);
+    const double axis = std::atan2(dir.y, dir.x);
+    const auto refl = [&](Vec2 p) {
+        const Vec2 ap = p - A;
+        const double t = dot(ap, dir);
+        const Vec2 proj = A + dir * t;
+        return proj * 2.0 - p;
+    };
+    const auto refl_ang = [&](double th) { return 2.0 * axis - th; };
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand>) {
+                x.a = refl(x.a);
+                x.b = refl(x.b);
+            } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
+                x.center = refl(x.center);
+            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
+                const double s = x.start_angle;
+                const double e = x.end_angle;
+                x.center = refl(x.center);
+                x.start_angle = refl_ang(e); // reflection reverses orientation
+                x.end_angle = refl_ang(s);
+            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
+                for (Vec2& p : x.points) {
+                    p = refl(p);
+                }
+            }
+        },
+        c);
+}
+
+} // namespace
+
+void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> moved;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command result = original;
+        translate_cmd(result, delta);
+        if (!copy) {
+            remove_indexed(h);
+            push_erase_item(group, original);
+        }
+        const EntityHandle nh = create_indexed(result);
+        push_create_item(group, nh, result);
+        moved.push_back(nh);
+    }
+    if (!copy && !moved.empty()) {
+        selection_ = moved; // the moved entities stay selected
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group) {
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> result_handles;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command mirrored = original;
+        mirror_cmd(mirrored, a, b);
+        if (erase_source) {
+            remove_indexed(h);
+            push_erase_item(group, original);
+        }
+        const EntityHandle nh = create_indexed(mirrored);
+        push_create_item(group, nh, mirrored);
+        result_handles.push_back(nh);
+    }
+    if (erase_source && !result_handles.empty()) {
+        selection_ = result_handles;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec2 side,
+                                  std::uint64_t group) {
+    const EntityHandle h = pick_nearest(pick, radius);
+    if (h.is_null()) {
+        return;
+    }
+    Command add;
+    if (kernel_.offset(store_, h, distance, side, add)) {
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(group, nh, add);
+        redo_.clear();
+        geom_dirty_ = true;
+    }
+}
+
+void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
+    const EntityHandle h = pick_nearest(pick, radius);
+    if (h.is_null() || h.kind != EntityKind::Line) {
+        return; // only line trimming is implemented (see COMMANDS.md)
+    }
+    const LineData* l = store_.line(h);
+    const Vec2 a = l->a;
+    const Vec2 b = l->b;
+    const Vec2 ab = b - a;
+    const double len2 = length_squared(ab);
+    if (len2 <= 0.0) {
+        return;
+    }
+
+    // Intersection parameters along the line with every nearby other entity.
+    Vec2 lo;
+    Vec2 hi;
+    entity_aabb(store_, h, lo, hi);
+    std::vector<EntityHandle> cand;
+    grid_.query(lo, hi, cand);
+    std::vector<double> ts;
+    std::vector<Vec2> hits;
+    for (const EntityHandle c : cand) {
+        if (c == h) {
+            continue;
+        }
+        hits.clear();
+        kernel_.intersect(store_, h, c, hits);
+        for (const Vec2& p : hits) {
+            const double t = dot(p - a, ab) / len2;
+            if (t > 1e-6 && t < 1.0 - 1e-6) {
+                ts.push_back(t);
+            }
+        }
+    }
+    if (ts.empty()) {
+        return; // nothing crosses this line -> nothing to trim
+    }
+    std::sort(ts.begin(), ts.end());
+    const double tp = std::clamp(dot(pick - a, ab) / len2, 0.0, 1.0);
+    double lo_t = 0.0;
+    double hi_t = 1.0;
+    for (const double t : ts) {
+        if (t <= tp) {
+            lo_t = t;
+        }
+        if (t >= tp) {
+            hi_t = t;
+            break;
+        }
+    }
+
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(group, original);
+    if (lo_t > 1e-6) {
+        const Command piece = AddLineCommand{a, a + ab * lo_t, 0};
+        push_create_item(group, create_indexed(piece), piece);
+    }
+    if (hi_t < 1.0 - 1e-6) {
+        const Command piece = AddLineCommand{a + ab * hi_t, b, 0};
+        push_create_item(group, create_indexed(piece), piece);
+    }
+    redo_.clear();
+    geom_dirty_ = true;
 }
 
 void GeometryEngine::apply(const Command& command) {
@@ -275,6 +557,27 @@ void GeometryEngine::apply(const Command& command) {
                 cursor_ = c.world;
                 pick_radius_ = c.pick_radius;
                 osnap_enabled_ = c.osnap;
+            } else if constexpr (std::is_same_v<T, SelectPickCommand>) {
+                if (!c.additive) {
+                    selection_.clear();
+                }
+                sel_add(pick_nearest(c.world, c.radius));
+            } else if constexpr (std::is_same_v<T, SelectWindowCommand>) {
+                select_window(c.min, c.max, c.crossing, c.additive);
+            } else if constexpr (std::is_same_v<T, SelectAllCommand>) {
+                selection_ = all_live();
+            } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
+                selection_.clear();
+            } else if constexpr (std::is_same_v<T, MoveSelectionCommand>) {
+                apply_move(c.delta, false, c.group);
+            } else if constexpr (std::is_same_v<T, CopySelectionCommand>) {
+                apply_move(c.delta, true, c.group);
+            } else if constexpr (std::is_same_v<T, MirrorSelectionCommand>) {
+                apply_mirror(c.a, c.b, c.erase_source, c.group);
+            } else if constexpr (std::is_same_v<T, OffsetPickCommand>) {
+                apply_offset(c.pick, c.radius, c.distance, c.side, c.group);
+            } else if constexpr (std::is_same_v<T, TrimPickCommand>) {
+                apply_trim(c.pick, c.radius, c.group);
             }
         },
         command);
@@ -284,13 +587,30 @@ void GeometryEngine::rebuild_and_publish() {
     if (geom_dirty_) {
         build_render_snapshot(store_, kernel_, geom_cache_);
         geom_dirty_ = false;
+        ++geom_version_;
     }
+    prune_selection();
+
     RenderSnapshot& buf = snapshots_.write_buffer();
     buf.points = geom_cache_.points;
     buf.line_vertices = geom_cache_.line_vertices;
     buf.bounds_min = geom_cache_.bounds_min;
     buf.bounds_max = geom_cache_.bounds_max;
     buf.has_bounds = geom_cache_.has_bounds;
+
+    // Publish the selection set (queryable API) and its segments (highlight/ghost).
+    buf.selection = selection_;
+    buf.selected_line_vertices.clear();
+    {
+        std::vector<Vec2> tess;
+        for (const EntityHandle h : selection_) {
+            kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+            for (std::size_t s = 1; s < tess.size(); ++s) {
+                buf.selected_line_vertices.push_back(tess[s - 1]);
+                buf.selected_line_vertices.push_back(tess[s]);
+            }
+        }
+    }
 
     buf.has_snap = false;
     buf.snap_type = SnapType::None;
@@ -303,6 +623,7 @@ void GeometryEngine::rebuild_and_publish() {
         }
     }
 
+    buf.geometry_version = geom_version_;
     buf.version = version_.fetch_add(1, std::memory_order_acq_rel) + 1;
     buf.checksum = buf.compute_checksum();
     snapshots_.publish();

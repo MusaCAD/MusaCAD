@@ -149,6 +149,16 @@ void ViewportWindow::render_loop(std::stop_token token) {
             snap_x_.store(snap.snap_point.x, std::memory_order_relaxed);
             snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
         }
+        selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
+
+        {
+            render::RenderOverlay ov;
+            {
+                std::scoped_lock lock(overlay_mutex_);
+                ov = overlay_;
+            }
+            renderer.set_overlay(std::move(ov));
+        }
 
         renderer.set_grid_visible(modes_ == nullptr || modes_->grid.load(std::memory_order_relaxed));
         renderer.set_cursor(cursor_inside_.load(std::memory_order_relaxed),
@@ -182,21 +192,31 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
     }
     if (event->button() == Qt::LeftButton && processor_ != nullptr) {
         const double dpr = devicePixelRatio();
+        const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
         core::Vec2 world;
         double scale = 1.0;
         {
             std::scoped_lock lock(camera_mutex_);
-            world = camera_.screen_to_world(
-                core::Vec2{event->position().x() * dpr, event->position().y() * dpr});
+            world = camera_.screen_to_world(screen_px);
             scale = camera_.scale();
         }
-        std::optional<core::Vec2> snap;
-        if (snap_has_.load(std::memory_order_relaxed)) {
-            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
-                              snap_y_.load(std::memory_order_relaxed)};
+        if (processor_->has_active_command()) {
+            std::optional<core::Vec2> snap;
+            if (snap_has_.load(std::memory_order_relaxed)) {
+                snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
+                                  snap_y_.load(std::memory_order_relaxed)};
+            }
+            processor_->set_pick_radius(10.0 / scale);
+            processor_->pick_point(world, snap);
+            rebuild_overlay();
+        } else {
+            // Idle: begin a selection drag (single click or window/crossing box).
+            selecting_ = true;
+            sel_additive_ = (event->modifiers() & Qt::ShiftModifier) != 0;
+            sel_start_screen_ = screen_px;
+            sel_start_world_ = world;
+            sel_cur_world_ = world;
         }
-        processor_->set_pick_radius(10.0 / scale); // 10px aperture for ERASE-pick
-        processor_->pick_point(world, snap);
     }
 }
 
@@ -232,12 +252,149 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         std::scoped_lock lock(camera_mutex_);
         camera_.pan_pixels(core::Vec2{dx * dpr, dy * dpr});
     }
+    if (selecting_) {
+        sel_cur_world_ = world;
+    }
+    rebuild_overlay();
 }
 
 void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         panning_ = false;
+        return;
     }
+    if (event->button() == Qt::LeftButton && selecting_) {
+        selecting_ = false;
+        const double dpr = devicePixelRatio();
+        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
+        double scale = 1.0;
+        core::Vec2 world;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            world = camera_.screen_to_world(rel_screen);
+            scale = camera_.scale();
+        }
+        const double drag_px = core::length(rel_screen - sel_start_screen_);
+        if (drag_px < 4.0) {
+            // Single-click pick.
+            engine_.submit(core::SelectPickCommand{world, 10.0 / scale, sel_additive_});
+        } else {
+            // Window (left->right) vs crossing (right->left), per AutoCAD.
+            const bool crossing = rel_screen.x < sel_start_screen_.x;
+            const core::Vec2 mn{std::min(sel_start_world_.x, world.x),
+                                std::min(sel_start_world_.y, world.y)};
+            const core::Vec2 mx{std::max(sel_start_world_.x, world.x),
+                                std::max(sel_start_world_.y, world.y)};
+            engine_.submit(core::SelectWindowCommand{mn, mx, crossing, sel_additive_});
+        }
+        rebuild_overlay();
+    }
+}
+
+namespace {
+void tess_circle(core::Vec2 c, double r, std::vector<core::Vec2>& out) {
+    constexpr int kN = 64;
+    core::Vec2 prev{c.x + r, c.y};
+    for (int i = 1; i <= kN; ++i) {
+        const double a = (static_cast<double>(i) / kN) * core::kTwoPi;
+        const core::Vec2 cur{c.x + r * std::cos(a), c.y + r * std::sin(a)};
+        out.push_back(prev);
+        out.push_back(cur);
+        prev = cur;
+    }
+}
+} // namespace
+
+void ViewportWindow::rebuild_overlay() {
+    render::RenderOverlay ov;
+
+    if (selecting_) {
+        const double drag_px = std::abs(cursor_px_x_.load(std::memory_order_relaxed) -
+                                        sel_start_screen_.x);
+        ov.rect_mode = (cursor_px_x_.load(std::memory_order_relaxed) < sel_start_screen_.x) ? 2 : 1;
+        ov.rect_a = sel_start_world_;
+        ov.rect_b = sel_cur_world_;
+        if (drag_px < 1.0) {
+            ov.rect_mode = 0; // not yet a meaningful box
+        }
+    }
+
+    if (processor_ != nullptr && processor_->preview().kind != command::PreviewKind::None) {
+        core::Vec2 raw;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            raw = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                     cursor_px_y_.load(std::memory_order_relaxed)});
+        }
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
+                              snap_y_.load(std::memory_order_relaxed)};
+        }
+        const core::Vec2 cur = processor_->resolve_pick(raw, snap);
+        const command::PreviewSpec& pv = processor_->preview();
+        const auto& pts = pv.points;
+        auto& seg = ov.preview_segments;
+        switch (pv.kind) {
+        case command::PreviewKind::Segment:
+            if (!pts.empty()) {
+                seg.push_back(pts[0]);
+                seg.push_back(cur);
+            }
+            break;
+        case command::PreviewKind::Polyline:
+            for (std::size_t i = 1; i < pts.size(); ++i) {
+                seg.push_back(pts[i - 1]);
+                seg.push_back(pts[i]);
+            }
+            if (!pts.empty()) {
+                seg.push_back(pts.back());
+                seg.push_back(cur);
+            }
+            break;
+        case command::PreviewKind::Rectangle:
+            if (!pts.empty()) {
+                const core::Vec2 a = pts[0];
+                const core::Vec2 b = cur;
+                seg.push_back({a.x, a.y}); seg.push_back({b.x, a.y});
+                seg.push_back({b.x, a.y}); seg.push_back({b.x, b.y});
+                seg.push_back({b.x, b.y}); seg.push_back({a.x, b.y});
+                seg.push_back({a.x, b.y}); seg.push_back({a.x, a.y});
+            }
+            break;
+        case command::PreviewKind::Circle:
+            if (!pts.empty()) {
+                tess_circle(pts[0], core::distance(pts[0], cur), seg);
+            }
+            break;
+        case command::PreviewKind::Arc:
+            if (pts.size() == 1) {
+                seg.push_back(pts[0]);
+                seg.push_back(cur);
+            } else if (pts.size() == 2) {
+                seg.push_back(pts[0]);
+                seg.push_back(pts[1]);
+                seg.push_back(pts[1]);
+                seg.push_back(cur);
+            }
+            break;
+        case command::PreviewKind::Move:
+        case command::PreviewKind::Mirror:
+            if (!pts.empty()) {
+                ov.ghost_mode = (pv.kind == command::PreviewKind::Move) ? 1 : 2;
+                ov.ghost_a = pts[0];
+                ov.ghost_b = cur;
+                seg.push_back(pts[0]);
+                seg.push_back(cur);
+            }
+            break;
+        case command::PreviewKind::None:
+            break;
+        }
+    }
+
+    std::scoped_lock lock(overlay_mutex_);
+    overlay_ = std::move(ov);
 }
 
 void ViewportWindow::wheelEvent(QWheelEvent* event) {

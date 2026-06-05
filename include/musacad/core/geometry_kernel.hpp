@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "musacad/core/command.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 
@@ -48,6 +49,14 @@ public:
     /// mode (Phase 5).
     virtual void intersect(const GeometryStore& store, EntityHandle a, EntityHandle b,
                            std::vector<Vec2>& out) const = 0;
+
+    /// Produces an entity offset from `entity` by `distance`, on the side of the
+    /// `side` point. Writes an Add* command describing the new entity into `out`
+    /// and returns true on success (false if the entity can't be offset, e.g. a
+    /// circle whose radius would go non-positive). The OFFSET command (Phase 7)
+    /// is the first and only caller -- added per the minimal-interface rule.
+    virtual bool offset(const GeometryStore& store, EntityHandle entity, double distance, Vec2 side,
+                        Command& out) const = 0;
 };
 
 } // namespace musacad::core

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/snap.hpp"
 
@@ -19,7 +20,8 @@ namespace musacad::core {
 /// over the version and payload so a consumer can assert it observed a complete,
 /// untorn snapshot (used by the concurrency test).
 struct RenderSnapshot {
-    std::uint64_t version = 0;
+    std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
+    std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
     std::vector<Vec2> points;
     std::vector<Vec2> line_vertices; // 2 entries per segment
     std::uint64_t checksum = 0;
@@ -38,8 +40,16 @@ struct RenderSnapshot {
     Vec2 snap_point{};
     SnapType snap_type = SnapType::None;
 
+    // Current selection (geometry-side). `selection` is the queryable handle set
+    // (API for the command layer / future scripting); `selected_line_vertices`
+    // are those entities' segments, for the highlight and move/mirror ghosts.
+    // Interaction state, not part of the checksum.
+    std::vector<EntityHandle> selection;
+    std::vector<Vec2> selected_line_vertices;
+
     void clear() noexcept {
         version = 0;
+        geometry_version = 0;
         points.clear();
         line_vertices.clear();
         checksum = 0;
@@ -49,6 +59,8 @@ struct RenderSnapshot {
         has_snap = false;
         snap_point = {};
         snap_type = SnapType::None;
+        selection.clear();
+        selected_line_vertices.clear();
     }
 
     /// FNV-1a over the version and payload. Cheap and order-sensitive; enough to

@@ -74,9 +74,71 @@ struct ErasePickCommand {
     std::uint64_t group = 0;
 };
 
+// ---------------------------------------------------------------------------
+// Phase 7 -- selection (the rubber-band visual is render-side; these mutate the
+// geometry-side selection set) and modify operations on the selection.
+// ---------------------------------------------------------------------------
+
+/// Select the entity nearest `world` within `radius` (single-click pick).
+struct SelectPickCommand {
+    Vec2 world;
+    double radius = 0.0;
+    bool additive = false; ///< Shift: add to selection rather than replace
+};
+
+/// Box select. `crossing` false = window (entities fully enclosed), true =
+/// crossing (entities touched/crossed).
+struct SelectWindowCommand {
+    Vec2 min;
+    Vec2 max;
+    bool crossing = false;
+    bool additive = false;
+};
+
+struct SelectAllCommand {};
+struct ClearSelectionCommand {};
+
+/// Translate all selected entities by `delta` (one undo group).
+struct MoveSelectionCommand {
+    Vec2 delta;
+    std::uint64_t group = 0;
+};
+
+/// Copy all selected entities by `delta`, leaving the originals.
+struct CopySelectionCommand {
+    Vec2 delta;
+    std::uint64_t group = 0;
+};
+
+/// Mirror the selection across the line a..b; optionally erase the originals.
+struct MirrorSelectionCommand {
+    Vec2 a;
+    Vec2 b;
+    bool erase_source = false;
+    std::uint64_t group = 0;
+};
+
+/// Offset the entity nearest `pick` by `distance` toward `side`.
+struct OffsetPickCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    double distance = 0.0;
+    Vec2 side;
+    std::uint64_t group = 0;
+};
+
+/// Trim the (line) entity nearest `pick` to its nearest intersections.
+struct TrimPickCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
+
 using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
                  ErasePickCommand, UndoLastGroupCommand, RedoLastGroupCommand, UndoLastOpCommand,
-                 SetCursorCommand>;
+                 SetCursorCommand, SelectPickCommand, SelectWindowCommand, SelectAllCommand,
+                 ClearSelectionCommand, MoveSelectionCommand, CopySelectionCommand,
+                 MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand>;
 
 } // namespace musacad::core

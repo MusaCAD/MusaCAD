@@ -9,6 +9,7 @@
 #include "musacad/command/command_context.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/render/camera.hpp"
+#include "musacad/render/overlay.hpp"
 #include "musacad/ui/viewport_modes.hpp"
 
 class QExposeEvent;
@@ -46,6 +47,11 @@ public:
     /// Latest measured frames-per-second (thread-safe).
     [[nodiscard]] double fps() const noexcept { return fps_.load(std::memory_order_relaxed); }
 
+    /// Number of currently-selected entities (for enabling Modify buttons).
+    [[nodiscard]] int selection_count() const noexcept {
+        return selection_count_.load(std::memory_order_relaxed);
+    }
+
     /// Requests the camera frame this world-space AABB once the viewport size is
     /// known (applied on the first rendered frame).
     void set_initial_view(render::Vec2 min_world, render::Vec2 max_world) noexcept;
@@ -66,11 +72,23 @@ private:
     void stop_render_thread() noexcept;
     void render_loop(std::stop_token token);
     void update_viewport_size() noexcept;
+    void rebuild_overlay();
 
     core::GeometryEngine& engine_;
 
     std::mutex camera_mutex_;
     render::Camera2D camera_; // guarded by camera_mutex_
+
+    std::mutex overlay_mutex_;
+    render::RenderOverlay overlay_; // guarded by overlay_mutex_
+
+    // Selection drag state (UI thread).
+    bool selecting_ = false;
+    bool sel_additive_ = false;
+    core::Vec2 sel_start_screen_{};
+    core::Vec2 sel_start_world_{};
+    core::Vec2 sel_cur_world_{};
+    std::atomic<int> selection_count_{0};
 
     std::atomic<int> fb_width_{1};
     std::atomic<int> fb_height_{1};

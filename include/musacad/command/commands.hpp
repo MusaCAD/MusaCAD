@@ -115,4 +115,74 @@ private:
     bool done_ = false;
 };
 
+// --- Modify commands (operate on the current selection / a pick) ---
+
+class MoveCommand final : public ICommand {
+public:
+    std::string name() const override { return "MOVE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::optional<core::Vec2> base_;
+    bool done_ = false;
+};
+
+class CopyCommand final : public ICommand {
+public:
+    std::string name() const override { return "COPY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::optional<core::Vec2> base_;
+    bool done_ = false;
+};
+
+class MirrorCommand final : public ICommand {
+public:
+    std::string name() const override { return "MIRROR"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, Second, Ask } state_ = State::First;
+    core::Vec2 p1_{};
+    core::Vec2 p2_{};
+    bool done_ = false;
+};
+
+class OffsetCommand final : public ICommand {
+public:
+    std::string name() const override { return "OFFSET"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Distance, Object, Side } state_ = State::Distance;
+    double distance_ = 0.0;
+    core::Vec2 object_pick_{};
+    bool done_ = false;
+};
+
+class TrimCommand final : public ICommand {
+public:
+    std::string name() const override { return "TRIM"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 } // namespace musacad::command

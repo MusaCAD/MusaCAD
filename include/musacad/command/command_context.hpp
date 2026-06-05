@@ -3,11 +3,31 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "musacad/core/command.hpp"
 #include "musacad/core/math/math.hpp"
 
 namespace musacad::command {
+
+/// What the active command wants previewed as the cursor moves. The renderer
+/// composes the actual overlay from this plus the live (constrained) cursor;
+/// nothing here touches the GeometryStore.
+enum class PreviewKind {
+    None,
+    Segment,    ///< rubber-band from points[0] to the cursor (LINE next segment)
+    Polyline,   ///< chain through points + rubber-band to the cursor
+    Rectangle,  ///< rectangle from points[0] to the cursor
+    Circle,     ///< circle centred at points[0], radius = |cursor - center|
+    Arc,        ///< 3-point arc through points (1 or 2) + the cursor
+    Move,       ///< ghost of the selection translated by (cursor - points[0])
+    Mirror,     ///< ghost of the selection reflected across points[0]..cursor
+};
+
+struct PreviewSpec {
+    PreviewKind kind = PreviewKind::None;
+    std::vector<core::Vec2> points; ///< committed anchors so far
+};
 
 /// Sink for command-line text output (scrollback + the active prompt).
 /// Implemented by the command-line widget.
@@ -44,6 +64,17 @@ public:
     [[nodiscard]] virtual std::optional<core::Vec2> last_point() const = 0;
     virtual void set_last_point(core::Vec2 p) = 0;
     virtual void clear_last_point() = 0;
+
+    /// What to draw as a cursor-tracking preview (transient, render-side).
+    virtual void set_preview(PreviewSpec spec) = 0;
+    virtual void clear_preview() = 0;
+
+    /// Current selection state (published from the geometry side, cached UI-side).
+    [[nodiscard]] virtual int selection_count() const = 0;
+    [[nodiscard]] bool has_selection() const { return selection_count() > 0; }
+
+    /// World-space pick aperture (pixels / camera scale), for pick-based commands.
+    [[nodiscard]] virtual double pick_radius() const = 0;
 
     [[nodiscard]] virtual ViewControl* view() = 0;       ///< may be null in tests
 };
