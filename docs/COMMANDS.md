@@ -83,10 +83,16 @@ suggests both); aliases are case-insensitive.
 
 | Command | Alias | Status |
 |---|---|---|
-| LAYER (layer manager) | LA | Planned (Phase 9) |
-| PROPERTIES | PR / Ctrl+1 | Planned (Phase 9) |
-| MATCHPROP | MA | Planned (Phase 9) |
-| Color / Linetype / Lineweight | — | Planned (Phase 9) |
+| Layer Manager (create/delete/rename, on/freeze/lock, colour/linetype/lineweight, set current) | ribbon | Implemented |
+| Current-layer dropdown (ribbon) | — | Implemented |
+| ByLayer / per-entity override resolution | — | Implemented |
+| Move selection to layer | Layer Mgr ▸ Assign | Implemented |
+| Set selection colour override | ribbon ▸ Set Colour | Implemented |
+| Off / Frozen layers skip rendering | — | Implemented |
+| Locked layers (drawn, not selectable/modifiable) | — | Implemented |
+| Linetype property (Continuous/Dashed/Center/Hidden) | — | Implemented (model + round-trip; visual stipple Planned) |
+| Lineweight property (hundredths-mm) | — | Implemented (model + round-trip; visible weight Planned) |
+| LAYER command-line alias / PROPERTIES palette / MATCHPROP | LA / PR / MA | Planned (Phase 13) |
 
 ## Blocks / Reference
 
@@ -104,8 +110,8 @@ suggests both); aliases are case-insensitive.
 | OPEN (native .musa) | Ctrl+O | Implemented |
 | SAVE | Ctrl+S | Implemented |
 | SAVE AS | Ctrl+Shift+S | Implemented |
-| DXF export (R2000 / AC1015) | File ▸ Export DXF | Implemented |
-| DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT) | File ▸ Import DXF | Implemented |
+| DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
+| DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT; reads the LAYER table) | File ▸ Import DXF | Implemented |
 | DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT | Ctrl+P | Planned (Phase 13) |

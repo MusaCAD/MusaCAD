@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <cstdint>
 #include <stop_token>
 #include <thread>
@@ -87,6 +88,9 @@ private:
     [[nodiscard]] EntityHandle most_recent_live() const;
     [[nodiscard]] std::vector<EntityHandle> all_live() const;
     [[nodiscard]] EntityHandle pick_nearest(Vec2 world, double radius) const;
+    /// True if the entity may be picked/selected/modified: its layer is on, not
+    /// frozen, and not locked. Off/frozen aren't drawn; locked is drawn but inert.
+    [[nodiscard]] bool selectable(EntityHandle h) const;
 
     // --- undo/redo ---
     void push_create_item(std::uint64_t group, EntityHandle handle, Command data);
@@ -116,6 +120,10 @@ private:
                       std::uint64_t group);
     void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
                        std::uint64_t group);
+    // Property changes on the selection (erase+recreate so they're undoable).
+    void apply_props_change(const std::function<void(EntityProps&)>& modify, std::uint64_t group);
+    void apply_entity_layer(std::uint16_t layer, std::uint64_t group);
+    void apply_entity_color(bool by_layer, Rgb color, std::uint64_t group);
 
     GeometryStore store_;
     NativeKernel2D kernel_;

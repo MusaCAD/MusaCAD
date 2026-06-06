@@ -13,6 +13,7 @@ class QTimer;
 class QLabel;
 class QAction;
 class QToolButton;
+class QComboBox;
 class QEvent;
 class QObject;
 
@@ -63,6 +64,11 @@ public:
     /// dialogs (file picker, message box), so the UI is visually consistent.
     bool selftest_theme();
 
+    /// Real-window self-test: the Layer Manager creates a layer, sets it current,
+    /// toggles it off (hiding geometry) -- all via the dialog, observed in the
+    /// published snapshot.
+    bool selftest_layers();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -78,6 +84,11 @@ private:
     // ARRAY command dialog (AutoCAD-style parametric input).
     void open_array_dialog();
     void submit_array_from_dialog(const ParameterDialog& dlg);
+
+    // Layers (UI side: dialog + ribbon combo; issues commands, never the store).
+    void open_layer_dialog();
+    void set_selection_color();
+    void sync_layer_combo();
 
     // Persistence (UI side: file dialogs + messages; never touches the store).
     void file_new();
@@ -101,6 +112,7 @@ private:
     std::vector<QToolButton*> selection_required_buttons_;
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
     QString current_path_;                  // path of the open .musa file (empty = untitled)
+    QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
 
     ViewportModes modes_;
     QAction* osnap_action_ = nullptr;

@@ -2,41 +2,42 @@
 
 namespace musacad::core {
 
-EntityHandle GeometryStore::add_point(Vec2 p) {
-    const auto slot = points_.insert(PointData{p});
+EntityHandle GeometryStore::add_point(Vec2 p, EntityProps props) {
+    const auto slot = points_.insert(PointData{p, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Point};
 }
 
-EntityHandle GeometryStore::add_line(Vec2 a, Vec2 b) {
-    const auto slot = lines_.insert(LineData{a, b});
+EntityHandle GeometryStore::add_line(Vec2 a, Vec2 b, EntityProps props) {
+    const auto slot = lines_.insert(LineData{a, b, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Line};
 }
 
-EntityHandle GeometryStore::add_circle(Vec2 center, double radius) {
-    const auto slot = circles_.insert(CircleData{center, radius});
+EntityHandle GeometryStore::add_circle(Vec2 center, double radius, EntityProps props) {
+    const auto slot = circles_.insert(CircleData{center, radius, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Circle};
 }
 
 EntityHandle GeometryStore::add_arc(Vec2 center, double radius, double start_angle,
-                                    double end_angle) {
-    const auto slot = arcs_.insert(ArcData{center, radius, start_angle, end_angle});
+                                    double end_angle, EntityProps props) {
+    const auto slot = arcs_.insert(ArcData{center, radius, start_angle, end_angle, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Arc};
 }
 
-EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices, bool closed) {
+EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices, bool closed,
+                                         EntityProps props) {
     const auto offset = static_cast<std::uint32_t>(polyline_pool_.size());
     polyline_pool_.insert(polyline_pool_.end(), vertices.begin(), vertices.end());
     const auto slot = polylines_.insert(
-        PolylineData{offset, static_cast<std::uint32_t>(vertices.size()), closed});
+        PolylineData{offset, static_cast<std::uint32_t>(vertices.size()), closed, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Polyline};
 }
 
-EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points,
-                                       std::uint32_t degree) {
+EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
+                                       EntityProps props) {
     const auto offset = static_cast<std::uint32_t>(spline_pool_.size());
     spline_pool_.insert(spline_pool_.end(), control_points.begin(), control_points.end());
     const auto slot = splines_.insert(
-        SplineData{offset, static_cast<std::uint32_t>(control_points.size()), degree});
+        SplineData{offset, static_cast<std::uint32_t>(control_points.size()), degree, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Spline};
 }
 
@@ -90,6 +91,8 @@ void GeometryStore::clear() noexcept {
     splines_.clear();
     polyline_pool_.clear();
     spline_pool_.clear();
+    layers_.assign(1, Layer{"0"}); // reset to just layer 0
+    current_layer_ = 0;
 }
 
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {
@@ -116,6 +119,190 @@ std::span<const Vec2> GeometryStore::vertices_of(const PolylineData& pl) const n
 }
 std::span<const Vec2> GeometryStore::control_points_of(const SplineData& sp) const noexcept {
     return std::span<const Vec2>(spline_pool_).subspan(sp.offset, sp.count);
+}
+
+// --- per-entity properties -------------------------------------------------
+
+const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
+    switch (h.kind) {
+    case EntityKind::Point:
+        if (const PointData* d = point(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Line:
+        if (const LineData* d = line(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Circle:
+        if (const CircleData* d = circle(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Arc:
+        if (const ArcData* d = arc(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Polyline:
+        if (const PolylineData* d = polyline(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Spline:
+        if (const SplineData* d = spline(h)) {
+            return &d->props;
+        }
+        break;
+    }
+    return nullptr;
+}
+
+bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
+    switch (h.kind) {
+    case EntityKind::Point:
+        if (PointData* d = points_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Line:
+        if (LineData* d = lines_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Circle:
+        if (CircleData* d = circles_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Arc:
+        if (ArcData* d = arcs_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Polyline:
+        if (PolylineData* d = polylines_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Spline:
+        if (SplineData* d = splines_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    }
+    return false;
+}
+
+// --- layer table -----------------------------------------------------------
+
+const Layer* GeometryStore::layer(std::uint16_t index) const noexcept {
+    return index < layers_.size() ? &layers_[index] : nullptr;
+}
+
+void GeometryStore::set_current_layer(std::uint16_t index) noexcept {
+    if (index < layers_.size()) {
+        current_layer_ = index;
+    }
+}
+
+void GeometryStore::set_layer_table(std::vector<Layer> layers, std::uint16_t current) {
+    layers_ = std::move(layers);
+    if (layers_.empty()) {
+        layers_.push_back(Layer{"0"});
+    }
+    layers_[0].name = "0"; // index 0 is always layer "0"
+    current_layer_ = current < layers_.size() ? current : 0;
+}
+
+std::uint16_t GeometryStore::add_layer(const Layer& layer) {
+    for (std::size_t i = 0; i < layers_.size(); ++i) {
+        if (layers_[i].name == layer.name) {
+            return static_cast<std::uint16_t>(i); // names are unique
+        }
+    }
+    layers_.push_back(layer);
+    return static_cast<std::uint16_t>(layers_.size() - 1);
+}
+
+bool GeometryStore::set_layer(std::uint16_t index, const Layer& layer) {
+    if (index >= layers_.size()) {
+        return false;
+    }
+    Layer updated = layer;
+    if (index == 0) {
+        updated.name = "0"; // layer 0 cannot be renamed
+    }
+    layers_[index] = updated;
+    return true;
+}
+
+namespace {
+template <class Arena, class Fn>
+void for_each_live_mut(Arena& arena, Fn&& fn) {
+    for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+        if (arena.alive(i)) {
+            fn(*arena.get(i, arena.generations()[i]));
+        }
+    }
+}
+template <class Arena, class Fn>
+void for_each_live_const(const Arena& arena, Fn&& fn) {
+    for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+        if (arena.alive(i)) {
+            fn(arena.data()[i]);
+        }
+    }
+}
+} // namespace
+
+bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    const auto check = [&](const auto& data) {
+        if (data.props.layer == index) {
+            used = true;
+        }
+    };
+    for_each_live_const(points_, check);
+    for_each_live_const(lines_, check);
+    for_each_live_const(circles_, check);
+    for_each_live_const(arcs_, check);
+    for_each_live_const(polylines_, check);
+    for_each_live_const(splines_, check);
+    return used;
+}
+
+void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexcept {
+    const auto fix = [&](auto& data) {
+        if (data.props.layer > removed) {
+            --data.props.layer;
+        }
+    };
+    for_each_live_mut(points_, fix);
+    for_each_live_mut(lines_, fix);
+    for_each_live_mut(circles_, fix);
+    for_each_live_mut(arcs_, fix);
+    for_each_live_mut(polylines_, fix);
+    for_each_live_mut(splines_, fix);
+}
+
+bool GeometryStore::remove_layer(std::uint16_t index) {
+    if (index == 0 || index >= layers_.size() || index == current_layer_ || layer_in_use(index)) {
+        return false; // AutoCAD: can't delete layer 0, current, or a non-empty layer
+    }
+    layers_.erase(layers_.begin() + index);
+    shift_layer_refs_after_removal(index);
+    if (current_layer_ > index) {
+        --current_layer_;
+    }
+    return true;
 }
 
 } // namespace musacad::core

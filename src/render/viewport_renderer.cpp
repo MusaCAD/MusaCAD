@@ -194,6 +194,9 @@ void ViewportRenderer::upload_scene(const core::RenderSnapshot& snapshot) {
     point_count_ = snapshot.points.size();
     point_instances_->upload(scratch_.data(), scratch_.size() * sizeof(float));
 
+    line_batches_ = snapshot.line_batches;
+    point_batches_ = snapshot.point_batches;
+
     uploaded_version_ = snapshot.geometry_version;
     stats_.scene_uploaded_bytes = line_bytes + scratch_.size() * sizeof(float);
 }
@@ -246,21 +249,48 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         cmd_->draw_instanced(2, static_cast<std::uint32_t>(major_count));
         ++stats_.draw_calls;
     }
+    // Scene lines, one small draw per resolved colour (ByLayer resolution +
+    // off/frozen skipping happen geometry-side; we just colour the batches). If no
+    // batches were published (e.g. a hand-built snapshot), fall back to one draw.
     if (line_count_ > 0) {
-        cmd_->set_uniform_vec4("u_color", kSceneColor[0], kSceneColor[1], kSceneColor[2], kSceneColor[3]);
-        cmd_->bind_vertex_buffer(0, *line_instances_, 0);
-        cmd_->draw_instanced(2, static_cast<std::uint32_t>(line_count_));
-        ++stats_.draw_calls;
+        if (line_batches_.empty()) {
+            cmd_->set_uniform_vec4("u_color", kSceneColor[0], kSceneColor[1], kSceneColor[2],
+                                   kSceneColor[3]);
+            cmd_->bind_vertex_buffer(0, *line_instances_, 0);
+            cmd_->draw_instanced(2, static_cast<std::uint32_t>(line_count_));
+            ++stats_.draw_calls;
+        } else {
+            for (const core::ColorBatch& b : line_batches_) {
+                cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
+                                       static_cast<float>(b.color.g) / 255.0f,
+                                       static_cast<float>(b.color.b) / 255.0f, 1.0f);
+                cmd_->bind_vertex_buffer(0, *line_instances_, b.first * sizeof(float) * 4);
+                cmd_->draw_instanced(2, b.count);
+                ++stats_.draw_calls;
+            }
+        }
     }
 
     if (point_count_ > 0) {
         cmd_->bind_pipeline(*point_pipeline_);
         cmd_->set_uniform_mat3("u_transform", view);
         cmd_->set_uniform_float("u_point_size", 6.0f);
-        cmd_->set_uniform_vec4("u_color", kPointColor[0], kPointColor[1], kPointColor[2], kPointColor[3]);
-        cmd_->bind_vertex_buffer(0, *point_instances_, 0);
-        cmd_->draw_instanced(1, static_cast<std::uint32_t>(point_count_));
-        ++stats_.draw_calls;
+        if (point_batches_.empty()) {
+            cmd_->set_uniform_vec4("u_color", kPointColor[0], kPointColor[1], kPointColor[2],
+                                   kPointColor[3]);
+            cmd_->bind_vertex_buffer(0, *point_instances_, 0);
+            cmd_->draw_instanced(1, static_cast<std::uint32_t>(point_count_));
+            ++stats_.draw_calls;
+        } else {
+            for (const core::ColorBatch& b : point_batches_) {
+                cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
+                                       static_cast<float>(b.color.g) / 255.0f,
+                                       static_cast<float>(b.color.b) / 255.0f, 1.0f);
+                cmd_->bind_vertex_buffer(0, *point_instances_, b.first * sizeof(float) * 2);
+                cmd_->draw_instanced(1, b.count);
+                ++stats_.draw_calls;
+            }
+        }
     }
 
     draw_selection_and_interaction(*cmd_, snapshot, view);

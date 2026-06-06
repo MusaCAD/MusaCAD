@@ -89,6 +89,10 @@ private:
     std::uint64_t uploaded_version_ = ~0ull;
     std::size_t line_count_ = 0;  ///< scene line instances currently on GPU
     std::size_t point_count_ = 0; ///< scene point instances currently on GPU
+    // Per-colour batches over the uploaded scene buffers (cached at upload time;
+    // one small draw per batch resolves per-entity colour).
+    std::vector<core::ColorBatch> line_batches_;
+    std::vector<core::ColorBatch> point_batches_;
 
     RenderStats stats_;
 };

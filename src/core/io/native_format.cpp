@@ -20,7 +20,18 @@ void append_vec(std::string& s, Vec2 v) {
 }
 void append_uint(std::string& s, std::uint64_t v) { s += std::to_string(v); }
 
-/// Splits a line into whitespace-separated tokens.
+// " layer flags cr cg cb linetype lineweight" -- the 7-int property tail (v2).
+void append_props(std::string& s, const EntityProps& p) {
+    const std::uint64_t fields[7] = {p.layer,           p.flags,
+                                     p.color.r,         p.color.g,
+                                     p.color.b,         static_cast<std::uint64_t>(p.linetype),
+                                     p.lineweight};
+    for (std::uint64_t f : fields) {
+        s += ' ';
+        append_uint(s, f);
+    }
+}
+
 std::vector<std::string_view> tokenize(std::string_view line) {
     std::vector<std::string_view> out;
     std::size_t i = 0;
@@ -48,14 +59,13 @@ bool to_uint(std::string_view t, std::uint64_t& out) {
     return ec == std::errc{} && ptr == t.data() + t.size();
 }
 
-// Reads `count` doubles from tokens[start..]. Returns false on shortage/parse error.
-bool read_vecs(const std::vector<std::string_view>& tok, std::size_t start, std::size_t doubles,
-               std::vector<double>& out) {
-    if (tok.size() - start != doubles) {
+// Parses `n` doubles starting at token `start` into `out` (appended).
+bool parse_doubles(const std::vector<std::string_view>& tok, std::size_t start, std::size_t n,
+                   std::vector<double>& out) {
+    if (start + n > tok.size()) {
         return false;
     }
-    out.clear();
-    for (std::size_t i = 0; i < doubles; ++i) {
+    for (std::size_t i = 0; i < n; ++i) {
         double d = 0.0;
         if (!to_double(tok[start + i], d)) {
             return false;
@@ -65,21 +75,67 @@ bool read_vecs(const std::vector<std::string_view>& tok, std::size_t start, std:
     return true;
 }
 
+// Parses the 7-int property tail at token `start`. Returns false on shortage.
+bool parse_props(const std::vector<std::string_view>& tok, std::size_t start, EntityProps& out) {
+    std::uint64_t v[7];
+    if (start + 7 > tok.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < 7; ++i) {
+        if (!to_uint(tok[start + i], v[i])) {
+            return false;
+        }
+    }
+    out.layer = static_cast<std::uint16_t>(v[0]);
+    out.flags = static_cast<std::uint8_t>(v[1]);
+    out.color = {static_cast<std::uint8_t>(v[2]), static_cast<std::uint8_t>(v[3]),
+                 static_cast<std::uint8_t>(v[4])};
+    out.linetype = static_cast<Linetype>(v[5]);
+    out.lineweight = static_cast<std::uint8_t>(v[6]);
+    return true;
+}
+
 } // namespace
 
 std::string serialize_native(const Document& doc) {
     std::string s;
-    s.reserve(64 + doc.entity_count() * 24);
+    s.reserve(128 + doc.entity_count() * 40);
     s += "MUSACAD ";
     append_uint(s, doc.format_version);
     s += '\n';
     s += "UNITS ";
     s += doc.units.empty() ? "unitless" : doc.units;
     s += '\n';
+    s += "CURRENT ";
+    append_uint(s, doc.current_layer);
+    s += '\n';
+    // LAYER <r> <g> <b> <linetype> <lineweight> <on> <frozen> <locked> <name...>
+    for (const Layer& l : doc.layers) {
+        s += "LAYER ";
+        append_uint(s, l.color.r);
+        s += ' ';
+        append_uint(s, l.color.g);
+        s += ' ';
+        append_uint(s, l.color.b);
+        s += ' ';
+        append_uint(s, static_cast<std::uint64_t>(l.linetype));
+        s += ' ';
+        append_uint(s, l.lineweight);
+        s += ' ';
+        append_uint(s, l.on ? 1 : 0);
+        s += ' ';
+        append_uint(s, l.frozen ? 1 : 0);
+        s += ' ';
+        append_uint(s, l.locked ? 1 : 0);
+        s += ' ';
+        s += l.name;
+        s += '\n';
+    }
 
-    for (const Vec2& p : doc.points) {
+    for (const DocPoint& p : doc.points) {
         s += "POINT ";
-        append_vec(s, p);
+        append_vec(s, p.p);
+        append_props(s, p.props);
         s += '\n';
     }
     for (const DocLine& l : doc.lines) {
@@ -87,6 +143,7 @@ std::string serialize_native(const Document& doc) {
         append_vec(s, l.a);
         s += ' ';
         append_vec(s, l.b);
+        append_props(s, l.props);
         s += '\n';
     }
     for (const DocCircle& c : doc.circles) {
@@ -94,6 +151,7 @@ std::string serialize_native(const Document& doc) {
         append_vec(s, c.center);
         s += ' ';
         append_double(s, c.radius);
+        append_props(s, c.props);
         s += '\n';
     }
     for (const DocArc& a : doc.arcs) {
@@ -105,6 +163,7 @@ std::string serialize_native(const Document& doc) {
         append_double(s, a.start_angle);
         s += ' ';
         append_double(s, a.end_angle);
+        append_props(s, a.props);
         s += '\n';
     }
     for (const DocPolyline& p : doc.polylines) {
@@ -116,6 +175,7 @@ std::string serialize_native(const Document& doc) {
             s += ' ';
             append_vec(s, v);
         }
+        append_props(s, p.props);
         s += '\n';
     }
     for (const DocSpline& sp : doc.splines) {
@@ -127,6 +187,7 @@ std::string serialize_native(const Document& doc) {
             s += ' ';
             append_vec(s, v);
         }
+        append_props(s, sp.props);
         s += '\n';
     }
     s += "END\n";
@@ -135,8 +196,10 @@ std::string serialize_native(const Document& doc) {
 
 IoResult parse_native(std::string_view text, Document& out) {
     Document doc;
+    doc.layers.clear(); // built from the file (or defaulted below for v1)
     bool header_seen = false;
     bool end_seen = false;
+    std::uint32_t version = 0;
     std::size_t line_no = 0;
 
     const auto fail = [&](const std::string& why) {
@@ -146,28 +209,41 @@ IoResult parse_native(std::string_view text, Document& out) {
     std::istringstream in{std::string(text)};
     std::string raw;
     std::vector<double> vals;
+    // Reads a fixed-geometry entity: `geom` doubles, then (v2) 7 prop ints.
+    const auto read_fixed = [&](const std::vector<std::string_view>& tok, std::size_t geom,
+                                EntityProps& props) -> bool {
+        vals.clear();
+        if (!parse_doubles(tok, 1, geom, vals)) {
+            return false;
+        }
+        if (version >= 2) {
+            if (!parse_props(tok, 1 + geom, props)) {
+                return false;
+            }
+            return tok.size() == 1 + geom + 7;
+        }
+        return tok.size() == 1 + geom;
+    };
+
     while (std::getline(in, raw)) {
         ++line_no;
         const std::vector<std::string_view> tok = tokenize(raw);
         if (tok.empty()) {
-            continue; // blank line
+            continue;
         }
         const std::string_view key = tok[0];
 
         if (!header_seen) {
-            if (key != "MUSACAD") {
+            std::uint64_t ver = 0;
+            if (key != "MUSACAD" || tok.size() != 2 || !to_uint(tok[1], ver)) {
                 return fail("expected MUSACAD header");
             }
-            std::uint64_t ver = 0;
-            if (tok.size() != 2 || !to_uint(tok[1], ver)) {
-                return fail("malformed MUSACAD header");
+            if (ver == 0 || ver > kFormatVersion) {
+                return IoResult::failure("Unsupported file format version " + std::to_string(ver) +
+                                         ".");
             }
-            if (ver > kFormatVersion) {
-                return IoResult::failure("File format version " + std::to_string(ver) +
-                                         " is newer than supported (" +
-                                         std::to_string(kFormatVersion) + ").");
-            }
-            doc.format_version = static_cast<std::uint32_t>(ver);
+            version = static_cast<std::uint32_t>(ver);
+            doc.format_version = version;
             header_seen = true;
             continue;
         }
@@ -178,35 +254,71 @@ IoResult parse_native(std::string_view text, Document& out) {
         }
         if (key == "UNITS") {
             doc.units = tok.size() >= 2 ? std::string(tok[1]) : "unitless";
-        } else if (key == "EXTENTS") {
-            // Informational metadata; recomputed on demand, ignored here.
+        } else if (key == "CURRENT") {
+            std::uint64_t idx = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], idx)) {
+                return fail("malformed CURRENT");
+            }
+            doc.current_layer = static_cast<std::uint16_t>(idx);
+        } else if (key == "LAYER") {
+            // LAYER r g b linetype lineweight on frozen locked name...
+            std::uint64_t f[8];
+            if (tok.size() < 10) {
+                return fail("malformed LAYER");
+            }
+            for (std::size_t i = 0; i < 8; ++i) {
+                if (!to_uint(tok[1 + i], f[i])) {
+                    return fail("malformed LAYER field");
+                }
+            }
+            Layer l;
+            l.color = {static_cast<std::uint8_t>(f[0]), static_cast<std::uint8_t>(f[1]),
+                       static_cast<std::uint8_t>(f[2])};
+            l.linetype = static_cast<Linetype>(f[3]);
+            l.lineweight = static_cast<std::uint8_t>(f[4]);
+            l.on = f[5] != 0;
+            l.frozen = f[6] != 0;
+            l.locked = f[7] != 0;
+            // Name is the remainder of the line (may contain spaces).
+            std::string name(tok[9]);
+            for (std::size_t i = 10; i < tok.size(); ++i) {
+                name += ' ';
+                name += std::string(tok[i]);
+            }
+            l.name = name;
+            doc.layers.push_back(std::move(l));
         } else if (key == "POINT") {
-            if (!read_vecs(tok, 1, 2, vals)) {
-                return fail("POINT expects 2 numbers");
+            EntityProps p;
+            if (!read_fixed(tok, 2, p)) {
+                return fail("POINT record malformed");
             }
-            doc.points.push_back({vals[0], vals[1]});
+            doc.points.push_back(DocPoint{{vals[0], vals[1]}, p});
         } else if (key == "LINE") {
-            if (!read_vecs(tok, 1, 4, vals)) {
-                return fail("LINE expects 4 numbers");
+            EntityProps p;
+            if (!read_fixed(tok, 4, p)) {
+                return fail("LINE record malformed");
             }
-            doc.lines.push_back(DocLine{{vals[0], vals[1]}, {vals[2], vals[3]}});
+            doc.lines.push_back(DocLine{{vals[0], vals[1]}, {vals[2], vals[3]}, p});
         } else if (key == "CIRCLE") {
-            if (!read_vecs(tok, 1, 3, vals)) {
-                return fail("CIRCLE expects 3 numbers");
+            EntityProps p;
+            if (!read_fixed(tok, 3, p)) {
+                return fail("CIRCLE record malformed");
             }
-            doc.circles.push_back(DocCircle{{vals[0], vals[1]}, vals[2]});
+            doc.circles.push_back(DocCircle{{vals[0], vals[1]}, vals[2], p});
         } else if (key == "ARC") {
-            if (!read_vecs(tok, 1, 5, vals)) {
-                return fail("ARC expects 5 numbers");
+            EntityProps p;
+            if (!read_fixed(tok, 5, p)) {
+                return fail("ARC record malformed");
             }
-            doc.arcs.push_back(DocArc{{vals[0], vals[1]}, vals[2], vals[3], vals[4]});
+            doc.arcs.push_back(DocArc{{vals[0], vals[1]}, vals[2], vals[3], vals[4], p});
         } else if (key == "POLYLINE") {
             std::uint64_t closed = 0;
             std::uint64_t n = 0;
             if (tok.size() < 3 || !to_uint(tok[1], closed) || !to_uint(tok[2], n)) {
                 return fail("malformed POLYLINE header");
             }
-            if (!read_vecs(tok, 3, n * 2, vals)) {
+            vals.clear();
+            if (!parse_doubles(tok, 3, n * 2, vals)) {
                 return fail("POLYLINE vertex count mismatch");
             }
             DocPolyline pl;
@@ -215,6 +327,13 @@ IoResult parse_native(std::string_view text, Document& out) {
             for (std::uint64_t i = 0; i < n; ++i) {
                 pl.points.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
+            if (version >= 2) {
+                if (!parse_props(tok, 3 + n * 2, pl.props) || tok.size() != 3 + n * 2 + 7) {
+                    return fail("POLYLINE properties malformed");
+                }
+            } else if (tok.size() != 3 + n * 2) {
+                return fail("POLYLINE record malformed");
+            }
             doc.polylines.push_back(std::move(pl));
         } else if (key == "SPLINE") {
             std::uint64_t degree = 0;
@@ -222,7 +341,8 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (tok.size() < 3 || !to_uint(tok[1], degree) || !to_uint(tok[2], n)) {
                 return fail("malformed SPLINE header");
             }
-            if (!read_vecs(tok, 3, n * 2, vals)) {
+            vals.clear();
+            if (!parse_doubles(tok, 3, n * 2, vals)) {
                 return fail("SPLINE control-point count mismatch");
             }
             DocSpline sp;
@@ -230,6 +350,13 @@ IoResult parse_native(std::string_view text, Document& out) {
             sp.control_points.reserve(n);
             for (std::uint64_t i = 0; i < n; ++i) {
                 sp.control_points.push_back({vals[i * 2], vals[i * 2 + 1]});
+            }
+            if (version >= 2) {
+                if (!parse_props(tok, 3 + n * 2, sp.props) || tok.size() != 3 + n * 2 + 7) {
+                    return fail("SPLINE properties malformed");
+                }
+            } else if (tok.size() != 3 + n * 2) {
+                return fail("SPLINE record malformed");
             }
             doc.splines.push_back(std::move(sp));
         } else {
@@ -242,6 +369,14 @@ IoResult parse_native(std::string_view text, Document& out) {
     }
     if (!end_seen) {
         return IoResult::failure("Unexpected end of file (missing END).");
+    }
+    // v1 files (and any file without a layer table) load onto layer 0.
+    if (doc.layers.empty()) {
+        doc.layers.push_back(Layer{"0"});
+    }
+    doc.layers[0].name = "0";
+    if (doc.current_layer >= doc.layers.size()) {
+        doc.current_layer = 0;
     }
     out = std::move(doc);
     return IoResult::success("Opened " + std::to_string(out.entity_count()) + " entities.");

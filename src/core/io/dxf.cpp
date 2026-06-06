@@ -6,6 +6,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
@@ -29,28 +30,86 @@ void code_d(std::string& s, int c, double v) {
 }
 void code_i(std::string& s, int c, long v) { code(s, c, std::to_string(v)); }
 
+const char* linetype_name(Linetype t) {
+    switch (t) {
+    case Linetype::Dashed:
+        return "DASHED";
+    case Linetype::Center:
+        return "CENTER";
+    case Linetype::Hidden:
+        return "HIDDEN";
+    case Linetype::Continuous:
+        break;
+    }
+    return "Continuous";
+}
+Linetype linetype_from(const std::string& name) {
+    std::string u = name;
+    for (char& ch : u) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    if (u == "DASHED") {
+        return Linetype::Dashed;
+    }
+    if (u == "CENTER") {
+        return Linetype::Center;
+    }
+    if (u == "HIDDEN") {
+        return Linetype::Hidden;
+    }
+    return Linetype::Continuous;
+}
+long true_color(Rgb c) {
+    return (static_cast<long>(c.r) << 16) | (static_cast<long>(c.g) << 8) | c.b;
+}
+Rgb from_true_color(long v) {
+    return {static_cast<std::uint8_t>((v >> 16) & 0xff), static_cast<std::uint8_t>((v >> 8) & 0xff),
+            static_cast<std::uint8_t>(v & 0xff)};
+}
+
 void emit_header(std::string& s) {
     code(s, 0, "SECTION");
     code(s, 2, "HEADER");
     code(s, 9, "$ACADVER");
     code(s, 1, "AC1015"); // AutoCAD R2000 -- widely compatible
-    code(s, 9, "$INSUNITS");
-    code_i(s, 70, 0);
     code(s, 0, "ENDSEC");
 }
-void emit_tables(std::string& s) {
+
+void emit_layer_table(std::string& s, const Document& doc) {
     code(s, 0, "SECTION");
     code(s, 2, "TABLES");
     code(s, 0, "TABLE");
     code(s, 2, "LAYER");
-    code_i(s, 70, 1);
-    code(s, 0, "LAYER");
-    code(s, 2, "0"); // the default layer every entity references
-    code_i(s, 70, 0);
-    code_i(s, 62, 7);
-    code(s, 6, "CONTINUOUS");
+    code_i(s, 70, static_cast<long>(doc.layers.size()));
+    for (const Layer& l : doc.layers) {
+        code(s, 0, "LAYER");
+        code(s, 2, l.name);
+        code_i(s, 70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0)); // 1=frozen, 4=locked
+        code_i(s, 62, l.on ? 7 : -7); // ACI; negative = layer off
+        code_i(s, 420, true_color(l.color)); // exact RGB
+        code(s, 6, linetype_name(l.linetype));
+        code_i(s, 370, l.lineweight);
+    }
     code(s, 0, "ENDTAB");
     code(s, 0, "ENDSEC");
+}
+
+// Per-entity layer/colour/linetype/lineweight (after geometry codes).
+void emit_props(std::string& s, const Document& doc, const EntityProps& p) {
+    const std::string layer =
+        p.layer < doc.layers.size() ? doc.layers[p.layer].name : std::string("0");
+    code(s, 8, layer);
+    if (p.color_by_layer()) {
+        code_i(s, 62, 256); // ByLayer
+    } else {
+        code_i(s, 420, true_color(p.color));
+    }
+    if (!p.linetype_by_layer()) {
+        code(s, 6, linetype_name(p.linetype));
+    }
+    if (!p.lineweight_by_layer()) {
+        code_i(s, 370, p.lineweight);
+    }
 }
 
 } // namespace
@@ -58,21 +117,21 @@ void emit_tables(std::string& s) {
 std::string serialize_dxf(const Document& doc) {
     std::string s;
     emit_header(s);
-    emit_tables(s);
+    emit_layer_table(s, doc);
 
     code(s, 0, "SECTION");
     code(s, 2, "ENTITIES");
 
-    for (const Vec2& p : doc.points) {
+    for (const DocPoint& p : doc.points) {
         code(s, 0, "POINT");
-        code(s, 8, "0");
-        code_d(s, 10, p.x);
-        code_d(s, 20, p.y);
+        emit_props(s, doc, p.props);
+        code_d(s, 10, p.p.x);
+        code_d(s, 20, p.p.y);
         code_d(s, 30, 0.0);
     }
     for (const DocLine& l : doc.lines) {
         code(s, 0, "LINE");
-        code(s, 8, "0");
+        emit_props(s, doc, l.props);
         code_d(s, 10, l.a.x);
         code_d(s, 20, l.a.y);
         code_d(s, 30, 0.0);
@@ -82,7 +141,7 @@ std::string serialize_dxf(const Document& doc) {
     }
     for (const DocCircle& c : doc.circles) {
         code(s, 0, "CIRCLE");
-        code(s, 8, "0");
+        emit_props(s, doc, c.props);
         code_d(s, 10, c.center.x);
         code_d(s, 20, c.center.y);
         code_d(s, 30, 0.0);
@@ -90,17 +149,17 @@ std::string serialize_dxf(const Document& doc) {
     }
     for (const DocArc& a : doc.arcs) {
         code(s, 0, "ARC");
-        code(s, 8, "0");
+        emit_props(s, doc, a.props);
         code_d(s, 10, a.center.x);
         code_d(s, 20, a.center.y);
         code_d(s, 30, 0.0);
         code_d(s, 40, a.radius);
-        code_d(s, 50, to_degrees(a.start_angle)); // DXF arc angles are degrees, CCW
+        code_d(s, 50, to_degrees(a.start_angle));
         code_d(s, 51, to_degrees(a.end_angle));
     }
     for (const DocPolyline& p : doc.polylines) {
         code(s, 0, "LWPOLYLINE");
-        code(s, 8, "0");
+        emit_props(s, doc, p.props);
         code_i(s, 90, static_cast<long>(p.points.size()));
         code_i(s, 70, p.closed ? 1 : 0);
         for (const Vec2& v : p.points) {
@@ -108,8 +167,6 @@ std::string serialize_dxf(const Document& doc) {
             code_d(s, 20, v.y);
         }
     }
-    // Splines are not part of the R2000 entity subset we emit; noted in COMMANDS.
-
     code(s, 0, "ENDSEC");
     code(s, 0, "EOF");
     return s;
@@ -123,7 +180,6 @@ struct Pair {
 };
 
 bool parse_int(const std::string& t, int& out) {
-    // DXF codes can have surrounding whitespace; trim.
     std::size_t a = 0;
     std::size_t b = t.size();
     while (a < b && std::isspace(static_cast<unsigned char>(t[a]))) {
@@ -135,7 +191,6 @@ bool parse_int(const std::string& t, int& out) {
     const auto [ptr, ec] = std::from_chars(t.data() + a, t.data() + b, out);
     return ec == std::errc{} && ptr == t.data() + b;
 }
-
 double to_d(const std::string& t) {
     double v = 0.0;
     std::size_t a = 0;
@@ -145,8 +200,15 @@ double to_d(const std::string& t) {
     std::from_chars(t.data() + a, t.data() + t.size(), v);
     return v;
 }
-
-// Looks up the first value with the given group code in an entity body.
+long to_l(const std::string& t) {
+    long v = 0;
+    std::size_t a = 0;
+    while (a < t.size() && std::isspace(static_cast<unsigned char>(t[a]))) {
+        ++a;
+    }
+    std::from_chars(t.data() + a, t.data() + t.size(), v);
+    return v;
+}
 const std::string* find(const std::vector<Pair>& body, int c) {
     for (const Pair& p : body) {
         if (p.code == c) {
@@ -155,8 +217,6 @@ const std::string* find(const std::vector<Pair>& body, int c) {
     }
     return nullptr;
 }
-
-// Single-lookup double accessor (a default when the code is absent).
 double getd(const std::vector<Pair>& body, int c, double def = 0.0) {
     const std::string* v = find(body, c);
     return v != nullptr ? to_d(*v) : def;
@@ -165,7 +225,6 @@ double getd(const std::vector<Pair>& body, int c, double def = 0.0) {
 } // namespace
 
 IoResult parse_dxf(const std::string& text, Document& out) {
-    // Read the file as (code, value) pairs -- two lines each.
     std::istringstream in(text);
     std::vector<Pair> pairs;
     std::string code_line;
@@ -191,30 +250,93 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     }
 
     Document doc;
+    doc.layers.assign(1, Layer{"0"}); // layer 0 always exists
+    std::map<std::string, std::uint16_t> layer_index{{"0", 0}};
+    const auto ensure_layer = [&](const std::string& name) -> std::uint16_t {
+        const auto it = layer_index.find(name);
+        if (it != layer_index.end()) {
+            return it->second;
+        }
+        const auto idx = static_cast<std::uint16_t>(doc.layers.size());
+        Layer l;
+        l.name = name;
+        doc.layers.push_back(l);
+        layer_index[name] = idx;
+        return idx;
+    };
+
     std::map<std::string, int> skipped;
     bool saw_section = false;
     std::string section;
     std::size_t i = 0;
     const std::size_t n = pairs.size();
 
-    const auto build = [&](const std::string& type, const std::vector<Pair>& body) {
+    const auto add_layer_record = [&](const std::vector<Pair>& body) {
+        const std::string* name = find(body, 2);
+        if (name == nullptr) {
+            return;
+        }
+        const std::uint16_t idx = ensure_layer(*name);
+        Layer& l = doc.layers[idx];
+        if (const std::string* flag = find(body, 70)) {
+            const long f = to_l(*flag);
+            l.frozen = (f & 1) != 0;
+            l.locked = (f & 4) != 0;
+        }
+        if (const std::string* col = find(body, 62)) {
+            l.on = to_l(*col) >= 0; // negative ACI = layer off
+        }
+        if (const std::string* tc = find(body, 420)) {
+            l.color = from_true_color(to_l(*tc));
+        }
+        if (const std::string* lt = find(body, 6)) {
+            l.linetype = linetype_from(*lt);
+        }
+        if (const std::string* lw = find(body, 370)) {
+            l.lineweight = static_cast<std::uint8_t>(to_l(*lw));
+        }
+    };
+
+    const auto props_of = [&](const std::vector<Pair>& body) {
+        EntityProps p;
+        const std::string* layer = find(body, 8);
+        p.layer = ensure_layer(layer != nullptr ? *layer : std::string("0"));
+        if (const std::string* tc = find(body, 420)) {
+            p.set_color_by_layer(false);
+            p.color = from_true_color(to_l(*tc));
+        } else if (const std::string* aci = find(body, 62); aci != nullptr && to_l(*aci) != 256) {
+            p.set_color_by_layer(false); // a concrete ACI override (approximate)
+        }
+        if (const std::string* lt = find(body, 6)) {
+            p.set_linetype_by_layer(false);
+            p.linetype = linetype_from(*lt);
+        }
+        if (const std::string* lw = find(body, 370)) {
+            p.set_lineweight_by_layer(false);
+            p.lineweight = static_cast<std::uint8_t>(to_l(*lw));
+        }
+        return p;
+    };
+
+    const auto build_entity = [&](const std::string& type, const std::vector<Pair>& body) {
         if (type == "LINE") {
             doc.lines.push_back(DocLine{{getd(body, 10), getd(body, 20)},
-                                        {getd(body, 11), getd(body, 21)}});
+                                        {getd(body, 11), getd(body, 21)}, props_of(body)});
         } else if (type == "CIRCLE") {
-            doc.circles.push_back(DocCircle{{getd(body, 10), getd(body, 20)}, getd(body, 40)});
+            doc.circles.push_back(
+                DocCircle{{getd(body, 10), getd(body, 20)}, getd(body, 40), props_of(body)});
         } else if (type == "ARC") {
             doc.arcs.push_back(DocArc{{getd(body, 10), getd(body, 20)},
                                       getd(body, 40),
                                       to_radians(getd(body, 50)),
-                                      to_radians(getd(body, 51))});
+                                      to_radians(getd(body, 51)),
+                                      props_of(body)});
         } else if (type == "POINT") {
-            doc.points.push_back({getd(body, 10), getd(body, 20)});
+            doc.points.push_back(DocPoint{{getd(body, 10), getd(body, 20)}, props_of(body)});
         } else if (type == "LWPOLYLINE") {
             DocPolyline pl;
             const std::string* flag = find(body, 70);
-            pl.closed = flag != nullptr && (std::stol(*flag) & 1) != 0;
-            // Collect 10/20 pairs in order.
+            pl.closed = flag != nullptr && (to_l(*flag) & 1) != 0;
             double x = 0.0;
             bool have_x = false;
             for (const Pair& p : body) {
@@ -226,6 +348,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     have_x = false;
                 }
             }
+            pl.props = props_of(body);
             doc.polylines.push_back(std::move(pl));
         } else {
             ++skipped[type];
@@ -235,7 +358,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     while (i < n) {
         const Pair& p = pairs[i];
         if (p.code != 0) {
-            ++i; // header/table data outside an entity body
+            ++i;
             continue;
         }
         if (p.value == "SECTION") {
@@ -253,6 +376,16 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (p.value == "EOF") {
             break;
         }
+        if (section == "TABLES" && p.value == "LAYER") {
+            std::vector<Pair> body;
+            ++i;
+            while (i < n && pairs[i].code != 0) {
+                body.push_back(pairs[i]);
+                ++i;
+            }
+            add_layer_record(body);
+            continue;
+        }
         if (section == "ENTITIES") {
             const std::string type = p.value;
             std::vector<Pair> body;
@@ -261,17 +394,18 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 body.push_back(pairs[i]);
                 ++i;
             }
-            build(type, body);
+            build_entity(type, body);
             continue;
         }
-        ++i; // a 0-record outside ENTITIES (e.g. TABLE/LAYER) -- ignore
+        ++i;
     }
 
     if (!saw_section) {
         return IoResult::failure("Not a DXF file (no SECTION found).");
     }
 
-    std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities";
+    std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities on " +
+                      std::to_string(doc.layers.size()) + " layers";
     if (!skipped.empty()) {
         int total = 0;
         std::string names;

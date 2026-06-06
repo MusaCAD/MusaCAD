@@ -14,6 +14,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QCoreApplication>
+#include <QColorDialog>
+#include <QComboBox>
 #include <QDockWidget>
 #include <QEvent>
 #include <QFileDialog>
@@ -26,6 +28,7 @@
 #include <QMenu>
 #include <QPalette>
 #include <QPlainTextEdit>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QStatusBar>
 #include <QString>
@@ -41,6 +44,7 @@
 #include "musacad/core/version.hpp"
 #include "musacad/ui/command_icons.hpp"
 #include "musacad/ui/command_line_widget.hpp"
+#include "musacad/ui/layer_dialog.hpp"
 #include "musacad/ui/parameter_dialog.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
 #include "musacad/ui/viewport_window.hpp"
@@ -121,6 +125,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
         }
+        sync_layer_combo();
         // Echo each new engine command-result (honest feedback) once.
         const std::uint64_t sv = viewport_->status_version();
         if (sv != last_status_version_) {
@@ -280,10 +285,28 @@ void MainWindow::build_ribbon() {
     }
 
     RibbonPanel* layers = ribbon_->add_panel(home, QStringLiteral("Layers"));
-    layers->add_placeholder(make_icon(QStringLiteral("layers")), QStringLiteral("Layer\nProperties"));
+    layer_combo_ = new QComboBox(this);
+    layer_combo_->setObjectName(QStringLiteral("CurrentLayerCombo"));
+    layer_combo_->setMinimumWidth(120);
+    layer_combo_->setToolTip(QStringLiteral("Current layer"));
+    connect(layer_combo_, &QComboBox::activated, this, [this](int index) {
+        if (index >= 0) {
+            engine_->submit(core::SetCurrentLayerCommand{static_cast<std::uint16_t>(index)});
+        }
+    });
+    layers->add_widget(layer_combo_);
+    QToolButton* layer_btn = layers->add_button(make_icon(QStringLiteral("layers")),
+                                                QStringLiteral("Layer\nProperties"));
+    layer_btn->setObjectName(QStringLiteral("ribbon.layer_manager"));
+    connect(layer_btn, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
 
     RibbonPanel* props = ribbon_->add_panel(home, QStringLiteral("Properties"));
-    props->add_placeholder(make_icon(QStringLiteral("properties")), QStringLiteral("Properties"));
+    QToolButton* color_btn = props->add_button(make_icon(QStringLiteral("properties")),
+                                               QStringLiteral("Set\nColour"));
+    color_btn->setObjectName(QStringLiteral("ribbon.set_color"));
+    connect(color_btn, &QToolButton::clicked, this, [this] { set_selection_color(); });
+    selection_required_buttons_.push_back(color_btn); // colour override needs a selection
+    color_btn->setEnabled(false);
 
     RibbonPanel* annot = ribbon_->add_panel(home, QStringLiteral("Annotation"));
     annot->add_placeholder(make_icon(QStringLiteral("dim")), QStringLiteral("Dimension"));
@@ -701,6 +724,62 @@ bool MainWindow::selftest_theme() {
     return ok;
 }
 
+bool MainWindow::selftest_layers() {
+    using core::AddLineCommand;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // Drive a real Layer Manager (the same one the ribbon button opens).
+    LayerDialog dlg([this] { return viewport_->layers(); },
+                    [this] { return viewport_->current_layer(); },
+                    [this](core::Command c) { engine_->submit(std::move(c)); }, this);
+    dlg.show();
+
+    const int before = static_cast<int>(viewport_->layers().size()); // 1 (layer "0")
+    dlg.test_new_layer();
+    const bool added = pump([this, before] {
+        return static_cast<int>(viewport_->layers().size()) == before + 1;
+    });
+    std::printf("[selftest] Layer Manager creates a layer: %s\n", added ? "PASS" : "FAIL");
+    all = all && added;
+
+    // Make the new layer current and draw on it.
+    dlg.test_set_current_row(1);
+    const bool current_ok = pump([this] { return viewport_->current_layer() == 1; });
+    engine_->submit(AddLineCommand{Vec2{0, 0}, Vec2{10, 0}, 1});
+    const bool drawn = pump([this] { return viewport_->line_vertex_count() == 2; });
+
+    // Turn the layer OFF from the dialog -> the line stops rendering.
+    dlg.refresh();
+    dlg.test_set_flag(1, /*kOn column*/ 1, false);
+    const bool hidden = pump([this] { return viewport_->line_vertex_count() == 0; });
+    std::printf("[selftest] Layer Manager toggles a layer off (geometry hides): %s\n",
+                (current_ok && drawn && hidden) ? "PASS" : "FAIL");
+    all = all && current_ok && drawn && hidden;
+
+    // The Layer Manager dialog uses the dark palette (Phase 11 consistency).
+    const bool dark = dlg.palette().color(QPalette::Window).lightness() < 90;
+    std::printf("[selftest] Layer Manager dark palette: %s\n", dark ? "PASS" : "FAIL");
+    all = all && dark;
+
+    dlg.close();
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
 bool MainWindow::selftest_persist() {
     using core::AddLineCommand;
     using core::Vec2;
@@ -753,6 +832,55 @@ bool MainWindow::selftest_persist() {
     std::error_code ec;
     std::filesystem::remove(path, ec);
     return all;
+}
+
+void MainWindow::sync_layer_combo() {
+    if (layer_combo_ == nullptr || viewport_ == nullptr) {
+        return;
+    }
+    const std::vector<core::Layer> layers = viewport_->layers();
+    bool changed = static_cast<int>(layers.size()) != layer_combo_->count();
+    for (int i = 0; !changed && i < static_cast<int>(layers.size()); ++i) {
+        changed = layer_combo_->itemText(i).toStdString() != layers[i].name;
+    }
+    if (changed) {
+        const QSignalBlocker block(layer_combo_);
+        layer_combo_->clear();
+        for (const core::Layer& l : layers) {
+            layer_combo_->addItem(QString::fromStdString(l.name));
+        }
+    }
+    const int cur = static_cast<int>(viewport_->current_layer());
+    if (cur >= 0 && cur < layer_combo_->count() && layer_combo_->currentIndex() != cur) {
+        const QSignalBlocker block(layer_combo_);
+        layer_combo_->setCurrentIndex(cur);
+    }
+}
+
+void MainWindow::open_layer_dialog() {
+    auto* dlg = new LayerDialog([this] { return viewport_->layers(); },
+                                [this] { return viewport_->current_layer(); },
+                                [this](core::Command c) { engine_->submit(std::move(c)); }, this);
+    dlg->setObjectName(QStringLiteral("LayerManager"));
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
+}
+
+void MainWindow::set_selection_color() {
+    if (viewport_ == nullptr || viewport_->selection_count() == 0) {
+        return;
+    }
+    const QColor c = QColorDialog::getColor(Qt::white, this, QStringLiteral("Object Colour"),
+                                            QColorDialog::DontUseNativeDialog);
+    if (!c.isValid()) {
+        return;
+    }
+    const std::uint64_t g = processor_->begin_group();
+    engine_->submit(core::SetEntityColorCommand{
+        false,
+        core::Rgb{static_cast<std::uint8_t>(c.red()), static_cast<std::uint8_t>(c.green()),
+                  static_cast<std::uint8_t>(c.blue())},
+        g});
 }
 
 void MainWindow::open_array_dialog() {

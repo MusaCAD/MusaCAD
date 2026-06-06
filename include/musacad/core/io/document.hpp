@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/properties.hpp"
 
 namespace musacad::core {
 class GeometryStore;
@@ -12,21 +13,28 @@ class GeometryStore;
 
 namespace musacad::core::io {
 
-/// The current native document format version. Bump when the on-disk layout
-/// changes; readers reject versions newer than they understand.
-inline constexpr std::uint32_t kFormatVersion = 1;
+/// The current native document format version. v1 had geometry only; v2 adds the
+/// layer table + per-entity properties. Readers reject newer versions; v1 files
+/// load with everything on layer 0, fully ByLayer.
+inline constexpr std::uint32_t kFormatVersion = 2;
 
-// Self-contained, pool-free records for serialization. Unlike the store's SoA
-// Data structs these carry their own vertices and no generational handles -- the
-// Document is the portable intermediate representation for save/load and DXF.
+// Self-contained, pool-free records for serialization: own vertices, no
+// generational handles, plus the entity's EntityProps (layer + overrides).
+struct DocPoint {
+    Vec2 p;
+    EntityProps props{};
+    friend bool operator==(const DocPoint&, const DocPoint&) = default;
+};
 struct DocLine {
     Vec2 a;
     Vec2 b;
+    EntityProps props{};
     friend bool operator==(const DocLine&, const DocLine&) = default;
 };
 struct DocCircle {
     Vec2 center;
     double radius = 0.0;
+    EntityProps props{};
     friend bool operator==(const DocCircle&, const DocCircle&) = default;
 };
 struct DocArc {
@@ -34,25 +42,32 @@ struct DocArc {
     double radius = 0.0;
     double start_angle = 0.0;
     double end_angle = 0.0;
+    EntityProps props{};
     friend bool operator==(const DocArc&, const DocArc&) = default;
 };
 struct DocPolyline {
     std::vector<Vec2> points;
     bool closed = false;
+    EntityProps props{};
     friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
 };
 struct DocSpline {
     std::vector<Vec2> control_points;
     std::uint32_t degree = 3;
+    EntityProps props{};
     friend bool operator==(const DocSpline&, const DocSpline&) = default;
 };
 
-/// A complete, serializable 2D drawing: metadata plus every entity family.
+/// A complete, serializable 2D drawing: metadata, the layer table, and every
+/// entity family with its properties.
 struct Document {
     std::uint32_t format_version = kFormatVersion;
     std::string units = "unitless";
 
-    std::vector<Vec2> points;
+    std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
+    std::uint16_t current_layer = 0;
+
+    std::vector<DocPoint> points;
     std::vector<DocLine> lines;
     std::vector<DocCircle> circles;
     std::vector<DocArc> arcs;

@@ -68,17 +68,23 @@ void GeometryEngine::run(std::stop_token token) {
 
 EntityHandle GeometryEngine::create_entity(const Command& add_command) {
     EntityHandle handle;
+    // A fresh draw (props unset) lands on the current layer, fully ByLayer; a
+    // captured/restored/transformed entity carries its exact props.
+    const auto props_of = [this](const std::optional<EntityProps>& p) {
+        return p ? *p : EntityProps{store_.current_layer()};
+    };
     std::visit(
         [&](const auto& c) {
             using T = std::decay_t<decltype(c)>;
             if constexpr (std::is_same_v<T, AddLineCommand>) {
-                handle = store_.add_line(c.a, c.b);
+                handle = store_.add_line(c.a, c.b, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
-                handle = store_.add_polyline(c.points, c.closed);
+                handle = store_.add_polyline(c.points, c.closed, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
-                handle = store_.add_circle(c.center, c.radius);
+                handle = store_.add_circle(c.center, c.radius, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddArcCommand>) {
-                handle = store_.add_arc(c.center, c.radius, c.start_angle, c.end_angle);
+                handle =
+                    store_.add_arc(c.center, c.radius, c.start_angle, c.end_angle, props_of(c.props));
             }
         },
         add_command);
@@ -104,20 +110,21 @@ Command GeometryEngine::capture_entity(EntityHandle h) const {
     switch (h.kind) {
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
-        return AddLineCommand{l->a, l->b, 0};
+        return AddLineCommand{l->a, l->b, 0, l->props};
     }
     case EntityKind::Circle: {
         const CircleData* c = store_.circle(h);
-        return AddCircleCommand{c->center, c->radius, 0};
+        return AddCircleCommand{c->center, c->radius, 0, c->props};
     }
     case EntityKind::Arc: {
         const ArcData* a = store_.arc(h);
-        return AddArcCommand{a->center, a->radius, a->start_angle, a->end_angle, 0};
+        return AddArcCommand{a->center, a->radius, a->start_angle, a->end_angle, 0, a->props};
     }
     case EntityKind::Polyline: {
         const PolylineData* p = store_.polyline(h);
         const auto verts = store_.vertices_of(*p);
-        return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()), p->closed, 0};
+        return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()), p->closed, 0,
+                                  p->props};
     }
     case EntityKind::Point:
     case EntityKind::Spline:
@@ -148,6 +155,9 @@ EntityHandle GeometryEngine::pick_nearest(Vec2 world, double radius) const {
     double best_d2 = radius * radius;
     Vec2 cp;
     for (const EntityHandle h : candidates) {
+        if (!selectable(h)) {
+            continue; // off/frozen aren't drawn; locked is inert
+        }
         if (kernel_.closest_point(store_, h, world, cp)) {
             const double d2 = length_squared(cp - world);
             if (d2 <= best_d2) {
@@ -157,6 +167,15 @@ EntityHandle GeometryEngine::pick_nearest(Vec2 world, double radius) const {
         }
     }
     return best;
+}
+
+bool GeometryEngine::selectable(EntityHandle h) const {
+    const EntityProps* p = store_.props(h);
+    if (p == nullptr) {
+        return false;
+    }
+    const Layer* l = store_.layer(p->layer);
+    return l != nullptr && l->on && !l->frozen && !l->locked;
 }
 
 std::vector<EntityHandle> GeometryEngine::all_live() const {
@@ -293,6 +312,9 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
     grid_.query(mn, mx, candidates);
     std::vector<Vec2> tess;
     for (const EntityHandle h : candidates) {
+        if (!selectable(h)) {
+            continue; // window/crossing select ignores off/frozen/locked layers
+        }
         kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
         if (tess.empty()) {
             continue;
@@ -1043,6 +1065,67 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
     report("Chamfered.");
 }
 
+namespace {
+/// Applies `fn` to the EntityProps inside an Add* command (engaging the optional
+/// if needed). No-op for non-Add commands.
+void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand> ||
+                          std::is_same_v<T, AddPolylineCommand> ||
+                          std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand>) {
+                if (!x.props) {
+                    x.props = EntityProps{};
+                }
+                fn(*x.props);
+            }
+        },
+        c);
+}
+} // namespace
+
+void GeometryEngine::apply_props_change(const std::function<void(EntityProps&)>& modify,
+                                        std::uint64_t group) {
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> out;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command modified = original; // carries the entity's exact props
+        modify_cmd_props(modified, modify);
+        remove_indexed(h);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(modified);
+        push_create_item(group, nh, modified);
+        out.push_back(nh);
+    }
+    if (!out.empty()) {
+        selection_ = out;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_entity_layer(std::uint16_t layer, std::uint64_t group) {
+    apply_props_change([layer](EntityProps& p) { p.layer = layer; }, group);
+    report("Moved selection to layer.");
+}
+
+void GeometryEngine::apply_entity_color(bool by_layer, Rgb color, std::uint64_t group) {
+    apply_props_change(
+        [by_layer, color](EntityProps& p) {
+            p.set_color_by_layer(by_layer);
+            if (!by_layer) {
+                p.color = color;
+            }
+        },
+        group);
+    report(by_layer ? "Colour set to ByLayer." : "Colour override applied.");
+}
+
 void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec2 side,
                                   std::uint64_t group) {
     const EntityHandle h = pick_nearest(pick, radius);
@@ -1248,6 +1331,27 @@ void GeometryEngine::apply(const Command& command) {
                 load_document_replace(command);
             } else if constexpr (std::is_same_v<T, NewDocumentCommand>) {
                 new_document();
+            } else if constexpr (std::is_same_v<T, AddLayerCommand>) {
+                store_.add_layer(c.layer);
+                geom_dirty_ = true;
+                report("Layer \"" + c.layer.name + "\" added.");
+            } else if constexpr (std::is_same_v<T, SetLayerCommand>) {
+                store_.set_layer(c.index, c.layer);
+                geom_dirty_ = true;
+                prune_selection();
+            } else if constexpr (std::is_same_v<T, RemoveLayerCommand>) {
+                if (store_.remove_layer(c.index)) {
+                    geom_dirty_ = true;
+                    report("Layer removed.");
+                } else {
+                    report("Cannot delete layer 0, the current layer, or a layer with objects.");
+                }
+            } else if constexpr (std::is_same_v<T, SetCurrentLayerCommand>) {
+                store_.set_current_layer(c.index);
+            } else if constexpr (std::is_same_v<T, SetEntityLayerCommand>) {
+                apply_entity_layer(c.index, c.group);
+            } else if constexpr (std::is_same_v<T, SetEntityColorCommand>) {
+                apply_entity_color(c.by_layer, c.color, c.group);
             }
         },
         command);
@@ -1325,9 +1429,15 @@ void GeometryEngine::rebuild_and_publish() {
     RenderSnapshot& buf = snapshots_.write_buffer();
     buf.points = geom_cache_.points;
     buf.line_vertices = geom_cache_.line_vertices;
+    buf.line_batches = geom_cache_.line_batches;
+    buf.point_batches = geom_cache_.point_batches;
     buf.bounds_min = geom_cache_.bounds_min;
     buf.bounds_max = geom_cache_.bounds_max;
     buf.has_bounds = geom_cache_.has_bounds;
+    // Layer table + current layer are cheap and may change without a geometry
+    // rebuild (e.g. SetCurrentLayer), so publish them fresh from the store.
+    buf.layers.assign(store_.layers().begin(), store_.layers().end());
+    buf.current_layer = store_.current_layer();
 
     // Publish the selection set (queryable API) and its segments (highlight/ghost).
     buf.selection = selection_;

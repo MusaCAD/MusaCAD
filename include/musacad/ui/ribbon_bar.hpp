@@ -29,6 +29,9 @@ public:
     /// Adds a disabled icon+label button for a not-yet-implemented feature.
     QToolButton* add_placeholder(const QIcon& icon, const QString& label);
 
+    /// Adds an arbitrary widget (e.g. the current-layer combo) to the panel.
+    void add_widget(QWidget* widget);
+
 private:
     QToolButton* make_button(const QIcon& icon, const QString& label, bool enabled);
     QHBoxLayout* content_;

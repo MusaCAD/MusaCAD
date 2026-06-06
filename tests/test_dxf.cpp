@@ -17,7 +17,7 @@ using Catch::Approx;
 namespace {
 Document sample() {
     Document d;
-    d.points.push_back({2.0, 3.0});
+    d.points.push_back({{2.0, 3.0}});
     d.lines.push_back(DocLine{{0, 0}, {10, 5}});
     d.circles.push_back(DocCircle{{4, 4}, 2.5});
     d.arcs.push_back(DocArc{{1, 1}, 3.0, 0.5, 2.5});

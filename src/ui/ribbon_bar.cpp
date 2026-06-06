@@ -57,6 +57,8 @@ QToolButton* RibbonPanel::add_placeholder(const QIcon& icon, const QString& labe
     return make_button(icon, label, false);
 }
 
+void RibbonPanel::add_widget(QWidget* widget) { content_->addWidget(widget); }
+
 // ---------------------------------------------------------------------------
 // RibbonBar
 // ---------------------------------------------------------------------------

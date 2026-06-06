@@ -77,6 +77,15 @@ public:
         return document_version_.load(std::memory_order_relaxed);
     }
 
+    /// The published layer table + current layer (for the Layer Manager / combo).
+    [[nodiscard]] std::vector<core::Layer> layers() const {
+        std::scoped_lock lock(layers_mutex_);
+        return layers_;
+    }
+    [[nodiscard]] std::uint16_t current_layer() const noexcept {
+        return current_layer_.load(std::memory_order_relaxed);
+    }
+
     /// Requests the camera frame this world-space AABB once the viewport size is
     /// known (applied on the first rendered frame).
     void set_initial_view(render::Vec2 min_world, render::Vec2 max_world) noexcept;
@@ -118,6 +127,11 @@ private:
     std::atomic<int> line_vertex_count_{0};
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
+
+    // Published layer table + current layer (for the Layer Manager / ribbon combo).
+    mutable std::mutex layers_mutex_;
+    std::vector<core::Layer> layers_;
+    std::atomic<std::uint16_t> current_layer_{0};
 
     // Engine command-result status, copied from the published snapshot.
     mutable std::mutex status_mutex_;

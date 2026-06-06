@@ -584,6 +584,47 @@ control on Qt 6.4; the color-scheme hint requests dark there on 6.5+.) Verified
 by `MUSACAD_SELFTEST`: a freshly-built file picker and message box both inherit
 the dark palette.
 
+## Layers & properties (Phase 12)
+
+A cross-cutting addition: the layer table and the ByLayer/override property model.
+
+* **The model (`core/properties.hpp`).** `EntityProps` carries a layer index plus
+  per-property ByLayer flags + override values; `Layer` holds name/colour/linetype/
+  lineweight + on/frozen/locked. `resolve(EntityProps, Layer)` is the conceptual
+  core: an explicit override wins, else the value is inherited from the layer.
+  `EntityProps` is deliberately **8 bytes** (packed flags byte + `uint8`
+  hundredths-mm lineweight, no `double`) so it's cheap on every entity -- the
+  initial 24-byte version regressed inserts and was slimmed.
+* **Store.** Each Data struct gains an `EntityProps` column; the store owns the
+  layer table (`layer 0` permanent at index 0) and the current layer. Layer CRUD
+  is geometry-thread. **Delete rule (AutoCAD):** layer 0, the current layer, and
+  non-empty layers can't be deleted; layer 0 can't be renamed; on removal, higher
+  entity layer-refs shift down.
+* **Creation & undo.** Fresh draws stamp the current layer (the `Add*` command's
+  optional `EntityProps` is empty); `capture_entity` records exact props, so undo/
+  move/copy/array/mirror/fillet/chamfer preserve layer + overrides. Property edits
+  on a selection are erase+recreate groups, so they're undoable.
+* **Snapshot / render (geometry-side resolution).** `build_render_snapshot`
+  resolves each entity's effective colour, **skips off/frozen layers** entirely,
+  and groups visible geometry into per-colour `ColorBatch`es. The renderer draws
+  one small sub-range per colour (no shader change; draw calls scale with distinct
+  colours, not entities). The snapshot also carries the layer table + current
+  layer for the UI. **Pick/select** (`selectable()`) skips off/frozen/**locked**
+  entities, so locked layers are drawn but inert across hover, click, window-
+  select, erase, and every Modify pick. Linetype/lineweight are carried + round-
+  tripped; visual stipple/weight rendering is deferred.
+* **UI.** A dark, modeless Layer Manager (`LayerDialog`) -- table of name/on/
+  frozen/locked/colour/linetype/lineweight with New/Delete/Set-Current/Assign --
+  plus a ribbon current-layer combo and a Set-Colour override button. It reads the
+  layer table from the published snapshot and issues commands; it never touches
+  the store.
+* **Persistence.** Native format **v2** serialises the layer table + per-entity
+  props (round-trips losslessly; **v1 files load onto layer 0**, fully ByLayer).
+  DXF writes a real **LAYER table** (TABLES section) and per-entity layer (code 8)
+  + ByLayer colour (62 = 256) or true-colour override (420); import **reads the
+  LAYER table** and assigns entities to real layers -- the Phase-11 faked default
+  is gone. Verified Musa↔DXF (layers + effective colour) and in LibreCAD.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -638,6 +679,11 @@ the dark palette.
   proven round-trip), DXF import/export (R2000; LibreCAD-verified), dirty
   tracking, all on the geometry-thread message pipeline, fail-safe on bad input.
   147 unit tests pass under ASan + TSan.
+
+* **Phase 12 — complete:** layers & the ByLayer/override property model —
+  layer table + CRUD, effective-property resolution, off/frozen skip + locked
+  inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
+  native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
 
 ## Known deferrals
 

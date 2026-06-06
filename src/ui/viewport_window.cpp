@@ -155,6 +155,11 @@ void ViewportWindow::render_loop(std::stop_token token) {
                                  std::memory_order_relaxed);
         dirty_.store(snap.dirty, std::memory_order_relaxed);
         document_version_.store(snap.document_version, std::memory_order_relaxed);
+        current_layer_.store(snap.current_layer, std::memory_order_relaxed);
+        {
+            std::scoped_lock lock(layers_mutex_);
+            layers_ = snap.layers;
+        }
 
         // Surface the engine's command-result message (honest feedback) once.
         if (snap.status_version != status_version_.load(std::memory_order_relaxed)) {

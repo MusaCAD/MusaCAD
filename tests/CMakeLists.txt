@@ -76,6 +76,9 @@ add_executable(musacad_tests
     test_native_roundtrip.cpp
     test_persistence_engine.cpp
     test_dxf.cpp
+    test_layers.cpp
+    test_layer_render.cpp
+    test_layer_persistence.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

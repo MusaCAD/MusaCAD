@@ -7,9 +7,19 @@
 
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/properties.hpp"
 #include "musacad/core/snap.hpp"
 
 namespace musacad::core {
+
+/// A contiguous range of segments (or points) sharing one resolved colour, so the
+/// renderer can colour the scene with one small draw per distinct colour. Off and
+/// frozen layers contribute no batches (they are skipped before batching).
+struct ColorBatch {
+    Rgb color;
+    std::uint32_t first = 0; ///< first segment/point index
+    std::uint32_t count = 0; ///< number of segments/points
+};
 
 /// An immutable (from the renderer's perspective) view of the scene, produced
 /// by the geometry thread and consumed lock-free by the render thread. Payload
@@ -24,8 +34,16 @@ struct RenderSnapshot {
     std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
     std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
     std::vector<Vec2> points;
-    std::vector<Vec2> line_vertices; // 2 entries per segment
+    std::vector<Vec2> line_vertices; // 2 entries per segment, ordered by colour batch
     std::uint64_t checksum = 0;
+
+    // Per-colour batches over `line_vertices` / `points` (after ByLayer
+    // resolution; off/frozen layers excluded). The renderer draws one sub-range
+    // per batch. Layer table + current layer for the UI. Not part of the checksum.
+    std::vector<ColorBatch> line_batches;
+    std::vector<ColorBatch> point_batches;
+    std::vector<Layer> layers;
+    std::uint16_t current_layer = 0;
 
     // World-space AABB of live geometry (for ZOOM extents). `has_bounds` is
     // false when the scene is empty. Derived from the payload; not part of the
@@ -74,6 +92,10 @@ struct RenderSnapshot {
         geometry_version = 0;
         points.clear();
         line_vertices.clear();
+        line_batches.clear();
+        point_batches.clear();
+        layers.clear();
+        current_layer = 0;
         checksum = 0;
         bounds_min = {};
         bounds_max = {};

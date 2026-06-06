@@ -1,11 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/properties.hpp"
 
 namespace musacad::core {
 
@@ -18,22 +20,28 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+// Add* commands carry an optional EntityProps. Empty => the engine stamps the
+// current layer (a fresh user draw); set => exact props (capture/undo/move,
+// preserving layer + overrides).
 struct AddLineCommand {
     Vec2 a;
     Vec2 b;
     std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
 };
 
 struct AddPolylineCommand {
     std::vector<Vec2> points;
     bool closed = false;
     std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
 };
 
 struct AddCircleCommand {
     Vec2 center;
     double radius = 0.0;
     std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
 };
 
 struct AddArcCommand {
@@ -42,6 +50,7 @@ struct AddArcCommand {
     double start_angle = 0.0; ///< radians, CCW
     double end_angle = 0.0;
     std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
 };
 
 struct EraseCommand {
@@ -215,6 +224,39 @@ struct OpenDocumentCommand {
 };
 struct NewDocumentCommand {};
 
+// --- Layers & properties (geometry-thread) ---------------------------------
+
+/// Add a layer (or ensure one with this name exists).
+struct AddLayerCommand {
+    Layer layer;
+};
+/// Replace the properties of the layer at `index` (name/color/linetype/lineweight
+/// and the on/frozen/locked flags). Layer 0 cannot be renamed.
+struct SetLayerCommand {
+    std::uint16_t index = 0;
+    Layer layer;
+};
+/// Remove the layer at `index` (fails for layer 0 / current / non-empty).
+struct RemoveLayerCommand {
+    std::uint16_t index = 0;
+};
+/// Make `index` the current layer (new entities land here).
+struct SetCurrentLayerCommand {
+    std::uint16_t index = 0;
+};
+/// Move every selected entity to layer `index` (one undo group).
+struct SetEntityLayerCommand {
+    std::uint16_t index = 0;
+    std::uint64_t group = 0;
+};
+/// Set (or clear) the colour override on every selected entity. `by_layer == true`
+/// reverts to ByLayer; otherwise `color` is the explicit override.
+struct SetEntityColorCommand {
+    bool by_layer = true;
+    Rgb color{};
+    std::uint64_t group = 0;
+};
+
 using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
                  ErasePickCommand, UndoLastGroupCommand, RedoLastGroupCommand, UndoLastOpCommand,
@@ -223,6 +265,8 @@ using Command =
                  CopySelectionCommand, MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand,
                  RotateSelectionCommand, ScaleSelectionCommand, ArrayRectCommand, ArrayPolarCommand,
                  ExtendPickCommand, FilletPickCommand, ChamferPickCommand, SaveDocumentCommand,
-                 OpenDocumentCommand, NewDocumentCommand>;
+                 OpenDocumentCommand, NewDocumentCommand, AddLayerCommand, SetLayerCommand,
+                 RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
+                 SetEntityColorCommand>;
 
 } // namespace musacad::core

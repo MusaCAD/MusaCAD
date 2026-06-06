@@ -7,6 +7,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/generational_arena.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/properties.hpp"
 
 namespace musacad::core {
 
@@ -16,18 +17,23 @@ namespace musacad::core {
 // into a shared contiguous vertex pool.
 // ---------------------------------------------------------------------------
 
+// Every primitive carries an EntityProps column (layer ref + ByLayer/override
+// colour, linetype, lineweight). Defaults to layer 0, fully ByLayer.
 struct PointData {
     Vec2 p;
+    EntityProps props{};
 };
 
 struct LineData {
     Vec2 a;
     Vec2 b;
+    EntityProps props{};
 };
 
 struct CircleData {
     Vec2 center;
     double radius;
+    EntityProps props{};
 };
 
 /// Arc on a circle, swept counter-clockwise from start_angle to end_angle
@@ -37,18 +43,21 @@ struct ArcData {
     double radius;
     double start_angle;
     double end_angle;
+    EntityProps props{};
 };
 
 struct PolylineData {
     std::uint32_t offset; ///< first vertex index in the polyline vertex pool
     std::uint32_t count;  ///< number of vertices
     bool closed;
+    EntityProps props{};
 };
 
 struct SplineData {
     std::uint32_t offset; ///< first control point in the spline pool
     std::uint32_t count;  ///< number of control points
     std::uint32_t degree;
+    EntityProps props{};
 };
 
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own
@@ -60,13 +69,15 @@ struct SplineData {
 /// valid. Pool compaction is a future optimisation.
 class GeometryStore {
 public:
-    // --- creation -----------------------------------------------------------
-    EntityHandle add_point(Vec2 p);
-    EntityHandle add_line(Vec2 a, Vec2 b);
-    EntityHandle add_circle(Vec2 center, double radius);
-    EntityHandle add_arc(Vec2 center, double radius, double start_angle, double end_angle);
-    EntityHandle add_polyline(std::span<const Vec2> vertices, bool closed);
-    EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree);
+    // --- creation (props default to layer 0, fully ByLayer) -----------------
+    EntityHandle add_point(Vec2 p, EntityProps props = {});
+    EntityHandle add_line(Vec2 a, Vec2 b, EntityProps props = {});
+    EntityHandle add_circle(Vec2 center, double radius, EntityProps props = {});
+    EntityHandle add_arc(Vec2 center, double radius, double start_angle, double end_angle,
+                         EntityProps props = {});
+    EntityHandle add_polyline(std::span<const Vec2> vertices, bool closed, EntityProps props = {});
+    EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
+                            EntityProps props = {});
 
     // --- removal / validity -------------------------------------------------
     bool remove(EntityHandle handle) noexcept;
@@ -108,7 +119,41 @@ public:
 
     void reserve_lines(std::size_t n) { lines_.reserve(n); }
 
+    // --- per-entity properties ----------------------------------------------
+    /// The entity's property attributes (nullptr if invalid). Read-only.
+    [[nodiscard]] const EntityProps* props(EntityHandle h) const noexcept;
+    /// Replaces an entity's property attributes. Returns false if invalid.
+    bool set_props(EntityHandle h, const EntityProps& props) noexcept;
+
+    // --- layer table --------------------------------------------------------
+    // Layer 0 always exists at index 0. Layers are few; a contiguous vector is
+    // plenty. Indices are stable for a session's lifetime (no mid-session
+    // removal reindex beyond the removed slot -- see remove_layer).
+    [[nodiscard]] const std::vector<Layer>& layers() const noexcept { return layers_; }
+    [[nodiscard]] std::size_t layer_count() const noexcept { return layers_.size(); }
+    [[nodiscard]] const Layer* layer(std::uint16_t index) const noexcept;
+    [[nodiscard]] std::uint16_t current_layer() const noexcept { return current_layer_; }
+    void set_current_layer(std::uint16_t index) noexcept;
+
+    /// Adds a layer, or returns the existing index if the name is already taken
+    /// (layer names are unique, AutoCAD-style).
+    std::uint16_t add_layer(const Layer& layer);
+    /// Replaces the entire layer table (used by Open/Import). Ensures at least
+    /// layer 0 exists and clamps the current index.
+    void set_layer_table(std::vector<Layer> layers, std::uint16_t current);
+    /// Updates the layer at `index` (keeps the name unique; ignores a rename of
+    /// layer 0). Returns false if the index is invalid.
+    bool set_layer(std::uint16_t index, const Layer& layer);
+    /// True if any live entity references the layer.
+    [[nodiscard]] bool layer_in_use(std::uint16_t index) const noexcept;
+    /// Removes a layer. Fails (returns false) for layer 0, the current layer, or
+    /// a layer that still contains entities (AutoCAD rule). Remaining entities'
+    /// layer indices above the removed one are shifted down to stay valid.
+    bool remove_layer(std::uint16_t index);
+
 private:
+    void shift_layer_refs_after_removal(std::uint16_t removed) noexcept;
+
     GenerationalArena<PointData> points_;
     GenerationalArena<LineData> lines_;
     GenerationalArena<CircleData> circles_;
@@ -118,6 +163,9 @@ private:
 
     std::vector<Vec2> polyline_pool_;
     std::vector<Vec2> spline_pool_;
+
+    std::vector<Layer> layers_{Layer{"0"}}; // layer 0 always present
+    std::uint16_t current_layer_ = 0;
 };
 
 } // namespace musacad::core
