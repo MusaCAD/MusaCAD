@@ -570,6 +570,20 @@ pool-free, generation-free struct holding every entity family -- with
   New/Open prompt before discarding unsaved work. The UI shows the file dialog and
   issues a message but **never touches the store**.
 
+## Consistent dark theme (dialogs included)
+
+The frame was themed only by a QSS stylesheet, which native-style surfaces
+(QFileDialog, QMessageBox, menus, window chrome) ignore -- so they rendered
+light. `apply_dark_theme()` (the single startup entry point) now sets the
+**Fusion** style, a **dark QPalette**, the **dark color-scheme hint**
+(`QStyleHints::setColorScheme`, Qt 6.5+; compiled out on 6.4), and the QSS. The
+palette is what reaches surfaces QSS can't, so dialogs match. File dialogs use
+`QFileDialog::DontUseNativeDialog` so they render with our palette regardless of
+the OS theme. (Server-side window-manager decorations are outside the app's
+control on Qt 6.4; the color-scheme hint requests dark there on 6.5+.) Verified
+by `MUSACAD_SELFTEST`: a freshly-built file picker and message box both inherit
+the dark palette.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6

@@ -9,8 +9,9 @@
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    // Centralized, swappable styling (the only place the look is defined).
-    app.setStyleSheet(musacad::ui::dark_theme_qss());
+    // Centralized, swappable styling: Fusion + dark palette + QSS, so the whole
+    // UI -- including dialogs, message boxes and the file picker -- is consistent.
+    musacad::ui::apply_dark_theme(app);
 
     musacad::ui::MainWindow window;
     window.show();
@@ -34,7 +35,8 @@ int main(int argc, char* argv[]) {
             const bool ok_modify = window.selftest_modify();
             const bool ok_dialog = window.selftest_dialog();
             const bool ok_persist = window.selftest_persist();
-            const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist;
+            const bool ok_theme = window.selftest_theme();
+            const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

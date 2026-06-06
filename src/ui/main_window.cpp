@@ -24,7 +24,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPalette>
 #include <QPlainTextEdit>
+#include <QStyle>
 #include <QStatusBar>
 #include <QString>
 #include <QTabBar>
@@ -678,6 +680,27 @@ bool MainWindow::selftest_dialog() {
     return all;
 }
 
+bool MainWindow::selftest_theme() {
+    const auto is_dark = [](const QPalette& pal) {
+        return pal.color(QPalette::Window).lightness() < 90;
+    };
+    const bool app_dark = is_dark(QApplication::palette());
+    // Freshly-created dialogs must inherit the dark palette (this is what was
+    // rendering light before): a file picker and a message box. (We don't assert
+    // the style name -- a set stylesheet wraps it in a proxy with an empty name --
+    // the dark palette reaching the dialog is the observable requirement.)
+    QFileDialog fd(this);
+    fd.setOption(QFileDialog::DontUseNativeDialog, true);
+    const bool picker_dark = is_dark(fd.palette());
+    QMessageBox mb(this);
+    const bool msgbox_dark = is_dark(mb.palette());
+
+    const bool ok = app_dark && picker_dark && msgbox_dark;
+    std::printf("[selftest] dark theme reaches dialogs (app=%d picker=%d msgbox=%d): %s\n", app_dark,
+                picker_dark, msgbox_dark, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 bool MainWindow::selftest_persist() {
     using core::AddLineCommand;
     using core::Vec2;
@@ -823,7 +846,8 @@ void MainWindow::file_open() {
         return;
     }
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Drawing"),
-                                                      QString(), QStringLiteral("Musa CAD (*.musa)"));
+                                                      QString(), QStringLiteral("Musa CAD (*.musa)"),
+                                                      nullptr, QFileDialog::DontUseNativeDialog);
     open_from(path, false);
 }
 
@@ -837,7 +861,8 @@ void MainWindow::file_save() {
 
 void MainWindow::file_save_as() {
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
-                                                QStringLiteral("Musa CAD (*.musa)"));
+                                                QStringLiteral("Musa CAD (*.musa)"), nullptr,
+                                                QFileDialog::DontUseNativeDialog);
     if (!path.isEmpty() && !path.endsWith(QStringLiteral(".musa"), Qt::CaseInsensitive)) {
         path += QStringLiteral(".musa");
     }
@@ -849,13 +874,15 @@ void MainWindow::file_import_dxf() {
         return;
     }
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import DXF"), QString(),
-                                                      QStringLiteral("DXF (*.dxf)"));
+                                                      QStringLiteral("DXF (*.dxf)"), nullptr,
+                                                      QFileDialog::DontUseNativeDialog);
     open_from(path, true);
 }
 
 void MainWindow::file_export_dxf() {
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export DXF"), QString(),
-                                                QStringLiteral("DXF (*.dxf)"));
+                                                QStringLiteral("DXF (*.dxf)"), nullptr,
+                                                QFileDialog::DontUseNativeDialog);
     if (!path.isEmpty() && !path.endsWith(QStringLiteral(".dxf"), Qt::CaseInsensitive)) {
         path += QStringLiteral(".dxf");
     }

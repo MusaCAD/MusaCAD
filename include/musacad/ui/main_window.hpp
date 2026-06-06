@@ -59,6 +59,10 @@ public:
     /// reopen it, and confirm geometry returns and the title/dirty flag track.
     bool selftest_persist();
 
+    /// Real-window self-test: the dark palette/style propagate to freshly-created
+    /// dialogs (file picker, message box), so the UI is visually consistent.
+    bool selftest_theme();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).

@@ -1,6 +1,62 @@
 #include "musacad/ui/theme.hpp"
 
+#include <QApplication>
+#include <QColor>
+#include <QPalette>
+#include <QStyleFactory>
+#include <QtGlobal>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <QStyleHints>
+#endif
+
 namespace musacad::ui {
+
+namespace {
+/// A dark palette matching the QSS, used for every surface QSS doesn't reach
+/// (native-style dialogs, message boxes, menus, the file picker).
+QPalette dark_palette() {
+    const QColor window(0x2b, 0x2b, 0x2b);
+    const QColor base(0x23, 0x23, 0x23);
+    const QColor alt(0x32, 0x32, 0x32);
+    const QColor text(0xd6, 0xd6, 0xd6);
+    const QColor button(0x3c, 0x3c, 0x3c);
+    const QColor highlight(0x4a, 0x90, 0xd9);
+    const QColor disabled(0x70, 0x70, 0x70);
+
+    QPalette p;
+    p.setColor(QPalette::Window, window);
+    p.setColor(QPalette::WindowText, text);
+    p.setColor(QPalette::Base, base);
+    p.setColor(QPalette::AlternateBase, alt);
+    p.setColor(QPalette::ToolTipBase, alt);
+    p.setColor(QPalette::ToolTipText, text);
+    p.setColor(QPalette::Text, text);
+    p.setColor(QPalette::Button, button);
+    p.setColor(QPalette::ButtonText, text);
+    p.setColor(QPalette::BrightText, QColor(0xff, 0xff, 0xff));
+    p.setColor(QPalette::Link, highlight);
+    p.setColor(QPalette::Highlight, highlight);
+    p.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+    p.setColor(QPalette::PlaceholderText, disabled);
+    p.setColor(QPalette::Disabled, QPalette::Text, disabled);
+    p.setColor(QPalette::Disabled, QPalette::ButtonText, disabled);
+    p.setColor(QPalette::Disabled, QPalette::WindowText, disabled);
+    return p;
+}
+} // namespace
+
+void apply_dark_theme(QApplication& app) {
+    // Fusion honors the palette consistently across platforms (unlike native
+    // styles, which may ignore it and render light dialogs).
+    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    QApplication::setPalette(dark_palette());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Announce the dark preference to the OS / portal (affects native pickers and,
+    // on some compositors, window decorations).
+    app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+#endif
+    app.setStyleSheet(dark_theme_qss());
+}
 
 QString dark_theme_qss() {
     // Single source of styling. Colors approximate the AutoCAD 2023 dark theme.
