@@ -35,10 +35,34 @@
 #include "musacad/core/version.hpp"
 #include "musacad/ui/command_icons.hpp"
 #include "musacad/ui/command_line_widget.hpp"
+#include "musacad/ui/parameter_dialog.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
 #include "musacad/ui/viewport_window.hpp"
 
 namespace musacad::ui {
+
+namespace {
+/// The declarative spec for the ARRAY dialog: a Type selector that gates the
+/// Rectangular vs Polar parameter sets.
+DialogSpec array_dialog_spec() {
+    DialogSpec spec;
+    spec.title = "Array";
+    spec.controller_key = "type";
+    spec.fields = {
+        {"type", "Type", FieldType::Choice, 0, {"Rectangular", "Polar"}, 0, false, ""},
+        {"rows", "Rows", FieldType::Integer, 2, {}, 0, false, "Rectangular"},
+        {"cols", "Columns", FieldType::Integer, 3, {}, 0, false, "Rectangular"},
+        {"dx", "Column spacing (X)", FieldType::Number, 10, {}, 0, false, "Rectangular"},
+        {"dy", "Row spacing (Y)", FieldType::Number, 10, {}, 0, false, "Rectangular"},
+        {"cx", "Center X", FieldType::Number, 0, {}, 0, false, "Polar"},
+        {"cy", "Center Y", FieldType::Number, 0, {}, 0, false, "Polar"},
+        {"count", "Item count", FieldType::Integer, 6, {}, 0, false, "Polar"},
+        {"fill", "Angle to fill (deg)", FieldType::Number, 360, {}, 0, false, "Polar"},
+        {"rotate", "Rotate items", FieldType::Bool, 0, {}, 0, true, "Polar"},
+    };
+    return spec;
+}
+} // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     const auto name = core::app_name();
@@ -205,7 +229,11 @@ void MainWindow::build_ribbon() {
     add_cmd(modify, QStringLiteral("trim"), QStringLiteral("Trim"), "TR");    // pick-based
     QToolButton* rotate_btn = add_cmd(modify, QStringLiteral("rotate"), QStringLiteral("Rotate"), "RO");
     QToolButton* scale_btn = add_cmd(modify, QStringLiteral("scale"), QStringLiteral("Scale"), "SC");
-    QToolButton* array_btn = add_cmd(modify, QStringLiteral("array"), QStringLiteral("Array"), "AR");
+    // ARRAY opens the parametric dialog (typing "AR" still uses the command line).
+    QToolButton* array_btn = modify->add_button(make_icon(QStringLiteral("array")),
+                                                QStringLiteral("Array"));
+    array_btn->setObjectName(QStringLiteral("ribbon.cmd.array"));
+    connect(array_btn, &QToolButton::clicked, this, [this] { open_array_dialog(); });
     add_cmd(modify, QStringLiteral("extend"), QStringLiteral("Extend"), "EX");   // pick-based
     add_cmd(modify, QStringLiteral("fillet"), QStringLiteral("Fillet"), "F");    // pick-based
     add_cmd(modify, QStringLiteral("chamfer"), QStringLiteral("Chamfer"), "CHA"); // pick-based
@@ -556,6 +584,94 @@ bool MainWindow::selftest_modify() {
     all = all && honest && unchanged;
 
     return all;
+}
+
+bool MainWindow::selftest_dialog() {
+    using core::AddPolylineCommand;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    processor_->set_pick_radius(1.0);
+
+    engine_->submit(core::EraseCommand{core::EraseScope::All});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(AddPolylineCommand{{{0, 0}, {10, 0}, {10, 5}, {0, 5}}, true, 8001});
+    if (!pump([this] { return viewport_->line_vertex_count() == 8; })) {
+        std::printf("[selftest] FAIL: dialog setup rectangle\n");
+        return false;
+    }
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 1; });
+    processor_->set_selection_count(viewport_->selection_count());
+
+    // Rectangular array via the dialog: 2 rows x 3 cols = 6 instances * 8 = 48.
+    {
+        ParameterDialog dlg(array_dialog_spec(), this);
+        dlg.set_choice("type", 0);
+        dlg.set_number("rows", 2);
+        dlg.set_number("cols", 3);
+        dlg.set_number("dx", 20);
+        dlg.set_number("dy", 20);
+        submit_array_from_dialog(dlg);
+    }
+    const bool rect_ok = pump([this] { return viewport_->line_vertex_count() == 48; });
+    std::printf("[selftest] ARRAY dialog (Rectangular) reflects in GUI: %s\n",
+                rect_ok ? "PASS" : "FAIL");
+    all = all && rect_ok;
+    processor_->undo();
+    pump([this] { return viewport_->line_vertex_count() == 8; });
+
+    // Polar array via the dialog: 4 items full circle = 4 instances * 8 = 32.
+    {
+        ParameterDialog dlg(array_dialog_spec(), this);
+        dlg.set_choice("type", 1);
+        dlg.set_number("count", 4);
+        dlg.set_number("fill", 360);
+        submit_array_from_dialog(dlg);
+    }
+    const bool polar_ok = pump([this] { return viewport_->line_vertex_count() == 32; });
+    std::printf("[selftest] ARRAY dialog (Polar) reflects in GUI: %s\n", polar_ok ? "PASS" : "FAIL");
+    all = all && polar_ok;
+
+    return all;
+}
+
+void MainWindow::open_array_dialog() {
+    if (viewport_ == nullptr || viewport_->selection_count() == 0) {
+        if (command_widget_ != nullptr) {
+            command_widget_->append_line("Select objects first, then ARRAY.");
+        }
+        return;
+    }
+    auto* dlg = new ParameterDialog(array_dialog_spec(), this);
+    connect(dlg, &QDialog::accepted, this, [this, dlg] { submit_array_from_dialog(*dlg); });
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
+}
+
+void MainWindow::submit_array_from_dialog(const ParameterDialog& dlg) {
+    if (processor_ == nullptr) {
+        return;
+    }
+    processor_->set_selection_count(viewport_->selection_count());
+    const std::uint64_t group = processor_->begin_group();
+    if (dlg.choice_value("type") == "Polar") {
+        processor_->submit(core::ArrayPolarCommand{core::Vec2{dlg.number("cx"), dlg.number("cy")},
+                                                   dlg.integer("count"),
+                                                   core::to_radians(dlg.number("fill")),
+                                                   dlg.boolean("rotate"), group});
+    } else {
+        processor_->submit(core::ArrayRectCommand{dlg.integer("rows"), dlg.integer("cols"),
+                                                  dlg.number("dx"), dlg.number("dy"), group});
+    }
 }
 
 void MainWindow::seed_demo_scene() {

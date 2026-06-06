@@ -58,6 +58,13 @@ public:
     void set_grid_spacing(double s) { grid_spacing_ = s; }
     void set_pick_radius(double world_radius) { pick_radius_ = world_radius; }
 
+    /// Starts a fresh undo group and returns its id, for one-shot commands
+    /// submitted outside the command-line state machine (e.g. dialog boxes).
+    std::uint64_t begin_group() {
+        current_group_ = ++group_counter_;
+        return current_group_;
+    }
+
     /// Resolves a raw cursor point exactly as a commit would: OSNAP point wins,
     /// otherwise ortho/polar/grid-snap relative to the anchor. Used by both the
     /// commit path and the render-side preview so they always agree.

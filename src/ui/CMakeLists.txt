@@ -2,12 +2,14 @@ add_library(musacad_ui STATIC
     main_window.cpp
     viewport_window.cpp
     command_line_widget.cpp
+    parameter_dialog.cpp
     ribbon_bar.cpp
     command_icons.cpp
     theme.cpp
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/main_window.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_window.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/command_line_widget.hpp"
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/parameter_dialog.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/ribbon_bar.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_modes.hpp")
 

@@ -171,5 +171,6 @@ button dropdown).
 | Autocomplete dropdown (registry-driven) | Implemented |
 | Up/Down history, ENTER repeats last | Implemented |
 | Honest command results (engine echoes what actually happened) | Implemented |
-| AutoCAD-style modal/docked input dialog boxes | Planned (next phase) |
+| Parametric input dialog (ARRAY: rectangular + polar) | Implemented |
+| Input dialogs for Rotate/Scale + live ghost preview | Planned (Phase 11.2) |
 | Dynamic input tooltips at cursor | Planned (Phase 13) |

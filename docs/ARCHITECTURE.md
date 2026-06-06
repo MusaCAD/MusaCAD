@@ -516,6 +516,26 @@ polyline, not four lines):
   "pick two adjacent edges" failure. Scale/Array were never broken (engine + GUI
   confirmed); the original report conflated them with the polyline no-op.
 
+## Command input dialogs (Phase 11, slice 1)
+
+AutoCAD-style parametric input, without disturbing the command pipeline.
+
+* **Reusable `ParameterDialog`.** A `QDialog` built from a declarative
+  `DialogSpec` (Number/Integer/Choice/Bool fields). A field's `group` gates its
+  visibility against a controller Choice, so one dialog presents alternative
+  parameter sets (e.g. ARRAY's Rectangular vs Polar). It emits `valuesChanged()`
+  for a future live preview, and has programmatic setters used by the self-test.
+* **No new pipeline.** A dialog only *collects parameters*; the caller submits the
+  same `Command` the command-line flow would. `CommandProcessor::begin_group()`
+  opens a one-shot undo group for a button/dialog-initiated command. The ARRAY
+  ribbon button opens the dialog; typing `AR` still runs the command-line Q&A.
+  Both end at the existing `ArrayRect`/`ArrayPolarCommand`.
+* **Verified.** `MUSACAD_SELFTEST` builds the ARRAY dialog (default runtime
+  state), sets fields, accepts, and confirms both Rectangular (6 instances) and
+  Polar (4 instances) arrays reach the engine and grow the rendered geometry.
+* **Deferred to slice 2:** live ghost preview as fields change, and dialogs for
+  Rotate/Scale (value + a "pick base point" affordance).
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6

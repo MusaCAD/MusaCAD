@@ -24,6 +24,7 @@ namespace musacad::ui {
 class ViewportWindow;
 class CommandLineWidget;
 class RibbonBar;
+class ParameterDialog;
 
 /// The application's top-level window: an AutoCAD-2023-style Ribbon frame
 /// (Quick Access Toolbar + tabbed ribbon panels + file/layout tabs), an OpenGL
@@ -49,6 +50,10 @@ public:
     /// changes AND the engine's result message reaches the command-line scrollback.
     bool selftest_modify();
 
+    /// Real-window self-test: open the ARRAY dialog, set fields, accept, and
+    /// confirm the array reaches the engine and grows the rendered geometry.
+    bool selftest_dialog();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -60,6 +65,10 @@ private:
     QWidget* build_central();
     void build_status_bar();
     QAction* make_mode_action(const QString& text, int func_key, bool initial);
+
+    // ARRAY command dialog (AutoCAD-style parametric input).
+    void open_array_dialog();
+    void submit_array_from_dialog(const ParameterDialog& dlg);
 
     std::unique_ptr<core::GeometryEngine> engine_;
     std::unique_ptr<command::CommandProcessor> processor_;
