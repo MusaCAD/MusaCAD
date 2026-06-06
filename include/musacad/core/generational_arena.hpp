@@ -88,6 +88,14 @@ public:
         generation_.reserve(n);
     }
 
+    /// Drops all slots, returning to the empty state.
+    void clear() noexcept {
+        data_.clear();
+        generation_.clear();
+        free_.clear();
+        live_ = 0;
+    }
+
 private:
     std::vector<T> data_;
     std::vector<std::uint32_t> generation_;

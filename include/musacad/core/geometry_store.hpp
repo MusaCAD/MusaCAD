@@ -73,6 +73,10 @@ public:
     [[nodiscard]] bool is_valid(EntityHandle handle) const noexcept;
     [[nodiscard]] std::size_t live_count() const noexcept;
 
+    /// Drops every entity and vertex pool, leaving an empty store (used by
+    /// New / Open). Generations are not preserved -- handles are runtime-only.
+    void clear() noexcept;
+
     // --- typed accessors (nullptr if invalid or wrong kind) -----------------
     [[nodiscard]] const PointData* point(EntityHandle h) const noexcept;
     [[nodiscard]] const LineData* line(EntityHandle h) const noexcept;

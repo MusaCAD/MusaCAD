@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <chrono>
+#include <filesystem>
 #include <thread>
 
 #include <QAbstractButton>
@@ -15,7 +16,10 @@
 #include <QCoreApplication>
 #include <QDockWidget>
 #include <QEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QKeyEvent>
+#include <QMessageBox>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -108,10 +112,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     title_timer_ = new QTimer(this);
     connect(title_timer_, &QTimer::timeout, this, [this] {
-        const auto n = core::app_name();
-        setWindowTitle(QStringLiteral("%1  —  %2 FPS")
-                           .arg(QString::fromUtf8(n.data(), static_cast<int>(n.size())))
-                           .arg(static_cast<int>(viewport_->fps() + 0.5)));
+        update_title();
         // Drive selection-dependent UI from the published selection count.
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
@@ -181,9 +182,20 @@ void MainWindow::build_ribbon() {
         a->setToolTip(tip + QStringLiteral(" (coming soon)"));
         ribbon_->add_qat_action(a);
     };
-    placeholder_qat(QStringLiteral("new"), QStringLiteral("New"));
-    placeholder_qat(QStringLiteral("open"), QStringLiteral("Open"));
-    placeholder_qat(QStringLiteral("save"), QStringLiteral("Save"));
+    const auto qat_file = [&](const QString& kind, const QString& tip, QKeySequence shortcut,
+                              void (MainWindow::*slot)()) {
+        auto* a = new QAction(make_icon(kind), tip, this);
+        a->setShortcut(shortcut);
+        a->setShortcutContext(Qt::ApplicationShortcut);
+        connect(a, &QAction::triggered, this, slot);
+        ribbon_->add_qat_action(a);
+        addAction(a); // ensure the shortcut is active app-wide
+    };
+    qat_file(QStringLiteral("new"), QStringLiteral("New"), QKeySequence::New, &MainWindow::file_new);
+    qat_file(QStringLiteral("open"), QStringLiteral("Open"), QKeySequence::Open,
+             &MainWindow::file_open);
+    qat_file(QStringLiteral("save"), QStringLiteral("Save"), QKeySequence::Save,
+             &MainWindow::file_save);
 
     auto* qat_undo = new QAction(make_icon(QStringLiteral("undo")), QStringLiteral("Undo"), this);
     qat_undo->setShortcut(QKeySequence::Undo);
@@ -213,6 +225,28 @@ void MainWindow::build_ribbon() {
 
     // --- Home tab ---
     const int home = ribbon_->add_tab(QStringLiteral("Home"));
+
+    // File panel: native New/Open/Save/Save As + DXF import/export.
+    RibbonPanel* file = ribbon_->add_panel(home, QStringLiteral("File"));
+    const auto file_btn = [&](const QString& kind, const QString& label, void (MainWindow::*slot)()) {
+        QToolButton* b = file->add_button(make_icon(kind), label);
+        connect(b, &QToolButton::clicked, this, slot);
+        return b;
+    };
+    file_btn(QStringLiteral("new"), QStringLiteral("New"), &MainWindow::file_new);
+    file_btn(QStringLiteral("open"), QStringLiteral("Open"), &MainWindow::file_open);
+    file_btn(QStringLiteral("save"), QStringLiteral("Save"), &MainWindow::file_save);
+    file_btn(QStringLiteral("save"), QStringLiteral("Save As"), &MainWindow::file_save_as);
+    file_btn(QStringLiteral("open"), QStringLiteral("Import\nDXF"), &MainWindow::file_import_dxf);
+    file_btn(QStringLiteral("save"), QStringLiteral("Export\nDXF"), &MainWindow::file_export_dxf);
+
+    // Save As shortcut (Ctrl+Shift+S) -- New/Open/Save shortcuts live on the QAT.
+    auto* save_as_act = new QAction(this);
+    save_as_act->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+S")));
+    save_as_act->setShortcutContext(Qt::ApplicationShortcut);
+    connect(save_as_act, &QAction::triggered, this, &MainWindow::file_save_as);
+    addAction(save_as_act);
+
     RibbonPanel* draw = ribbon_->add_panel(home, QStringLiteral("Draw"));
     add_cmd(draw, QStringLiteral("line"), QStringLiteral("Line"), "L");
     add_cmd(draw, QStringLiteral("polyline"), QStringLiteral("Polyline"), "PL");
@@ -644,6 +678,60 @@ bool MainWindow::selftest_dialog() {
     return all;
 }
 
+bool MainWindow::selftest_persist() {
+    using core::AddLineCommand;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    const std::string path =
+        (std::filesystem::temp_directory_path() / "musacad_selftest.musa").string();
+    const QString qpath = QString::fromStdString(path);
+
+    // Fresh drawing, then draw -> becomes dirty.
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(AddLineCommand{Vec2{0, 0}, Vec2{10, 0}, 1});
+    engine_->submit(AddLineCommand{Vec2{0, 5}, Vec2{10, 5}, 2});
+    const bool became_dirty = pump([this] { return viewport_->dirty(); });
+    std::printf("[selftest] edit marks drawing modified: %s\n", became_dirty ? "PASS" : "FAIL");
+    all = all && became_dirty;
+    const int verts = viewport_->line_vertex_count();
+
+    // Save clears the modified flag and the title loses its '*'.
+    save_to(qpath, false);
+    const bool saved_clean = pump([this] { return !viewport_->dirty(); });
+    update_title();
+    const bool title_ok = !windowTitle().contains(QLatin1Char('*'));
+    std::printf("[selftest] Save clears modified flag + title: %s\n",
+                (saved_clean && title_ok) ? "PASS" : "FAIL");
+    all = all && saved_clean && title_ok;
+
+    // New empties the drawing (not dirty -> no prompt).
+    file_new();
+    const bool cleared = pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // Reopen restores the saved geometry, clean.
+    open_from(qpath, false);
+    const bool reopened =
+        pump([this, verts] { return viewport_->line_vertex_count() == verts && !viewport_->dirty(); });
+    std::printf("[selftest] New clears + Open restores from disk: %s\n",
+                (cleared && reopened) ? "PASS" : "FAIL");
+    all = all && cleared && reopened;
+
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return all;
+}
+
 void MainWindow::open_array_dialog() {
     if (viewport_ == nullptr || viewport_->selection_count() == 0) {
         if (command_widget_ != nullptr) {
@@ -672,6 +760,106 @@ void MainWindow::submit_array_from_dialog(const ParameterDialog& dlg) {
         processor_->submit(core::ArrayRectCommand{dlg.integer("rows"), dlg.integer("cols"),
                                                   dlg.number("dx"), dlg.number("dy"), group});
     }
+}
+
+void MainWindow::update_title() {
+    const auto n = core::app_name();
+    const QString app = QString::fromUtf8(n.data(), static_cast<int>(n.size()));
+    const QString name = current_path_.isEmpty() ? QStringLiteral("Drawing1")
+                                                  : QFileInfo(current_path_).fileName();
+    const QString mark = (viewport_ != nullptr && viewport_->dirty()) ? QStringLiteral("*")
+                                                                      : QString();
+    const int fps = viewport_ != nullptr ? static_cast<int>(viewport_->fps() + 0.5) : 0;
+    setWindowTitle(QStringLiteral("%1%2  —  %3  —  %4 FPS").arg(name, mark, app).arg(fps));
+}
+
+bool MainWindow::confirm_discard_if_dirty() {
+    if (viewport_ == nullptr || !viewport_->dirty()) {
+        return true;
+    }
+    const auto choice = QMessageBox::warning(
+        this, QStringLiteral("Unsaved changes"),
+        QStringLiteral("The current drawing has unsaved changes. Save before continuing?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    if (choice == QMessageBox::Cancel) {
+        return false;
+    }
+    if (choice == QMessageBox::Save) {
+        file_save();
+    }
+    return true;
+}
+
+void MainWindow::save_to(const QString& path, bool dxf) {
+    if (path.isEmpty()) {
+        return;
+    }
+    if (!dxf) {
+        current_path_ = path;
+    }
+    engine_->submit(core::SaveDocumentCommand{path.toStdString(), dxf});
+}
+
+void MainWindow::open_from(const QString& path, bool dxf) {
+    if (path.isEmpty()) {
+        return;
+    }
+    if (!dxf) {
+        current_path_ = path;
+    }
+    engine_->submit(core::OpenDocumentCommand{path.toStdString(), dxf});
+}
+
+void MainWindow::file_new() {
+    if (!confirm_discard_if_dirty()) {
+        return;
+    }
+    current_path_.clear();
+    engine_->submit(core::NewDocumentCommand{});
+}
+
+void MainWindow::file_open() {
+    if (!confirm_discard_if_dirty()) {
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Drawing"),
+                                                      QString(), QStringLiteral("Musa CAD (*.musa)"));
+    open_from(path, false);
+}
+
+void MainWindow::file_save() {
+    if (current_path_.isEmpty()) {
+        file_save_as();
+        return;
+    }
+    save_to(current_path_, false);
+}
+
+void MainWindow::file_save_as() {
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
+                                                QStringLiteral("Musa CAD (*.musa)"));
+    if (!path.isEmpty() && !path.endsWith(QStringLiteral(".musa"), Qt::CaseInsensitive)) {
+        path += QStringLiteral(".musa");
+    }
+    save_to(path, false);
+}
+
+void MainWindow::file_import_dxf() {
+    if (!confirm_discard_if_dirty()) {
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import DXF"), QString(),
+                                                      QStringLiteral("DXF (*.dxf)"));
+    open_from(path, true);
+}
+
+void MainWindow::file_export_dxf() {
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export DXF"), QString(),
+                                                QStringLiteral("DXF (*.dxf)"));
+    if (!path.isEmpty() && !path.endsWith(QStringLiteral(".dxf"), Qt::CaseInsensitive)) {
+        path += QStringLiteral(".dxf");
+    }
+    save_to(path, true);
 }
 
 void MainWindow::seed_demo_scene() {

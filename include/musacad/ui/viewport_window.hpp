@@ -70,6 +70,13 @@ public:
         return line_vertex_count_.load(std::memory_order_relaxed);
     }
 
+    /// Unsaved-changes flag and the document version (bumps on save/open/new),
+    /// from the published snapshot -- drives the title bar and dirty prompts.
+    [[nodiscard]] bool dirty() const noexcept { return dirty_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t document_version() const noexcept {
+        return document_version_.load(std::memory_order_relaxed);
+    }
+
     /// Requests the camera frame this world-space AABB once the viewport size is
     /// known (applied on the first rendered frame).
     void set_initial_view(render::Vec2 min_world, render::Vec2 max_world) noexcept;
@@ -109,6 +116,8 @@ private:
     core::Vec2 sel_cur_world_{};
     std::atomic<int> selection_count_{0};
     std::atomic<int> line_vertex_count_{0};
+    std::atomic<bool> dirty_{false};
+    std::atomic<std::uint64_t> document_version_{0};
 
     // Engine command-result status, copied from the published snapshot.
     mutable std::mutex status_mutex_;

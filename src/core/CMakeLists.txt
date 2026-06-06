@@ -6,7 +6,10 @@ add_library(musacad_core STATIC
     entity_bounds.cpp
     osnap.cpp
     scene_snapshot.cpp
-    geometry_engine.cpp)
+    geometry_engine.cpp
+    io/document.cpp
+    io/native_format.cpp
+    io/dxf.cpp)
 
 add_library(musacad::core ALIAS musacad_core)
 

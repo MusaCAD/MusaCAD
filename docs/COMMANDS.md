@@ -100,11 +100,15 @@ suggests both); aliases are case-insensitive.
 
 | Command | Alias | Status |
 |---|---|---|
-| NEW | Ctrl+N | Planned (Phase 12) |
-| OPEN | Ctrl+O | Planned (Phase 12) |
-| SAVE / SAVEAS | Ctrl+S | Planned (Phase 12) |
-| PLOT / PRINT | Ctrl+P | Planned (Phase 12) |
-| DXF import / export | — | Planned (Phase 12) |
+| NEW (native .musa) | Ctrl+N | Implemented |
+| OPEN (native .musa) | Ctrl+O | Implemented |
+| SAVE | Ctrl+S | Implemented |
+| SAVE AS | Ctrl+Shift+S | Implemented |
+| DXF export (R2000 / AC1015) | File ▸ Export DXF | Implemented |
+| DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT) | File ▸ Import DXF | Implemented |
+| DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |
+| Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
+| PLOT / PRINT | Ctrl+P | Planned (Phase 13) |
 
 ## Object snap (OSNAP)
 

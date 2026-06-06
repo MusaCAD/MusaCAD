@@ -536,6 +536,40 @@ AutoCAD-style parametric input, without disturbing the command pipeline.
 * **Deferred to slice 2:** live ghost preview as fields change, and dialogs for
   Rotate/Scale (value + a "pick base point" affordance).
 
+## Persistence: native save/open + DXF (Phase 11)
+
+Drawings become durable, via a module under `core/io/` (own `musacad::core::io`
+namespace; DXF isolated in `dxf.cpp`). The serializable IR is `Document` -- a
+pool-free, generation-free struct holding every entity family -- with
+`document_from_store()` / `populate_store()` bridging to the SoA store.
+
+* **Native `.musa` format.** Chosen form: a **versioned, line-oriented text**
+  format (one record per line; a `MUSACAD <version>` header; `END` terminator).
+  Doubles are written with `std::to_chars` and read with `std::from_chars` --
+  shortest *exact* round-trip, locale-independent -- so **save → load reproduces
+  the document value-for-value**. Proven by a test that builds a scene with every
+  entity family, round-trips it, and asserts `Document` equality (and store →
+  doc → file → doc → store equality).
+* **Load = one geometry-thread op, fail-safe.** `Open`/`New` are messages handled
+  on the geometry thread. A load first *parses fully into a Document*; only on
+  success does the engine clear the store + grid, repopulate, rebuild the spatial
+  index, and reset undo/redo/selection. **On any parse failure the store is left
+  untouched** -- no partial loads. Undo after a load cannot resurrect pre-load
+  geometry (history is reset).
+* **DXF (AC1015 / R2000).** Export writes HEADER + TABLES (layer "0") + ENTITIES
+  so the file is genuinely loadable; entities: LINE, LWPOLYLINE, CIRCLE, ARC,
+  POINT (arc angles converted radians↔degrees). Import is a tolerant group-code
+  parser: supported entities load; unsupported ones are **counted and named in
+  the result** ("skipped 2 unsupported (HATCH, MTEXT)"), never fatal. Malformed
+  input (dangling code, non-numeric code, empty) fails with the store unchanged.
+  **Externally verified:** Musa's DXF export loads + renders in **LibreCAD**
+  (`librecad dxf2pdf`). Deferred: SPLINE and legacy POLYLINE import.
+* **Dirty tracking + feedback.** The engine sets `dirty_` on any mutating command
+  and clears it on save/open/new; `dirty` + `document_version` ride the snapshot
+  next to the Phase-10 status string. The UI title shows `name* — Musa CAD`, and
+  New/Open prompt before discarding unsaved work. The UI shows the file dialog and
+  issues a message but **never touches the store**.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -585,6 +619,11 @@ AutoCAD-style parametric input, without disturbing the command pipeline.
   EXTEND, TRIM (exact, line entities), FILLET (line/line incl. tangent arc),
   CHAMFER — on shared `NativeKernel2D` intersection primitives, each one undoable
   group, wired to ribbon + alias. 124 unit tests pass under ASan + TSan.
+
+* **Phase 11 — complete:** persistence — native `.musa` save/open (lossless,
+  proven round-trip), DXF import/export (R2000; LibreCAD-verified), dirty
+  tracking, all on the geometry-thread message pipeline, fail-safe on bad input.
+  147 unit tests pass under ASan + TSan.
 
 ## Known deferrals
 

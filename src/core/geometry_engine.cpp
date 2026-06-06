@@ -8,6 +8,9 @@
 #include <variant>
 
 #include "musacad/core/entity_bounds.hpp"
+#include "musacad/core/io/document.hpp"
+#include "musacad/core/io/dxf.hpp"
+#include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
 
@@ -1232,9 +1235,83 @@ void GeometryEngine::apply(const Command& command) {
                 apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group);
             } else if constexpr (std::is_same_v<T, ChamferPickCommand>) {
                 apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group);
+            } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
+                const io::Document doc = io::document_from_store(store_);
+                const io::IoResult r =
+                    c.dxf ? io::save_dxf(doc, c.path) : io::save_native(doc, c.path);
+                if (r.ok) {
+                    dirty_ = false;
+                    ++document_version_;
+                }
+                report(r.message);
+            } else if constexpr (std::is_same_v<T, OpenDocumentCommand>) {
+                load_document_replace(command);
+            } else if constexpr (std::is_same_v<T, NewDocumentCommand>) {
+                new_document();
             }
         },
         command);
+
+    // Any geometry-mutating command marks the drawing dirty. Persistence and pure
+    // view/selection commands manage the flag themselves (or leave it alone).
+    std::visit(
+        [this](const auto& c) {
+            using T = std::decay_t<decltype(c)>;
+            constexpr bool view_or_io =
+                std::is_same_v<T, SetCursorCommand> || std::is_same_v<T, SelectPickCommand> ||
+                std::is_same_v<T, SelectWindowCommand> || std::is_same_v<T, SelectAllCommand> ||
+                std::is_same_v<T, ClearSelectionCommand> ||
+                std::is_same_v<T, SaveDocumentCommand> ||
+                std::is_same_v<T, OpenDocumentCommand> || std::is_same_v<T, NewDocumentCommand>;
+            if constexpr (!view_or_io) {
+                dirty_ = true;
+            }
+        },
+        command);
+}
+
+void GeometryEngine::load_document_replace(const Command& command) {
+    const auto* open = std::get_if<OpenDocumentCommand>(&command);
+    if (open == nullptr) {
+        return;
+    }
+    io::Document doc;
+    const io::IoResult r =
+        open->dxf ? io::load_dxf(open->path, doc) : io::load_native(open->path, doc);
+    if (!r.ok) {
+        report(r.message); // store left untouched
+        return;
+    }
+    // One store operation: clear, repopulate, rebuild the index, reset history.
+    store_.clear();
+    grid_.clear();
+    io::populate_store(store_, doc);
+    for (const EntityHandle h : all_live()) {
+        Vec2 lo;
+        Vec2 hi;
+        if (entity_aabb(store_, h, lo, hi)) {
+            grid_.insert(h, lo, hi);
+        }
+    }
+    undo_.clear();
+    redo_.clear();
+    selection_.clear();
+    geom_dirty_ = true;
+    dirty_ = false;
+    ++document_version_;
+    report(r.message);
+}
+
+void GeometryEngine::new_document() {
+    store_.clear();
+    grid_.clear();
+    undo_.clear();
+    redo_.clear();
+    selection_.clear();
+    geom_dirty_ = true;
+    dirty_ = false;
+    ++document_version_;
+    report("New drawing.");
 }
 
 void GeometryEngine::rebuild_and_publish() {
@@ -1300,6 +1377,8 @@ void GeometryEngine::rebuild_and_publish() {
 
     buf.status = status_;
     buf.status_version = status_version_;
+    buf.dirty = dirty_;
+    buf.document_version = document_version_;
 
     buf.geometry_version = geom_version_;
     buf.version = version_.fetch_add(1, std::memory_order_acq_rel) + 1;

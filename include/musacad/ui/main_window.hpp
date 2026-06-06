@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <QMainWindow>
+#include <QString>
 
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/ui/viewport_modes.hpp"
@@ -54,6 +55,10 @@ public:
     /// confirm the array reaches the engine and grows the rendered geometry.
     bool selftest_dialog();
 
+    /// Real-window self-test: save the drawing, New (clears + dirty cleared),
+    /// reopen it, and confirm geometry returns and the title/dirty flag track.
+    bool selftest_persist();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -70,6 +75,18 @@ private:
     void open_array_dialog();
     void submit_array_from_dialog(const ParameterDialog& dlg);
 
+    // Persistence (UI side: file dialogs + messages; never touches the store).
+    void file_new();
+    void file_open();
+    void file_save();      // Save (Save As if untitled)
+    void file_save_as();
+    void file_import_dxf();
+    void file_export_dxf();
+    void save_to(const QString& path, bool dxf); // testable: send SaveDocumentCommand
+    void open_from(const QString& path, bool dxf); // testable: send OpenDocumentCommand
+    [[nodiscard]] bool confirm_discard_if_dirty(); // returns true to proceed
+    void update_title();
+
     std::unique_ptr<core::GeometryEngine> engine_;
     std::unique_ptr<command::CommandProcessor> processor_;
     RibbonBar* ribbon_ = nullptr;
@@ -79,6 +96,7 @@ private:
     QTimer* title_timer_ = nullptr;
     std::vector<QToolButton*> selection_required_buttons_;
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
+    QString current_path_;                  // path of the open .musa file (empty = untitled)
 
     ViewportModes modes_;
     QAction* osnap_action_ = nullptr;

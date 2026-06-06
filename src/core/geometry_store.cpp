@@ -81,6 +81,17 @@ std::size_t GeometryStore::live_count() const noexcept {
            circles_.live_count() + arcs_.live_count() + splines_.live_count();
 }
 
+void GeometryStore::clear() noexcept {
+    points_.clear();
+    lines_.clear();
+    circles_.clear();
+    arcs_.clear();
+    polylines_.clear();
+    splines_.clear();
+    polyline_pool_.clear();
+    spline_pool_.clear();
+}
+
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Point ? points_.get(h.index, h.generation) : nullptr;
 }

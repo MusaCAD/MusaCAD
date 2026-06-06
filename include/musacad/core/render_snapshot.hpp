@@ -63,6 +63,12 @@ struct RenderSnapshot {
     std::string status;
     std::uint64_t status_version = 0;
 
+    // Document state for the title bar / dirty prompts. `dirty` is true when there
+    // are unsaved changes; `document_version` bumps on save/open/new. Not part of
+    // the checksum.
+    bool dirty = false;
+    std::uint64_t document_version = 0;
+
     void clear() noexcept {
         version = 0;
         geometry_version = 0;
@@ -82,6 +88,8 @@ struct RenderSnapshot {
         hover_line_vertices.clear();
         status.clear();
         status_version = 0;
+        dirty = false;
+        document_version = 0;
     }
 
     /// FNV-1a over the version and payload. Cheap and order-sensitive; enough to

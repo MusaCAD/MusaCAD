@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -201,6 +202,19 @@ struct ChamferPickCommand {
     std::uint64_t group = 0;
 };
 
+/// Persistence (geometry-thread). `dxf` selects the DXF codec over the native
+/// format. Save reads the store to disk; Open/New replace the drawing as ONE
+/// store operation (store left unchanged if a load fails).
+struct SaveDocumentCommand {
+    std::string path;
+    bool dxf = false;
+};
+struct OpenDocumentCommand {
+    std::string path;
+    bool dxf = false;
+};
+struct NewDocumentCommand {};
+
 using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
                  ErasePickCommand, UndoLastGroupCommand, RedoLastGroupCommand, UndoLastOpCommand,
@@ -208,6 +222,7 @@ using Command =
                  ClearSelectionCommand, EraseSelectionCommand, MoveSelectionCommand,
                  CopySelectionCommand, MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand,
                  RotateSelectionCommand, ScaleSelectionCommand, ArrayRectCommand, ArrayPolarCommand,
-                 ExtendPickCommand, FilletPickCommand, ChamferPickCommand>;
+                 ExtendPickCommand, FilletPickCommand, ChamferPickCommand, SaveDocumentCommand,
+                 OpenDocumentCommand, NewDocumentCommand>;
 
 } // namespace musacad::core

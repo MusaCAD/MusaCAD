@@ -33,7 +33,8 @@ int main(int argc, char* argv[]) {
             const bool ok_delete = window.selftest_delete();
             const bool ok_modify = window.selftest_modify();
             const bool ok_dialog = window.selftest_dialog();
-            const bool ok = ok_delete && ok_modify && ok_dialog;
+            const bool ok_persist = window.selftest_persist();
+            const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

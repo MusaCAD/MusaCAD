@@ -153,6 +153,8 @@ void ViewportWindow::render_loop(std::stop_token token) {
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
         line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
                                  std::memory_order_relaxed);
+        dirty_.store(snap.dirty, std::memory_order_relaxed);
+        document_version_.store(snap.document_version, std::memory_order_relaxed);
 
         // Surface the engine's command-result message (honest feedback) once.
         if (snap.status_version != status_version_.load(std::memory_order_relaxed)) {

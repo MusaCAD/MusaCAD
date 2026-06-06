@@ -137,6 +137,12 @@ private:
     std::string status_;
     std::uint64_t status_version_ = 0;
 
+    // Persistence: unsaved-changes flag + a version that bumps on save/open/new.
+    void load_document_replace(const Command& command); // Open / DXF import
+    void new_document();
+    bool dirty_ = false;
+    std::uint64_t document_version_ = 0;
+
     Vec2 cursor_{};
     double pick_radius_ = 0.0;
     bool osnap_enabled_ = false;
