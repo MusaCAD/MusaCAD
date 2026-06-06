@@ -455,6 +455,67 @@ preview + ghost + selection rectangle all active.
   combined cursor-frame geometry-side cost (snap + hover) ~34 µs on a ~4900-entity
   scene — cursor/crosshair stay render-side and zero-lag.
 
+## Completing the Modify suite (Phase 10)
+
+Rotate/Scale/Array/Extend/Trim/Fillet/Chamfer, all on the existing machinery
+(selection set, render-side ghost preview, op-log undo groups, spatial index).
+
+* **Transforms.** `rotate_cmd`/`scale_cmd` join `translate_cmd`/`mirror_cmd` as
+  pure Command transforms; `apply_rotate`/`apply_scale` are erase-original +
+  create-result groups (like move); `apply_array_rect`/`apply_array_polar` keep
+  the originals and add copies (like copy) — all one undo group. ROTATE and SCALE
+  show a render-side ghost (overlay `ghost_mode` 3=rotate/4=scale with
+  `ghost_param`). ARRAY is command-line driven (rows×cols×spacing, or
+  centre+count+fill+rotate); the interactive dialog/preview is deferred.
+* **Shared intersection primitives (built once in `NativeKernel2D`).**
+  `line_line_intersection` (infinite, exact) and `line_circle_intersection`
+  (infinite line ∩ circle) are the basis for every corner op; `intersect()` now
+  takes an exact analytic path for line∩line, line∩circle, line∩arc (sweep-
+  filtered) and falls back to tessellation only for arc∩arc and polyline/spline
+  pairs. This also made OSNAP intersection ~4x cheaper. **Robust/exact:** line∩
+  line, line∩circle, line∩arc. **Deferred (tessellation-approx):** arc∩arc,
+  polyline/spline pairs.
+* **Corner ops.** EXTEND lengthens a *line* to the nearest forward boundary
+  (line/circle/arc), scanning live entities. TRIM cuts a *line* at its
+  intersections with any nearby edge (now exact). FILLET joins two *lines* with a
+  tangent arc (radius 0 = clean corner via trim/extend to the infinite-line
+  corner); the kept side of each line is the picked side. CHAMFER bevels two
+  *lines* by two distances. All reuse `line_line_intersection` + a shared
+  `kept_endpoint` helper — no duplicated intersection math. **Deferred:** trimming/
+  extending/filleting *arc entities* (the cutter/boundary may be a curve, but the
+  entity being modified must currently be a line).
+
+## Honest command feedback + polyline-corner Modify (Phase 10.1)
+
+Follow-up after testing Modify on a **rectangle** (which is a single closed
+polyline, not four lines):
+
+* **The false-success bug.** Pick-based ops (Fillet/Chamfer/Extend/Trim) only
+  handled `Line` entities, so they silently no-op'd on a polyline while the
+  command still echoed "Filleted." The command line (UI thread) cannot see the
+  engine outcome, so it was *asserting* success.
+* **Honest status channel.** `RenderSnapshot` now carries a `status` string +
+  `status_version`; the geometry thread's `report()` records what each op actually
+  did (success or a specific reason it couldn't), published with the snapshot. The
+  viewport copies it; `MainWindow`'s timer echoes each new message once to the
+  command line. Pick-based commands no longer echo a guessed result — the engine
+  tells the truth.
+* **Polyline-corner Fillet/Chamfer.** When both picks land on the same polyline,
+  the engine finds the two segments (`nearest_pl_segment`), their shared vertex
+  (`shared_vertex`), and rewrites the vertex list: Chamfer replaces the corner
+  with two bevel points; Fillet replaces it with a tangent arc approximated by
+  vertices (our polylines are pure point lists — no arc bulges). Two-line Fillet/
+  Chamfer are unchanged. **Deferred:** trimming/extending a polyline/arc *entity*
+  (reported honestly), and true arc-bulge polyline fillets.
+* **CHAMFER Angle method.** `CHAMFER` now offers `[Angle]` (chamfer length +
+  angle, default 45°) alongside the two-distance method.
+* **Verified end-to-end.** A real-window `MUSACAD_SELFTEST` (default runtime
+  state — command line focused/empty) drives ARRAY and CHAMFER through the command
+  line and confirms the rendered geometry changes (vertex count) **and** the
+  engine's result reaches the command-line scrollback, including the honest
+  "pick two adjacent edges" failure. Scale/Array were never broken (engine + GUI
+  confirmed); the original report conflated them with the polyline no-op.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -499,6 +560,11 @@ preview + ghost + selection rectangle all active.
   filter (verified on the real window); snap markers strengthened (bright/bold/
   larger, centralized theme); rollover hover-highlight (render-side, three
   distinct states). 112 unit tests pass under ASan + TSan.
+
+* **Phase 10 — complete:** the Modify suite — ROTATE, SCALE, ARRAY (rect+polar),
+  EXTEND, TRIM (exact, line entities), FILLET (line/line incl. tangent arc),
+  CHAMFER — on shared `NativeKernel2D` intersection primitives, each one undoable
+  group, wired to ribbon + alias. 124 unit tests pass under ASan + TSan.
 
 ## Known deferrals
 

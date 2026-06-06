@@ -30,7 +30,9 @@ int main(int argc, char* argv[]) {
     // Real-window self-test for the Delete-key route (Phase 9).
     if (qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
         QTimer::singleShot(900, &window, [&window, &app] {
-            const bool ok = window.selftest_delete();
+            const bool ok_delete = window.selftest_delete();
+            const bool ok_modify = window.selftest_modify();
+            const bool ok = ok_delete && ok_modify;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

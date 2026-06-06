@@ -328,22 +328,36 @@ void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
         draw_world(snapshot.selected_line_vertices, kSelectColor);
     }
 
-    // Move/mirror ghost: transform the selected geometry render-side.
+    // Ghost: transform the selected geometry render-side (move/mirror/rotate/scale).
     if (overlay_.ghost_mode != 0 && !snapshot.selected_line_vertices.empty()) {
         std::vector<core::Vec2> ghost;
         ghost.reserve(snapshot.selected_line_vertices.size());
-        if (overlay_.ghost_mode == 1) {
+        const auto& src = snapshot.selected_line_vertices;
+        if (overlay_.ghost_mode == 1) { // move
             const core::Vec2 d = overlay_.ghost_b - overlay_.ghost_a;
-            for (const core::Vec2& v : snapshot.selected_line_vertices) {
+            for (const core::Vec2& v : src) {
                 ghost.push_back(v + d);
             }
-        } else { // mirror across ghost_a..ghost_b
+        } else if (overlay_.ghost_mode == 2) { // mirror across ghost_a..ghost_b
             const core::Vec2 dir = core::normalized(overlay_.ghost_b - overlay_.ghost_a);
-            for (const core::Vec2& v : snapshot.selected_line_vertices) {
+            for (const core::Vec2& v : src) {
                 const core::Vec2 ap = v - overlay_.ghost_a;
                 const double t = core::dot(ap, dir);
                 const core::Vec2 proj = overlay_.ghost_a + dir * t;
                 ghost.push_back(proj * 2.0 - v);
+            }
+        } else if (overlay_.ghost_mode == 3) { // rotate about ghost_a
+            const double cs = std::cos(overlay_.ghost_param);
+            const double sn = std::sin(overlay_.ghost_param);
+            for (const core::Vec2& v : src) {
+                const core::Vec2 d = v - overlay_.ghost_a;
+                ghost.push_back({overlay_.ghost_a.x + d.x * cs - d.y * sn,
+                                 overlay_.ghost_a.y + d.x * sn + d.y * cs});
+            }
+        } else { // scale about ghost_a
+            const double f = overlay_.ghost_param;
+            for (const core::Vec2& v : src) {
+                ghost.push_back(overlay_.ghost_a + (v - overlay_.ghost_a) * f);
             }
         }
         draw_world(ghost, kGhostColor);

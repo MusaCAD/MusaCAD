@@ -142,11 +142,72 @@ struct TrimPickCommand {
     std::uint64_t group = 0;
 };
 
+/// Rotate the selection by `angle` (radians) about `base`.
+struct RotateSelectionCommand {
+    Vec2 base;
+    double angle = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// Scale the selection by `factor` about `base`.
+struct ScaleSelectionCommand {
+    Vec2 base;
+    double factor = 1.0;
+    std::uint64_t group = 0;
+};
+
+/// Rectangular array of the selection: rows x cols, spaced by (dx, dy).
+struct ArrayRectCommand {
+    int rows = 1;
+    int cols = 1;
+    double dx = 0.0;
+    double dy = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// Polar array of the selection: `count` copies around `center` spanning
+/// `total_angle` (radians); `rotate_items` rotates each copy to match.
+struct ArrayPolarCommand {
+    Vec2 center;
+    int count = 1;
+    double total_angle = 0.0;
+    bool rotate_items = true;
+    std::uint64_t group = 0;
+};
+
+/// Extend the (line) entity nearest `pick` to the nearest boundary edge.
+struct ExtendPickCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// Fillet two picked lines with a tangent arc of `radius` (0 = clean corner).
+struct FilletPickCommand {
+    Vec2 pick1;
+    Vec2 pick2;
+    double radius = 0.0;
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// Chamfer two picked lines, beveling `dist1`/`dist2` from the corner.
+struct ChamferPickCommand {
+    Vec2 pick1;
+    Vec2 pick2;
+    double dist1 = 0.0;
+    double dist2 = 0.0;
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
+
 using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
                  ErasePickCommand, UndoLastGroupCommand, RedoLastGroupCommand, UndoLastOpCommand,
                  SetCursorCommand, SelectPickCommand, SelectWindowCommand, SelectAllCommand,
                  ClearSelectionCommand, EraseSelectionCommand, MoveSelectionCommand,
-                 CopySelectionCommand, MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand>;
+                 CopySelectionCommand, MirrorSelectionCommand, OffsetPickCommand, TrimPickCommand,
+                 RotateSelectionCommand, ScaleSelectionCommand, ArrayRectCommand, ArrayPolarCommand,
+                 ExtendPickCommand, FilletPickCommand, ChamferPickCommand>;
 
 } // namespace musacad::core

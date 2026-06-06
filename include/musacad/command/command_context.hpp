@@ -22,6 +22,8 @@ enum class PreviewKind {
     Arc,        ///< 3-point arc through points (1 or 2) + the cursor
     Move,       ///< ghost of the selection translated by (cursor - points[0])
     Mirror,     ///< ghost of the selection reflected across points[0]..cursor
+    Rotate,     ///< ghost of the selection rotated about points[0] by angle to cursor
+    Scale,      ///< ghost of the selection scaled about points[0] by |cursor - base|
 };
 
 struct PreviewSpec {

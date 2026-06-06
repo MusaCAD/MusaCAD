@@ -82,6 +82,10 @@ void CommandLineWidget::append_line(const std::string& line) {
     scrollback_->appendPlainText(QString::fromStdString(line));
 }
 
+std::string CommandLineWidget::debug_scrollback() const {
+    return scrollback_->toPlainText().toStdString();
+}
+
 void CommandLineWidget::set_prompt(const std::string& prompt) {
     prompt_text_ = QString::fromStdString(prompt);
     prompt_label_->setText(prompt_text_);

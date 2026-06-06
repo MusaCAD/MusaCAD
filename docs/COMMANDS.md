@@ -35,17 +35,22 @@ suggests both); aliases are case-insensitive.
 | COPY | CO / CP | Implemented |
 | MIRROR | MI | Implemented |
 | OFFSET (line/circle/arc/polyline) | O | Implemented |
-| TRIM (lines, to nearest intersection) | TR | Implemented (subset) |
-| TRIM (arcs/circles/curves) | TR | Planned (Phase 8) |
-| ROTATE | RO | Planned (Phase 8) |
-| SCALE | SC | Planned (Phase 8) |
-| EXTEND | EX | Planned (Phase 8) |
-| FILLET | F | Planned (Phase 8) |
-| CHAMFER | CHA | Planned (Phase 8) |
-| ARRAY | AR | Planned (Phase 8) |
-| STRETCH | S | Planned (Phase 8) |
-| EXPLODE | X | Planned (Phase 8) |
-| JOIN | J | Planned (Phase 8) |
+| ROTATE | RO | Implemented |
+| SCALE | SC | Implemented |
+| ARRAY (rectangular + polar, command-line) | AR | Implemented |
+| TRIM a line (cut by line/circle/arc edges) | TR | Implemented |
+| TRIM an arc/circle/polyline *entity* | TR | Partial (line entities only; curve entities deferred) |
+| EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
+| EXTEND an arc/polyline *entity* | EX | Partial (line entities only) |
+| FILLET (line/line; radius 0 or tangent arc) | F | Implemented |
+| FILLET (polyline corner; arc approximated by vertices) | F | Implemented |
+| FILLET (arc/curve cases) | F | Partial (line + polyline-corner only) |
+| CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
+| CHAMFER (polyline corner) | CHA | Implemented |
+| ARRAY dialog (interactive grid/preview) | AR | Planned (Phase 13) |
+| STRETCH | S | Planned (Phase 13) |
+| EXPLODE | X | Planned (Phase 13) |
+| JOIN | J | Planned (Phase 13) |
 
 ## Annotate / Dimensions
 
@@ -165,4 +170,6 @@ button dropdown).
 | Table-driven aliases | Implemented |
 | Autocomplete dropdown (registry-driven) | Implemented |
 | Up/Down history, ENTER repeats last | Implemented |
-| Dynamic input tooltips at cursor | Planned (Phase 9) |
+| Honest command results (engine echoes what actually happened) | Implemented |
+| AutoCAD-style modal/docked input dialog boxes | Planned (next phase) |
+| Dynamic input tooltips at cursor | Planned (Phase 13) |

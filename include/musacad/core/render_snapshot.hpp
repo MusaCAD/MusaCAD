@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "musacad/core/entity_handle.hpp"
@@ -54,6 +55,14 @@ struct RenderSnapshot {
     bool has_hover = false;
     std::vector<Vec2> hover_line_vertices;
 
+    // Last command-result message from the geometry thread (e.g. "Filleted." or
+    // "Nothing to fillet."). `status_version` bumps on each new message so the UI
+    // can echo it once. Honest feedback: set by the op that actually ran, so the
+    // command line reflects what the engine did -- not what the UI hoped. Not part
+    // of the checksum.
+    std::string status;
+    std::uint64_t status_version = 0;
+
     void clear() noexcept {
         version = 0;
         geometry_version = 0;
@@ -71,6 +80,8 @@ struct RenderSnapshot {
         hover = EntityHandle{};
         has_hover = false;
         hover_line_vertices.clear();
+        status.clear();
+        status_version = 0;
     }
 
     /// FNV-1a over the version and payload. Cheap and order-sensitive; enough to

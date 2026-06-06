@@ -151,6 +151,17 @@ void ViewportWindow::render_loop(std::stop_token token) {
             snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
         }
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
+        line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
+                                 std::memory_order_relaxed);
+
+        // Surface the engine's command-result message (honest feedback) once.
+        if (snap.status_version != status_version_.load(std::memory_order_relaxed)) {
+            {
+                std::scoped_lock lock(status_mutex_);
+                status_ = snap.status;
+            }
+            status_version_.store(snap.status_version, std::memory_order_relaxed);
+        }
 
         {
             render::RenderOverlay ov;
@@ -396,6 +407,24 @@ void ViewportWindow::rebuild_overlay() {
                 ov.ghost_mode = (pv.kind == command::PreviewKind::Move) ? 1 : 2;
                 ov.ghost_a = pts[0];
                 ov.ghost_b = cur;
+                seg.push_back(pts[0]);
+                seg.push_back(cur);
+            }
+            break;
+        case command::PreviewKind::Rotate:
+            if (!pts.empty()) {
+                ov.ghost_mode = 3;
+                ov.ghost_a = pts[0];
+                ov.ghost_param = std::atan2(cur.y - pts[0].y, cur.x - pts[0].x);
+                seg.push_back(pts[0]);
+                seg.push_back(cur);
+            }
+            break;
+        case command::PreviewKind::Scale:
+            if (!pts.empty()) {
+                ov.ghost_mode = 4;
+                ov.ghost_a = pts[0];
+                ov.ghost_param = core::distance(pts[0], cur); // reference length 1
                 seg.push_back(pts[0]);
                 seg.push_back(cur);
             }

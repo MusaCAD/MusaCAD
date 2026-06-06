@@ -43,6 +43,10 @@ public:
     /// Test hook: focus the input and set its text (used by MUSACAD_SELFTEST).
     void debug_set_input(const QString& text);
 
+    /// Test hook: the full scrollback text (used by MUSACAD_SELFTEST to verify the
+    /// engine's command-result messages reach the command line).
+    [[nodiscard]] std::string debug_scrollback() const;
+
     /// When true, ENTER always accepts the highlighted suggestion. Default false
     /// (AutoCAD behavior: ENTER runs the typed command if complete, else accepts
     /// the highlighted suggestion).

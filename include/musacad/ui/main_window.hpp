@@ -44,6 +44,11 @@ public:
     /// confirm it is erased. Returns true on success.
     bool selftest_delete();
 
+    /// Real-window self-test: drive Scale (on a selected polyline) and Chamfer (a
+    /// rectangle corner) through the real command line, and confirm the geometry
+    /// changes AND the engine's result message reaches the command-line scrollback.
+    bool selftest_modify();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -64,6 +69,7 @@ private:
     QLabel* coord_label_ = nullptr;
     QTimer* title_timer_ = nullptr;
     std::vector<QToolButton*> selection_required_buttons_;
+    std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
 
     ViewportModes modes_;
     QAction* osnap_action_ = nullptr;

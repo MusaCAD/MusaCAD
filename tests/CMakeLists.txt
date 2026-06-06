@@ -68,6 +68,11 @@ add_executable(musacad_tests
     test_osnap_types.cpp
     test_delete_selection.cpp
     test_hover.cpp
+    test_transform.cpp
+    test_kernel_intersect.cpp
+    test_modify_corner.cpp
+    test_modify_commands.cpp
+    test_modify_polyline.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

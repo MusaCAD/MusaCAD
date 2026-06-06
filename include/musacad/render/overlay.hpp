@@ -23,10 +23,12 @@ struct RenderOverlay {
 
     /// Ghost transform applied by the renderer to the snapshot's selected
     /// geometry: 0 = none, 1 = move (translate by ghost_b - ghost_a),
-    /// 2 = mirror (reflect across the line ghost_a..ghost_b).
+    /// 2 = mirror (reflect across ghost_a..ghost_b), 3 = rotate about ghost_a by
+    /// ghost_param radians, 4 = scale about ghost_a by ghost_param.
     int ghost_mode = 0;
     core::Vec2 ghost_a{};
     core::Vec2 ghost_b{};
+    double ghost_param = 0.0;
 
     void clear() noexcept {
         preview_segments.clear();

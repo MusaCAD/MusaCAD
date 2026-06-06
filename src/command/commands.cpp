@@ -565,7 +565,7 @@ void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
     } else {
         ctx.submit(core::OffsetPickCommand{object_pick_, ctx.pick_radius(), distance_, *p,
                                            ctx.group_id()});
-        ctx.echo("Offset created.");
+        // Result is echoed by the engine (honest status), not assumed here.
         state_ = State::Object;
         ctx.set_prompt("Select object to offset: ");
     }
@@ -593,10 +593,342 @@ void TrimCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
-    ctx.echo("Trimmed.");
+    // Result is echoed by the engine (honest status), not assumed here.
 }
 
 void TrimCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// ROTATE
+// ---------------------------------------------------------------------------
+void RotateCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run ROTATE.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify base point: ");
+}
+
+void RotateCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!base_) {
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Rotate, {*p}});
+            ctx.set_prompt("Specify rotation angle: ");
+        }
+        return;
+    }
+    const std::string t = trimmed(text);
+    double deg = 0.0;
+    double angle = 0.0;
+    if (parse_number(t, deg)) {
+        angle = core::to_radians(deg); // typed number = degrees
+    } else if (const auto p = read_point(ctx, text)) {
+        angle = std::atan2(p->y - base_->y, p->x - base_->x); // picked = angle to point
+    } else {
+        return;
+    }
+    ctx.submit(core::RotateSelectionCommand{*base_, angle, ctx.group_id()});
+    ctx.echo("Rotated.");
+    done_ = true;
+}
+
+void RotateCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// SCALE
+// ---------------------------------------------------------------------------
+void ScaleCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run SCALE.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify base point: ");
+}
+
+void ScaleCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!base_) {
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Scale, {*p}});
+            ctx.set_prompt("Specify scale factor: ");
+        }
+        return;
+    }
+    const std::string t = trimmed(text);
+    double factor = 0.0;
+    if (parse_number(t, factor)) {
+        // typed factor
+    } else if (const auto p = read_point(ctx, text)) {
+        factor = core::distance(*base_, *p); // picked = distance (reference length 1)
+    } else {
+        return;
+    }
+    if (!(factor > 0.0)) {
+        ctx.echo("Scale factor must be positive.");
+        return;
+    }
+    ctx.submit(core::ScaleSelectionCommand{*base_, factor, ctx.group_id()});
+    ctx.echo("Scaled.");
+    done_ = true;
+}
+
+void ScaleCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// ARRAY (command-line driven: rectangular or polar)
+// ---------------------------------------------------------------------------
+namespace {
+int parse_int(const std::string& t, int fallback) {
+    double d = 0.0;
+    return parse_number(t, d) ? static_cast<int>(std::lround(d)) : fallback;
+}
+} // namespace
+
+void ArrayCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run ARRAY.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    ctx.set_prompt("Enter array type [Rectangular/Polar] <R>: ");
+}
+
+void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Type: {
+        const std::string u = upper(t);
+        if (u == "P" || u == "POLAR") {
+            state_ = State::Center;
+            ctx.set_prompt("Specify center point of array: ");
+        } else {
+            state_ = State::Rows;
+            ctx.set_prompt("Enter number of rows <1>: ");
+        }
+        return;
+    }
+    case State::Rows:
+        rows_ = std::max(1, parse_int(t, 1));
+        state_ = State::Cols;
+        ctx.set_prompt("Enter number of columns <1>: ");
+        return;
+    case State::Cols:
+        cols_ = std::max(1, parse_int(t, 1));
+        state_ = State::RowSpace;
+        ctx.set_prompt("Enter row spacing (Y): ");
+        return;
+    case State::RowSpace:
+        if (!parse_number(t, row_space_)) {
+            ctx.echo("Enter a number for row spacing.");
+            return;
+        }
+        state_ = State::ColSpace;
+        ctx.set_prompt("Enter column spacing (X): ");
+        return;
+    case State::ColSpace: {
+        double col_space = 0.0;
+        if (!parse_number(t, col_space)) {
+            ctx.echo("Enter a number for column spacing.");
+            return;
+        }
+        ctx.submit(core::ArrayRectCommand{rows_, cols_, col_space, row_space_, ctx.group_id()});
+        ctx.echo("Array created.");
+        done_ = true;
+        return;
+    }
+    case State::Center:
+        if (const auto p = read_point(ctx, text)) {
+            center_ = *p;
+            state_ = State::Count;
+            ctx.set_prompt("Enter number of items: ");
+        }
+        return;
+    case State::Count:
+        count_ = std::max(1, parse_int(t, 1));
+        state_ = State::Fill;
+        ctx.set_prompt("Specify angle to fill in degrees <360>: ");
+        return;
+    case State::Fill: {
+        const double deg = t.empty() ? 360.0 : [&] {
+            double d = 360.0;
+            if (!parse_number(t, d)) {
+                d = 360.0;
+            }
+            return d;
+        }();
+        fill_ = core::to_radians(deg);
+        state_ = State::RotateItems;
+        ctx.set_prompt("Rotate items as copied? [Yes/No] <Yes>: ");
+        return;
+    }
+    case State::RotateItems: {
+        const std::string u = upper(t);
+        const bool rotate = !(u == "N" || u == "NO");
+        ctx.submit(core::ArrayPolarCommand{center_, count_, fill_, rotate, ctx.group_id()});
+        ctx.echo("Polar array created.");
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void ArrayCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// EXTEND (pick the object to extend; repeats)
+// ---------------------------------------------------------------------------
+void ExtendCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Select object to extend: ");
+}
+
+void ExtendCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::ExtendPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+        // Result is echoed by the engine (honest status), not assumed here.
+    }
+}
+
+void ExtendCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// FILLET (radius, then two lines)
+// ---------------------------------------------------------------------------
+void FilletCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Specify fillet radius <0>: ");
+}
+
+void FilletCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (state_ == State::Radius) {
+        double r = 0.0;
+        if (!t.empty() && parse_number(t, r)) {
+            radius_ = std::max(0.0, r);
+        }
+        state_ = State::First;
+        ctx.set_prompt("Select first line: ");
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::First) {
+        pick1_ = *p;
+        state_ = State::Second;
+        ctx.set_prompt("Select second line: ");
+    } else {
+        ctx.submit(core::FilletPickCommand{pick1_, *p, radius_, ctx.pick_radius(), ctx.group_id()});
+        // Result is echoed by the engine (honest status), not assumed here.
+        done_ = true;
+    }
+}
+
+void FilletCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// CHAMFER (Distance method, or Angle method defaulting to 45 degrees)
+// ---------------------------------------------------------------------------
+void ChamferCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Specify first chamfer distance or [Angle] <0>: ");
+}
+
+void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Dist1:
+        if (upper(t) == "A" || upper(t) == "ANGLE") {
+            state_ = State::AngleLen;
+            ctx.set_prompt("Specify chamfer length on the first line <0>: ");
+            return;
+        }
+        {
+            double d = 0.0;
+            if (!t.empty() && parse_number(t, d)) {
+                dist1_ = std::max(0.0, d);
+            }
+        }
+        state_ = State::Dist2;
+        ctx.set_prompt("Specify second chamfer distance <" + std::to_string(dist1_) + ">: ");
+        return;
+    case State::Dist2: {
+        double d = dist1_;
+        if (!t.empty() && !parse_number(t, d)) {
+            d = dist1_;
+        }
+        dist2_ = std::max(0.0, d);
+        state_ = State::First;
+        ctx.set_prompt("Select first line: ");
+        return;
+    }
+    case State::AngleLen:
+        if (!t.empty() && !parse_number(t, length_)) {
+            length_ = 0.0;
+        }
+        length_ = std::max(0.0, length_);
+        state_ = State::AngleVal;
+        ctx.set_prompt("Specify chamfer angle from the first line <45>: ");
+        return;
+    case State::AngleVal: {
+        double deg = 45.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            deg = 45.0;
+        }
+        // Distance on line 1 is the length; on line 2 it is length * tan(angle).
+        dist1_ = length_;
+        dist2_ = length_ * std::tan(core::to_radians(deg));
+        state_ = State::First;
+        ctx.set_prompt("Select first line: ");
+        return;
+    }
+    case State::First:
+        if (const auto p = read_point(ctx, text)) {
+            pick1_ = *p;
+            state_ = State::Second;
+            ctx.set_prompt("Select second line: ");
+        }
+        return;
+    case State::Second:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::ChamferPickCommand{pick1_, *p, dist1_, dist2_, ctx.pick_radius(),
+                                                ctx.group_id()});
+            // Result is echoed by the engine (honest status), not assumed here.
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void ChamferCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

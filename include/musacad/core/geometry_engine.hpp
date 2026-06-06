@@ -106,6 +106,16 @@ private:
     void apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group);
     void apply_offset(Vec2 pick, double radius, double distance, Vec2 side, std::uint64_t group);
     void apply_trim(Vec2 pick, double radius, std::uint64_t group);
+    void apply_rotate(Vec2 base, double angle, std::uint64_t group);
+    void apply_scale(Vec2 base, double factor, std::uint64_t group);
+    void apply_array_rect(int rows, int cols, double dx, double dy, std::uint64_t group);
+    void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
+                           std::uint64_t group);
+    void apply_extend(Vec2 pick, double radius, std::uint64_t group);
+    void apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
+                      std::uint64_t group);
+    void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
+                       std::uint64_t group);
 
     GeometryStore store_;
     NativeKernel2D kernel_;
@@ -120,6 +130,12 @@ private:
     RenderSnapshot geom_cache_; // payload rebuilt only when geometry changes
     bool geom_dirty_ = true;
     std::uint64_t geom_version_ = 0; // bumps only when geometry changes
+
+    // Honest command-result feedback, published in every snapshot. `report()`
+    // records what an op actually did so the command line can echo the truth.
+    void report(std::string message);
+    std::string status_;
+    std::uint64_t status_version_ = 0;
 
     Vec2 cursor_{};
     double pick_radius_ = 0.0;

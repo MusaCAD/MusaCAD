@@ -92,6 +92,13 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"MI", "MIRROR"}, [] { return std::make_unique<MirrorCommand>(); });
     r.register_command({"O", "OFFSET"}, [] { return std::make_unique<OffsetCommand>(); });
     r.register_command({"TR", "TRIM"}, [] { return std::make_unique<TrimCommand>(); });
+    // Modify (Phase 10).
+    r.register_command({"RO", "ROTATE"}, [] { return std::make_unique<RotateCommand>(); });
+    r.register_command({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); });
+    r.register_command({"AR", "ARRAY"}, [] { return std::make_unique<ArrayCommand>(); });
+    r.register_command({"EX", "EXTEND"}, [] { return std::make_unique<ExtendCommand>(); });
+    r.register_command({"F", "FILLET"}, [] { return std::make_unique<FilletCommand>(); });
+    r.register_command({"CHA", "CHAMFER"}, [] { return std::make_unique<ChamferCommand>(); });
     return r;
 }
 

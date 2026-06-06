@@ -94,6 +94,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
         }
+        // Echo each new engine command-result (honest feedback) once.
+        const std::uint64_t sv = viewport_->status_version();
+        if (sv != last_status_version_) {
+            last_status_version_ = sv;
+            const std::string msg = viewport_->last_status();
+            if (!msg.empty() && command_widget_ != nullptr) {
+                command_widget_->append_line(msg);
+            }
+        }
     });
     title_timer_->start(100);
 }
@@ -194,8 +203,14 @@ void MainWindow::build_ribbon() {
     QToolButton* mirror_btn = add_cmd(modify, QStringLiteral("mirror"), QStringLiteral("Mirror"), "MI");
     add_cmd(modify, QStringLiteral("offset"), QStringLiteral("Offset"), "O"); // pick-based
     add_cmd(modify, QStringLiteral("trim"), QStringLiteral("Trim"), "TR");    // pick-based
-    // Move/Copy/Mirror require an existing selection.
-    selection_required_buttons_ = {move_btn, copy_btn, mirror_btn};
+    QToolButton* rotate_btn = add_cmd(modify, QStringLiteral("rotate"), QStringLiteral("Rotate"), "RO");
+    QToolButton* scale_btn = add_cmd(modify, QStringLiteral("scale"), QStringLiteral("Scale"), "SC");
+    QToolButton* array_btn = add_cmd(modify, QStringLiteral("array"), QStringLiteral("Array"), "AR");
+    add_cmd(modify, QStringLiteral("extend"), QStringLiteral("Extend"), "EX");   // pick-based
+    add_cmd(modify, QStringLiteral("fillet"), QStringLiteral("Fillet"), "F");    // pick-based
+    add_cmd(modify, QStringLiteral("chamfer"), QStringLiteral("Chamfer"), "CHA"); // pick-based
+    // Move/Copy/Mirror/Rotate/Scale/Array operate on an existing selection.
+    selection_required_buttons_ = {move_btn, copy_btn, mirror_btn, rotate_btn, scale_btn, array_btn};
     for (QToolButton* b : selection_required_buttons_) {
         b->setEnabled(false);
     }
@@ -458,6 +473,89 @@ bool MainWindow::selftest_delete() {
     command_widget_->debug_set_input(QString());
 
     return erased && guard_held;
+}
+
+bool MainWindow::selftest_modify() {
+    using core::AddPolylineCommand;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    const auto type = [this](const char* line) { processor_->submit_line(line); };
+    bool all = true;
+
+    // A live cursor sets the pick aperture; headless, set one so picks resolve.
+    processor_->set_pick_radius(1.0);
+
+    // Start clean (selftest_delete may have left entities behind).
+    engine_->submit(core::EraseCommand{core::EraseScope::All});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // A rectangle is a closed polyline -> 4 segments = 8 line vertices.
+    engine_->submit(AddPolylineCommand{{{0, 0}, {10, 0}, {10, 5}, {0, 5}}, true, 7001});
+    if (!pump([this] { return viewport_->line_vertex_count() == 8; })) {
+        std::printf("[selftest] FAIL: rectangle not drawn\n");
+        return false;
+    }
+
+    // ARRAY (selection-based) must visibly grow the rendered geometry (8 -> 32).
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 1; });
+    processor_->set_selection_count(viewport_->selection_count());
+    command_widget_->debug_set_input(QString());
+    command_widget_->focus_input();
+    type("AR");
+    type("R");
+    type("2");
+    type("2");
+    type("20");
+    type("20");
+    const bool arrayed = pump([this] { return viewport_->line_vertex_count() == 32; });
+    std::printf("[selftest] ARRAY reflects in GUI (8->32 verts): %s\n", arrayed ? "PASS" : "FAIL");
+    all = all && arrayed;
+    processor_->undo();
+    pump([this] { return viewport_->line_vertex_count() == 8; });
+
+    // CHAMFER a rectangle corner via the command line: geometry must change
+    // (corner -> two vertices => 5-vertex closed polyline = 10 line verts) AND the
+    // engine's honest result must reach the command-line scrollback.
+    type("CHA");
+    type("2");
+    type("2");
+    type("5,0");    // bottom edge
+    type("10,2.5"); // right edge -> corner (10,0)
+    const bool chamfered = pump([this] { return viewport_->line_vertex_count() == 10; });
+    const bool status_ok = pump([this] {
+        return command_widget_->debug_scrollback().find("Chamfered.") != std::string::npos;
+    });
+    std::printf("[selftest] CHAMFER reflects in GUI + status echoed: %s\n",
+                (chamfered && status_ok) ? "PASS" : "FAIL");
+    all = all && chamfered && status_ok;
+    processor_->undo();
+    pump([this] { return viewport_->line_vertex_count() == 8; });
+
+    // Honest failure: picking two non-adjacent edges changes nothing and says so.
+    type("CHA");
+    type("2");
+    type("2");
+    type("5,0"); // bottom edge
+    type("5,5"); // top edge (opposite, not adjacent)
+    const bool honest = pump([this] {
+        return command_widget_->debug_scrollback().find("adjacent") != std::string::npos;
+    });
+    const bool unchanged = viewport_->line_vertex_count() == 8;
+    std::printf("[selftest] CHAMFER honest failure (no change + message): %s\n",
+                (honest && unchanged) ? "PASS" : "FAIL");
+    all = all && honest && unchanged;
+
+    return all;
 }
 
 void MainWindow::seed_demo_scene() {

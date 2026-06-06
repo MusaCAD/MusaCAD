@@ -53,6 +53,23 @@ public:
         return selection_count_.load(std::memory_order_relaxed);
     }
 
+    /// Latest engine command-result message and its monotonically-rising version
+    /// (so the command line can echo each new result once). Honest feedback from
+    /// the geometry thread via the snapshot.
+    [[nodiscard]] std::uint64_t status_version() const noexcept {
+        return status_version_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::string last_status() const {
+        std::scoped_lock lock(status_mutex_);
+        return status_;
+    }
+
+    /// Number of line-segment vertices in the last consumed snapshot (test hook:
+    /// proves geometry edits actually reach the rendered snapshot).
+    [[nodiscard]] int line_vertex_count() const noexcept {
+        return line_vertex_count_.load(std::memory_order_relaxed);
+    }
+
     /// Requests the camera frame this world-space AABB once the viewport size is
     /// known (applied on the first rendered frame).
     void set_initial_view(render::Vec2 min_world, render::Vec2 max_world) noexcept;
@@ -91,6 +108,12 @@ private:
     core::Vec2 sel_start_world_{};
     core::Vec2 sel_cur_world_{};
     std::atomic<int> selection_count_{0};
+    std::atomic<int> line_vertex_count_{0};
+
+    // Engine command-result status, copied from the published snapshot.
+    mutable std::mutex status_mutex_;
+    std::string status_;
+    std::atomic<std::uint64_t> status_version_{0};
 
     std::atomic<int> fb_width_{1};
     std::atomic<int> fb_height_{1};

@@ -185,4 +185,96 @@ private:
     bool done_ = false;
 };
 
+class RotateCommand final : public ICommand {
+public:
+    std::string name() const override { return "ROTATE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::optional<core::Vec2> base_;
+    bool done_ = false;
+};
+
+class ScaleCommand final : public ICommand {
+public:
+    std::string name() const override { return "SCALE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::optional<core::Vec2> base_;
+    bool done_ = false;
+};
+
+class ArrayCommand final : public ICommand {
+public:
+    std::string name() const override { return "ARRAY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Type, Rows, Cols, RowSpace, ColSpace, Center, Count, Fill, RotateItems };
+    State state_ = State::Type;
+    int rows_ = 1;
+    int cols_ = 1;
+    double row_space_ = 0.0;
+    int count_ = 1;
+    double fill_ = 0.0;
+    core::Vec2 center_{};
+    bool done_ = false;
+};
+
+class ExtendCommand final : public ICommand {
+public:
+    std::string name() const override { return "EXTEND"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+class FilletCommand final : public ICommand {
+public:
+    std::string name() const override { return "FILLET"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Radius, First, Second } state_ = State::Radius;
+    double radius_ = 0.0;
+    core::Vec2 pick1_{};
+    bool done_ = false;
+};
+
+class ChamferCommand final : public ICommand {
+public:
+    std::string name() const override { return "CHAMFER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    // Distance method (Dist1->Dist2) or Angle method (AngleLen->AngleVal, default
+    // 45 degrees), then pick the two lines.
+    enum class State { Dist1, Dist2, AngleLen, AngleVal, First, Second } state_ = State::Dist1;
+    double dist1_ = 0.0;
+    double dist2_ = 0.0;
+    double length_ = 0.0; // chamfer length on the first line (Angle method)
+    core::Vec2 pick1_{};
+    bool done_ = false;
+};
+
 } // namespace musacad::command

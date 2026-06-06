@@ -189,6 +189,44 @@ void push_unique(std::vector<Vec2>& out, std::size_t start, Vec2 p) {
     out.push_back(p);
 }
 
+bool angle_on_arc(const ArcData& arc, Vec2 p) {
+    const double sweep = normalized_sweep(arc.start_angle, arc.end_angle);
+    double rel = std::atan2(p.y - arc.center.y, p.x - arc.center.x) - arc.start_angle;
+    while (rel < 0.0) {
+        rel += kTwoPi;
+    }
+    return rel <= sweep + 1e-9;
+}
+
+/// Intersections of the segment p0-p1 with a circle (centre c, radius r), kept
+/// only within the segment. When `arc` is non-null, points are further filtered
+/// to the arc's sweep. Exact (analytic).
+void seg_circle_hits(Vec2 p0, Vec2 p1, Vec2 c, double r, std::vector<Vec2>& out, std::size_t base,
+                     const ArcData* arc) {
+    const Vec2 d = p1 - p0;
+    const double A = dot(d, d);
+    if (A < kIntersectEps) {
+        return;
+    }
+    const Vec2 f = p0 - c;
+    const double B = 2.0 * dot(f, d);
+    const double C = dot(f, f) - r * r;
+    double disc = B * B - 4.0 * A * C;
+    if (disc < 0.0) {
+        return;
+    }
+    disc = std::sqrt(disc);
+    for (const double t : {(-B - disc) / (2.0 * A), (-B + disc) / (2.0 * A)}) {
+        if (t < -1e-9 || t > 1.0 + 1e-9) {
+            continue;
+        }
+        const Vec2 p = p0 + d * t;
+        if (arc == nullptr || angle_on_arc(*arc, p)) {
+            push_unique(out, base, p);
+        }
+    }
+}
+
 } // namespace
 
 void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity, double tolerance,
@@ -376,6 +414,39 @@ void NativeKernel2D::intersect(const GeometryStore& store, EntityHandle a, Entit
     if (!store.is_valid(a) || !store.is_valid(b)) {
         return;
     }
+    const std::size_t base = out.size();
+
+    // Robust analytic paths for the common pairs (segment-bounded). Order a,b so
+    // a line, when present, is `a`.
+    EntityHandle e0 = a;
+    EntityHandle e1 = b;
+    if (e1.kind == EntityKind::Line && e0.kind != EntityKind::Line) {
+        std::swap(e0, e1);
+    }
+    if (e0.kind == EntityKind::Line) {
+        const LineData* l = store.line(e0);
+        if (e1.kind == EntityKind::Line) { // line x line (exact)
+            const LineData* m = store.line(e1);
+            Vec2 hit{};
+            if (segment_intersection(l->a, l->b, m->a, m->b, hit)) {
+                push_unique(out, base, hit);
+            }
+            return;
+        }
+        if (e1.kind == EntityKind::Circle) { // line x circle (exact)
+            const CircleData* c = store.circle(e1);
+            seg_circle_hits(l->a, l->b, c->center, c->radius, out, base, nullptr);
+            return;
+        }
+        if (e1.kind == EntityKind::Arc) { // line x arc (exact, sweep-filtered)
+            const ArcData* arc = store.arc(e1);
+            seg_circle_hits(l->a, l->b, arc->center, arc->radius, out, base, arc);
+            return;
+        }
+    }
+
+    // Fallback: tessellate both and cross every segment pair (arc x arc,
+    // polyline/spline pairs -- approximate to the tessellation tolerance).
     std::vector<Vec2> pa;
     std::vector<Vec2> pb;
     tessellate(store, a, kDefaultTessTolerance, pa);
@@ -383,7 +454,6 @@ void NativeKernel2D::intersect(const GeometryStore& store, EntityHandle a, Entit
     if (pa.size() < 2 || pb.size() < 2) {
         return; // point-like entities produce no intersection segments
     }
-    const std::size_t base = out.size();
     Vec2 hit{};
     for (std::size_t i = 1; i < pa.size(); ++i) {
         for (std::size_t j = 1; j < pb.size(); ++j) {
@@ -392,6 +462,42 @@ void NativeKernel2D::intersect(const GeometryStore& store, EntityHandle a, Entit
             }
         }
     }
+}
+
+bool NativeKernel2D::line_line_intersection(Vec2 a0, Vec2 a1, Vec2 b0, Vec2 b1, Vec2& out) {
+    const Vec2 r = a1 - a0;
+    const Vec2 s = b1 - b0;
+    const double rxs = cross(r, s);
+    if (std::abs(rxs) < 1e-12) {
+        return false; // parallel
+    }
+    const double t = cross(b0 - a0, s) / rxs;
+    out = a0 + r * t;
+    return true;
+}
+
+int NativeKernel2D::line_circle_intersection(Vec2 a, Vec2 b, Vec2 center, double radius, Vec2& p0,
+                                             Vec2& p1) {
+    const Vec2 d = b - a;
+    const double A = dot(d, d);
+    if (A < 1e-18) {
+        return 0;
+    }
+    const Vec2 f = a - center;
+    const double B = 2.0 * dot(f, d);
+    const double C = dot(f, f) - radius * radius;
+    double disc = B * B - 4.0 * A * C;
+    if (disc < 0.0) {
+        return 0;
+    }
+    if (disc < 1e-18) {
+        p0 = a + d * (-B / (2.0 * A));
+        return 1;
+    }
+    disc = std::sqrt(disc);
+    p0 = a + d * ((-B - disc) / (2.0 * A));
+    p1 = a + d * ((-B + disc) / (2.0 * A));
+    return 2;
 }
 
 } // namespace musacad::core

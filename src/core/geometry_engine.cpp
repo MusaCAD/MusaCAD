@@ -376,6 +376,94 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
         c);
 }
 
+void rotate_cmd(Command& c, Vec2 base, double ang) {
+    const double cs = std::cos(ang);
+    const double sn = std::sin(ang);
+    const auto rot = [&](Vec2 p) {
+        const Vec2 d = p - base;
+        return Vec2{base.x + d.x * cs - d.y * sn, base.y + d.x * sn + d.y * cs};
+    };
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand>) {
+                x.a = rot(x.a);
+                x.b = rot(x.b);
+            } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
+                x.center = rot(x.center);
+            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
+                x.center = rot(x.center);
+                x.start_angle += ang;
+                x.end_angle += ang;
+            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
+                for (Vec2& p : x.points) {
+                    p = rot(p);
+                }
+            }
+        },
+        c);
+}
+
+/// True if point p (assumed on the arc's circle) lies within the CCW sweep.
+bool angle_on_arc(const ArcData& arc, Vec2 p) {
+    double sweep = arc.end_angle - arc.start_angle;
+    while (sweep < 0.0) {
+        sweep += kTwoPi;
+    }
+    if (sweep <= 0.0) {
+        sweep = kTwoPi;
+    }
+    double rel = std::atan2(p.y - arc.center.y, p.x - arc.center.x) - arc.start_angle;
+    while (rel < 0.0) {
+        rel += kTwoPi;
+    }
+    return rel <= sweep + 1e-9;
+}
+
+/// A representative anchor point for an add-command (used by polar array when the
+/// items should orbit the centre without rotating themselves).
+Vec2 command_anchor(const Command& c) {
+    Vec2 out{0.0, 0.0};
+    std::visit(
+        [&](const auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand>) {
+                out = x.a;
+            } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
+                out = x.center;
+            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
+                out = x.center;
+            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
+                out = x.points.empty() ? Vec2{0.0, 0.0} : x.points.front();
+            }
+        },
+        c);
+    return out;
+}
+
+void scale_cmd(Command& c, Vec2 base, double f) {
+    const auto scl = [&](Vec2 p) { return base + (p - base) * f; };
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand>) {
+                x.a = scl(x.a);
+                x.b = scl(x.b);
+            } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
+                x.center = scl(x.center);
+                x.radius *= f;
+            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
+                x.center = scl(x.center);
+                x.radius *= f;
+            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
+                for (Vec2& p : x.points) {
+                    p = scl(p);
+                }
+            }
+        },
+        c);
+}
+
 } // namespace
 
 void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
@@ -428,10 +516,535 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
     geom_dirty_ = true;
 }
 
+void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group) {
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> out;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command result = original;
+        rotate_cmd(result, base, angle);
+        remove_indexed(h);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(result);
+        push_create_item(group, nh, result);
+        out.push_back(nh);
+    }
+    if (!out.empty()) {
+        selection_ = out;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) {
+    if (!(factor > 0.0)) {
+        return;
+    }
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> out;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command result = original;
+        scale_cmd(result, base, factor);
+        remove_indexed(h);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(result);
+        push_create_item(group, nh, result);
+        out.push_back(nh);
+    }
+    if (!out.empty()) {
+        selection_ = out;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy,
+                                      std::uint64_t group) {
+    rows = std::max(rows, 1);
+    cols = std::max(cols, 1);
+    const std::vector<EntityHandle> sel = selection_;
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            if (r == 0 && c == 0) {
+                continue; // the originals stay in place
+            }
+            const Vec2 d{static_cast<double>(c) * dx, static_cast<double>(r) * dy};
+            for (const EntityHandle h : sel) {
+                if (!store_.is_valid(h)) {
+                    continue;
+                }
+                Command copy = capture_entity(h);
+                translate_cmd(copy, d);
+                const EntityHandle nh = create_indexed(copy);
+                push_create_item(group, nh, copy);
+            }
+        }
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
+                                       bool rotate_items, std::uint64_t group) {
+    if (count < 2) {
+        return;
+    }
+    // Full circle distributes count items evenly; a partial fill spans the angle
+    // across (count-1) gaps (AutoCAD semantics).
+    const bool full = std::abs(std::abs(total_angle) - kTwoPi) < 1e-6;
+    const double step = full ? total_angle / static_cast<double>(count)
+                             : total_angle / static_cast<double>(count - 1);
+    const std::vector<EntityHandle> sel = selection_;
+    for (int i = 1; i < count; ++i) {
+        const double a = step * static_cast<double>(i);
+        for (const EntityHandle h : sel) {
+            if (!store_.is_valid(h)) {
+                continue;
+            }
+            Command copy = capture_entity(h);
+            if (rotate_items) {
+                rotate_cmd(copy, center, a);
+            } else {
+                // Move the copy around the circle without rotating the entity.
+                const Vec2 anchor = command_anchor(copy);
+                const double cs = std::cos(a);
+                const double sn = std::sin(a);
+                const Vec2 d = anchor - center;
+                const Vec2 moved{center.x + d.x * cs - d.y * sn, center.y + d.x * sn + d.y * cs};
+                translate_cmd(copy, moved - anchor);
+            }
+            const EntityHandle nh = create_indexed(copy);
+            push_create_item(group, nh, copy);
+        }
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group) {
+    const EntityHandle h = pick_nearest(pick, radius);
+    if (h.is_null()) {
+        report("Extend: nothing under the pick.");
+        return;
+    }
+    if (h.kind != EntityKind::Line) {
+        report("Extend: only line entities can be extended yet (closed shapes have no open end).");
+        return;
+    }
+    const LineData* l = store_.line(h);
+    const Vec2 a = l->a;
+    const Vec2 b = l->b;
+    // The end nearer the pick is the one that moves; extend away from the fixed end.
+    Vec2 mov = a;
+    Vec2 fix = b;
+    if (length_squared(pick - b) < length_squared(pick - a)) {
+        mov = b;
+        fix = a;
+    }
+    const Vec2 dir = normalized(mov - fix);
+
+    // Find the nearest boundary hit strictly forward of the moving end. Boundaries
+    // can be anywhere, so scan live entities (EXTEND is interactive/infrequent).
+    double best = std::numeric_limits<double>::infinity();
+    Vec2 target{};
+    bool found = false;
+    const auto consider = [&](Vec2 p) {
+        const double fwd = dot(p - mov, dir);
+        if (fwd > 1e-6 && fwd < best) {
+            best = fwd;
+            target = p;
+            found = true;
+        }
+    };
+    for (const EntityHandle c : all_live()) {
+        if (c == h) {
+            continue;
+        }
+        if (c.kind == EntityKind::Line) {
+            const LineData* m = store_.line(c);
+            Vec2 p{};
+            if (NativeKernel2D::line_line_intersection(fix, mov, m->a, m->b, p)) {
+                const Vec2 md = m->b - m->a;
+                const double u = dot(p - m->a, md) / std::max(length_squared(md), 1e-18);
+                if (u >= -1e-9 && u <= 1.0 + 1e-9) {
+                    consider(p);
+                }
+            }
+        } else if (c.kind == EntityKind::Circle) {
+            const CircleData* cc = store_.circle(c);
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n = NativeKernel2D::line_circle_intersection(fix, mov, cc->center, cc->radius,
+                                                                   p0, p1);
+            if (n >= 1) {
+                consider(p0);
+            }
+            if (n == 2) {
+                consider(p1);
+            }
+        } else if (c.kind == EntityKind::Arc) {
+            const ArcData* arc = store_.arc(c);
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n =
+                NativeKernel2D::line_circle_intersection(fix, mov, arc->center, arc->radius, p0, p1);
+            if (n >= 1 && angle_on_arc(*arc, p0)) {
+                consider(p0);
+            }
+            if (n == 2 && angle_on_arc(*arc, p1)) {
+                consider(p1);
+            }
+        }
+    }
+    if (!found) {
+        report("Extend: no boundary ahead of that end.");
+        return;
+    }
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(group, original);
+    const Command extended = AddLineCommand{fix, target, 0};
+    push_create_item(group, create_indexed(extended), extended);
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Extended.");
+}
+
+namespace {
+/// The endpoint of L on the same side of the corner P as the pick (the part the
+/// user wants to keep). `dir` returns the unit direction from P toward that end.
+Vec2 kept_endpoint(const LineData& L, Vec2 P, Vec2 pick, Vec2& dir) {
+    const Vec2 d = L.b - L.a;
+    const double len2 = std::max(length_squared(d), 1e-18);
+    const double tP = dot(P - L.a, d) / len2;
+    const double tpick = dot(pick - L.a, d) / len2;
+    const Vec2 keep = (tpick < tP) ? L.a : L.b;
+    dir = normalized(keep - P);
+    return keep;
+}
+
+double dist_point_seg(Vec2 a, Vec2 b, Vec2 p) {
+    const Vec2 ab = b - a;
+    const double len2 = length_squared(ab);
+    const double t = len2 > 1e-18 ? std::clamp(dot(p - a, ab) / len2, 0.0, 1.0) : 0.0;
+    return length((a + ab * t) - p);
+}
+
+/// Index of the polyline segment nearest p (seg i joins v[i], v[i+1]; the closing
+/// segment n-1 joins v[n-1], v[0] when closed). -1 if too few vertices.
+int nearest_pl_segment(std::span<const Vec2> v, bool closed, Vec2 p) {
+    const std::size_t n = v.size();
+    if (n < 2) {
+        return -1;
+    }
+    const std::size_t segs = closed ? n : n - 1;
+    int best = -1;
+    double bestd = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < segs; ++i) {
+        const double d = dist_point_seg(v[i], v[(i + 1) % n], p);
+        if (d < bestd) {
+            bestd = d;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+/// The vertex shared by two adjacent polyline segments, or -1 if not adjacent.
+int shared_vertex(int s1, int s2, int n, bool closed) {
+    if (s1 == s2) {
+        return -1;
+    }
+    if (s2 == s1 + 1) {
+        return s1 + 1;
+    }
+    if (s1 == s2 + 1) {
+        return s2 + 1;
+    }
+    if (closed && ((s1 == 0 && s2 == n - 1) || (s2 == 0 && s1 == n - 1))) {
+        return 0; // the wrap corner joins segment 0 and segment n-1 at vertex 0
+    }
+    return -1;
+}
+
+/// Replace vertex `sv` with a bevel: a point d_prev along the edge toward the
+/// previous vertex and d_next toward the next. Returns false if it can't fit.
+bool chamfer_pl(std::vector<Vec2>& pts, bool closed, int sv, double d_prev, double d_next) {
+    const std::size_t n = pts.size();
+    const std::size_t s = static_cast<std::size_t>(sv);
+    if (n < 3 || (!closed && (sv <= 0 || s >= n - 1))) {
+        return false;
+    }
+    const std::size_t prev = (s + n - 1) % n;
+    const std::size_t next = (s + 1) % n;
+    const Vec2 V = pts[s];
+    if (d_prev > distance(V, pts[prev]) + 1e-9 || d_next > distance(V, pts[next]) + 1e-9) {
+        return false;
+    }
+    const Vec2 A = V + normalized(pts[prev] - V) * d_prev;
+    const Vec2 B = V + normalized(pts[next] - V) * d_next;
+    std::vector<Vec2> out;
+    out.reserve(n + 1);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i == s) {
+            out.push_back(A);
+            out.push_back(B);
+        } else {
+            out.push_back(pts[i]);
+        }
+    }
+    pts = std::move(out);
+    return true;
+}
+
+/// Replace vertex `sv` with a tangent arc of radius r, approximated by vertices.
+bool fillet_pl(std::vector<Vec2>& pts, bool closed, int sv, double r) {
+    const std::size_t n = pts.size();
+    const std::size_t s = static_cast<std::size_t>(sv);
+    if (n < 3 || (!closed && (sv <= 0 || s >= n - 1)) || r <= 0.0) {
+        return false;
+    }
+    const std::size_t prev = (s + n - 1) % n;
+    const std::size_t next = (s + 1) % n;
+    const Vec2 V = pts[s];
+    const Vec2 uP = normalized(pts[prev] - V);
+    const Vec2 uN = normalized(pts[next] - V);
+    const double alpha = std::acos(std::clamp(dot(uP, uN), -1.0, 1.0));
+    if (alpha < 1e-4 || alpha > kPi - 1e-4) {
+        return false;
+    }
+    const double td = r / std::tan(alpha / 2.0);
+    if (td > distance(V, pts[prev]) + 1e-9 || td > distance(V, pts[next]) + 1e-9) {
+        return false;
+    }
+    const Vec2 Tp = V + uP * td;
+    const Vec2 Tn = V + uN * td;
+    const Vec2 C = V + normalized(uP + uN) * (r / std::sin(alpha / 2.0));
+    double a0 = std::atan2(Tp.y - C.y, Tp.x - C.x);
+    const double a1 = std::atan2(Tn.y - C.y, Tn.x - C.x);
+    double sweep = a1 - a0;
+    while (sweep <= -kPi) {
+        sweep += kTwoPi;
+    }
+    while (sweep > kPi) {
+        sweep -= kTwoPi;
+    }
+    constexpr int kSteps = 12;
+    std::vector<Vec2> out;
+    out.reserve(n + kSteps + 1);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i == s) {
+            for (int k = 0; k <= kSteps; ++k) {
+                const double a = a0 + sweep * static_cast<double>(k) / kSteps;
+                out.push_back({C.x + r * std::cos(a), C.y + r * std::sin(a)});
+            }
+        } else {
+            out.push_back(pts[i]);
+        }
+    }
+    pts = std::move(out);
+    return true;
+}
+} // namespace
+
+void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
+                                  std::uint64_t group) {
+    const EntityHandle h1 = pick_nearest(pick1, pick_radius);
+    const EntityHandle h2 = pick_nearest(pick2, pick_radius);
+    if (h1.is_null() || h2.is_null()) {
+        report("Fillet: pick two edges.");
+        return;
+    }
+
+    // Case 1: two adjacent segments of the same polyline -> round that corner.
+    if (h1 == h2 && h1.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store_.polyline(h1);
+        const std::span<const Vec2> v = store_.vertices_of(*pl);
+        const int s1 = nearest_pl_segment(v, pl->closed, pick1);
+        const int s2 = nearest_pl_segment(v, pl->closed, pick2);
+        const int sv = shared_vertex(s1, s2, static_cast<int>(v.size()), pl->closed);
+        if (sv < 0) {
+            report("Fillet: pick two adjacent edges of the polyline.");
+            return;
+        }
+        std::vector<Vec2> pts(v.begin(), v.end());
+        if (!fillet_pl(pts, pl->closed, sv, radius)) {
+            report("Fillet: radius too large for that corner.");
+            return;
+        }
+        const bool closed = pl->closed;
+        const Command orig = capture_entity(h1);
+        remove_indexed(h1);
+        push_erase_item(group, orig);
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0};
+        push_create_item(group, create_indexed(np), np);
+        redo_.clear();
+        geom_dirty_ = true;
+        report("Filleted.");
+        return;
+    }
+
+    // Case 2: two distinct lines.
+    if (h1 == h2 || h1.kind != EntityKind::Line || h2.kind != EntityKind::Line) {
+        report("Fillet: pick two lines, or two adjacent edges of one polyline.");
+        return;
+    }
+    const LineData l1 = *store_.line(h1);
+    const LineData l2 = *store_.line(h2);
+    Vec2 P{};
+    if (!NativeKernel2D::line_line_intersection(l1.a, l1.b, l2.a, l2.b, P)) {
+        report("Fillet: the two lines are parallel.");
+        return;
+    }
+    Vec2 u1{};
+    Vec2 u2{};
+    const Vec2 k1 = kept_endpoint(l1, P, pick1, u1);
+    const Vec2 k2 = kept_endpoint(l2, P, pick2, u2);
+
+    Vec2 t1 = P;
+    Vec2 t2 = P;
+    std::optional<Command> arc;
+    if (radius > 0.0) {
+        const double cosang = std::clamp(dot(u1, u2), -1.0, 1.0);
+        const double alpha = std::acos(cosang);
+        if (alpha < 1e-6 || alpha > kPi - 1e-6) {
+            report("Fillet: the two lines are collinear.");
+            return;
+        }
+        const double td = radius / std::tan(alpha / 2.0);
+        if (td > length(k1 - P) + 1e-9 || td > length(k2 - P) + 1e-9) {
+            report("Fillet: radius too large for these lines.");
+            return;
+        }
+        const double cd = radius / std::sin(alpha / 2.0);
+        t1 = P + u1 * td;
+        t2 = P + u2 * td;
+        const Vec2 center = P + normalized(u1 + u2) * cd;
+        double a1 = std::atan2(t1.y - center.y, t1.x - center.x);
+        double a2 = std::atan2(t2.y - center.y, t2.x - center.x);
+        double ccw = a2 - a1;
+        while (ccw < 0.0) {
+            ccw += kTwoPi;
+        }
+        if (ccw > kPi) {
+            std::swap(a1, a2); // keep the minor (rounding) arc
+        }
+        arc = AddArcCommand{center, radius, a1, a2, 0};
+    }
+
+    const Command o1 = capture_entity(h1);
+    const Command o2 = capture_entity(h2);
+    remove_indexed(h1);
+    push_erase_item(group, o1);
+    remove_indexed(h2);
+    push_erase_item(group, o2);
+    const Command e1 = AddLineCommand{k1, t1, 0};
+    push_create_item(group, create_indexed(e1), e1);
+    const Command e2 = AddLineCommand{k2, t2, 0};
+    push_create_item(group, create_indexed(e2), e2);
+    if (arc) {
+        push_create_item(group, create_indexed(*arc), *arc);
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Filleted.");
+}
+
+void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2,
+                                   double pick_radius, std::uint64_t group) {
+    const EntityHandle h1 = pick_nearest(pick1, pick_radius);
+    const EntityHandle h2 = pick_nearest(pick2, pick_radius);
+    if (h1.is_null() || h2.is_null()) {
+        report("Chamfer: pick two edges.");
+        return;
+    }
+
+    // Case 1: two adjacent segments of the same polyline -> bevel that corner.
+    if (h1 == h2 && h1.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store_.polyline(h1);
+        const std::span<const Vec2> v = store_.vertices_of(*pl);
+        const int n = static_cast<int>(v.size());
+        const int s1 = nearest_pl_segment(v, pl->closed, pick1);
+        const int s2 = nearest_pl_segment(v, pl->closed, pick2);
+        const int sv = shared_vertex(s1, s2, n, pl->closed);
+        if (sv < 0) {
+            report("Chamfer: pick two adjacent edges of the polyline.");
+            return;
+        }
+        const int prevseg = (sv - 1 + n) % n; // segment joining prev vertex to sv
+        double d_prev = dist2;
+        double d_next = dist1;
+        if (s1 == prevseg) {
+            d_prev = dist1;
+            d_next = dist2;
+        }
+        std::vector<Vec2> pts(v.begin(), v.end());
+        if (!chamfer_pl(pts, pl->closed, sv, d_prev, d_next)) {
+            report("Chamfer: distances too large for that corner.");
+            return;
+        }
+        const bool closed = pl->closed;
+        const Command orig = capture_entity(h1);
+        remove_indexed(h1);
+        push_erase_item(group, orig);
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0};
+        push_create_item(group, create_indexed(np), np);
+        redo_.clear();
+        geom_dirty_ = true;
+        report("Chamfered.");
+        return;
+    }
+
+    // Case 2: two distinct lines.
+    if (h1 == h2 || h1.kind != EntityKind::Line || h2.kind != EntityKind::Line) {
+        report("Chamfer: pick two lines, or two adjacent edges of one polyline.");
+        return;
+    }
+    const LineData l1 = *store_.line(h1);
+    const LineData l2 = *store_.line(h2);
+    Vec2 P{};
+    if (!NativeKernel2D::line_line_intersection(l1.a, l1.b, l2.a, l2.b, P)) {
+        report("Chamfer: the two lines are parallel.");
+        return;
+    }
+    Vec2 u1{};
+    Vec2 u2{};
+    const Vec2 k1 = kept_endpoint(l1, P, pick1, u1);
+    const Vec2 k2 = kept_endpoint(l2, P, pick2, u2);
+    const Vec2 t1 = P + u1 * dist1;
+    const Vec2 t2 = P + u2 * dist2;
+
+    const Command o1 = capture_entity(h1);
+    const Command o2 = capture_entity(h2);
+    remove_indexed(h1);
+    push_erase_item(group, o1);
+    remove_indexed(h2);
+    push_erase_item(group, o2);
+    const Command e1 = AddLineCommand{k1, t1, 0};
+    push_create_item(group, create_indexed(e1), e1);
+    const Command e2 = AddLineCommand{k2, t2, 0};
+    push_create_item(group, create_indexed(e2), e2);
+    if (length_squared(t1 - t2) > 1e-12) { // skip the connector for a clean corner
+        const Command bevel = AddLineCommand{t1, t2, 0};
+        push_create_item(group, create_indexed(bevel), bevel);
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Chamfered.");
+}
+
 void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec2 side,
                                   std::uint64_t group) {
     const EntityHandle h = pick_nearest(pick, radius);
     if (h.is_null()) {
+        report("Offset: nothing under the pick.");
         return;
     }
     Command add;
@@ -440,13 +1053,21 @@ void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec
         push_create_item(group, nh, add);
         redo_.clear();
         geom_dirty_ = true;
+        report("Offset created.");
+    } else {
+        report("Offset: can't offset that entity.");
     }
 }
 
 void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     const EntityHandle h = pick_nearest(pick, radius);
-    if (h.is_null() || h.kind != EntityKind::Line) {
-        return; // only line trimming is implemented (see COMMANDS.md)
+    if (h.is_null()) {
+        report("Trim: nothing under the pick.");
+        return;
+    }
+    if (h.kind != EntityKind::Line) {
+        report("Trim: only line entities can be trimmed yet (explode polylines first).");
+        return;
     }
     const LineData* l = store_.line(h);
     const Vec2 a = l->a;
@@ -479,7 +1100,8 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         }
     }
     if (ts.empty()) {
-        return; // nothing crosses this line -> nothing to trim
+        report("Trim: no crossing edge found.");
+        return;
     }
     std::sort(ts.begin(), ts.end());
     const double tp = std::clamp(dot(pick - a, ab) / len2, 0.0, 1.0);
@@ -508,6 +1130,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     }
     redo_.clear();
     geom_dirty_ = true;
+    report("Trimmed.");
 }
 
 void GeometryEngine::apply(const Command& command) {
@@ -595,6 +1218,20 @@ void GeometryEngine::apply(const Command& command) {
                 apply_offset(c.pick, c.radius, c.distance, c.side, c.group);
             } else if constexpr (std::is_same_v<T, TrimPickCommand>) {
                 apply_trim(c.pick, c.radius, c.group);
+            } else if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
+                apply_rotate(c.base, c.angle, c.group);
+            } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
+                apply_scale(c.base, c.factor, c.group);
+            } else if constexpr (std::is_same_v<T, ArrayRectCommand>) {
+                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.group);
+            } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
+                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
+            } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {
+                apply_extend(c.pick, c.radius, c.group);
+            } else if constexpr (std::is_same_v<T, FilletPickCommand>) {
+                apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group);
+            } else if constexpr (std::is_same_v<T, ChamferPickCommand>) {
+                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group);
             }
         },
         command);
@@ -661,10 +1298,18 @@ void GeometryEngine::rebuild_and_publish() {
         }
     }
 
+    buf.status = status_;
+    buf.status_version = status_version_;
+
     buf.geometry_version = geom_version_;
     buf.version = version_.fetch_add(1, std::memory_order_acq_rel) + 1;
     buf.checksum = buf.compute_checksum();
     snapshots_.publish();
+}
+
+void GeometryEngine::report(std::string message) {
+    status_ = std::move(message);
+    ++status_version_;
 }
 
 } // namespace musacad::core
