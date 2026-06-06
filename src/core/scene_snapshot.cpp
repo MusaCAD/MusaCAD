@@ -5,6 +5,9 @@
 #include <map>
 #include <vector>
 
+#include "musacad/core/dimension.hpp"
+#include "musacad/core/text/stroke_font.hpp"
+
 namespace musacad::core {
 
 namespace {
@@ -92,6 +95,42 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                   [&](EntityHandle h) { emit_curve(h, store.polyline(h)->props); });
     for_each_live(store.splines(), EntityKind::Spline,
                   [&](EntityHandle h) { emit_curve(h, store.spline(h)->props); });
+
+    // Single-line text -> stroke-font segments in the entity's resolved colour.
+    std::vector<Vec2> tseg;
+    for_each_live(store.texts(), EntityKind::Text, [&](EntityHandle h) {
+        const TextData* t = store.text(h);
+        if (!visible(store, t->props)) {
+            return;
+        }
+        const Rgb c = entity_color(store, t->props);
+        note(c);
+        tseg.clear();
+        text::append_text_segments(store.string_of(*t), t->pos, t->height, t->rotation,
+                                   static_cast<text::Justify>(t->justify), tseg);
+        auto& v = line_groups[pack_rgb(c)];
+        v.insert(v.end(), tseg.begin(), tseg.end());
+    });
+
+    // Dimensions -> extension/dimension lines + arrowheads + measured label, all
+    // computed from def points + style (so editing def points updates the dim).
+    for_each_live(store.dimensions(), EntityKind::Dimension, [&](EntityHandle h) {
+        const DimData* d = store.dimension(h);
+        if (!visible(store, d->props)) {
+            return;
+        }
+        const Rgb c = entity_color(store, d->props);
+        note(c);
+        const DimStyle* style = store.dimstyle(d->style);
+        const DimGeometry g = compute_dim_geometry(*d, style != nullptr ? *style : DimStyle{});
+        auto& v = line_groups[pack_rgb(c)];
+        v.insert(v.end(), g.lines.begin(), g.lines.end());
+        v.insert(v.end(), g.arrows.begin(), g.arrows.end());
+        tseg.clear();
+        text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation,
+                                   g.text_justify, tseg);
+        v.insert(v.end(), tseg.begin(), tseg.end());
+    });
 
     // Flatten colour groups into contiguous batches over the payload arrays.
     for (auto& [key, verts] : line_groups) {

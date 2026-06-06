@@ -224,6 +224,41 @@ struct OpenDocumentCommand {
 };
 struct NewDocumentCommand {};
 
+// --- Annotation (Phase 13): text + dimensions -------------------------------
+
+/// Single-line text. `justify`: 0 left, 1 centre, 2 right.
+struct AddTextCommand {
+    Vec2 pos;
+    double height = 2.5;
+    double rotation = 0.0;
+    std::uint8_t justify = 0;
+    std::string content;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
+/// A dimension defined by `a`/`b` (def points) placed through `line_pt`, drawn
+/// with style `style`. `type` matches core::DimType.
+struct AddDimensionCommand {
+    std::uint8_t type = 0;
+    Vec2 a;
+    Vec2 b;
+    Vec2 line_pt;
+    std::uint16_t style = 0;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
+/// Add a dimension style (or return the existing index for a known name).
+struct AddDimStyleCommand {
+    DimStyle style;
+};
+/// Replace the dimension style at `index` (index 0 stays "Standard").
+struct SetDimStyleCommand {
+    std::uint16_t index = 0;
+    DimStyle style;
+};
+
 // --- Layers & properties (geometry-thread) ---------------------------------
 
 /// Add a layer (or ensure one with this name exists).
@@ -267,6 +302,7 @@ using Command =
                  ExtendPickCommand, FilletPickCommand, ChamferPickCommand, SaveDocumentCommand,
                  OpenDocumentCommand, NewDocumentCommand, AddLayerCommand, SetLayerCommand,
                  RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
-                 SetEntityColorCommand>;
+                 SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
+                 SetDimStyleCommand>;
 
 } // namespace musacad::core

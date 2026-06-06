@@ -69,6 +69,10 @@ public:
     /// published snapshot.
     bool selftest_layers();
 
+    /// Real-window self-test: place TEXT and a DIMLINEAR via the command line,
+    /// confirm they render, and the DIMSTYLE dialog uses the dark palette.
+    bool selftest_annotation();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -84,6 +88,10 @@ private:
     // ARRAY command dialog (AutoCAD-style parametric input).
     void open_array_dialog();
     void submit_array_from_dialog(const ParameterDialog& dlg);
+
+    // Annotation (UI side: dimension-style dialog).
+    void open_dimstyle_dialog();
+    void submit_dimstyle_from_dialog(const ParameterDialog& dlg);
 
     // Layers (UI side: dialog + ribbon combo; issues commands, never the store).
     void open_layer_dialog();

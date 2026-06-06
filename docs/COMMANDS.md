@@ -56,17 +56,18 @@ suggests both); aliases are case-insensitive.
 
 | Command | Alias | Status |
 |---|---|---|
-| DIMLINEAR | DLI | Planned (Phase 8) |
-| DIMALIGNED | DAL | Planned (Phase 8) |
-| DIMANGULAR | DAN | Planned (Phase 8) |
-| DIMRADIUS | DRA | Planned (Phase 8) |
-| DIMDIAMETER | DDI | Planned (Phase 8) |
-| DIMCONTINUE | DCO | Planned (Phase 8) |
-| DIMSTYLE (arrows/units/precision) | D | Planned (Phase 8) |
-| MLEADER / LEADER | MLD | Planned (Phase 8) |
-| TEXT | DT | Planned (Phase 10) |
-| MTEXT | MT | Planned (Phase 10) |
-| STYLE (text style) | ST | Planned (Phase 10) |
+| TEXT (single-line) | DT / TEXT | Implemented |
+| DIMLINEAR (horizontal/vertical) | DLI | Implemented |
+| DIMALIGNED (parallel to segment) | DAL | Implemented |
+| DIMSTYLE (text height / arrow type+size / precision / ext lines) | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
+| Filled-triangle + tick arrowheads | — | Implemented |
+| Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
+| DIMRADIUS / DIMDIAMETER | DRA / DDI | Partial (modelled; geometry staged) |
+| DIMANGULAR | DAN | Partial (modelled; geometry staged) |
+| DIMCONTINUE / DIMBASELINE | DCO / DBA | Planned |
+| MTEXT (multi-line) | MT | Planned |
+| MLEADER / LEADER | MLD | Planned |
+| STYLE (text style) | ST | Planned |
 
 ## View / Navigate
 
@@ -106,6 +107,8 @@ suggests both); aliases are case-insensitive.
 
 | Command | Alias | Status |
 |---|---|---|
+| Native format v3 (adds text + dimensions + dimstyles) | — | Implemented |
+| DXF TEXT + linear DIMENSION + DIMSTYLE table (read/write) | — | Implemented |
 | NEW (native .musa) | Ctrl+N | Implemented |
 | OPEN (native .musa) | Ctrl+O | Implemented |
 | SAVE | Ctrl+S | Implemented |

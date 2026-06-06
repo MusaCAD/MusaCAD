@@ -9,7 +9,9 @@ add_library(musacad_core STATIC
     geometry_engine.cpp
     io/document.cpp
     io/native_format.cpp
-    io/dxf.cpp)
+    io/dxf.cpp
+    text/stroke_font.cpp
+    dimension.cpp)
 
 add_library(musacad::core ALIAS musacad_core)
 

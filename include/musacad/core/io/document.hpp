@@ -13,10 +13,10 @@ class GeometryStore;
 
 namespace musacad::core::io {
 
-/// The current native document format version. v1 had geometry only; v2 adds the
-/// layer table + per-entity properties. Readers reject newer versions; v1 files
-/// load with everything on layer 0, fully ByLayer.
-inline constexpr std::uint32_t kFormatVersion = 2;
+/// The current native document format version. v1: geometry only. v2: layer table
+/// + per-entity properties. v3: text + dimensions + dimension styles. Readers
+/// reject newer versions; older files load fine (no layers => layer 0; no dims).
+inline constexpr std::uint32_t kFormatVersion = 3;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -57,6 +57,24 @@ struct DocSpline {
     EntityProps props{};
     friend bool operator==(const DocSpline&, const DocSpline&) = default;
 };
+struct DocText {
+    Vec2 pos;
+    double height = 2.5;
+    double rotation = 0.0;
+    std::uint8_t justify = 0;
+    std::string content;
+    EntityProps props{};
+    friend bool operator==(const DocText&, const DocText&) = default;
+};
+struct DocDim {
+    std::uint8_t type = 0;
+    Vec2 a;
+    Vec2 b;
+    Vec2 line_pt;
+    std::uint16_t style = 0;
+    EntityProps props{};
+    friend bool operator==(const DocDim&, const DocDim&) = default;
+};
 
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
@@ -66,6 +84,7 @@ struct Document {
 
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;
+    std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
 
     std::vector<DocPoint> points;
     std::vector<DocLine> lines;
@@ -73,10 +92,12 @@ struct Document {
     std::vector<DocArc> arcs;
     std::vector<DocPolyline> polylines;
     std::vector<DocSpline> splines;
+    std::vector<DocText> texts;
+    std::vector<DocDim> dims;
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
-               splines.size();
+               splines.size() + texts.size() + dims.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

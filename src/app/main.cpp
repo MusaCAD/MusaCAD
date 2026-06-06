@@ -37,8 +37,9 @@ int main(int argc, char* argv[]) {
             const bool ok_persist = window.selftest_persist();
             const bool ok_theme = window.selftest_theme();
             const bool ok_layers = window.selftest_layers();
-            const bool ok =
-                ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme && ok_layers;
+            const bool ok_annotation = window.selftest_annotation();
+            const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
+                            ok_layers && ok_annotation;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

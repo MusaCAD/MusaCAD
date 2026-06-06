@@ -4,7 +4,9 @@
 #include <cmath>
 #include <cstdint>
 
+#include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
 
@@ -283,6 +285,29 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         tessellate_spline(store.control_points_of(*sp), sp->degree, out);
         break;
     }
+    case EntityKind::Text: {
+        // Pick/window-select against the (rotated) bounding box outline.
+        const TextData* t = store.text(entity);
+        const double w = text::text_width(store.string_of(*t), t->height);
+        const double cs = std::cos(t->rotation);
+        const double sn = std::sin(t->rotation);
+        const Vec2 local[5] = {{0, 0}, {w, 0}, {w, t->height}, {0, t->height}, {0, 0}};
+        for (const Vec2& c : local) {
+            out.push_back({t->pos.x + c.x * cs - c.y * sn, t->pos.y + c.x * sn + c.y * cs});
+        }
+        break;
+    }
+    case EntityKind::Dimension: {
+        // The dimension line (between the feet) is the selectable span.
+        const DimData* d = store.dimension(entity);
+        const DimStyle* s = store.dimstyle(d->style);
+        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{});
+        if (g.lines.size() >= 2) {
+            out.push_back(g.lines[g.lines.size() - 2]);
+            out.push_back(g.lines.back());
+        }
+        break;
+    }
     }
 }
 
@@ -332,6 +357,44 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         }
         out_point = best;
         return true;
+    }
+    case EntityKind::Text: {
+        // Closest point on the text bbox; the query inside the box reads distance 0.
+        const TextData* t = store.text(entity);
+        const double w = text::text_width(store.string_of(*t), t->height);
+        const double cs = std::cos(t->rotation);
+        const double sn = std::sin(t->rotation);
+        // Transform the query into text-local space (un-rotate about pos).
+        const Vec2 q = query - t->pos;
+        const double lx = q.x * cs + q.y * sn;
+        const double ly = -q.x * sn + q.y * cs;
+        const double cx = std::clamp(lx, 0.0, w);
+        const double cy = std::clamp(ly, 0.0, t->height);
+        out_point = {t->pos.x + cx * cs - cy * sn, t->pos.y + cx * sn + cy * cs};
+        return true;
+    }
+    case EntityKind::Dimension: {
+        const DimData* d = store.dimension(entity);
+        const DimStyle* s = store.dimstyle(d->style);
+        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{});
+        bool found = false;
+        double best_d2 = 0.0;
+        const auto consider = [&](Vec2 a, Vec2 b) {
+            const Vec2 cp = closest_on_segment(a, b, query);
+            const double d2 = length_squared(query - cp);
+            if (!found || d2 < best_d2) {
+                found = true;
+                best_d2 = d2;
+                out_point = cp;
+            }
+        };
+        for (std::size_t i = 0; i + 1 < g.lines.size(); i += 2) {
+            consider(g.lines[i], g.lines[i + 1]);
+        }
+        for (std::size_t i = 0; i + 1 < g.arrows.size(); i += 2) {
+            consider(g.arrows[i], g.arrows[i + 1]);
+        }
+        return found;
     }
     }
     return false;
@@ -404,6 +467,8 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     }
     case EntityKind::Point:
     case EntityKind::Spline:
+    case EntityKind::Text:
+    case EntityKind::Dimension:
         break;
     }
     return false;

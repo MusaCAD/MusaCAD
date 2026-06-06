@@ -625,6 +625,44 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   LAYER table** and assigns entities to real layers -- the Phase-11 faked default
   is gone. Verified Musa↔DXF (layers + effective colour) and in LibreCAD.
 
+## Text & dimensions (Phase 13)
+
+* **Vector text (`core/text/stroke_font`).** A single-stroke font (not an atlas/
+  SDF): text is geometry, so it stays crisp at every zoom and batches with the
+  existing line pipeline -- no texture backend. Covers ASCII 0x20-0x7E plus UTF-8
+  `° ± ⌀`; lowercase renders as small capitals (a documented CAD-font
+  simplification). `append_text_segments(text, origin, height, rotation, justify)`
+  emits world-space segments; `text_width` drives justification + pick bounds.
+* **TEXT entity.** `EntityKind::Text`; `TextData` (pos/height/rotation/justify +
+  an (offset,len) into a shared char pool -- no fat inline buffer). Layer-aware,
+  selectable (bbox), movable/rotatable/scalable (the transform helpers handle it),
+  erasable. The snapshot tessellates each text to stroke segments in its resolved
+  colour.
+* **Dimensions.** `EntityKind::Dimension`; `DimData` stores **definition points**
+  (a, b) + a placement point + a dimstyle index -- the measured value is
+  **computed**, never baked (`dim_measure`), so editing the def points updates the
+  dimension on the next snapshot. `compute_dim_geometry` (shared by the snapshot,
+  the kernel pick path, and bounds) builds extension lines + the dimension line +
+  arrowheads + the measured label under the style. **Solid: DIMLINEAR + DIMALIGNED.**
+  Radius/Diameter/Angular are modelled (measure works) with geometry staged.
+* **DIMSTYLE.** A style table parallel to the layer table ("Standard" at index 0):
+  text height, arrow type (filled-triangle fan / tick) + size, extension offset/
+  extension, decimal precision, text placement. Changing a style re-renders the
+  dimensions that use it (snapshot recompute). Editable via a dark dialog.
+* **Arrowheads** are real oriented geometry batched with everything else (a fan of
+  lines fakes a filled triangle for the line renderer); draw calls stay bounded
+  (per-colour batches -- 4 in the offscreen scene).
+* **Associativity (honest level):** a dimension recomputes its value/label/geometry
+  from its stored def points every snapshot build. Editing the def points (or the
+  style) updates it; moving the *referenced entity* does **not** auto-update the
+  dimension (def points are independent copies). True geometric association is
+  deferred.
+* **Struct sizes:** `TextData` 56 B, `DimData` 72 B -- their own arenas, so the hot
+  `LineData` stays 40 B (insert baseline unchanged, ~30-50 ns/line).
+* **Persistence:** native **v3** round-trips text + dims + dimstyles losslessly
+  (v1/v2 still load -- no annotations); DXF writes/reads TEXT + linear DIMENSION +
+  the DIMSTYLE table (LibreCAD-verified).
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -684,6 +722,11 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   layer table + CRUD, effective-property resolution, off/frozen skip + locked
   inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
   native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
+
+* **Phase 13 — complete:** vector text rendering (single-stroke font), the TEXT
+  entity, and dimensions (DIMLINEAR + DIMALIGNED solid, others staged) with a real
+  DIMSTYLE table, arrowheads, the Annotate ribbon, a dimstyle dialog, and native-v3
+  + DXF persistence. 172 unit tests pass under ASan + TSan.
 
 ## Known deferrals
 

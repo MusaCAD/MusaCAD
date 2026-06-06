@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "musacad/core/entity_handle.hpp"
@@ -60,6 +62,31 @@ struct SplineData {
     EntityProps props{};
 };
 
+/// Single-line text. The string lives in a shared char pool (offset, len) like
+/// polyline vertices -- no fat inline buffer on the per-entity struct.
+struct TextData {
+    Vec2 pos;                  ///< insertion point (justification anchor, on the baseline)
+    double height = 1.0;
+    double rotation = 0.0;     ///< radians, CCW
+    std::uint8_t justify = 0;  ///< 0 = left, 1 = center, 2 = right
+    std::uint32_t str_offset = 0;
+    std::uint32_t str_len = 0;
+    EntityProps props{};
+};
+
+/// A composite dimension. The measured value is COMPUTED from the definition
+/// points (a, b) -- never baked -- so editing them updates the dimension. `line_pt`
+/// positions the dimension line; `style` indexes the dimstyle table. DimType lives
+/// in properties.hpp.
+struct DimData {
+    DimType type = DimType::Linear;
+    Vec2 a;       ///< first definition point
+    Vec2 b;       ///< second definition point
+    Vec2 line_pt; ///< a point the dimension line passes through (placement)
+    std::uint16_t style = 0;
+    EntityProps props{};
+};
+
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own
 /// GenerationalArena; variable-length vertex data lives in shared pools. All
 /// access is non-virtual.
@@ -78,6 +105,10 @@ public:
     EntityHandle add_polyline(std::span<const Vec2> vertices, bool closed, EntityProps props = {});
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                             EntityProps props = {});
+    EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
+                          std::string_view content, EntityProps props = {});
+    EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
+                               EntityProps props = {});
 
     // --- removal / validity -------------------------------------------------
     bool remove(EntityHandle handle) noexcept;
@@ -95,6 +126,10 @@ public:
     [[nodiscard]] const ArcData* arc(EntityHandle h) const noexcept;
     [[nodiscard]] const PolylineData* polyline(EntityHandle h) const noexcept;
     [[nodiscard]] const SplineData* spline(EntityHandle h) const noexcept;
+    [[nodiscard]] const TextData* text(EntityHandle h) const noexcept;
+    [[nodiscard]] const DimData* dimension(EntityHandle h) const noexcept;
+    /// The string content of a text entity.
+    [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
 
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
@@ -105,6 +140,16 @@ public:
         return polylines_;
     }
     [[nodiscard]] const GenerationalArena<SplineData>& splines() const noexcept { return splines_; }
+    [[nodiscard]] const GenerationalArena<TextData>& texts() const noexcept { return texts_; }
+    [[nodiscard]] const GenerationalArena<DimData>& dimensions() const noexcept { return dims_; }
+
+    // --- dimension styles ("Standard" always at index 0) --------------------
+    [[nodiscard]] const std::vector<DimStyle>& dimstyles() const noexcept { return dimstyles_; }
+    [[nodiscard]] const DimStyle* dimstyle(std::uint16_t index) const noexcept;
+    std::uint16_t add_dimstyle(const DimStyle& style);
+    bool set_dimstyle(std::uint16_t index, const DimStyle& style);
+    /// Replaces the dimstyle table (Open/Import); ensures "Standard" at index 0.
+    void set_dimstyle_table(std::vector<DimStyle> styles);
 
     // --- vertex pools -------------------------------------------------------
     [[nodiscard]] std::span<const Vec2> polyline_vertices() const noexcept {
@@ -160,12 +205,16 @@ private:
     GenerationalArena<ArcData> arcs_;
     GenerationalArena<PolylineData> polylines_;
     GenerationalArena<SplineData> splines_;
+    GenerationalArena<TextData> texts_;
+    GenerationalArena<DimData> dims_;
 
     std::vector<Vec2> polyline_pool_;
     std::vector<Vec2> spline_pool_;
+    std::vector<char> string_pool_; // text content
 
     std::vector<Layer> layers_{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer_ = 0;
+    std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
 };
 
 } // namespace musacad::core

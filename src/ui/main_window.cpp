@@ -72,6 +72,23 @@ DialogSpec array_dialog_spec() {
     };
     return spec;
 }
+
+/// The "Standard" dimension-style editor (minimal; full multi-style manager is
+/// staged). All fields always visible.
+DialogSpec dimstyle_dialog_spec() {
+    DialogSpec spec;
+    spec.title = "Dimension Style: Standard";
+    spec.fields = {
+        {"text_height", "Text height", FieldType::Number, 2.5, {}, 0, false, ""},
+        {"arrow_size", "Arrow size", FieldType::Number, 2.5, {}, 0, false, ""},
+        {"arrow_type", "Arrow type", FieldType::Choice, 0, {"Filled triangle", "Tick"}, 0, false,
+         ""},
+        {"precision", "Decimal precision", FieldType::Integer, 2, {}, 0, false, ""},
+        {"ext_offset", "Extension offset", FieldType::Number, 0.6, {}, 0, false, ""},
+        {"ext_extension", "Extension beyond", FieldType::Number, 1.25, {}, 0, false, ""},
+    };
+    return spec;
+}
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -309,8 +326,13 @@ void MainWindow::build_ribbon() {
     color_btn->setEnabled(false);
 
     RibbonPanel* annot = ribbon_->add_panel(home, QStringLiteral("Annotation"));
-    annot->add_placeholder(make_icon(QStringLiteral("dim")), QStringLiteral("Dimension"));
-    annot->add_placeholder(make_icon(QStringLiteral("text")), QStringLiteral("Text"));
+    add_cmd(annot, QStringLiteral("text"), QStringLiteral("Text"), "DT");
+    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Linear"), "DLI");
+    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Aligned"), "DAL");
+    QToolButton* dimstyle_btn =
+        annot->add_button(make_icon(QStringLiteral("dim")), QStringLiteral("Dim\nStyle"));
+    dimstyle_btn->setObjectName(QStringLiteral("ribbon.dimstyle"));
+    connect(dimstyle_btn, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
 
     // --- Insert tab (placeholder) ---
     const int insert = ribbon_->add_tab(QStringLiteral("Insert"));
@@ -881,6 +903,72 @@ void MainWindow::set_selection_color() {
         core::Rgb{static_cast<std::uint8_t>(c.red()), static_cast<std::uint8_t>(c.green()),
                   static_cast<std::uint8_t>(c.blue())},
         g});
+}
+
+void MainWindow::submit_dimstyle_from_dialog(const ParameterDialog& dlg) {
+    core::DimStyle s;
+    s.name = "Standard";
+    s.text_height = dlg.number("text_height");
+    s.arrow_size = dlg.number("arrow_size");
+    s.arrow_type = static_cast<std::uint8_t>(dlg.choice_index("arrow_type"));
+    s.precision = static_cast<std::uint8_t>(dlg.integer("precision"));
+    s.ext_offset = dlg.number("ext_offset");
+    s.ext_extension = dlg.number("ext_extension");
+    engine_->submit(core::SetDimStyleCommand{0, s});
+}
+
+void MainWindow::open_dimstyle_dialog() {
+    auto* dlg = new ParameterDialog(dimstyle_dialog_spec(), this);
+    connect(dlg, &QDialog::accepted, this, [this, dlg] { submit_dimstyle_from_dialog(*dlg); });
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
+}
+
+bool MainWindow::selftest_annotation() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    const auto type = [this](const char* line) { processor_->submit_line(line); };
+    bool all = true;
+    processor_->set_pick_radius(1.0);
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // Place text via the command line.
+    type("DT");
+    type("5,5");
+    type("4");
+    type("0");
+    type("HELLO 12");
+    const bool text_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+    std::printf("[selftest] TEXT command renders: %s\n", text_ok ? "PASS" : "FAIL");
+    all = all && text_ok;
+    const int after_text = viewport_->line_vertex_count();
+
+    // Place a linear dimension; geometry grows further (ext/dim lines + arrows + label).
+    type("DLI");
+    type("0,0");
+    type("20,0");
+    type("10,-5");
+    const bool dim_ok = pump([this, after_text] { return viewport_->line_vertex_count() > after_text; });
+    std::printf("[selftest] DIMLINEAR command renders: %s\n", dim_ok ? "PASS" : "FAIL");
+    all = all && dim_ok;
+
+    // The DIMSTYLE dialog uses the dark palette.
+    ParameterDialog dlg(dimstyle_dialog_spec(), this);
+    const bool dark = dlg.palette().color(QPalette::Window).lightness() < 90;
+    std::printf("[selftest] DIMSTYLE dialog dark palette: %s\n", dark ? "PASS" : "FAIL");
+    all = all && dark;
+
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
 }
 
 void MainWindow::open_array_dialog() {

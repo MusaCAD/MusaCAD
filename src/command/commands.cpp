@@ -933,4 +933,95 @@ void ChamferCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// TEXT (single-line): point -> height -> rotation -> content
+// ---------------------------------------------------------------------------
+void TextCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify start point: ");
+}
+
+void TextCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Point:
+        if (const auto p = read_point(ctx, text)) {
+            pos_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Height;
+            ctx.set_prompt("Specify text height <2.5>: ");
+        }
+        return;
+    case State::Height:
+        if (!t.empty()) {
+            double h = 2.5;
+            if (parse_number(t, h) && h > 0.0) {
+                height_ = h;
+            }
+        }
+        state_ = State::Rotation;
+        ctx.set_prompt("Specify rotation angle <0>: ");
+        return;
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty() && parse_number(t, deg)) {
+            rotation_ = core::to_radians(deg);
+        }
+        state_ = State::Content;
+        ctx.set_prompt("Enter text: ");
+        return;
+    }
+    case State::Content:
+        ctx.submit(core::AddTextCommand{pos_, height_, rotation_, 0, text, ctx.group_id()});
+        ctx.echo("Text placed.");
+        done_ = true;
+        return;
+    }
+}
+
+void TextCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIMLINEAR / DIMALIGNED: first point -> second point -> dim line location
+// ---------------------------------------------------------------------------
+void LinearDimensionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify first extension line origin: ");
+}
+
+void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    switch (state_) {
+    case State::First:
+        a_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Second;
+        ctx.set_prompt("Specify second extension line origin: ");
+        return;
+    case State::Second:
+        b_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Place;
+        ctx.set_prompt("Specify dimension line location: ");
+        return;
+    case State::Place:
+        ctx.submit(core::AddDimensionCommand{static_cast<std::uint8_t>(type_), a_, b_, *p, 0,
+                                             ctx.group_id()});
+        ctx.echo("Dimension placed.");
+        done_ = true;
+        return;
+    }
+}
+
+void LinearDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

@@ -36,6 +36,29 @@ struct Layer {
     friend bool operator==(const Layer&, const Layer&) = default;
 };
 
+/// Dimension subtype. Linear/Aligned are fully implemented; the rest are staged.
+enum class DimType : std::uint8_t {
+    Linear = 0,  ///< horizontal/vertical (dominant axis of the def points)
+    Aligned = 1, ///< parallel to the measured segment
+    Radius = 2,
+    Diameter = 3,
+    Angular = 4,
+};
+
+/// A dimension style: the formatting all dimensions resolve through. "Standard"
+/// always exists at index 0 of the store's dimstyle table.
+struct DimStyle {
+    std::string name;
+    double text_height = 2.5;
+    double arrow_size = 2.5;
+    std::uint8_t arrow_type = 0; ///< 0 = filled triangle, 1 = tick
+    double ext_offset = 0.6;     ///< gap from def point to the extension line start
+    double ext_extension = 1.25; ///< how far the extension line passes the dim line
+    std::uint8_t precision = 2;  ///< decimal places in the measured text
+    bool text_above = true;      ///< text sits above the dim line (else centred)
+    friend bool operator==(const DimStyle&, const DimStyle&) = default;
+};
+
 /// Per-entity property attributes. Each property is either inherited from the
 /// entity's layer (its ByLayer flag set) or an explicit override. Kept compact
 /// (8 bytes) because every entity carries one: a packed flags byte instead of

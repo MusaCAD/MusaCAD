@@ -131,6 +131,27 @@ std::string serialize_native(const Document& doc) {
         s += l.name;
         s += '\n';
     }
+    // DIMSTYLE <text_height> <arrow_size> <arrow_type> <ext_offset> <ext_extension>
+    //          <precision> <text_above> <name...>
+    for (const DimStyle& ds : doc.dimstyles) {
+        s += "DIMSTYLE ";
+        append_double(s, ds.text_height);
+        s += ' ';
+        append_double(s, ds.arrow_size);
+        s += ' ';
+        append_uint(s, ds.arrow_type);
+        s += ' ';
+        append_double(s, ds.ext_offset);
+        s += ' ';
+        append_double(s, ds.ext_extension);
+        s += ' ';
+        append_uint(s, ds.precision);
+        s += ' ';
+        append_uint(s, ds.text_above ? 1 : 0);
+        s += ' ';
+        s += ds.name;
+        s += '\n';
+    }
 
     for (const DocPoint& p : doc.points) {
         s += "POINT ";
@@ -190,13 +211,43 @@ std::string serialize_native(const Document& doc) {
         append_props(s, sp.props);
         s += '\n';
     }
+    // TEXT params then the content on its own (raw) line, preserving spaces.
+    for (const DocText& t : doc.texts) {
+        s += "TEXT ";
+        append_vec(s, t.pos);
+        s += ' ';
+        append_double(s, t.height);
+        s += ' ';
+        append_double(s, t.rotation);
+        s += ' ';
+        append_uint(s, t.justify);
+        append_props(s, t.props);
+        s += '\n';
+        s += t.content;
+        s += '\n';
+    }
+    for (const DocDim& d : doc.dims) {
+        s += "DIM ";
+        append_uint(s, d.type);
+        s += ' ';
+        append_vec(s, d.a);
+        s += ' ';
+        append_vec(s, d.b);
+        s += ' ';
+        append_vec(s, d.line_pt);
+        s += ' ';
+        append_uint(s, d.style);
+        append_props(s, d.props);
+        s += '\n';
+    }
     s += "END\n";
     return s;
 }
 
 IoResult parse_native(std::string_view text, Document& out) {
     Document doc;
-    doc.layers.clear(); // built from the file (or defaulted below for v1)
+    doc.layers.clear();     // built from the file (or defaulted below for v1)
+    doc.dimstyles.clear();  // built from DIMSTYLE records (defaulted below if none)
     bool header_seen = false;
     bool end_seen = false;
     std::uint32_t version = 0;
@@ -287,6 +338,81 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             l.name = name;
             doc.layers.push_back(std::move(l));
+        } else if (key == "DIMSTYLE") {
+            // DIMSTYLE th as at eo ee pr ta name...
+            if (tok.size() < 9) {
+                return fail("malformed DIMSTYLE");
+            }
+            double th = 0;
+            double as = 0;
+            double eo = 0;
+            double ee = 0;
+            std::uint64_t at = 0;
+            std::uint64_t pr = 0;
+            std::uint64_t ta = 0;
+            if (!to_double(tok[1], th) || !to_double(tok[2], as) || !to_uint(tok[3], at) ||
+                !to_double(tok[4], eo) || !to_double(tok[5], ee) || !to_uint(tok[6], pr) ||
+                !to_uint(tok[7], ta)) {
+                return fail("malformed DIMSTYLE field");
+            }
+            DimStyle ds;
+            ds.text_height = th;
+            ds.arrow_size = as;
+            ds.arrow_type = static_cast<std::uint8_t>(at);
+            ds.ext_offset = eo;
+            ds.ext_extension = ee;
+            ds.precision = static_cast<std::uint8_t>(pr);
+            ds.text_above = ta != 0;
+            std::string name(tok[8]);
+            for (std::size_t i = 9; i < tok.size(); ++i) {
+                name += ' ';
+                name += std::string(tok[i]);
+            }
+            ds.name = name;
+            doc.dimstyles.push_back(std::move(ds));
+        } else if (key == "TEXT") {
+            // params: px py height rotation justify <props7>; content on next line.
+            vals.clear();
+            EntityProps props;
+            if (!parse_doubles(tok, 1, 4, vals)) {
+                return fail("TEXT params malformed");
+            }
+            std::uint64_t justify = 0;
+            if (tok.size() < 13 || !to_uint(tok[5], justify) || !parse_props(tok, 6, props)) {
+                return fail("TEXT params malformed");
+            }
+            std::string content;
+            if (!std::getline(in, content)) {
+                return fail("TEXT missing content line");
+            }
+            ++line_no;
+            if (!content.empty() && content.back() == '\r') {
+                content.pop_back();
+            }
+            doc.texts.push_back(DocText{{vals[0], vals[1]},
+                                        vals[2],
+                                        vals[3],
+                                        static_cast<std::uint8_t>(justify),
+                                        std::move(content),
+                                        props});
+        } else if (key == "DIM") {
+            // DIM type ax ay bx by lx ly style <props7>
+            std::uint64_t dtype = 0;
+            vals.clear();
+            if (tok.size() != 16 || !to_uint(tok[1], dtype) || !parse_doubles(tok, 2, 6, vals)) {
+                return fail("DIM record malformed");
+            }
+            std::uint64_t style = 0;
+            EntityProps props;
+            if (!to_uint(tok[8], style) || !parse_props(tok, 9, props)) {
+                return fail("DIM record malformed");
+            }
+            doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
+                                      {vals[0], vals[1]},
+                                      {vals[2], vals[3]},
+                                      {vals[4], vals[5]},
+                                      static_cast<std::uint16_t>(style),
+                                      props});
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {
@@ -378,6 +504,10 @@ IoResult parse_native(std::string_view text, Document& out) {
     if (doc.current_layer >= doc.layers.size()) {
         doc.current_layer = 0;
     }
+    if (doc.dimstyles.empty()) {
+        doc.dimstyles.push_back(DimStyle{"Standard"});
+    }
+    doc.dimstyles[0].name = "Standard";
     out = std::move(doc);
     return IoResult::success("Opened " + std::to_string(out.entity_count()) + " entities.");
 }

@@ -196,7 +196,9 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
             break;
         }
         case EntityKind::Spline:
-            break; // nearest handled below
+        case EntityKind::Text:
+        case EntityKind::Dimension:
+            break; // no object-snap points (nearest, if any, handled below)
         }
 
         // Nearest applies to any curve-like entity.

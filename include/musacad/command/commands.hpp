@@ -4,6 +4,7 @@
 
 #include "musacad/command/command.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/properties.hpp"
 
 namespace musacad::command {
 
@@ -274,6 +275,44 @@ private:
     double dist2_ = 0.0;
     double length_ = 0.0; // chamfer length on the first line (Angle method)
     core::Vec2 pick1_{};
+    bool done_ = false;
+};
+
+// --- Annotation (Phase 13) -------------------------------------------------
+
+class TextCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Point, Height, Rotation, Content } state_ = State::Point;
+    core::Vec2 pos_{};
+    double height_ = 2.5;
+    double rotation_ = 0.0;
+    bool done_ = false;
+};
+
+/// DIMLINEAR / DIMALIGNED share one state machine, parameterised by type/name.
+class LinearDimensionCommand final : public ICommand {
+public:
+    LinearDimensionCommand(core::DimType type, std::string name)
+        : type_(type), name_(std::move(name)) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, Second, Place } state_ = State::First;
+    core::DimType type_;
+    std::string name_;
+    core::Vec2 a_{};
+    core::Vec2 b_{};
     bool done_ = false;
 };
 

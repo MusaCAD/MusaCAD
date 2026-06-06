@@ -79,6 +79,10 @@ add_executable(musacad_tests
     test_layers.cpp
     test_layer_render.cpp
     test_layer_persistence.cpp
+    test_text_font.cpp
+    test_text_entity.cpp
+    test_dimension.cpp
+    test_annotation_persistence.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

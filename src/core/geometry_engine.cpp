@@ -85,6 +85,12 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
             } else if constexpr (std::is_same_v<T, AddArcCommand>) {
                 handle =
                     store_.add_arc(c.center, c.radius, c.start_angle, c.end_angle, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
+                handle = store_.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
+                                         props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                handle = store_.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
+                                              c.style, props_of(c.props));
             }
         },
         add_command);
@@ -125,6 +131,21 @@ Command GeometryEngine::capture_entity(EntityHandle h) const {
         const auto verts = store_.vertices_of(*p);
         return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()), p->closed, 0,
                                   p->props};
+    }
+    case EntityKind::Text: {
+        const TextData* t = store_.text(h);
+        return AddTextCommand{t->pos,   t->height, t->rotation, t->justify,
+                              std::string(store_.string_of(*t)), 0, t->props};
+    }
+    case EntityKind::Dimension: {
+        const DimData* d = store_.dimension(h);
+        return AddDimensionCommand{static_cast<std::uint8_t>(d->type),
+                                   d->a,
+                                   d->b,
+                                   d->line_pt,
+                                   d->style,
+                                   0,
+                                   d->props};
     }
     case EntityKind::Point:
     case EntityKind::Spline:
@@ -363,6 +384,12 @@ void translate_cmd(Command& c, Vec2 d) {
                 for (Vec2& p : x.points) {
                     p += d;
                 }
+            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
+                x.pos += d;
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                x.a += d;
+                x.b += d;
+                x.line_pt += d;
             }
         },
         c);
@@ -396,6 +423,13 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 for (Vec2& p : x.points) {
                     p = refl(p);
                 }
+            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
+                x.pos = refl(x.pos);
+                x.rotation = refl_ang(x.rotation);
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                x.a = refl(x.a);
+                x.b = refl(x.b);
+                x.line_pt = refl(x.line_pt);
             }
         },
         c);
@@ -424,6 +458,13 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 for (Vec2& p : x.points) {
                     p = rot(p);
                 }
+            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
+                x.pos = rot(x.pos);
+                x.rotation += ang;
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                x.a = rot(x.a);
+                x.b = rot(x.b);
+                x.line_pt = rot(x.line_pt);
             }
         },
         c);
@@ -460,6 +501,10 @@ Vec2 command_anchor(const Command& c) {
                 out = x.center;
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 out = x.points.empty() ? Vec2{0.0, 0.0} : x.points.front();
+            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
+                out = x.pos;
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                out = x.a;
             }
         },
         c);
@@ -484,6 +529,13 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 for (Vec2& p : x.points) {
                     p = scl(p);
                 }
+            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
+                x.pos = scl(x.pos);
+                x.height *= f;
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                x.a = scl(x.a);
+                x.b = scl(x.b);
+                x.line_pt = scl(x.line_pt);
             }
         },
         c);
@@ -1226,7 +1278,8 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||
-                          std::is_same_v<T, AddArcCommand>) {
+                          std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
+                          std::is_same_v<T, AddDimensionCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();
@@ -1352,6 +1405,13 @@ void GeometryEngine::apply(const Command& command) {
                 apply_entity_layer(c.index, c.group);
             } else if constexpr (std::is_same_v<T, SetEntityColorCommand>) {
                 apply_entity_color(c.by_layer, c.color, c.group);
+            } else if constexpr (std::is_same_v<T, AddDimStyleCommand>) {
+                store_.add_dimstyle(c.style);
+                geom_dirty_ = true;
+                report("Dimension style \"" + c.style.name + "\" added.");
+            } else if constexpr (std::is_same_v<T, SetDimStyleCommand>) {
+                store_.set_dimstyle(c.index, c.style);
+                geom_dirty_ = true; // dims using this style recompute on rebuild
             }
         },
         command);

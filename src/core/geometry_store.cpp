@@ -41,6 +41,21 @@ EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std
     return EntityHandle{slot.index, slot.generation, EntityKind::Spline};
 }
 
+EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
+                                     std::string_view content, EntityProps props) {
+    const auto offset = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), content.begin(), content.end());
+    const auto slot = texts_.insert(TextData{pos, height, rotation, justify, offset,
+                                             static_cast<std::uint32_t>(content.size()), props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Text};
+}
+
+EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt,
+                                          std::uint16_t style, EntityProps props) {
+    const auto slot = dims_.insert(DimData{type, a, b, line_pt, style, props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Dimension};
+}
+
 bool GeometryStore::remove(EntityHandle h) noexcept {
     switch (h.kind) {
     case EntityKind::Point:
@@ -55,6 +70,10 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return arcs_.erase(h.index, h.generation);
     case EntityKind::Spline:
         return splines_.erase(h.index, h.generation);
+    case EntityKind::Text:
+        return texts_.erase(h.index, h.generation);
+    case EntityKind::Dimension:
+        return dims_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -73,13 +92,18 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return arcs_.is_valid(h.index, h.generation);
     case EntityKind::Spline:
         return splines_.is_valid(h.index, h.generation);
+    case EntityKind::Text:
+        return texts_.is_valid(h.index, h.generation);
+    case EntityKind::Dimension:
+        return dims_.is_valid(h.index, h.generation);
     }
     return false;
 }
 
 std::size_t GeometryStore::live_count() const noexcept {
     return points_.live_count() + lines_.live_count() + polylines_.live_count() +
-           circles_.live_count() + arcs_.live_count() + splines_.live_count();
+           circles_.live_count() + arcs_.live_count() + splines_.live_count() +
+           texts_.live_count() + dims_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -89,10 +113,14 @@ void GeometryStore::clear() noexcept {
     arcs_.clear();
     polylines_.clear();
     splines_.clear();
+    texts_.clear();
+    dims_.clear();
     polyline_pool_.clear();
     spline_pool_.clear();
+    string_pool_.clear();
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
     current_layer_ = 0;
+    dimstyles_.assign(1, DimStyle{"Standard"});
 }
 
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {
@@ -112,6 +140,47 @@ const PolylineData* GeometryStore::polyline(EntityHandle h) const noexcept {
 }
 const SplineData* GeometryStore::spline(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Spline ? splines_.get(h.index, h.generation) : nullptr;
+}
+const TextData* GeometryStore::text(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Text ? texts_.get(h.index, h.generation) : nullptr;
+}
+const DimData* GeometryStore::dimension(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+}
+std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
+    return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
+}
+
+const DimStyle* GeometryStore::dimstyle(std::uint16_t index) const noexcept {
+    return index < dimstyles_.size() ? &dimstyles_[index] : nullptr;
+}
+std::uint16_t GeometryStore::add_dimstyle(const DimStyle& style) {
+    for (std::size_t i = 0; i < dimstyles_.size(); ++i) {
+        if (dimstyles_[i].name == style.name) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    dimstyles_.push_back(style);
+    return static_cast<std::uint16_t>(dimstyles_.size() - 1);
+}
+void GeometryStore::set_dimstyle_table(std::vector<DimStyle> styles) {
+    dimstyles_ = std::move(styles);
+    if (dimstyles_.empty()) {
+        dimstyles_.push_back(DimStyle{"Standard"});
+    }
+    dimstyles_[0].name = "Standard";
+}
+
+bool GeometryStore::set_dimstyle(std::uint16_t index, const DimStyle& style) {
+    if (index >= dimstyles_.size()) {
+        return false;
+    }
+    DimStyle updated = style;
+    if (index == 0) {
+        updated.name = "Standard"; // index 0 is always "Standard"
+    }
+    dimstyles_[index] = updated;
+    return true;
 }
 
 std::span<const Vec2> GeometryStore::vertices_of(const PolylineData& pl) const noexcept {
@@ -155,6 +224,16 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Text:
+        if (const TextData* d = text(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Dimension:
+        if (const DimData* d = dimension(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -193,6 +272,18 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Spline:
         if (SplineData* d = splines_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Text:
+        if (TextData* d = texts_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Dimension:
+        if (DimData* d = dims_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -276,6 +367,8 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(arcs_, check);
     for_each_live_const(polylines_, check);
     for_each_live_const(splines_, check);
+    for_each_live_const(texts_, check);
+    for_each_live_const(dims_, check);
     return used;
 }
 
@@ -291,6 +384,8 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(arcs_, fix);
     for_each_live_mut(polylines_, fix);
     for_each_live_mut(splines_, fix);
+    for_each_live_mut(texts_, fix);
+    for_each_live_mut(dims_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {
