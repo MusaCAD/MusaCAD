@@ -56,6 +56,15 @@ EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 lin
     return EntityHandle{slot.index, slot.generation, EntityKind::Dimension};
 }
 
+EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
+                                       std::string_view content, EntityProps props) {
+    const auto offset = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), content.begin(), content.end());
+    const auto slot = leaders_.insert(LeaderData{tip, knee, text_height, style, offset,
+                                                 static_cast<std::uint32_t>(content.size()), props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Leader};
+}
+
 bool GeometryStore::remove(EntityHandle h) noexcept {
     switch (h.kind) {
     case EntityKind::Point:
@@ -74,6 +83,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return texts_.erase(h.index, h.generation);
     case EntityKind::Dimension:
         return dims_.erase(h.index, h.generation);
+    case EntityKind::Leader:
+        return leaders_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -96,6 +107,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return texts_.is_valid(h.index, h.generation);
     case EntityKind::Dimension:
         return dims_.is_valid(h.index, h.generation);
+    case EntityKind::Leader:
+        return leaders_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -103,7 +116,7 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
 std::size_t GeometryStore::live_count() const noexcept {
     return points_.live_count() + lines_.live_count() + polylines_.live_count() +
            circles_.live_count() + arcs_.live_count() + splines_.live_count() +
-           texts_.live_count() + dims_.live_count();
+           texts_.live_count() + dims_.live_count() + leaders_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -115,6 +128,7 @@ void GeometryStore::clear() noexcept {
     splines_.clear();
     texts_.clear();
     dims_.clear();
+    leaders_.clear();
     polyline_pool_.clear();
     spline_pool_.clear();
     string_pool_.clear();
@@ -147,8 +161,14 @@ const TextData* GeometryStore::text(EntityHandle h) const noexcept {
 const DimData* GeometryStore::dimension(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
 }
+const LeaderData* GeometryStore::leader(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Leader ? leaders_.get(h.index, h.generation) : nullptr;
+}
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
+}
+std::string_view GeometryStore::string_of(const LeaderData& l) const noexcept {
+    return std::string_view(string_pool_.data() + l.str_offset, l.str_len);
 }
 
 const DimStyle* GeometryStore::dimstyle(std::uint16_t index) const noexcept {
@@ -234,6 +254,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Leader:
+        if (const LeaderData* d = leader(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -284,6 +309,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Dimension:
         if (DimData* d = dims_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Leader:
+        if (LeaderData* d = leaders_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -369,6 +400,7 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(splines_, check);
     for_each_live_const(texts_, check);
     for_each_live_const(dims_, check);
+    for_each_live_const(leaders_, check);
     return used;
 }
 
@@ -386,6 +418,7 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(splines_, fix);
     for_each_live_mut(texts_, fix);
     for_each_live_mut(dims_, fix);
+    for_each_live_mut(leaders_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

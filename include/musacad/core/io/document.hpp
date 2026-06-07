@@ -14,9 +14,10 @@ class GeometryStore;
 namespace musacad::core::io {
 
 /// The current native document format version. v1: geometry only. v2: layer table
-/// + per-entity properties. v3: text + dimensions + dimension styles. Readers
+/// + per-entity properties. v3: text + dimensions + dimension styles. v4: leaders +
+/// expanded DIMSTYLE (per-element colours, dim lineweight, arrow types). Readers
 /// reject newer versions; older files load fine (no layers => layer 0; no dims).
-inline constexpr std::uint32_t kFormatVersion = 3;
+inline constexpr std::uint32_t kFormatVersion = 4;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -75,6 +76,15 @@ struct DocDim {
     EntityProps props{};
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
+struct DocLeader {
+    Vec2 tip;
+    Vec2 knee;
+    double text_height = 2.5;
+    std::uint16_t style = 0;
+    std::string content;
+    EntityProps props{};
+    friend bool operator==(const DocLeader&, const DocLeader&) = default;
+};
 
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
@@ -94,10 +104,11 @@ struct Document {
     std::vector<DocSpline> splines;
     std::vector<DocText> texts;
     std::vector<DocDim> dims;
+    std::vector<DocLeader> leaders;
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
-               splines.size() + texts.size() + dims.size();
+               splines.size() + texts.size() + dims.size() + leaders.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

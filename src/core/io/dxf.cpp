@@ -204,14 +204,61 @@ std::string serialize_dxf(const Document& doc) {
         code_d(s, 11, d.line_pt.x);
         code_d(s, 21, d.line_pt.y);
         code_d(s, 31, 0.0);
-        // 70: 0 = rotated/linear, 1 = aligned (+ bit 32 "block defined" omitted).
-        code_i(s, 70, d.type == static_cast<std::uint8_t>(DimType::Aligned) ? 1 : 0);
+        // 70 dim type: 0 rotated/linear, 1 aligned, 3 diameter, 4 radius, 5 angular.
+        long dimtype = 0;
+        switch (static_cast<DimType>(d.type)) {
+        case DimType::Aligned:
+            dimtype = 1;
+            break;
+        case DimType::Diameter:
+            dimtype = 3;
+            break;
+        case DimType::Radius:
+            dimtype = 4;
+            break;
+        case DimType::Angular:
+            dimtype = 5;
+            break;
+        case DimType::Linear:
+            dimtype = 0;
+            break;
+        }
+        code_i(s, 70, dimtype);
         code_d(s, 13, d.a.x);
         code_d(s, 23, d.a.y);
         code_d(s, 33, 0.0);
         code_d(s, 14, d.b.x);
         code_d(s, 24, d.b.y);
         code_d(s, 34, 0.0);
+        code_d(s, 15, d.line_pt.x); // radius/diameter "edge" def point reuse
+        code_d(s, 25, d.line_pt.y);
+        code_d(s, 35, 0.0);
+    }
+    // Leaders: exported as a DXF LEADER (vertices) plus a TEXT label so any reader
+    // shows them. Import reconstructs them as line + text (see docs); Musa keeps
+    // leaders as first-class entities via the native format.
+    for (const DocLeader& l : doc.leaders) {
+        code(s, 0, "LEADER");
+        emit_props(s, doc, l.props);
+        const std::string style =
+            l.style < doc.dimstyles.size() ? doc.dimstyles[l.style].name : std::string("Standard");
+        code(s, 3, style);
+        code_i(s, 76, 2); // vertex count
+        code_d(s, 10, l.tip.x);
+        code_d(s, 20, l.tip.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 10, l.knee.x);
+        code_d(s, 20, l.knee.y);
+        code_d(s, 30, 0.0);
+        if (!l.content.empty()) {
+            code(s, 0, "TEXT");
+            emit_props(s, doc, l.props);
+            code_d(s, 10, l.knee.x);
+            code_d(s, 20, l.knee.y);
+            code_d(s, 30, 0.0);
+            code_d(s, 40, l.text_height);
+            code(s, 1, l.content);
+        }
     }
     code(s, 0, "ENDSEC");
     code(s, 0, "EOF");
@@ -418,11 +465,58 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             d.a = {getd(body, 13), getd(body, 23)};
             d.b = {getd(body, 14), getd(body, 24)};
             d.line_pt = {getd(body, 10), getd(body, 20)};
-            d.type = static_cast<std::uint8_t>(flag == 1 ? DimType::Aligned : DimType::Linear);
+            DimType dt = DimType::Linear;
+            switch (flag) {
+            case 1:
+                dt = DimType::Aligned;
+                break;
+            case 3:
+                dt = DimType::Diameter;
+                break;
+            case 4:
+                dt = DimType::Radius;
+                break;
+            case 5:
+                dt = DimType::Angular;
+                break;
+            default:
+                dt = DimType::Linear;
+                break;
+            }
+            // Radius/diameter store the edge point in line_pt (code 15) on export.
+            if ((dt == DimType::Radius || dt == DimType::Diameter) && find(body, 15) != nullptr) {
+                d.line_pt = {getd(body, 15), getd(body, 25)};
+            }
+            d.type = static_cast<std::uint8_t>(dt);
             if (const std::string* st = find(body, 3)) {
                 d.style = ensure_dimstyle(*st);
             }
             doc.dims.push_back(std::move(d));
+            return;
+        }
+        if (type == "LEADER") {
+            // Reconstruct from the two vertices; the label is the following TEXT.
+            DocLeader l;
+            l.props = props_of(body);
+            l.tip = {getd(body, 10), getd(body, 20)};
+            // The last 10/20 pair is the landing point; getd returns the first, so
+            // scan for a second occurrence.
+            bool first = true;
+            for (const Pair& pr : body) {
+                if (pr.code == 10) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        l.knee.x = to_d(pr.value);
+                    }
+                } else if (pr.code == 20 && !first) {
+                    l.knee.y = to_d(pr.value);
+                }
+            }
+            if (const std::string* st = find(body, 3)) {
+                l.style = ensure_dimstyle(*st);
+            }
+            doc.leaders.push_back(std::move(l));
             return;
         }
         if (type == "LINE") {

@@ -298,14 +298,17 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         break;
     }
     case EntityKind::Dimension: {
-        // The dimension line (between the feet) is the selectable span.
+        // The dimension line(s) are the selectable span.
         const DimData* d = store.dimension(entity);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{});
-        if (g.lines.size() >= 2) {
-            out.push_back(g.lines[g.lines.size() - 2]);
-            out.push_back(g.lines.back());
-        }
+        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
+        out.assign(g.dim_lines.begin(), g.dim_lines.end());
+        break;
+    }
+    case EntityKind::Leader: {
+        const LeaderData* l = store.leader(entity);
+        out.push_back(l->tip);
+        out.push_back(l->knee);
         break;
     }
     }
@@ -376,25 +379,29 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(entity);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{});
+        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
         bool found = false;
         double best_d2 = 0.0;
-        const auto consider = [&](Vec2 a, Vec2 b) {
-            const Vec2 cp = closest_on_segment(a, b, query);
-            const double d2 = length_squared(query - cp);
-            if (!found || d2 < best_d2) {
-                found = true;
-                best_d2 = d2;
-                out_point = cp;
+        const auto consider_list = [&](const std::vector<Vec2>& v) {
+            for (std::size_t i = 0; i + 1 < v.size(); i += 2) {
+                const Vec2 cp = closest_on_segment(v[i], v[i + 1], query);
+                const double d2 = length_squared(query - cp);
+                if (!found || d2 < best_d2) {
+                    found = true;
+                    best_d2 = d2;
+                    out_point = cp;
+                }
             }
         };
-        for (std::size_t i = 0; i + 1 < g.lines.size(); i += 2) {
-            consider(g.lines[i], g.lines[i + 1]);
-        }
-        for (std::size_t i = 0; i + 1 < g.arrows.size(); i += 2) {
-            consider(g.arrows[i], g.arrows[i + 1]);
-        }
+        consider_list(g.ext_lines);
+        consider_list(g.dim_lines);
+        consider_list(g.arrow_lines);
         return found;
+    }
+    case EntityKind::Leader: {
+        const LeaderData* l = store.leader(entity);
+        out_point = closest_on_segment(l->tip, l->knee, query);
+        return true;
     }
     }
     return false;
@@ -469,6 +476,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Spline:
     case EntityKind::Text:
     case EntityKind::Dimension:
+    case EntityKind::Leader:
         break;
     }
     return false;

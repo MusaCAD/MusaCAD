@@ -51,6 +51,34 @@ PipelineDesc make_point_pipeline_desc() {
     return d;
 }
 
+// Thick scene lines: per-instance segment (vec4) expanded to a screen-space quad.
+PipelineDesc make_thickline_pipeline_desc() {
+    PipelineDesc d;
+    d.vertex_src = shaders::thickline_vert;
+    d.fragment_src = shaders::thickline_frag;
+    d.attributes = {VertexAttribute{0, 0, 4, 0, 1}}; // vec4 per instance
+    d.bindings = {VertexBinding{0, sizeof(float) * 4}};
+    d.topology = Topology::TriangleStrip;
+    return d;
+}
+
+// Filled triangles (arrowheads): per-vertex world position.
+PipelineDesc make_fill_pipeline_desc() {
+    PipelineDesc d;
+    d.vertex_src = shaders::fill_vert;
+    d.fragment_src = shaders::fill_frag;
+    d.attributes = {VertexAttribute{0, 0, 2, 0, 0}}; // vec2 per vertex
+    d.bindings = {VertexBinding{0, sizeof(float) * 2}};
+    d.topology = Topology::Triangles;
+    return d;
+}
+
+// AutoCAD-style fixed-screen lineweight: hundredths-mm -> pixels (zoom-independent).
+constexpr float kPixelsPerMm = 6.0f;
+float lineweight_px(std::uint8_t hundredths_mm) {
+    return std::max(1.5f, (static_cast<float>(hundredths_mm) / 100.0f) * kPixelsPerMm);
+}
+
 /// Converts world-space segment endpoint pairs (2 Vec2 per segment) into a flat
 /// vec4-per-instance float buffer. Returns the instance count.
 std::size_t pack_segments(const std::vector<core::Vec2>& endpoints, std::vector<float>& out) {
@@ -171,8 +199,11 @@ void append_marker(std::vector<core::Vec2>& seg, core::SnapType type, double cx,
 ViewportRenderer::ViewportRenderer(GpuDevice& device) : device_(device) {
     line_pipeline_ = device_.create_pipeline(make_line_pipeline_desc());
     point_pipeline_ = device_.create_pipeline(make_point_pipeline_desc());
+    thick_pipeline_ = device_.create_pipeline(make_thickline_pipeline_desc());
+    fill_pipeline_ = device_.create_pipeline(make_fill_pipeline_desc());
     line_instances_ = device_.create_buffer(BufferUsage::Dynamic);
     point_instances_ = device_.create_buffer(BufferUsage::Dynamic);
+    fill_buffer_ = device_.create_buffer(BufferUsage::Dynamic);
     grid_minor_ = device_.create_buffer(BufferUsage::Stream);
     grid_major_ = device_.create_buffer(BufferUsage::Stream);
     overlay_buffer_ = device_.create_buffer(BufferUsage::Stream);
@@ -194,8 +225,18 @@ void ViewportRenderer::upload_scene(const core::RenderSnapshot& snapshot) {
     point_count_ = snapshot.points.size();
     point_instances_->upload(scratch_.data(), scratch_.size() * sizeof(float));
 
+    scratch_.clear();
+    scratch_.reserve(snapshot.fill_vertices.size() * 2);
+    for (const core::Vec2& p : snapshot.fill_vertices) {
+        scratch_.push_back(static_cast<float>(p.x));
+        scratch_.push_back(static_cast<float>(p.y));
+    }
+    fill_count_ = snapshot.fill_vertices.size();
+    fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+
     line_batches_ = snapshot.line_batches;
     point_batches_ = snapshot.point_batches;
+    fill_batches_ = snapshot.fill_batches;
 
     uploaded_version_ = snapshot.geometry_version;
     stats_.scene_uploaded_bytes = line_bytes + scratch_.size() * sizeof(float);
@@ -249,25 +290,48 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         cmd_->draw_instanced(2, static_cast<std::uint32_t>(major_count));
         ++stats_.draw_calls;
     }
-    // Scene lines, one small draw per resolved colour (ByLayer resolution +
-    // off/frozen skipping happen geometry-side; we just colour the batches). If no
-    // batches were published (e.g. a hand-built snapshot), fall back to one draw.
+    // Scene lines: thick screen-space-expanded quads, one draw per (colour,
+    // lineweight) batch. Width is in pixels (zoom-independent). LWDISPLAY off ->
+    // a thin default for everything.
     if (line_count_ > 0) {
-        if (line_batches_.empty()) {
-            cmd_->set_uniform_vec4("u_color", kSceneColor[0], kSceneColor[1], kSceneColor[2],
-                                   kSceneColor[3]);
-            cmd_->bind_vertex_buffer(0, *line_instances_, 0);
-            cmd_->draw_instanced(2, static_cast<std::uint32_t>(line_count_));
+        cmd_->bind_pipeline(*thick_pipeline_);
+        cmd_->set_uniform_mat3("u_transform", view);
+        cmd_->set_uniform_vec2("u_viewport", static_cast<float>(target.width()),
+                               static_cast<float>(target.height()));
+        const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
+                                    std::uint32_t count) {
+            const float w = snapshot.lineweight_display ? lineweight_px(lw) : 1.0f;
+            cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
+            cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
+                                   static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
+                                   1.0f);
+            cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 4);
+            cmd_->draw_instanced(4, count); // 4-vertex triangle strip per segment
             ++stats_.draw_calls;
+        };
+        if (line_batches_.empty()) {
+            draw_batch(core::Rgb{static_cast<std::uint8_t>(kSceneColor[0] * 255),
+                                 static_cast<std::uint8_t>(kSceneColor[1] * 255),
+                                 static_cast<std::uint8_t>(kSceneColor[2] * 255)},
+                       25, 0, static_cast<std::uint32_t>(line_count_));
         } else {
             for (const core::ColorBatch& b : line_batches_) {
-                cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
-                                       static_cast<float>(b.color.g) / 255.0f,
-                                       static_cast<float>(b.color.b) / 255.0f, 1.0f);
-                cmd_->bind_vertex_buffer(0, *line_instances_, b.first * sizeof(float) * 4);
-                cmd_->draw_instanced(2, b.count);
-                ++stats_.draw_calls;
+                draw_batch(b.color, b.lineweight, b.first, b.count);
             }
+        }
+    }
+
+    // Filled arrowheads (and future hatching): one draw per colour batch.
+    if (fill_count_ > 0 && !fill_batches_.empty()) {
+        cmd_->bind_pipeline(*fill_pipeline_);
+        cmd_->set_uniform_mat3("u_transform", view);
+        for (const core::ColorBatch& b : fill_batches_) {
+            cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
+                                   static_cast<float>(b.color.g) / 255.0f,
+                                   static_cast<float>(b.color.b) / 255.0f, 1.0f);
+            cmd_->bind_vertex_buffer(0, *fill_buffer_, b.first * sizeof(float) * 2);
+            cmd_->draw_instanced(b.count, 1); // b.count vertices, GL_TRIANGLES
+            ++stats_.draw_calls;
         }
     }
 

@@ -198,6 +198,7 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
         case EntityKind::Spline:
         case EntityKind::Text:
         case EntityKind::Dimension:
+        case EntityKind::Leader:
             break; // no object-snap points (nearest, if any, handled below)
         }
 

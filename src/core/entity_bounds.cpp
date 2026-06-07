@@ -88,7 +88,7 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{});
+        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
         bool first = true;
         const auto extend = [&](Vec2 p) {
             if (first) {
@@ -99,15 +99,22 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
                 out_max = {std::max(out_max.x, p.x), std::max(out_max.y, p.y)};
             }
         };
-        for (const Vec2& p : g.lines) {
-            extend(p);
-        }
-        for (const Vec2& p : g.arrows) {
-            extend(p);
+        for (const auto* list : {&g.ext_lines, &g.dim_lines, &g.arrow_lines, &g.arrow_fills}) {
+            for (const Vec2& p : *list) {
+                extend(p);
+            }
         }
         extend(d->a);
         extend(d->b);
         return !first;
+    }
+    case EntityKind::Leader: {
+        const LeaderData* l = store.leader(h);
+        const double w = text::text_width(store.string_of(*l), l->text_height);
+        box2(l->tip, l->knee);
+        out_min = {std::min(out_min.x, l->knee.x), std::min(out_min.y, l->knee.y)};
+        out_max = {std::max(out_max.x, l->knee.x + w), std::max(out_max.y, l->knee.y + l->text_height)};
+        return true;
     }
     }
     return false;

@@ -1024,4 +1024,115 @@ void LinearDimensionCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// DIMRADIUS / DIMDIAMETER: centre -> point on circle
+// ---------------------------------------------------------------------------
+void RadialDimensionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify centre of circle/arc: ");
+}
+
+void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::Center) {
+        center_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Edge;
+        ctx.set_prompt("Specify point on circle/arc: ");
+        return;
+    }
+    ctx.submit(core::AddDimensionCommand{static_cast<std::uint8_t>(type_), center_, *p, *p, 0,
+                                         ctx.group_id()});
+    ctx.echo("Dimension placed.");
+    done_ = true;
+}
+
+void RadialDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIMANGULAR: vertex -> ray-1 point -> ray-2 point
+// ---------------------------------------------------------------------------
+void AngularDimensionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify angle vertex: ");
+}
+
+void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    switch (state_) {
+    case State::Vertex:
+        vertex_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Ray1;
+        ctx.set_prompt("Specify first point: ");
+        return;
+    case State::Ray1:
+        ray1_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Ray2;
+        ctx.set_prompt("Specify second point: ");
+        return;
+    case State::Ray2:
+        // a = vertex, b = ray-1 point, line_pt = ray-2 point (angular convention).
+        ctx.submit(core::AddDimensionCommand{static_cast<std::uint8_t>(core::DimType::Angular),
+                                             vertex_, ray1_, *p, 0, ctx.group_id()});
+        ctx.echo("Angular dimension placed.");
+        done_ = true;
+        return;
+    }
+}
+
+void AngularDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// LEADER: arrow tip -> landing point -> text
+// ---------------------------------------------------------------------------
+void LeaderCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify leader arrow point: ");
+}
+
+void LeaderCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (state_) {
+    case State::Tip:
+        if (const auto p = read_point(ctx, text)) {
+            tip_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Knee;
+            ctx.set_prompt("Specify landing point: ");
+        }
+        return;
+    case State::Knee:
+        if (const auto p = read_point(ctx, text)) {
+            knee_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Content;
+            ctx.set_prompt("Enter leader text: ");
+        }
+        return;
+    case State::Content:
+        ctx.submit(core::AddLeaderCommand{tip_, knee_, 2.5, 0, text, ctx.group_id()});
+        ctx.echo("Leader placed.");
+        done_ = true;
+        return;
+    }
+}
+
+void LeaderCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

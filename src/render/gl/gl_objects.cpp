@@ -152,6 +152,10 @@ void GlCommandBuffer::set_uniform_float(const char* name, float value) {
     gl_->glProgramUniform1f(pipeline_->program(), pipeline_->uniform(name), value);
 }
 
+void GlCommandBuffer::set_uniform_vec2(const char* name, float x, float y) {
+    gl_->glProgramUniform2f(pipeline_->program(), pipeline_->uniform(name), x, y);
+}
+
 void GlCommandBuffer::set_uniform_vec4(const char* name, float r, float g, float b, float a) {
     gl_->glProgramUniform4f(pipeline_->program(), pipeline_->uniform(name), r, g, b, a);
 }

@@ -249,6 +249,22 @@ struct AddDimensionCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// A quick leader: arrowhead at `tip`, line to `knee`, text label at `knee`.
+struct AddLeaderCommand {
+    Vec2 tip;
+    Vec2 knee;
+    double text_height = 2.5;
+    std::uint16_t style = 0;
+    std::string content;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
+/// Toggle lineweight display (AutoCAD LWDISPLAY). Off => thin default everywhere.
+struct SetLineweightDisplayCommand {
+    bool on = true;
+};
+
 /// Add a dimension style (or return the existing index for a known name).
 struct AddDimStyleCommand {
     DimStyle style;
@@ -303,6 +319,6 @@ using Command =
                  OpenDocumentCommand, NewDocumentCommand, AddLayerCommand, SetLayerCommand,
                  RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
-                 SetDimStyleCommand>;
+                 SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand>;
 
 } // namespace musacad::core

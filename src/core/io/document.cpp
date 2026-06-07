@@ -71,6 +71,14 @@ Document document_from_store(const GeometryStore& store) {
                                       dd.style, dd.props});
         }
     }
+    const auto& leaders = store.leaders();
+    for (std::uint32_t i = 0; i < leaders.slot_count(); ++i) {
+        if (leaders.alive(i)) {
+            const LeaderData& ld = leaders.data()[i];
+            doc.leaders.push_back(DocLeader{ld.tip, ld.knee, ld.text_height, ld.style,
+                                            std::string(store.string_of(ld)), ld.props});
+        }
+    }
     return doc;
 }
 
@@ -82,6 +90,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocDim& d : doc.dims) {
         store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props);
+    }
+    for (const DocLeader& l : doc.leaders) {
+        store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props);
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);

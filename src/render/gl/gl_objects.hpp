@@ -66,6 +66,7 @@ public:
                             std::size_t offset) override;
     void set_uniform_mat3(const char* name, const core::Mat3& m) override;
     void set_uniform_float(const char* name, float value) override;
+    void set_uniform_vec2(const char* name, float x, float y) override;
     void set_uniform_vec4(const char* name, float r, float g, float b, float a) override;
     void draw_instanced(std::uint32_t vertex_count, std::uint32_t instance_count) override;
 

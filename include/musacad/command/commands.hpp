@@ -316,4 +316,55 @@ private:
     bool done_ = false;
 };
 
+/// DIMRADIUS / DIMDIAMETER: pick centre, then a point on the circle/arc.
+class RadialDimensionCommand final : public ICommand {
+public:
+    RadialDimensionCommand(core::DimType type, std::string name)
+        : type_(type), name_(std::move(name)) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Center, Edge } state_ = State::Center;
+    core::DimType type_;
+    std::string name_;
+    core::Vec2 center_{};
+    bool done_ = false;
+};
+
+/// DIMANGULAR: pick the vertex, then a point on each of the two rays.
+class AngularDimensionCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMANGULAR"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Vertex, Ray1, Ray2 } state_ = State::Vertex;
+    core::Vec2 vertex_{};
+    core::Vec2 ray1_{};
+    bool done_ = false;
+};
+
+/// LEADER: pick the arrow tip, the landing point, then enter the label.
+class LeaderCommand final : public ICommand {
+public:
+    std::string name() const override { return "LEADER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Tip, Knee, Content } state_ = State::Tip;
+    core::Vec2 tip_{};
+    core::Vec2 knee_{};
+    bool done_ = false;
+};
+
 } // namespace musacad::command

@@ -141,6 +141,52 @@ int main(int argc, char* argv[]) {
     std::printf("Lit pixels         : %zu of %d\n", lit, W * H);
     check(lit > 1000, "geometry rasterized to the framebuffer");
 
+    // ----- Lineweight proof: a single horizontal line's on-screen thickness -----
+    std::printf("\n== Lineweight proof (screen-space expanded geometry) ==\n");
+    std::uint64_t lw_ver = 100;
+    const auto measure_thickness = [&](std::uint8_t lineweight, bool lwdisplay) -> int {
+        core::GeometryStore ls;
+        core::Layer wl;
+        wl.name = "w";
+        wl.lineweight = lineweight;
+        const std::uint16_t li = ls.add_layer(wl);
+        ls.add_line(Vec2{-50, 0}, Vec2{50, 0}, core::EntityProps{li});
+        core::RenderSnapshot s;
+        core::build_render_snapshot(ls, kernel, s);
+        s.version = ++lw_ver;
+        s.geometry_version = lw_ver;
+        s.lineweight_display = lwdisplay;
+        cam.frame_bounds(Vec2{-50, -50}, Vec2{50, 50}, 0.05);
+        renderer.render(*target, s, cam);
+        base->glFinish();
+        const std::vector<std::uint8_t> px = render::read_offscreen_rgba(*target);
+        int max_run = 0;
+        int run = 0;
+        const int x = W / 2;
+        for (int y = 0; y < H; ++y) {
+            const std::size_t idx = (static_cast<std::size_t>(y) * W + x) * 4;
+            const bool on = px[idx] > 60 || px[idx + 1] > 60 || px[idx + 2] > 60;
+            run = on ? run + 1 : 0;
+            max_run = std::max(max_run, run);
+        }
+        return max_run; // line thickness in pixels at mid-screen
+    };
+    const int t_off = measure_thickness(60, false);  // LWDISPLAY off -> thin
+    const int t_def = measure_thickness(25, true);   // 0.25 mm default
+    const int t_heavy = measure_thickness(120, true); // 1.20 mm heavy
+    std::printf("Thickness px: LWDISPLAY-off=%d  default(0.25mm)=%d  heavy(1.20mm)=%d\n", t_off,
+                t_def, t_heavy);
+    check(t_def >= 1 && t_def <= 4, "default 0.25 mm renders a thin-but-visible line");
+    check(t_heavy > t_def + 2, "heavy lineweight is clearly thicker than default");
+    check(t_off <= t_def, "LWDISPLAY off draws thinner than displayed default");
+
+    // Restore the big-scene camera + re-sync the uploaded scene (the thickness
+    // probes uploaded their own tiny scenes) before the zero-re-upload check.
+    cam.frame_bounds(Vec2{0.0, 0.0}, Vec2{static_cast<double>(side), static_cast<double>(side)},
+                     0.05);
+    renderer.render(*target, snap, cam);
+    base->glFinish();
+
     // ----- Constraint B: camera-only frames re-upload nothing; measure timing -----
     std::printf("\n== Constraint B: pan/zoom independent of edit load ==\n");
     const int kFrames = 300;

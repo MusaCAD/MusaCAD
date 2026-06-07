@@ -25,7 +25,17 @@ inline GLenum to_gl_usage(BufferUsage usage) noexcept {
 }
 
 inline GLenum to_gl_topology(Topology topology) noexcept {
-    return topology == Topology::Points ? GL_POINTS : GL_LINES;
+    switch (topology) {
+    case Topology::Points:
+        return GL_POINTS;
+    case Topology::TriangleStrip:
+        return GL_TRIANGLE_STRIP;
+    case Topology::Triangles:
+        return GL_TRIANGLES;
+    case Topology::Lines:
+        break;
+    }
+    return GL_LINES;
 }
 
 } // namespace musacad::render::gl

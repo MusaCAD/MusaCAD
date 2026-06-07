@@ -59,14 +59,17 @@ suggests both); aliases are case-insensitive.
 | TEXT (single-line) | DT / TEXT | Implemented |
 | DIMLINEAR (horizontal/vertical) | DLI | Implemented |
 | DIMALIGNED (parallel to segment) | DAL | Implemented |
-| DIMSTYLE (text height / arrow type+size / precision / ext lines) | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
-| Filled-triangle + tick arrowheads | — | Implemented |
+| DIMRADIUS (R-prefix, arrow at edge) | DRA | Implemented |
+| DIMDIAMETER (⌀-prefix, through-centre) | DDI | Implemented |
+| DIMANGULAR (3-point, arc + degree °) | DAN | Implemented |
+| LEADER (arrow + line + text label) | LE / LEADER | Implemented |
+| Arrowheads: filled / open / tick / dot (solid filled geometry) | DIMSTYLE | Implemented |
+| DIMSTYLE: text height / arrow type+size / precision / ext lines | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
+| DIMSTYLE per-element colours (dim / ext / text / arrow) + dim lineweight | Dim Style btn | Implemented |
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
-| DIMRADIUS / DIMDIAMETER | DRA / DDI | Partial (modelled; geometry staged) |
-| DIMANGULAR | DAN | Partial (modelled; geometry staged) |
 | DIMCONTINUE / DIMBASELINE | DCO / DBA | Planned |
 | MTEXT (multi-line) | MT | Planned |
-| MLEADER / LEADER | MLD | Planned |
+| MLEADER (multi-segment) | MLD | Planned |
 | STYLE (text style) | ST | Planned |
 
 ## View / Navigate
@@ -107,8 +110,9 @@ suggests both); aliases are case-insensitive.
 
 | Command | Alias | Status |
 |---|---|---|
-| Native format v3 (adds text + dimensions + dimstyles) | — | Implemented |
-| DXF TEXT + linear DIMENSION + DIMSTYLE table (read/write) | — | Implemented |
+| Native format v4 (adds leaders + expanded DIMSTYLE) | — | Implemented |
+| DXF TEXT + DIMENSION (all subtypes) + LEADER + DIMSTYLE table | — | Implemented (leader label imports as separate TEXT) |
+| LWDISPLAY (lineweight display on/off) | LWT ribbon toggle | Implemented |
 | NEW (native .musa) | Ctrl+N | Implemented |
 | OPEN (native .musa) | Ctrl+O | Implemented |
 | SAVE | Ctrl+S | Implemented |

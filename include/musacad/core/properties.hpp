@@ -45,17 +45,41 @@ enum class DimType : std::uint8_t {
     Angular = 4,
 };
 
+/// Arrowhead style for dimensions and leaders.
+enum class ArrowType : std::uint8_t {
+    Filled = 0, ///< solid filled triangle (closed)
+    Tick = 1,   ///< architectural 45-degree tick
+    Open = 2,   ///< open (two barb lines)
+    Dot = 3,    ///< filled dot
+};
+
+/// A per-element colour: inherited from the entity's layer, or an explicit RGB.
+struct ElementColor {
+    bool by_layer = true;
+    Rgb color{};
+    friend bool operator==(const ElementColor&, const ElementColor&) = default;
+    [[nodiscard]] Rgb resolve(Rgb base) const noexcept { return by_layer ? base : color; }
+};
+
 /// A dimension style: the formatting all dimensions resolve through. "Standard"
 /// always exists at index 0 of the store's dimstyle table.
 struct DimStyle {
     std::string name;
     double text_height = 2.5;
     double arrow_size = 2.5;
-    std::uint8_t arrow_type = 0; ///< 0 = filled triangle, 1 = tick
+    std::uint8_t arrow_type = 0; ///< ArrowType
     double ext_offset = 0.6;     ///< gap from def point to the extension line start
     double ext_extension = 1.25; ///< how far the extension line passes the dim line
     std::uint8_t precision = 2;  ///< decimal places in the measured text
     bool text_above = true;      ///< text sits above the dim line (else centred)
+    std::uint8_t dim_lineweight = 25; ///< dimension/extension line weight (hundredths mm)
+
+    // Per-element colours (ByLayer by default, AutoCAD-style).
+    ElementColor dim_color{};
+    ElementColor ext_color{};
+    ElementColor text_color{};
+    ElementColor arrow_color{};
+
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };
 

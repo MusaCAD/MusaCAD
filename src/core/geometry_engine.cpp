@@ -91,6 +91,9 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store_.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                               c.style, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                handle = store_.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
+                                           props_of(c.props));
             }
         },
         add_command);
@@ -146,6 +149,16 @@ Command GeometryEngine::capture_entity(EntityHandle h) const {
                                    d->style,
                                    0,
                                    d->props};
+    }
+    case EntityKind::Leader: {
+        const LeaderData* l = store_.leader(h);
+        return AddLeaderCommand{l->tip,
+                                l->knee,
+                                l->text_height,
+                                l->style,
+                                std::string(store_.string_of(*l)),
+                                0,
+                                l->props};
     }
     case EntityKind::Point:
     case EntityKind::Spline:
@@ -214,6 +227,9 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.arcs(), EntityKind::Arc);
     collect(store_.polylines(), EntityKind::Polyline);
     collect(store_.splines(), EntityKind::Spline);
+    collect(store_.texts(), EntityKind::Text);
+    collect(store_.dimensions(), EntityKind::Dimension);
+    collect(store_.leaders(), EntityKind::Leader);
     return live;
 }
 
@@ -390,6 +406,9 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.a += d;
                 x.b += d;
                 x.line_pt += d;
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                x.tip += d;
+                x.knee += d;
             }
         },
         c);
@@ -430,6 +449,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
                 x.line_pt = refl(x.line_pt);
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                x.tip = refl(x.tip);
+                x.knee = refl(x.knee);
             }
         },
         c);
@@ -465,6 +487,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
                 x.line_pt = rot(x.line_pt);
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                x.tip = rot(x.tip);
+                x.knee = rot(x.knee);
             }
         },
         c);
@@ -505,6 +530,8 @@ Vec2 command_anchor(const Command& c) {
                 out = x.pos;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 out = x.a;
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                out = x.tip;
             }
         },
         c);
@@ -536,6 +563,10 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
                 x.line_pt = scl(x.line_pt);
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                x.tip = scl(x.tip);
+                x.knee = scl(x.knee);
+                x.text_height *= f;
             }
         },
         c);
@@ -929,6 +960,7 @@ bool fillet_pl(std::vector<Vec2>& pts, bool closed, int sv, double r) {
     pts = std::move(out);
     return true;
 }
+
 } // namespace
 
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
@@ -1279,7 +1311,8 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||
                           std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
-                          std::is_same_v<T, AddDimensionCommand>) {
+                          std::is_same_v<T, AddDimensionCommand> ||
+                          std::is_same_v<T, AddLeaderCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();
@@ -1412,6 +1445,8 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, SetDimStyleCommand>) {
                 store_.set_dimstyle(c.index, c.style);
                 geom_dirty_ = true; // dims using this style recompute on rebuild
+            } else if constexpr (std::is_same_v<T, SetLineweightDisplayCommand>) {
+                lineweight_display_ = c.on;
             }
         },
         command);
@@ -1426,7 +1461,8 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, SelectWindowCommand> || std::is_same_v<T, SelectAllCommand> ||
                 std::is_same_v<T, ClearSelectionCommand> ||
                 std::is_same_v<T, SaveDocumentCommand> ||
-                std::is_same_v<T, OpenDocumentCommand> || std::is_same_v<T, NewDocumentCommand>;
+                std::is_same_v<T, OpenDocumentCommand> || std::is_same_v<T, NewDocumentCommand> ||
+                std::is_same_v<T, SetLineweightDisplayCommand>;
             if constexpr (!view_or_io) {
                 dirty_ = true;
             }
@@ -1491,6 +1527,8 @@ void GeometryEngine::rebuild_and_publish() {
     buf.line_vertices = geom_cache_.line_vertices;
     buf.line_batches = geom_cache_.line_batches;
     buf.point_batches = geom_cache_.point_batches;
+    buf.fill_vertices = geom_cache_.fill_vertices;
+    buf.fill_batches = geom_cache_.fill_batches;
     buf.bounds_min = geom_cache_.bounds_min;
     buf.bounds_max = geom_cache_.bounds_max;
     buf.has_bounds = geom_cache_.has_bounds;
@@ -1549,6 +1587,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.status_version = status_version_;
     buf.dirty = dirty_;
     buf.document_version = document_version_;
+    buf.lineweight_display = lineweight_display_;
 
     buf.geometry_version = geom_version_;
     buf.version = version_.fetch_add(1, std::memory_order_acq_rel) + 1;

@@ -663,6 +663,48 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   (v1/v2 still load -- no annotations); DXF writes/reads TEXT + linear DIMENSION +
   the DIMSTYLE table (LibreCAD-verified).
 
+## Lineweight rendering & solid arrowheads (Phase 14)
+
+* **Thick lines via screen-space expansion (not `glLineWidth`).** A second line
+  pipeline (`shaders/thickline.*`, `Topology::TriangleStrip`) draws each segment as
+  an instanced 4-vertex quad expanded perpendicular to the segment by a pixel
+  half-width in the vertex shader. Core-GL `glLineWidth` is unreliable/capped, so it
+  is not used for scene geometry. Caps are square (each end extended by the
+  half-width) so polyline joins overlap with no gaps -- a cheap stand-in for true
+  miter/round joins (deferred).
+* **mm -> pixels.** Lineweight (the Phase-12 per-entity uint8 hundredths-mm,
+  resolved ByLayer/override) maps to a *fixed screen* width `px = max(1.5, mm*6)` --
+  zoom-independent, matching AutoCAD's default lineweight display. "Display to
+  scale" (world-proportional) is deferred. Offscreen-measured: LWDISPLAY-off ~1 px,
+  default 0.25 mm ~2 px, 1.20 mm ~8 px.
+* **LWDISPLAY.** A drawing-wide flag (`SetLineweightDisplayCommand`, default **on**)
+  published in the snapshot and read per-frame at draw; off -> a thin 1 px default.
+  A checkable **LWT** ribbon button toggles it.
+* **Batching stays bounded.** Lines batch by **(colour, lineweight)**; fills by
+  colour. A 1,000,000-line scene still draws in <= 6 calls at ~94 FPS offscreen
+  (4-vertex expansion vs the old 2-vertex line). Insert baseline unaffected
+  (~30 ns/line) -- rendering is downstream of the store.
+* **Solid arrowheads (`Topology::Triangles`, `shaders/fill.*`).** A fill channel
+  carries filled triangles (3 Vec2 each) batched by colour. `append_arrowhead`
+  emits **filled / dot** as triangle fans and **open / tick** as line segments,
+  oriented and sized to the style. Shared by dimensions and leaders.
+* **DIMSTYLE colour expansion.** The style carries per-element `ElementColor`
+  (ByLayer-or-explicit) for dim line / extension line / text / arrowhead, plus a dim
+  lineweight. `compute_dim_geometry` returns each element list with its resolved
+  colour; the snapshot routes them into the right batches. A style change re-renders
+  every dimension that uses it; the dark dimstyle dialog edits these.
+* **Remaining dimension types + leader.** On the shared model (def points ->
+  computed geometry): **DIMRADIUS** (centre->edge, R-prefix), **DIMDIAMETER**
+  (through-centre, diameter prefix, two arrows), **DIMANGULAR** (vertex + two ray
+  points -> arc + degree). **Leader** is a new `EntityKind::Leader` (`LeaderData`:
+  tip + knee + text in the shared char pool, own arena) sharing the arrow +
+  stroke-font machinery. All are layer-aware, selectable, undoable, round-trip the
+  native format; DXF writes each DIMENSION subtype (group code 70) + a LEADER (the
+  leader label re-imports as a separate TEXT -- stated honestly).
+* **Struct sizes:** `LeaderData` 64 B and `DimStyle` 96 B in their own arena/table;
+  the hot `LineData` stays **40 B** and insert holds at ~30 ns/line.
+* See `docs/AUTOCAD_CONFIG.md` for the full configurable-options roadmap.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -723,6 +765,11 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
   native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
 
+* **Phase 14 — complete:** real lineweight rendering (screen-space expanded
+  quads, LWDISPLAY toggle), solid filled arrowheads (filled/open/tick/dot),
+  DIMSTYLE per-element colours, and the remaining dimension types (radius/diameter/
+  angular) + leaders. Native v4 + DXF round-trip; `docs/AUTOCAD_CONFIG.md` catalogs
+  the full config roadmap. 177 unit tests pass under ASan + TSan.
 * **Phase 13 — complete:** vector text rendering (single-stroke font), the TEXT
   entity, and dimensions (DIMLINEAR + DIMALIGNED solid, others staged) with a real
   DIMSTYLE table, arrowheads, the Annotate ribbon, a dimstyle dialog, and native-v3

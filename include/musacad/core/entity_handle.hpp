@@ -16,6 +16,7 @@ enum class EntityKind : std::uint16_t {
     Spline,
     Text,
     Dimension,
+    Leader,
 };
 
 /// A generational handle to an entity in the GeometryStore.

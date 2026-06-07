@@ -83,6 +83,7 @@ add_executable(musacad_tests
     test_text_entity.cpp
     test_dimension.cpp
     test_annotation_persistence.cpp
+    test_lineweight.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

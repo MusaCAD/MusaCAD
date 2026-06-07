@@ -17,8 +17,9 @@ namespace musacad::core {
 /// frozen layers contribute no batches (they are skipped before batching).
 struct ColorBatch {
     Rgb color;
-    std::uint32_t first = 0; ///< first segment/point index
-    std::uint32_t count = 0; ///< number of segments/points
+    std::uint32_t first = 0;      ///< first segment/point/vertex index
+    std::uint32_t count = 0;      ///< number of segments/points/vertices
+    std::uint8_t lineweight = 25; ///< resolved display lineweight (hundredths mm); 0 = points/fills
 };
 
 /// An immutable (from the renderer's perspective) view of the scene, produced
@@ -44,6 +45,12 @@ struct RenderSnapshot {
     std::vector<ColorBatch> point_batches;
     std::vector<Layer> layers;
     std::uint16_t current_layer = 0;
+
+    // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
+    // any future hatching. `lineweight_display` is the LWDISPLAY toggle.
+    std::vector<Vec2> fill_vertices;
+    std::vector<ColorBatch> fill_batches;
+    bool lineweight_display = true;
 
     // World-space AABB of live geometry (for ZOOM extents). `has_bounds` is
     // false when the scene is empty. Derived from the payload; not part of the
@@ -94,6 +101,9 @@ struct RenderSnapshot {
         line_vertices.clear();
         line_batches.clear();
         point_batches.clear();
+        fill_vertices.clear();
+        fill_batches.clear();
+        lineweight_display = true;
         layers.clear();
         current_layer = 0;
         checksum = 0;

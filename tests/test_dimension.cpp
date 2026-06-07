@@ -44,14 +44,62 @@ TEST_CASE("compute_dim_geometry builds ext/dim lines + arrows + label per style"
     DimStyle s;
     s.precision = 2;
 
-    const DimGeometry g = compute_dim_geometry(d, s);
+    const DimGeometry g = compute_dim_geometry(d, s, Rgb{255, 255, 255});
     REQUIRE(g.label == "10.00");
-    REQUIRE(g.lines.size() >= 6);   // two extension lines + dimension line
-    REQUIRE(!g.arrows.empty());     // arrowheads at both ends
+    REQUIRE(g.ext_lines.size() == 4);       // two extension lines
+    REQUIRE(g.dim_lines.size() >= 2);       // the dimension line
+    REQUIRE(!g.arrow_fills.empty());        // solid filled arrowheads (triangles)
+    REQUIRE(g.arrow_fills.size() % 3 == 0);
 
     // Precision is a style property: fewer decimals -> different label.
     s.precision = 0;
-    REQUIRE(compute_dim_geometry(d, s).label == "10");
+    REQUIRE(compute_dim_geometry(d, s, Rgb{}).label == "10");
+}
+
+TEST_CASE("Radius / diameter / angular: computed value, prefix/suffix, geometry") {
+    DimStyle s;
+    s.precision = 1;
+
+    DimData rad;
+    rad.type = DimType::Radius;
+    rad.a = {0, 0};   // centre
+    rad.b = {10, 0};  // point on circle
+    REQUIRE(dim_measure(rad) == Approx(10.0));
+    const DimGeometry gr = compute_dim_geometry(rad, s, Rgb{});
+    REQUIRE(gr.label == "R10.0");
+    REQUIRE(!gr.dim_lines.empty());
+    REQUIRE(!gr.arrow_fills.empty());
+
+    DimData dia = rad;
+    dia.type = DimType::Diameter;
+    REQUIRE(dim_measure(dia) == Approx(20.0));
+    REQUIRE(compute_dim_geometry(dia, s, Rgb{}).label == "⌀20.0"); // diameter prefix
+
+    DimData ang;
+    ang.type = DimType::Angular;
+    ang.a = {0, 0};       // vertex
+    ang.b = {10, 0};      // ray 1 (+x)
+    ang.line_pt = {0, 10}; // ray 2 (+y)
+    REQUIRE(dim_measure(ang) == Approx(90.0));
+    const DimGeometry ga = compute_dim_geometry(ang, s, Rgb{});
+    REQUIRE(ga.label == "90.0°"); // degree suffix
+    REQUIRE(!ga.dim_lines.empty());     // the arc
+}
+
+TEST_CASE("DIMSTYLE per-element colours resolve (explicit wins, ByLayer uses base)") {
+    DimStyle s;
+    s.arrow_color = {false, Rgb{255, 0, 0}};   // explicit red
+    s.text_color = {false, Rgb{255, 255, 0}};  // explicit yellow
+    // dim_color stays ByLayer -> uses the base colour.
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {10, 0};
+    d.line_pt = {5, 3};
+    const DimGeometry g = compute_dim_geometry(d, s, Rgb{0, 0, 255}); // base blue
+    REQUIRE(g.arrow_color == Rgb{255, 0, 0});
+    REQUIRE(g.text_color == Rgb{255, 255, 0});
+    REQUIRE(g.dim_color == Rgb{0, 0, 255}); // ByLayer -> base
 }
 
 namespace {

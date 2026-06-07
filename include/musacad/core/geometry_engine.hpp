@@ -150,6 +150,7 @@ private:
     void new_document();
     bool dirty_ = false;
     std::uint64_t document_version_ = 0;
+    bool lineweight_display_ = true; // LWDISPLAY (default on so default 0.25mm shows)
 
     Vec2 cursor_{};
     double pick_radius_ = 0.0;

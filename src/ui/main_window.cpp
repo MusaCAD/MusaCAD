@@ -75,17 +75,43 @@ DialogSpec array_dialog_spec() {
 
 /// The "Standard" dimension-style editor (minimal; full multi-style manager is
 /// staged). All fields always visible.
+// Colour-choice palette shared by the dimstyle dialog (index 0 = ByLayer).
+const std::array<core::Rgb, 7> kDimColorPalette = {{
+    core::Rgb{255, 255, 255}, // 0 ByLayer placeholder (value unused)
+    core::Rgb{255, 0, 0},     // Red
+    core::Rgb{255, 255, 0},   // Yellow
+    core::Rgb{0, 255, 0},     // Green
+    core::Rgb{0, 255, 255},   // Cyan
+    core::Rgb{0, 128, 255},   // Blue
+    core::Rgb{255, 255, 255}, // White
+}};
+core::ElementColor color_from_choice(int idx) {
+    if (idx <= 0) {
+        return core::ElementColor{true, {}}; // ByLayer
+    }
+    const auto i = static_cast<std::size_t>(idx);
+    return core::ElementColor{false, i < kDimColorPalette.size() ? kDimColorPalette[i]
+                                                                 : core::Rgb{255, 255, 255}};
+}
+
 DialogSpec dimstyle_dialog_spec() {
     DialogSpec spec;
     spec.title = "Dimension Style: Standard";
+    const std::vector<std::string> colors = {"ByLayer", "Red",  "Yellow", "Green",
+                                             "Cyan",    "Blue", "White"};
     spec.fields = {
         {"text_height", "Text height", FieldType::Number, 2.5, {}, 0, false, ""},
         {"arrow_size", "Arrow size", FieldType::Number, 2.5, {}, 0, false, ""},
-        {"arrow_type", "Arrow type", FieldType::Choice, 0, {"Filled triangle", "Tick"}, 0, false,
-         ""},
+        {"arrow_type", "Arrow type", FieldType::Choice, 0,
+         {"Filled triangle", "Tick", "Open", "Dot"}, 0, false, ""},
         {"precision", "Decimal precision", FieldType::Integer, 2, {}, 0, false, ""},
         {"ext_offset", "Extension offset", FieldType::Number, 0.6, {}, 0, false, ""},
         {"ext_extension", "Extension beyond", FieldType::Number, 1.25, {}, 0, false, ""},
+        {"dim_lineweight", "Dim line weight (1/100 mm)", FieldType::Integer, 25, {}, 0, false, ""},
+        {"dim_color", "Dimension-line colour", FieldType::Choice, 0, colors, 0, false, ""},
+        {"ext_color", "Extension-line colour", FieldType::Choice, 0, colors, 0, false, ""},
+        {"text_color", "Text colour", FieldType::Choice, 0, colors, 0, false, ""},
+        {"arrow_color", "Arrowhead colour", FieldType::Choice, 0, colors, 0, false, ""},
     };
     return spec;
 }
@@ -329,10 +355,21 @@ void MainWindow::build_ribbon() {
     add_cmd(annot, QStringLiteral("text"), QStringLiteral("Text"), "DT");
     add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Linear"), "DLI");
     add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Aligned"), "DAL");
+    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Radius"), "DRA");
+    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Diameter"), "DDI");
+    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Angular"), "DAN");
+    add_cmd(annot, QStringLiteral("text"), QStringLiteral("Leader"), "LE");
     QToolButton* dimstyle_btn =
         annot->add_button(make_icon(QStringLiteral("dim")), QStringLiteral("Dim\nStyle"));
     dimstyle_btn->setObjectName(QStringLiteral("ribbon.dimstyle"));
     connect(dimstyle_btn, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
+    QToolButton* lwt_btn =
+        annot->add_button(make_icon(QStringLiteral("dim")), QStringLiteral("LWT"));
+    lwt_btn->setObjectName(QStringLiteral("ribbon.lwt"));
+    lwt_btn->setCheckable(true);
+    lwt_btn->setChecked(true); // LWDISPLAY defaults on
+    connect(lwt_btn, &QToolButton::toggled, this,
+            [this](bool on) { engine_->submit(core::SetLineweightDisplayCommand{on}); });
 
     // --- Insert tab (placeholder) ---
     const int insert = ribbon_->add_tab(QStringLiteral("Insert"));
@@ -914,6 +951,11 @@ void MainWindow::submit_dimstyle_from_dialog(const ParameterDialog& dlg) {
     s.precision = static_cast<std::uint8_t>(dlg.integer("precision"));
     s.ext_offset = dlg.number("ext_offset");
     s.ext_extension = dlg.number("ext_extension");
+    s.dim_lineweight = static_cast<std::uint8_t>(dlg.integer("dim_lineweight"));
+    s.dim_color = color_from_choice(dlg.choice_index("dim_color"));
+    s.ext_color = color_from_choice(dlg.choice_index("ext_color"));
+    s.text_color = color_from_choice(dlg.choice_index("text_color"));
+    s.arrow_color = color_from_choice(dlg.choice_index("arrow_color"));
     engine_->submit(core::SetDimStyleCommand{0, s});
 }
 
@@ -961,7 +1003,42 @@ bool MainWindow::selftest_annotation() {
     std::printf("[selftest] DIMLINEAR command renders: %s\n", dim_ok ? "PASS" : "FAIL");
     all = all && dim_ok;
 
-    // The DIMSTYLE dialog uses the dark palette.
+    // Radius, diameter, angular, and leader each add geometry.
+    int prev = viewport_->line_vertex_count();
+    const auto place = [&](const char* name, std::initializer_list<const char*> steps) {
+        for (const char* s : steps) {
+            type(s);
+        }
+        const bool ok = pump([this, prev] { return viewport_->line_vertex_count() > prev; });
+        std::printf("[selftest] %s renders: %s\n", name, ok ? "PASS" : "FAIL");
+        all = all && ok;
+        prev = viewport_->line_vertex_count();
+    };
+    place("DIMRADIUS", {"DRA", "40,0", "50,0"});
+    place("DIMDIAMETER", {"DDI", "0,40", "10,40"});
+    place("DIMANGULAR", {"DAN", "0,0", "10,0", "0,10"});
+    place("LEADER", {"LE", "60,60", "70,66", "see note"});
+
+    // A DIMSTYLE change (precision) re-renders the dimensions using it.
+    const int before_style = viewport_->line_vertex_count();
+    core::DimStyle s;
+    s.name = "Standard";
+    s.precision = 0;
+    s.arrow_color = {false, core::Rgb{255, 0, 0}}; // red arrowheads
+    engine_->submit(core::SetDimStyleCommand{0, s});
+    const bool restyle =
+        pump([this, before_style] { return viewport_->line_vertex_count() != before_style; });
+    std::printf("[selftest] DIMSTYLE change re-renders dims: %s\n", restyle ? "PASS" : "FAIL");
+    all = all && restyle;
+
+    // LWDISPLAY toggle is accepted (pixel-width proof is in the offscreen harness).
+    engine_->submit(core::SetLineweightDisplayCommand{false});
+    engine_->submit(core::SetLineweightDisplayCommand{true});
+    const bool lwt_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+    std::printf("[selftest] LWDISPLAY toggle accepted: %s\n", lwt_ok ? "PASS" : "FAIL");
+    all = all && lwt_ok;
+
+    // The DIMSTYLE dialog (dark) now exposes per-element colour fields.
     ParameterDialog dlg(dimstyle_dialog_spec(), this);
     const bool dark = dlg.palette().color(QPalette::Window).lightness() < 90;
     std::printf("[selftest] DIMSTYLE dialog dark palette: %s\n", dark ? "PASS" : "FAIL");

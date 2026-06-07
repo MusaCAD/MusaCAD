@@ -36,6 +36,7 @@ public:
 
     virtual void set_uniform_mat3(const char* name, const core::Mat3& m) = 0;
     virtual void set_uniform_float(const char* name, float value) = 0;
+    virtual void set_uniform_vec2(const char* name, float x, float y) = 0;
     virtual void set_uniform_vec4(const char* name, float r, float g, float b, float a) = 0;
 
     /// Instanced draw: `vertex_count` base vertices, `instance_count` instances.

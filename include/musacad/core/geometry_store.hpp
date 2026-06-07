@@ -87,6 +87,18 @@ struct DimData {
     EntityProps props{};
 };
 
+/// A quick leader: an arrowhead at `tip`, a leader line to `knee`, and a text
+/// label anchored at `knee`. Shares the dimstyle arrow + the stroke font.
+struct LeaderData {
+    Vec2 tip;              ///< arrowhead point (what the leader points at)
+    Vec2 knee;            ///< landing / text anchor
+    double text_height = 2.5;
+    std::uint16_t style = 0; ///< dimstyle (for arrow type/size + colours)
+    std::uint32_t str_offset = 0;
+    std::uint32_t str_len = 0;
+    EntityProps props{};
+};
+
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own
 /// GenerationalArena; variable-length vertex data lives in shared pools. All
 /// access is non-virtual.
@@ -109,6 +121,8 @@ public:
                           std::string_view content, EntityProps props = {});
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {});
+    EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
+                            std::string_view content, EntityProps props = {});
 
     // --- removal / validity -------------------------------------------------
     bool remove(EntityHandle handle) noexcept;
@@ -128,8 +142,10 @@ public:
     [[nodiscard]] const SplineData* spline(EntityHandle h) const noexcept;
     [[nodiscard]] const TextData* text(EntityHandle h) const noexcept;
     [[nodiscard]] const DimData* dimension(EntityHandle h) const noexcept;
+    [[nodiscard]] const LeaderData* leader(EntityHandle h) const noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
+    [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
 
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
@@ -142,6 +158,7 @@ public:
     [[nodiscard]] const GenerationalArena<SplineData>& splines() const noexcept { return splines_; }
     [[nodiscard]] const GenerationalArena<TextData>& texts() const noexcept { return texts_; }
     [[nodiscard]] const GenerationalArena<DimData>& dimensions() const noexcept { return dims_; }
+    [[nodiscard]] const GenerationalArena<LeaderData>& leaders() const noexcept { return leaders_; }
 
     // --- dimension styles ("Standard" always at index 0) --------------------
     [[nodiscard]] const std::vector<DimStyle>& dimstyles() const noexcept { return dimstyles_; }
@@ -207,6 +224,7 @@ private:
     GenerationalArena<SplineData> splines_;
     GenerationalArena<TextData> texts_;
     GenerationalArena<DimData> dims_;
+    GenerationalArena<LeaderData> leaders_;
 
     std::vector<Vec2> polyline_pool_;
     std::vector<Vec2> spline_pool_;

@@ -1,0 +1,96 @@
+# Musa CAD — AutoCAD configuration catalog (living roadmap)
+
+The configurable AutoCAD options relevant to a 2D drafter, as the roadmap for
+Musa CAD's settings. **Status**: `Implemented`, `This phase` (Phase 14), or
+`Planned`. Grouped by where AutoCAD exposes them.
+
+## DIMSTYLE — Lines tab
+
+| Option | Status |
+|---|---|
+| Dimension-line color | Implemented (Ph14) |
+| Dimension-line lineweight | Implemented (Ph14) |
+| Dimension-line extend beyond ticks | Planned |
+| Baseline spacing | Planned |
+| Suppress dim line 1 / 2 | Planned |
+| Extension-line color | Implemented (Ph14) |
+| Extension-line lineweight | Planned |
+| Extend beyond dim lines (ext_extension) | Implemented (Ph13) |
+| Offset from origin (ext_offset) | Implemented (Ph13) |
+| Suppress ext line 1 / 2 | Planned |
+| Fixed-length extension lines | Planned |
+
+## DIMSTYLE — Symbols & Arrows tab
+
+| Option | Status |
+|---|---|
+| Arrowhead type (filled / open / tick / dot) | Implemented (Ph14) |
+| Arrowhead size | Implemented (Ph13) |
+| Arrowhead color (per dimstyle) | Implemented (Ph14) |
+| Separate first/second arrowheads | Planned |
+| Center marks (none / mark / line) | Planned |
+| Leader arrowhead | Implemented (Ph14, shares arrow rendering) |
+| Arc length symbol / dimension break | Planned |
+
+## DIMSTYLE — Text tab
+
+| Option | Status |
+|---|---|
+| Text height | Implemented (Ph13) |
+| Text color | Implemented (Ph14) |
+| Text placement (above / centered) | Implemented (Ph13) |
+| Text style (font) | Planned (single stroke font for now) |
+| Text alignment (horizontal / aligned with dim line) | Implemented (Ph13, aligned) |
+| Text offset from dim line | Planned |
+| Fraction format / text frame | Planned |
+
+## DIMSTYLE — Fit tab
+
+| Option | Status |
+|---|---|
+| Overall scale (DIMSCALE) | Planned |
+| Fit options when text doesn't fit | Planned |
+| Text placement when moved | Planned (grips, next phase) |
+
+## DIMSTYLE — Primary Units tab
+
+| Option | Status |
+|---|---|
+| Linear precision (decimal places) | Implemented (Ph13) |
+| Unit format (decimal / architectural / engineering) | Planned (decimal only) |
+| Decimal separator | Planned |
+| Round off | Planned |
+| Prefix / suffix | Implemented (Ph14, built-in R / ⌀ / ° for radius/dia/angular) |
+| Measurement scale factor | Planned |
+| Suppress leading / trailing zeros | Planned |
+| Angular precision / format | Implemented (Ph14, degrees) |
+
+## DIMSTYLE — Alternate Units / Tolerances tabs
+
+| Option | Status |
+|---|---|
+| Alternate units (mm/inch dual) | Planned |
+| Tolerances (symmetric / deviation / limits) | Planned |
+
+## Drawing-wide settings
+
+| Variable | Meaning | Status |
+|---|---|---|
+| LWDISPLAY | Show lineweights on/off | Implemented (Ph14) |
+| Default lineweight | New-entity/ByLayer default (0.25 mm) | Implemented (Ph12) |
+| Lineweight display scale | Display lineweight to world scale vs fixed screen | Planned (fixed screen this phase) |
+| LTSCALE | Global linetype scale | Planned |
+| Per-layer / per-entity lineweight | ByLayer + override | Implemented (Ph12) |
+| Per-layer / per-entity color, linetype | ByLayer + override | Implemented (Ph12) |
+| LUNITS / LUPREC | Drawing unit format / precision | Planned |
+| PDMODE / PDSIZE | Point display style / size | Planned |
+| Linetype patterns (dashed/center/hidden render) | Visual stipple | Planned (property modelled Ph12) |
+
+## Leader / MLEADER
+
+| Option | Status |
+|---|---|
+| LEADER (arrow + line + text) | Implemented (Ph14) |
+| MLEADER (multi-segment, content blocks) | Planned |
+| Leader landing / dogleg | Planned |
+| Leader style | Planned (uses dimstyle arrow for now) |

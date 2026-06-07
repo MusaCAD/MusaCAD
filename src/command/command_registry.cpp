@@ -107,6 +107,15 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"DAL", "DIMALIGNED"}, [] {
         return std::make_unique<LinearDimensionCommand>(core::DimType::Aligned, "DIMALIGNED");
     });
+    r.register_command({"DRA", "DIMRADIUS"}, [] {
+        return std::make_unique<RadialDimensionCommand>(core::DimType::Radius, "DIMRADIUS");
+    });
+    r.register_command({"DDI", "DIMDIAMETER"}, [] {
+        return std::make_unique<RadialDimensionCommand>(core::DimType::Diameter, "DIMDIAMETER");
+    });
+    r.register_command({"DAN", "DIMANGULAR"},
+                       [] { return std::make_unique<AngularDimensionCommand>(); });
+    r.register_command({"LE", "LEADER"}, [] { return std::make_unique<LeaderCommand>(); });
     return r;
 }
 

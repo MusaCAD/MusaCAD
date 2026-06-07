@@ -69,8 +69,11 @@ private:
     GpuDevice& device_;
     std::unique_ptr<GpuPipeline> line_pipeline_;
     std::unique_ptr<GpuPipeline> point_pipeline_;
+    std::unique_ptr<GpuPipeline> thick_pipeline_; // scene lines (screen-space width)
+    std::unique_ptr<GpuPipeline> fill_pipeline_;  // filled triangles (arrowheads)
     std::unique_ptr<GpuBuffer> line_instances_;
     std::unique_ptr<GpuBuffer> point_instances_;
+    std::unique_ptr<GpuBuffer> fill_buffer_;
     std::unique_ptr<GpuBuffer> grid_minor_;
     std::unique_ptr<GpuBuffer> grid_major_;
     std::unique_ptr<GpuBuffer> overlay_buffer_;
@@ -89,10 +92,12 @@ private:
     std::uint64_t uploaded_version_ = ~0ull;
     std::size_t line_count_ = 0;  ///< scene line instances currently on GPU
     std::size_t point_count_ = 0; ///< scene point instances currently on GPU
-    // Per-colour batches over the uploaded scene buffers (cached at upload time;
-    // one small draw per batch resolves per-entity colour).
+    std::size_t fill_count_ = 0;  ///< scene fill vertices currently on GPU
+    // Per-colour(+weight) batches over the uploaded scene buffers (cached at upload
+    // time; one small draw per batch resolves per-entity colour/lineweight).
     std::vector<core::ColorBatch> line_batches_;
     std::vector<core::ColorBatch> point_batches_;
+    std::vector<core::ColorBatch> fill_batches_;
 
     RenderStats stats_;
 };

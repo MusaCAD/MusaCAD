@@ -11,7 +11,7 @@ namespace musacad::render {
 enum class BufferUsage : std::uint8_t { Static, Dynamic, Stream };
 
 /// Primitive topology for a draw.
-enum class Topology : std::uint8_t { Points, Lines };
+enum class Topology : std::uint8_t { Points, Lines, TriangleStrip, Triangles };
 
 /// One vertex attribute, sourced from a buffer bound at `binding`. `divisor`
 /// of 1 makes it per-instance (instanced rendering); 0 is per-vertex.

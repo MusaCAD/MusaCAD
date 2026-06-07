@@ -131,8 +131,17 @@ std::string serialize_native(const Document& doc) {
         s += l.name;
         s += '\n';
     }
-    // DIMSTYLE <text_height> <arrow_size> <arrow_type> <ext_offset> <ext_extension>
-    //          <precision> <text_above> <name...>
+    // DIMSTYLE th as at eo ee pr ta dlw  <4 element colours: by_layer r g b>  name...
+    const auto append_ecolor = [](std::string& out, const ElementColor& ec) {
+        append_uint(out, ec.by_layer ? 1 : 0);
+        out += ' ';
+        append_uint(out, ec.color.r);
+        out += ' ';
+        append_uint(out, ec.color.g);
+        out += ' ';
+        append_uint(out, ec.color.b);
+        out += ' ';
+    };
     for (const DimStyle& ds : doc.dimstyles) {
         s += "DIMSTYLE ";
         append_double(s, ds.text_height);
@@ -149,6 +158,12 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, ds.text_above ? 1 : 0);
         s += ' ';
+        append_uint(s, ds.dim_lineweight);
+        s += ' ';
+        append_ecolor(s, ds.dim_color);
+        append_ecolor(s, ds.ext_color);
+        append_ecolor(s, ds.text_color);
+        append_ecolor(s, ds.arrow_color);
         s += ds.name;
         s += '\n';
     }
@@ -238,6 +253,21 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, d.style);
         append_props(s, d.props);
+        s += '\n';
+    }
+    // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
+    for (const DocLeader& l : doc.leaders) {
+        s += "LEADER ";
+        append_vec(s, l.tip);
+        s += ' ';
+        append_vec(s, l.knee);
+        s += ' ';
+        append_double(s, l.text_height);
+        s += ' ';
+        append_uint(s, l.style);
+        append_props(s, l.props);
+        s += '\n';
+        s += l.content;
         s += '\n';
     }
     s += "END\n";
@@ -363,8 +393,33 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.ext_extension = ee;
             ds.precision = static_cast<std::uint8_t>(pr);
             ds.text_above = ta != 0;
-            std::string name(tok[8]);
-            for (std::size_t i = 9; i < tok.size(); ++i) {
+            // v4 appends: dim_lineweight + 4 element colours (by_layer r g b) before name.
+            std::size_t name_at = 8;
+            if (version >= 4 && tok.size() >= 25) {
+                std::uint64_t dlw = 0;
+                to_uint(tok[8], dlw);
+                ds.dim_lineweight = static_cast<std::uint8_t>(dlw);
+                const auto read_ec = [&](std::size_t i, ElementColor& ec) {
+                    std::uint64_t by = 1;
+                    std::uint64_t r = 0;
+                    std::uint64_t g = 0;
+                    std::uint64_t b = 0;
+                    to_uint(tok[i], by);
+                    to_uint(tok[i + 1], r);
+                    to_uint(tok[i + 2], g);
+                    to_uint(tok[i + 3], b);
+                    ec.by_layer = by != 0;
+                    ec.color = {static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g),
+                                static_cast<std::uint8_t>(b)};
+                };
+                read_ec(9, ds.dim_color);
+                read_ec(13, ds.ext_color);
+                read_ec(17, ds.text_color);
+                read_ec(21, ds.arrow_color);
+                name_at = 25;
+            }
+            std::string name(tok[name_at]);
+            for (std::size_t i = name_at + 1; i < tok.size(); ++i) {
                 name += ' ';
                 name += std::string(tok[i]);
             }
@@ -413,6 +468,29 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       {vals[4], vals[5]},
                                       static_cast<std::uint16_t>(style),
                                       props});
+        } else if (key == "LEADER") {
+            // LEADER tipx tipy kneex kneey height style <props7>; content next line.
+            vals.clear();
+            EntityProps props;
+            std::uint64_t style = 0;
+            if (tok.size() != 14 || !parse_doubles(tok, 1, 5, vals) || !to_uint(tok[6], style) ||
+                !parse_props(tok, 7, props)) {
+                return fail("LEADER record malformed");
+            }
+            std::string content;
+            if (!std::getline(in, content)) {
+                return fail("LEADER missing content line");
+            }
+            ++line_no;
+            if (!content.empty() && content.back() == '\r') {
+                content.pop_back();
+            }
+            doc.leaders.push_back(DocLeader{{vals[0], vals[1]},
+                                            {vals[2], vals[3]},
+                                            vals[4],
+                                            static_cast<std::uint16_t>(style),
+                                            std::move(content),
+                                            props});
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {
