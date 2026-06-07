@@ -209,6 +209,63 @@ int main(int argc, char* argv[]) {
     renderer.render(*target, snap, cam);
     base->glFinish();
 
+    // ----- Part A: zoom-adaptive curve tessellation (segment counts + frame cost) --
+    std::printf("\n== Curve tessellation (zoom-adaptive) ==\n");
+    {
+        core::GeometryStore cs;
+        core::NativeKernel2D ck;
+        constexpr int kCircles = 5000;
+        for (int i = 0; i < kCircles; ++i) {
+            cs.add_circle(Vec2{static_cast<double>(i % 100) * 5.0,
+                               static_cast<double>(i / 100) * 5.0},
+                          10.0);
+        }
+        // Coarse (zoomed out) vs fine (zoomed in) chord tolerance -> the same circles
+        // re-tessellate to more segments when zoomed in (smooth, not faceted).
+        core::RenderSnapshot coarse;
+        core::RenderSnapshot fine;
+        core::build_render_snapshot(cs, ck, coarse, 1.0);   // ~zoomed way out
+        core::build_render_snapshot(cs, ck, fine, 0.002);   // ~zoomed in (0.3px@~150dpi)
+        const std::size_t coarse_segs = coarse.line_vertices.size() / 2;
+        const std::size_t fine_segs = fine.line_vertices.size() / 2;
+        std::printf("%d circles: coarse=%zu segs (%.1f/circle), fine=%zu segs (%.1f/circle)\n",
+                    kCircles, coarse_segs, static_cast<double>(coarse_segs) / kCircles, fine_segs,
+                    static_cast<double>(fine_segs) / kCircles);
+        check(fine_segs > coarse_segs * 3, "zooming in tessellates curves much finer");
+        check(fine_segs / kCircles <= 8192, "per-curve segment count stays bounded (cap)");
+
+        core::RenderSnapshot probe;
+        core::build_render_snapshot(cs, ck, probe, 1.0e-9); // absurd zoom -> cap engages
+        std::printf("Worst-case (cap): %.0f segs/circle\n",
+                    static_cast<double>(probe.line_vertices.size() / 2) / kCircles);
+
+        fine.version = 7;
+        fine.geometry_version = 7;
+        cam.frame_bounds(Vec2{0, 0}, Vec2{500, 250}, 0.05);
+        renderer.render(*target, fine, cam); // upload the fine scene
+        base->glFinish();
+        const std::uint32_t curve_calls = renderer.stats().draw_calls;
+        constexpr int kCurveFrames = 120;
+        const auto c0 = std::chrono::steady_clock::now();
+        for (int f = 0; f < kCurveFrames; ++f) {
+            renderer.render(*target, fine, cam);
+        }
+        base->glFinish();
+        const double cms = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - c0)
+                               .count() /
+                           kCurveFrames;
+        std::printf("Fine-tessellated %d-circle scene: %.3f ms/frame (%.0f FPS), draw calls=%u\n",
+                    kCircles, cms, 1000.0 / cms, curve_calls);
+        check(curve_calls <= 6, "many fine curves still draw in <= 6 calls (bounded)");
+    }
+
+    // Restore the big scene for the remaining checks.
+    cam.frame_bounds(Vec2{0.0, 0.0}, Vec2{static_cast<double>(side), static_cast<double>(side)},
+                     0.05);
+    renderer.render(*target, snap, cam);
+    base->glFinish();
+
     // ----- Constraint B: camera-only frames re-upload nothing; measure timing -----
     std::printf("\n== Constraint B: pan/zoom independent of edit load ==\n");
     const int kFrames = 300;

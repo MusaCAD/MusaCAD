@@ -986,17 +986,15 @@ bool segment_endpoints(const GeometryStore& store, EntityHandle h, Vec2 pick, Ve
 }
 } // namespace
 
-void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2,
-                                            double radius, std::uint16_t style,
-                                            std::uint64_t group) {
+bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2, double radius,
+                                      DimData& out) const {
     const auto dt = static_cast<DimType>(type);
     const EntityHandle h1 = pick_nearest(pick1, radius);
     if (h1.is_null()) {
-        report("No object under the pick -- select an object to dimension.");
-        return;
+        return false;
     }
-
-    Command add = AddLineCommand{}; // placeholder; replaced below
+    out.type = dt;
+    out.style = 0;
     if (dt == DimType::Radius || dt == DimType::Diameter) {
         Vec2 center{};
         double r = 0.0;
@@ -1009,18 +1007,19 @@ void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 
             center = arc->center;
             r = arc->radius;
         } else {
-            report("Select a circle or an arc for a radius/diameter dimension.");
-            return;
+            return false;
         }
         Vec2 dir = pick2 - center;
         dir = length_squared(dir) > 1e-12 ? normalized(dir) : Vec2{1.0, 0.0};
-        const Vec2 edge = center + dir * r;
-        add = AddDimensionCommand{type, center, edge, pick2, style, group, {}};
-    } else if (dt == DimType::Angular) {
+        out.a = center;
+        out.b = center + dir * r;
+        out.line_pt = pick2;
+        return true;
+    }
+    if (dt == DimType::Angular) {
         const EntityHandle h2 = pick_nearest(pick2, radius);
         if (h2.is_null()) {
-            report("Select a second line for an angular dimension.");
-            return;
+            return false;
         }
         Vec2 a1{};
         Vec2 b1{};
@@ -1028,13 +1027,11 @@ void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 
         Vec2 b2{};
         if (!segment_endpoints(store_, h1, pick1, a1, b1) ||
             !segment_endpoints(store_, h2, pick2, a2, b2)) {
-            report("Angular dimension needs two lines or polyline edges.");
-            return;
+            return false;
         }
         Vec2 v{};
         if (!NativeKernel2D::line_line_intersection(a1, b1, a2, b2, v)) {
-            report("Angular: the two lines are parallel.");
-            return;
+            return false;
         }
         // A ray point on each line, on the picked side of the vertex; its distance
         // sizes the dimension arc (the measured angle is direction-only).
@@ -1053,18 +1050,32 @@ void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 
             }
             return v + d * len;
         };
-        add = AddDimensionCommand{type, v, ray_pt(a1, b1, pick1), ray_pt(a2, b2, pick2),
-                                  style, group, {}};
-    } else { // Linear / Aligned
-        Vec2 a{};
-        Vec2 b{};
-        if (!segment_endpoints(store_, h1, pick1, a, b)) {
-            report("Select a line or a polyline segment for a linear dimension.");
-            return;
-        }
-        add = AddDimensionCommand{type, a, b, pick2, style, group, {}};
+        out.a = v;
+        out.b = ray_pt(a1, b1, pick1);
+        out.line_pt = ray_pt(a2, b2, pick2);
+        return true;
     }
+    // Linear / Aligned.
+    Vec2 a{};
+    Vec2 b{};
+    if (!segment_endpoints(store_, h1, pick1, a, b)) {
+        return false;
+    }
+    out.a = a;
+    out.b = b;
+    out.line_pt = pick2;
+    return true;
+}
 
+void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2,
+                                            double radius, std::uint16_t style,
+                                            std::uint64_t group) {
+    DimData d;
+    if (!resolve_dim_defs(type, pick1, pick2, radius, d)) {
+        report("Could not dimension that object -- select a line, circle, or arc.");
+        return;
+    }
+    const Command add = AddDimensionCommand{type, d.a, d.b, d.line_pt, style, group, {}};
     const EntityHandle nh = create_indexed(add);
     push_create_item(group, nh, add);
     redo_.clear();
@@ -1515,6 +1526,26 @@ void GeometryEngine::apply(const Command& command) {
                 apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group);
             } else if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
                 apply_object_dimension(c.type, c.pick1, c.pick2, c.pick_radius, c.style, c.group);
+            } else if constexpr (std::is_same_v<T, ResolveDimObjectCommand>) {
+                // Non-mutating: resolve def points for the UI placement preview.
+                DimData d;
+                has_pending_dim_ = resolve_dim_defs(c.type, c.pick1, c.pick2, c.pick_radius, d);
+                if (has_pending_dim_) {
+                    pending_dim_ = d;
+                }
+                ++pending_dim_version_;
+            } else if constexpr (std::is_same_v<T, SetViewScaleCommand>) {
+                // Zoom-adaptive tessellation: re-tessellate only when the view scale
+                // crosses a half-octave bucket (so panning never re-tessellates).
+                view_world_per_px_ = c.world_per_px > 0.0 ? c.world_per_px : view_world_per_px_;
+                const int bucket =
+                    static_cast<int>(std::lround(std::log2(view_world_per_px_) * 2.0));
+                if (bucket != tess_bucket_) {
+                    tess_bucket_ = bucket;
+                    constexpr double kChordPx = 0.3; // target screen-space chord error
+                    tess_tolerance_ = std::max(1e-9, kChordPx * view_world_per_px_);
+                    geom_dirty_ = true; // force re-tessellation at the new resolution
+                }
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =
@@ -1573,7 +1604,9 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, ClearSelectionCommand> ||
                 std::is_same_v<T, SaveDocumentCommand> ||
                 std::is_same_v<T, OpenDocumentCommand> || std::is_same_v<T, NewDocumentCommand> ||
-                std::is_same_v<T, SetLineweightDisplayCommand>;
+                std::is_same_v<T, SetLineweightDisplayCommand> ||
+                std::is_same_v<T, ResolveDimObjectCommand> ||
+                std::is_same_v<T, SetViewScaleCommand>;
             if constexpr (!view_or_io) {
                 dirty_ = true;
             }
@@ -1627,7 +1660,9 @@ void GeometryEngine::new_document() {
 
 void GeometryEngine::rebuild_and_publish() {
     if (geom_dirty_) {
-        build_render_snapshot(store_, kernel_, geom_cache_);
+        // Curves tessellate to the current zoom bucket's chord tolerance (Part A);
+        // stored geometry stays parametric -- only this render payload is sampled.
+        build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_);
         geom_dirty_ = false;
         ++geom_version_;
     }
@@ -1647,6 +1682,16 @@ void GeometryEngine::rebuild_and_publish() {
     // rebuild (e.g. SetCurrentLayer), so publish them fresh from the store.
     buf.layers.assign(store_.layers().begin(), store_.layers().end());
     buf.current_layer = store_.current_layer();
+    // Dimension styles for the UI placement preview (cheap; few entries).
+    buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
+
+    // Pending object-dimension def points for the placement preview (Part C).
+    buf.has_pending_dim = has_pending_dim_;
+    buf.pending_dim_a = pending_dim_.a;
+    buf.pending_dim_b = pending_dim_.b;
+    buf.pending_dim_line_pt = pending_dim_.line_pt;
+    buf.pending_dim_type = static_cast<std::uint8_t>(pending_dim_.type);
+    buf.pending_dim_version = pending_dim_version_;
 
     // Publish the selection set (queryable API) and its segments (highlight/ghost).
     buf.selection = selection_;

@@ -45,6 +45,7 @@ struct RenderSnapshot {
     std::vector<ColorBatch> point_batches;
     std::vector<Layer> layers;
     std::uint16_t current_layer = 0;
+    std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
     // any future hatching. `lineweight_display` is the LWDISPLAY toggle.
@@ -80,6 +81,18 @@ struct RenderSnapshot {
     bool has_hover = false;
     std::vector<Vec2> hover_line_vertices;
 
+    // Pending object-dimension def points, resolved once (geometry-side) when the
+    // user selects the object during an object-based dimension command. The UI
+    // reads these to rubber-band the full dimension at the cursor during placement,
+    // with no per-move geometry round-trip. `pending_dim_type` matches DimType.
+    // Interaction state, not part of the checksum.
+    bool has_pending_dim = false;
+    Vec2 pending_dim_a{};
+    Vec2 pending_dim_b{};
+    Vec2 pending_dim_line_pt{};
+    std::uint8_t pending_dim_type = 0;
+    std::uint64_t pending_dim_version = 0;
+
     // Last command-result message from the geometry thread (e.g. "Filleted." or
     // "Nothing to fillet."). `status_version` bumps on each new message so the UI
     // can echo it once. Honest feedback: set by the op that actually ran, so the
@@ -105,7 +118,10 @@ struct RenderSnapshot {
         fill_batches.clear();
         lineweight_display = true;
         layers.clear();
+        dimstyles.clear();
         current_layer = 0;
+        has_pending_dim = false;
+        pending_dim_version = 0;
         checksum = 0;
         bounds_min = {};
         bounds_max = {};

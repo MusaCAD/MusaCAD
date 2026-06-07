@@ -11,6 +11,8 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/dimension.hpp"
+#include "musacad/core/text/stroke_font.hpp"
 
 #include <QExposeEvent>
 #include <QMouseEvent>
@@ -121,6 +123,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
     const bool smoke = std::getenv("MUSACAD_SMOKE") != nullptr;
     int smoke_frames = 0;
     auto last = std::chrono::steady_clock::now();
+    double last_world_per_px = 0.0; // last view scale reported to the geometry thread
 
     while (!token.stop_requested()) {
         const int w = fb_width_.load(std::memory_order_relaxed);
@@ -145,6 +148,15 @@ void ViewportWindow::render_loop(std::stop_token token) {
             camera_.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
             cam = camera_;
         }
+        // Zoom-adaptive tessellation (Part A): tell the geometry thread the view
+        // scale ONLY when it actually changes (zoom/resize, never pan), so curves
+        // re-tessellate to the current zoom. The engine buckets it, so tiny changes
+        // are no-ops there too.
+        const double wpp = cam.scale() > 0.0 ? 1.0 / cam.scale() : 1.0;
+        if (std::abs(wpp - last_world_per_px) > last_world_per_px * 1e-3) {
+            last_world_per_px = wpp;
+            engine_.submit(core::SetViewScaleCommand{wpp});
+        }
         // Share the latest snap point back to the GUI thread for click-time picks.
         snap_has_.store(snap.has_snap, std::memory_order_relaxed);
         if (snap.has_snap) {
@@ -159,6 +171,17 @@ void ViewportWindow::render_loop(std::stop_token token) {
         dirty_.store(snap.dirty, std::memory_order_relaxed);
         document_version_.store(snap.document_version, std::memory_order_relaxed);
         current_layer_.store(snap.current_layer, std::memory_order_relaxed);
+        {
+            // Cache resolved object-dimension def points + Standard style for the
+            // GUI-thread placement preview (read in rebuild_overlay).
+            std::scoped_lock lock(pending_dim_mutex_);
+            pending_dim_valid_ = snap.has_pending_dim;
+            pdim_a_ = snap.pending_dim_a;
+            pdim_b_ = snap.pending_dim_b;
+            pdim_line_pt_ = snap.pending_dim_line_pt;
+            pdim_type_ = snap.pending_dim_type;
+            pdim_style_ = snap.dimstyles.empty() ? core::DimStyle{} : snap.dimstyles[0];
+        }
         {
             std::scoped_lock lock(layers_mutex_);
             layers_ = snap.layers;
@@ -342,6 +365,30 @@ void tess_circle(core::Vec2 c, double r, std::vector<core::Vec2>& out) {
         prev = cur;
     }
 }
+
+// Flatten a dimension's computed geometry into preview line segments (ext + dim +
+// arrow outlines + the live label as stroke text), for the placement rubber-band.
+void dim_preview_segments(const core::DimData& d, const core::DimStyle& style,
+                          std::vector<core::Vec2>& seg) {
+    const core::DimGeometry g = core::compute_dim_geometry(d, style, core::Rgb{});
+    const auto add = [&](const std::vector<core::Vec2>& v) {
+        seg.insert(seg.end(), v.begin(), v.end());
+    };
+    add(g.ext_lines);
+    add(g.dim_lines);
+    add(g.arrow_lines);
+    // Filled arrowheads -> draw their triangle outlines as preview lines.
+    for (std::size_t i = 0; i + 2 < g.arrow_fills.size(); i += 3) {
+        seg.push_back(g.arrow_fills[i]);
+        seg.push_back(g.arrow_fills[i + 1]);
+        seg.push_back(g.arrow_fills[i + 1]);
+        seg.push_back(g.arrow_fills[i + 2]);
+        seg.push_back(g.arrow_fills[i + 2]);
+        seg.push_back(g.arrow_fills[i]);
+    }
+    core::text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation,
+                                     g.text_justify, seg);
+}
 } // namespace
 
 void ViewportWindow::rebuild_overlay() {
@@ -445,6 +492,51 @@ void ViewportWindow::rebuild_overlay() {
                 seg.push_back(cur);
             }
             break;
+        case command::PreviewKind::Dimension: {
+            // Rubber-band the full dimension at the cursor placement (Part C). Def
+            // points come from pts (two-point dims) or the resolved pending_dim
+            // (object dims). Pure render-side: no store mutation, no op-log entry.
+            core::DimData d;
+            d.type = static_cast<core::DimType>(pv.dim_type);
+            d.style = pv.dim_style;
+            core::DimStyle style;
+            bool ok = false;
+            if (pts.size() >= 2) {
+                d.a = pts[0];
+                d.b = pts[1];
+                d.line_pt = cur; // placement follows the cursor
+                ok = true;
+            } else {
+                std::scoped_lock lock(pending_dim_mutex_);
+                if (pending_dim_valid_ && static_cast<int>(pdim_type_) == pv.dim_type) {
+                    style = pdim_style_;
+                    const auto t = static_cast<core::DimType>(pdim_type_);
+                    if (t == core::DimType::Radius || t == core::DimType::Diameter) {
+                        // Radius line follows the cursor: edge = centre + R*dir(cursor).
+                        const double r = core::distance(pdim_a_, pdim_b_);
+                        core::Vec2 dir = cur - pdim_a_;
+                        dir = core::length_squared(dir) > 1e-12 ? core::normalized(dir)
+                                                               : core::Vec2{1.0, 0.0};
+                        d.a = pdim_a_;
+                        d.b = pdim_a_ + dir * r;
+                        d.line_pt = cur;
+                    } else if (t == core::DimType::Angular) {
+                        d.a = pdim_a_; // geometry fixed by the two lines
+                        d.b = pdim_b_;
+                        d.line_pt = pdim_line_pt_;
+                    } else { // Linear / Aligned: endpoints fixed, placement follows cursor
+                        d.a = pdim_a_;
+                        d.b = pdim_b_;
+                        d.line_pt = cur;
+                    }
+                    ok = true;
+                }
+            }
+            if (ok) {
+                dim_preview_segments(d, style, seg);
+            }
+            break;
+        }
         case command::PreviewKind::None:
             break;
         }

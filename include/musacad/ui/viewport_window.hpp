@@ -138,6 +138,16 @@ private:
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
 
+    // Resolved object-dimension def points + the Standard style, cached from the
+    // snapshot for the GUI-thread placement preview (Phase 16 Part C).
+    mutable std::mutex pending_dim_mutex_;
+    bool pending_dim_valid_ = false;
+    core::Vec2 pdim_a_{};
+    core::Vec2 pdim_b_{};
+    core::Vec2 pdim_line_pt_{};
+    std::uint8_t pdim_type_ = 0;
+    core::DimStyle pdim_style_{};
+
     // Published layer table + current layer (for the Layer Manager / ribbon combo).
     mutable std::mutex layers_mutex_;
     std::vector<core::Layer> layers_;

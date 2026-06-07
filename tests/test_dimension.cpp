@@ -144,6 +144,30 @@ TEST_CASE("DIMLINEAR through the engine: renders, undoable, style change propaga
     engine.stop();
 }
 
+TEST_CASE("Object-dim placement preview resolve is non-mutating (no entity, no geom bump)") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{50, 0}, 10.0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    const std::size_t base = engine.snapshot().line_vertices.size();
+    const std::uint64_t gv = engine.snapshot().geometry_version;
+
+    // What an object-dim command issues at the object pick (for the live preview).
+    engine.submit(ResolveDimObjectCommand{static_cast<std::uint8_t>(DimType::Radius),
+                                          {60, 0}, {60, 0}, 2.0});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.has_pending_dim; }));
+    const RenderSnapshot& s = engine.snapshot();
+    // Resolving created NOTHING and did not re-tessellate: it is preview-only.
+    REQUIRE(s.line_vertices.size() == base);
+    REQUIRE(s.geometry_version == gv);
+    // The pending def points describe the circle (centre + radius), for the preview.
+    REQUIRE(s.pending_dim_a.x == Approx(50.0));
+    REQUIRE(s.pending_dim_a.y == Approx(0.0));
+    REQUIRE(distance(s.pending_dim_a, s.pending_dim_b) == Approx(10.0).margin(1e-6));
+    REQUIRE(s.pending_dim_type == static_cast<std::uint8_t>(DimType::Radius));
+    engine.stop();
+}
+
 namespace {
 // Count line-segment vertices within `r` of point `p` in the snapshot.
 std::size_t verts_near(const RenderSnapshot& s, Vec2 p, double r) {

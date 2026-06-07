@@ -16,6 +16,11 @@ constexpr double kIntersectEps = 1e-9;
 
 /// Number of chord segments to approximate an arc of the given sweep within a
 /// chordal tolerance.
+// Upper bound on chord segments per curve. Keeps tessellation work bounded at
+// extreme zoom-in (a screen-filling circle needs only ~128 segments at 0.3px
+// chord error, so this cap is generous headroom and rarely reached).
+constexpr std::size_t kMaxArcSegments = 8192;
+
 std::size_t arc_segments(double radius, double sweep_abs, double tolerance) {
     sweep_abs = std::abs(sweep_abs);
     if (radius <= 0.0 || sweep_abs <= 0.0) {
@@ -29,7 +34,7 @@ std::size_t arc_segments(double radius, double sweep_abs, double tolerance) {
         max_step = kHalfPi;
     }
     const auto n = static_cast<std::size_t>(std::ceil(sweep_abs / max_step));
-    return n < 1 ? std::size_t{1} : n;
+    return std::clamp(n, std::size_t{1}, kMaxArcSegments);
 }
 
 Vec2 point_on_circle(Vec2 center, double radius, double angle) {

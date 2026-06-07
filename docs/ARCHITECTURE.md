@@ -751,6 +751,53 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   circle→diameter / arc→radius / line·poly→linear, then submits the shared
   `AddObjectDimensionCommand`. (Two-line angular stays on DIMANGULAR.)
 
+## Zoom-adaptive tessellation, round joins & dimension preview (Phase 16)
+
+The "thin/dashed arc" report was a **continuity** problem, not a weight problem:
+curves were sampled at a fixed *world-space* tolerance, so zooming in stretched the
+chords into visible facets, and the square-cap join left notches. Both are fixed
+here; stored geometry stays parametric throughout.
+
+* **Zoom-adaptive curve tessellation (Part A).** `arc_segments` already sampled to a
+  chord tolerance; the tolerance is now derived from the **view scale**. The viewport
+  emits `SetViewScaleCommand{world_per_px}` **only when the camera scale changes**
+  (detected once per frame in the render loop; zoom/resize change it, pan does not).
+  The geometry thread buckets it to **half-octaves** (`round(log2(world_per_px)*2)`)
+  and, only on a **bucket change**, sets `geom_dirty_` and rebuilds the snapshot with
+  `tolerance = 0.3px × world_per_px`. So: panning never re-tessellates; a meaningful
+  zoom step does; tiny zoom jitter within a bucket is a no-op. It rides the existing
+  command queue + snapshot — no new handoff, no synchronous per-frame geometry query;
+  the renderer still only reads snapshots. **Stored curves remain parametric**
+  (center/radius/def-points) — only the per-snapshot render payload is sampled; no
+  segment list is ever baked into storage. Work is bounded by `kMaxArcSegments`
+  (8192/curve); a screen-filling circle needs only ~128 segments at 0.3px error, so
+  the cap is generous headroom. Measured: 5000 circles re-tessellate 7→158 segs/circle
+  coarse→fine and render (790k segments) in ~6 ms/frame at 4 draw calls.
+* **Round joins/caps (Part B).** The thick-line shader no longer relies on
+  square-cap extension to fill joins. The vertex stage passes the segment endpoints +
+  half-width (flat) and the fragment stage keeps only fragments within the half-width
+  of the segment (a **capsule SDF**, `discard` outside). Every segment thus has round
+  caps; consecutive segments of a tessellated curve share a vertex, so their round
+  caps overlap and fill the join with no gap or notch on the outer bend — proper round
+  joins with **no extra geometry and no extra draw call** (the quad already extends by
+  the half-width). Cost is one segment-distance test per fragment plus a little cap
+  overdraw. Draw calls stay ≤ 6.
+* **Dimension placement preview (Part C).** During the placement step every dimension
+  rubber-bands the **full** geometry (ext + dim lines, arrowheads, and the live
+  measured label) at the cursor, committing on click — the Phase-7 render-side preview
+  pattern (`PreviewKind::Dimension`), composed UI-side in `rebuild_overlay` via
+  `core::compute_dim_geometry`, honoring ORTHO/POLAR/snap through `resolve_pick`.
+  Two-point dims carry their def points in `PreviewSpec.points`; **object** dims
+  resolve their def points **once at the object pick** via the non-mutating
+  `ResolveDimObjectCommand` (which shares `resolve_dim_defs` with the create path — no
+  duplicate logic) and the geometry thread publishes them in the snapshot
+  (`pending_dim_*`, plus `dimstyles` for the style); the per-cursor preview is then
+  pure UI with **zero geometry round-trip and zero store/op-log mutation during the
+  drag** (radius/diameter recompute the edge from the cursor; angular's geometry is
+  fixed by its two lines so its preview is shown for confirmation). The commit path is
+  unchanged. No shared per-entity struct grew (`LineData` 40 B, `DimData` 72 B); the
+  snapshot gained transient preview fields only. Native/DXF formats unaffected.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -811,6 +858,13 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
   native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
 
+* **Phase 16 — complete:** zoom-adaptive curve tessellation (smooth arcs/circles at
+  any zoom; re-tessellate on a zoom-bucket change, never on pan; curves stay
+  parametric, work capped at 8192 segs/curve), round thick-line joins/caps via a
+  capsule-SDF fragment shader (no gaps/notches, no extra draw call), and full
+  dimension placement preview that rubber-bands the live dimension to the cursor for
+  every dim type (zero store/op-log mutation during the drag). 195 tests (dev) / 194
+  (TSan) pass under ASan + TSan.
 * **Phase 15 — complete:** object-aware dimensioning (select the circle/arc/line/
   segment; the geometry thread reads its intrinsic geometry), the smart all-in-one
   **DIM** command (hover previews + dispatches by entity kind to the shared

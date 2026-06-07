@@ -25,11 +25,19 @@ enum class PreviewKind {
     Mirror,     ///< ghost of the selection reflected across points[0]..cursor
     Rotate,     ///< ghost of the selection rotated about points[0] by angle to cursor
     Scale,      ///< ghost of the selection scaled about points[0] by |cursor - base|
+    Dimension,  ///< full dimension rubber-band following the cursor to its placement
 };
 
 struct PreviewSpec {
     PreviewKind kind = PreviewKind::None;
     std::vector<core::Vec2> points; ///< committed anchors so far
+
+    // Dimension preview only: the subtype (core::DimType) and style index. `points`
+    // holds the def points (a, b) for two-point dims; for object-based dims it is
+    // empty and the def points come from the snapshot's pending_dim_* (resolved once
+    // at the object pick). The cursor supplies the dimension-line placement.
+    int dim_type = -1; ///< -1 = not a dimension preview
+    std::uint16_t dim_style = 0;
 };
 
 /// Sink for command-line text output (scrollback + the active prompt).

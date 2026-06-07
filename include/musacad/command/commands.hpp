@@ -350,8 +350,9 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Line1, Line2 } state_ = State::Line1;
+    enum class State { Line1, Line2, Place } state_ = State::Line1;
     core::Vec2 pick1_{};
+    core::Vec2 pick2_{};
     bool done_ = false;
 };
 

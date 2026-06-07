@@ -266,6 +266,27 @@ struct AddObjectDimensionCommand {
     std::uint64_t group = 0;
 };
 
+/// Non-mutating query: resolve the def points of an object-based dimension under
+/// the pick(s) and publish them in the snapshot (`pending_dim_*`) so the UI can
+/// rubber-band the full dimension during placement -- WITHOUT creating anything or
+/// touching the op-log. Shares the exact resolution path with
+/// AddObjectDimensionCommand (no duplicate logic). Issued once when the object is
+/// selected; the per-cursor preview is then computed UI-side.
+struct ResolveDimObjectCommand {
+    std::uint8_t type = 0;
+    Vec2 pick1;
+    Vec2 pick2;
+    double pick_radius = 0.0;
+};
+
+/// View scale (world units per pixel) for zoom-adaptive curve tessellation. Sent
+/// only when the camera scale actually changes (zoom/resize, never pan). The
+/// geometry thread buckets it and re-tessellates curves on a bucket change so
+/// arcs/circles stay smooth at any zoom; panning never re-tessellates.
+struct SetViewScaleCommand {
+    double world_per_px = 1.0;
+};
+
 /// A quick leader: arrowhead at `tip`, line to `knee`, text label at `knee`.
 struct AddLeaderCommand {
     Vec2 tip;
@@ -337,6 +358,6 @@ using Command =
                  RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
-                 AddObjectDimensionCommand>;
+                 AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand>;
 
 } // namespace musacad::core

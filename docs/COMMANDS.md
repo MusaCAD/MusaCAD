@@ -68,6 +68,7 @@ suggests both); aliases are case-insensitive.
 | DIMSTYLE: text height / arrow type+size / precision / ext lines | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
 | DIMSTYLE per-element colours (dim / ext / text / arrow) + dim lineweight | Dim Style btn | Implemented |
 | Object-aware dims capture **def points** at creation (no entity ref) | — | Implemented (deleting the source entity never dangles the dim) |
+| Placement preview: the full dimension (with live value) rubber-bands to the cursor, commits on click | — | Implemented (all dim types + DIM; angular arc is fixed by its two lines) |
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
 | DIMCONTINUE / DIMBASELINE | DCO / DBA | Planned |
 | MTEXT (multi-line) | MT | Planned |
@@ -82,6 +83,7 @@ suggests both); aliases are case-insensitive.
 | ZOOM Extents / All | Z→E/A | Implemented |
 | PAN (middle-drag) | P | Implemented (mouse) |
 | Zoom about cursor (wheel) | — | Implemented (mouse) |
+| Smooth curves at any zoom (adaptive tessellation; re-tessellate on zoom, not pan) | — | Implemented |
 | REGEN | RE | Planned (Phase 9) |
 | Named views (VIEW) | V | Planned (Phase 9) |
 

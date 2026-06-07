@@ -126,6 +126,11 @@ private:
     // later deleting the source entity leaves it intact (no dangling reference).
     void apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2, double radius,
                                 std::uint16_t style, std::uint64_t group);
+    // Shared resolution: the entity(ies) under the pick(s) -> a dimension's def
+    // points (a, b, line_pt). Used by both apply_object_dimension (create) and the
+    // ResolveDimObjectCommand preview query, so there is one resolution path.
+    [[nodiscard]] bool resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2, double radius,
+                                        DimData& out) const;
     // Property changes on the selection (erase+recreate so they're undoable).
     void apply_props_change(const std::function<void(EntityProps&)>& modify, std::uint64_t group);
     void apply_entity_layer(std::uint16_t layer, std::uint64_t group);
@@ -164,6 +169,20 @@ private:
     std::uint32_t snap_mask_ = kAllSnaps;
     Vec2 from_{};
     bool has_from_ = false;
+
+    // Zoom-adaptive tessellation: the view scale (world units / pixel) and the
+    // half-octave bucket derived from it. Curves re-tessellate only when the bucket
+    // changes (i.e. a meaningful zoom step), never on pan. `tess_tolerance_` is the
+    // world-space chord tolerance fed to the kernel for the current bucket.
+    double view_world_per_px_ = 1.0;
+    int tess_bucket_ = 0;
+    double tess_tolerance_ = kDefaultTessTolerance;
+
+    // Pending object-dimension def points, published for the UI placement preview
+    // (set by ResolveDimObjectCommand; never mutates the store or op-log).
+    bool has_pending_dim_ = false;
+    DimData pending_dim_{};
+    std::uint64_t pending_dim_version_ = 0;
 
     std::atomic<std::uint64_t> version_{0};
     std::jthread worker_;

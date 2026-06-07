@@ -1009,6 +1009,25 @@ const char* dim_type_word(core::DimType t) {
 }
 } // namespace
 
+namespace {
+// Rubber-band the full dimension at the cursor (Phase 16 Part C). Two-point dims
+// pass their def points (a, b); object dims pass none and the UI uses the snapshot's
+// resolved pending_dim_* (set by ResolveDimObjectCommand at the object pick).
+void preview_two_point_dim(CommandContext& ctx, core::DimType t, core::Vec2 a, core::Vec2 b) {
+    PreviewSpec s;
+    s.kind = PreviewKind::Dimension;
+    s.dim_type = static_cast<int>(t);
+    s.points = {a, b};
+    ctx.set_preview(std::move(s));
+}
+void preview_object_dim(CommandContext& ctx, core::DimType t) {
+    PreviewSpec s;
+    s.kind = PreviewKind::Dimension;
+    s.dim_type = static_cast<int>(t);
+    ctx.set_preview(std::move(s)); // def points come from the snapshot pending_dim
+}
+} // namespace
+
 // ---------------------------------------------------------------------------
 // DIMLINEAR / DIMALIGNED: two-point flow, or [Object] -> select a line/segment.
 // ---------------------------------------------------------------------------
@@ -1039,6 +1058,7 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
         b_ = *p;
         ctx.set_last_point(*p);
         state_ = State::Place;
+        preview_two_point_dim(ctx, type_, a_, b_); // rubber-band to the cursor
         ctx.set_prompt("Specify dimension line location: ");
         return;
     case State::Place:
@@ -1051,6 +1071,10 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
         obj_pick_ = *p;
         ctx.set_last_point(*p);
         state_ = State::ObjPlace;
+        // Resolve the selected segment's def points once for the placement preview.
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(type_), obj_pick_,
+                                                 obj_pick_, ctx.pick_radius()});
+        preview_object_dim(ctx, type_);
         ctx.set_prompt("Specify dimension line location: ");
         return;
     case State::ObjPlace:
@@ -1085,6 +1109,10 @@ void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text)
         obj_pick_ = *p;
         ctx.set_last_point(*p);
         state_ = State::Place;
+        // Resolve centre+radius once so the preview can rubber-band to the cursor.
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(type_), obj_pick_,
+                                                 obj_pick_, ctx.pick_radius()});
+        preview_object_dim(ctx, type_);
         ctx.set_prompt("Specify dimension line location: ");
         return;
     }
@@ -1112,17 +1140,32 @@ void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text
     if (!p) {
         return;
     }
-    if (state_ == State::Line1) {
+    switch (state_) {
+    case State::Line1:
         pick1_ = *p;
         ctx.set_last_point(*p);
         state_ = State::Line2;
         ctx.set_prompt("Select second line: ");
         return;
+    case State::Line2:
+        pick2_ = *p;
+        state_ = State::Place;
+        // The angle is fully determined by the two lines; resolve it so the preview
+        // shows the full dimension. (The arc position has no free placement DOF, so
+        // the preview is shown for confirmation rather than cursor-tracking.)
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(core::DimType::Angular),
+                                                 pick1_, pick2_, ctx.pick_radius()});
+        preview_object_dim(ctx, core::DimType::Angular);
+        ctx.set_prompt("Specify dimension arc location (or click to place): ");
+        return;
+    case State::Place:
+        ctx.submit(core::AddObjectDimensionCommand{
+            static_cast<std::uint8_t>(core::DimType::Angular), pick1_, pick2_, ctx.pick_radius(), 0,
+            ctx.group_id()});
+        ctx.echo("Angular dimension placed.");
+        done_ = true;
+        return;
     }
-    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(core::DimType::Angular),
-                                               pick1_, *p, ctx.pick_radius(), 0, ctx.group_id()});
-    ctx.echo("Angular dimension placed.");
-    done_ = true;
 }
 
 void AngularDimensionCommand::cancel(CommandContext& ctx) {
@@ -1183,6 +1226,10 @@ void DimCommand::input(CommandContext& ctx, const std::string& text) {
         obj_pick_ = *p;
         ctx.set_last_point(*p);
         state_ = State::Place;
+        // Resolve def points once so the chosen dimension rubber-bands to the cursor.
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(type_), obj_pick_,
+                                                 obj_pick_, ctx.pick_radius()});
+        preview_object_dim(ctx, type_);
         ctx.set_prompt(std::string("Specify dimension line location (") + dim_type_word(type_) +
                        "): ");
         return;

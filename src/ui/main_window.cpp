@@ -1030,7 +1030,7 @@ bool MainWindow::selftest_annotation() {
     prev = viewport_->line_vertex_count();
     place("DIMRADIUS (select circle)", {"DRA", "48,0", "62,0"});
     place("DIMDIAMETER (select circle)", {"DDI", "8,40", "0,56"});
-    place("DIMANGULAR (select two lines)", {"DAN", "-10,-20", "-20,-10"});
+    place("DIMANGULAR (select two lines)", {"DAN", "-10,-20", "-20,-10", "-14,-14"});
     place("DIMLINEAR (select line)", {"DLI", "O", "30,20", "30,28"});
 
     // Smart DIM: hover a circle -> it creates a diameter dimension. The hover kind

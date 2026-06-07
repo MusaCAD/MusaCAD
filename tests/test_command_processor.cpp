@@ -231,11 +231,14 @@ TEST_CASE("DIMRADIUS selects the object then places (object-aware message)") {
     REQUIRE(od->pick2.x == Approx(20.0));
 }
 
-TEST_CASE("DIMANGULAR selects two lines (two object picks)") {
+TEST_CASE("DIMANGULAR selects two lines then places the arc (object picks)") {
     Harness h;
     h.proc.submit_line("DAN");
-    h.proc.submit_line("5,0");
-    h.proc.submit_line("0,5");
+    h.proc.submit_line("5,0"); // first line
+    h.proc.submit_line("0,5"); // second line -> resolve + preview, not committed yet
+    REQUIRE(last_object_dim(h.cmds) == nullptr);
+    REQUIRE(h.proc.preview().kind == PreviewKind::Dimension);
+    h.proc.submit_line("3,3"); // place -> commit
     const auto* od = last_object_dim(h.cmds);
     REQUIRE(od != nullptr);
     REQUIRE(od->type == static_cast<std::uint8_t>(DimType::Angular));
@@ -299,4 +302,49 @@ TEST_CASE("Smart DIM refuses to dimension empty space") {
     h.proc.submit_line("10,10");
     REQUIRE(last_object_dim(h.cmds) == nullptr); // nothing submitted
     REQUIRE(h.proc.has_active_command());        // still waiting
+}
+
+// --- Phase 16 Part C: dimension placement preview (cursor-follow rubber-band) ---
+
+using musacad::core::ResolveDimObjectCommand;
+
+namespace {
+bool has_resolve(const std::vector<musacad::core::Command>& cmds) {
+    for (const auto& c : cmds) {
+        if (std::holds_alternative<ResolveDimObjectCommand>(c)) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST_CASE("DIMLINEAR placement step requests a preview and emits nothing until the click") {
+    Harness h;
+    h.proc.submit_line("DLI");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("10,0"); // now in placement: a full-dimension preview is active
+    REQUIRE(h.proc.preview().kind == PreviewKind::Dimension);
+    REQUIRE(h.proc.preview().dim_type == static_cast<int>(DimType::Linear));
+    // The drag has produced NO geometry command yet (zero store mutation invariant).
+    for (const auto& c : h.cmds) {
+        REQUIRE_FALSE(std::holds_alternative<musacad::core::AddDimensionCommand>(c));
+    }
+    h.proc.submit_line("5,4"); // commit placement
+    bool committed = false;
+    for (const auto& c : h.cmds) {
+        committed = committed || std::holds_alternative<musacad::core::AddDimensionCommand>(c);
+    }
+    REQUIRE(committed);
+}
+
+TEST_CASE("DIMRADIUS resolves def points for the preview, commits only on placement") {
+    Harness h;
+    h.proc.submit_line("DRA");
+    h.proc.submit_line("10,0"); // select the circle -> resolve-for-preview, no create
+    REQUIRE(h.proc.preview().kind == PreviewKind::Dimension);
+    REQUIRE(has_resolve(h.cmds));               // preview resolve was issued
+    REQUIRE(last_object_dim(h.cmds) == nullptr); // but nothing created yet
+    h.proc.submit_line("20,0");                  // placement click commits
+    REQUIRE(last_object_dim(h.cmds) != nullptr);
 }
