@@ -200,3 +200,103 @@ TEST_CASE("Registry is data-driven and trivially extensible") {
                                        [] { return std::make_unique<LineCommand>(); });
     REQUIRE(h.proc.registry().contains("WOBBLE"));
 }
+
+// --- Phase 15: object-aware dimensioning + the smart DIM command -------------
+
+using musacad::core::AddObjectDimensionCommand;
+using musacad::core::DimType;
+using musacad::core::EntityKind;
+
+namespace {
+const AddObjectDimensionCommand* last_object_dim(const std::vector<musacad::core::Command>& cmds) {
+    const AddObjectDimensionCommand* found = nullptr;
+    for (const auto& c : cmds) {
+        if (const auto* od = std::get_if<AddObjectDimensionCommand>(&c)) {
+            found = od;
+        }
+    }
+    return found;
+}
+} // namespace
+
+TEST_CASE("DIMRADIUS selects the object then places (object-aware message)") {
+    Harness h;
+    h.proc.submit_line("DRA");
+    h.proc.submit_line("10,0");  // select circle/arc
+    h.proc.submit_line("20,0");  // dimension line location
+    const auto* od = last_object_dim(h.cmds);
+    REQUIRE(od != nullptr);
+    REQUIRE(od->type == static_cast<std::uint8_t>(DimType::Radius));
+    REQUIRE(od->pick1.x == Approx(10.0));
+    REQUIRE(od->pick2.x == Approx(20.0));
+}
+
+TEST_CASE("DIMANGULAR selects two lines (two object picks)") {
+    Harness h;
+    h.proc.submit_line("DAN");
+    h.proc.submit_line("5,0");
+    h.proc.submit_line("0,5");
+    const auto* od = last_object_dim(h.cmds);
+    REQUIRE(od != nullptr);
+    REQUIRE(od->type == static_cast<std::uint8_t>(DimType::Angular));
+}
+
+TEST_CASE("DIMLINEAR [Object] mode dimensions a selected segment") {
+    Harness h;
+    h.proc.submit_line("DLI");
+    h.proc.submit_line("O");     // switch to object mode
+    h.proc.submit_line("5,0");   // select the line/segment
+    h.proc.submit_line("5,5");   // dimension line location
+    const auto* od = last_object_dim(h.cmds);
+    REQUIRE(od != nullptr);
+    REQUIRE(od->type == static_cast<std::uint8_t>(DimType::Linear));
+    // Two-point mode still works (no object message, a plain AddDimensionCommand).
+    Harness h2;
+    h2.proc.submit_line("DLI");
+    h2.proc.submit_line("0,0");
+    h2.proc.submit_line("10,0");
+    h2.proc.submit_line("5,3");
+    REQUIRE(last_object_dim(h2.cmds) == nullptr);
+    bool plain = false;
+    for (const auto& c : h2.cmds) {
+        plain = plain || std::holds_alternative<musacad::core::AddDimensionCommand>(c);
+    }
+    REQUIRE(plain);
+}
+
+TEST_CASE("Smart DIM dispatches by hovered entity kind") {
+    // Copy the submitted type out before the Harness (and its vector) is destroyed.
+    auto run = [](EntityKind k) -> std::optional<std::uint8_t> {
+        Harness h;
+        h.proc.submit_line("DIM");
+        h.proc.set_hovered_kind(k);     // cursor over this kind
+        h.proc.submit_line("10,10");    // pick the object
+        h.proc.submit_line("20,20");    // placement
+        const auto* od = last_object_dim(h.cmds);
+        return od != nullptr ? std::optional<std::uint8_t>{od->type} : std::nullopt;
+    };
+    REQUIRE(run(EntityKind::Circle) == static_cast<std::uint8_t>(DimType::Diameter));
+    REQUIRE(run(EntityKind::Arc) == static_cast<std::uint8_t>(DimType::Radius));
+    REQUIRE(run(EntityKind::Line) == static_cast<std::uint8_t>(DimType::Linear));
+}
+
+TEST_CASE("Smart DIM previews the type in the prompt as the cursor hovers") {
+    Harness h;
+    h.proc.submit_line("DIM");
+    h.proc.set_hovered_kind(EntityKind::Circle);
+    REQUIRE(h.out.prompt.find("Diameter") != std::string::npos);
+    h.proc.set_hovered_kind(EntityKind::Arc);
+    REQUIRE(h.out.prompt.find("Radius") != std::string::npos);
+    h.proc.set_hovered_kind(std::nullopt); // over empty space
+    REQUIRE(h.out.prompt.find("Diameter") == std::string::npos);
+    REQUIRE(h.out.prompt.find("Radius") == std::string::npos);
+}
+
+TEST_CASE("Smart DIM refuses to dimension empty space") {
+    Harness h;
+    h.proc.submit_line("DIM");
+    h.proc.set_hovered_kind(std::nullopt); // nothing under the cursor
+    h.proc.submit_line("10,10");
+    REQUIRE(last_object_dim(h.cmds) == nullptr); // nothing submitted
+    REQUIRE(h.proc.has_active_command());        // still waiting
+}

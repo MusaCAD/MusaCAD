@@ -165,6 +165,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         // Drive selection-dependent UI from the published selection count.
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
+        processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
         }
@@ -353,6 +354,7 @@ void MainWindow::build_ribbon() {
 
     RibbonPanel* annot = ribbon_->add_panel(home, QStringLiteral("Annotation"));
     add_cmd(annot, QStringLiteral("text"), QStringLiteral("Text"), "DT");
+    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Dim"), "DIM");
     add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Linear"), "DLI");
     add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Aligned"), "DAL");
     add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Radius"), "DRA");
@@ -1014,10 +1016,35 @@ bool MainWindow::selftest_annotation() {
         all = all && ok;
         prev = viewport_->line_vertex_count();
     };
-    place("DIMRADIUS", {"DRA", "40,0", "50,0"});
-    place("DIMDIAMETER", {"DDI", "0,40", "10,40"});
-    place("DIMANGULAR", {"DAN", "0,0", "10,0", "0,10"});
     place("LEADER", {"LE", "60,60", "70,66", "see note"});
+
+    // --- Object-aware dimensioning (Phase 15): dimension entities by SELECTING
+    // them. Draw the source geometry, then pick the objects themselves.
+    engine_->submit(core::AddCircleCommand{{40, 0}, 8.0, 0});      // for DIMRADIUS
+    engine_->submit(core::AddCircleCommand{{0, 40}, 8.0, 0});      // for DIMDIAMETER
+    engine_->submit(core::AddLineCommand{{-20, -20}, {0, -20}, 0});  // angular line 1
+    engine_->submit(core::AddLineCommand{{-20, -20}, {-20, 0}, 0});  // angular line 2
+    engine_->submit(core::AddLineCommand{{20, 20}, {40, 20}, 0});    // for DIMLINEAR
+    engine_->submit(core::AddCircleCommand{{70, 0}, 5.0, 0});        // for smart DIM
+    pump([this, prev] { return viewport_->line_vertex_count() > prev; });
+    prev = viewport_->line_vertex_count();
+    place("DIMRADIUS (select circle)", {"DRA", "48,0", "62,0"});
+    place("DIMDIAMETER (select circle)", {"DDI", "8,40", "0,56"});
+    place("DIMANGULAR (select two lines)", {"DAN", "-10,-20", "-20,-10"});
+    place("DIMLINEAR (select line)", {"DLI", "O", "30,20", "30,28"});
+
+    // Smart DIM: hover a circle -> it creates a diameter dimension. The hover kind
+    // is normally pushed by the UI timer; set it directly here (no real mouse move)
+    // right before the pick so it isn't clobbered by an intervening timer tick.
+    type("DIM");
+    processor_->set_hovered_kind(core::EntityKind::Circle);
+    type("75,0"); // pick the circle at (70,0) r=5
+    type("88,0"); // placement
+    const bool smart_ok = pump([this, prev] { return viewport_->line_vertex_count() > prev; });
+    std::printf("[selftest] DIM smart (circle -> diameter) renders: %s\n",
+                smart_ok ? "PASS" : "FAIL");
+    all = all && smart_ok;
+    prev = viewport_->line_vertex_count();
 
     // A DIMSTYLE change (precision) re-renders the dimensions using it.
     const int before_style = viewport_->line_vertex_count();

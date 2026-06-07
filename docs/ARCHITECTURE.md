@@ -705,6 +705,52 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   the hot `LineData` stays **40 B** and insert holds at ~30 ns/line.
 * See `docs/AUTOCAD_CONFIG.md` for the full configurable-options roadmap.
 
+## Object-aware dimensioning & AutoCAD-accurate lineweight (Phase 15)
+
+* **AutoCAD-accurate lineweight (corrected).** The Phase-14 mapping
+  (`px = max(1.5, mm·6)`, a magic constant) is replaced by a DPI-anchored one:
+  `px = max(1.0, mm × device_px_per_mm)` with `device_px_per_mm = screen_DPI / 25.4`.
+  The framebuffer is in physical device pixels, so Qt's `QScreen::physicalDotsPerInch`
+  already folds in the device-pixel-ratio; the viewport sets it each frame, and the
+  renderer defaults to a 96-DPI assumption (~3.78 px/mm) for offscreen/test use.
+  "Default" (and any sub-pixel weight) floors to a **1px hairline** — exactly how
+  AutoCAD shows the default lineweight. Still zoom-independent (no camera scale).
+  Verified pixel widths @96 DPI: 0.25mm→1, 0.50mm→2, 0.70mm→~3, 1.00mm→4, 2.00mm→8.
+  LWDISPLAY off → 1px everywhere. The AutoCAD ladder (0.00…2.11 mm) is the stored
+  set; the mapping is continuous over it.
+* **Object-aware dimensioning.** Dimensions are created by *selecting the object*,
+  not by picking raw construction points. A single message,
+  `AddObjectDimensionCommand{type, pick1, pick2, pick_radius, …}`, is resolved on
+  the **geometry thread** by `apply_object_dimension`: it `pick_nearest`-resolves the
+  entity (via the spatial index + `selectable()` gate, so off/frozen/locked layers
+  are respected) and reads the entity's intrinsic geometry —
+  - **Radius/Diameter** ← a Circle/Arc's own centre + radius (edge along `pick2`),
+  - **Linear/Aligned** ← a Line's endpoints, or the nearest Polyline segment
+    (`nearest_pl_segment`, shared with fillet/chamfer); `pick2` is the dim-line
+    placement,
+  - **Angular** ← two Lines/edges: vertex = their intersection, rays from each
+    direction.
+  One code path per type; the UI commands and the smart DIM only *choose the type*
+  and submit — they never duplicate the dimension math. The UI never touches the
+  store (it submits a pick, the geometry thread reads the geometry).
+* **Storage = def points only (no entity reference).** The resolved entity is
+  converted to def points **at creation** and stored in the existing `DimData`
+  (still 72 B; `LineData` still 40 B — no shared struct grew, no native/DXF format
+  bump). This keeps the Ph13 "value computed from def points" rule and makes the
+  **dangling-reference problem impossible by construction**: deleting (or editing)
+  the source entity leaves the dimension intact with its captured geometry — the
+  same associativity level as before (def-point edits update the value; the source
+  entity is not back-referenced), stated honestly.
+* **Smart DIM (dispatch, not duplicate).** `DimCommand` previews the type as the
+  cursor rolls over candidates and dispatches on pick. Hover flows render-side →
+  UI: the geometry thread already publishes `snapshot.hover`; the viewport caches
+  its `EntityKind`, the main-window timer pushes it to the processor
+  (`set_hovered_kind`), which fires the active command's new `ICommand::hover()`
+  hook. `DimCommand::hover` updates the prompt ("…→ Diameter"); `DimCommand::input`
+  reads `CommandContext::hovered_kind()` at pick time to choose
+  circle→diameter / arc→radius / line·poly→linear, then submits the shared
+  `AddObjectDimensionCommand`. (Two-line angular stays on DIMANGULAR.)
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -765,6 +811,13 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
   native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
 
+* **Phase 15 — complete:** object-aware dimensioning (select the circle/arc/line/
+  segment; the geometry thread reads its intrinsic geometry), the smart all-in-one
+  **DIM** command (hover previews + dispatches by entity kind to the shared
+  machinery), and AutoCAD-accurate DPI-anchored lineweight (`px = mm × DPI/25.4`,
+  Default = 1px hairline). Dims store def points only — deleting the source entity
+  never dangles them. No shared struct grew; native/DXF formats unchanged. 188
+  tests (dev) / 187 (TSan) pass under ASan + TSan.
 * **Phase 14 — complete:** real lineweight rendering (screen-space expanded
   quads, LWDISPLAY toggle), solid filled arrowheads (filled/open/tick/dot),
   DIMSTYLE per-element colours, and the remaining dimension types (radius/diameter/

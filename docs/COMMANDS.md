@@ -57,15 +57,17 @@ suggests both); aliases are case-insensitive.
 | Command | Alias | Status |
 |---|---|---|
 | TEXT (single-line) | DT / TEXT | Implemented |
-| DIMLINEAR (horizontal/vertical) | DLI | Implemented |
-| DIMALIGNED (parallel to segment) | DAL | Implemented |
-| DIMRADIUS (R-prefix, arrow at edge) | DRA | Implemented |
-| DIMDIAMETER (⌀-prefix, through-centre) | DDI | Implemented |
-| DIMANGULAR (3-point, arc + degree °) | DAN | Implemented |
+| **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
+| DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |
+| DIMALIGNED (two-point, or `[Object]` → segment's true length) | DAL | Implemented |
+| DIMRADIUS (**select a circle/arc** → R from its own geometry) | DRA | Implemented |
+| DIMDIAMETER (**select a circle/arc** → ⌀ from its own geometry) | DDI | Implemented |
+| DIMANGULAR (**select two lines/edges** → angle from their directions) | DAN | Implemented |
 | LEADER (arrow + line + text label) | LE / LEADER | Implemented |
 | Arrowheads: filled / open / tick / dot (solid filled geometry) | DIMSTYLE | Implemented |
 | DIMSTYLE: text height / arrow type+size / precision / ext lines | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
 | DIMSTYLE per-element colours (dim / ext / text / arrow) + dim lineweight | Dim Style btn | Implemented |
+| Object-aware dims capture **def points** at creation (no entity ref) | — | Implemented (deleting the source entity never dangles the dim) |
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
 | DIMCONTINUE / DIMBASELINE | DCO / DBA | Planned |
 | MTEXT (multi-line) | MT | Planned |
@@ -113,6 +115,7 @@ suggests both); aliases are case-insensitive.
 | Native format v4 (adds leaders + expanded DIMSTYLE) | — | Implemented |
 | DXF TEXT + DIMENSION (all subtypes) + LEADER + DIMSTYLE table | — | Implemented (leader label imports as separate TEXT) |
 | LWDISPLAY (lineweight display on/off) | LWT ribbon toggle | Implemented |
+| Lineweight display: DPI-anchored `px = mm × DPI/25.4`, zoom-independent, Default = 1px hairline (AutoCAD-accurate) | — | Implemented |
 | NEW (native .musa) | Ctrl+N | Implemented |
 | OPEN (native .musa) | Ctrl+O | Implemented |
 | SAVE | Ctrl+S | Implemented |

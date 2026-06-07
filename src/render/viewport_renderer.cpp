@@ -73,10 +73,14 @@ PipelineDesc make_fill_pipeline_desc() {
     return d;
 }
 
-// AutoCAD-style fixed-screen lineweight: hundredths-mm -> pixels (zoom-independent).
-constexpr float kPixelsPerMm = 6.0f;
-float lineweight_px(std::uint8_t hundredths_mm) {
-    return std::max(1.5f, (static_cast<float>(hundredths_mm) / 100.0f) * kPixelsPerMm);
+// AutoCAD-accurate fixed-screen lineweight: a weight in millimetres displays at a
+// zoom-independent pixel thickness anchored to the real display density --
+// px = mm * (DPI / 25.4) = mm * device_px_per_mm. The framebuffer is in physical
+// device pixels, so the device-pixel-ratio is already folded into the DPI. The 1px
+// floor is AutoCAD's "Default" hairline: a 0.25 mm line is ~0.95 px @96 DPI, i.e. a
+// hairline, exactly as AutoCAD renders it. (zoom-independent: no camera scale here.)
+float lineweight_px(std::uint8_t hundredths_mm, float device_px_per_mm) {
+    return std::max(1.0f, (static_cast<float>(hundredths_mm) / 100.0f) * device_px_per_mm);
 }
 
 /// Converts world-space segment endpoint pairs (2 Vec2 per segment) into a flat
@@ -300,7 +304,8 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
                                static_cast<float>(target.height()));
         const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
                                     std::uint32_t count) {
-            const float w = snapshot.lineweight_display ? lineweight_px(lw) : 1.0f;
+            const float w =
+                snapshot.lineweight_display ? lineweight_px(lw, device_px_per_mm_) : 1.0f;
             cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
             cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
                                    static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,

@@ -142,7 +142,15 @@ int main(int argc, char* argv[]) {
     check(lit > 1000, "geometry rasterized to the framebuffer");
 
     // ----- Lineweight proof: a single horizontal line's on-screen thickness -----
-    std::printf("\n== Lineweight proof (screen-space expanded geometry) ==\n");
+    // AutoCAD-accurate mapping: px = mm * (DPI / 25.4), zoom-independent. We pin a
+    // 96-DPI assumption (3.7795 px/mm) so the expected pixel widths are checkable
+    // against real AutoCAD at 96 DPI.
+    constexpr double kAssumedDpi = 96.0;
+    const float px_per_mm = static_cast<float>(kAssumedDpi / 25.4);
+    renderer.set_device_pixels_per_mm(px_per_mm);
+    std::printf("\n== Lineweight proof (DPI-anchored, zoom-independent) ==\n");
+    std::printf("Mapping: px = mm * (%.0f DPI / 25.4) = mm * %.4f px/mm; floor 1px (Default hairline)\n",
+                kAssumedDpi, px_per_mm);
     std::uint64_t lw_ver = 100;
     const auto measure_thickness = [&](std::uint8_t lineweight, bool lwdisplay) -> int {
         core::GeometryStore ls;
@@ -171,14 +179,28 @@ int main(int argc, char* argv[]) {
         }
         return max_run; // line thickness in pixels at mid-screen
     };
-    const int t_off = measure_thickness(60, false);  // LWDISPLAY off -> thin
-    const int t_def = measure_thickness(25, true);   // 0.25 mm default
-    const int t_heavy = measure_thickness(120, true); // 1.20 mm heavy
-    std::printf("Thickness px: LWDISPLAY-off=%d  default(0.25mm)=%d  heavy(1.20mm)=%d\n", t_off,
-                t_def, t_heavy);
-    check(t_def >= 1 && t_def <= 4, "default 0.25 mm renders a thin-but-visible line");
-    check(t_heavy > t_def + 2, "heavy lineweight is clearly thicker than default");
-    check(t_off <= t_def, "LWDISPLAY off draws thinner than displayed default");
+    const int t_off = measure_thickness(60, false);   // LWDISPLAY off -> hairline
+    const int t_def = measure_thickness(25, true);    // 0.25 mm "Default" -> ~1px
+    const int t_050 = measure_thickness(50, true);    // 0.50 mm           -> ~2px
+    const int t_070 = measure_thickness(70, true);    // 0.70 mm           -> ~3px
+    const int t_100 = measure_thickness(100, true);   // 1.00 mm           -> ~4px
+    const int t_200 = measure_thickness(200, true);   // 2.00 mm           -> ~8px
+    // Expected pixel width = round(mm * px_per_mm); allow +/-1 px for sub-pixel
+    // rasterization at the >60/255 coverage threshold.
+    const auto expect_px = [&](double mm) { return static_cast<int>(mm * px_per_mm + 0.5); };
+    const auto near1 = [](int got, int want) { return got >= want - 1 && got <= want + 1; };
+    std::printf("Thickness px @96 DPI: off=%d  0.25mm=%d  0.50mm=%d  0.70mm=%d  1.00mm=%d  2.00mm=%d\n",
+                t_off, t_def, t_050, t_070, t_100, t_200);
+    std::printf("AutoCAD expectation:  off=1   0.25mm=%d   0.50mm=%d   0.70mm=%d   1.00mm=%d   2.00mm=%d\n",
+                expect_px(0.25), expect_px(0.50), expect_px(0.70), expect_px(1.00), expect_px(2.00));
+    check(t_off == 1, "LWDISPLAY off draws a 1px hairline");
+    check(t_def == 1, "0.25 mm Default renders as a 1px hairline (AutoCAD-accurate)");
+    check(near1(t_050, expect_px(0.50)), "0.50 mm ~= mm*DPI/25.4 px");
+    check(near1(t_070, expect_px(0.70)), "0.70 mm ~= mm*DPI/25.4 px");
+    check(near1(t_100, expect_px(1.00)), "1.00 mm ~= mm*DPI/25.4 px");
+    check(near1(t_200, expect_px(2.00)), "2.00 mm ~= mm*DPI/25.4 px");
+    check(t_def <= t_050 && t_050 <= t_070 && t_070 <= t_100 && t_100 < t_200,
+          "lineweight ladder is non-decreasing and proportional to mm");
 
     // Restore the big-scene camera + re-sync the uploaded scene (the thickness
     // probes uploaded their own tiny scenes) before the zero-re-upload check.

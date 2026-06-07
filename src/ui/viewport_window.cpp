@@ -16,6 +16,7 @@
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QSurfaceFormat>
 #include <QKeyEvent>
 #include <QWheelEvent>
@@ -153,6 +154,8 @@ void ViewportWindow::render_loop(std::stop_token token) {
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
         line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
                                  std::memory_order_relaxed);
+        hovered_kind_.store(snap.has_hover ? static_cast<int>(snap.hover.kind) + 1 : 0,
+                            std::memory_order_relaxed);
         dirty_.store(snap.dirty, std::memory_order_relaxed);
         document_version_.store(snap.document_version, std::memory_order_relaxed);
         current_layer_.store(snap.current_layer, std::memory_order_relaxed);
@@ -184,6 +187,12 @@ void ViewportWindow::render_loop(std::stop_token token) {
                             static_cast<float>(cursor_px_x_.load(std::memory_order_relaxed)),
                             static_cast<float>(cursor_px_y_.load(std::memory_order_relaxed)));
         renderer.set_overlay_text(overlay_text(stats.fps(), stats.average_frame_ms()));
+        // AutoCAD-accurate lineweight: anchor mm->px to the real display density.
+        // physicalDotsPerInch is in physical device pixels, matching the framebuffer.
+        if (const QScreen* scr = screen(); scr != nullptr) {
+            renderer.set_device_pixels_per_mm(
+                static_cast<float>(scr->physicalDotsPerInch() / 25.4));
+        }
         renderer.render(*target, snap, cam);
         context.swapBuffers(this);
 

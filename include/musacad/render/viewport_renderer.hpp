@@ -52,6 +52,17 @@ public:
     }
     void set_grid_visible(bool visible) { grid_visible_ = visible; }
 
+    /// Device pixel density for AutoCAD-accurate lineweight display: framebuffer
+    /// pixels per millimetre = screen DPI / 25.4 (the GL target is in physical
+    /// device pixels, so the device-pixel-ratio is already folded into the DPI).
+    /// Defaults to a 96-DPI assumption (~3.78 px/mm) for offscreen/test use; the
+    /// real viewport overrides it from the active QScreen.
+    void set_device_pixels_per_mm(float px_per_mm) {
+        if (px_per_mm > 0.0f) {
+            device_px_per_mm_ = px_per_mm;
+        }
+    }
+
     /// Transient interaction overlay (preview, selection rect, ghost), composed
     /// on the UI thread and handed in each frame.
     void set_overlay(RenderOverlay overlay) { overlay_ = std::move(overlay); }
@@ -87,6 +98,7 @@ private:
     float cursor_x_ = 0.0f;
     float cursor_y_ = 0.0f;
     bool grid_visible_ = true;
+    float device_px_per_mm_ = 96.0f / 25.4f; // ~3.78 px/mm @ 96 DPI (AutoCAD default)
     RenderOverlay overlay_;
 
     std::uint64_t uploaded_version_ = ~0ull;

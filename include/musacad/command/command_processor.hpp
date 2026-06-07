@@ -76,6 +76,11 @@ public:
     /// Cached selection count, fed from the published snapshot by the UI.
     void set_selection_count(int n) noexcept { selection_count_ = n; }
 
+    /// Cached hovered-entity kind, fed from the published snapshot by the UI. When
+    /// it changes while a command is active, the command's hover() hook fires (the
+    /// smart DIM preview). nullopt means the cursor is over empty space.
+    void set_hovered_kind(std::optional<core::EntityKind> kind);
+
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
     [[nodiscard]] const std::string& last_command() const noexcept { return last_command_alias_; }
     [[nodiscard]] const CommandRegistry& registry() const noexcept { return registry_; }
@@ -93,6 +98,9 @@ public:
     void clear_preview() override { preview_ = PreviewSpec{}; }
     [[nodiscard]] int selection_count() const override { return selection_count_; }
     [[nodiscard]] double pick_radius() const override { return pick_radius_; }
+    [[nodiscard]] std::optional<core::EntityKind> hovered_kind() const override {
+        return hovered_kind_;
+    }
     [[nodiscard]] ViewControl* view() override { return view_; }
 
 private:
@@ -119,6 +127,7 @@ private:
     double grid_spacing_ = 1.0;
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
+    std::optional<core::EntityKind> hovered_kind_;
     PreviewSpec preview_;
 };
 

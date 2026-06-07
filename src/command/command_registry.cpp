@@ -115,6 +115,7 @@ CommandRegistry CommandRegistry::make_default() {
     });
     r.register_command({"DAN", "DIMANGULAR"},
                        [] { return std::make_unique<AngularDimensionCommand>(); });
+    r.register_command({"DIM"}, [] { return std::make_unique<DimCommand>(); });
     r.register_command({"LE", "LEADER"}, [] { return std::make_unique<LeaderCommand>(); });
     return r;
 }

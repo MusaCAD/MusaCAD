@@ -1,8 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "musacad/command/command_context.hpp"
+#include "musacad/core/entity_handle.hpp"
 
 namespace musacad::command {
 
@@ -21,6 +23,11 @@ public:
     virtual void start(CommandContext& ctx) = 0;
     virtual void input(CommandContext& ctx, const std::string& text) = 0;
     virtual void cancel(CommandContext& ctx) = 0;
+
+    /// Optional live feedback as the cursor rolls over entities (the smart DIM
+    /// command uses it to preview which dimension type it will create). `kind` is
+    /// the entity under the cursor, or nullopt when over empty space. Default no-op.
+    virtual void hover(CommandContext& /*ctx*/, std::optional<core::EntityKind> /*kind*/) {}
 
     [[nodiscard]] virtual bool done() const = 0;
 

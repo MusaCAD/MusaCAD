@@ -70,6 +70,15 @@ public:
         return line_vertex_count_.load(std::memory_order_relaxed);
     }
 
+    /// The kind of entity under the cursor in the last snapshot, encoded as its
+    /// EntityKind value + 1 (0 = nothing hovered). The smart DIM command reads this
+    /// (via the processor) to preview the dimension type it will create.
+    [[nodiscard]] std::optional<core::EntityKind> hovered_kind() const noexcept {
+        const int v = hovered_kind_.load(std::memory_order_relaxed);
+        return v == 0 ? std::nullopt
+                      : std::optional<core::EntityKind>{static_cast<core::EntityKind>(v - 1)};
+    }
+
     /// Unsaved-changes flag and the document version (bumps on save/open/new),
     /// from the published snapshot -- drives the title bar and dirty prompts.
     [[nodiscard]] bool dirty() const noexcept { return dirty_.load(std::memory_order_relaxed); }
@@ -125,6 +134,7 @@ private:
     core::Vec2 sel_cur_world_{};
     std::atomic<int> selection_count_{0};
     std::atomic<int> line_vertex_count_{0};
+    std::atomic<int> hovered_kind_{0}; // EntityKind+1, or 0 for nothing hovered
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
 

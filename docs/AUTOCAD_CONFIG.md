@@ -1,8 +1,8 @@
 # Musa CAD — AutoCAD configuration catalog (living roadmap)
 
 The configurable AutoCAD options relevant to a 2D drafter, as the roadmap for
-Musa CAD's settings. **Status**: `Implemented`, `This phase` (Phase 14), or
-`Planned`. Grouped by where AutoCAD exposes them.
+Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
+`Ph15`) or `Planned`. Grouped by where AutoCAD exposes them.
 
 ## DIMSTYLE — Lines tab
 
@@ -78,7 +78,9 @@ Musa CAD's settings. **Status**: `Implemented`, `This phase` (Phase 14), or
 |---|---|---|
 | LWDISPLAY | Show lineweights on/off | Implemented (Ph14) |
 | Default lineweight | New-entity/ByLayer default (0.25 mm) | Implemented (Ph12) |
-| Lineweight display scale | Display lineweight to world scale vs fixed screen | Planned (fixed screen this phase) |
+| Lineweight display mapping | Fixed-screen, DPI-anchored: `px = mm × DPI/25.4` (DPI from `QScreen::physicalDotsPerInch`; 96 DPI default ⇒ 3.7795 px/mm), zoom-independent, Default = 1px hairline | Implemented (Ph15, AutoCAD-accurate) |
+| Lineweight ladder | Standard set 0.00…2.11 mm; mapping continuous over it | Implemented (Ph15) |
+| Lineweight display *to scale* (world-proportional, thickens with zoom) | Alternative AutoCAD mode | Planned |
 | LTSCALE | Global linetype scale | Planned |
 | Per-layer / per-entity lineweight | ByLayer + override | Implemented (Ph12) |
 | Per-layer / per-entity color, linetype | ByLayer + override | Implemented (Ph12) |

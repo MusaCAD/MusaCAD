@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "musacad/core/command.hpp"
+#include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 
 namespace musacad::command {
@@ -77,6 +78,10 @@ public:
 
     /// World-space pick aperture (pixels / camera scale), for pick-based commands.
     [[nodiscard]] virtual double pick_radius() const = 0;
+
+    /// The kind of entity under the cursor (from the published snapshot, cached
+    /// UI-side), or nullopt over empty space. Used by the smart DIM preview.
+    [[nodiscard]] virtual std::optional<core::EntityKind> hovered_kind() const { return std::nullopt; }
 
     [[nodiscard]] virtual ViewControl* view() = 0;       ///< may be null in tests
 };

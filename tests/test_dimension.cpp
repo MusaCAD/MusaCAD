@@ -143,3 +143,87 @@ TEST_CASE("DIMLINEAR through the engine: renders, undoable, style change propaga
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty(); }));
     engine.stop();
 }
+
+namespace {
+// Count line-segment vertices within `r` of point `p` in the snapshot.
+std::size_t verts_near(const RenderSnapshot& s, Vec2 p, double r) {
+    std::size_t n = 0;
+    for (const Vec2& v : s.line_vertices) {
+        if (length_squared(v - p) <= r * r) {
+            ++n;
+        }
+    }
+    return n;
+}
+} // namespace
+
+TEST_CASE("Object radius dimension reads the circle's own centre + radius") {
+    GeometryEngine engine;
+    engine.start();
+    // A circle r=10 at the origin: nothing of it comes near the centre.
+    engine.submit(AddCircleCommand{{0, 0}, 10.0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    REQUIRE(verts_near(engine.snapshot(), {0, 0}, 0.5) == 0);
+
+    // Select the circle (pick on its rim) and place to the right: the radius dim
+    // line runs centre -> edge, so a vertex appears AT the circle's centre, proving
+    // the value came from the entity's geometry (not from raw picked points).
+    engine.submit(AddObjectDimensionCommand{static_cast<std::uint8_t>(DimType::Radius),
+                                            {10, 0}, {25, 0}, 2.0, 0, 2});
+    REQUIRE(wait_until(engine,
+                       [](const auto& s) { return verts_near(s, {0, 0}, 0.5) > 0; }));
+    engine.stop();
+}
+
+TEST_CASE("Object linear dimension reads a selected line's endpoints") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
+    engine.submit(AddObjectDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
+                                            {5, 0}, {5, 5}, 1.0, 0, 2});
+    // Extension + dimension lines + arrows + label all add geometry.
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 2; }));
+    engine.stop();
+}
+
+TEST_CASE("Object angular dimension measures the angle between two selected lines") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});  // +x
+    engine.submit(AddLineCommand{{0, 0}, {0, 10}, 1});  // +y (90 deg)
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+    engine.submit(AddObjectDimensionCommand{static_cast<std::uint8_t>(DimType::Angular),
+                                            {5, 0}, {0, 5}, 1.0, 0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 4; }));
+    engine.stop();
+}
+
+TEST_CASE("Dangling-ref policy: deleting the dimensioned circle leaves the dim intact") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 10.0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(AddObjectDimensionCommand{static_cast<std::uint8_t>(DimType::Radius),
+                                            {10, 0}, {25, 0}, 2.0, 0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return verts_near(s, {0, 0}, 0.5) > 0; }));
+
+    // Erase the circle by picking its top rim (clear of the x-axis dim line). The
+    // dimension captured def points at creation, so it must survive (no dangling
+    // reference, no crash). Wait for the circle's rim vertices to vanish...
+    engine.submit(ErasePickCommand{{0, 10}, 2.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return verts_near(s, {0, 10}, 0.5) == 0; }));
+    // ...then the dimension's centre-endpoint vertex must still be present.
+    REQUIRE(verts_near(engine.snapshot(), {0, 0}, 0.5) > 0);
+    engine.stop();
+}
+
+TEST_CASE("Object dimension on empty space creates nothing (honest, no crash)") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddObjectDimensionCommand{static_cast<std::uint8_t>(DimType::Radius),
+                                            {100, 100}, {120, 100}, 2.0, 0, 1});
+    // Give the engine time to process; nothing should render.
+    REQUIRE_FALSE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.stop();
+}

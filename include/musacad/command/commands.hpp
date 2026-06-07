@@ -308,15 +308,19 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { First, Second, Place } state_ = State::First;
+    // Two-point flow: First -> Second -> Place. Object flow (via the [Object]
+    // keyword or an empty first input): SelectObj -> ObjPlace.
+    enum class State { First, Second, Place, SelectObj, ObjPlace } state_ = State::First;
     core::DimType type_;
     std::string name_;
     core::Vec2 a_{};
     core::Vec2 b_{};
+    core::Vec2 obj_pick_{};
     bool done_ = false;
 };
 
-/// DIMRADIUS / DIMDIAMETER: pick centre, then a point on the circle/arc.
+/// DIMRADIUS / DIMDIAMETER: select a circle or arc, then place the dimension line.
+/// The value comes from the entity's own centre + radius (object-aware).
 class RadialDimensionCommand final : public ICommand {
 public:
     RadialDimensionCommand(core::DimType type, std::string name)
@@ -328,14 +332,15 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Center, Edge } state_ = State::Center;
+    enum class State { Select, Place } state_ = State::Select;
     core::DimType type_;
     std::string name_;
-    core::Vec2 center_{};
+    core::Vec2 obj_pick_{};
     bool done_ = false;
 };
 
-/// DIMANGULAR: pick the vertex, then a point on each of the two rays.
+/// DIMANGULAR: select two lines (or polyline edges); the angle is read from the
+/// entities' directions (object-aware).
 class AngularDimensionCommand final : public ICommand {
 public:
     std::string name() const override { return "DIMANGULAR"; }
@@ -345,9 +350,28 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Vertex, Ray1, Ray2 } state_ = State::Vertex;
-    core::Vec2 vertex_{};
-    core::Vec2 ray1_{};
+    enum class State { Line1, Line2 } state_ = State::Line1;
+    core::Vec2 pick1_{};
+    bool done_ = false;
+};
+
+/// DIM: AutoCAD's smart all-in-one dimension. As the cursor moves over candidates
+/// it previews the type it would create; on pick it reads the hovered entity kind
+/// (circle -> diameter, arc -> radius, line/polyline -> linear) and dispatches to
+/// the SAME object-aware machinery as DIMRADIUS/DIMDIAMETER/DIMLINEAR.
+class DimCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIM"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void hover(CommandContext& ctx, std::optional<core::EntityKind> kind) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Select, Place } state_ = State::Select;
+    core::DimType type_ = core::DimType::Linear;
+    core::Vec2 obj_pick_{};
     bool done_ = false;
 };
 

@@ -961,7 +961,116 @@ bool fillet_pl(std::vector<Vec2>& pts, bool closed, int sv, double r) {
     return true;
 }
 
+/// Endpoints of the line, or the polyline segment nearest `pick`, under `h`.
+/// False for any other entity kind (or a degenerate polyline).
+bool segment_endpoints(const GeometryStore& store, EntityHandle h, Vec2 pick, Vec2& a, Vec2& b) {
+    if (h.kind == EntityKind::Line) {
+        const LineData* l = store.line(h);
+        a = l->a;
+        b = l->b;
+        return true;
+    }
+    if (h.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store.polyline(h);
+        const std::span<const Vec2> v = store.vertices_of(*pl);
+        const int s = nearest_pl_segment(v, pl->closed, pick);
+        if (s < 0) {
+            return false;
+        }
+        const std::size_t n = v.size();
+        a = v[static_cast<std::size_t>(s)];
+        b = v[(static_cast<std::size_t>(s) + 1) % n];
+        return true;
+    }
+    return false;
+}
 } // namespace
+
+void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2,
+                                            double radius, std::uint16_t style,
+                                            std::uint64_t group) {
+    const auto dt = static_cast<DimType>(type);
+    const EntityHandle h1 = pick_nearest(pick1, radius);
+    if (h1.is_null()) {
+        report("No object under the pick -- select an object to dimension.");
+        return;
+    }
+
+    Command add = AddLineCommand{}; // placeholder; replaced below
+    if (dt == DimType::Radius || dt == DimType::Diameter) {
+        Vec2 center{};
+        double r = 0.0;
+        if (h1.kind == EntityKind::Circle) {
+            const CircleData* c = store_.circle(h1);
+            center = c->center;
+            r = c->radius;
+        } else if (h1.kind == EntityKind::Arc) {
+            const ArcData* arc = store_.arc(h1);
+            center = arc->center;
+            r = arc->radius;
+        } else {
+            report("Select a circle or an arc for a radius/diameter dimension.");
+            return;
+        }
+        Vec2 dir = pick2 - center;
+        dir = length_squared(dir) > 1e-12 ? normalized(dir) : Vec2{1.0, 0.0};
+        const Vec2 edge = center + dir * r;
+        add = AddDimensionCommand{type, center, edge, pick2, style, group, {}};
+    } else if (dt == DimType::Angular) {
+        const EntityHandle h2 = pick_nearest(pick2, radius);
+        if (h2.is_null()) {
+            report("Select a second line for an angular dimension.");
+            return;
+        }
+        Vec2 a1{};
+        Vec2 b1{};
+        Vec2 a2{};
+        Vec2 b2{};
+        if (!segment_endpoints(store_, h1, pick1, a1, b1) ||
+            !segment_endpoints(store_, h2, pick2, a2, b2)) {
+            report("Angular dimension needs two lines or polyline edges.");
+            return;
+        }
+        Vec2 v{};
+        if (!NativeKernel2D::line_line_intersection(a1, b1, a2, b2, v)) {
+            report("Angular: the two lines are parallel.");
+            return;
+        }
+        // A ray point on each line, on the picked side of the vertex; its distance
+        // sizes the dimension arc (the measured angle is direction-only).
+        const auto ray_pt = [&](Vec2 pa, Vec2 pb, Vec2 pick) -> Vec2 {
+            Vec2 d = pb - pa;
+            if (length_squared(d) < 1e-18) {
+                return pb;
+            }
+            d = normalized(d);
+            if (dot(pick - v, d) < 0.0) {
+                d = d * -1.0;
+            }
+            double len = distance(v, pick);
+            if (len < 1e-6) {
+                len = 1.0;
+            }
+            return v + d * len;
+        };
+        add = AddDimensionCommand{type, v, ray_pt(a1, b1, pick1), ray_pt(a2, b2, pick2),
+                                  style, group, {}};
+    } else { // Linear / Aligned
+        Vec2 a{};
+        Vec2 b{};
+        if (!segment_endpoints(store_, h1, pick1, a, b)) {
+            report("Select a line or a polyline segment for a linear dimension.");
+            return;
+        }
+        add = AddDimensionCommand{type, a, b, pick2, style, group, {}};
+    }
+
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(group, nh, add);
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Dimension created from object.");
+}
 
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                                   std::uint64_t group) {
@@ -1404,6 +1513,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group);
             } else if constexpr (std::is_same_v<T, ChamferPickCommand>) {
                 apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group);
+            } else if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
+                apply_object_dimension(c.type, c.pick1, c.pick2, c.pick_radius, c.style, c.group);
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =

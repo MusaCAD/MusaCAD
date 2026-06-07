@@ -120,6 +120,12 @@ private:
                       std::uint64_t group);
     void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
                        std::uint64_t group);
+    // Object-aware dimensioning: resolve the entity(ies) under the pick(s) via the
+    // spatial index + selectable() gate and build the matching dimension from their
+    // intrinsic geometry. The dimension captures DEF POINTS only (no entity ref), so
+    // later deleting the source entity leaves it intact (no dangling reference).
+    void apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2, double radius,
+                                std::uint16_t style, std::uint64_t group);
     // Property changes on the selection (erase+recreate so they're undoable).
     void apply_props_change(const std::function<void(EntityProps&)>& modify, std::uint64_t group);
     void apply_entity_layer(std::uint16_t layer, std::uint64_t group);

@@ -107,6 +107,16 @@ void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> sn
     submit_line(buf); // feed as an absolute coordinate to the active command
 }
 
+void CommandProcessor::set_hovered_kind(std::optional<core::EntityKind> kind) {
+    if (kind == hovered_kind_) {
+        return; // only react to changes
+    }
+    hovered_kind_ = kind;
+    if (active_) {
+        active_->hover(*this, hovered_kind_);
+    }
+}
+
 void CommandProcessor::undo() {
     submit(core::UndoLastGroupCommand{});
     output_.append_line("Undo");

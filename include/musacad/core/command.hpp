@@ -249,6 +249,23 @@ struct AddDimensionCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Object-aware dimensioning: the geometry thread resolves the entity under
+/// `pick1` (and `pick2` for angular) via the spatial index + selectable() gate,
+/// reads its intrinsic geometry, and creates the matching dimension -- so the user
+/// dimensions by SELECTING the object, not by picking raw construction points.
+/// `pick2` is the dimension-line placement for Radius/Diameter/Linear/Aligned, or
+/// the second-line pick for Angular. The resulting dimension captures DEF POINTS
+/// only (no entity reference), so deleting the source entity never dangles it.
+/// `type` matches core::DimType.
+struct AddObjectDimensionCommand {
+    std::uint8_t type = 0;
+    Vec2 pick1;
+    Vec2 pick2;
+    double pick_radius = 0.0;
+    std::uint16_t style = 0;
+    std::uint64_t group = 0;
+};
+
 /// A quick leader: arrowhead at `tip`, line to `knee`, text label at `knee`.
 struct AddLeaderCommand {
     Vec2 tip;
@@ -319,6 +336,7 @@ using Command =
                  OpenDocumentCommand, NewDocumentCommand, AddLayerCommand, SetLayerCommand,
                  RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
-                 SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand>;
+                 SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
+                 AddObjectDimensionCommand>;
 
 } // namespace musacad::core

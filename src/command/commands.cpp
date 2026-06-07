@@ -984,15 +984,46 @@ void TextCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+namespace {
+bool is_object_keyword(const std::string& text) {
+    std::string u;
+    for (const char c : text) {
+        u += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return u == "O" || u == "OBJECT";
+}
+const char* dim_type_word(core::DimType t) {
+    switch (t) {
+    case core::DimType::Radius:
+        return "Radius";
+    case core::DimType::Diameter:
+        return "Diameter";
+    case core::DimType::Aligned:
+        return "Aligned";
+    case core::DimType::Angular:
+        return "Angular";
+    case core::DimType::Linear:
+        break;
+    }
+    return "Linear";
+}
+} // namespace
+
 // ---------------------------------------------------------------------------
-// DIMLINEAR / DIMALIGNED: first point -> second point -> dim line location
+// DIMLINEAR / DIMALIGNED: two-point flow, or [Object] -> select a line/segment.
 // ---------------------------------------------------------------------------
 void LinearDimensionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify first extension line origin: ");
+    ctx.set_prompt("Specify first extension line origin or [Object]: ");
 }
 
 void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    // Object mode is entered from the first prompt via the [Object] keyword.
+    if (state_ == State::First && is_object_keyword(text)) {
+        state_ = State::SelectObj;
+        ctx.set_prompt("Select line or polyline segment: ");
+        return;
+    }
     const auto p = read_point(ctx, text);
     if (!p) {
         return;
@@ -1016,6 +1047,18 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
         ctx.echo("Dimension placed.");
         done_ = true;
         return;
+    case State::SelectObj:
+        obj_pick_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::ObjPlace;
+        ctx.set_prompt("Specify dimension line location: ");
+        return;
+    case State::ObjPlace:
+        ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(type_), obj_pick_, *p,
+                                                   ctx.pick_radius(), 0, ctx.group_id()});
+        ctx.echo("Dimension placed from object.");
+        done_ = true;
+        return;
     }
 }
 
@@ -1025,11 +1068,12 @@ void LinearDimensionCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// DIMRADIUS / DIMDIAMETER: centre -> point on circle
+// DIMRADIUS / DIMDIAMETER: select the circle/arc -> place. The value comes from
+// the entity's own geometry (resolved on the geometry thread).
 // ---------------------------------------------------------------------------
 void RadialDimensionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify centre of circle/arc: ");
+    ctx.set_prompt("Select circle or arc: ");
 }
 
 void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text) {
@@ -1037,15 +1081,15 @@ void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text)
     if (!p) {
         return;
     }
-    if (state_ == State::Center) {
-        center_ = *p;
+    if (state_ == State::Select) {
+        obj_pick_ = *p;
         ctx.set_last_point(*p);
-        state_ = State::Edge;
-        ctx.set_prompt("Specify point on circle/arc: ");
+        state_ = State::Place;
+        ctx.set_prompt("Specify dimension line location: ");
         return;
     }
-    ctx.submit(core::AddDimensionCommand{static_cast<std::uint8_t>(type_), center_, *p, *p, 0,
-                                         ctx.group_id()});
+    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(type_), obj_pick_, *p,
+                                               ctx.pick_radius(), 0, ctx.group_id()});
     ctx.echo("Dimension placed.");
     done_ = true;
 }
@@ -1056,11 +1100,11 @@ void RadialDimensionCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// DIMANGULAR: vertex -> ray-1 point -> ray-2 point
+// DIMANGULAR: select two lines/edges; the angle is read from their directions.
 // ---------------------------------------------------------------------------
 void AngularDimensionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify angle vertex: ");
+    ctx.set_prompt("Select first line: ");
 }
 
 void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text) {
@@ -1068,30 +1112,88 @@ void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text
     if (!p) {
         return;
     }
-    switch (state_) {
-    case State::Vertex:
-        vertex_ = *p;
+    if (state_ == State::Line1) {
+        pick1_ = *p;
         ctx.set_last_point(*p);
-        state_ = State::Ray1;
-        ctx.set_prompt("Specify first point: ");
-        return;
-    case State::Ray1:
-        ray1_ = *p;
-        ctx.set_last_point(*p);
-        state_ = State::Ray2;
-        ctx.set_prompt("Specify second point: ");
-        return;
-    case State::Ray2:
-        // a = vertex, b = ray-1 point, line_pt = ray-2 point (angular convention).
-        ctx.submit(core::AddDimensionCommand{static_cast<std::uint8_t>(core::DimType::Angular),
-                                             vertex_, ray1_, *p, 0, ctx.group_id()});
-        ctx.echo("Angular dimension placed.");
-        done_ = true;
+        state_ = State::Line2;
+        ctx.set_prompt("Select second line: ");
         return;
     }
+    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(core::DimType::Angular),
+                                               pick1_, *p, ctx.pick_radius(), 0, ctx.group_id()});
+    ctx.echo("Angular dimension placed.");
+    done_ = true;
 }
 
 void AngularDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIM: smart all-in-one. Hover previews the type; on pick it reads the hovered
+// entity kind and dispatches to the shared object-aware machinery.
+// ---------------------------------------------------------------------------
+namespace {
+core::DimType dim_type_for(core::EntityKind k) {
+    switch (k) {
+    case core::EntityKind::Circle:
+        return core::DimType::Diameter;
+    case core::EntityKind::Arc:
+        return core::DimType::Radius;
+    default:
+        return core::DimType::Linear; // Line / Polyline
+    }
+}
+bool dimensionable(core::EntityKind k) {
+    return k == core::EntityKind::Line || k == core::EntityKind::Polyline ||
+           k == core::EntityKind::Circle || k == core::EntityKind::Arc;
+}
+} // namespace
+
+void DimCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select objects to dimension: ");
+}
+
+void DimCommand::hover(CommandContext& ctx, std::optional<core::EntityKind> kind) {
+    if (state_ != State::Select) {
+        return;
+    }
+    if (kind && dimensionable(*kind)) {
+        ctx.set_prompt(std::string("Select objects to dimension: -> ") +
+                       dim_type_word(dim_type_for(*kind)));
+    } else {
+        ctx.set_prompt("Select objects to dimension: ");
+    }
+}
+
+void DimCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::Select) {
+        const auto kind = ctx.hovered_kind();
+        if (!kind || !dimensionable(*kind)) {
+            ctx.echo("No dimensionable object under the cursor -- hover a line, circle, or arc.");
+            return; // stay in Select; let the user try again
+        }
+        type_ = dim_type_for(*kind);
+        obj_pick_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Place;
+        ctx.set_prompt(std::string("Specify dimension line location (") + dim_type_word(type_) +
+                       "): ");
+        return;
+    }
+    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(type_), obj_pick_, *p,
+                                               ctx.pick_radius(), 0, ctx.group_id()});
+    ctx.echo(std::string(dim_type_word(type_)) + " dimension placed.");
+    done_ = true;
+}
+
+void DimCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }
