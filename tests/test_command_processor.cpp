@@ -375,3 +375,15 @@ TEST_CASE("Processor: QLEADER arrow + vertex + text emits AddMLeaderCommand") {
     REQUIRE(m->vertices.size() == 2);
     REQUIRE(m->content == "SEE NOTE");
 }
+
+TEST_CASE("Processor: TEXTEDIT picks then sets content via EditTextContentCommand") {
+    Harness h;
+    h.proc.submit_line("ED");
+    h.proc.submit_line("5,5");          // pick a point on the text
+    h.proc.submit_line("NEW CONTENT");  // the new string
+    REQUIRE(h.cmds.size() == 1);
+    const auto* e = std::get_if<musacad::core::EditTextContentCommand>(&h.cmds[0]);
+    REQUIRE(e != nullptr);
+    REQUIRE(e->content == "NEW CONTENT");
+    REQUIRE(e->at == Vec2{5.0, 5.0});
+}

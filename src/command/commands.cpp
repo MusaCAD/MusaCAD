@@ -1377,4 +1377,34 @@ void QLeaderCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// TEXTEDIT / DDEDIT: pick a text entity, then type its new content.
+// ---------------------------------------------------------------------------
+void TextEditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select text/MText/leader-label to edit: ");
+}
+
+void TextEditCommand::input(CommandContext& ctx, const std::string& text) {
+    if (state_ == State::Content) {
+        ctx.submit(core::EditTextContentCommand{at_, radius_, text, ctx.group_id()});
+        ctx.echo("Text edited.");
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    at_ = *p;
+    radius_ = ctx.pick_radius();
+    state_ = State::Content;
+    ctx.set_prompt("Enter new text: ");
+}
+
+void TextEditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

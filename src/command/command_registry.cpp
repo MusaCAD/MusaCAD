@@ -120,6 +120,8 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"MT", "MTEXT", "T"}, [] { return std::make_unique<MTextCommand>(); });
     r.register_command({"LE", "QLEADER", "QL"},
                        [] { return std::make_unique<QLeaderCommand>(); });
+    r.register_command({"ED", "TEXTEDIT", "DDEDIT"},
+                       [] { return std::make_unique<TextEditCommand>(); });
     return r;
 }
 

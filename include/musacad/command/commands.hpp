@@ -426,4 +426,22 @@ private:
     bool done_ = false;
 };
 
+/// TEXTEDIT / DDEDIT (ED): pick a text-bearing entity (TEXT / MTEXT / QLEADER
+/// label), then type the new content. The scriptable/keyboard path to text edit;
+/// same one-undo-group content change as the double-click editor.
+class TextEditCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Pick, Content } state_ = State::Pick;
+    core::Vec2 at_{};
+    double radius_ = 0.0;
+    bool done_ = false;
+};
+
 } // namespace musacad::command

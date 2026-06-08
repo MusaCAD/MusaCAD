@@ -1104,6 +1104,72 @@ void GeometryEngine::apply_grip_commit(std::uint64_t group) {
     report("Edited.");
 }
 
+void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::string& content,
+                                     std::uint64_t group) {
+    // Find the nearest editable text-bearing entity whose AABB (grown by the pick
+    // aperture) contains `at`. Reuses the entity AABB; respects selectable() so
+    // locked/off/frozen text can't be edited.
+    EntityHandle target;
+    double best = 0.0;
+    const auto consider = [&](EntityHandle h) {
+        if (!store_.is_valid(h) || !selectable(h)) {
+            return;
+        }
+        Vec2 lo;
+        Vec2 hi;
+        if (!entity_aabb(store_, h, lo, hi)) {
+            return;
+        }
+        const double pad = std::max(pick_radius, 1e-9);
+        if (at.x < lo.x - pad || at.x > hi.x + pad || at.y < lo.y - pad || at.y > hi.y + pad) {
+            return;
+        }
+        const Vec2 c{(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5};
+        const double d2 = length_squared(at - c);
+        if (target.is_null() || d2 < best) {
+            target = h;
+            best = d2;
+        }
+    };
+    const auto scan = [&](const auto& arena, EntityKind kind) {
+        for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+            if (arena.alive(i)) {
+                consider(EntityHandle{i, arena.generations()[i], kind});
+            }
+        }
+    };
+    scan(store_.texts(), EntityKind::Text);
+    scan(store_.mtexts(), EntityKind::MText);
+    scan(store_.mleaders(), EntityKind::MLeader);
+    if (target.is_null()) {
+        report("No editable text there.");
+        return;
+    }
+    // Capture the entity, change ONLY its content, recommit as one undo group --
+    // layer/properties/position are preserved (not a delete+recreate).
+    Command edited = capture_entity(target);
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddTextCommand> ||
+                          std::is_same_v<T, AddMTextCommand> ||
+                          std::is_same_v<T, AddMLeaderCommand>) {
+                x.content = content;
+            }
+        },
+        edited);
+    const Command original = capture_entity(target);
+    remove_indexed(target);
+    push_erase_item(group, original);
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(group, nh, edited);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Text edited.");
+}
+
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                                   std::uint64_t group) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
@@ -1589,6 +1655,8 @@ void GeometryEngine::apply(const Command& command) {
                 } else { // Cancel
                     grip_active_ = false;
                 }
+            } else if constexpr (std::is_same_v<T, EditTextContentCommand>) {
+                apply_text_edit(c.at, c.pick_radius, c.content, c.group);
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =
@@ -1719,6 +1787,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.point_batches = geom_cache_.point_batches;
     buf.fill_vertices = geom_cache_.fill_vertices;
     buf.fill_batches = geom_cache_.fill_batches;
+    buf.text_edit_targets = geom_cache_.text_edit_targets; // double-click-to-edit
     buf.bounds_min = geom_cache_.bounds_min;
     buf.bounds_max = geom_cache_.bounds_max;
     buf.has_bounds = geom_cache_.has_bounds;

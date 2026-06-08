@@ -186,6 +186,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
             // Cache grips for GUI-thread hit-testing (grab on press).
             std::scoped_lock lock(grips_mutex_);
             grips_cache_ = snap.grips;
+            text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
         }
         {
             std::scoped_lock lock(layers_mutex_);
@@ -291,6 +292,51 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             sel_start_world_ = world;
             sel_cur_world_ = world;
         }
+    }
+}
+
+void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
+    // Double-click a text-bearing entity -> request the in-window editor. Idle only
+    // (an active command keeps its own click semantics). Hit-test the cached text
+    // targets (already gated to editable/unlocked layers geometry-side).
+    if (event->button() != Qt::LeftButton || processor_ == nullptr ||
+        processor_->has_active_command() || !text_edit_callback_) {
+        return;
+    }
+    const double dpr = devicePixelRatio();
+    const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
+    core::Vec2 world;
+    double scale = 1.0;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        world = camera_.screen_to_world(screen_px);
+        scale = camera_.scale();
+    }
+    const double pad = 10.0 * dpr / scale; // pick aperture in world units (DPR-aware)
+    bool found = false;
+    std::string content;
+    bool multiline = false;
+    {
+        std::scoped_lock lock(grips_mutex_);
+        double best = 0.0;
+        for (const core::TextEditTarget& t : text_targets_) {
+            if (world.x < t.min.x - pad || world.x > t.max.x + pad || world.y < t.min.y - pad ||
+                world.y > t.max.y + pad) {
+                continue;
+            }
+            const core::Vec2 c{(t.min.x + t.max.x) * 0.5, (t.min.y + t.max.y) * 0.5};
+            const double d2 = core::length_squared(world - c);
+            if (!found || d2 < best) {
+                found = true;
+                best = d2;
+                content = t.content;
+                multiline = t.multiline;
+            }
+        }
+    }
+    // Open the editor OUTSIDE the lock (it runs a modal dialog).
+    if (found) {
+        text_edit_callback_(TextEditRequest{world, pad, content, multiline});
     }
 }
 

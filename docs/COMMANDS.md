@@ -63,6 +63,9 @@ suggests both); aliases are case-insensitive.
 | MTEXT grips: insertion (move) + width (re-wraps live) | — | Implemented |
 | **QLEADER (arrow → leader vertices → attached MTEXT label)** | LE / QLEADER / QL | Implemented (label is owned → moves with the leader) |
 | QLEADER grips: arrow tip + each vertex + text position | — | Implemented |
+| **Double-click a TEXT / MTEXT / QLEADER label → edit its content** (dark modal editor, pre-filled) | (double-click) | Implemented (Ph21) |
+| **TEXTEDIT / DDEDIT** (pick text → type new content; scriptable path) | ED / TEXTEDIT / DDEDIT | Implemented (Ph21) |
+| Text edit = one undo group, preserves layer/properties/position (not delete+recreate) | — | Implemented (Ph21) |
 | LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
 | DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |

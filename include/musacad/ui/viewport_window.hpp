@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -115,10 +116,37 @@ public:
     void set_processor(command::CommandProcessor* processor) noexcept { processor_ = processor; }
     void set_modes(ViewportModes* modes) noexcept { modes_ = modes; }
 
+    /// A double-click on a text-bearing entity (TEXT/MTEXT/QLEADER label): where it
+    /// was hit (world), the pick aperture, the current content, and whether the
+    /// editor should be multi-line. The host opens a (dark-themed) editor and, on
+    /// confirm, submits an EditTextContentCommand at `at`.
+    struct TextEditRequest {
+        render::Vec2 at;
+        double pick_radius = 0.0;
+        std::string content;
+        bool multiline = false;
+    };
+    void set_text_edit_callback(std::function<void(const TextEditRequest&)> cb) {
+        text_edit_callback_ = std::move(cb);
+    }
+
+    /// Snapshot of the editable text contents (for self-tests / observed-outcome
+    /// checks). Copied under the cache lock.
+    [[nodiscard]] std::vector<std::string> text_contents() const {
+        std::scoped_lock lock(grips_mutex_);
+        std::vector<std::string> out;
+        out.reserve(text_targets_.size());
+        for (const core::TextEditTarget& t : text_targets_) {
+            out.push_back(t.content);
+        }
+        return out;
+    }
+
 protected:
     void exposeEvent(QExposeEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -167,6 +195,8 @@ private:
     // plus the active grip-drag state (direct manipulation, Phase 17).
     mutable std::mutex grips_mutex_;
     std::vector<core::GripInfo> grips_cache_;
+    std::vector<core::TextEditTarget> text_targets_; // for double-click-to-edit (same mutex)
+    std::function<void(const TextEditRequest&)> text_edit_callback_;
     bool dragging_grip_ = false;
     core::Vec2 grip_origin_{};
 

@@ -39,6 +39,11 @@ bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
     return l != nullptr && l->on && !l->frozen;
 }
+/// Editable = visible and not on a locked layer (locked text can't be edited).
+bool editable(const GeometryStore& store, const EntityProps& p) {
+    const Layer* l = store.layer(p.layer);
+    return l != nullptr && l->on && !l->frozen && !l->locked;
+}
 ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
     return l != nullptr ? resolve(p, *l) : ResolvedProps{};
@@ -54,6 +59,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     out.point_batches.clear();
     out.fill_vertices.clear();
     out.fill_batches.clear();
+    out.text_edit_targets.clear();
     out.layers.assign(store.layers().begin(), store.layers().end());
     out.current_layer = store.current_layer();
 
@@ -124,6 +130,12 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         text::append_text_segments(store.string_of(*t), t->pos, t->height, t->rotation,
                                    static_cast<text::Justify>(t->justify), tseg);
         add_lines(r.color, 0, tseg);
+        if (editable(store, t->props)) {
+            const double w = text::text_width(store.string_of(*t), t->height);
+            out.text_edit_targets.push_back(TextEditTarget{
+                h, t->pos, {t->pos.x, t->pos.y}, {t->pos.x + w, t->pos.y + t->height}, t->height,
+                t->rotation, false, std::string(store.string_of(*t))});
+        }
     });
 
     // Dimensions: per-element colours (ext/dim/arrow/text), filled arrowheads, and
@@ -182,6 +194,11 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         const ResolvedProps r = entity_resolved(store, m->props);
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
         add_lines(r.color, 0, lay.segments);
+        if (editable(store, m->props)) {
+            out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
+                                                           m->text.height, m->text.rotation, true,
+                                                           std::string(store.string_of(m->text))});
+        }
     });
 
     // QLEADER: leader polyline + arrowhead + owned paragraph label (same layout).
@@ -209,6 +226,11 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
         add_lines(text_c, 0, lay.segments);
+        if (editable(store, m->props)) {
+            out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
+                                                           m->text.height, m->text.rotation, true,
+                                                           std::string(store.string_of(m->text))});
+        }
     });
 
     // Flatten groups into contiguous batches over the payload arrays.

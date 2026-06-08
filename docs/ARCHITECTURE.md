@@ -878,6 +878,38 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## Editable text — double-click & TEXTEDIT (Phase 21)
+
+The text data model was already edit-ready (content is a discrete stored field,
+layout computed-not-baked, Ph20). This phase adds only the **interaction** — no
+data-model change.
+
+* **One edit command.** `EditTextContentCommand{at, pick_radius, content, group}`
+  changes the content of the nearest editable text-bearing entity (TEXT / MTEXT /
+  QLEADER label) at `at`. The engine's `apply_text_edit` finds it (by AABB, gated by
+  `selectable()` so locked/off/frozen text can't be edited), then **captures the
+  entity, changes only its content, and recommits as one undo group** — exactly the
+  `apply_grip_commit` pattern, so layer/properties/position are preserved (not a
+  delete+recreate) and Ctrl+Z restores the prior string. Layout re-computes from the
+  new content at the next snapshot (so an edited MTEXT re-wraps automatically).
+* **Double-click gesture.** The snapshot carries `text_edit_targets` — for every
+  editable TEXT/MTEXT/QLEADER label, its handle, AABB, anchor, height, multi-line
+  flag, and live content. The UI caches these and, on `mouseDoubleClickEvent`,
+  hit-tests them (reusing the pick aperture, DPR-aware) without touching the store;
+  on a hit it opens an editor pre-filled from the snapshot content. Double-click is
+  idle-only, so single-click select and grip-grab are unaffected.
+* **Editor UI.** A small **modal popup** (an in-canvas overlay is awkward over the
+  QWindow GL surface — stated choice), themed by the app-wide Fusion + dark palette
+  (Ph11): a `QLineEdit` for single-line TEXT, a `QPlainTextEdit` (multi-line) for
+  MTEXT/QLEADER. On confirm it submits `EditTextContentCommand`; Esc/Cancel changes
+  nothing. The UI never touches the store — the edit rides the command queue.
+* **TEXTEDIT / DDEDIT (ED).** The scriptable/keyboard path: pick a text entity, type
+  the new content, submit the same `EditTextContentCommand` — one code path, same
+  one-undo-group commit. Lets a script/AI edit text via a command, not a gesture.
+* **No regressions.** No struct/data-model change (`TextData` 56 / `MTextData` 80 /
+  `MLeaderData` 96 unchanged); insert ~36 ns; native/DXF untouched (content was always
+  stored). `text_edit_targets` is interaction metadata (not in the checksum).
+
 ## MTEXT (paragraph text) & QLEADER (editable leaders) (Phase 20)
 
 Two new entities, both **property-bearing** so the next phase's Properties palette
@@ -1011,6 +1043,12 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 21 — complete:** editable text — double-click a TEXT/MTEXT/QLEADER label
+  to edit its content (dark modal editor pre-filled from the snapshot) + TEXTEDIT/
+  DDEDIT/ED command (scriptable path). Both submit one `EditTextContentCommand` that
+  changes only the content as one undo group (layer/props/position preserved), with
+  layout recomputed at snapshot. No data-model change; 216 tests (dev) / 215 (TSan);
+  observed-outcome self-test (store content BEFORE→AFTER, undo restores).
 * **Phase 20 — complete:** MTEXT (paragraph text, word-wrap, attachment/spacing/
   width-factor fields, width + insertion grips) and QLEADER (arrow + leader vertices +
   owned MTEXT label; arrow/vertex/text grips; the label moves with the leader). Both

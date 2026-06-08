@@ -172,3 +172,74 @@ TEST_CASE("MTEXT + QLEADER round-trip native + DXF; stored as discrete fields") 
     }
     REQUIRE(found_alpha);
 }
+
+TEST_CASE("EditTextContentCommand changes content in place (one undo group)") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddTextCommand{{0, 0}, 2.5, 0.0, 0, "OLD", 1, {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    const std::size_t before = engine.snapshot().line_vertices.size();
+
+    // Edit the content at a point inside the text box.
+    engine.submit(EditTextContentCommand{{1, 1}, 5.0, "A MUCH LONGER STRING", 7});
+    REQUIRE(wait_until(engine, [before](const auto& s) {
+        return s.line_vertices.size() != before; // re-rendered with new glyphs
+    }));
+    // The edit target reflects new content + preserved layer (computed-not-baked).
+    bool ok = false;
+    for (const auto& t : engine.snapshot().text_edit_targets) {
+        if (t.content == "A MUCH LONGER STRING") {
+            ok = true;
+        }
+    }
+    REQUIRE(ok);
+
+    // Undo restores the prior string as one group.
+    engine.submit(UndoLastGroupCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        for (const auto& t : s.text_edit_targets) {
+            if (t.content == "OLD") {
+                return true;
+            }
+        }
+        return false;
+    }));
+    engine.stop();
+}
+
+TEST_CASE("EditTextContentCommand edits MTEXT (re-wraps) and a QLEADER label") {
+    GeometryEngine engine;
+    engine.start();
+    MTextBlock mb;
+    mb.pos = {0, 0};
+    mb.height = 2.5;
+    mb.width = 30.0;
+    engine.submit(AddMTextCommand{mb, "SHORT", 1});
+    MTextBlock lb;
+    lb.pos = {40, 0};
+    lb.height = 2.5;
+    engine.submit(AddMLeaderCommand{{{60, -10}, {50, 0}, {40, 0}}, 0, lb, "NOTE", 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.text_edit_targets.size() == 2; }));
+
+    // Edit the MTEXT content to something that wraps to multiple lines.
+    engine.submit(EditTextContentCommand{{0, -1}, 5.0, "NOW THIS IS A LONG PARAGRAPH THAT WRAPS", 7});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        for (const auto& t : s.text_edit_targets) {
+            if (t.content.rfind("NOW THIS", 0) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }));
+    // Edit the QLEADER label.
+    engine.submit(EditTextContentCommand{{40, 0}, 5.0, "REVISED", 8});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        for (const auto& t : s.text_edit_targets) {
+            if (t.content == "REVISED") {
+                return true;
+            }
+        }
+        return false;
+    }));
+    engine.stop();
+}

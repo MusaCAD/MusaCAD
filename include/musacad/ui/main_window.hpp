@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <QMainWindow>
@@ -96,6 +97,11 @@ private:
     // ARRAY command dialog (AutoCAD-style parametric input).
     void open_array_dialog();
     void submit_array_from_dialog(const ParameterDialog& dlg);
+
+    // Double-click text editor: a dark-themed modal editor pre-filled with the
+    // entity's content; on confirm submits an EditTextContentCommand at (wx,wy).
+    void open_text_editor(double wx, double wy, double pick_radius, const std::string& content,
+                          bool multiline);
 
     // Annotation (UI side: dimension-style dialog).
     void open_dimstyle_dialog();

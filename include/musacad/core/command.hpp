@@ -336,6 +336,17 @@ struct AddMLeaderCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Edit the content of the text-bearing entity (TEXT / MTEXT / QLEADER label)
+/// nearest `at`. A content change on the existing entity -- layer/properties/
+/// position are preserved -- committed as one undo group. Used by both the
+/// double-click editor and the TEXTEDIT/DDEDIT command.
+struct EditTextContentCommand {
+    Vec2 at;
+    double pick_radius = 0.0;
+    std::string content;
+    std::uint64_t group = 0;
+};
+
 /// Toggle lineweight display (AutoCAD LWDISPLAY). Off => thin default everywhere.
 struct SetLineweightDisplayCommand {
     bool on = true;
@@ -397,6 +408,6 @@ using Command =
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
-                 GripDragCommand, AddMTextCommand, AddMLeaderCommand>;
+                 GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand>;
 
 } // namespace musacad::core

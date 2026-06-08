@@ -40,6 +40,21 @@ struct GripInfo {
     std::uint8_t kind = 0; ///< core::GripKind
 };
 
+/// An editable text entity (TEXT / MTEXT / QLEADER label) surfaced so the UI can
+/// hit-test a double-click and pre-fill the editor from the live content -- without
+/// touching the store. `anchor` is the insertion point (editor placement); `min/max`
+/// is the world AABB for hit-testing; `multiline` allows newlines (MTEXT/QLEADER).
+struct TextEditTarget {
+    EntityHandle handle;
+    Vec2 anchor;
+    Vec2 min;
+    Vec2 max;
+    double height = 2.5;
+    double rotation = 0.0;
+    bool multiline = false;
+    std::string content;
+};
+
 struct RenderSnapshot {
     std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
     std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
@@ -111,6 +126,10 @@ struct RenderSnapshot {
     std::vector<Vec2> grip_preview_segments;
     std::vector<Vec2> grip_preview_fills;
 
+    // Editable text entities (for double-click-to-edit hit-testing + pre-fill).
+    // Interaction state, not part of the checksum.
+    std::vector<TextEditTarget> text_edit_targets;
+
     // Last command-result message from the geometry thread (e.g. "Filleted." or
     // "Nothing to fillet."). `status_version` bumps on each new message so the UI
     // can echo it once. Honest feedback: set by the op that actually ran, so the
@@ -144,6 +163,7 @@ struct RenderSnapshot {
         hot_grip = -1;
         grip_preview_segments.clear();
         grip_preview_fills.clear();
+        text_edit_targets.clear();
         checksum = 0;
         bounds_min = {};
         bounds_max = {};

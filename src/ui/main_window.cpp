@@ -16,6 +16,8 @@
 #include <QCoreApplication>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QEvent>
 #include <QFileDialog>
@@ -148,6 +150,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     processor_->set_grid_spacing(10.0);
     command_widget_->set_processor(processor_.get());
     viewport_->set_processor(processor_.get());
+    viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
+        open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
+    });
     command_widget_->focus_input();
 
     // Application-wide Delete/Backspace -> erase selection. An event filter on
@@ -1201,8 +1206,77 @@ bool MainWindow::selftest_mtext() {
                 leader_ok ? "PASS" : "FAIL");
     all = all && leader_ok;
 
+    // TEXTEDIT (scriptable path): create a single-line TEXT, then ED its content.
+    // Observed outcome: the store's content actually changed + re-rendered (Ph10).
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(core::AddTextCommand{{0, 0}, 2.5, 0.0, 0, "BEFORE", processor_->begin_group()});
+    const auto has_content = [this](const char* s) {
+        for (const std::string& c : viewport_->text_contents()) {
+            if (c == s) {
+                return true;
+            }
+        }
+        return false;
+    };
+    pump([&] { return has_content("BEFORE"); });
+    type("ED");
+    type("1,1"); // pick on the text
+    type("AFTER");
+    const bool edit_ok = pump([&] { return has_content("AFTER") && !has_content("BEFORE"); });
+    std::printf("[selftest] TEXTEDIT command changes store content (BEFORE->AFTER): %s\n",
+                edit_ok ? "PASS" : "FAIL");
+    all = all && edit_ok;
+
+    // Undo restores the prior content as one group.
+    engine_->submit(core::UndoLastGroupCommand{});
+    const bool undo_ok = pump([&] { return has_content("BEFORE"); });
+    std::printf("[selftest] text-edit undo restores prior content: %s\n",
+                undo_ok ? "PASS" : "FAIL");
+    all = all && undo_ok;
+
     engine_->submit(core::NewDocumentCommand{});
     return all;
+}
+
+void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
+                                  const std::string& content, bool multiline) {
+    // A small modal editor (popup; an in-canvas overlay is awkward over a QWindow
+    // OpenGL surface). Themed by the app-wide Fusion + dark palette (Ph11), so no
+    // light native widget. Multi-line for MTEXT/QLEADER, single-line for TEXT.
+    QDialog dlg(this);
+    dlg.setWindowTitle(multiline ? QStringLiteral("Edit MText") : QStringLiteral("Edit Text"));
+    auto* layout = new QVBoxLayout(&dlg);
+    const QString initial = QString::fromStdString(content);
+    QPlainTextEdit* multi = nullptr;
+    QLineEdit* single = nullptr;
+    if (multiline) {
+        multi = new QPlainTextEdit(initial, &dlg);
+        layout->addWidget(multi);
+        dlg.resize(360, 180);
+    } else {
+        single = new QLineEdit(initial, &dlg);
+        single->selectAll();
+        layout->addWidget(single);
+    }
+    auto* buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    // For single-line, Enter confirms (QLineEdit returnPressed) -- AutoCAD feel.
+    if (single != nullptr) {
+        QObject::connect(single, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+    }
+
+    if (dlg.exec() != QDialog::Accepted) {
+        return; // Esc / Cancel -> no change
+    }
+    const std::string updated =
+        multiline ? multi->toPlainText().toStdString() : single->text().toStdString();
+    // One undo group; the engine changes only the content (layer/props/pos kept).
+    engine_->submit(core::EditTextContentCommand{
+        {wx, wy}, pick_radius, updated, processor_->begin_group()});
 }
 
 void MainWindow::open_array_dialog() {

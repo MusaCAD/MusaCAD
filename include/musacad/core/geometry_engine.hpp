@@ -188,6 +188,10 @@ private:
     // previewed on `grip_preview_store_` and published; the real store is untouched
     // until commit. Commit applies the edit as one undo group; cancel drops it.
     void apply_grip_commit(std::uint64_t group);
+    // Edit a text entity's content in place (TEXT/MTEXT/QLEADER label), preserving
+    // all other fields, as one undo group. Used by double-click + TEXTEDIT.
+    void apply_text_edit(Vec2 at, double pick_radius, const std::string& content,
+                         std::uint64_t group);
     bool grip_active_ = false;
     EntityHandle grip_handle_{};
     std::uint32_t grip_index_ = 0;
