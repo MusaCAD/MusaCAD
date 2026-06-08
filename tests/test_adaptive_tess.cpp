@@ -75,6 +75,28 @@ TEST_CASE("Engine: zooming in re-tessellates a circle finer; the store stays par
     engine.stop();
 }
 
+TEST_CASE("Engine: a bulged-polyline arc re-tessellates finer on zoom (shared path)") {
+    GeometryEngine engine;
+    engine.start();
+    // A polyline with a big arc segment (semicircle, bulge 1) -- the Phase-17 path.
+    engine.submit(SetViewScaleCommand{1.0});
+    AddPolylineCommand pl;
+    pl.points = {{0, 0}, {400, 0}};
+    pl.bulges = {1.0, 0.0};
+    pl.group = 1;
+    engine.submit(pl);
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    const std::size_t coarse = engine.snapshot().line_vertices.size();
+
+    // Zoom in: the SAME tessellation path (used by render/select/hover/pick) samples
+    // the bulged arc finer -- the filleted corner stays smooth, not faceted.
+    engine.submit(SetViewScaleCommand{0.002});
+    REQUIRE(wait_until(engine, [coarse](const auto& s) {
+        return s.line_vertices.size() > coarse * 2;
+    }));
+    engine.stop();
+}
+
 TEST_CASE("Engine: a same-bucket scale nudge does NOT re-tessellate (pan/zoom-jitter safe)") {
     GeometryEngine engine;
     engine.start();
