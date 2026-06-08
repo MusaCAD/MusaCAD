@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/mtext_block.hpp"
 #include "musacad/core/properties.hpp"
 
 namespace musacad::core {
@@ -16,9 +17,10 @@ namespace musacad::core::io {
 /// The current native document format version. v1: geometry only. v2: layer table
 /// + per-entity properties. v3: text + dimensions + dimension styles. v4: leaders +
 /// expanded DIMSTYLE (per-element colours, dim lineweight, arrow types). v5: polyline
-/// per-vertex arc bulges. Readers reject newer versions; older files load fine (no
-/// layers => layer 0; no dims; no bulges => straight polylines).
-inline constexpr std::uint32_t kFormatVersion = 5;
+/// per-vertex arc bulges. v6: MTEXT (paragraph text) + MLEADER (editable leaders).
+/// Readers reject newer versions; older files load fine (no layers => layer 0; no
+/// dims; no bulges => straight polylines; no mtext/mleader).
+inline constexpr std::uint32_t kFormatVersion = 6;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -87,6 +89,20 @@ struct DocLeader {
     EntityProps props{};
     friend bool operator==(const DocLeader&, const DocLeader&) = default;
 };
+struct DocMText {
+    MTextBlock block;
+    std::string content;
+    EntityProps props{};
+    friend bool operator==(const DocMText&, const DocMText&) = default;
+};
+struct DocMLeader {
+    std::vector<Vec2> vertices;
+    std::uint16_t style = 0;
+    MTextBlock block;
+    std::string content;
+    EntityProps props{};
+    friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
+};
 
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
@@ -107,10 +123,13 @@ struct Document {
     std::vector<DocText> texts;
     std::vector<DocDim> dims;
     std::vector<DocLeader> leaders;
+    std::vector<DocMText> mtexts;
+    std::vector<DocMLeader> mleaders;
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
-               splines.size() + texts.size() + dims.size() + leaders.size();
+               splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
+               mleaders.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

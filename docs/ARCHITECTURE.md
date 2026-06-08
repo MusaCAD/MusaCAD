@@ -878,6 +878,50 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## MTEXT (paragraph text) & QLEADER (editable leaders) (Phase 20)
+
+Two new entities, both **property-bearing** so the next phase's Properties palette
+can edit their fields without a rebuild.
+
+* **Shared, stored-not-baked text model.** `MTextBlock` (in the tiny standalone
+  `core/mtext_block.hpp`, so commands/IR can use it without pulling in the store)
+  holds the **discrete, queryable** fields: insertion `pos`, defined wrap `width`,
+  `height`, `rotation`, `width_factor`, `line_spacing`, `attach` (TL..BR), and the
+  content range in the shared string pool. **Layout is computed at snapshot time**
+  from these fields by the single `text/mtext.cpp::layout_mtext` (greedy word-wrap to
+  the width using the stroke-font metrics × `width_factor`, line stacking by
+  `line_spacing`, anchoring by `attach`, rotation) — nothing about glyph placement is
+  stored. The same function feeds the snapshot, the AABB (`entity_bounds`), the pick
+  outline (`native_kernel`), and the grips, so there is **one** text-layout path.
+  Per-character inline formatting (bold / mid-string colour or height) is **Planned**,
+  not faked; the paragraph-level fields are what the PR phase edits first.
+* **MTEXT entity** (`MTextData = MTextBlock + props`, own arena). Command `MT/MTEXT/T`
+  picks two corners (insertion + wrap width) then the text. Grips: insertion (move) +
+  **width** (drag re-wraps live — the layout follows the field). Selectable by its
+  box, layer-aware, erasable, undoable.
+* **QLEADER entity** (`MLeaderData`, own arena): leader vertices in the shared
+  polyline pool (vertex 0 = arrow tip, last = landing), a dimstyle arrow (reusing the
+  dimension arrowhead machinery), and an **owned** `MTextBlock` label. **Association is
+  ownership** — the label lives inside the leader, so moving the leader moves the text;
+  there is no cross-entity reference to dangle. Command `LE/QLEADER/QL`: arrow → vertices
+  (Enter to finish) → annotation. Grips: arrow tip, each vertex, and the text position;
+  dragging the landing vertex carries the label with it. The older simple `LEADER`
+  entity/command is kept for file compatibility.
+* **Persistence.** Native format **v6** adds `MTEXT`/`MLEADER` records (content
+  newlines escaped as `\n`); v1–v5 files still load (no mtext/mleader). DXF writes
+  standard `MTEXT` group codes (10/20, 40, 41, 71, 50, 1; hard breaks as `\P`) and
+  round-trips them; a QLEADER is written as a readable `LEADER` polyline **+** an
+  `MTEXT` label — full MLEADER-block fidelity is a **stated gap** (the native format
+  preserves the association losslessly; through DXF it returns as a leader line + an
+  MTEXT). LibreCAD-verified.
+* **Footprint.** `MTextData` 80 B, `MLeaderData` 96 B, each in its own arena; the
+  hot `LineData` (40 B) / `DimData` (72 B) are untouched and the insert baseline is
+  unchanged (~36 ns/line). Strings share the existing char pool.
+* **PR-readiness (next phase).** The Properties palette will expose, per MTEXT/
+  QLEADER: content, text height, width factor, line spacing, attachment, defined
+  width, rotation, and colour (ByLayer/override) — all already stored as discrete
+  fields, with layout recomputed on edit.
+
 ## HiDPI / device-pixel-ratio correctness (Phase 19)
 
 Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop.
@@ -967,6 +1011,13 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 20 — complete:** MTEXT (paragraph text, word-wrap, attachment/spacing/
+  width-factor fields, width + insertion grips) and QLEADER (arrow + leader vertices +
+  owned MTEXT label; arrow/vertex/text grips; the label moves with the leader). Both
+  store discrete editable fields with layout computed at snapshot (PR-ready); one shared
+  text-layout path; native v6 + DXF MTEXT/LEADER round-trip (LibreCAD-verified, MLEADER
+  fidelity gap stated). New structs in their own arenas (MTextData 80 B, MLeaderData
+  96 B); LineData/DimData unchanged; insert ~36 ns. 213 tests (dev) / 212 (TSan) pass.
 * **Phase 19 — complete:** full dimension grip set (both ext-line origins, both
   dim-line feet, offset midpoint — grabbable anywhere, freely placeable; no edit-path
   fork, `DimData` unchanged) + HiDPI device-pixel-ratio lineweight fix (lineweights and

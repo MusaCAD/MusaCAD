@@ -9,6 +9,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/generational_arena.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/mtext_block.hpp"
 #include "musacad/core/properties.hpp"
 
 namespace musacad::core {
@@ -102,6 +103,25 @@ struct LeaderData {
     EntityProps props{};
 };
 
+/// Multi-line paragraph text (MTEXT): a formatting block + layer properties.
+struct MTextData {
+    MTextBlock text;
+    EntityProps props{};
+};
+
+/// An editable leader (QLEADER): a leader polyline (vertices in the shared pool;
+/// vertex 0 is the arrow tip, the last is the landing) drawn with a dimstyle
+/// arrow, plus an OWNED paragraph-text label (the same MTextBlock + layout as
+/// MTEXT -- no text fork). Ownership is the association: moving the leader moves
+/// the text; there is no cross-entity reference to dangle.
+struct MLeaderData {
+    std::uint32_t vtx_offset = 0; ///< first leader vertex in the polyline pool
+    std::uint32_t vtx_count = 0;  ///< number of leader vertices (>= 1)
+    std::uint16_t style = 0;      ///< dimstyle (arrow type/size + colours)
+    MTextBlock text;              ///< the attached label (computed layout)
+    EntityProps props{};
+};
+
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own
 /// GenerationalArena; variable-length vertex data lives in shared pools. All
 /// access is non-virtual.
@@ -130,6 +150,14 @@ public:
                                EntityProps props = {});
     EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                             std::string_view content, EntityProps props = {});
+    /// Multi-line paragraph text. `block.str_offset/str_len` are ignored; `content`
+    /// is copied into the shared string pool and the range is recorded.
+    EntityHandle add_mtext(const MTextBlock& block, std::string_view content,
+                           EntityProps props = {});
+    /// Editable leader with an owned paragraph label. `vertices[0]` is the arrow tip.
+    EntityHandle add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
+                             const MTextBlock& text, std::string_view content,
+                             EntityProps props = {});
 
     // --- removal / validity -------------------------------------------------
     bool remove(EntityHandle handle) noexcept;
@@ -150,9 +178,15 @@ public:
     [[nodiscard]] const TextData* text(EntityHandle h) const noexcept;
     [[nodiscard]] const DimData* dimension(EntityHandle h) const noexcept;
     [[nodiscard]] const LeaderData* leader(EntityHandle h) const noexcept;
+    [[nodiscard]] const MTextData* mtext(EntityHandle h) const noexcept;
+    [[nodiscard]] const MLeaderData* mleader(EntityHandle h) const noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
+    /// Content of a paragraph-text block (MTEXT entity or QLEADER label).
+    [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
+    /// Leader-polyline vertices of an MLeader.
+    [[nodiscard]] std::span<const Vec2> vertices_of(const MLeaderData& m) const noexcept;
 
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
@@ -166,6 +200,10 @@ public:
     [[nodiscard]] const GenerationalArena<TextData>& texts() const noexcept { return texts_; }
     [[nodiscard]] const GenerationalArena<DimData>& dimensions() const noexcept { return dims_; }
     [[nodiscard]] const GenerationalArena<LeaderData>& leaders() const noexcept { return leaders_; }
+    [[nodiscard]] const GenerationalArena<MTextData>& mtexts() const noexcept { return mtexts_; }
+    [[nodiscard]] const GenerationalArena<MLeaderData>& mleaders() const noexcept {
+        return mleaders_;
+    }
 
     // --- dimension styles ("Standard" always at index 0) --------------------
     [[nodiscard]] const std::vector<DimStyle>& dimstyles() const noexcept { return dimstyles_; }
@@ -235,6 +273,8 @@ private:
     GenerationalArena<TextData> texts_;
     GenerationalArena<DimData> dims_;
     GenerationalArena<LeaderData> leaders_;
+    GenerationalArena<MTextData> mtexts_;
+    GenerationalArena<MLeaderData> mleaders_;
 
     std::vector<Vec2> polyline_pool_;
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges

@@ -1284,4 +1284,97 @@ void LeaderCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// MTEXT: two corners (insertion + wrap width) -> paragraph text.
+// ---------------------------------------------------------------------------
+void MTextCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify first corner: ");
+}
+
+void MTextCommand::input(CommandContext& ctx, const std::string& text) {
+    if (state_ == State::Content) {
+        core::MTextBlock b;
+        b.pos = pos_;
+        b.width = width_;
+        b.height = 2.5;
+        b.attach = 0; // top-left
+        ctx.submit(core::AddMTextCommand{b, text, ctx.group_id()});
+        ctx.echo("MText placed.");
+        ctx.clear_preview();
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::First) {
+        c1_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Second;
+        ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
+        ctx.set_prompt("Specify opposite corner: ");
+        return;
+    }
+    // Second corner: top-left insertion + wrap width from the box.
+    pos_ = {std::min(c1_.x, p->x), std::max(c1_.y, p->y)};
+    width_ = std::abs(p->x - c1_.x);
+    state_ = State::Content;
+    ctx.clear_preview();
+    ctx.set_prompt("Enter text: ");
+}
+
+void MTextCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// QLEADER: arrow point -> leader vertices (Enter to finish) -> annotation text.
+// ---------------------------------------------------------------------------
+void QLeaderCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify leader arrow point: ");
+}
+
+void QLeaderCommand::input(CommandContext& ctx, const std::string& text) {
+    if (state_ == State::Content) {
+        core::MTextBlock b;
+        b.pos = verts_.empty() ? core::Vec2{} : verts_.back(); // landing = text anchor
+        b.height = 2.5;
+        b.attach = 0;
+        ctx.submit(core::AddMLeaderCommand{verts_, 0, b, text, ctx.group_id()});
+        ctx.echo("Leader placed.");
+        ctx.clear_preview();
+        done_ = true;
+        return;
+    }
+    // Empty input finishes the vertex chain (needs an arrow + at least one vertex).
+    if (state_ == State::Vertices && text.empty()) {
+        if (verts_.size() >= 2) {
+            state_ = State::Content;
+            ctx.clear_preview();
+            ctx.set_prompt("Enter annotation text: ");
+        }
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    verts_.push_back(*p);
+    ctx.set_last_point(*p);
+    state_ = State::Vertices;
+    ctx.set_preview(PreviewSpec{PreviewKind::Polyline, verts_});
+    ctx.set_prompt("Specify next leader point (Enter to finish): ");
+}
+
+void QLeaderCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
 } // namespace musacad::command

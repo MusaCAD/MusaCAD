@@ -116,7 +116,10 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"DAN", "DIMANGULAR"},
                        [] { return std::make_unique<AngularDimensionCommand>(); });
     r.register_command({"DIM"}, [] { return std::make_unique<DimCommand>(); });
-    r.register_command({"LE", "LEADER"}, [] { return std::make_unique<LeaderCommand>(); });
+    r.register_command({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); });
+    r.register_command({"MT", "MTEXT", "T"}, [] { return std::make_unique<MTextCommand>(); });
+    r.register_command({"LE", "QLEADER", "QL"},
+                       [] { return std::make_unique<QLeaderCommand>(); });
     return r;
 }
 

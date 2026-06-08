@@ -348,3 +348,30 @@ TEST_CASE("DIMRADIUS resolves def points for the preview, commits only on placem
     h.proc.submit_line("20,0");                  // placement click commits
     REQUIRE(last_object_dim(h.cmds) != nullptr);
 }
+
+TEST_CASE("Processor: MTEXT two corners + text emits AddMTextCommand") {
+    Harness h;
+    h.proc.submit_line("MT");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("40,-20");
+    h.proc.submit_line("ALPHA BETA GAMMA");
+    REQUIRE(h.cmds.size() == 1);
+    const auto* m = std::get_if<musacad::core::AddMTextCommand>(&h.cmds[0]);
+    REQUIRE(m != nullptr);
+    REQUIRE(m->content == "ALPHA BETA GAMMA");
+    REQUIRE(m->block.width == Approx(40.0));
+}
+
+TEST_CASE("Processor: QLEADER arrow + vertex + text emits AddMLeaderCommand") {
+    Harness h;
+    h.proc.submit_line("LE");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("10,8");
+    h.proc.submit_line(""); // finish chain
+    h.proc.submit_line("SEE NOTE");
+    REQUIRE(h.cmds.size() == 1);
+    const auto* m = std::get_if<musacad::core::AddMLeaderCommand>(&h.cmds[0]);
+    REQUIRE(m != nullptr);
+    REQUIRE(m->vertices.size() == 2);
+    REQUIRE(m->content == "SEE NOTE");
+}

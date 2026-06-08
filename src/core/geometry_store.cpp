@@ -81,6 +81,30 @@ EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, 
     return EntityHandle{slot.index, slot.generation, EntityKind::Leader};
 }
 
+EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view content,
+                                      EntityProps props) {
+    MTextBlock b = block;
+    b.str_offset = static_cast<std::uint32_t>(string_pool_.size());
+    b.str_len = static_cast<std::uint32_t>(content.size());
+    string_pool_.insert(string_pool_.end(), content.begin(), content.end());
+    const auto slot = mtexts_.insert(MTextData{b, props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::MText};
+}
+
+EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
+                                        const MTextBlock& text, std::string_view content,
+                                        EntityProps props) {
+    const auto voff = static_cast<std::uint32_t>(polyline_pool_.size());
+    polyline_pool_.insert(polyline_pool_.end(), vertices.begin(), vertices.end());
+    MTextBlock b = text;
+    b.str_offset = static_cast<std::uint32_t>(string_pool_.size());
+    b.str_len = static_cast<std::uint32_t>(content.size());
+    string_pool_.insert(string_pool_.end(), content.begin(), content.end());
+    const auto slot = mleaders_.insert(MLeaderData{
+        voff, static_cast<std::uint32_t>(vertices.size()), style, b, props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
+}
+
 bool GeometryStore::remove(EntityHandle h) noexcept {
     switch (h.kind) {
     case EntityKind::Point:
@@ -101,6 +125,10 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return dims_.erase(h.index, h.generation);
     case EntityKind::Leader:
         return leaders_.erase(h.index, h.generation);
+    case EntityKind::MText:
+        return mtexts_.erase(h.index, h.generation);
+    case EntityKind::MLeader:
+        return mleaders_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -125,6 +153,10 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return dims_.is_valid(h.index, h.generation);
     case EntityKind::Leader:
         return leaders_.is_valid(h.index, h.generation);
+    case EntityKind::MText:
+        return mtexts_.is_valid(h.index, h.generation);
+    case EntityKind::MLeader:
+        return mleaders_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -132,7 +164,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
 std::size_t GeometryStore::live_count() const noexcept {
     return points_.live_count() + lines_.live_count() + polylines_.live_count() +
            circles_.live_count() + arcs_.live_count() + splines_.live_count() +
-           texts_.live_count() + dims_.live_count() + leaders_.live_count();
+           texts_.live_count() + dims_.live_count() + leaders_.live_count() +
+           mtexts_.live_count() + mleaders_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -145,6 +178,8 @@ void GeometryStore::clear() noexcept {
     texts_.clear();
     dims_.clear();
     leaders_.clear();
+    mtexts_.clear();
+    mleaders_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
     spline_pool_.clear();
@@ -181,11 +216,23 @@ const DimData* GeometryStore::dimension(EntityHandle h) const noexcept {
 const LeaderData* GeometryStore::leader(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Leader ? leaders_.get(h.index, h.generation) : nullptr;
 }
+const MTextData* GeometryStore::mtext(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::MText ? mtexts_.get(h.index, h.generation) : nullptr;
+}
+const MLeaderData* GeometryStore::mleader(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+}
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
 }
 std::string_view GeometryStore::string_of(const LeaderData& l) const noexcept {
     return std::string_view(string_pool_.data() + l.str_offset, l.str_len);
+}
+std::string_view GeometryStore::string_of(const MTextBlock& b) const noexcept {
+    return std::string_view(string_pool_.data() + b.str_offset, b.str_len);
+}
+std::span<const Vec2> GeometryStore::vertices_of(const MLeaderData& m) const noexcept {
+    return std::span<const Vec2>(polyline_pool_).subspan(m.vtx_offset, m.vtx_count);
 }
 
 const DimStyle* GeometryStore::dimstyle(std::uint16_t index) const noexcept {
@@ -282,6 +329,16 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::MText:
+        if (const MTextData* d = mtext(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::MLeader:
+        if (const MLeaderData* d = mleader(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -338,6 +395,18 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Leader:
         if (LeaderData* d = leaders_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::MText:
+        if (MTextData* d = mtexts_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::MLeader:
+        if (MLeaderData* d = mleaders_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -424,6 +493,8 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(texts_, check);
     for_each_live_const(dims_, check);
     for_each_live_const(leaders_, check);
+    for_each_live_const(mtexts_, check);
+    for_each_live_const(mleaders_, check);
     return used;
 }
 
@@ -442,6 +513,8 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(texts_, fix);
     for_each_live_mut(dims_, fix);
     for_each_live_mut(leaders_, fix);
+    for_each_live_mut(mtexts_, fix);
+    for_each_live_mut(mleaders_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

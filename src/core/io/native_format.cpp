@@ -60,6 +60,29 @@ bool to_uint(std::string_view t, std::uint64_t& out) {
 }
 
 // Parses `n` doubles starting at token `start` into `out` (appended).
+// Reverse of the MTEXT/MLEADER content escaping (\n -> newline, \\ -> backslash).
+std::string unescape(std::string_view in) {
+    std::string o;
+    o.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '\\' && i + 1 < in.size()) {
+            const char c = in[i + 1];
+            if (c == 'n') {
+                o += '\n';
+                ++i;
+                continue;
+            }
+            if (c == '\\') {
+                o += '\\';
+                ++i;
+                continue;
+            }
+        }
+        o += in[i];
+    }
+    return o;
+}
+
 bool parse_doubles(const std::vector<std::string_view>& tok, std::size_t start, std::size_t n,
                    std::vector<double>& out) {
     if (start + n > tok.size()) {
@@ -275,6 +298,62 @@ std::string serialize_native(const Document& doc) {
         append_props(s, l.props);
         s += '\n';
         s += l.content;
+        s += '\n';
+    }
+    // v6: MTEXT and MLEADER. The MTextBlock numeric fields are written inline; the
+    // content is on the following line (may contain spaces; \n stored as literal "\n").
+    const auto append_block = [&](const MTextBlock& b) {
+        append_vec(s, b.pos);
+        s += ' ';
+        append_double(s, b.width);
+        s += ' ';
+        append_double(s, b.height);
+        s += ' ';
+        append_double(s, b.rotation);
+        s += ' ';
+        append_double(s, b.width_factor);
+        s += ' ';
+        append_double(s, b.line_spacing);
+        s += ' ';
+        append_uint(s, b.attach);
+    };
+    // Content may contain newlines; escape them so each record stays one line + one
+    // content line.
+    const auto escape = [](std::string_view in) {
+        std::string o;
+        for (const char c : in) {
+            if (c == '\n') {
+                o += "\\n";
+            } else if (c == '\\') {
+                o += "\\\\";
+            } else {
+                o += c;
+            }
+        }
+        return o;
+    };
+    for (const DocMText& m : doc.mtexts) {
+        s += "MTEXT ";
+        append_block(m.block);
+        append_props(s, m.props);
+        s += '\n';
+        s += escape(m.content);
+        s += '\n';
+    }
+    for (const DocMLeader& m : doc.mleaders) {
+        s += "MLEADER ";
+        append_uint(s, m.style);
+        s += ' ';
+        append_uint(s, m.vertices.size());
+        for (const Vec2& v : m.vertices) {
+            s += ' ';
+            append_vec(s, v);
+        }
+        s += ' ';
+        append_block(m.block);
+        append_props(s, m.props);
+        s += '\n';
+        s += escape(m.content);
         s += '\n';
     }
     s += "END\n";
@@ -498,6 +577,73 @@ IoResult parse_native(std::string_view text, Document& out) {
                                             static_cast<std::uint16_t>(style),
                                             std::move(content),
                                             props});
+        } else if (key == "MTEXT") {
+            // MTEXT px py width height rot wf ls attach <props7>; content next line.
+            vals.clear();
+            EntityProps props;
+            std::uint64_t attach = 0;
+            if (tok.size() != 16 || !parse_doubles(tok, 1, 7, vals) || !to_uint(tok[8], attach) ||
+                !parse_props(tok, 9, props)) {
+                return fail("MTEXT record malformed");
+            }
+            std::string content;
+            if (!std::getline(in, content)) {
+                return fail("MTEXT missing content line");
+            }
+            ++line_no;
+            if (!content.empty() && content.back() == '\r') {
+                content.pop_back();
+            }
+            MTextBlock b;
+            b.pos = {vals[0], vals[1]};
+            b.width = vals[2];
+            b.height = vals[3];
+            b.rotation = vals[4];
+            b.width_factor = vals[5];
+            b.line_spacing = vals[6];
+            b.attach = static_cast<std::uint8_t>(attach);
+            doc.mtexts.push_back(DocMText{b, unescape(content), props});
+        } else if (key == "MLEADER") {
+            // MLEADER style nverts <x y...> px py width height rot wf ls attach <props7>.
+            std::uint64_t style = 0;
+            std::uint64_t nv = 0;
+            if (tok.size() < 3 || !to_uint(tok[1], style) || !to_uint(tok[2], nv)) {
+                return fail("MLEADER header malformed");
+            }
+            const std::size_t vbase = 3;
+            const std::size_t bbase = vbase + nv * 2; // block fields start
+            std::uint64_t attach = 0;
+            vals.clear();
+            std::vector<double> bvals;
+            EntityProps props;
+            if (tok.size() != bbase + 7 + 8 || !parse_doubles(tok, vbase, nv * 2, vals) ||
+                !parse_doubles(tok, bbase, 7, bvals) || !to_uint(tok[bbase + 7], attach) ||
+                !parse_props(tok, bbase + 8, props)) {
+                return fail("MLEADER record malformed");
+            }
+            std::string content;
+            if (!std::getline(in, content)) {
+                return fail("MLEADER missing content line");
+            }
+            ++line_no;
+            if (!content.empty() && content.back() == '\r') {
+                content.pop_back();
+            }
+            std::vector<Vec2> verts;
+            verts.reserve(nv);
+            for (std::uint64_t i = 0; i < nv; ++i) {
+                verts.push_back({vals[i * 2], vals[i * 2 + 1]});
+            }
+            MTextBlock b;
+            b.pos = {bvals[0], bvals[1]};
+            b.width = bvals[2];
+            b.height = bvals[3];
+            b.rotation = bvals[4];
+            b.width_factor = bvals[5];
+            b.line_spacing = bvals[6];
+            b.attach = static_cast<std::uint8_t>(attach);
+            doc.mleaders.push_back(DocMLeader{std::move(verts), static_cast<std::uint16_t>(style), b,
+                                              unescape(content), props});
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {

@@ -77,6 +77,10 @@ public:
     /// mutating the store, commits on release, undo restores; dim-line-offset drag.
     bool selftest_grips();
 
+    /// Real-window self-test: create MTEXT (two corners + text) and QLEADER (arrow
+    /// + vertices + text) via the command line; both render.
+    bool selftest_mtext();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).

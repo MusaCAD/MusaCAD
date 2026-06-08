@@ -3,6 +3,22 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## MTEXT inline (per-character) formatting (deferred 2026-06-08)
+
+**Status:** MTEXT (Phase 20) implements real multi-line layout, word-wrap, and all
+**paragraph-level** fields (height, width factor, line spacing, attachment, rotation,
+colour). Per-character inline formatting is intentionally **not** implemented (and not
+faked).
+
+**Why parked:** inline runs need an AutoCAD-style formatting-code parser (`\f`/`\C`/
+`\H`/`\S`…) plus a richer stroke-font engine (real bold/italic, stacked fractions),
+and the paragraph-level fields are what the Properties palette needs first.
+
+**What done looks like:** parse inline codes in the stored content; lay out per-run
+font/colour/height/stacking; round-trip the codes through native + DXF MTEXT; expose
+run formatting in the Properties palette. The content string already round-trips
+verbatim, so adding a parser later is non-breaking.
+
 ## Dialog boxes / dynamic input everywhere (deferred 2026-06-06)
 
 **Status:** Slice 1 shipped — a reusable `ParameterDialog` (see

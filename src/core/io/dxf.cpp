@@ -265,6 +265,54 @@ std::string serialize_dxf(const Document& doc) {
             code(s, 1, l.content);
         }
     }
+    // MTEXT: standard group codes (read by AutoCAD/LibreCAD).
+    const auto emit_mtext = [&](const MTextBlock& b, const std::string& content,
+                                const EntityProps& props) {
+        code(s, 0, "MTEXT");
+        emit_props(s, doc, props);
+        code_d(s, 10, b.pos.x);
+        code_d(s, 20, b.pos.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 40, b.height);
+        if (b.width > 0.0) {
+            code_d(s, 41, b.width); // reference rectangle width
+        }
+        code_i(s, 71, b.attach + 1); // DXF attachment is 1..9
+        code_d(s, 50, to_degrees(b.rotation));
+        // MTEXT encodes hard line breaks as "\P" (a literal newline would break the
+        // DXF code/value line structure).
+        std::string enc;
+        for (const char c : content) {
+            if (c == '\n') {
+                enc += "\\P";
+            } else {
+                enc += c;
+            }
+        }
+        code(s, 1, enc);
+    };
+    for (const DocMText& m : doc.mtexts) {
+        emit_mtext(m.block, m.content, m.props);
+    }
+    // MLEADER: full MLEADER block is heavy; write a readable LEADER (the leader
+    // line via vertices) + an MTEXT label. Round-trips through Musa via the native
+    // format; through DXF it comes back as a leader line + MTEXT (association not
+    // preserved -- stated fidelity gap).
+    for (const DocMLeader& m : doc.mleaders) {
+        if (m.vertices.size() >= 2) {
+            code(s, 0, "LEADER");
+            emit_props(s, doc, m.props);
+            code_i(s, 76, static_cast<long>(m.vertices.size()));
+            for (const Vec2& v : m.vertices) {
+                code_d(s, 10, v.x);
+                code_d(s, 20, v.y);
+                code_d(s, 30, 0.0);
+            }
+        }
+        if (m.block.str_len != 0 || !m.content.empty()) {
+            emit_mtext(m.block, m.content, m.props);
+        }
+    }
     code(s, 0, "ENDSEC");
     code(s, 0, "EOF");
     return s;
@@ -447,6 +495,33 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     };
 
     const auto build_entity = [&](const std::string& type, const std::vector<Pair>& body) {
+        if (type == "MTEXT") {
+            DocMText m;
+            m.props = props_of(body);
+            m.block.pos = {getd(body, 10), getd(body, 20)};
+            m.block.height = getd(body, 40, 2.5);
+            m.block.width = getd(body, 41, 0.0);
+            m.block.rotation = to_radians(getd(body, 50));
+            if (const std::string* a = find(body, 71)) {
+                const long att = to_l(*a) - 1; // DXF 1..9 -> 0..8
+                m.block.attach = static_cast<std::uint8_t>(att < 0 ? 0 : att);
+            }
+            if (const std::string* c = find(body, 1)) {
+                std::string dec;
+                for (std::size_t k = 0; k < c->size(); ++k) {
+                    if ((*c)[k] == '\\' && k + 1 < c->size() &&
+                        ((*c)[k + 1] == 'P' || (*c)[k + 1] == 'p')) {
+                        dec += '\n';
+                        ++k;
+                    } else {
+                        dec += (*c)[k];
+                    }
+                }
+                m.content = dec;
+            }
+            doc.mtexts.push_back(std::move(m));
+            return;
+        }
         if (type == "TEXT") {
             DocText t;
             t.props = props_of(body);

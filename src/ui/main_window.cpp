@@ -1016,7 +1016,7 @@ bool MainWindow::selftest_annotation() {
         all = all && ok;
         prev = viewport_->line_vertex_count();
     };
-    place("LEADER", {"LE", "60,60", "70,66", "see note"});
+    place("LEADER", {"LEADER", "60,60", "70,66", "see note"});
 
     // --- Object-aware dimensioning (Phase 15): dimension entities by SELECTING
     // them. Draw the source geometry, then pick the objects themselves.
@@ -1156,6 +1156,50 @@ bool MainWindow::selftest_grips() {
     std::printf("[selftest] dim-line offset grip drag (headline) commits: %s\n",
                 offset_ok ? "PASS" : "FAIL");
     all = all && offset_ok;
+
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
+bool MainWindow::selftest_mtext() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    const auto type = [this](const char* line) { processor_->submit_line(line); };
+    bool all = true;
+    processor_->set_pick_radius(1.0);
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // MTEXT: two corners (insertion + wrap width) then a paragraph that wraps.
+    type("MT");
+    type("0,0");
+    type("40,-20");
+    type("ALPHA BETA GAMMA DELTA EPSILON ZETA");
+    const bool mtext_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+    std::printf("[selftest] MTEXT command renders (wrapped paragraph): %s\n",
+                mtext_ok ? "PASS" : "FAIL");
+    all = all && mtext_ok;
+
+    // QLEADER: arrow point -> a vertex -> Enter -> annotation text.
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    type("LE");
+    type("0,0");
+    type("10,8");
+    type(""); // finish the vertex chain
+    type("SEE NOTE");
+    const bool leader_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+    std::printf("[selftest] QLEADER command renders (arrow + line + text): %s\n",
+                leader_ok ? "PASS" : "FAIL");
+    all = all && leader_ok;
 
     engine_->submit(core::NewDocumentCommand{});
     return all;

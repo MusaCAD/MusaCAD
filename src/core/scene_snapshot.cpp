@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
@@ -169,6 +170,45 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         text::append_text_segments(store.string_of(*l), l->knee + Vec2{s.arrow_size * 0.4, 0.0},
                                    l->text_height, 0.0, text::Justify::Left, tseg);
         add_lines(text_c, 0, tseg);
+    });
+
+    // MTEXT: multi-line paragraph text. Layout is COMPUTED here from the stored
+    // fields (text/mtext.cpp) -- never baked on the entity.
+    for_each_live(store.mtexts(), EntityKind::MText, [&](EntityHandle h) {
+        const MTextData* m = store.mtext(h);
+        if (!visible(store, m->props)) {
+            return;
+        }
+        const ResolvedProps r = entity_resolved(store, m->props);
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        add_lines(r.color, 0, lay.segments);
+    });
+
+    // QLEADER: leader polyline + arrowhead + owned paragraph label (same layout).
+    for_each_live(store.mleaders(), EntityKind::MLeader, [&](EntityHandle h) {
+        const MLeaderData* m = store.mleader(h);
+        if (!visible(store, m->props)) {
+            return;
+        }
+        const ResolvedProps r = entity_resolved(store, m->props);
+        const DimStyle* style = store.dimstyle(m->style);
+        const DimStyle s = style != nullptr ? *style : DimStyle{};
+        const Rgb arrow_c = s.arrow_color.resolve(r.color);
+        const Rgb text_c = s.text_color.resolve(r.color);
+        const std::span<const Vec2> v = store.vertices_of(*m);
+        for (std::size_t i = 1; i < v.size(); ++i) {
+            add_line(r.color, r.lineweight, v[i - 1], v[i]);
+        }
+        if (v.size() >= 2) {
+            afill.clear();
+            aline.clear();
+            append_arrowhead(afill, aline, v[0], v[1] - v[0], s.arrow_size,
+                             static_cast<ArrowType>(s.arrow_type));
+            add_fills(arrow_c, afill);
+            add_lines(arrow_c, r.lineweight, aline);
+        }
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        add_lines(text_c, 0, lay.segments);
     });
 
     // Flatten groups into contiguous batches over the payload arrays.

@@ -8,6 +8,7 @@
 
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/mtext_block.hpp"
 #include "musacad/core/properties.hpp"
 
 namespace musacad::core {
@@ -315,6 +316,26 @@ struct AddLeaderCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Multi-line paragraph text (MTEXT). `block.str_offset/str_len` are ignored;
+/// `content` is the raw paragraph string. Layout is computed at render time.
+struct AddMTextCommand {
+    MTextBlock block;
+    std::string content;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
+/// Editable leader (QLEADER): leader `vertices` (vertex 0 = arrow tip), a dimstyle
+/// arrow `style`, and an owned paragraph label (`block` + `content`).
+struct AddMLeaderCommand {
+    std::vector<Vec2> vertices;
+    std::uint16_t style = 0;
+    MTextBlock block;
+    std::string content;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// Toggle lineweight display (AutoCAD LWDISPLAY). Off => thin default everywhere.
 struct SetLineweightDisplayCommand {
     bool on = true;
@@ -376,6 +397,6 @@ using Command =
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
-                 GripDragCommand>;
+                 GripDragCommand, AddMTextCommand, AddMLeaderCommand>;
 
 } // namespace musacad::core

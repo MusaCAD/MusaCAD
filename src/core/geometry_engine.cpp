@@ -157,6 +157,8 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.texts(), EntityKind::Text);
     collect(store_.dimensions(), EntityKind::Dimension);
     collect(store_.leaders(), EntityKind::Leader);
+    collect(store_.mtexts(), EntityKind::MText);
+    collect(store_.mleaders(), EntityKind::MLeader);
     return live;
 }
 
@@ -336,6 +338,13 @@ void translate_cmd(Command& c, Vec2 d) {
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip += d;
                 x.knee += d;
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                x.block.pos += d;
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                for (Vec2& v : x.vertices) {
+                    v += d;
+                }
+                x.block.pos += d; // the owned label moves with the leader
             }
         },
         c);
@@ -382,6 +391,15 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip = refl(x.tip);
                 x.knee = refl(x.knee);
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                x.block.pos = refl(x.block.pos);
+                x.block.rotation = refl_ang(x.block.rotation);
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                for (Vec2& v : x.vertices) {
+                    v = refl(v);
+                }
+                x.block.pos = refl(x.block.pos);
+                x.block.rotation = refl_ang(x.block.rotation);
             }
         },
         c);
@@ -420,6 +438,15 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip = rot(x.tip);
                 x.knee = rot(x.knee);
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                x.block.pos = rot(x.block.pos);
+                x.block.rotation += ang;
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                for (Vec2& v : x.vertices) {
+                    v = rot(v);
+                }
+                x.block.pos = rot(x.block.pos);
+                x.block.rotation += ang;
             }
         },
         c);
@@ -462,6 +489,10 @@ Vec2 command_anchor(const Command& c) {
                 out = x.a;
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 out = x.tip;
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                out = x.block.pos;
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                out = x.vertices.empty() ? x.block.pos : x.vertices.front();
             }
         },
         c);
@@ -497,6 +528,17 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.tip = scl(x.tip);
                 x.knee = scl(x.knee);
                 x.text_height *= f;
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                x.block.pos = scl(x.block.pos);
+                x.block.height *= f;
+                x.block.width *= f;
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                for (Vec2& v : x.vertices) {
+                    v = scl(v);
+                }
+                x.block.pos = scl(x.block.pos);
+                x.block.height *= f;
+                x.block.width *= f;
             }
         },
         c);
@@ -1259,7 +1301,10 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
-                          std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand>) {
+                          std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
+                          std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddDimensionCommand> ||
+                          std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
+                          std::is_same_v<T, AddMLeaderCommand>) {
                 if (!x.props) {
                     x.props = EntityProps{};
                 }
@@ -1413,7 +1458,8 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddCircleCommand> ||
                           std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
                           std::is_same_v<T, AddDimensionCommand> ||
-                          std::is_same_v<T, AddLeaderCommand>) {
+                          std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
+                          std::is_same_v<T, AddMLeaderCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();

@@ -88,11 +88,25 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | PDMODE / PDSIZE | Point display style / size | Planned |
 | Linetype patterns (dashed/center/hidden render) | Visual stipple | Planned (property modelled Ph12) |
 
+## Text / MTEXT
+
+| Option | Status |
+|---|---|
+| TEXT (single-line) | Implemented (Ph13) |
+| MTEXT (multi-line paragraph, word-wrap within a defined width) | Implemented (Ph20) |
+| MTEXT attachment point (TL/TC/TR/ML/MC/MR/BL/BC/BR) | Implemented (Ph20) |
+| MTEXT line spacing / width factor / rotation | Implemented (Ph20) |
+| MTEXT inline formatting (bold, mid-string colour/height, stacked fractions) | Planned (Ph20 stub) |
+| Text/font selection (multiple fonts, TTF) | Planned (single stroke font; font ref stored) |
+
 ## Leader / MLEADER
 
 | Option | Status |
 |---|---|
-| LEADER (arrow + line + text) | Implemented (Ph14) |
-| MLEADER (multi-segment, content blocks) | Planned |
-| Leader landing / dogleg | Planned |
-| Leader style | Planned (uses dimstyle arrow for now) |
+| LEADER (simple arrow + line + single-line text) | Implemented (Ph14) |
+| QLEADER (arrow + multi-vertex line + attached MTEXT, editable) | Implemented (Ph20) |
+| Leader–text association (text owned by the leader; moves with it) | Implemented (Ph20) |
+| Leader grips (arrow tip, each vertex, text position) | Implemented (Ph20) |
+| MLEADER content blocks / DXF MLEADER round-trip | Planned (DXF writes LEADER + MTEXT; native v6 is lossless) |
+| Leader landing / dogleg auto-geometry | Planned |
+| Leader style (own table) | Planned (uses dimstyle arrow for now) |

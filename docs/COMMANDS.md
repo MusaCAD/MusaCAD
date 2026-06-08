@@ -58,13 +58,18 @@ suggests both); aliases are case-insensitive.
 | Command | Alias | Status |
 |---|---|---|
 | TEXT (single-line) | DT / TEXT | Implemented |
+| **MTEXT (paragraph text; two-corner box → wraps within the width)** | MT / MTEXT / T | Implemented (multi-line + paragraph fields; inline per-char formatting Planned) |
+| MTEXT fields: defined width, height, width factor, line spacing, attachment (TL..BR), rotation, ByLayer/override colour | — | Implemented (discrete, queryable — Properties palette ready) |
+| MTEXT grips: insertion (move) + width (re-wraps live) | — | Implemented |
+| **QLEADER (arrow → leader vertices → attached MTEXT label)** | LE / QLEADER / QL | Implemented (label is owned → moves with the leader) |
+| QLEADER grips: arrow tip + each vertex + text position | — | Implemented |
+| LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
 | DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |
 | DIMALIGNED (two-point, or `[Object]` → segment's true length) | DAL | Implemented |
 | DIMRADIUS (**select a circle/arc**, or a filleted polyline arc segment → R) | DRA | Implemented |
 | DIMDIAMETER (**select a circle/arc** → ⌀ from its own geometry) | DDI | Implemented |
 | DIMANGULAR (**select two lines/edges** → angle from their directions) | DAN | Implemented |
-| LEADER (arrow + line + text label) | LE / LEADER | Implemented |
 | Arrowheads: filled / open / tick / dot (solid filled geometry) | DIMSTYLE | Implemented |
 | DIMSTYLE: text height / arrow type+size / precision / ext lines | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
 | DIMSTYLE per-element colours (dim / ext / text / arrow) + dim lineweight | Dim Style btn | Implemented |

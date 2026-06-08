@@ -1,9 +1,12 @@
 #include "musacad/core/grips.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <variant>
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/text/mtext.hpp"
 
 namespace musacad::core {
 
@@ -43,6 +46,16 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         return AddLeaderCommand{l->tip, l->knee, l->text_height, l->style,
                                 std::string(store.string_of(*l)), 0, l->props};
     }
+    case EntityKind::MText: {
+        const MTextData* m = store.mtext(h);
+        return AddMTextCommand{m->text, std::string(store.string_of(m->text)), 0, m->props};
+    }
+    case EntityKind::MLeader: {
+        const MLeaderData* m = store.mleader(h);
+        const auto v = store.vertices_of(*m);
+        return AddMLeaderCommand{std::vector<Vec2>(v.begin(), v.end()), m->style, m->text,
+                                 std::string(store.string_of(m->text)), 0, m->props};
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -74,6 +87,11 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                handle = store.add_mtext(c.block, c.content, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                handle = store.add_mleader(c.vertices, c.style, c.block, c.content,
+                                           props_of(c.props));
             }
         },
         cmd);
@@ -176,6 +194,27 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         push(out, l->knee, GripKind::Move, 1);
         break;
     }
+    case EntityKind::MText: {
+        const MTextData* m = store.mtext(h);
+        push(out, m->text.pos, GripKind::Move, 0); // insertion / attachment
+        const Vec2 xdir{std::cos(m->text.rotation), std::sin(m->text.rotation)};
+        if (m->text.width > 0.0) {
+            push(out, m->text.pos + xdir * m->text.width, GripKind::DimLine, 1); // width grip
+        } else {
+            const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+            push(out, {lay.max.x, (lay.min.y + lay.max.y) * 0.5}, GripKind::DimLine, 1);
+        }
+        break;
+    }
+    case EntityKind::MLeader: {
+        const MLeaderData* m = store.mleader(h);
+        const auto v = store.vertices_of(*m);
+        for (std::uint32_t i = 0; i < v.size(); ++i) {
+            push(out, v[i], i == 0 ? GripKind::Endpoint : GripKind::Vertex, i);
+        }
+        push(out, m->text.pos, GripKind::Move, static_cast<std::uint32_t>(v.size())); // text
+        break;
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -239,6 +278,25 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.tip = newpos;
                 } else {
                     x.knee = newpos;
+                }
+            } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
+                if (grip_index == 0) {
+                    x.block.pos = newpos; // move insertion
+                } else {
+                    // Width grip: re-wrap to the cursor along the text x-axis.
+                    const Vec2 xdir{std::cos(x.block.rotation), std::sin(x.block.rotation)};
+                    x.block.width = std::max(x.block.height, dot(newpos - x.block.pos, xdir));
+                }
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                const std::uint32_t n = static_cast<std::uint32_t>(x.vertices.size());
+                if (grip_index < n) {
+                    const Vec2 d = newpos - x.vertices[grip_index];
+                    x.vertices[grip_index] = newpos;
+                    if (grip_index == n - 1) {
+                        x.block.pos = x.block.pos + d; // landing drags the label with it
+                    }
+                } else {
+                    x.block.pos = newpos; // text grip
                 }
             }
         },

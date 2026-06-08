@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
@@ -337,6 +338,22 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         out.push_back(l->knee);
         break;
     }
+    case EntityKind::MText: {
+        const MTextData* m = store.mtext(entity);
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        const Vec2 c[5] = {lay.min, {lay.max.x, lay.min.y}, lay.max, {lay.min.x, lay.max.y}, lay.min};
+        for (const Vec2& p : c) {
+            out.push_back(p);
+        }
+        break;
+    }
+    case EntityKind::MLeader: {
+        const MLeaderData* m = store.mleader(entity);
+        for (const Vec2& v : store.vertices_of(*m)) {
+            out.push_back(v); // the leader polyline (selectable span)
+        }
+        break;
+    }
     }
 }
 
@@ -429,6 +446,24 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         out_point = closest_on_segment(l->tip, l->knee, query);
         return true;
     }
+    case EntityKind::MText:
+    case EntityKind::MLeader: {
+        // Nearest point on the entity's pick outline (box / leader polyline).
+        std::vector<Vec2> chain;
+        tessellate(store, entity, kDefaultTessTolerance, chain);
+        bool found = false;
+        double best = 0.0;
+        for (std::size_t i = 1; i < chain.size(); ++i) {
+            const Vec2 cp = closest_on_segment(chain[i - 1], chain[i], query);
+            const double d2 = length_squared(query - cp);
+            if (!found || d2 < best) {
+                found = true;
+                best = d2;
+                out_point = cp;
+            }
+        }
+        return found;
+    }
     }
     return false;
 }
@@ -503,6 +538,8 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Text:
     case EntityKind::Dimension:
     case EntityKind::Leader:
+    case EntityKind::MText:
+    case EntityKind::MLeader:
         break;
     }
     return false;

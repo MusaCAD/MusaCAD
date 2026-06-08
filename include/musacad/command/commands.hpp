@@ -392,4 +392,38 @@ private:
     bool done_ = false;
 };
 
+/// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph
+/// text. Wraps within the defined width across multiple lines.
+class MTextCommand final : public ICommand {
+public:
+    std::string name() const override { return "MTEXT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, Second, Content } state_ = State::First;
+    core::Vec2 c1_{};
+    core::Vec2 pos_{};
+    double width_ = 0.0;
+    bool done_ = false;
+};
+
+/// QLEADER (LE/QLEADER): pick the arrow point, then leader vertices (Enter to
+/// finish), then enter the annotation (MTEXT). Arrow + leader line + attached text.
+class QLeaderCommand final : public ICommand {
+public:
+    std::string name() const override { return "QLEADER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Arrow, Vertices, Content } state_ = State::Arrow;
+    std::vector<core::Vec2> verts_;
+    bool done_ = false;
+};
+
 } // namespace musacad::command

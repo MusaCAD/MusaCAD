@@ -80,6 +80,23 @@ Document document_from_store(const GeometryStore& store) {
                                             std::string(store.string_of(ld)), ld.props});
         }
     }
+    const auto& mtx = store.mtexts();
+    for (std::uint32_t i = 0; i < mtx.slot_count(); ++i) {
+        if (mtx.alive(i)) {
+            const MTextData& m = mtx.data()[i];
+            doc.mtexts.push_back(DocMText{m.text, std::string(store.string_of(m.text)), m.props});
+        }
+    }
+    const auto& mld = store.mleaders();
+    for (std::uint32_t i = 0; i < mld.slot_count(); ++i) {
+        if (mld.alive(i)) {
+            const MLeaderData& m = mld.data()[i];
+            const auto v = store.vertices_of(m);
+            doc.mleaders.push_back(DocMLeader{std::vector<Vec2>(v.begin(), v.end()), m.style,
+                                              m.text, std::string(store.string_of(m.text)),
+                                              m.props});
+        }
+    }
     return doc;
 }
 
@@ -94,6 +111,12 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props);
+    }
+    for (const DocMText& m : doc.mtexts) {
+        store.add_mtext(m.block, m.content, m.props);
+    }
+    for (const DocMLeader& m : doc.mleaders) {
+        store.add_mleader(m.vertices, m.style, m.block, m.content, m.props);
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);

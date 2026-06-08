@@ -11,6 +11,7 @@ add_library(musacad_core STATIC
     io/native_format.cpp
     io/dxf.cpp
     text/stroke_font.cpp
+    text/mtext.cpp
     dimension.cpp
     grips.cpp)
 
