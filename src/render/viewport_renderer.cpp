@@ -23,6 +23,8 @@ constexpr const float (&kSelectColor)[4] = theme::kSelected;
 constexpr const float (&kHoverColor)[4] = theme::kHover;
 constexpr const float (&kPreviewColor)[4] = theme::kPreview;
 constexpr const float (&kGhostColor)[4] = theme::kGhost;
+constexpr const float (&kGripColor)[4] = theme::kGrip;
+constexpr const float (&kHotGripColor)[4] = theme::kHotGrip;
 constexpr const float (&kWindowColor)[4] = theme::kWindow;
 constexpr const float (&kCrossingColor)[4] = theme::kCrossing;
 constexpr const float (&kGridMinor)[4] = theme::kGridMinor;
@@ -96,6 +98,17 @@ std::size_t pack_segments(const std::vector<core::Vec2>& endpoints, std::vector<
         out.push_back(static_cast<float>(endpoints[2 * i + 1].y));
     }
     return segments;
+}
+
+// Flatten a vec2 list to floats (for the fill pipeline: 1 position per vertex).
+std::size_t pack_positions(const std::vector<core::Vec2>& pts, std::vector<float>& out) {
+    out.clear();
+    out.reserve(pts.size() * 2);
+    for (const core::Vec2& p : pts) {
+        out.push_back(static_cast<float>(p.x));
+        out.push_back(static_cast<float>(p.y));
+    }
+    return pts.size();
 }
 
 core::Mat3 screen_to_ndc(int width, int height) {
@@ -478,6 +491,27 @@ void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
         edge(rect, {a.x, b.y}, {a.x, a.y});
         draw_world(rect, overlay_.rect_mode == 2 ? kCrossingColor : kWindowColor);
     }
+
+    // Grip drag preview: the edited entity (computed geometry-side on a temp store)
+    // drawn in the hot colour. Lines through the line pipeline; arrowhead fills
+    // through the fill pipeline (rebound after, since draw_world expects the line
+    // pipeline -- this is the last line draw so order is fine).
+    if (!snapshot.grip_preview_segments.empty()) {
+        draw_world(snapshot.grip_preview_segments, kHotGripColor);
+    }
+    if (!snapshot.grip_preview_fills.empty()) {
+        const std::size_t n = pack_positions(snapshot.grip_preview_fills, scratch_);
+        if (n > 0) {
+            cmd.bind_pipeline(*fill_pipeline_);
+            cmd.set_uniform_mat3("u_transform", view);
+            fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            cmd.set_uniform_vec4("u_color", kHotGripColor[0], kHotGripColor[1], kHotGripColor[2],
+                                 kHotGripColor[3]);
+            cmd.bind_vertex_buffer(0, *fill_buffer_, 0);
+            cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
+            ++stats_.draw_calls;
+        }
+    }
 }
 
 void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,
@@ -537,6 +571,44 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
             cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
             ++stats_.draw_calls;
         }
+    }
+
+    // Grips of the selected set: small filled squares at a constant pixel size, the
+    // grabbed/hovered one in the hot colour. Batched: at most two fill draws.
+    if (!snapshot.grips.empty()) {
+        const double hpx = theme::kGripHalfPx;
+        std::vector<core::Vec2> normal;
+        std::vector<core::Vec2> hot;
+        for (std::size_t i = 0; i < snapshot.grips.size(); ++i) {
+            const core::Vec2 s = camera.world_to_screen(snapshot.grips[i].pos);
+            std::vector<core::Vec2>& dst =
+                (static_cast<int>(i) == snapshot.hot_grip) ? hot : normal;
+            const core::Vec2 a{s.x - hpx, s.y - hpx};
+            const core::Vec2 b{s.x + hpx, s.y - hpx};
+            const core::Vec2 c{s.x + hpx, s.y + hpx};
+            const core::Vec2 d{s.x - hpx, s.y + hpx};
+            dst.push_back(a);
+            dst.push_back(b);
+            dst.push_back(c);
+            dst.push_back(a);
+            dst.push_back(c);
+            dst.push_back(d);
+        }
+        cmd.bind_pipeline(*fill_pipeline_);
+        cmd.set_uniform_mat3("u_transform", screen);
+        const auto draw_squares = [&](const std::vector<core::Vec2>& tris, const float (&col)[4]) {
+            const std::size_t n = pack_positions(tris, scratch_);
+            if (n == 0) {
+                return;
+            }
+            fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            cmd.set_uniform_vec4("u_color", col[0], col[1], col[2], col[3]);
+            cmd.bind_vertex_buffer(0, *fill_buffer_, 0);
+            cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
+            ++stats_.draw_calls;
+        };
+        draw_squares(normal, kGripColor);
+        draw_squares(hot, kHotGripColor);
     }
 }
 

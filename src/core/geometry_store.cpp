@@ -1,5 +1,7 @@
 #include "musacad/core/geometry_store.hpp"
 
+#include <algorithm>
+
 namespace musacad::core {
 
 EntityHandle GeometryStore::add_point(Vec2 p, EntityProps props) {
@@ -25,10 +27,24 @@ EntityHandle GeometryStore::add_arc(Vec2 center, double radius, double start_ang
 
 EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices, bool closed,
                                          EntityProps props) {
+    return add_polyline(vertices, {}, closed, props);
+}
+
+EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
+                                         std::span<const double> bulges, bool closed,
+                                         EntityProps props) {
     const auto offset = static_cast<std::uint32_t>(polyline_pool_.size());
     polyline_pool_.insert(polyline_pool_.end(), vertices.begin(), vertices.end());
-    const auto slot = polylines_.insert(
-        PolylineData{offset, static_cast<std::uint32_t>(vertices.size()), closed, props});
+    // Store bulges only if any are non-zero (keep straight polylines lean).
+    std::uint32_t bulge_offset = PolylineData::kNoBulges;
+    const bool any = !bulges.empty() &&
+                     std::any_of(bulges.begin(), bulges.end(), [](double b) { return b != 0.0; });
+    if (any && bulges.size() == vertices.size()) {
+        bulge_offset = static_cast<std::uint32_t>(bulge_pool_.size());
+        bulge_pool_.insert(bulge_pool_.end(), bulges.begin(), bulges.end());
+    }
+    const auto slot = polylines_.insert(PolylineData{
+        offset, static_cast<std::uint32_t>(vertices.size()), bulge_offset, closed, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Polyline};
 }
 
@@ -130,6 +146,7 @@ void GeometryStore::clear() noexcept {
     dims_.clear();
     leaders_.clear();
     polyline_pool_.clear();
+    bulge_pool_.clear();
     spline_pool_.clear();
     string_pool_.clear();
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
@@ -205,6 +222,12 @@ bool GeometryStore::set_dimstyle(std::uint16_t index, const DimStyle& style) {
 
 std::span<const Vec2> GeometryStore::vertices_of(const PolylineData& pl) const noexcept {
     return std::span<const Vec2>(polyline_pool_).subspan(pl.offset, pl.count);
+}
+std::span<const double> GeometryStore::bulges_of(const PolylineData& pl) const noexcept {
+    if (pl.bulge_offset == PolylineData::kNoBulges) {
+        return {};
+    }
+    return std::span<const double>(bulge_pool_).subspan(pl.bulge_offset, pl.count);
 }
 std::span<const Vec2> GeometryStore::control_points_of(const SplineData& sp) const noexcept {
     return std::span<const Vec2>(spline_pool_).subspan(sp.offset, sp.count);

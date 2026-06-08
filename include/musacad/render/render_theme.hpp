@@ -26,9 +26,12 @@ inline constexpr float kPreview[4] = {0.90f, 0.90f, 0.40f, 1.0f}; // rubber-band
 inline constexpr float kGhost[4] = {0.55f, 0.80f, 1.0f, 1.0f};    // move/mirror ghost
 inline constexpr float kWindow[4] = {0.35f, 0.55f, 1.0f, 1.0f};   // window select box
 inline constexpr float kCrossing[4] = {0.35f, 0.90f, 0.45f, 1.0f}; // crossing select box
+inline constexpr float kGrip[4] = {0.30f, 0.55f, 1.0f, 1.0f};     // grip square (AutoCAD blue)
+inline constexpr float kHotGrip[4] = {1.0f, 0.25f, 0.20f, 1.0f};  // grabbed/hovered grip (hot red)
 
 inline constexpr double kSnapMarkerHalfPx = 9.0; // half-extent of a snap glyph
 inline constexpr double kPickBoxHalfPx = 6.0;    // cursor pick-box half-extent
 inline constexpr double kMarkerStrokePx = 1.4;   // bold-stroke offset (faked thickness)
+inline constexpr double kGripHalfPx = 4.0;       // half-extent of a grip square (screen px)
 
 } // namespace musacad::render::theme

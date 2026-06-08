@@ -49,8 +49,11 @@ struct ArcData {
 };
 
 struct PolylineData {
+    static constexpr std::uint32_t kNoBulges = 0xFFFFFFFFu; ///< all segments straight
+
     std::uint32_t offset; ///< first vertex index in the polyline vertex pool
     std::uint32_t count;  ///< number of vertices
+    std::uint32_t bulge_offset = kNoBulges; ///< first of `count` bulges, or kNoBulges
     bool closed;
     EntityProps props{};
 };
@@ -115,6 +118,10 @@ public:
     EntityHandle add_arc(Vec2 center, double radius, double start_angle, double end_angle,
                          EntityProps props = {});
     EntityHandle add_polyline(std::span<const Vec2> vertices, bool closed, EntityProps props = {});
+    /// Polyline with per-vertex arc bulges (b = tan(theta/4); 0 = straight). `bulges`
+    /// must be empty (all straight) or the same length as `vertices`.
+    EntityHandle add_polyline(std::span<const Vec2> vertices, std::span<const double> bulges,
+                              bool closed, EntityProps props = {});
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                             EntityProps props = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
@@ -177,6 +184,9 @@ public:
     }
     /// The vertex view for a given polyline/spline record.
     [[nodiscard]] std::span<const Vec2> vertices_of(const PolylineData& pl) const noexcept;
+    /// Per-vertex bulges for a polyline, or an empty span when all segments are
+    /// straight. Same length as vertices_of() when non-empty.
+    [[nodiscard]] std::span<const double> bulges_of(const PolylineData& pl) const noexcept;
     [[nodiscard]] std::span<const Vec2> control_points_of(const SplineData& sp) const noexcept;
 
     void reserve_lines(std::size_t n) { lines_.reserve(n); }
@@ -227,6 +237,7 @@ private:
     GenerationalArena<LeaderData> leaders_;
 
     std::vector<Vec2> polyline_pool_;
+    std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<Vec2> spline_pool_;
     std::vector<char> string_pool_; // text content
 

@@ -1075,6 +1075,91 @@ bool MainWindow::selftest_annotation() {
     return all;
 }
 
+bool MainWindow::selftest_grips() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    processor_->set_pick_radius(1.0);
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    using G = core::GripDragCommand;
+    using P = core::GripDragCommand::Phase;
+
+    // A line: select it -> grips appear (2 endpoints + midpoint).
+    engine_->submit(core::AddLineCommand{{0, 0}, {10, 0}, 0});
+    pump([this] { return viewport_->line_vertex_count() > 0; });
+    engine_->submit(core::SelectPickCommand{{5, 0}, 1.0, false});
+    const bool line_grips = pump([this] { return viewport_->grip_count() == 3; });
+    std::printf("[selftest] line selection shows grips: %s\n", line_grips ? "PASS" : "FAIL");
+    all = all && line_grips;
+
+    // Drag an endpoint grip: Begin -> Move (transient preview) -> Commit on release.
+    int eb = -1;
+    for (int i = 0; i < viewport_->grip_count(); ++i) {
+        if (viewport_->grip_info(i).index == 1) {
+            eb = i;
+        }
+    }
+    bool drag_ok = false;
+    if (eb >= 0) {
+        const core::GripInfo g = viewport_->grip_info(eb);
+        engine_->submit(G{P::Begin, g.handle, g.index, {}, 0});
+        engine_->submit(G{P::Move, {}, 0, {10, 8}, 0});
+        pump([] { return false; }); // let a few frames publish the preview
+        engine_->submit(G{P::Commit, {}, 0, {10, 8}, processor_->begin_group()});
+        drag_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+        engine_->submit(core::UndoLastGroupCommand{}); // one undo group restores it
+        drag_ok = drag_ok && pump([this] { return viewport_->line_vertex_count() > 0; });
+    }
+    std::printf("[selftest] line endpoint grip drag commits + undoes: %s\n",
+                drag_ok ? "PASS" : "FAIL");
+    all = all && drag_ok;
+
+    // A dimension: select it -> grips (def a, def b, dim-line offset) and drag the
+    // dim-line-offset grip (the headline ask).
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(core::AddDimensionCommand{static_cast<std::uint8_t>(core::DimType::Linear),
+                                              {0, 0}, {20, 0}, {10, 5}, 0, 0});
+    pump([this] { return viewport_->line_vertex_count() > 0; });
+    engine_->submit(core::SelectPickCommand{{10, 5}, 2.0, false});
+    const bool dim_grips = pump([this] { return viewport_->grip_count() == 3; });
+    std::printf("[selftest] dimension shows grips (def + dim-line offset): %s\n",
+                dim_grips ? "PASS" : "FAIL");
+    all = all && dim_grips;
+
+    bool offset_ok = false;
+    int off = -1;
+    for (int i = 0; i < viewport_->grip_count(); ++i) {
+        if (viewport_->grip_info(i).index == 2) {
+            off = i; // the dim-line offset grip
+        }
+    }
+    if (off >= 0) {
+        const core::GripInfo g = viewport_->grip_info(off);
+        engine_->submit(G{P::Begin, g.handle, g.index, {}, 0});
+        engine_->submit(G{P::Move, {}, 0, {10, 12}, 0}); // push the dim line farther
+        pump([] { return false; });
+        engine_->submit(G{P::Commit, {}, 0, {10, 12}, processor_->begin_group()});
+        offset_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+    }
+    std::printf("[selftest] dim-line offset grip drag (headline) commits: %s\n",
+                offset_ok ? "PASS" : "FAIL");
+    all = all && offset_ok;
+
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
 void MainWindow::open_array_dialog() {
     if (viewport_ == nullptr || viewport_->selection_count() == 0) {
         if (command_widget_ != nullptr) {

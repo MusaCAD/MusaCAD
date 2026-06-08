@@ -41,8 +41,9 @@ Document document_from_store(const GeometryStore& store) {
         if (plines.alive(i)) {
             const PolylineData& p = plines.data()[i];
             const std::span<const Vec2> v = store.vertices_of(p);
-            doc.polylines.push_back(
-                DocPolyline{std::vector<Vec2>(v.begin(), v.end()), p.closed, p.props});
+            const std::span<const double> b = store.bulges_of(p);
+            doc.polylines.push_back(DocPolyline{std::vector<Vec2>(v.begin(), v.end()), p.closed,
+                                                p.props, std::vector<double>(b.begin(), b.end())});
         }
     }
     const auto& splines = store.splines();
@@ -107,7 +108,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.add_arc(a.center, a.radius, a.start_angle, a.end_angle, a.props);
     }
     for (const DocPolyline& p : doc.polylines) {
-        store.add_polyline(p.points, p.closed, p.props);
+        store.add_polyline(p.points, p.bulges, p.closed, p.props);
     }
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props);

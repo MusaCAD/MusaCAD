@@ -15,9 +15,10 @@ namespace musacad::core::io {
 
 /// The current native document format version. v1: geometry only. v2: layer table
 /// + per-entity properties. v3: text + dimensions + dimension styles. v4: leaders +
-/// expanded DIMSTYLE (per-element colours, dim lineweight, arrow types). Readers
-/// reject newer versions; older files load fine (no layers => layer 0; no dims).
-inline constexpr std::uint32_t kFormatVersion = 4;
+/// expanded DIMSTYLE (per-element colours, dim lineweight, arrow types). v5: polyline
+/// per-vertex arc bulges. Readers reject newer versions; older files load fine (no
+/// layers => layer 0; no dims; no bulges => straight polylines).
+inline constexpr std::uint32_t kFormatVersion = 5;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -50,6 +51,7 @@ struct DocPolyline {
     std::vector<Vec2> points;
     bool closed = false;
     EntityProps props{};
+    std::vector<double> bulges = {}; ///< per-vertex arc bulges (empty = all straight)
     friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
 };
 struct DocSpline {

@@ -31,6 +31,15 @@ struct ColorBatch {
 /// `version` increases monotonically with each publish. `checksum` is computed
 /// over the version and payload so a consumer can assert it observed a complete,
 /// untorn snapshot (used by the concurrency test).
+/// A grip handle published for the selected set: its world position plus the
+/// (handle, index) the UI sends back to begin a drag, and its role for colouring.
+struct GripInfo {
+    Vec2 pos;
+    EntityHandle handle;
+    std::uint32_t index = 0;
+    std::uint8_t kind = 0; ///< core::GripKind
+};
+
 struct RenderSnapshot {
     std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
     std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
@@ -93,6 +102,15 @@ struct RenderSnapshot {
     std::uint8_t pending_dim_type = 0;
     std::uint64_t pending_dim_version = 0;
 
+    // Grips of the selected set (display + hit-test), the hot grip (grabbed or
+    // hovered, index into `grips`, or -1), and the transient drag preview (the
+    // edited entity computed on a temporary store -- the real store is untouched).
+    // Interaction state, not part of the checksum.
+    std::vector<GripInfo> grips;
+    int hot_grip = -1;
+    std::vector<Vec2> grip_preview_segments;
+    std::vector<Vec2> grip_preview_fills;
+
     // Last command-result message from the geometry thread (e.g. "Filleted." or
     // "Nothing to fillet."). `status_version` bumps on each new message so the UI
     // can echo it once. Honest feedback: set by the op that actually ran, so the
@@ -122,6 +140,10 @@ struct RenderSnapshot {
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;
+        grips.clear();
+        hot_grip = -1;
+        grip_preview_segments.clear();
+        grip_preview_fills.clear();
         checksum = 0;
         bounds_min = {};
         bounds_max = {};

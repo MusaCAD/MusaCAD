@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/properties.hpp"
 
@@ -35,6 +36,8 @@ struct AddPolylineCommand {
     bool closed = false;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    /// Per-vertex arc bulges (b = tan(theta/4); 0 = straight). Empty = all straight.
+    std::vector<double> bulges = {};
 };
 
 struct AddCircleCommand {
@@ -279,6 +282,20 @@ struct ResolveDimObjectCommand {
     double pick_radius = 0.0;
 };
 
+/// Direct-manipulation grip editing. One command drives the whole lifecycle:
+/// `Begin` arms a drag on grip `grip` of entity `handle`; `Move` updates the live
+/// (snapped/ortho-resolved) target `pos`, recomputing a transient preview on a
+/// temporary store -- NO store mutation, NO op-log entry; `Commit` applies the edit
+/// as exactly one undo `group`; `Cancel` (Esc) drops the drag, entity unchanged.
+struct GripDragCommand {
+    enum class Phase : std::uint8_t { Begin, Move, Commit, Cancel };
+    Phase phase = Phase::Begin;
+    EntityHandle handle;     ///< Begin: the entity being edited
+    std::uint32_t grip = 0;  ///< Begin: which grip index
+    Vec2 pos;                ///< Move/Commit: resolved drag target
+    std::uint64_t group = 0; ///< Commit: undo group id
+};
+
 /// View scale (world units per pixel) for zoom-adaptive curve tessellation. Sent
 /// only when the camera scale actually changes (zoom/resize, never pan). The
 /// geometry thread buckets it and re-tessellates curves on a bucket change so
@@ -358,6 +375,7 @@ using Command =
                  RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
-                 AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand>;
+                 AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
+                 GripDragCommand>;
 
 } // namespace musacad::core

@@ -184,6 +184,16 @@ private:
     DimData pending_dim_{};
     std::uint64_t pending_dim_version_ = 0;
 
+    // Active grip drag (direct manipulation). While armed, the dragged entity is
+    // previewed on `grip_preview_store_` and published; the real store is untouched
+    // until commit. Commit applies the edit as one undo group; cancel drops it.
+    void apply_grip_commit(std::uint64_t group);
+    bool grip_active_ = false;
+    EntityHandle grip_handle_{};
+    std::uint32_t grip_index_ = 0;
+    Vec2 grip_pos_{};
+    GeometryStore grip_preview_store_;
+
     std::atomic<std::uint64_t> version_{0};
     std::jthread worker_;
 };

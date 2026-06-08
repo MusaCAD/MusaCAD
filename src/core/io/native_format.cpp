@@ -212,6 +212,13 @@ std::string serialize_native(const Document& doc) {
             append_vec(s, v);
         }
         append_props(s, p.props);
+        // v5: per-vertex arc bulges appended after props (only when any are present).
+        if (p.bulges.size() == p.points.size()) {
+            for (const double b : p.bulges) {
+                s += ' ';
+                append_double(s, b);
+            }
+        }
         s += '\n';
     }
     for (const DocSpline& sp : doc.splines) {
@@ -532,7 +539,18 @@ IoResult parse_native(std::string_view text, Document& out) {
                 pl.points.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
             if (version >= 2) {
-                if (!parse_props(tok, 3 + n * 2, pl.props) || tok.size() != 3 + n * 2 + 7) {
+                if (!parse_props(tok, 3 + n * 2, pl.props)) {
+                    return fail("POLYLINE properties malformed");
+                }
+                const std::size_t after = 3 + n * 2 + 7;
+                if (tok.size() == after + n) {
+                    // v5: per-vertex bulges follow the properties.
+                    std::vector<double> bv;
+                    if (!parse_doubles(tok, after, n, bv)) {
+                        return fail("POLYLINE bulge count mismatch");
+                    }
+                    pl.bulges = std::move(bv);
+                } else if (tok.size() != after) {
                     return fail("POLYLINE properties malformed");
                 }
             } else if (tok.size() != 3 + n * 2) {

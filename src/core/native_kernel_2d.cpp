@@ -279,9 +279,30 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     case EntityKind::Polyline: {
         const PolylineData* pl = store.polyline(entity);
         const std::span<const Vec2> verts = store.vertices_of(*pl);
-        out.assign(verts.begin(), verts.end());
-        if (pl->closed && verts.size() >= 2) {
-            out.push_back(verts.front());
+        const std::span<const double> bulges = store.bulges_of(*pl);
+        out.clear();
+        if (verts.empty()) {
+            break;
+        }
+        const std::size_t n = verts.size();
+        const std::size_t segs = (pl->closed && n >= 2) ? n : n - 1;
+        out.push_back(verts[0]);
+        for (std::size_t i = 0; i < segs; ++i) {
+            const Vec2 p0 = verts[i];
+            const Vec2 p1 = verts[(i + 1) % n];
+            const double b = bulges.empty() ? 0.0 : bulges[i];
+            if (b == 0.0) {
+                out.push_back(p1); // straight segment
+                continue;
+            }
+            const BulgeArc a = arc_from_bulge(p0, p1, b); // zoom-adaptive arc samples
+            const std::size_t m = arc_segments(a.radius, a.sweep, tolerance);
+            for (std::size_t k = 1; k <= m; ++k) {
+                const double ang = a.a0 + a.sweep * (static_cast<double>(k) / static_cast<double>(m));
+                out.push_back({a.center.x + a.radius * std::cos(ang),
+                               a.center.y + a.radius * std::sin(ang)});
+            }
+            out.back() = p1; // land exactly on the vertex
         }
         break;
     }

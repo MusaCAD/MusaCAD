@@ -798,6 +798,79 @@ here; stored geometry stays parametric throughout.
   unchanged. No shared per-entity struct grew (`LineData` 40 B, `DimData` 72 B); the
   snapshot gained transient preview fields only. Native/DXF formats unaffected.
 
+## Grip editing — direct manipulation (Phase 17)
+
+The first non-command editing path: select an entity, drag a grip handle, release to
+commit. It reuses the transient-preview-then-commit discipline (Phase 7) for *editing*.
+
+* **One grip module (`core/grips`), no duplicated logic.** `grips_of(store, h)` returns
+  an entity's grips (per-kind), and `edit_for_grip_drag(store, h, index, newpos)` returns
+  the **edited entity as an `Add*` command** (capture → mutate the relevant parameter →
+  parametric result, props preserved). The engine's `capture_entity` and `create_entity`
+  were extracted here (`capture_entity`, `add_command_to_store`) so the create/undo path,
+  the move path, and grip editing all share one definition.
+* **Transient, render-side, commit-on-release.** A `GripDragCommand{Begin|Move|Commit|Cancel}`
+  drives the lifecycle on the geometry thread. `Begin` arms `(handle, grip)`; `Move`
+  records the resolved target; `Commit` applies the edit as **one undo group**
+  (capture original → remove → create edited, exactly the move pattern); `Cancel`/Esc
+  drops it. **No store mutation or op-log entry during the drag** — the preview is
+  computed by running the edited command through `build_render_snapshot` on a **reused
+  temporary store** and published as `grip_preview_segments`/`fills` in the snapshot, so
+  the real store and undo log are untouched until release. This rides the existing
+  command queue + snapshot (no second handoff, no synchronous per-move query); the
+  renderer only reads snapshots.
+* **Grips on the snapshot.** The engine publishes `grips` (pos + handle + index + kind)
+  for the selected set (gated by `selectable()` — off/frozen/locked layers get none) and
+  a `hot_grip` (the grabbed grip, else the nearest to the cursor within the aperture).
+  The renderer draws grip squares in **screen space** (fixed pixel size; blue, hot=red),
+  batched into at most two fill draws; the drag preview is at most two more — draw calls
+  stay bounded. The UI caches `grips` for GUI-thread hit-testing; a press near a grip
+  sends `Begin` (and sets the processor's last-point to the grip origin so ORTHO/POLAR
+  resolve relative to it); moves send `Move` with the `resolve_pick`-resolved target
+  (OSNAP/ORTHO/POLAR honored); release sends `Commit`.
+* **Per-entity grips.** Line (2 endpoints + midpoint-move), Circle (centre + 4
+  quadrant-radius), Arc (centre + 2 endpoints[angle] + mid[radius]), Polyline/Rectangle
+  (per-vertex move), Text (insertion). Dimensions get the richest set: def-point grips
+  (drag → **re-measures**, the value updates live), and the **dim-line offset** grip
+  (move `line_pt` → the dim line slides, value unchanged) — all on the existing `DimData`
+  (no struct change). An independent text-reposition grip is deferred (needs a stored
+  text offset + a format bump). Object-based dims store def points only (Ph13/Ph15), so a
+  def-point drag simply re-measures from the dragged points — the source entity is never
+  back-referenced, so there is **no dangling reference** to break.
+* **Stays parametric.** Dragging a circle quadrant changes its `radius`, not a baked
+  segment list; dimensions stay def-points. No per-entity struct grew (`LineData` 40 B,
+  `DimData` 72 B); grips are computed on demand, not stored. A grip-edited drawing
+  round-trips native + DXF unchanged (it produces ordinary entities).
+
+## Polyline arc segments (bulges)
+
+Filleting a rectangle/polyline corner used to **bake** the round as ~13 straight
+vertices, so it had no radius and couldn't be dimensioned. Polylines now carry true
+arc segments (AutoCAD LWPOLYLINE-style **bulges**), so a fillet is a real arc with a
+recoverable radius.
+
+* **Model.** Each vertex `i` has a bulge `b = tan(θ/4)` for the segment `i→i+1`
+  (`0` = straight; sign = direction). `math.hpp::arc_from_bulge(p0,p1,b)` recovers the
+  arc (centre, radius, start angle, signed sweep). Stored in a parallel `bulge_pool_`;
+  `PolylineData` gains a `bulge_offset` (sentinel `kNoBulges` for the common all-straight
+  case, so straight polylines store **zero** bulge data). `PolylineData` grew 20→**24 B**;
+  no other struct changed and the insert baseline is unchanged (~37 ns/line).
+* **One geometry definition.** The kernel's polyline `tessellate` walks segments and
+  samples bulged ones to the **zoom-adaptive chord tolerance** (Phase 16), so render,
+  selection, hover, and pick all show smooth arcs from a single place; `entity_bounds`
+  samples arc segments so the AABB encloses the bow. Stored geometry stays parametric —
+  bulges, never baked facets.
+* **Fillet produces a bulge.** `fillet_pl` now replaces the corner with its two tangent
+  points and records the arc as a bulge on the first (no facets). Chamfer stays straight.
+* **Dimensioning the fillet (the fix).** `resolve_dim_defs` Radius/Diameter accepts a
+  **polyline**: it finds the arc segment nearest the pick and reads its bulge's
+  centre+radius — so DIMRADIUS/DIMDIAMETER work on a filleted corner.
+* **Edits + persistence.** `AddPolylineCommand.bulges` flows through capture/create and
+  the transforms (mirror negates bulges; translate/rotate/scale keep them); grips move
+  vertices and keep bulges (the arc recomputes). Native format **v5** appends per-vertex
+  bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
+  (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
@@ -858,6 +931,18 @@ here; stored geometry stays parametric throughout.
   inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
   native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
 
+* **Polyline arc segments (bulges) — complete:** filleted rectangle/polyline corners
+  are now true arc segments (per-vertex bulge), so DIMRADIUS/DIMDIAMETER can dimension
+  them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
+  + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
+  unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 17 — complete:** grip editing (direct manipulation) — a per-entity grip
+  system (`core/grips`) with grips for line/circle/arc/polyline/rectangle/text and the
+  rich dimension set (dim-line offset + def-point re-measure). A grip drag is a
+  transient preview computed on a temp store (zero store/op-log churn mid-drag),
+  commits as one undo group on release, Esc cancels; ORTHO/POLAR/OSNAP honored; grip
+  squares batched (draw calls bounded). Geometry stays parametric; grip-edited drawings
+  round-trip native + DXF. 199 tests (dev) / 199 (TSan) pass under ASan + TSan.
 * **Phase 16 — complete:** zoom-adaptive curve tessellation (smooth arcs/circles at
   any zoom; re-tessellate on a zoom-bucket change, never on pan; curves stay
   parametric, work capped at 8192 segs/curve), round thick-line joins/caps via a

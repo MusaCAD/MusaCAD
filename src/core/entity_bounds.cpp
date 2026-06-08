@@ -43,13 +43,35 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     case EntityKind::Polyline: {
         const PolylineData* p = store.polyline(h);
         const auto verts = store.vertices_of(*p);
+        const auto bulges = store.bulges_of(*p);
         if (verts.empty()) {
             return false;
         }
         out_min = out_max = verts.front();
-        for (const Vec2& v : verts) {
+        const auto extend = [&](Vec2 v) {
             out_min = {std::min(out_min.x, v.x), std::min(out_min.y, v.y)};
             out_max = {std::max(out_max.x, v.x), std::max(out_max.y, v.y)};
+        };
+        for (const Vec2& v : verts) {
+            extend(v);
+        }
+        // Arc (bulged) segments can bow past their chord; sample them so the AABB
+        // encloses the arc (loose is fine; too-tight would clip the bulge).
+        if (!bulges.empty()) {
+            const std::size_t n = verts.size();
+            const std::size_t segs = (p->closed && n >= 2) ? n : n - 1;
+            for (std::size_t i = 0; i < segs; ++i) {
+                if (bulges[i] == 0.0) {
+                    continue;
+                }
+                const BulgeArc a = arc_from_bulge(verts[i], verts[(i + 1) % n], bulges[i]);
+                constexpr int kS = 16;
+                for (int k = 1; k < kS; ++k) {
+                    const double ang = a.a0 + a.sweep * (static_cast<double>(k) / kS);
+                    extend({a.center.x + a.radius * std::cos(ang),
+                            a.center.y + a.radius * std::sin(ang)});
+                }
+            }
         }
         return true;
     }

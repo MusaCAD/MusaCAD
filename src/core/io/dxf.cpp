@@ -174,9 +174,14 @@ std::string serialize_dxf(const Document& doc) {
         emit_props(s, doc, p.props);
         code_i(s, 90, static_cast<long>(p.points.size()));
         code_i(s, 70, p.closed ? 1 : 0);
-        for (const Vec2& v : p.points) {
-            code_d(s, 10, v.x);
-            code_d(s, 20, v.y);
+        const bool has_bulge = p.bulges.size() == p.points.size();
+        for (std::size_t i = 0; i < p.points.size(); ++i) {
+            code_d(s, 10, p.points[i].x);
+            code_d(s, 20, p.points[i].y);
+            // Code 42 is the vertex bulge; emit only non-zero ones (DXF convention).
+            if (has_bulge && p.bulges[i] != 0.0) {
+                code_d(s, 42, p.bulges[i]);
+            }
         }
     }
     for (const DocText& t : doc.texts) {
@@ -539,14 +544,22 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             pl.closed = flag != nullptr && (to_l(*flag) & 1) != 0;
             double x = 0.0;
             bool have_x = false;
+            bool any_bulge = false;
             for (const Pair& p : body) {
                 if (p.code == 10) {
                     x = to_d(p.value);
                     have_x = true;
                 } else if (p.code == 20 && have_x) {
                     pl.points.push_back({x, to_d(p.value)});
+                    pl.bulges.push_back(0.0); // default straight; a code 42 may follow
                     have_x = false;
+                } else if (p.code == 42 && !pl.bulges.empty()) {
+                    pl.bulges.back() = to_d(p.value); // bulge of the vertex just read
+                    any_bulge = true;
                 }
+            }
+            if (!any_bulge) {
+                pl.bulges.clear(); // all straight -> store none
             }
             pl.props = props_of(body);
             doc.polylines.push_back(std::move(pl));

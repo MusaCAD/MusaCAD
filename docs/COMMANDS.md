@@ -43,7 +43,8 @@ suggests both); aliases are case-insensitive.
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
 | EXTEND an arc/polyline *entity* | EX | Partial (line entities only) |
 | FILLET (line/line; radius 0 or tangent arc) | F | Implemented |
-| FILLET (polyline corner; arc approximated by vertices) | F | Implemented |
+| FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented |
+| Polyline arc segments (per-vertex bulge, AutoCAD LWPOLYLINE) | — | Implemented |
 | FILLET (arc/curve cases) | F | Partial (line + polyline-corner only) |
 | CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
 | CHAMFER (polyline corner) | CHA | Implemented |
@@ -60,7 +61,7 @@ suggests both); aliases are case-insensitive.
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
 | DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |
 | DIMALIGNED (two-point, or `[Object]` → segment's true length) | DAL | Implemented |
-| DIMRADIUS (**select a circle/arc** → R from its own geometry) | DRA | Implemented |
+| DIMRADIUS (**select a circle/arc**, or a filleted polyline arc segment → R) | DRA | Implemented |
 | DIMDIAMETER (**select a circle/arc** → ⌀ from its own geometry) | DDI | Implemented |
 | DIMANGULAR (**select two lines/edges** → angle from their directions) | DAN | Implemented |
 | LEADER (arrow + line + text label) | LE / LEADER | Implemented |
@@ -114,7 +115,8 @@ suggests both); aliases are case-insensitive.
 
 | Command | Alias | Status |
 |---|---|---|
-| Native format v4 (adds leaders + expanded DIMSTYLE) | — | Implemented |
+| Native format v5 (adds polyline arc bulges) | — | Implemented (v1–v4 load) |
+| DXF LWPOLYLINE bulges (code 42, read/write) | — | Implemented (LibreCAD-verified) |
 | DXF TEXT + DIMENSION (all subtypes) + LEADER + DIMSTYLE table | — | Implemented (leader label imports as separate TEXT) |
 | LWDISPLAY (lineweight display on/off) | LWT ribbon toggle | Implemented |
 | Lineweight display: DPI-anchored `px = mm × DPI/25.4`, zoom-independent, Default = 1px hairline (AutoCAD-accurate) | — | Implemented |
@@ -162,7 +164,24 @@ button dropdown).
 | Live cursor preview (Line/Circle/Rect/PLine/Arc) | Implemented |
 | Move/Mirror ghost preview | Implemented |
 | Ortho/Polar/grid-snap honored by preview | Implemented |
-| Grips (square handles on selection) | Planned (Phase 9) |
+
+## Grip editing (direct manipulation)
+
+| Feature | Status |
+|---|---|
+| Grips (blue squares) show on a selected entity; grabbed/hovered grip goes hot (red) | Implemented |
+| Drag a grip → live preview; release commits as one undo step; Esc cancels (entity unchanged) | Implemented |
+| Zero store mutation / op-log churn during the drag (transient preview) | Implemented |
+| ORTHO/POLAR/OSNAP honored on the dragged grip | Implemented |
+| Line (2 endpoints + midpoint-move) | Implemented |
+| Circle (centre-move + 4 quadrant-radius) | Implemented |
+| Arc (centre-move + 2 endpoints + mid-radius) | Implemented |
+| Polyline / Rectangle (per-vertex move) | Implemented |
+| Text (insertion-point move) | Implemented |
+| Dimension: **dim-line offset** (move the dim line, value unchanged) | Implemented |
+| Dimension: def-point drag (re-measures, live value) | Implemented (Linear/Aligned/Radius/Diameter/Angular) |
+| Dimension: independent text-reposition grip | Planned (needs a stored text offset) |
+| Add/remove polyline vertex via grips | Planned |
 
 ## Status-bar modes & keys
 

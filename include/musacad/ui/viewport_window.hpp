@@ -70,6 +70,19 @@ public:
         return line_vertex_count_.load(std::memory_order_relaxed);
     }
 
+    /// Number of grips published for the selected set (test hook: proves grips show).
+    [[nodiscard]] int grip_count() const {
+        std::scoped_lock lock(grips_mutex_);
+        return static_cast<int>(grips_cache_.size());
+    }
+    /// The i-th cached grip (test hook for the real-window grip self-test).
+    [[nodiscard]] core::GripInfo grip_info(int i) const {
+        std::scoped_lock lock(grips_mutex_);
+        return (i >= 0 && i < static_cast<int>(grips_cache_.size()))
+                   ? grips_cache_[static_cast<std::size_t>(i)]
+                   : core::GripInfo{};
+    }
+
     /// The kind of entity under the cursor in the last snapshot, encoded as its
     /// EntityKind value + 1 (0 = nothing hovered). The smart DIM command reads this
     /// (via the processor) to preview the dimension type it will create.
@@ -117,6 +130,8 @@ private:
     void render_loop(std::stop_token token);
     void update_viewport_size() noexcept;
     void rebuild_overlay();
+    /// Index of the cached grip within `radius_world` of `world`, or -1 (hit-test).
+    [[nodiscard]] int grip_at(core::Vec2 world, double radius_world) const;
 
     core::GeometryEngine& engine_;
 
@@ -147,6 +162,13 @@ private:
     core::Vec2 pdim_line_pt_{};
     std::uint8_t pdim_type_ = 0;
     core::DimStyle pdim_style_{};
+
+    // Grips of the selected set, cached from the snapshot for GUI-thread hit-testing,
+    // plus the active grip-drag state (direct manipulation, Phase 17).
+    mutable std::mutex grips_mutex_;
+    std::vector<core::GripInfo> grips_cache_;
+    bool dragging_grip_ = false;
+    core::Vec2 grip_origin_{};
 
     // Published layer table + current layer (for the Layer Manager / ribbon combo).
     mutable std::mutex layers_mutex_;

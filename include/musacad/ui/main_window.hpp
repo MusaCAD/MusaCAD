@@ -73,6 +73,10 @@ public:
     /// confirm they render, and the DIMSTYLE dialog uses the dark palette.
     bool selftest_annotation();
 
+    /// Real-window self-test: grips show on selection, a grip drag previews without
+    /// mutating the store, commits on release, undo restores; dim-line-offset drag.
+    bool selftest_grips();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).

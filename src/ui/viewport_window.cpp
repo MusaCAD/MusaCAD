@@ -183,6 +183,11 @@ void ViewportWindow::render_loop(std::stop_token token) {
             pdim_style_ = snap.dimstyles.empty() ? core::DimStyle{} : snap.dimstyles[0];
         }
         {
+            // Cache grips for GUI-thread hit-testing (grab on press).
+            std::scoped_lock lock(grips_mutex_);
+            grips_cache_ = snap.grips;
+        }
+        {
             std::scoped_lock lock(layers_mutex_);
             layers_ = snap.layers;
         }
@@ -260,6 +265,20 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             processor_->set_pick_radius(10.0 / scale);
             processor_->pick_point(world, snap);
             rebuild_overlay();
+        } else if (const int gi = grip_at(world, 10.0 / scale); gi >= 0) {
+            // Idle press on a grip of a selected entity: begin a direct-manipulation
+            // drag. ORTHO/POLAR resolve relative to the grip's origin.
+            core::GripInfo ginfo;
+            {
+                std::scoped_lock lock(grips_mutex_);
+                ginfo = grips_cache_[static_cast<std::size_t>(gi)];
+            }
+            dragging_grip_ = true;
+            grip_origin_ = ginfo.pos;
+            processor_->set_pick_radius(10.0 / scale);
+            processor_->set_last_point(ginfo.pos);
+            engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
+                                                 ginfo.index, {}, 0});
         } else {
             // Idle: begin a selection drag (single click or window/crossing box).
             selecting_ = true;
@@ -314,6 +333,18 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         std::scoped_lock lock(camera_mutex_);
         camera_.pan_pixels(core::Vec2{dx * dpr, dy * dpr});
     }
+    if (dragging_grip_ && processor_ != nullptr) {
+        // Resolve the dragged point (OSNAP wins, else ORTHO/POLAR/grid vs the grip
+        // origin) and push it to the geometry thread for the transient preview.
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
+                              snap_y_.load(std::memory_order_relaxed)};
+        }
+        const core::Vec2 target = processor_->resolve_pick(world, snap);
+        engine_.submit(
+            core::GripDragCommand{core::GripDragCommand::Phase::Move, {}, 0, target, 0});
+    }
     if (selecting_) {
         sel_cur_world_ = world;
     }
@@ -323,6 +354,28 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
 void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         panning_ = false;
+        return;
+    }
+    if (event->button() == Qt::LeftButton && dragging_grip_ && processor_ != nullptr) {
+        dragging_grip_ = false;
+        const double dpr = devicePixelRatio();
+        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
+        core::Vec2 world;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            world = camera_.screen_to_world(rel_screen);
+        }
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
+                              snap_y_.load(std::memory_order_relaxed)};
+        }
+        const core::Vec2 target = processor_->resolve_pick(world, snap);
+        const std::uint64_t group = processor_->begin_group();
+        engine_.submit(
+            core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, target, group});
+        processor_->clear_last_point();
+        rebuild_overlay();
         return;
     }
     if (event->button() == Qt::LeftButton && selecting_) {
@@ -390,6 +443,20 @@ void dim_preview_segments(const core::DimData& d, const core::DimStyle& style,
                                      g.text_justify, seg);
 }
 } // namespace
+
+int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
+    std::scoped_lock lock(grips_mutex_);
+    int best = -1;
+    double best_d2 = radius_world * radius_world;
+    for (std::size_t i = 0; i < grips_cache_.size(); ++i) {
+        const double d2 = core::length_squared(grips_cache_[i].pos - world);
+        if (d2 <= best_d2) {
+            best_d2 = d2;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
 
 void ViewportWindow::rebuild_overlay() {
     render::RenderOverlay ov;
@@ -555,6 +622,14 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
     // MainWindow (so they work regardless of which window holds focus, while
     // still leaving text-entry keys to the command-line field).
     if (event->key() == Qt::Key_Escape) {
+        if (dragging_grip_) {
+            // Cancel the grip drag: the entity is left unchanged (no commit).
+            dragging_grip_ = false;
+            engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
+            processor_->clear_last_point();
+            rebuild_overlay();
+            return;
+        }
         // Cancel the active command, or clear the selection when idle.
         processor_->cancel();
         return;

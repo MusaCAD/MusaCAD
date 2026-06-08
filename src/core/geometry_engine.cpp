@@ -8,6 +8,7 @@
 #include <variant>
 
 #include "musacad/core/entity_bounds.hpp"
+#include "musacad/core/grips.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
@@ -67,37 +68,10 @@ void GeometryEngine::run(std::stop_token token) {
 }
 
 EntityHandle GeometryEngine::create_entity(const Command& add_command) {
-    EntityHandle handle;
     // A fresh draw (props unset) lands on the current layer, fully ByLayer; a
-    // captured/restored/transformed entity carries its exact props.
-    const auto props_of = [this](const std::optional<EntityProps>& p) {
-        return p ? *p : EntityProps{store_.current_layer()};
-    };
-    std::visit(
-        [&](const auto& c) {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
-                handle = store_.add_line(c.a, c.b, props_of(c.props));
-            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
-                handle = store_.add_polyline(c.points, c.closed, props_of(c.props));
-            } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
-                handle = store_.add_circle(c.center, c.radius, props_of(c.props));
-            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
-                handle =
-                    store_.add_arc(c.center, c.radius, c.start_angle, c.end_angle, props_of(c.props));
-            } else if constexpr (std::is_same_v<T, AddTextCommand>) {
-                handle = store_.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
-                                         props_of(c.props));
-            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
-                handle = store_.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
-                                              c.style, props_of(c.props));
-            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
-                handle = store_.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
-                                           props_of(c.props));
-            }
-        },
-        add_command);
-    return handle;
+    // captured/restored/transformed entity carries its exact props. The apply logic
+    // is shared with the grip-preview path via core::add_command_to_store.
+    return add_command_to_store(store_, add_command, EntityProps{store_.current_layer()});
 }
 
 EntityHandle GeometryEngine::create_indexed(const Command& add_command) {
@@ -116,55 +90,8 @@ void GeometryEngine::remove_indexed(EntityHandle h) {
 }
 
 Command GeometryEngine::capture_entity(EntityHandle h) const {
-    switch (h.kind) {
-    case EntityKind::Line: {
-        const LineData* l = store_.line(h);
-        return AddLineCommand{l->a, l->b, 0, l->props};
-    }
-    case EntityKind::Circle: {
-        const CircleData* c = store_.circle(h);
-        return AddCircleCommand{c->center, c->radius, 0, c->props};
-    }
-    case EntityKind::Arc: {
-        const ArcData* a = store_.arc(h);
-        return AddArcCommand{a->center, a->radius, a->start_angle, a->end_angle, 0, a->props};
-    }
-    case EntityKind::Polyline: {
-        const PolylineData* p = store_.polyline(h);
-        const auto verts = store_.vertices_of(*p);
-        return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()), p->closed, 0,
-                                  p->props};
-    }
-    case EntityKind::Text: {
-        const TextData* t = store_.text(h);
-        return AddTextCommand{t->pos,   t->height, t->rotation, t->justify,
-                              std::string(store_.string_of(*t)), 0, t->props};
-    }
-    case EntityKind::Dimension: {
-        const DimData* d = store_.dimension(h);
-        return AddDimensionCommand{static_cast<std::uint8_t>(d->type),
-                                   d->a,
-                                   d->b,
-                                   d->line_pt,
-                                   d->style,
-                                   0,
-                                   d->props};
-    }
-    case EntityKind::Leader: {
-        const LeaderData* l = store_.leader(h);
-        return AddLeaderCommand{l->tip,
-                                l->knee,
-                                l->text_height,
-                                l->style,
-                                std::string(store_.string_of(*l)),
-                                0,
-                                l->props};
-    }
-    case EntityKind::Point:
-    case EntityKind::Spline:
-        break; // not produced by commands in this phase
-    }
-    return AddLineCommand{}; // restore no-op fallback
+    // Shared with the grip-edit/preview path (core::grips). One capture definition.
+    return core::capture_entity(store_, h);
 }
 
 EntityHandle GeometryEngine::most_recent_live() const {
@@ -441,6 +368,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 for (Vec2& p : x.points) {
                     p = refl(p);
+                }
+                for (double& b : x.bulges) {
+                    b = -b; // reflection flips arc orientation
                 }
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = refl(x.pos);
@@ -913,11 +843,18 @@ bool chamfer_pl(std::vector<Vec2>& pts, bool closed, int sv, double d_prev, doub
 }
 
 /// Replace vertex `sv` with a tangent arc of radius r, approximated by vertices.
-bool fillet_pl(std::vector<Vec2>& pts, bool closed, int sv, double r) {
+// Rounds corner `sv` with a true arc by replacing the corner vertex with its two
+// tangent points and recording the arc as a BULGE on the first -- the geometry
+// stays a parametric polyline (no baked facets), so it can be dimensioned and
+// re-tessellated at any zoom. `bulges` is grown to match `pts` (zeros = straight).
+bool fillet_pl(std::vector<Vec2>& pts, std::vector<double>& bulges, bool closed, int sv, double r) {
     const std::size_t n = pts.size();
     const std::size_t s = static_cast<std::size_t>(sv);
     if (n < 3 || (!closed && (sv <= 0 || s >= n - 1)) || r <= 0.0) {
         return false;
+    }
+    if (bulges.size() != n) {
+        bulges.assign(n, 0.0);
     }
     const std::size_t prev = (s + n - 1) % n;
     const std::size_t next = (s + 1) % n;
@@ -932,8 +869,8 @@ bool fillet_pl(std::vector<Vec2>& pts, bool closed, int sv, double r) {
     if (td > distance(V, pts[prev]) + 1e-9 || td > distance(V, pts[next]) + 1e-9) {
         return false;
     }
-    const Vec2 Tp = V + uP * td;
-    const Vec2 Tn = V + uN * td;
+    const Vec2 Tp = V + uP * td; // tangent point on the incoming edge
+    const Vec2 Tn = V + uN * td; // tangent point on the outgoing edge
     const Vec2 C = V + normalized(uP + uN) * (r / std::sin(alpha / 2.0));
     double a0 = std::atan2(Tp.y - C.y, Tp.x - C.x);
     const double a1 = std::atan2(Tn.y - C.y, Tn.x - C.x);
@@ -944,20 +881,14 @@ bool fillet_pl(std::vector<Vec2>& pts, bool closed, int sv, double r) {
     while (sweep > kPi) {
         sweep -= kTwoPi;
     }
-    constexpr int kSteps = 12;
-    std::vector<Vec2> out;
-    out.reserve(n + kSteps + 1);
-    for (std::size_t i = 0; i < n; ++i) {
-        if (i == s) {
-            for (int k = 0; k <= kSteps; ++k) {
-                const double a = a0 + sweep * static_cast<double>(k) / kSteps;
-                out.push_back({C.x + r * std::cos(a), C.y + r * std::sin(a)});
-            }
-        } else {
-            out.push_back(pts[i]);
-        }
-    }
-    pts = std::move(out);
+    const double bulge = std::tan(sweep / 4.0); // arc Tp->Tn as an AutoCAD bulge
+    // Replace V (index s) with Tp, Tn; the prev->Tp edge keeps its bulge, Tp->Tn is
+    // the fillet arc, Tn->next keeps what V->next had.
+    pts[s] = Tp;
+    pts.insert(pts.begin() + static_cast<std::ptrdiff_t>(s) + 1, Tn);
+    const double out_bulge = bulges[s]; // old V->next segment bulge
+    bulges[s] = bulge;
+    bulges.insert(bulges.begin() + static_cast<std::ptrdiff_t>(s) + 1, out_bulge);
     return true;
 }
 
@@ -1006,6 +937,35 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
             const ArcData* arc = store_.arc(h1);
             center = arc->center;
             r = arc->radius;
+        } else if (h1.kind == EntityKind::Polyline) {
+            // Dimension a filleted (bulged) polyline segment: find the arc segment
+            // nearest the pick and read its recovered centre + radius.
+            const PolylineData* pl = store_.polyline(h1);
+            const auto v = store_.vertices_of(*pl);
+            const auto b = store_.bulges_of(*pl);
+            if (b.empty() || v.empty()) {
+                return false;
+            }
+            const std::size_t n = v.size();
+            const std::size_t segs = (pl->closed && n >= 2) ? n : n - 1;
+            double best = std::numeric_limits<double>::infinity();
+            bool found = false;
+            for (std::size_t i = 0; i < segs; ++i) {
+                if (b[i] == 0.0) {
+                    continue;
+                }
+                const BulgeArc a = arc_from_bulge(v[i], v[(i + 1) % n], b[i]);
+                const double d = std::abs(distance(pick1, a.center) - a.radius);
+                if (d < best) {
+                    best = d;
+                    center = a.center;
+                    r = a.radius;
+                    found = true;
+                }
+            }
+            if (!found) {
+                return false;
+            }
         } else {
             return false;
         }
@@ -1083,6 +1043,25 @@ void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 
     report("Dimension created from object.");
 }
 
+void GeometryEngine::apply_grip_commit(std::uint64_t group) {
+    if (!grip_active_ || !store_.is_valid(grip_handle_)) {
+        return;
+    }
+    // Erase the original and create the grip-edited entity as ONE undo group --
+    // exactly the move/property-edit pattern. The edit is parametric (no baking).
+    const Command original = capture_entity(grip_handle_);
+    const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+    remove_indexed(grip_handle_);
+    push_erase_item(group, original);
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(group, nh, edited);
+    selection_ = {nh}; // keep the edited entity selected (grips follow)
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Edited.");
+}
+
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                                   std::uint64_t group) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
@@ -1104,7 +1083,9 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
             return;
         }
         std::vector<Vec2> pts(v.begin(), v.end());
-        if (!fillet_pl(pts, pl->closed, sv, radius)) {
+        const auto bspan = store_.bulges_of(*pl);
+        std::vector<double> bulges(bspan.begin(), bspan.end());
+        if (!fillet_pl(pts, bulges, pl->closed, sv, radius)) {
             report("Fillet: radius too large for that corner.");
             return;
         }
@@ -1112,7 +1093,7 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
         push_erase_item(group, orig);
-        const Command np = AddPolylineCommand{std::move(pts), closed, 0};
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0, {}, std::move(bulges)};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
         geom_dirty_ = true;
@@ -1546,6 +1527,22 @@ void GeometryEngine::apply(const Command& command) {
                     tess_tolerance_ = std::max(1e-9, kChordPx * view_world_per_px_);
                     geom_dirty_ = true; // force re-tessellation at the new resolution
                 }
+            } else if constexpr (std::is_same_v<T, GripDragCommand>) {
+                using P = GripDragCommand::Phase;
+                if (c.phase == P::Begin) {
+                    // Arm the drag only if the entity is selectable (layer on/unlocked).
+                    grip_active_ = store_.is_valid(c.handle) && selectable(c.handle);
+                    grip_handle_ = c.handle;
+                    grip_index_ = c.grip;
+                } else if (c.phase == P::Move) {
+                    grip_pos_ = c.pos; // preview recomputed in rebuild_and_publish
+                } else if (c.phase == P::Commit) {
+                    grip_pos_ = c.pos;
+                    apply_grip_commit(c.group);
+                    grip_active_ = false;
+                } else { // Cancel
+                    grip_active_ = false;
+                }
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =
@@ -1606,7 +1603,8 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, OpenDocumentCommand> || std::is_same_v<T, NewDocumentCommand> ||
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
-                std::is_same_v<T, SetViewScaleCommand>;
+                std::is_same_v<T, SetViewScaleCommand> ||
+                std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
             }
@@ -1705,6 +1703,60 @@ void GeometryEngine::rebuild_and_publish() {
                 buf.selected_line_vertices.push_back(tess[s]);
             }
         }
+    }
+
+    // Grips of the selected set (display + hit-test) + the hot grip (grabbed during
+    // a drag, else the one nearest the cursor within the pick aperture).
+    buf.grips.clear();
+    buf.hot_grip = -1;
+    {
+        std::vector<Grip> gs;
+        for (const EntityHandle h : selection_) {
+            if (!selectable(h)) {
+                continue;
+            }
+            gs.clear();
+            grips_of(store_, h, gs);
+            for (const Grip& g : gs) {
+                buf.grips.push_back(
+                    GripInfo{g.pos, h, g.index, static_cast<std::uint8_t>(g.kind)});
+            }
+        }
+        if (grip_active_) {
+            for (std::size_t i = 0; i < buf.grips.size(); ++i) {
+                if (buf.grips[i].handle == grip_handle_ && buf.grips[i].index == grip_index_) {
+                    buf.hot_grip = static_cast<int>(i);
+                    break;
+                }
+            }
+        } else if (pick_radius_ > 0.0) {
+            double best = pick_radius_ * pick_radius_;
+            for (std::size_t i = 0; i < buf.grips.size(); ++i) {
+                const double d2 = length_squared(buf.grips[i].pos - cursor_);
+                if (d2 <= best) {
+                    best = d2;
+                    buf.hot_grip = static_cast<int>(i);
+                }
+            }
+        }
+    }
+
+    // Active grip drag: preview the edited entity on a TEMPORARY store (the real
+    // store is untouched -- zero op-log churn) and publish its drawable geometry.
+    buf.grip_preview_segments.clear();
+    buf.grip_preview_fills.clear();
+    if (grip_active_ && store_.is_valid(grip_handle_)) {
+        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+        grip_preview_store_.clear();
+        grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
+        grip_preview_store_.set_dimstyle_table(store_.dimstyles());
+        const EntityProps* ep = store_.props(grip_handle_);
+        add_command_to_store(grip_preview_store_, edited,
+                             ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+        RenderSnapshot tmp;
+        build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_);
+        buf.grip_preview_segments = std::move(tmp.line_vertices);
+        buf.grip_preview_fills = std::move(tmp.fill_vertices);
     }
 
     // Rollover (hover) candidate: the entity under the cursor's pick-box. Same
