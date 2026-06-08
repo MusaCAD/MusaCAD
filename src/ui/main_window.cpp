@@ -1132,8 +1132,9 @@ bool MainWindow::selftest_grips() {
                                               {0, 0}, {20, 0}, {10, 5}, 0, 0});
     pump([this] { return viewport_->line_vertex_count() > 0; });
     engine_->submit(core::SelectPickCommand{{10, 5}, 2.0, false});
-    const bool dim_grips = pump([this] { return viewport_->grip_count() == 3; });
-    std::printf("[selftest] dimension shows grips (def + dim-line offset): %s\n",
+    // Full set: 2 ext-line origins + 2 dim-line feet + offset midpoint.
+    const bool dim_grips = pump([this] { return viewport_->grip_count() == 5; });
+    std::printf("[selftest] dimension shows full grip set (def + feet + offset): %s\n",
                 dim_grips ? "PASS" : "FAIL");
     all = all && dim_grips;
 
@@ -1141,7 +1142,7 @@ bool MainWindow::selftest_grips() {
     int off = -1;
     for (int i = 0; i < viewport_->grip_count(); ++i) {
         if (viewport_->grip_info(i).index == 2) {
-            off = i; // the dim-line offset grip
+            off = i; // a dim-line FOOT grip (a non-centre handle) -> moves the dim line
         }
     }
     if (off >= 0) {

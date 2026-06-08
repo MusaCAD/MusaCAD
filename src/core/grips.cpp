@@ -153,11 +153,20 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
             push(out, d->b, GripKind::DimDef, 1);  // ray 1
             push(out, d->line_pt, GripKind::DimDef, 2); // ray 2
         } else { // Linear / Aligned
-            push(out, d->a, GripKind::DimDef, 0);
-            push(out, d->b, GripKind::DimDef, 1);
-            const Vec2 mid = g.dim_lines.size() >= 2 ? (g.dim_lines[0] + g.dim_lines[1]) * 0.5
-                                                     : d->line_pt;
-            push(out, mid, GripKind::DimLine, 2); // dim-line offset (value unchanged)
+            // Full grip set: both extension-line origins (def points, re-measure),
+            // both dim-line ends (feet), and the offset midpoint. Indices >= 2 all
+            // slide the dim line to the cursor (edit_for_grip_drag maps them to
+            // line_pt), so the dimension is grabbable anywhere and freely placeable.
+            push(out, d->a, GripKind::DimDef, 0); // ext-line origin a
+            push(out, d->b, GripKind::DimDef, 1); // ext-line origin b
+            if (g.dim_lines.size() >= 2) {
+                push(out, g.dim_lines[0], GripKind::DimLine, 2); // dim-line foot a
+                push(out, g.dim_lines[1], GripKind::DimLine, 3); // dim-line foot b
+                push(out, (g.dim_lines[0] + g.dim_lines[1]) * 0.5, GripKind::DimLine,
+                     4); // offset / placement
+            } else {
+                push(out, d->line_pt, GripKind::DimLine, 2);
+            }
         }
         break;
     }

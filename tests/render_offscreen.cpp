@@ -202,6 +202,15 @@ int main(int argc, char* argv[]) {
     check(t_def <= t_050 && t_050 <= t_070 && t_070 <= t_100 && t_100 < t_200,
           "lineweight ladder is non-decreasing and proportional to mm");
 
+    // HiDPI fix: the framebuffer is in physical pixels, so at device-pixel-ratio 2x
+    // the same lineweight must render ~2x thicker (same PHYSICAL thickness on a 2x
+    // laptop as a 1x monitor). Default dpr=1 above; bump to 2 and re-measure.
+    renderer.set_device_pixel_ratio(2.0f);
+    const int t_100_2x = measure_thickness(100, true);
+    renderer.set_device_pixel_ratio(1.0f);
+    std::printf("DPR: 1.00mm at dpr=1 -> %dpx, dpr=2 -> %dpx (expect ~2x)\n", t_100, t_100_2x);
+    check(t_100_2x >= t_100 * 2 - 1, "lineweight scales with device-pixel-ratio (HiDPI fix)");
+
     // Restore the big-scene camera + re-sync the uploaded scene (the thickness
     // probes uploaded their own tiny scenes) before the zero-re-upload check.
     cam.frame_bounds(Vec2{0.0, 0.0}, Vec2{static_cast<double>(side), static_cast<double>(side)},

@@ -215,12 +215,16 @@ void ViewportWindow::render_loop(std::stop_token token) {
                             static_cast<float>(cursor_px_x_.load(std::memory_order_relaxed)),
                             static_cast<float>(cursor_px_y_.load(std::memory_order_relaxed)));
         renderer.set_overlay_text(overlay_text(stats.fps(), stats.average_frame_ms()));
-        // AutoCAD-accurate lineweight: anchor mm->px to the real display density.
-        // physicalDotsPerInch is in physical device pixels, matching the framebuffer.
+        // AutoCAD-accurate, HiDPI-correct lineweight. physicalDotsPerInch is a
+        // *logical* pixel density (Qt derives it from device-independent geometry);
+        // the framebuffer is in PHYSICAL pixels, so the renderer multiplies this by
+        // the device-pixel-ratio. Both are pushed every frame, so dragging the
+        // window between a normal monitor and a HiDPI laptop self-corrects.
         if (const QScreen* scr = screen(); scr != nullptr) {
             renderer.set_device_pixels_per_mm(
                 static_cast<float>(scr->physicalDotsPerInch() / 25.4));
         }
+        renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
         renderer.render(*target, snap, cam);
         context.swapBuffers(this);
 
@@ -262,10 +266,10 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                                   snap_y_.load(std::memory_order_relaxed)};
             }
-            processor_->set_pick_radius(10.0 / scale);
+            processor_->set_pick_radius(10.0 * dpr / scale);
             processor_->pick_point(world, snap);
             rebuild_overlay();
-        } else if (const int gi = grip_at(world, 10.0 / scale); gi >= 0) {
+        } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
             // drag. ORTHO/POLAR resolve relative to the grip's origin.
             core::GripInfo ginfo;
@@ -275,7 +279,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             }
             dragging_grip_ = true;
             grip_origin_ = ginfo.pos;
-            processor_->set_pick_radius(10.0 / scale);
+            processor_->set_pick_radius(10.0 * dpr / scale);
             processor_->set_last_point(ginfo.pos);
             engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
                                                  ginfo.index, {}, 0});
@@ -316,7 +320,7 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         modes_ ? modes_->snap_mask.load(std::memory_order_relaxed) : core::kAllSnaps;
     // The pick aperture is always sent (it drives the rollover hover-pick too);
     // the `osnap` flag gates only the snap-point computation.
-    core::SetCursorCommand cmd{world, kApertonPx / scale, osnap, mask, {}, false};
+    core::SetCursorCommand cmd{world, kApertonPx * dpr / scale, osnap, mask, {}, false};
     if (processor_ != nullptr) {
         if (const auto from = processor_->active_from()) {
             cmd.from = *from;
@@ -390,9 +394,9 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
             scale = camera_.scale();
         }
         const double drag_px = core::length(rel_screen - sel_start_screen_);
-        if (drag_px < 4.0) {
+        if (drag_px < 4.0 * dpr) {
             // Single-click pick.
-            engine_.submit(core::SelectPickCommand{world, 10.0 / scale, sel_additive_});
+            engine_.submit(core::SelectPickCommand{world, 10.0 * dpr / scale, sel_additive_});
         } else {
             // Window (left->right) vs crossing (right->left), per AutoCAD.
             const bool crossing = rel_screen.x < sel_start_screen_.x;

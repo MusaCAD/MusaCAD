@@ -710,9 +710,10 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
 * **AutoCAD-accurate lineweight (corrected).** The Phase-14 mapping
   (`px = max(1.5, mm·6)`, a magic constant) is replaced by a DPI-anchored one:
   `px = max(1.0, mm × device_px_per_mm)` with `device_px_per_mm = screen_DPI / 25.4`.
-  The framebuffer is in physical device pixels, so Qt's `QScreen::physicalDotsPerInch`
-  already folds in the device-pixel-ratio; the viewport sets it each frame, and the
-  renderer defaults to a 96-DPI assumption (~3.78 px/mm) for offscreen/test use.
+  (Phase 19 corrects a HiDPI bug here: `physicalDotsPerInch` is actually a *logical*
+  density, so the effective px/mm must also be multiplied by the device-pixel-ratio —
+  see "HiDPI / device-pixel-ratio correctness" below.) The renderer defaults to a
+  96-DPI assumption (~3.78 px/mm) for offscreen/test use.
   "Default" (and any sub-pixel weight) floors to a **1px hairline** — exactly how
   AutoCAD shows the default lineweight. Still zoom-independent (no camera scale).
   Verified pixel widths @96 DPI: 0.25mm→1, 0.50mm→2, 0.70mm→~3, 1.00mm→4, 2.00mm→8.
@@ -830,13 +831,19 @@ commit. It reuses the transient-preview-then-commit discipline (Phase 7) for *ed
   (OSNAP/ORTHO/POLAR honored); release sends `Commit`.
 * **Per-entity grips.** Line (2 endpoints + midpoint-move), Circle (centre + 4
   quadrant-radius), Arc (centre + 2 endpoints[angle] + mid[radius]), Polyline/Rectangle
-  (per-vertex move), Text (insertion). Dimensions get the richest set: def-point grips
-  (drag → **re-measures**, the value updates live), and the **dim-line offset** grip
-  (move `line_pt` → the dim line slides, value unchanged) — all on the existing `DimData`
-  (no struct change). An independent text-reposition grip is deferred (needs a stored
-  text offset + a format bump). Object-based dims store def points only (Ph13/Ph15), so a
-  def-point drag simply re-measures from the dragged points — the source entity is never
-  back-referenced, so there is **no dangling reference** to break.
+  (per-vertex move), Text (insertion). Dimensions get the richest set. **Phase 19**
+  expands a Linear/Aligned dimension to a **full 5-grip set** — both extension-line
+  origins (def points), **both dim-line ends (feet)**, and the offset midpoint — so it
+  is grabbable from many points, not one central handle. Dragging a def point
+  **re-measures** (live value); dragging any of the three dim-line grips (the two feet
+  or the midpoint) slides the whole dim line to the cursor (value unchanged), placing
+  the dimension anywhere. This needed **no edit-path fork**: `edit_for_grip_drag` maps
+  grip index 0→`a`, 1→`b`, and any index ≥2→`line_pt`, so the extra feet are just more
+  entries in `grips_of` — all on the existing `DimData` (no struct change). Radius/
+  Diameter keep centre-move + edge-re-measure + placement; an independent text-only
+  reposition grip stays deferred (needs a stored text offset + format bump). Object-based
+  dims store def points only (Ph13/Ph15), so a def-point drag re-measures from the dragged
+  points — the source entity is never back-referenced, so there is **no dangling reference**.
 * **Stays parametric.** Dragging a circle quadrant changes its `radius`, not a baked
   segment list; dimensions stay def-points. No per-entity struct grew (`LineData` 40 B,
   `DimData` 72 B); grips are computed on demand, not stored. A grip-edited drawing
@@ -870,6 +877,30 @@ recoverable radius.
   vertices and keep bulges (the arc recomputes). Native format **v5** appends per-vertex
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
+
+## HiDPI / device-pixel-ratio correctness (Phase 19)
+
+Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop.
+
+* **Root cause.** The GL framebuffer is correctly sized in **physical** pixels
+  (`width()*devicePixelRatio()`), but the lineweight density used
+  `QScreen::physicalDotsPerInch()/25.4`, which is a **logical** pixel density (Qt
+  derives `physicalDotsPerInch` from device-independent geometry). It therefore omits
+  the `×dpr`, so on a 2× display every line was half its intended physical thickness;
+  fixed-size screen markers (grips, snap glyph, crosshair/pick-box) were undersized for
+  the same reason.
+* **Fix (renderer owns it, one place).** `ViewportRenderer::set_device_pixel_ratio(dpr)`
+  is pushed every frame from `QWindow::devicePixelRatio()`. The effective lineweight
+  density is `device_px_per_mm_ × dpr`, and all screen-space marker sizes (grip square,
+  snap marker + stroke, crosshair pick-box) are scaled by `dpr`. So a 0.25 mm line — and
+  a grip square — are the **same physical size** on a 1× monitor and a 2× laptop;
+  AutoCAD's hairline (Ph15) is preserved, now equally thin everywhere. The pick/grab/snap
+  apertures are likewise `×dpr` (consistent physical pick tolerance). Default `dpr=1`
+  leaves normal monitors and the offscreen harness unchanged; the harness verifies a
+  given mm renders ~2× thicker at `dpr=2`.
+* **Display change.** Both the DPI and the DPR are pushed every frame from the live
+  `QScreen`, so dragging the window between the laptop panel and an external monitor
+  self-corrects on the next frame (no explicit screen-change signal needed).
 
 ## Build / phase status
 
@@ -936,6 +967,12 @@ recoverable radius.
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 19 — complete:** full dimension grip set (both ext-line origins, both
+  dim-line feet, offset midpoint — grabbable anywhere, freely placeable; no edit-path
+  fork, `DimData` unchanged) + HiDPI device-pixel-ratio lineweight fix (lineweights and
+  screen markers are the same physical size on 1× and 2× displays; the renderer scales
+  by `dpr`, self-correcting on monitor change). 206 tests (dev) / 205 (TSan) pass; insert
+  ~40 ns/line, draw calls bounded.
 * **Phase 17 — complete:** grip editing (direct manipulation) — a per-entity grip
   system (`core/grips`) with grips for line/circle/arc/polyline/rectangle/text and the
   rich dimension set (dim-line offset + def-point re-measure). A grip drag is a

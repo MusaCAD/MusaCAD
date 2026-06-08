@@ -40,7 +40,7 @@ TEST_CASE("grips_of exposes the expected grips per entity") {
 
     g.clear();
     grips_of(s, s.add_dimension(DimType::Linear, {0, 0}, {10, 0}, {5, 3}, 0), g);
-    REQUIRE(g.size() == 3); // def a, def b, dim-line offset
+    REQUIRE(g.size() == 5); // def a, def b, both dim-line feet, offset midpoint
 }
 
 TEST_CASE("edit_for_grip_drag edits parameters, staying parametric") {
@@ -138,6 +138,52 @@ TEST_CASE("Grip drag is a transient preview; commits as one undo group on releas
     REQUIRE(wait_until(engine, [](const auto& s) {
         return verts_near(s, s.line_vertices, {10, 10}, 0.1) == 0 &&
                verts_near(s, s.line_vertices, {10, 0}, 0.1) > 0;
+    }));
+    engine.stop();
+}
+
+TEST_CASE("Dimension: a non-centre grip is grabbable; dim-line drag moves it freely") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
+                                      {0, 0}, {10, 0}, {5, 3}, 0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(SelectPickCommand{{5, 3}, 2.0, false});
+    // Full grip set: both def points, both dim-line feet, the offset midpoint.
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grips.size() == 5; }));
+
+    // Grab a dim-line FOOT grip (index 2) -- a non-centre handle.
+    GripInfo foot{};
+    bool found = false;
+    for (const GripInfo& g : engine.snapshot().grips) {
+        if (g.index == 2) {
+            foot = g;
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    REQUIRE(foot.kind == static_cast<std::uint8_t>(GripKind::DimLine));
+    const std::uint64_t gv = engine.snapshot().geometry_version;
+
+    // Drag it far away -> the whole dim line slides there (transient preview only).
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, foot.handle, foot.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Move, {}, 0, {5, 12}, 0});
+    REQUIRE(wait_until(engine,
+                       [](const auto& s) { return !s.grip_preview_segments.empty(); }));
+    {
+        const RenderSnapshot& s = engine.snapshot();
+        REQUIRE(s.geometry_version == gv);                                // zero churn
+        REQUIRE(verts_near(s, s.line_vertices, {10, 12}, 0.3) == 0);       // store untouched
+        REQUIRE(verts_near(s, s.grip_preview_segments, {10, 12}, 0.3) > 0); // preview moved
+    }
+    // Release -> one undo group; the dim line is now up at y~12.
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {5, 12}, 9});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return verts_near(s, s.line_vertices, {10, 12}, 0.3) > 0;
+    }));
+    engine.submit(UndoLastGroupCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return verts_near(s, s.line_vertices, {10, 12}, 0.3) == 0;
     }));
     engine.stop();
 }

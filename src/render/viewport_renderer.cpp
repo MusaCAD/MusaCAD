@@ -315,10 +315,14 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         cmd_->set_uniform_mat3("u_transform", view);
         cmd_->set_uniform_vec2("u_viewport", static_cast<float>(target.width()),
                                static_cast<float>(target.height()));
+        // HiDPI fix: the framebuffer is in physical pixels, so the effective
+        // density is the logical px/mm times the device-pixel-ratio -- without this
+        // every line is dpr x too thin on a HiDPI display.
+        const float eff_px_per_mm = device_px_per_mm_ * device_pixel_ratio_;
         const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
                                     std::uint32_t count) {
             const float w =
-                snapshot.lineweight_display ? lineweight_px(lw, device_px_per_mm_) : 1.0f;
+                snapshot.lineweight_display ? lineweight_px(lw, eff_px_per_mm) : device_pixel_ratio_;
             cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
             cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
                                    static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
@@ -524,7 +528,9 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
     // AutoCAD-style cursor: full-screen crosshair + a center pick-box. Pure
     // render-side, from the raw cursor -> always smooth, no geometry round-trip.
     if (cursor_visible_) {
-        constexpr double kPickBoxHalfPx = 6.0; // pick-box half-extent (adjustable)
+        // Pick-box at a constant *physical* size: scale by DPR so it isn't tiny on
+        // a HiDPI framebuffer.
+        const double kPickBoxHalfPx = 6.0 * device_pixel_ratio_;
         const double cx = static_cast<double>(cursor_x_);
         const double cy = static_cast<double>(cursor_y_);
         std::vector<core::Vec2> seg;
@@ -550,10 +556,12 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
     if (snapshot.has_snap) {
         const core::Vec2 sp = camera.world_to_screen(snapshot.snap_point);
         std::vector<core::Vec2> base;
-        append_marker(base, snapshot.snap_type, sp.x, sp.y, theme::kSnapMarkerHalfPx);
+        // Constant physical size: scale by DPR (HiDPI-consistent).
+        append_marker(base, snapshot.snap_type, sp.x, sp.y,
+                      theme::kSnapMarkerHalfPx * device_pixel_ratio_);
         // Fake a bold stroke by overdrawing the glyph at small offsets (core-GL
         // line width is unreliable). Keeps it one draw call.
-        const double o = theme::kMarkerStrokePx;
+        const double o = theme::kMarkerStrokePx * device_pixel_ratio_;
         std::vector<core::Vec2> seg;
         seg.reserve(base.size() * 4);
         for (const core::Vec2 off : {core::Vec2{0, 0}, core::Vec2{o, 0}, core::Vec2{0, o},
@@ -576,7 +584,7 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
     // Grips of the selected set: small filled squares at a constant pixel size, the
     // grabbed/hovered one in the hot colour. Batched: at most two fill draws.
     if (!snapshot.grips.empty()) {
-        const double hpx = theme::kGripHalfPx;
+        const double hpx = theme::kGripHalfPx * device_pixel_ratio_; // physical-consistent
         std::vector<core::Vec2> normal;
         std::vector<core::Vec2> hot;
         for (std::size_t i = 0; i < snapshot.grips.size(); ++i) {

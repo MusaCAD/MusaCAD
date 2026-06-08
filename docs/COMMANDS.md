@@ -178,8 +178,10 @@ button dropdown).
 | Arc (centre-move + 2 endpoints + mid-radius) | Implemented |
 | Polyline / Rectangle (per-vertex move) | Implemented |
 | Text (insertion-point move) | Implemented |
+| Dimension: full grip set — both ext-line origins, both dim-line ends, offset midpoint (grab anywhere, place anywhere) | Implemented (Linear/Aligned) |
 | Dimension: **dim-line offset** (move the dim line, value unchanged) | Implemented |
 | Dimension: def-point drag (re-measures, live value) | Implemented (Linear/Aligned/Radius/Diameter/Angular) |
+| HiDPI: lineweights + grip/snap/crosshair sizes are the same physical size on 1×/2× displays (DPR-corrected) | Implemented |
 | Dimension: independent text-reposition grip | Planned (needs a stored text offset) |
 | Add/remove polyline vertex via grips | Planned |
 

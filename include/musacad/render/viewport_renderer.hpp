@@ -52,14 +52,25 @@ public:
     }
     void set_grid_visible(bool visible) { grid_visible_ = visible; }
 
-    /// Device pixel density for AutoCAD-accurate lineweight display: framebuffer
-    /// pixels per millimetre = screen DPI / 25.4 (the GL target is in physical
-    /// device pixels, so the device-pixel-ratio is already folded into the DPI).
-    /// Defaults to a 96-DPI assumption (~3.78 px/mm) for offscreen/test use; the
-    /// real viewport overrides it from the active QScreen.
+    /// Device pixel density for AutoCAD-accurate lineweight display, in *logical*
+    /// pixels per millimetre = screen DPI / 25.4. The framebuffer is in PHYSICAL
+    /// device pixels, so the effective px/mm used for rendering is this times the
+    /// device-pixel-ratio (see set_device_pixel_ratio) -- that is the HiDPI fix:
+    /// a 0.25 mm line is the same physical thickness on a 1x monitor and a 2x
+    /// laptop. Defaults to a 96-DPI assumption (~3.78 px/mm) for offscreen/test use.
     void set_device_pixels_per_mm(float px_per_mm) {
         if (px_per_mm > 0.0f) {
             device_px_per_mm_ = px_per_mm;
+        }
+    }
+
+    /// Device-pixel-ratio of the target surface (Qt devicePixelRatio). The
+    /// framebuffer is DPR x denser than logical pixels, so lineweights AND all
+    /// screen-space markers (grips, snap glyph, crosshair/pick-box) are scaled by
+    /// it to a consistent physical size across displays. Default 1 (offscreen/test).
+    void set_device_pixel_ratio(float dpr) {
+        if (dpr > 0.0f) {
+            device_pixel_ratio_ = dpr;
         }
     }
 
@@ -99,6 +110,7 @@ private:
     float cursor_y_ = 0.0f;
     bool grid_visible_ = true;
     float device_px_per_mm_ = 96.0f / 25.4f; // ~3.78 px/mm @ 96 DPI (AutoCAD default)
+    float device_pixel_ratio_ = 1.0f;        // Qt devicePixelRatio (HiDPI scaling)
     RenderOverlay overlay_;
 
     std::uint64_t uploaded_version_ = ~0ull;
