@@ -69,6 +69,13 @@ void ViewportWindow::zoom_scale(double factor) {
     camera_.zoom_about({cx, cy}, factor);
 }
 
+void ViewportWindow::open_properties() {
+    // The processor runs on the GUI thread, so forwarding directly is safe.
+    if (properties_toggle_callback_) {
+        properties_toggle_callback_();
+    }
+}
+
 void ViewportWindow::update_viewport_size() noexcept {
     const double dpr = devicePixelRatio();
     fb_width_.store(std::max(1, static_cast<int>(static_cast<double>(width()) * dpr)),
@@ -187,6 +194,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
             std::scoped_lock lock(grips_mutex_);
             grips_cache_ = snap.grips;
             text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
+            selection_summary_ = snap.selection_summary; // PR palette
         }
         {
             std::scoped_lock lock(layers_mutex_);

@@ -56,6 +56,8 @@ public:
     virtual ~ViewControl() = default;
     virtual void zoom_extents() = 0;
     virtual void zoom_scale(double factor) = 0;
+    /// Toggle the Properties palette (PR). Default no-op (headless/tests).
+    virtual void open_properties() {}
 };
 
 /// The services a running command uses to interact with the system. Commands

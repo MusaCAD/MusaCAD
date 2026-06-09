@@ -8,6 +8,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/properties.hpp"
+#include "musacad/core/properties_palette.hpp"
 #include "musacad/core/snap.hpp"
 
 namespace musacad::core {
@@ -130,6 +131,11 @@ struct RenderSnapshot {
     // Interaction state, not part of the checksum.
     std::vector<TextEditTarget> text_edit_targets;
 
+    // Aggregated property view of the current selection (for the PR palette):
+    // values + per-field "varies" flags. Computed on the geometry thread so the
+    // UI never queries the store. Interaction state, not part of the checksum.
+    SelectionSummary selection_summary;
+
     // Last command-result message from the geometry thread (e.g. "Filleted." or
     // "Nothing to fillet."). `status_version` bumps on each new message so the UI
     // can echo it once. Honest feedback: set by the op that actually ran, so the
@@ -164,6 +170,7 @@ struct RenderSnapshot {
         grip_preview_segments.clear();
         grip_preview_fills.clear();
         text_edit_targets.clear();
+        selection_summary = SelectionSummary{};
         checksum = 0;
         bounds_min = {};
         bounds_max = {};

@@ -11,6 +11,7 @@
 #include "musacad/ui/viewport_modes.hpp"
 
 class QTimer;
+class QDockWidget;
 class QLabel;
 class QAction;
 class QToolButton;
@@ -28,6 +29,7 @@ class ViewportWindow;
 class CommandLineWidget;
 class RibbonBar;
 class ParameterDialog;
+class PropertiesPanel;
 
 /// The application's top-level window: an AutoCAD-2023-style Ribbon frame
 /// (Quick Access Toolbar + tabbed ribbon panels + file/layout tabs), an OpenGL
@@ -81,6 +83,9 @@ public:
     /// Real-window self-test: create MTEXT (two corners + text) and QLEADER (arrow
     /// + vertices + text) via the command line; both render.
     bool selftest_mtext();
+    /// Real-window self-test: PR palette multiplicity (none/one/many-same/mixed),
+    /// universal + text property edits via the panel, observed store change + undo.
+    bool selftest_properties();
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
@@ -111,6 +116,8 @@ private:
     void open_layer_dialog();
     void set_selection_color();
     void sync_layer_combo();
+    void toggle_properties();      ///< PR: show/hide the Properties palette dock
+    void sync_properties_panel();  ///< push the latest selection summary to the panel
 
     // Persistence (UI side: file dialogs + messages; never touches the store).
     void file_new();
@@ -129,6 +136,8 @@ private:
     RibbonBar* ribbon_ = nullptr;
     ViewportWindow* viewport_ = nullptr;          // owned by the window-container widget
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
+    PropertiesPanel* properties_panel_ = nullptr; // owned by its dock
+    QDockWidget* properties_dock_ = nullptr;
     QLabel* coord_label_ = nullptr;
     QTimer* title_timer_ = nullptr;
     std::vector<QToolButton*> selection_required_buttons_;

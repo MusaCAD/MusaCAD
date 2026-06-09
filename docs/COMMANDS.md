@@ -66,6 +66,13 @@ suggests both); aliases are case-insensitive.
 | **Double-click a TEXT / MTEXT / QLEADER label → edit its content** (dark modal editor, pre-filled) | (double-click) | Implemented (Ph21) |
 | **TEXTEDIT / DDEDIT** (pick text → type new content; scriptable path) | ED / TEXTEDIT / DDEDIT | Implemented (Ph21) |
 | Text edit = one undo group, preserves layer/properties/position (not delete+recreate) | — | Implemented (Ph21) |
+| **Properties palette (PR): dockable, context-sensitive panel for the selection** | PR / PROPERTIES / PROPS / CH | Implemented (Ph22) |
+| PR multiplicity: nothing / one / many-same / many-mixed, with **\*VARIES\*** where values differ; edits set all | — | Implemented (Ph22) |
+| PR universal props: **Layer / Color / Linetype / Lineweight** (ByLayer or override) editable single + multi + mixed | — | Implemented (Ph22) |
+| PR Geometry group (read-only): line length/ends, circle/arc center+radius, text position | — | Implemented (Ph22; numeric geometry editing Planned) |
+| PR full **Text / MTEXT** group: contents, height, rotation, justify, width factor, line spacing, defined width, attachment, font (read-only) | — | Implemented (Ph22) |
+| PR deep **Dimension** group (per-element colors, arrow type/size, dimstyle overrides) | — | Planned (universal props cover color/layer/linetype/lineweight today) |
+| PR numeric **geometry editing** for line/circle/arc/polyline/leader | — | Planned (read-only display today) |
 | LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
 | DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |

@@ -41,6 +41,7 @@ public:
     // ViewControl (callable from the GUI thread).
     void zoom_extents() override;
     void zoom_scale(double factor) override;
+    void open_properties() override;
 
 Q_SIGNALS:
     void cursorWorldMoved(double x, double y);
@@ -130,6 +131,18 @@ public:
         text_edit_callback_ = std::move(cb);
     }
 
+    /// The aggregated property view of the current selection (PR palette). Copied
+    /// lock-free under the cache lock; the UI never queries the store.
+    [[nodiscard]] core::SelectionSummary selection_summary() const {
+        std::scoped_lock lock(grips_mutex_);
+        return selection_summary_;
+    }
+    /// PR command -> toggle the palette. The MainWindow (which owns the dock) sets
+    /// this; ViewControl::open_properties() forwards to it on the GUI thread.
+    void set_properties_toggle_callback(std::function<void()> cb) {
+        properties_toggle_callback_ = std::move(cb);
+    }
+
     /// Snapshot of the editable text contents (for self-tests / observed-outcome
     /// checks). Copied under the cache lock.
     [[nodiscard]] std::vector<std::string> text_contents() const {
@@ -197,6 +210,8 @@ private:
     std::vector<core::GripInfo> grips_cache_;
     std::vector<core::TextEditTarget> text_targets_; // for double-click-to-edit (same mutex)
     std::function<void(const TextEditRequest&)> text_edit_callback_;
+    core::SelectionSummary selection_summary_; // PR palette (same mutex)
+    std::function<void()> properties_toggle_callback_;
     bool dragging_grip_ = false;
     core::Vec2 grip_origin_{};
 

@@ -1407,4 +1407,15 @@ void TextEditCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// PROPERTIES (PR): toggle the Properties palette via the view, then finish.
+// ---------------------------------------------------------------------------
+void PropertiesCommand::start(CommandContext& ctx) {
+    if (ViewControl* v = ctx.view(); v != nullptr) {
+        v->open_properties();
+    }
+    ctx.echo("Properties palette toggled.");
+    done_ = true;
+}
+
 } // namespace musacad::command

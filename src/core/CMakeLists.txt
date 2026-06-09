@@ -13,7 +13,8 @@ add_library(musacad_core STATIC
     text/stroke_font.cpp
     text/mtext.cpp
     dimension.cpp
-    grips.cpp)
+    grips.cpp
+    properties_registry.cpp)
 
 add_library(musacad::core ALIAS musacad_core)
 

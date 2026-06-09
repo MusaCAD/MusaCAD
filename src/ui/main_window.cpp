@@ -48,6 +48,7 @@
 #include "musacad/ui/command_line_widget.hpp"
 #include "musacad/ui/layer_dialog.hpp"
 #include "musacad/ui/parameter_dialog.hpp"
+#include "musacad/ui/properties_panel.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
 #include "musacad/ui/viewport_window.hpp"
 
@@ -153,6 +154,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
         open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
     });
+
+    // Properties palette (PR): a dockable panel, hidden by default (the default
+    // runtime state stays as before). PR toggles it; the panel edits flow back as
+    // SetPropertyCommand on the geometry queue.
+    properties_panel_ = new PropertiesPanel;
+    properties_dock_ = new QDockWidget(QStringLiteral("Properties"), this);
+    properties_dock_->setObjectName(QStringLiteral("PropertiesDock"));
+    properties_dock_->setWidget(properties_panel_);
+    properties_dock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                                  QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, properties_dock_);
+    properties_dock_->hide();
+    properties_panel_->set_edit_callback([this](core::PropertyId id, const core::PropertyValue& v) {
+        engine_->submit(core::SetPropertyCommand{id, v, processor_->begin_group()});
+    });
+    viewport_->set_properties_toggle_callback([this] { toggle_properties(); });
+
     command_widget_->focus_input();
 
     // Application-wide Delete/Backspace -> erase selection. An event filter on
@@ -175,6 +193,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             b->setEnabled(sel > 0);
         }
         sync_layer_combo();
+        sync_properties_panel();
         // Echo each new engine command-result (honest feedback) once.
         const std::uint64_t sv = viewport_->status_version();
         if (sv != last_status_version_) {
@@ -554,8 +573,23 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             // usual state, since it holds focus by default -- must NOT block the
             // Delete-erases-selection binding.
             const bool typing = command_widget_ != nullptr && command_widget_->is_typing();
-            if (!typing && processor_ != nullptr && viewport_ != nullptr &&
-                !processor_->has_active_command() && viewport_->selection_count() > 0) {
+            // ...but also never hijack the key away from a focused text editor or a
+            // Properties-palette field (else Backspace while editing e.g. text height
+            // would erase the selected entity instead of a digit).
+            QWidget* fw = QApplication::focusWidget();
+            // The command line is itself a QLineEdit but has its own (is_typing)
+            // logic above -- exempt it so an empty, focused command line still lets
+            // Delete erase the selection.
+            const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
+                                (fw == static_cast<QWidget*>(command_widget_) ||
+                                 command_widget_->isAncestorOf(fw));
+            const bool in_text_input = !in_cmd && (qobject_cast<QLineEdit*>(fw) != nullptr ||
+                                                   qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+            const bool in_properties = properties_dock_ != nullptr && fw != nullptr &&
+                                       properties_dock_->isAncestorOf(fw);
+            if (!typing && !in_text_input && !in_properties && processor_ != nullptr &&
+                viewport_ != nullptr && !processor_->has_active_command() &&
+                viewport_->selection_count() > 0) {
                 processor_->delete_selection();
                 return true; // consume: erased the selection
             }
@@ -923,6 +957,26 @@ void MainWindow::sync_layer_combo() {
     }
 }
 
+void MainWindow::toggle_properties() {
+    if (properties_dock_ == nullptr) {
+        return;
+    }
+    const bool show = !properties_dock_->isVisible();
+    properties_dock_->setVisible(show);
+    if (show) {
+        sync_properties_panel(); // populate immediately on open
+    }
+}
+
+void MainWindow::sync_properties_panel() {
+    if (properties_panel_ == nullptr || viewport_ == nullptr || properties_dock_ == nullptr ||
+        !properties_dock_->isVisible()) {
+        return; // only the visible palette needs refreshing
+    }
+    properties_panel_->update_view(viewport_->selection_summary(), viewport_->layers(),
+                                   viewport_->current_layer());
+}
+
 void MainWindow::open_layer_dialog() {
     auto* dlg = new LayerDialog([this] { return viewport_->layers(); },
                                 [this] { return viewport_->current_layer(); },
@@ -1235,6 +1289,153 @@ bool MainWindow::selftest_mtext() {
                 undo_ok ? "PASS" : "FAIL");
     all = all && undo_ok;
 
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
+bool MainWindow::selftest_properties() {
+    using core::PropertyId;
+    using core::PropertyValue;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    properties_dock_->show(); // make the palette live so sync runs
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    const auto summary = [this] { return viewport_->selection_summary(); };
+
+    // (1) Nothing selected -> empty summary.
+    const bool none_ok = pump([&] { return summary().count == 0 && summary().fields.empty(); });
+
+    // Build: two lines (one recoloured), a circle, a text.
+    engine_->submit(core::AddLineCommand{Vec2{0, 0}, Vec2{10, 0}, 1});
+    engine_->submit(core::AddLineCommand{Vec2{0, 5}, Vec2{10, 5}, 2});
+    engine_->submit(core::AddCircleCommand{Vec2{30, 0}, 4.0, 3});
+    engine_->submit(core::AddTextCommand{Vec2{0, 20}, 2.5, 0.0, 0, "HELLO", 4});
+    pump([this] { return viewport_->line_vertex_count() > 0; });
+
+    // (2) One entity -> its full set (universal + Geometry). Sync the panel inside
+    // the predicate so it reflects the live summary (decoupled from the 100ms timer).
+    engine_->submit(core::SelectPickCommand{{5, 0}, 1.0, false});
+    const bool one_ok = pump([&] {
+        sync_properties_panel();
+        return summary().count == 1 && !summary().mixed &&
+               properties_panel_->has_field(PropertyId::Layer) &&
+               properties_panel_->has_field(PropertyId::GeomLength);
+    });
+    std::printf("[selftest] PR one-entity shows universal+geometry: %s\n", one_ok ? "PASS" : "FAIL");
+
+    // (3) Many same type -> shared set + VARIES where they differ. Recolour line #2
+    // first so Color varies across the two lines.
+    engine_->submit(core::SelectPickCommand{{5, 5}, 1.0, false});
+    pump([&] { return summary().count == 1; });
+    engine_->submit(core::SetPropertyCommand{
+        PropertyId::Color, [] { PropertyValue v; v.flag = false; v.color = {255, 0, 0}; return v; }(),
+        processor_->begin_group()});
+    pump([&] { return !summary().fields.empty(); });
+    engine_->submit(core::SelectPickCommand{{5, 0}, 1.0, false});
+    engine_->submit(core::SelectPickCommand{{5, 5}, 1.0, true}); // additive -> 2 lines
+    const bool many_ok = pump([&] {
+        sync_properties_panel();
+        return summary().count == 2 && !summary().mixed &&
+               properties_panel_->field_varies(PropertyId::Color);
+    });
+    std::printf("[selftest] PR many-same shows shared set with *VARIES*: %s\n",
+                many_ok ? "PASS" : "FAIL");
+    all = all && none_ok && one_ok && many_ok;
+
+    // (4) Mixed types -> only universal props (Geometry/Text excluded).
+    engine_->submit(core::SelectPickCommand{{5, 0}, 1.0, false}); // a line
+    engine_->submit(core::SelectPickCommand{{30, 4}, 1.5, true}); // + the circle
+    const bool mixed_ok = pump([&] {
+        sync_properties_panel();
+        return summary().count == 2 && summary().mixed &&
+               properties_panel_->has_field(PropertyId::Layer) &&
+               !properties_panel_->has_field(PropertyId::GeomLength);
+    });
+    std::printf("[selftest] PR mixed shows only universal props: %s\n", mixed_ok ? "PASS" : "FAIL");
+    all = all && mixed_ok;
+
+    // (5) Universal edit (single) via the panel -> store changed + re-rendered; undo.
+    engine_->submit(core::SelectPickCommand{{5, 0}, 1.0, false});
+    pump([&] { sync_properties_panel(); return summary().count == 1; });
+    properties_panel_->test_commit(
+        PropertyId::Color, [] { PropertyValue v; v.flag = false; v.color = {0, 200, 0}; return v; }());
+    const bool color_ok = pump([&] {
+        sync_properties_panel();
+        const auto v = properties_panel_->field_value(PropertyId::Color);
+        return !v.flag && v.color == core::Rgb{0, 200, 0};
+    });
+    engine_->submit(core::UndoLastGroupCommand{});
+    // Undo leaves the selection pointing at the now-recreated handle's predecessor;
+    // re-select to inspect the genuinely reverted entity in the store.
+    engine_->submit(core::SelectPickCommand{{5, 0}, 1.0, false});
+    const bool color_undo = pump([&] {
+        sync_properties_panel();
+        return properties_panel_->has_field(PropertyId::Color) &&
+               properties_panel_->field_value(PropertyId::Color).flag; // back to ByLayer
+    });
+    std::printf("[selftest] PR universal color edit + undo (observed): %s\n",
+                (color_ok && color_undo) ? "PASS" : "FAIL");
+    all = all && color_ok && color_undo;
+
+    // (6) Text deep edit via the panel -> height changes + re-lays-out; undo.
+    engine_->submit(core::SelectPickCommand{{1, 19}, 2.0, false});
+    const bool text_sel = pump([&] {
+        sync_properties_panel();
+        return summary().count == 1 && properties_panel_->has_field(PropertyId::TextHeight);
+    });
+    properties_panel_->test_commit(PropertyId::TextHeight,
+                                   [] { PropertyValue v; v.num = 6.0; return v; }());
+    const bool height_ok = pump([&] {
+        sync_properties_panel();
+        return properties_panel_->field_value(PropertyId::TextHeight).num > 5.5;
+    });
+    engine_->submit(core::UndoLastGroupCommand{});
+    engine_->submit(core::SelectPickCommand{{1, 19}, 2.0, false}); // re-select reverted text
+    const bool height_undo = pump([&] {
+        sync_properties_panel();
+        return properties_panel_->has_field(PropertyId::TextHeight) &&
+               properties_panel_->field_value(PropertyId::TextHeight).num < 3.0;
+    });
+    std::printf("[selftest] PR text height edit + undo (observed): %s\n",
+                (text_sel && height_ok && height_undo) ? "PASS" : "FAIL");
+    all = all && text_sel && height_ok && height_undo;
+
+    // (7) Regression: Backspace while a PR field is focused must edit the field, NOT
+    // erase the selected entity (the global Delete/Backspace binding must yield).
+    engine_->submit(core::SelectPickCommand{{1, 19}, 2.0, false});
+    pump([&] {
+        sync_properties_panel();
+        return summary().count == 1 &&
+               properties_panel_->editor_widget(PropertyId::TextHeight) != nullptr;
+    });
+    bool bksp_ok = false;
+    if (QWidget* he = properties_panel_->editor_widget(PropertyId::TextHeight); he != nullptr) {
+        he->setFocus(Qt::OtherFocusReason);
+        QCoreApplication::processEvents();
+        QKeyEvent ev(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+        QApplication::sendEvent(he, &ev);
+        for (int i = 0; i < 60; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        bksp_ok = summary().count == 1; // entity survived the Backspace
+    }
+    std::printf("[selftest] PR Backspace in field does not erase entity: %s\n",
+                bksp_ok ? "PASS" : "FAIL");
+    all = all && bksp_ok;
+
+    properties_dock_->hide();
     engine_->submit(core::NewDocumentCommand{});
     return all;
 }

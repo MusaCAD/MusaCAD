@@ -122,6 +122,8 @@ CommandRegistry CommandRegistry::make_default() {
                        [] { return std::make_unique<QLeaderCommand>(); });
     r.register_command({"ED", "TEXTEDIT", "DDEDIT"},
                        [] { return std::make_unique<TextEditCommand>(); });
+    r.register_command({"PR", "PROPERTIES", "PROPS", "CH"},
+                       [] { return std::make_unique<PropertiesCommand>(); });
     return r;
 }
 

@@ -878,6 +878,59 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## Properties palette (PR) — framework, multiplicity, per-type registration (Phase 22)
+
+A live, context-sensitive Properties panel (AutoCAD PR) that reflects the current
+selection and edits object properties. It is a **binding layer over fields that
+already exist** (Ph12 layer/color/linetype/lineweight, Ph20 text fields) — no new
+entity capability, no data-model change.
+
+* **Descriptor registry (the single source of truth).** `core/properties_registry`
+  holds one table of `PropertyDescriptor`s. Each declares its `PropertyId`, group
+  ("General"/"Geometry"/"Text"), label, editor kind, an `applies(EntityKind)` gate,
+  and **read**/**write** functions that operate on a captured `Add*Command`. The
+  accessors use C++20 `requires`-expressions, so a property "applies to whichever
+  command exposes the member" — no per-type enumeration. Adding a type's deep group
+  later is *adding rows to this table*; the engine apply path and the UI renderer do
+  not change (the anti-switch-bomb lesson from grips).
+* **Multiplicity / aggregation (geometry thread).** `summarize_selection(captured)`
+  produces a `SelectionSummary`: the type label ("Line" / "3 Texts" / "Mixed (5)"),
+  and the field list. A field is shown only if it applies to **every** selected
+  entity — so a homogeneous selection gets universal + type fields, a mixed selection
+  gets universal only. Each field carries its value plus a **`varies`** flag set when
+  the entities disagree. This runs on the geometry thread and is published in the
+  snapshot (`selection_summary`), so the **UI never queries the store** — it reads the
+  aggregated view the same lock-free way the renderer reads geometry.
+* **Generic write-back (one command, one undo group).** Editing any field emits a
+  single `SetPropertyCommand{id, value, group}`. `apply_set_property` looks the id up
+  in the registry and applies its `write` to **every** selected entity it applies to,
+  via capture/erase/recreate as **one undo group** (the `apply_props_change` pattern,
+  so layer/other-props/position are preserved; Ctrl+Z restores). PR never mutates the
+  store. The pre-Ph22 `SetEntityLayer/ColorCommand` remain for the ribbon combos; the
+  registry's universal writes do the same `EntityProps` mutation, so behaviour isn't
+  forked.
+* **Generic UI renderer.** `ui/properties_panel` is dumb over the field list: it maps
+  each `PropEditor` to a widget (number/text entry, layer/linetype/lineweight/justify/
+  attachment combos, a ByLayer-or-pick color control, a read-only label, a content
+  editor button, a disabled font combo) and emits `(PropertyId, value)` back. `varies`
+  shows as **`*VARIES*`**. It rebuilds only when the summary actually changes. Dark,
+  non-native (Fusion palette, Ph11). Dockable; **PR** toggles it via a new
+  `ViewControl::open_properties()` → MainWindow callback; a 100 ms timer pushes the
+  latest summary to the visible panel.
+* **Coverage now.** Universal Layer/Color/Linetype/Lineweight on any selection; a
+  read-only Geometry group (line length/ends, circle/arc center+radius, text position);
+  and the full **Text/MTEXT** group (contents, height, rotation°, justify, width
+  factor, line spacing, defined width, attachment, font). Font is a wired read-only
+  combo — the single stroke font is the only option today (stated limitation), so the
+  field slots a real font system in later without UI change.
+* **Staged (Planned, same pattern):** the deep Dimension group (per-element colors,
+  arrow type/size, dimstyle overrides) and numeric geometry editing for line/circle/
+  arc/polyline/leader. Universal props already cover their color/layer/linetype/
+  lineweight.
+* **No regressions.** No struct/data-model change (`TextData` 56 / `MTextData` 80 /
+  `LineData` 40 unchanged); insert ~33 ns; native/DXF untouched. `selection_summary`
+  is interaction metadata (not in the checksum).
+
 ## Editable text — double-click & TEXTEDIT (Phase 21)
 
 The text data model was already edit-ready (content is a discrete stored field,
@@ -1043,6 +1096,14 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 22 — complete:** Properties palette (PR). A generic descriptor registry
+  (`core/properties_registry`) drives a geometry-thread `summarize_selection` (values
+  + `varies`, published in the snapshot) and a single `SetPropertyCommand` write path
+  (one undo group over the whole selection). Dark dockable panel handles all four
+  multiplicity cases (none/one/many-same/mixed). Universal Layer/Color/Linetype/
+  Lineweight + read-only Geometry + full Text/MTEXT group; Dimension/numeric-geometry
+  groups staged behind the same registration. No data-model change. 221 tests (dev) /
+  220 (TSan); real-window selftest verifies multiplicity + observed store edits + undo.
 * **Phase 21 — complete:** editable text — double-click a TEXT/MTEXT/QLEADER label
   to edit its content (dark modal editor pre-filled from the snapshot) + TEXTEDIT/
   DDEDIT/ED command (scriptable path). Both submit one `EditTextContentCommand` that

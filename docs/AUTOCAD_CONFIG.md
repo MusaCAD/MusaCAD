@@ -88,6 +88,21 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | PDMODE / PDSIZE | Point display style / size | Planned |
 | Linetype patterns (dashed/center/hidden render) | Visual stipple | Planned (property modelled Ph12) |
 
+## Properties palette (PR / Ctrl+1)
+
+| Option | Status |
+|---|---|
+| Open/toggle palette (PR / PROPERTIES / PROPS / CH) | Implemented (Ph22) |
+| Reflects selection: nothing / one / many-same / many-mixed | Implemented (Ph22) |
+| **\*VARIES\*** for fields that differ across a multi-selection; edit sets all | Implemented (Ph22) |
+| General: Layer / Color / Linetype / Lineweight (ByLayer or override) | Implemented (Ph22) |
+| Geometry group (line length/ends, circle/arc center+radius, text position) | Implemented (Ph22, read-only) |
+| Geometry numeric editing (type a new radius/length/endpoint) | Planned |
+| Text/MTEXT group (contents, height, rotation, justify, width factor, line spacing, defined width, attachment) | Implemented (Ph22) |
+| Font selection field | Implemented as read-only (single stroke font); real font system Planned |
+| Dimension group (per-element colors, arrow type/size, dimstyle overrides) | Planned |
+| Quick-select / filter by property | Planned |
+
 ## Text / MTEXT
 
 | Option | Status |

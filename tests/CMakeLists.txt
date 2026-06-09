@@ -88,6 +88,7 @@ add_executable(musacad_tests
     test_grips.cpp
     test_bulge.cpp
     test_mtext.cpp
+    test_properties.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE

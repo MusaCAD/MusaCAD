@@ -10,6 +10,7 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/properties.hpp"
+#include "musacad/core/properties_palette.hpp"
 
 namespace musacad::core {
 
@@ -336,6 +337,16 @@ struct AddMLeaderCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Set one property (universal or type-specific) on every selected entity, as
+/// one undo group. The Properties palette's single write path: the descriptor
+/// registry (properties_registry.hpp) maps `id` to the field it mutates on each
+/// captured Add*Command. Entities the property doesn't apply to are skipped.
+struct SetPropertyCommand {
+    PropertyId id{};
+    PropertyValue value{};
+    std::uint64_t group = 0;
+};
+
 /// Edit the content of the text-bearing entity (TEXT / MTEXT / QLEADER label)
 /// nearest `at`. A content change on the existing entity -- layer/properties/
 /// position are preserved -- committed as one undo group. Used by both the
@@ -408,6 +419,7 @@ using Command =
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
-                 GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand>;
+                 GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
+                 SetPropertyCommand>;
 
 } // namespace musacad::core

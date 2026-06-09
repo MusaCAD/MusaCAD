@@ -192,6 +192,8 @@ private:
     // all other fields, as one undo group. Used by double-click + TEXTEDIT.
     void apply_text_edit(Vec2 at, double pick_radius, const std::string& content,
                          std::uint64_t group);
+    // PR palette: set one property on every selected entity as one undo group.
+    void apply_set_property(PropertyId id, const PropertyValue& value, std::uint64_t group);
     bool grip_active_ = false;
     EntityHandle grip_handle_{};
     std::uint32_t grip_index_ = 0;

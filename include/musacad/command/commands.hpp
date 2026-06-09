@@ -444,4 +444,18 @@ private:
     bool done_ = false;
 };
 
+/// PR / PROPERTIES / PROPS / CH: toggle the Properties palette. A one-shot view
+/// command -- it opens the panel via ViewControl and finishes immediately.
+class PropertiesCommand final : public ICommand {
+public:
+    std::string name() const override { return "PROPERTIES"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 } // namespace musacad::command

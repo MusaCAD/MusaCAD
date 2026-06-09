@@ -10,6 +10,7 @@
 #include "musacad/core/entity_bounds.hpp"
 #include "musacad/core/grips.hpp"
 #include "musacad/core/io/document.hpp"
+#include "musacad/core/properties_registry.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
@@ -1405,6 +1406,41 @@ void GeometryEngine::apply_props_change(const std::function<void(EntityProps&)>&
     geom_dirty_ = true;
 }
 
+void GeometryEngine::apply_set_property(PropertyId id, const PropertyValue& value,
+                                       std::uint64_t group) {
+    // The PR palette's single write path: change one property on every selected
+    // entity it applies to, as one undo group (capture/erase/recreate -- the
+    // apply_props_change pattern, so layer/other props/position are preserved).
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> out;
+    bool any = false;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        if (!property_applies(id, h.kind)) {
+            out.push_back(h); // unchanged, keep selected
+            continue;
+        }
+        Command modified = original;
+        write_property(modified, id, value);
+        remove_indexed(h);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(modified);
+        push_create_item(group, nh, modified);
+        out.push_back(nh);
+        any = true;
+    }
+    if (any) {
+        selection_ = out;
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Property changed.");
+    }
+}
+
 void GeometryEngine::apply_entity_layer(std::uint16_t layer, std::uint64_t group) {
     apply_props_change([layer](EntityProps& p) { p.layer = layer; }, group);
     report("Moved selection to layer.");
@@ -1657,6 +1693,8 @@ void GeometryEngine::apply(const Command& command) {
                 }
             } else if constexpr (std::is_same_v<T, EditTextContentCommand>) {
                 apply_text_edit(c.at, c.pick_radius, c.content, c.group);
+            } else if constexpr (std::is_same_v<T, SetPropertyCommand>) {
+                apply_set_property(c.id, c.value, c.group);
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =
@@ -1808,6 +1846,19 @@ void GeometryEngine::rebuild_and_publish() {
 
     // Publish the selection set (queryable API) and its segments (highlight/ghost).
     buf.selection = selection_;
+    // Aggregate the selection's editable properties for the PR palette (geometry
+    // thread -> snapshot, so the UI never queries the store). Capture is cheap over
+    // the small selection set.
+    {
+        std::vector<Command> captured;
+        captured.reserve(selection_.size());
+        for (const EntityHandle h : selection_) {
+            if (store_.is_valid(h)) {
+                captured.push_back(capture_entity(h));
+            }
+        }
+        buf.selection_summary = summarize_selection(captured);
+    }
     buf.selected_line_vertices.clear();
     {
         std::vector<Vec2> tess;

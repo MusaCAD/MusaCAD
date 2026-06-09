@@ -3,6 +3,24 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Properties palette — staged deep groups (deferred 2026-06-09)
+
+**Status:** PR (Phase 22) ships the framework, the multiplicity/`*VARIES*` model, the
+universal General group (Layer/Color/Linetype/Lineweight), a read-only Geometry group,
+and the full Text/MTEXT group — all via a generic descriptor registry
+(`core/properties_registry`) so a new group is *new rows in the table*, not new UI.
+
+**Not yet built (same pattern, mark each by adding descriptors):**
+- **Dimension** deep group: per-element colors (dim/ext/text/arrow), arrow type/size,
+  precision, and dimstyle overrides. Tangled with DIMSTYLE; the universal props already
+  expose its color/layer/linetype/lineweight today.
+- **Numeric geometry editing**: make the Geometry group's line length/endpoints,
+  circle/arc center+radius, etc. *editable* (a write fn + a non-ReadOnly editor on the
+  existing descriptors) rather than display-only.
+- **Font system**: the PR Font field is wired but read-only (single stroke font). When a
+  real font table lands, make the field a live combo (no UI change needed).
+- **Quick-select / property filter**: select-by-property using the same registry reads.
+
 ## MTEXT inline (per-character) formatting (deferred 2026-06-08)
 
 **Status:** MTEXT (Phase 20) implements real multi-line layout, word-wrap, and all
