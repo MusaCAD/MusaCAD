@@ -1738,6 +1738,9 @@ void GeometryEngine::apply(const Command& command) {
                 geom_dirty_ = true; // dims using this style recompute on rebuild
             } else if constexpr (std::is_same_v<T, SetLineweightDisplayCommand>) {
                 lineweight_display_ = c.on;
+            } else if constexpr (std::is_same_v<T, SetLtscaleCommand>) {
+                store_.set_ltscale(c.scale);
+                geom_dirty_ = true; // re-dash all non-continuous entities at rebuild
             }
         },
         command);
@@ -1812,7 +1815,7 @@ void GeometryEngine::rebuild_and_publish() {
     if (geom_dirty_) {
         // Curves tessellate to the current zoom bucket's chord tolerance (Part A);
         // stored geometry stays parametric -- only this render payload is sampled.
-        build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_);
+        build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_, store_.ltscale());
         geom_dirty_ = false;
         ++geom_version_;
     }
@@ -1920,7 +1923,7 @@ void GeometryEngine::rebuild_and_publish() {
         add_command_to_store(grip_preview_store_, edited,
                              ep != nullptr ? *ep : EntityProps{store_.current_layer()});
         RenderSnapshot tmp;
-        build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_);
+        build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
         buf.grip_preview_segments = std::move(tmp.line_vertices);
         buf.grip_preview_fills = std::move(tmp.fill_vertices);
     }

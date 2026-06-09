@@ -14,7 +14,8 @@ add_library(musacad_core STATIC
     text/mtext.cpp
     dimension.cpp
     grips.cpp
-    properties_registry.cpp)
+    properties_registry.cpp
+    linetype.cpp)
 
 add_library(musacad::core ALIAS musacad_core)
 

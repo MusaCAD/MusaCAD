@@ -1418,4 +1418,35 @@ void PropertiesCommand::start(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// LTSCALE: prompt for the global linetype scale factor, then apply it.
+// ---------------------------------------------------------------------------
+void LtscaleCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new linetype scale factor <1.0>: ");
+}
+
+void LtscaleCommand::input(CommandContext& ctx, const std::string& text) {
+    if (text.empty()) {
+        done_ = true; // Enter with no value -> keep current
+        return;
+    }
+    try {
+        const double scale = std::stod(text);
+        if (scale > 0.0) {
+            ctx.submit(core::SetLtscaleCommand{scale});
+            ctx.echo("LTSCALE = " + text);
+        } else {
+            ctx.echo("Value must be positive.");
+        }
+    } catch (const std::exception&) {
+        ctx.echo("Requires a numeric scale.");
+    }
+    done_ = true;
+}
+
+void LtscaleCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

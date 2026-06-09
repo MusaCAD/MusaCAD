@@ -18,9 +18,10 @@ namespace musacad::core::io {
 /// + per-entity properties. v3: text + dimensions + dimension styles. v4: leaders +
 /// expanded DIMSTYLE (per-element colours, dim lineweight, arrow types). v5: polyline
 /// per-vertex arc bulges. v6: MTEXT (paragraph text) + MLEADER (editable leaders).
-/// Readers reject newer versions; older files load fine (no layers => layer 0; no
-/// dims; no bulges => straight polylines; no mtext/mleader).
-inline constexpr std::uint32_t kFormatVersion = 6;
+/// v7: global LTSCALE. Readers reject newer versions; older files load fine (no
+/// layers => layer 0; no dims; no bulges => straight polylines; no mtext/mleader;
+/// no LTSCALE => 1.0).
+inline constexpr std::uint32_t kFormatVersion = 7;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -113,6 +114,7 @@ struct Document {
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;
     std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
+    double ltscale = 1.0;                                  // global linetype scale (LTSCALE)
 
     std::vector<DocPoint> points;
     std::vector<DocLine> lines;

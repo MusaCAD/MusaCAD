@@ -132,6 +132,9 @@ std::string serialize_native(const Document& doc) {
     s += "CURRENT ";
     append_uint(s, doc.current_layer);
     s += '\n';
+    s += "LTSCALE ";
+    append_double(s, doc.ltscale);
+    s += '\n';
     // LAYER <r> <g> <b> <linetype> <lineweight> <on> <frozen> <locked> <name...>
     for (const Layer& l : doc.layers) {
         s += "LAYER ";
@@ -427,6 +430,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed CURRENT");
             }
             doc.current_layer = static_cast<std::uint16_t>(idx);
+        } else if (key == "LTSCALE") {
+            double ls = 1.0;
+            if (tok.size() != 2 || !to_double(tok[1], ls)) {
+                return fail("malformed LTSCALE");
+            }
+            doc.ltscale = ls;
         } else if (key == "LAYER") {
             // LAYER r g b linetype lineweight on frozen locked name...
             std::uint64_t f[8];

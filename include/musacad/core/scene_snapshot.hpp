@@ -14,7 +14,10 @@ namespace musacad::core {
 /// those are never visited here: iteration goes through live slots and their
 /// (offset,count) views, so deleted geometry leaves no residue in the snapshot.
 /// The caller is responsible for setting `out.version` and `out.checksum`.
+/// `ltscale` is the global linetype scale (AutoCAD LTSCALE): dash patterns are
+/// derived here (never stored) and their lengths multiplied by it.
 void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& kernel,
-                           RenderSnapshot& out, double tolerance = kDefaultTessTolerance);
+                           RenderSnapshot& out, double tolerance = kDefaultTessTolerance,
+                           double ltscale = 1.0);
 
 } // namespace musacad::core

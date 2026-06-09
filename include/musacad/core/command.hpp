@@ -363,6 +363,12 @@ struct SetLineweightDisplayCommand {
     bool on = true;
 };
 
+/// Set the global linetype scale (AutoCAD LTSCALE). Re-dashes all non-continuous
+/// entities at the next snapshot (derived, not stored as geometry). Ignored if <= 0.
+struct SetLtscaleCommand {
+    double scale = 1.0;
+};
+
 /// Add a dimension style (or return the existing index for a known name).
 struct AddDimStyleCommand {
     DimStyle style;
@@ -420,6 +426,6 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 SetPropertyCommand>;
+                 SetPropertyCommand, SetLtscaleCommand>;
 
 } // namespace musacad::core

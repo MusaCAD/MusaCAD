@@ -1440,6 +1440,68 @@ bool MainWindow::selftest_properties() {
     return all;
 }
 
+bool MainWindow::selftest_linetype() {
+    using core::Linetype;
+    using core::PropertyId;
+    using core::PropertyValue;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // A continuous line is a single segment (2 vertices).
+    engine_->submit(core::AddLineCommand{Vec2{0, 0}, Vec2{200, 0}, 1});
+    pump([this] { return viewport_->line_vertex_count() == 2; });
+
+    // Set its linetype to Dashed via the PR write path -> it visibly dashes (the
+    // Ph22 gap, now closed). Observed: many more vertices than the solid line.
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 1; });
+    PropertyValue lt;
+    lt.flag = false; // override (not ByLayer)
+    lt.choice = static_cast<int>(Linetype::Dashed);
+    engine_->submit(core::SetPropertyCommand{PropertyId::Linetype, lt, processor_->begin_group()});
+    const bool dashed_ok = pump([this] { return viewport_->line_vertex_count() > 2; });
+    const int dashed_n = viewport_->line_vertex_count();
+    std::printf("[selftest] PR linetype Dashed visibly dashes the line: %s\n",
+                dashed_ok ? "PASS" : "FAIL");
+
+    // LTSCALE up -> longer dashes -> fewer of them (re-derived live, not stored).
+    engine_->submit(core::SetLtscaleCommand{8.0});
+    const bool ltscale_ok = pump([this, dashed_n] {
+        const int n = viewport_->line_vertex_count();
+        return n > 2 && n < dashed_n;
+    });
+    std::printf("[selftest] LTSCALE re-dashes live (fewer dashes at scale 8): %s\n",
+                ltscale_ok ? "PASS" : "FAIL");
+
+    // Back to Continuous -> solid again (one segment).
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 1; });
+    PropertyValue cont;
+    cont.flag = false;
+    cont.choice = static_cast<int>(Linetype::Continuous);
+    engine_->submit(core::SetPropertyCommand{PropertyId::Linetype, cont, processor_->begin_group()});
+    const bool cont_ok = pump([this] { return viewport_->line_vertex_count() == 2; });
+    std::printf("[selftest] Continuous linetype renders solid again: %s\n",
+                cont_ok ? "PASS" : "FAIL");
+
+    all = all && dashed_ok && ltscale_ok && cont_ok;
+    engine_->submit(core::SetLtscaleCommand{1.0});
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
 void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
                                   const std::string& content, bool multiline) {
     // A small modal editor (popup; an in-canvas overlay is awkward over a QWindow

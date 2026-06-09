@@ -67,17 +67,49 @@ Rgb from_true_color(long v) {
             static_cast<std::uint8_t>(v & 0xff)};
 }
 
-void emit_header(std::string& s) {
+void emit_header(std::string& s, const Document& doc) {
     code(s, 0, "SECTION");
     code(s, 2, "HEADER");
     code(s, 9, "$ACADVER");
     code(s, 1, "AC1015"); // AutoCAD R2000 -- widely compatible
+    code(s, 9, "$LTSCALE");
+    code_d(s, 40, doc.ltscale); // global linetype scale
     code(s, 0, "ENDSEC");
+}
+
+// One LTYPE record: name + dash elements (positive = dash, negative = gap), in
+// drawing units. Must match core/linetype.cpp so a Musa-dashed entity reads dashed
+// in other CAD apps. `elems` empty => Continuous (solid).
+void emit_ltype(std::string& s, const char* name, std::initializer_list<double> elems) {
+    code(s, 0, "LTYPE");
+    code(s, 2, name);
+    code_i(s, 70, 0);
+    code(s, 3, name); // description
+    code_i(s, 72, 65); // alignment 'A'
+    code_i(s, 73, static_cast<long>(elems.size()));
+    double total = 0.0;
+    for (double e : elems) {
+        total += e < 0.0 ? -e : e;
+    }
+    code_d(s, 40, total);
+    for (double e : elems) {
+        code_d(s, 49, e);
+    }
 }
 
 void emit_layer_table(std::string& s, const Document& doc) {
     code(s, 0, "SECTION");
     code(s, 2, "TABLES");
+    // LTYPE table first -- layers/entities reference these patterns by name. The
+    // element lengths mirror core/linetype.cpp (Dashed/Hidden/Center).
+    code(s, 0, "TABLE");
+    code(s, 2, "LTYPE");
+    code_i(s, 70, 4);
+    emit_ltype(s, "Continuous", {});
+    emit_ltype(s, "DASHED", {5.0, -2.5});
+    emit_ltype(s, "HIDDEN", {2.5, -1.25});
+    emit_ltype(s, "CENTER", {12.5, -2.5, 2.5, -2.5});
+    code(s, 0, "ENDTAB");
     code(s, 0, "TABLE");
     code(s, 2, "LAYER");
     code_i(s, 70, static_cast<long>(doc.layers.size()));
@@ -128,7 +160,7 @@ void emit_props(std::string& s, const Document& doc, const EntityProps& p) {
 
 std::string serialize_dxf(const Document& doc) {
     std::string s;
-    emit_header(s);
+    emit_header(s, doc);
     emit_layer_table(s, doc);
 
     code(s, 0, "SECTION");
@@ -645,6 +677,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     while (i < n) {
         const Pair& p = pairs[i];
+        // Header variable: $LTSCALE <40 value>.
+        if (section == "HEADER" && p.code == 9 && p.value == "$LTSCALE") {
+            if (i + 1 < n && pairs[i + 1].code == 40) {
+                doc.ltscale = to_d(pairs[i + 1].value);
+                i += 2;
+                continue;
+            }
+        }
         if (p.code != 0) {
             ++i;
             continue;

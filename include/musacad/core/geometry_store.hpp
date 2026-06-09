@@ -245,6 +245,11 @@ public:
     [[nodiscard]] std::uint16_t current_layer() const noexcept { return current_layer_; }
     void set_current_layer(std::uint16_t index) noexcept;
 
+    /// Global linetype scale (AutoCAD LTSCALE): multiplies every dash pattern. Dash
+    /// geometry is derived at snapshot from this + the stored linetype (not baked).
+    [[nodiscard]] double ltscale() const noexcept { return ltscale_; }
+    void set_ltscale(double scale) noexcept { ltscale_ = scale > 0.0 ? scale : ltscale_; }
+
     /// Adds a layer, or returns the existing index if the name is already taken
     /// (layer names are unique, AutoCAD-style).
     std::uint16_t add_layer(const Layer& layer);
@@ -284,6 +289,7 @@ private:
     std::vector<Layer> layers_{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer_ = 0;
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
+    double ltscale_ = 1.0;                                  // global linetype scale
 };
 
 } // namespace musacad::core

@@ -187,6 +187,7 @@ void GeometryStore::clear() noexcept {
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
     current_layer_ = 0;
     dimstyles_.assign(1, DimStyle{"Standard"});
+    ltscale_ = 1.0;
 }
 
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {

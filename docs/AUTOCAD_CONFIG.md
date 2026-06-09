@@ -81,12 +81,13 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Lineweight display mapping | Fixed-screen, DPI-anchored: `px = mm × DPI/25.4` (DPI from `QScreen::physicalDotsPerInch`; 96 DPI default ⇒ 3.7795 px/mm), zoom-independent, Default = 1px hairline | Implemented (Ph15, AutoCAD-accurate) |
 | Lineweight ladder | Standard set 0.00…2.11 mm; mapping continuous over it | Implemented (Ph15) |
 | Lineweight display *to scale* (world-proportional, thickens with zoom) | Alternative AutoCAD mode | Planned |
-| LTSCALE | Global linetype scale | Planned |
+| LTSCALE | Global linetype scale | Implemented (Ph23; native + DXF $LTSCALE round-trip) |
+| CELTSCALE | Per-entity linetype scale | Planned |
 | Per-layer / per-entity lineweight | ByLayer + override | Implemented (Ph12) |
 | Per-layer / per-entity color, linetype | ByLayer + override | Implemented (Ph12) |
 | LUNITS / LUPREC | Drawing unit format / precision | Planned |
 | PDMODE / PDSIZE | Point display style / size | Planned |
-| Linetype patterns (dashed/center/hidden render) | Visual stipple | Planned (property modelled Ph12) |
+| Linetype patterns (dashed/center/hidden render) | Visual dashes | Implemented (Ph23; arc-length dashing on lines + curves, scaled by LTSCALE) |
 
 ## Properties palette (PR / Ctrl+1)
 

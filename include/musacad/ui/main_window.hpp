@@ -86,6 +86,9 @@ public:
     /// Real-window self-test: PR palette multiplicity (none/one/many-same/mixed),
     /// universal + text property edits via the panel, observed store change + undo.
     bool selftest_properties();
+    /// Real-window self-test: PR linetype dashes the entity (Ph22 gap closed) and
+    /// LTSCALE re-dashes live; Continuous renders solid.
+    bool selftest_linetype();
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text

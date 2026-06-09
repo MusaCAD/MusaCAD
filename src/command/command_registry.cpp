@@ -124,6 +124,7 @@ CommandRegistry CommandRegistry::make_default() {
                        [] { return std::make_unique<TextEditCommand>(); });
     r.register_command({"PR", "PROPERTIES", "PROPS", "CH"},
                        [] { return std::make_unique<PropertiesCommand>(); });
+    r.register_command({"LTSCALE", "LTS"}, [] { return std::make_unique<LtscaleCommand>(); });
     return r;
 }
 

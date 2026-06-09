@@ -114,7 +114,10 @@ suggests both); aliases are case-insensitive.
 | Set selection colour override | ribbon ▸ Set Colour | Implemented |
 | Off / Frozen layers skip rendering | — | Implemented |
 | Locked layers (drawn, not selectable/modifiable) | — | Implemented |
-| Linetype property (Continuous/Dashed/Center/Hidden) | — | Implemented (model + round-trip; visual stipple Planned) |
+| Linetype property (Continuous/Dashed/Center/Hidden) | — | Implemented (model + round-trip + **dashed rendering**, Ph23) |
+| **Linetype pattern rendering** (dashes drawn on lines, polylines, and curves by arc-length; ByLayer + override) | — | Implemented (Ph23) |
+| **LTSCALE** (global linetype scale; re-dashes live; native + DXF round-trip) | LTSCALE / LTS | Implemented (Ph23) |
+| Per-entity linetype scale (CELTSCALE) | — | Planned |
 | Lineweight property (hundredths-mm) | — | Implemented (model + round-trip; visible weight Planned) |
 | LAYER command-line alias / PROPERTIES palette / MATCHPROP | LA / PR / MA | Planned (Phase 13) |
 

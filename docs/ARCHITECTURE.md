@@ -878,6 +878,47 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## Linetype pattern rendering & LTSCALE (Phase 23)
+
+Dashed/Center/Hidden linetypes now draw as real dash patterns; Continuous is
+unchanged. The linetype was already a stored, PR-editable property (Ph12) — this
+phase only renders it, with no data-model change.
+
+* **Derived-not-baked, one shared path.** Dashing happens **at snapshot time** in
+  `build_render_snapshot`, never in storage (same parametric rule as tessellation).
+  A single walker, `core/linetype.cpp::dash_polyline`, takes any point list and emits
+  the "on" sub-segments by **arc-length**. A straight line is a 2-point polyline; a
+  curve is its tessellated point list — both go through the same walker, so there is
+  one dash path for lines, polylines, circles, arcs, and bulged corners. The dash
+  phase carries **continuously across vertices**, so curves dash by true arc-length
+  (no restart at each tessellation segment, no bunching at joins) and stay even.
+* **Patterns** (`dash_pattern`, drawing units, AutoCAD acad.lin proportions ×10 so
+  they read at LTSCALE 1 in a tens-of-units drawing): Dashed `[5, 2.5]`, Hidden
+  `[2.5, 1.25]`, Center `[12.5, 2.5, 2.5, 2.5]` (long, gap, dot, gap), Continuous
+  `{}`. The effective linetype is ByLayer-resolved per entity (`ResolvedProps`); the
+  dashes inherit the entity's resolved colour + lineweight and feed the existing
+  `(colour, lineweight)` batches, so the thick-line pipeline thickens each dash and
+  **draw calls stay bounded** (one draw per colour/lineweight, as before).
+* **Zoom-consistent.** Dashing rides the Ph18 zoom-bucket tessellation: as a curve
+  refines on zoom the dash pattern is unchanged (it's parameterized by world
+  arc-length, independent of segment count). Pan does not re-dash — dashing lives in
+  the geom-dirty rebuild, not per-frame; a zoom-bucket change or an LTSCALE change
+  re-derives it, a pan does not.
+* **LTSCALE (global linetype scale).** `GeometryStore::ltscale_` (default 1.0)
+  multiplies every pattern length before dashing. `build_render_snapshot` takes it as
+  a parameter (engine passes `store_.ltscale()`). `LTSCALE`/`LTS` command prompts for
+  the factor → `SetLtscaleCommand` → `set_ltscale` + a geom-dirty rebuild, so all
+  non-continuous entities re-dash live. It round-trips in the native format (**v7**,
+  `LTSCALE` header line; v1–v6 load as 1.0) and DXF (`$LTSCALE` header var). DXF
+  export also writes an **LTYPE table** (Continuous/DASHED/HIDDEN/CENTER with element
+  lengths mirroring `linetype.cpp`) so the dashes render dashed in other CAD apps
+  (LibreCAD-verified). Per-entity scale (CELTSCALE) is **Planned**.
+* **PR gap closed.** Setting an entity's linetype in the Properties palette (Ph22)
+  now visibly dashes it — the write path was already there; this phase makes it draw.
+* **No regressions.** No entity-struct change (`LineData` 40 / `CircleData` 32
+  unchanged; `ltscale_` is one double on the store); insert ~31 ns; draw calls 4/6;
+  dense dashed scene (5000 fine circles) ~6.6 ms/frame.
+
 ## Properties palette (PR) — framework, multiplicity, per-type registration (Phase 22)
 
 A live, context-sensitive Properties panel (AutoCAD PR) that reflects the current
@@ -1096,6 +1137,12 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 23 — complete:** linetype pattern rendering + LTSCALE. One arc-length dash
+  walker (`core/linetype`) dashes lines and curves through the same path (phase carries
+  across tessellation vertices; zoom-consistent; bounded draw calls). Patterns follow
+  acad.lin; LTSCALE (command + native v7 + DXF $LTSCALE + LTYPE table, LibreCAD-verified)
+  scales them and re-dashes live. Derived-not-baked; no entity-struct change. Closes the
+  Ph22 PR-linetype gap. 229 tests (dev) / 228 (TSan); real-window selftest.
 * **Phase 22 — complete:** Properties palette (PR). A generic descriptor registry
   (`core/properties_registry`) drives a geometry-thread `summarize_selection` (values
   + `varies`, published in the snapshot) and a single `SetPropertyCommand` write path

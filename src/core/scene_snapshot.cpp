@@ -1,11 +1,13 @@
 #include "musacad/core/scene_snapshot.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <map>
 #include <vector>
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
@@ -52,7 +54,7 @@ ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) 
 } // namespace
 
 void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& kernel,
-                           RenderSnapshot& out, double tolerance) {
+                           RenderSnapshot& out, double tolerance, double ltscale) {
     out.points.clear();
     out.line_vertices.clear();
     out.line_batches.clear();
@@ -89,13 +91,20 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
     });
 
+    // Dash buffer reused across entities. dash_polyline appends "on" sub-segments
+    // (endpoint pairs) per the resolved linetype, scaled by LTSCALE; Continuous
+    // copies every segment. Dashing is derived here, never stored.
+    std::vector<Vec2> dashed;
     for_each_live(store.lines(), EntityKind::Line, [&](EntityHandle h) {
         const LineData* l = store.line(h);
         if (!visible(store, l->props)) {
             return;
         }
         const ResolvedProps r = entity_resolved(store, l->props);
-        add_line(r.color, r.lineweight, l->a, l->b);
+        const std::array<Vec2, 2> seg{l->a, l->b};
+        dashed.clear();
+        dash_polyline(seg, r.linetype, ltscale, dashed);
+        add_lines(r.color, r.lineweight, dashed);
     });
 
     std::vector<Vec2> tess;
@@ -105,9 +114,11 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const ResolvedProps r = entity_resolved(store, p);
         kernel.tessellate(store, h, tolerance, tess);
-        for (std::size_t s = 1; s < tess.size(); ++s) {
-            add_line(r.color, r.lineweight, tess[s - 1], tess[s]);
-        }
+        // Dash by arc-length along the tessellated curve (phase carries across the
+        // tessellation vertices), so the pattern stays even and zoom-consistent.
+        dashed.clear();
+        dash_polyline(tess, r.linetype, ltscale, dashed);
+        add_lines(r.color, r.lineweight, dashed);
     };
     for_each_live(store.circles(), EntityKind::Circle,
                   [&](EntityHandle h) { emit_curve(h, store.circle(h)->props); });

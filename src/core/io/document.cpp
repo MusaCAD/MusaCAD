@@ -8,6 +8,7 @@ Document document_from_store(const GeometryStore& store) {
     Document doc;
     doc.layers.assign(store.layers().begin(), store.layers().end());
     doc.current_layer = store.current_layer();
+    doc.ltscale = store.ltscale();
 
     const auto& pts = store.points();
     for (std::uint32_t i = 0; i < pts.slot_count(); ++i) {
@@ -103,6 +104,7 @@ Document document_from_store(const GeometryStore& store) {
 void populate_store(GeometryStore& store, const Document& doc) {
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
+    store.set_ltscale(doc.ltscale);
     for (const DocText& t : doc.texts) {
         store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props);
     }

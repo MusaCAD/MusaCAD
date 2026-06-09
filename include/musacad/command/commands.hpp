@@ -444,6 +444,20 @@ private:
     bool done_ = false;
 };
 
+/// LTSCALE: set the global linetype scale (drawing-wide). Prompts for the factor,
+/// then submits SetLtscaleCommand; all non-continuous entities re-dash live.
+class LtscaleCommand final : public ICommand {
+public:
+    std::string name() const override { return "LTSCALE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// PR / PROPERTIES / PROPS / CH: toggle the Properties palette. A one-shot view
 /// command -- it opens the panel via ViewControl and finishes immediately.
 class PropertiesCommand final : public ICommand {
