@@ -152,3 +152,54 @@ TEST_CASE("write_property only touches applicable kinds (Geometry/text are gated
     REQUIRE(property_applies(PropertyId::MtWidthFactor, EntityKind::MText));
     REQUIRE_FALSE(property_applies(PropertyId::MtWidthFactor, EntityKind::Text));
 }
+
+TEST_CASE("Dimension PR group: arrow-size override set + reset via SetPropertyCommand") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
+                                      {0, 0}, {10, 0}, {5, 3}, 0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+
+    // The dim group is present; arrow size is ByStyle initially (flag = true).
+    const auto field = [&](PropertyId id) {
+        for (const auto& f : engine.snapshot().selection_summary.fields) {
+            if (f.id == id) {
+                return f.value;
+            }
+        }
+        return PropertyValue{};
+    };
+    const auto has = [&](PropertyId id) {
+        for (const auto& f : engine.snapshot().selection_summary.fields) {
+            if (f.id == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+    REQUIRE(has(PropertyId::DimArrowSize));
+    REQUIRE(has(PropertyId::DimTextColor));
+    REQUIRE(field(PropertyId::DimArrowSize).flag); // ByStyle
+
+    // Override arrow size = 9 on this dim (flag=false => set override).
+    PropertyValue set;
+    set.flag = false;
+    set.num = 9.0;
+    engine.submit(SetPropertyCommand{PropertyId::DimArrowSize, set, 7});
+    REQUIRE(wait_until(engine, [&](const auto&) {
+        const auto v = field(PropertyId::DimArrowSize);
+        return !v.flag && v.num == Approx(9.0); // Overridden, effective = 9
+    }));
+
+    // Reset to ByStyle (flag=true) -> follows the style again.
+    PropertyValue reset;
+    reset.flag = true;
+    engine.submit(SetPropertyCommand{PropertyId::DimArrowSize, reset, 8});
+    REQUIRE(wait_until(engine, [&](const auto&) {
+        const auto v = field(PropertyId::DimArrowSize);
+        return v.flag && v.num == Approx(2.5); // ByStyle, effective = style arrow_size
+    }));
+    engine.stop();
+}

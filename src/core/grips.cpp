@@ -38,8 +38,16 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
+        const DimStyle* st = store.dimstyle(d->style);
         return AddDimensionCommand{static_cast<std::uint8_t>(d->type),
-                                   d->a, d->b, d->line_pt, d->style, 0, d->props};
+                                   d->a,
+                                   d->b,
+                                   d->line_pt,
+                                   d->style,
+                                   0,
+                                   d->props,
+                                   d->overrides,
+                                   st != nullptr ? *st : DimStyle{}};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -83,7 +91,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                         props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
-                                             c.style, props_of(c.props));
+                                             c.style, props_of(c.props), c.overrides);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props));

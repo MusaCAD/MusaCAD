@@ -89,6 +89,8 @@ public:
     /// Real-window self-test: PR linetype dashes the entity (Ph22 gap closed) and
     /// LTSCALE re-dashes live; Continuous renders solid.
     bool selftest_linetype();
+    /// Real-window self-test: PR dimension per-dim overrides (set/reset/undo/multi).
+    bool selftest_dim_properties();
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text

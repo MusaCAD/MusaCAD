@@ -89,6 +89,7 @@ struct DimData {
     Vec2 line_pt; ///< a point the dimension line passes through (placement)
     std::uint16_t style = 0;
     EntityProps props{};
+    DimOverrides overrides{}; ///< per-dimension style overrides (ByStyle by default)
 };
 
 /// A quick leader: an arrowhead at `tip`, a leader line to `knee`, and a text
@@ -147,7 +148,7 @@ public:
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                           std::string_view content, EntityProps props = {});
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
-                               EntityProps props = {});
+                               EntityProps props = {}, DimOverrides overrides = {});
     EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                             std::string_view content, EntityProps props = {});
     /// Multi-line paragraph text. `block.str_offset/str_len` are ignored; `content`

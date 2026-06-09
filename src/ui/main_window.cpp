@@ -1502,6 +1502,113 @@ bool MainWindow::selftest_linetype() {
     return all;
 }
 
+bool MainWindow::selftest_dim_properties() {
+    using core::DimType;
+    using core::PropertyId;
+    using core::PropertyValue;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    properties_dock_->show();
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // Effective value of a field in the (live) selection summary.
+    const auto field = [this](PropertyId id) {
+        for (const auto& f : viewport_->selection_summary().fields) {
+            if (f.id == id) {
+                return f.value;
+            }
+        }
+        return PropertyValue{};
+    };
+    const auto has = [this](PropertyId id) {
+        for (const auto& f : viewport_->selection_summary().fields) {
+            if (f.id == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Two linear dimensions (so we can test multi-select varies/set-all).
+    engine_->submit(core::AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
+                                              {0, 0}, {10, 0}, {5, 3}, 0, 1});
+    engine_->submit(core::AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
+                                              {0, 20}, {10, 20}, {5, 23}, 0, 2});
+    pump([this] { return viewport_->line_vertex_count() > 0; });
+
+    // One dim selected -> the Dimension group is present and ByStyle.
+    engine_->submit(core::SelectPickCommand{{5, 3}, 2.0, false});
+    const bool group_ok = pump([&] {
+        sync_properties_panel();
+        return viewport_->selection_count() == 1 && has(PropertyId::DimArrowSize) &&
+               has(PropertyId::DimTextColor) && field(PropertyId::DimArrowSize).flag; // ByStyle
+    });
+    std::printf("[selftest] PR dimension group present + ByStyle: %s\n", group_ok ? "PASS" : "FAIL");
+
+    // Set an arrow-size override = 9 via the panel (observed: store override + effective 9).
+    PropertyValue set;
+    set.flag = false;
+    set.num = 9.0;
+    properties_panel_->test_commit(PropertyId::DimArrowSize, set);
+    const bool over_ok = pump([&] {
+        sync_properties_panel();
+        const auto v = field(PropertyId::DimArrowSize);
+        return !v.flag && v.num > 8.5; // Overridden, effective = 9
+    });
+    std::printf("[selftest] PR dim arrow-size override (observed): %s\n", over_ok ? "PASS" : "FAIL");
+
+    // Reset to ByStyle via the panel -> effective follows the style again.
+    PropertyValue reset;
+    reset.flag = true;
+    properties_panel_->test_commit(PropertyId::DimArrowSize, reset);
+    const bool reset_ok = pump([&] {
+        sync_properties_panel();
+        const auto v = field(PropertyId::DimArrowSize);
+        return v.flag && v.num < 8.5; // ByStyle, effective = style 2.5
+    });
+    std::printf("[selftest] PR dim reset-to-style (observed): %s\n", reset_ok ? "PASS" : "FAIL");
+
+    // Undo the reset restores the override (one undo group each).
+    engine_->submit(core::UndoLastGroupCommand{});
+    engine_->submit(core::SelectPickCommand{{5, 3}, 2.0, false});
+    const bool undo_ok = pump([&] {
+        sync_properties_panel();
+        const auto v = field(PropertyId::DimArrowSize);
+        return !v.flag && v.num > 8.5; // back to overridden 9
+    });
+    std::printf("[selftest] PR dim override undo restores it: %s\n", undo_ok ? "PASS" : "FAIL");
+
+    // Multi-dim select -> shared rows; set override on ALL.
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 2; });
+    PropertyValue set2;
+    set2.flag = false;
+    set2.num = 5.0;
+    properties_panel_->test_commit(PropertyId::DimArrowSize, set2);
+    const bool multi_ok = pump([&] {
+        sync_properties_panel();
+        const auto v = field(PropertyId::DimArrowSize);
+        return viewport_->selection_count() == 2 && !v.flag && v.num > 4.5 && v.num < 5.5;
+    });
+    std::printf("[selftest] PR multi-dim set-all override: %s\n", multi_ok ? "PASS" : "FAIL");
+
+    all = all && group_ok && over_ok && reset_ok && undo_ok && multi_ok;
+    properties_dock_->hide();
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
 void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
                                   const std::string& content, bool multiline) {
     // A small modal editor (popup; an in-canvas overlay is awkward over a QWindow

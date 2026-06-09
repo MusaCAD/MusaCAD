@@ -20,8 +20,8 @@ namespace musacad::core::io {
 /// per-vertex arc bulges. v6: MTEXT (paragraph text) + MLEADER (editable leaders).
 /// v7: global LTSCALE. Readers reject newer versions; older files load fine (no
 /// layers => layer 0; no dims; no bulges => straight polylines; no mtext/mleader;
-/// no LTSCALE => 1.0).
-inline constexpr std::uint32_t kFormatVersion = 7;
+/// no LTSCALE => 1.0). v8: per-dimension style overrides (no overrides => ByStyle).
+inline constexpr std::uint32_t kFormatVersion = 8;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -79,6 +79,7 @@ struct DocDim {
     Vec2 line_pt;
     std::uint16_t style = 0;
     EntityProps props{};
+    DimOverrides overrides{}; ///< per-dimension style overrides (v8+)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

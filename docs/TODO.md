@@ -11,9 +11,12 @@ and the full Text/MTEXT group — all via a generic descriptor registry
 (`core/properties_registry`) so a new group is *new rows in the table*, not new UI.
 
 **Not yet built (same pattern, mark each by adding descriptors):**
-- **Dimension** deep group: per-element colors (dim/ext/text/arrow), arrow type/size,
-  precision, and dimstyle overrides. Tangled with DIMSTYLE; the universal props already
-  expose its color/layer/linetype/lineweight today.
+- **Dimension** deep group — DONE (Phase 24): per-dimension overrides for arrow type/
+  size, dim/ext/text colour, text height/placement, precision (ByStyle-or-Overridden +
+  reset), native v8 round-trip. Remaining dim follow-ups: override `arrow_color`,
+  `ext_offset`/`ext_extension`, `dim_lineweight` (only the 8 essentials are wired);
+  **DXF dim-override fidelity** (overrides are native-only today — map to DXF dimvar
+  XDATA when worth it); the standalone LEADER's arrow override.
 - **Numeric geometry editing**: make the Geometry group's line length/endpoints,
   circle/arc center+radius, etc. *editable* (a write fn + a non-ReadOnly editor on the
   existing descriptors) rather than display-only.

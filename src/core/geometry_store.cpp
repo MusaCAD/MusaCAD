@@ -67,8 +67,9 @@ EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, s
 }
 
 EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt,
-                                          std::uint16_t style, EntityProps props) {
-    const auto slot = dims_.insert(DimData{type, a, b, line_pt, style, props});
+                                          std::uint16_t style, EntityProps props,
+                                          DimOverrides overrides) {
+    const auto slot = dims_.insert(DimData{type, a, b, line_pt, style, props, overrides});
     return EntityHandle{slot.index, slot.generation, EntityKind::Dimension};
 }
 

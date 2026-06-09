@@ -251,3 +251,39 @@ TEST_CASE("Object dimension on empty space creates nothing (honest, no crash)") 
     REQUIRE_FALSE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
     engine.stop();
 }
+
+TEST_CASE("Per-dimension overrides resolve override-first in compute_dim_geometry") {
+    using musacad::core::DimData;
+    using musacad::core::DimOverrides;
+    using musacad::core::DimStyle;
+    using musacad::core::DimType;
+    using musacad::core::Rgb;
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {10, 0};
+    d.line_pt = {5, 3};
+    DimStyle s; // text_height 2.5, arrow 2.5, precision 2
+    // No override -> follows style.
+    REQUIRE(compute_dim_geometry(d, s, Rgb{255, 255, 255}).text_height == Catch::Approx(2.5));
+
+    // Override text height + text colour on THIS dim.
+    d.overrides.set(DimOverrides::kTextHeight, true);
+    d.overrides.text_height = 7.0;
+    d.overrides.set(DimOverrides::kTextColor, true);
+    d.overrides.text_color = {255, 0, 0};
+    const auto g1 = compute_dim_geometry(d, s, Rgb{255, 255, 255});
+    REQUIRE(g1.text_height == Catch::Approx(7.0));
+    REQUIRE(g1.text_color == Rgb{255, 0, 0});
+
+    // Change the style: overridden field stays, ByStyle field (precision) follows.
+    s.text_height = 4.0;
+    s.precision = 4;
+    const auto g2 = compute_dim_geometry(d, s, Rgb{255, 255, 255});
+    REQUIRE(g2.text_height == Catch::Approx(7.0)); // override wins
+    REQUIRE(g2.label == "10.0000");                // precision followed the style
+
+    // Reset the override -> follows the style again.
+    d.overrides.set(DimOverrides::kTextHeight, false);
+    REQUIRE(compute_dim_geometry(d, s, Rgb{255, 255, 255}).text_height == Catch::Approx(4.0));
+}

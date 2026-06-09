@@ -71,7 +71,8 @@ suggests both); aliases are case-insensitive.
 | PR universal props: **Layer / Color / Linetype / Lineweight** (ByLayer or override) editable single + multi + mixed | — | Implemented (Ph22) |
 | PR Geometry group (read-only): line length/ends, circle/arc center+radius, text position | — | Implemented (Ph22; numeric geometry editing Planned) |
 | PR full **Text / MTEXT** group: contents, height, rotation, justify, width factor, line spacing, defined width, attachment, font (read-only) | — | Implemented (Ph22) |
-| PR deep **Dimension** group (per-element colors, arrow type/size, dimstyle overrides) | — | Planned (universal props cover color/layer/linetype/lineweight today) |
+| PR deep **Dimension** group: per-dimension overrides — arrowhead type/size, dim-line & ext-line color, text height/color/placement, precision (each ByStyle or Overridden, with reset-to-style) | — | Implemented (Ph24) |
+| Per-dimension overrides: resolve override-first-else-style (the Ph12 pattern) in compute_dim_geometry; one undo group; native round-trip; DXF override-vs-style distinction is native-only (stated gap) | — | Implemented (Ph24) |
 | PR numeric **geometry editing** for line/circle/arc/polyline/leader | — | Planned (read-only display today) |
 | LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |

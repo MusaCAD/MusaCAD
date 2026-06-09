@@ -244,11 +244,15 @@ void PropertiesPanel::rebuild() {
             break;
         }
         case PropEditor::ColorOverride: {
+            // The "inherited" state is ByLayer for entity colour, ByStyle for a
+            // dimension element colour (same flag, different label).
+            const QString inherit =
+                f.group == "Dimension" ? QStringLiteral("ByStyle") : QStringLiteral("ByLayer");
             auto* btn = new QPushButton();
             if (varies) {
                 btn->setText(QString::fromLatin1(kVaries));
             } else if (f.value.flag) {
-                btn->setText(QStringLiteral("ByLayer"));
+                btn->setText(inherit);
             } else {
                 const core::Rgb c = f.value.color;
                 btn->setText(QStringLiteral("%1, %2, %3").arg(c.r).arg(c.g).arg(c.b));
@@ -265,9 +269,9 @@ void PropertiesPanel::rebuild() {
                     emit_edit(id, pv);
                 }
             });
-            // A second control for ByLayer keeps the override/by-layer choice explicit.
-            auto* bylayer = new QPushButton(QStringLiteral("ByLayer"));
-            connect(bylayer, &QPushButton::clicked, this, [this, id] {
+            // A second control for the inherited (ByLayer/ByStyle) state -> reset.
+            auto* reset = new QPushButton(inherit);
+            connect(reset, &QPushButton::clicked, this, [this, id] {
                 PropertyValue pv;
                 pv.flag = true;
                 emit_edit(id, pv);
@@ -276,8 +280,82 @@ void PropertiesPanel::rebuild() {
             auto* h = new QHBoxLayout(row);
             h->setContentsMargins(0, 0, 0, 0);
             h->addWidget(btn);
-            h->addWidget(bylayer);
+            h->addWidget(reset);
             current_form->addRow(label, row);
+            break;
+        }
+        case PropEditor::NumberOverride: {
+            // A number field + a "ByStyle" reset button. Editing the number sets the
+            // override (flag=false); the button resets to ByStyle (flag=true).
+            auto* e = new QLineEdit();
+            e->setValidator(new QDoubleValidator(e));
+            if (varies) {
+                e->setPlaceholderText(QString::fromLatin1(kVaries));
+            } else {
+                e->setText(QString::number(f.value.num, 'g', 6));
+                if (f.value.flag) {
+                    e->setToolTip(QStringLiteral("ByStyle"));
+                }
+            }
+            connect(e, &QLineEdit::editingFinished, this, [this, id, e] {
+                bool ok = false;
+                const double v = e->text().toDouble(&ok);
+                if (ok) {
+                    PropertyValue pv;
+                    pv.flag = false; // a typed value sets the override
+                    pv.num = v;
+                    emit_edit(id, pv);
+                }
+            });
+            auto* reset = new QPushButton(QStringLiteral("ByStyle"));
+            connect(reset, &QPushButton::clicked, this, [this, id] {
+                PropertyValue pv;
+                pv.flag = true; // reset to style
+                emit_edit(id, pv);
+            });
+            auto* row = new QWidget();
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->addWidget(e);
+            h->addWidget(reset);
+            current_form->addRow(label, row);
+            editors_[static_cast<int>(id)] = e;
+            break;
+        }
+        case PropEditor::DimArrowTypeCombo: {
+            auto* e = new QComboBox();
+            e->addItems({QStringLiteral("ByStyle"), QStringLiteral("Filled"),
+                         QStringLiteral("Tick"), QStringLiteral("Open"), QStringLiteral("Dot")});
+            if (varies) {
+                e->addItem(QString::fromLatin1(kVaries));
+                e->setCurrentIndex(e->count() - 1);
+            } else {
+                e->setCurrentIndex(f.value.choice);
+            }
+            connect(e, &QComboBox::activated, this, [this, id](int index) {
+                PropertyValue pv;
+                pv.choice = index; // 0 = ByStyle
+                emit_edit(id, pv);
+            });
+            current_form->addRow(label, e);
+            break;
+        }
+        case PropEditor::DimPlacementCombo: {
+            auto* e = new QComboBox();
+            e->addItems({QStringLiteral("ByStyle"), QStringLiteral("Above"),
+                         QStringLiteral("Centered")});
+            if (varies) {
+                e->addItem(QString::fromLatin1(kVaries));
+                e->setCurrentIndex(e->count() - 1);
+            } else {
+                e->setCurrentIndex(f.value.choice);
+            }
+            connect(e, &QComboBox::activated, this, [this, id](int index) {
+                PropertyValue pv;
+                pv.choice = index; // 0 = ByStyle
+                emit_edit(id, pv);
+            });
+            current_form->addRow(label, e);
             break;
         }
         case PropEditor::LinetypeCombo: {

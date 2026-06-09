@@ -42,9 +42,10 @@ int main(int argc, char* argv[]) {
             const bool ok_mtext = window.selftest_mtext();
             const bool ok_props = window.selftest_properties();
             const bool ok_linetype = window.selftest_linetype();
+            const bool ok_dimprops = window.selftest_dim_properties();
             const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
-                            ok_linetype;
+                            ok_linetype && ok_dimprops;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

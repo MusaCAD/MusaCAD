@@ -101,3 +101,50 @@ TEST_CASE("Loading a missing file fails gracefully") {
     REQUIRE_FALSE(r.ok);
     REQUIRE_FALSE(r.message.empty());
 }
+
+TEST_CASE("Native round-trip: per-dimension overrides preserved; older DIM loads as ByStyle") {
+    using namespace musacad::core;
+    using namespace musacad::core::io;
+    Document doc;
+    DocDim d;
+    d.type = static_cast<std::uint8_t>(DimType::Linear);
+    d.a = {0, 0};
+    d.b = {20, 0};
+    d.line_pt = {10, 4};
+    d.style = 0;
+    d.overrides.set(DimOverrides::kArrowSize, true);
+    d.overrides.arrow_size = 9.0;
+    d.overrides.set(DimOverrides::kTextColor, true);
+    d.overrides.text_color = {0, 128, 255};
+    doc.dims.push_back(d);
+
+    Document back;
+    REQUIRE(parse_native(serialize_native(doc), back).ok);
+    REQUIRE(back.dims.size() == 1);
+    REQUIRE(back.dims[0].overrides == d.overrides); // lossless
+    REQUIRE(back.dims[0].overrides.has(DimOverrides::kArrowSize));
+    REQUIRE(back.dims[0].overrides.arrow_size == 9.0);
+
+    // An older (pre-v8) DIM line without the override block loads as all-ByStyle.
+    std::string text = serialize_native(doc);
+    // Strip the trailing 15 override tokens from the single DIM line.
+    const std::size_t dpos = text.find("\nDIM ");
+    REQUIRE(dpos != std::string::npos);
+    std::size_t eol = text.find('\n', dpos + 1);
+    std::string line = text.substr(dpos + 1, eol - (dpos + 1));
+    // keep first 16 tokens
+    std::size_t cut = 0;
+    int spaces = 0;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == ' ' && ++spaces == 16) {
+            cut = i;
+            break;
+        }
+    }
+    REQUIRE(cut > 0);
+    text.replace(dpos + 1, eol - (dpos + 1), line.substr(0, cut));
+    Document older;
+    REQUIRE(parse_native(text, older).ok);
+    REQUIRE(older.dims.size() == 1);
+    REQUIRE(older.dims[0].overrides.mask == 0); // ByStyle
+}

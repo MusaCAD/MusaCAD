@@ -90,7 +90,18 @@ std::string format_measurement(double value, std::uint8_t precision) {
     return std::string(buf);
 }
 
+// Builds the geometry from an ALREADY-EFFECTIVE style (overrides applied).
+static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle& style,
+                                               Rgb base_color);
+
 DimGeometry compute_dim_geometry(const DimData& d, const DimStyle& style, Rgb base_color) {
+    // The single resolution point: per-dimension overrides win over the style
+    // (the Ph12 ByLayer/override shape), then the body reads the effective style.
+    return compute_dim_geometry_styled(d, apply_dim_overrides(style, d.overrides), base_color);
+}
+
+static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle& style,
+                                               Rgb base_color) {
     DimGeometry g;
     g.text_height = style.text_height;
     g.lineweight = style.dim_lineweight;

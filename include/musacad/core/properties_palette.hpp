@@ -40,6 +40,16 @@ enum class PropertyId : std::uint16_t {
     MtLineSpacing,
     MtAttach, ///< 0..8 = TL,TC,TR,ML,MC,MR,BL,BC,BR
     MtWidth,  ///< MTEXT defined wrap width
+    // Dimension per-dimension overrides (ByStyle unless overridden). The effective
+    // value (override or the dim's DimStyle) is shown; editing sets an override.
+    DimArrowType,
+    DimArrowSize,
+    DimDimColor,
+    DimExtColor,
+    DimTextHeight,
+    DimTextColor,
+    DimTextPlacement, ///< Above / Centered
+    DimPrecision,
 };
 
 /// How the UI renders + edits a field. The UI is generic over these.
@@ -55,6 +65,12 @@ enum class PropEditor : std::uint8_t {
     JustifyCombo,    ///< value.choice 0..2
     AttachCombo,     ///< value.choice 0..8
     FontCombo,       ///< read-only (single font), value.choice
+    // Dimension overrides: value.flag = ByStyle (no override). The combos put
+    // "ByStyle" at index 0 (like LinetypeCombo's ByLayer); editing index>0 / a
+    // number / a colour sets the override.
+    NumberOverride,    ///< value.flag = ByStyle; value.num = effective/override value
+    DimArrowTypeCombo, ///< value.choice: 0=ByStyle, 1..4 = ArrowType+1
+    DimPlacementCombo, ///< value.choice: 0=ByStyle, 1=Above, 2=Centered
 };
 
 /// A typed value carried by a field / a SetPropertyCommand. Only the members

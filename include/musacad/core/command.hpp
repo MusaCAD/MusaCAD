@@ -252,6 +252,9 @@ struct AddDimensionCommand {
     std::uint16_t style = 0;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    DimOverrides overrides = {}; ///< per-dimension style overrides (authoritative)
+    DimStyle dim_style = {};      ///< resolved style snapshot for PR display only;
+                                  ///< filled by capture_entity, ignored on recreate
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under

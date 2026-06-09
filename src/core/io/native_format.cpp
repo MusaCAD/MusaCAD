@@ -286,6 +286,28 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, d.style);
         append_props(s, d.props);
+        // Per-dimension overrides (v8): mask + all values (full block => lossless).
+        const DimOverrides& o = d.overrides;
+        s += ' ';
+        append_uint(s, o.mask);
+        s += ' ';
+        append_uint(s, o.arrow_type);
+        s += ' ';
+        append_uint(s, o.precision);
+        s += ' ';
+        append_uint(s, o.text_above ? 1 : 0);
+        s += ' ';
+        append_double(s, o.text_height);
+        s += ' ';
+        append_double(s, o.arrow_size);
+        for (const Rgb& c : {o.dim_color, o.ext_color, o.text_color}) {
+            s += ' ';
+            append_uint(s, c.r);
+            s += ' ';
+            append_uint(s, c.g);
+            s += ' ';
+            append_uint(s, c.b);
+        }
         s += '\n';
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
@@ -546,10 +568,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                                         std::move(content),
                                         props});
         } else if (key == "DIM") {
-            // DIM type ax ay bx by lx ly style <props7>
+            // DIM type ax ay bx by lx ly style <props7> [override block of 15]
             std::uint64_t dtype = 0;
             vals.clear();
-            if (tok.size() != 16 || !to_uint(tok[1], dtype) || !parse_doubles(tok, 2, 6, vals)) {
+            const bool has_ov = tok.size() == 31; // v8 appends the override block
+            if ((tok.size() != 16 && !has_ov) || !to_uint(tok[1], dtype) ||
+                !parse_doubles(tok, 2, 6, vals)) {
                 return fail("DIM record malformed");
             }
             std::uint64_t style = 0;
@@ -557,12 +581,38 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (!to_uint(tok[8], style) || !parse_props(tok, 9, props)) {
                 return fail("DIM record malformed");
             }
+            DimOverrides ov{};
+            if (has_ov) {
+                std::uint64_t mask = 0, atype = 0, prec = 0, above = 0;
+                double th = 0.0, as = 0.0;
+                std::array<std::uint64_t, 9> rgb{};
+                bool ok = to_uint(tok[16], mask) && to_uint(tok[17], atype) &&
+                          to_uint(tok[18], prec) && to_uint(tok[19], above) &&
+                          to_double(tok[20], th) && to_double(tok[21], as);
+                for (int k = 0; ok && k < 9; ++k) {
+                    ok = to_uint(tok[22 + static_cast<std::size_t>(k)], rgb[static_cast<std::size_t>(k)]);
+                }
+                if (!ok) {
+                    return fail("DIM override block malformed");
+                }
+                ov.mask = static_cast<std::uint16_t>(mask);
+                ov.arrow_type = static_cast<std::uint8_t>(atype);
+                ov.precision = static_cast<std::uint8_t>(prec);
+                ov.text_above = above != 0;
+                ov.text_height = th;
+                ov.arrow_size = as;
+                const auto b = [&](int i) { return static_cast<std::uint8_t>(rgb[static_cast<std::size_t>(i)]); };
+                ov.dim_color = {b(0), b(1), b(2)};
+                ov.ext_color = {b(3), b(4), b(5)};
+                ov.text_color = {b(6), b(7), b(8)};
+            }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
                                       {vals[0], vals[1]},
                                       {vals[2], vals[3]},
                                       {vals[4], vals[5]},
                                       static_cast<std::uint16_t>(style),
-                                      props});
+                                      props,
+                                      ov});
         } else if (key == "LEADER") {
             // LEADER tipx tipy kneex kneey height style <props7>; content next line.
             vals.clear();

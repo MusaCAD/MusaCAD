@@ -83,6 +83,68 @@ struct DimStyle {
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };
 
+/// Per-dimension property overrides (AutoCAD's PR "this dimension only"). Mirrors
+/// the ByLayer/override pattern: a bit in `mask` means "this field is overridden;
+/// use the value here instead of the dimension's DimStyle". No bit => ByStyle. The
+/// effective value is resolved once, in compute_dim_geometry (override-first). Kept
+/// compact and only in the dimension's arena -- hot structs are untouched.
+struct DimOverrides {
+    enum Bit : std::uint16_t {
+        kTextHeight = 1u << 0,
+        kArrowSize = 1u << 1,
+        kArrowType = 1u << 2,
+        kPrecision = 1u << 3,
+        kTextAbove = 1u << 4,
+        kDimColor = 1u << 5,
+        kExtColor = 1u << 6,
+        kTextColor = 1u << 7,
+    };
+    std::uint16_t mask = 0;
+    std::uint8_t arrow_type = 0;
+    std::uint8_t precision = 2;
+    bool text_above = true;
+    double text_height = 2.5;
+    double arrow_size = 2.5;
+    Rgb dim_color{};
+    Rgb ext_color{};
+    Rgb text_color{};
+
+    [[nodiscard]] bool has(Bit b) const noexcept { return (mask & b) != 0; }
+    void set(Bit b, bool on) noexcept { mask = on ? (mask | b) : (mask & ~b); }
+
+    friend bool operator==(const DimOverrides&, const DimOverrides&) = default;
+};
+
+/// Apply a dimension's overrides onto a copy of its style, producing the effective
+/// style. The ONE place override-vs-style is decided (called from compute_dim_geometry).
+[[nodiscard]] inline DimStyle apply_dim_overrides(DimStyle s, const DimOverrides& o) noexcept {
+    if (o.has(DimOverrides::kTextHeight)) {
+        s.text_height = o.text_height;
+    }
+    if (o.has(DimOverrides::kArrowSize)) {
+        s.arrow_size = o.arrow_size;
+    }
+    if (o.has(DimOverrides::kArrowType)) {
+        s.arrow_type = o.arrow_type;
+    }
+    if (o.has(DimOverrides::kPrecision)) {
+        s.precision = o.precision;
+    }
+    if (o.has(DimOverrides::kTextAbove)) {
+        s.text_above = o.text_above;
+    }
+    if (o.has(DimOverrides::kDimColor)) {
+        s.dim_color = ElementColor{false, o.dim_color};
+    }
+    if (o.has(DimOverrides::kExtColor)) {
+        s.ext_color = ElementColor{false, o.ext_color};
+    }
+    if (o.has(DimOverrides::kTextColor)) {
+        s.text_color = ElementColor{false, o.text_color};
+    }
+    return s;
+}
+
 /// Per-entity property attributes. Each property is either inherited from the
 /// entity's layer (its ByLayer flag set) or an explicit override. Kept compact
 /// (8 bytes) because every entity carries one: a packed flags byte instead of

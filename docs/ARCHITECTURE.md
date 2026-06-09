@@ -878,6 +878,49 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## Dimension properties in PR — per-dimension overrides (Phase 24)
+
+The Properties palette's deep Dimension group edits **per-dimension overrides**
+(this dimension only; the shared DIMSTYLE is untouched — that lives in the DIMSTYLE
+dialog), exactly like AutoCAD's PR.
+
+* **Override model = the Ph12 ByLayer/override shape.** `DimOverrides` (in
+  `properties.hpp`) is a compact **presence bitmask + values** for the 8 PR-editable
+  fields (arrow type/size, dim/ext/text colour, text height, text placement,
+  precision). A set bit means "override; use this value", no bit means **ByStyle**.
+  It lives inline in `DimData` (the dimension's own arena) — hot structs
+  (`LineData` 40 / `CircleData` 32) are untouched; `DimData` grows 56→112 B
+  (`DimOverrides` is 40 B), which is fine for the few-and-cold dim arena.
+* **One resolution path.** `compute_dim_geometry` (the single place dims resolve
+  appearance) applies overrides first via `apply_dim_overrides(style, d.overrides)`
+  → an effective style, then the body reads that exactly as before. Override-first-
+  else-style, no parallel resolution. So a non-overridden field follows its DIMSTYLE
+  (and tracks style edits), while an overridden field stays put — proven by a test
+  mirroring the Ph12 colour test.
+* **Flows through capture→recreate (undo).** `AddDimensionCommand` gains
+  `overrides` (authoritative — `capture_entity` reads it from `DimData`,
+  `add_command_to_store` writes it back) plus a `dim_style` snapshot
+  (`capture_entity` fills it from the store; **used only for PR effective-value
+  display, ignored on recreate**). Edits and reset-to-style ride the Ph22
+  `SetPropertyCommand` path → one undo group; Ctrl+Z restores.
+* **PR group via the registry (no framework change).** 8 descriptors registered
+  with `applies = is_dimension` under group "Dimension" — the per-type registration
+  Text/MTEXT established, just more rows. Each row reads the **effective** value
+  (override if set, else the captured style) and its ByStyle/Overridden state, and
+  offers reset-to-style. Reused `ColorOverride` (its inherit button reads "ByStyle"
+  for the dim group); added three editors mirroring existing ones —
+  `NumberOverride` (value + ByStyle reset) and `DimArrowTypeCombo` /
+  `DimPlacementCombo` (index 0 = ByStyle, like LinetypeCombo's ByLayer). Multi-dim
+  selection reuses the `*VARIES*`/set-all aggregation. Covers LINEAR/ALIGNED/RADIUS/
+  DIAMETER/ANGULAR; the standalone LEADER's arrow is deferred (Planned).
+* **Persistence.** Native **v8** serializes the full override block per DIM line
+  (lossless round-trip, proof test); v1–v7 dim lines load as all-ByStyle. **DXF**:
+  per-dimension overrides are **not** written — the dim exports referencing its
+  style (the override-vs-style distinction is a stated native-only gap); the dim
+  still round-trips and renders (LibreCAD-verified).
+* **No hot-path regression.** Insert ~31 ns; draw calls 4/6; threading unchanged
+  (overrides resolve snapshot-side, read lock-free via the selection summary).
+
 ## Linetype pattern rendering & LTSCALE (Phase 23)
 
 Dashed/Center/Hidden linetypes now draw as real dash patterns; Continuous is
@@ -1137,6 +1180,13 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 24 — complete:** dimension properties in PR (per-dimension overrides). A
+  compact `DimOverrides` bitmask+values (Ph12 ByLayer/override shape) in `DimData`,
+  resolved override-first in the single `compute_dim_geometry` path; 8 PR rows via the
+  registry (arrow type/size, dim/ext/text colour, text height/placement, precision)
+  with ByStyle-or-Overridden + reset-to-style; one undo group; multi-dim varies/set-all;
+  native v8 lossless (DXF override-vs-style native-only). Hot structs unchanged. 232
+  tests (dev) / 231 (TSan); real-window selftest (set/reset/undo/multi).
 * **Phase 23 — complete:** linetype pattern rendering + LTSCALE. One arc-length dash
   walker (`core/linetype`) dashes lines and curves through the same path (phase carries
   across tessellation vertices; zoom-consistent; bounded draw calls). Patterns follow

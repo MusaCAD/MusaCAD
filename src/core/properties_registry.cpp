@@ -48,6 +48,40 @@ void with_props(Command& c, const std::function<void(EntityProps&)>& fn) {
         c);
 }
 
+// --- dimension per-dimension overrides + resolved-style snapshot ---------------
+// Only AddDimensionCommand carries .overrides / .dim_style.
+DimOverrides get_dim_ov(const Command& c) {
+    DimOverrides o{};
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.overrides; }) {
+                o = x.overrides;
+            }
+        },
+        c);
+    return o;
+}
+DimStyle get_dim_style(const Command& c) {
+    DimStyle s{};
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.dim_style; }) {
+                s = x.dim_style;
+            }
+        },
+        c);
+    return s;
+}
+void with_dim_ov(Command& c, const std::function<void(DimOverrides&)>& fn) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.overrides; }) {
+                fn(x.overrides);
+            }
+        },
+        c);
+}
+
 double get_height(const Command& c) {
     double v = 0.0;
     std::visit(
@@ -195,6 +229,29 @@ bool is_circular(EntityKind k) { return k == EntityKind::Circle || k == EntityKi
 bool is_text(EntityKind k) { return k == EntityKind::Text || k == EntityKind::MText; }
 bool is_text_only(EntityKind k) { return k == EntityKind::Text; }
 bool is_mtext_only(EntityKind k) { return k == EntityKind::MText; }
+bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
+
+// Read a dim numeric override field: flag = ByStyle (no override); num = the
+// effective value (override if set, else the resolved style value).
+PropertyValue read_dim_num(const Command& c, DimOverrides::Bit bit, double ov_val,
+                           double style_val) {
+    PropertyValue v;
+    const bool overridden = get_dim_ov(c).has(bit);
+    v.flag = !overridden;
+    v.num = overridden ? ov_val : style_val;
+    return v;
+}
+// Read a dim colour override: flag = ByStyle; color = effective (override, else the
+// style element colour -- shown as its explicit RGB, or white when the style
+// element is ByLayer, a display approximation).
+PropertyValue read_dim_color(const Command& c, DimOverrides::Bit bit, Rgb ov_col,
+                             const ElementColor& style_col) {
+    PropertyValue v;
+    const bool overridden = get_dim_ov(c).has(bit);
+    v.flag = !overridden;
+    v.color = overridden ? ov_col : (style_col.by_layer ? Rgb{255, 255, 255} : style_col.color);
+    return v;
+}
 
 // Deduced size -- the table is the single source of truth; range-for everywhere
 // means no hand-maintained count to get wrong.
@@ -428,6 +485,118 @@ const Desc kDescs[] = {
                  }
              },
              c);
+     }},
+
+    // -- Dimension (per-dimension overrides; ByStyle unless set) --
+    {PropertyId::DimArrowType, "Dimension", "Arrowhead", PropEditor::DimArrowTypeCombo, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         const DimOverrides o = get_dim_ov(c);
+         v.choice = o.has(DimOverrides::kArrowType) ? o.arrow_type + 1 : 0; // 0 = ByStyle
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kArrowType, v.choice > 0);
+             if (v.choice > 0) {
+                 o.arrow_type = static_cast<std::uint8_t>(v.choice - 1);
+             }
+         });
+     }},
+    {PropertyId::DimArrowSize, "Dimension", "Arrow size", PropEditor::NumberOverride, is_dimension,
+     [](const Command& c) {
+         return read_dim_num(c, DimOverrides::kArrowSize, get_dim_ov(c).arrow_size,
+                             get_dim_style(c).arrow_size);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kArrowSize, !v.flag);
+             if (!v.flag) {
+                 o.arrow_size = v.num;
+             }
+         });
+     }},
+    {PropertyId::DimDimColor, "Dimension", "Dim line color", PropEditor::ColorOverride, is_dimension,
+     [](const Command& c) {
+         return read_dim_color(c, DimOverrides::kDimColor, get_dim_ov(c).dim_color,
+                               get_dim_style(c).dim_color);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kDimColor, !v.flag);
+             if (!v.flag) {
+                 o.dim_color = v.color;
+             }
+         });
+     }},
+    {PropertyId::DimExtColor, "Dimension", "Ext line color", PropEditor::ColorOverride, is_dimension,
+     [](const Command& c) {
+         return read_dim_color(c, DimOverrides::kExtColor, get_dim_ov(c).ext_color,
+                               get_dim_style(c).ext_color);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kExtColor, !v.flag);
+             if (!v.flag) {
+                 o.ext_color = v.color;
+             }
+         });
+     }},
+    {PropertyId::DimTextHeight, "Dimension", "Text height", PropEditor::NumberOverride, is_dimension,
+     [](const Command& c) {
+         return read_dim_num(c, DimOverrides::kTextHeight, get_dim_ov(c).text_height,
+                             get_dim_style(c).text_height);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kTextHeight, !v.flag);
+             if (!v.flag) {
+                 o.text_height = v.num;
+             }
+         });
+     }},
+    {PropertyId::DimTextColor, "Dimension", "Text color", PropEditor::ColorOverride, is_dimension,
+     [](const Command& c) {
+         return read_dim_color(c, DimOverrides::kTextColor, get_dim_ov(c).text_color,
+                               get_dim_style(c).text_color);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kTextColor, !v.flag);
+             if (!v.flag) {
+                 o.text_color = v.color;
+             }
+         });
+     }},
+    {PropertyId::DimTextPlacement, "Dimension", "Text placement", PropEditor::DimPlacementCombo,
+     is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         const DimOverrides o = get_dim_ov(c);
+         v.choice = o.has(DimOverrides::kTextAbove) ? (o.text_above ? 1 : 2) : 0; // 0 = ByStyle
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kTextAbove, v.choice > 0);
+             if (v.choice > 0) {
+                 o.text_above = (v.choice == 1);
+             }
+         });
+     }},
+    {PropertyId::DimPrecision, "Dimension", "Precision", PropEditor::NumberOverride, is_dimension,
+     [](const Command& c) {
+         return read_dim_num(c, DimOverrides::kPrecision,
+                             static_cast<double>(get_dim_ov(c).precision),
+                             static_cast<double>(get_dim_style(c).precision));
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kPrecision, !v.flag);
+             if (!v.flag) {
+                 o.precision = static_cast<std::uint8_t>(v.num < 0 ? 0 : v.num);
+             }
+         });
      }},
 };
 

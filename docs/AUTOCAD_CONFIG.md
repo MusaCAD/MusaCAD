@@ -101,7 +101,7 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Geometry numeric editing (type a new radius/length/endpoint) | Planned |
 | Text/MTEXT group (contents, height, rotation, justify, width factor, line spacing, defined width, attachment) | Implemented (Ph22) |
 | Font selection field | Implemented as read-only (single stroke font); real font system Planned |
-| Dimension group (per-element colors, arrow type/size, dimstyle overrides) | Planned |
+| Dimension group: per-dimension overrides (arrow type/size, dim/ext-line color, text height/color/placement, precision; ByStyle-or-Overridden + reset) | Implemented (Ph24; native round-trip, DXF override-vs-style native-only) |
 | Quick-select / filter by property | Planned |
 
 ## Text / MTEXT
