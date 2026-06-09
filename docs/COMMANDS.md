@@ -118,6 +118,14 @@ suggests both); aliases are case-insensitive.
 | Linetype property (Continuous/Dashed/Center/Hidden) | — | Implemented (model + round-trip + **dashed rendering**, Ph23) |
 | **Linetype pattern rendering** (dashes drawn on lines, polylines, and curves by arc-length; ByLayer + override) | — | Implemented (Ph23) |
 | **LTSCALE** (global linetype scale; re-dashes live; native + DXF round-trip) | LTSCALE / LTS | Implemented (Ph23) |
+| **Dynamic Input** — type commands/values AT the crosshair; cursor-anchored field shows the live prompt | F12 / status DYN toggle | Implemented (Ph25; state persisted) |
+| DYN live dimensional input: type an exact length/angle (line), radius (circle), width/height (rectangle) during the rubber-band; Tab between fields | — | Implemented (Ph25; honors ORTHO/POLAR/snap) |
+| DYN is additive: the bottom command line still works and stays in sync (same processor) | — | Implemented (Ph25) |
+| **DYN autocomplete**: the Ph6 command-suggestion dropdown anchored at the cursor field (one suggestion source: the registry) | — | Implemented (Ph26) |
+| Draw/transform ribbon buttons **start the interactive command** (pick on screen, like typing — never a fixed-position dialog): Line/Circle/Arc/Rectangle/Rotate/Scale | ribbon | Implemented (AutoCAD model) |
+| **CIRCLE radius/[Diameter] option** — type `D` at the radius prompt (command line or DYN) to enter a diameter instead | C → D | Implemented (Ph26) |
+| Parametric **multi-parameter dialog** (collect values → submit existing Command): ARRAY | ribbon | Implemented (Ph11) |
+| POLYGON command + dialog | — | Planned (no POLYGON command yet) |
 | Per-entity linetype scale (CELTSCALE) | — | Planned |
 | Lineweight property (hundredths-mm) | — | Implemented (model + round-trip; visible weight Planned) |
 | LAYER command-line alias / PROPERTIES palette / MATCHPROP | LA / PR / MA | Planned (Phase 13) |

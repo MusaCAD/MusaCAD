@@ -387,3 +387,30 @@ TEST_CASE("Processor: TEXTEDIT picks then sets content via EditTextContentComman
     REQUIRE(e->content == "NEW CONTENT");
     REQUIRE(e->at == Vec2{5.0, 5.0});
 }
+
+TEST_CASE("Processor: LINE then polar @50<0 lands exactly at (50,0) [DYN composition]") {
+    Harness h;
+    h.proc.submit_line("L");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("@50<0"); // exactly what DYN composes from length=50, angle=0
+    h.proc.cancel();
+    REQUIRE(h.cmds.size() == 1);
+    const auto* line = std::get_if<musacad::core::AddLineCommand>(&h.cmds[0]);
+    REQUIRE(line != nullptr);
+    REQUIRE(line->a == Vec2{0.0, 0.0});
+    REQUIRE(line->b.x == Approx(50.0));
+    REQUIRE(line->b.y == Approx(0.0).margin(1e-9));
+}
+
+TEST_CASE("Processor: CIRCLE [Diameter] option -> radius = diameter/2") {
+    Harness h;
+    h.proc.submit_line("C");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("D");   // switch to diameter
+    h.proc.submit_line("50");  // diameter 50
+    REQUIRE(h.cmds.size() == 1);
+    const auto* c = std::get_if<musacad::core::AddCircleCommand>(&h.cmds[0]);
+    REQUIRE(c != nullptr);
+    REQUIRE(c->center == Vec2{0.0, 0.0});
+    REQUIRE(c->radius == Approx(25.0));
+}

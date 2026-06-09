@@ -42,30 +42,40 @@ verbatim, so adding a parser later is non-breaking.
 
 ## Dialog boxes / dynamic input everywhere (deferred 2026-06-06)
 
-**Status:** Slice 1 shipped — a reusable `ParameterDialog` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)) with the **ARRAY** dialog (rectangular +
-polar) wired to the ribbon. The command pipeline is untouched: a dialog only
-collects parameters and submits the existing `Command`.
+**Status:** The cursor surface is settled. Draw/transform commands are **interactive**
+(ribbon starts the command, pick on screen — the AutoCAD model); the cursor value box
+is **DYN** (Phase 25), which mirrors the command line, with an **autocomplete dropdown**
+(Phase 26) and **option keywords** surfaced in both (e.g. CIRCLE radius/[Diameter]).
+The **ARRAY** multi-parameter dialog (Ph11 `ParameterDialog`) remains for genuinely
+parametric commands. Earlier upfront draw modals were removed — a modal that asks for
+position isn't "identical to the command line"; DYN is. The command pipeline is
+untouched (collect-and-submit only).
 
-**Not yet satisfied — the full AutoCAD-style vision still to build:**
+**Remaining:**
 
-1. **Dialogs / dynamic input for *draw* commands**, not just modify:
-   - CIRCLE — radius / diameter (and 2P, 3P, TTR options).
-   - RECTANGLE — length × width (and area, rotation).
-   - POLYGON — number of sides, inscribed/circumscribed, radius.
-   - ARC, ELLIPSE, POINT, etc. — their option sets.
-2. **Dialogs for the remaining modify commands**: ROTATE (angle, copy, reference),
-   SCALE (factor, reference), plus a "pick base point" affordance that briefly
-   yields to the viewport for one pick, then returns to the dialog.
-3. **Live preview while editing dialog fields** — `ParameterDialog` already emits
-   `valuesChanged()`. Needs a render-side overlay mode that draws N transformed
-   ghost copies of the selection (array) or the previewed primitive (draw), so the
-   result updates as the user types. Zero geometry round-trip (same discipline as
-   the cursor preview / move ghost).
-4. **Dynamic Input (DYN)** — the in-canvas input boxes at the cursor (AutoCAD F12),
-   showing length/angle fields you can tab between, as an alternative to both the
-   command line and modal dialogs.
-5. **A declarative command schema** so each command declares its fields/options
+1. **More command options as keywords** (work in command line + DYN): CIRCLE 2P/3P/TTR;
+   RECTANGLE area/rotation; ARC/ELLIPSE option sets. Each is a command state-machine
+   keyword, surfaced via the mirrored prompt.
+2. **POLYGON** — no POLYGON command exists yet (build the command + its sides/
+   inscribed-circumscribed/radius options).
+3. **Context-aware Dynamic Input box (deferred 2026-06-09)** — TODAY the DYN box is a
+   faithful *mirror* of the command line (prompt + a generic value field); it is
+   correct but adds little beyond the command line. AutoCAD's DYN box is
+   **context-sensitive**: its fields and structure change with the active command,
+   the current step, and the selected object — e.g. CIRCLE shows a radius field with a
+   radius/diameter switch *in the box*; RECTANGLE shows length + width fields with the
+   visual rubber-band; each command surfaces its own helpers/option chips right there.
+   It is not a fixed always-on layout.
+   - **Why parked:** purely UI/UX (no functional gap — every value is already
+     enterable via the command line / the generic DYN field). It needs a per-command
+     *field schema* the DYN box renders (which dovetails with item 4), plus
+     option-keyword chips / a Down-arrow dropdown for the bracketed `[Diameter]`-style
+     options (today they are typed).
+   - **Done looks like:** selecting/typing a command drives the DYN box to show that
+     command's labelled fields + option chips for the current step; editing them
+     submits the same `Command` (no parallel pipeline) — the box becomes a genuine
+     shortcut, not just an echo.
+4. **A declarative command schema** so each command declares its fields/options
    *once* and gets the command-line prompts, the dialog, and dynamic input for
    free (avoid hand-writing each surface). `DialogSpec` is the seed of this.
 

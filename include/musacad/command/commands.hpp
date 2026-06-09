@@ -33,7 +33,7 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Center, Radius } state_ = State::Center;
+    enum class State { Center, Radius, Diameter } state_ = State::Center;
     core::Vec2 center_{};
     bool done_ = false;
 };

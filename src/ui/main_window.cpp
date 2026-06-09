@@ -1,6 +1,7 @@
 #include "musacad/ui/main_window.hpp"
 
 #include <cmath>
+#include <numbers>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,7 @@
 #include <QString>
 #include <QTabBar>
 #include <QTimer>
+#include <QSettings>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -48,6 +50,7 @@
 #include "musacad/ui/command_line_widget.hpp"
 #include "musacad/ui/layer_dialog.hpp"
 #include "musacad/ui/parameter_dialog.hpp"
+#include "musacad/ui/dyn_input.hpp"
 #include "musacad/ui/properties_panel.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
 #include "musacad/ui/viewport_window.hpp"
@@ -75,6 +78,7 @@ DialogSpec array_dialog_spec() {
     };
     return spec;
 }
+
 
 /// The "Standard" dimension-style editor (minimal; full multi-style manager is
 /// staged). All fields always visible.
@@ -146,14 +150,39 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::BottomDockWidgetArea, dock);
 
+    // The processor speaks to ONE CommandOutput; a fan-out mirrors prompt/echo to
+    // both the bottom command line and the cursor-anchored Dynamic Input.
+    fanout_ = std::make_unique<FanoutOutput>();
+    fanout_->add(command_widget_);
     processor_ = std::make_unique<command::CommandProcessor>(
-        [this](core::Command c) { engine_->submit(std::move(c)); }, viewport_, *command_widget_);
+        [this](core::Command c) { engine_->submit(std::move(c)); }, viewport_, *fanout_);
     processor_->set_grid_spacing(10.0);
     command_widget_->set_processor(processor_.get());
     viewport_->set_processor(processor_.get());
     viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
         open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
     });
+
+    // Dynamic Input (F12): a frameless surface that floats at the crosshair. It
+    // routes typed text through the SAME processor (submit_line) and mirrors the
+    // prompt via the fan-out. Hidden until enabled; OFF == today's behaviour.
+    dyn_ = new DynInput(this);
+    dyn_->set_processor(processor_.get());
+    dyn_->set_escape_callback([this] {
+        viewport_->handle_escape();
+        refocus_dyn();
+    });
+    fanout_->add(dyn_);
+    dyn_->hide();
+    connect(viewport_, &ViewportWindow::cursorScreenMoved, this,
+            [this](double px, double py) { reposition_dyn(px, py); });
+    connect(viewport_, &ViewportWindow::constrainedCursorMoved, this,
+            [this](double cx, double cy) {
+                if (dyn_ != nullptr) {
+                    dyn_->on_constrained_cursor(cx, cy);
+                }
+            });
+    connect(viewport_, &ViewportWindow::pickerInteracted, this, [this] { refocus_dyn(); });
 
     // Properties palette (PR): a dockable panel, hidden by default (the default
     // runtime state stays as before). PR toggles it; the panel edits flow back as
@@ -443,6 +472,10 @@ void MainWindow::build_status_bar() {
     ortho_action_ = make_mode_action(QStringLiteral("ORTHO"), Qt::Key_F8, modes_.ortho);
     snap_action_ = make_mode_action(QStringLiteral("SNAP"), Qt::Key_F9, modes_.snap);
     polar_action_ = make_mode_action(QStringLiteral("POLAR"), Qt::Key_F10, modes_.polar);
+    // Dynamic Input (F12). Persisted across runs (the only persisted UI toggle).
+    const bool dyn_initial = QSettings().value(QStringLiteral("dyn/enabled"), false).toBool();
+    dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial);
+    connect(dyn_action_, &QAction::toggled, this, [this](bool on) { set_dyn_enabled(on); });
 
     connect(osnap_action_, &QAction::toggled, this, [this](bool on) { modes_.osnap = on; });
     connect(grid_action_, &QAction::toggled, this, [this](bool on) { modes_.grid = on; });
@@ -476,6 +509,17 @@ void MainWindow::build_status_bar() {
     add_toggle(ortho_action_);
     add_toggle(snap_action_);
     add_toggle(polar_action_);
+    add_toggle(dyn_action_);
+    // Apply the persisted state at startup -- but NOT under the self-test/dump
+    // harness, which must run in the canonical default runtime state (DYN off, the
+    // command line focused) regardless of a developer's saved preference (Ph9).
+    if (!qEnvironmentVariableIsSet("MUSACAD_SELFTEST") &&
+        !qEnvironmentVariableIsSet("MUSACAD_DUMP_UI") &&
+        !qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {
+        set_dyn_enabled(dyn_initial);
+    } else {
+        dyn_action_->setChecked(false);
+    }
 
     // OSNAP button dropdown: per-type running-osnap toggles (drive snap_mask).
     auto* osnap_menu = new QMenu(this);
@@ -573,21 +617,28 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             // usual state, since it holds focus by default -- must NOT block the
             // Delete-erases-selection binding.
             const bool typing = command_widget_ != nullptr && command_widget_->is_typing();
+            // Dynamic Input is a focused QLineEdit too -- like the command line, it
+            // blocks erase-selection ONLY when actually typing (focused + non-empty);
+            // an empty focused DYN field still lets Delete erase the selection.
+            const bool dyn_typing = dyn_ != nullptr && dyn_->is_typing();
             // ...but also never hijack the key away from a focused text editor or a
             // Properties-palette field (else Backspace while editing e.g. text height
             // would erase the selected entity instead of a digit).
             QWidget* fw = QApplication::focusWidget();
-            // The command line is itself a QLineEdit but has its own (is_typing)
-            // logic above -- exempt it so an empty, focused command line still lets
-            // Delete erase the selection.
+            // The command line / DYN are QLineEdits but have their own is_typing
+            // logic above -- exempt them so an empty, focused field still lets Delete
+            // erase the selection.
             const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
                                 (fw == static_cast<QWidget*>(command_widget_) ||
                                  command_widget_->isAncestorOf(fw));
-            const bool in_text_input = !in_cmd && (qobject_cast<QLineEdit*>(fw) != nullptr ||
-                                                   qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+            const bool in_dyn = dyn_ != nullptr && fw != nullptr &&
+                                (fw == static_cast<QWidget*>(dyn_) || dyn_->isAncestorOf(fw));
+            const bool in_text_input = !in_cmd && !in_dyn &&
+                                       (qobject_cast<QLineEdit*>(fw) != nullptr ||
+                                        qobject_cast<QPlainTextEdit*>(fw) != nullptr);
             const bool in_properties = properties_dock_ != nullptr && fw != nullptr &&
                                        properties_dock_->isAncestorOf(fw);
-            if (!typing && !in_text_input && !in_properties && processor_ != nullptr &&
+            if (!typing && !dyn_typing && !in_text_input && !in_properties && processor_ != nullptr &&
                 viewport_ != nullptr && !processor_->has_active_command() &&
                 viewport_->selection_count() > 0) {
                 processor_->delete_selection();
@@ -975,6 +1026,59 @@ void MainWindow::sync_properties_panel() {
     }
     properties_panel_->update_view(viewport_->selection_summary(), viewport_->layers(),
                                    viewport_->current_layer());
+}
+
+void MainWindow::set_dyn_enabled(bool on) {
+    if (dyn_ == nullptr) {
+        return;
+    }
+    QSettings().setValue(QStringLiteral("dyn/enabled"), on);
+    if (on) {
+        dyn_->show();
+        dyn_->raise();
+        refocus_dyn();
+    } else {
+        dyn_->hide();
+        if (command_widget_ != nullptr) {
+            command_widget_->focus_input(); // keys go back to the bottom command line
+        }
+    }
+}
+
+void MainWindow::reposition_dyn(double local_px, double local_py) {
+    if (dyn_ == nullptr || dyn_action_ == nullptr || !dyn_action_->isChecked() || viewport_ == nullptr) {
+        return;
+    }
+    // Anchor below-right of the crosshair (offset so it never sits under the cursor),
+    // in global screen coords (DYN is a frameless tool window over the GL surface).
+    const QPoint local(static_cast<int>(local_px) + 18, static_cast<int>(local_py) + 18);
+    dyn_->place_at_global(viewport_->mapToGlobal(local));
+}
+
+void MainWindow::refocus_dyn() {
+    if (dyn_ == nullptr || dyn_action_ == nullptr || !dyn_action_->isChecked()) {
+        return;
+    }
+    // Re-acquire focus on the next tick (after the viewport finishes the mouse
+    // event), but ONLY if focus isn't already in another text input (command line /
+    // PR) -- so DYN never steals keys the user directed elsewhere.
+    QTimer::singleShot(0, this, [this] {
+        if (dyn_ == nullptr || !dyn_action_->isChecked()) {
+            return;
+        }
+        QWidget* fw = QApplication::focusWidget();
+        const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
+                            (fw == static_cast<QWidget*>(command_widget_) ||
+                             command_widget_->isAncestorOf(fw));
+        const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
+                              properties_dock_->isAncestorOf(fw);
+        if (!in_cmd && !in_props) {
+            dyn_->show();
+            dyn_->raise();
+            dyn_->activateWindow();
+            dyn_->focus_field();
+        }
+    });
 }
 
 void MainWindow::open_layer_dialog() {
@@ -1421,8 +1525,19 @@ bool MainWindow::selftest_properties() {
     });
     bool bksp_ok = false;
     if (QWidget* he = properties_panel_->editor_widget(PropertyId::TextHeight); he != nullptr) {
+        // Settle focus on the field before the key (else the app filter reads a stale
+        // focusWidget and the guard is evaluated wrong -- a real-window timing race).
+        // The PR field lives in the main window, so make that the active window first.
+        QApplication::setActiveWindow(this);
+        activateWindow();
+        raise();
         he->setFocus(Qt::OtherFocusReason);
-        QCoreApplication::processEvents();
+        for (int i = 0; i < 200 && QApplication::focusWidget() != he; ++i) {
+            QCoreApplication::processEvents();
+            QApplication::setActiveWindow(this);
+            he->setFocus(Qt::OtherFocusReason);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         QKeyEvent ev(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
         QApplication::sendEvent(he, &ev);
         for (int i = 0; i < 60; ++i) {
@@ -1605,6 +1720,200 @@ bool MainWindow::selftest_dim_properties() {
 
     all = all && group_ok && over_ok && reset_ok && undo_ok && multi_ok;
     properties_dock_->hide();
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
+bool MainWindow::selftest_dyn() {
+    using core::AddLineCommand;
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    const auto send_key = [](int key) {
+        QWidget* target = QApplication::focusWidget();
+        QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
+                                                  : static_cast<QObject*>(QApplication::instance()),
+                                &ev);
+    };
+    bool all = true;
+    const bool saved_pref = QSettings().value(QStringLiteral("dyn/enabled"), false).toBool();
+
+    // (1) F12 toggle on -> the surface shows and the state persists.
+    dyn_action_->setChecked(true);
+    const bool on_ok = pump([this] { return dyn_->isVisible(); }) &&
+                       QSettings().value(QStringLiteral("dyn/enabled")).toBool();
+    std::printf("[selftest] DYN F12 toggle on + persisted: %s\n", on_ok ? "PASS" : "FAIL");
+
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // (1b) Autocomplete at the cursor: typing a partial command shows the SAME Ph6
+    // suggestion list, anchored to the DYN field. "C" must include CIRCLE.
+    dyn_->focus_field();
+    QCoreApplication::processEvents();
+    dyn_->test_set_primary("C");
+    const bool sugg_ok = pump([this] { return dyn_->suggestions_visible() && dyn_->suggestion_count() > 0; });
+    dyn_->test_set_primary(""); // clear -> popup hides
+    pump([this] { return !dyn_->suggestions_visible(); });
+    std::printf("[selftest] DYN autocomplete shows registry suggestions at cursor: %s\n",
+                sugg_ok ? "PASS" : "FAIL");
+    all = all && sugg_ok;
+
+    // (2) Start LINE by typing at the cursor surface; prompt mirrors live state.
+    dyn_->test_set_primary("LINE");
+    dyn_->test_submit();
+    const bool start_ok = pump([this] { return processor_->has_active_command(); });
+    const bool prompt_ok =
+        pump([this] { const std::string p = dyn_->prompt_text(); return !p.empty() && p != "Command:"; });
+    std::printf("[selftest] DYN starts a command at the cursor + mirrors prompt: %s\n",
+                (start_ok && prompt_ok) ? "PASS" : "FAIL");
+
+    // (3) A coordinate (abs) via DYN, then an EXACT length (length+angle fields).
+    dyn_->test_set_primary("0,0");
+    dyn_->test_submit();
+    const bool two_fields = pump([this] { return dyn_->secondary_visible(); }); // length + angle
+    dyn_->test_set_primary("50"); // length
+    dyn_->test_set_secondary("0"); // angle (deg)
+    dyn_->test_submit();
+    Vec2 mn{}, mx{};
+    const bool exact_ok = pump([&] {
+        return viewport_->line_vertex_count() == 2 && viewport_->content_bounds(mn, mx) &&
+               std::abs((mx.x - mn.x) - 50.0) < 0.01 && std::abs(mx.y - mn.y) < 0.01;
+    });
+    std::printf("[selftest] DYN exact-length line (typed 50 -> 50.000 long): %s\n",
+                (two_fields && exact_ok) ? "PASS" : "FAIL");
+    all = all && on_ok && start_ok && prompt_ok && two_fields && exact_ok;
+
+    // (4) THE FOCUS CHECK -- with DYN on, the prior gestures still work. First end
+    // the still-active LINE chain (a command being active would block erase-select).
+    processor_->cancel();
+    pump([this] { return !processor_->has_active_command(); });
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(AddLineCommand{Vec2{0, 0}, Vec2{20, 0}, 1});
+    pump([this] { return viewport_->line_vertex_count() == 2; });
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 1; });
+
+    const auto settle_dyn_focus = [&] {
+        dyn_->show();
+        dyn_->raise();
+        dyn_->activateWindow();
+        dyn_->focus_field();
+        for (int i = 0; i < 80 && !dyn_->field_has_focus(); ++i) {
+            QCoreApplication::processEvents();
+            dyn_->activateWindow();
+            dyn_->focus_field();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    // 4a. Delete with an EMPTY focused DYN field still erases the selection.
+    dyn_->test_set_primary("");
+    settle_dyn_focus();
+    send_key(Qt::Key_Delete);
+    const bool del_ok = pump([this] { return viewport_->selection_count() == 0; });
+
+    // 4b. Backspace WHILE typing in DYN must NOT erase the selection.
+    engine_->submit(AddLineCommand{Vec2{0, 5}, Vec2{20, 5}, 2});
+    pump([this] { return viewport_->line_vertex_count() == 2; });
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 1; });
+    dyn_->test_set_primary("5"); // now "typing"
+    settle_dyn_focus();
+    send_key(Qt::Key_Backspace);
+    QCoreApplication::processEvents();
+    const bool guard_ok = !pump([this] { return viewport_->selection_count() == 0; }); // stays selected
+
+    // 4c. Esc from the DYN field cancels (routes to the viewport escape handler).
+    dyn_->test_set_primary("");
+    engine_->submit(core::ClearSelectionCommand{});
+    pump([this] { return viewport_->selection_count() == 0; });
+    processor_->submit_line("LINE");
+    pump([this] { return processor_->has_active_command(); });
+    settle_dyn_focus();
+    send_key(Qt::Key_Escape);
+    const bool esc_ok = pump([this] { return !processor_->has_active_command(); });
+    std::printf("[selftest] DYN focus rule: Delete-erase(empty)=%d typing-guard=%d Esc=%d\n",
+                del_ok, guard_ok, esc_ok);
+    all = all && del_ok && guard_ok && esc_ok;
+
+    // Restore default runtime state: DYN off, and the developer's saved preference.
+    dyn_action_->setChecked(false);
+    QSettings().setValue(QStringLiteral("dyn/enabled"), saved_pref);
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
+bool MainWindow::selftest_param_dialogs() {
+    using core::Vec2;
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    const auto type = [this](const char* line) { processor_->submit_line(line); };
+    bool all = true;
+    processor_->cancel();
+    pump([this] { return !processor_->has_active_command(); });
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+
+    // The CIRCLE ribbon button STARTS the interactive command (it does NOT place an
+    // object at 0,0). After firing, a command is active and nothing is drawn yet.
+    auto* circle_btn = findChild<QToolButton*>(QStringLiteral("ribbon.cmd.C"));
+    bool ribbon_ok = false;
+    if (circle_btn != nullptr) {
+        circle_btn->click();
+        ribbon_ok = pump([this] { return processor_->has_active_command(); }) &&
+                    viewport_->line_vertex_count() == 0; // nothing placed yet -> must pick
+        processor_->cancel();
+        pump([this] { return !processor_->has_active_command(); });
+    }
+    std::printf("[selftest] CIRCLE ribbon starts interactive command (no 0,0 object): %s\n",
+                ribbon_ok ? "PASS" : "FAIL");
+
+    // CIRCLE with the [Diameter] option (command line == DYN == identical input):
+    // C -> centre -> "D" -> 50  draws a radius-25 circle.
+    type("C");
+    type("0,0");
+    type("D");
+    type("50");
+    Vec2 mn{}, mx{};
+    const bool diam_ok = pump([&] {
+        return viewport_->line_vertex_count() > 0 && viewport_->content_bounds(mn, mx) &&
+               std::abs((mx.x - mn.x) - 50.0) < 0.5; // diameter 50 -> radius 25
+    });
+    std::printf("[selftest] CIRCLE [Diameter] option draws d=50 circle: %s\n",
+                diam_ok ? "PASS" : "FAIL");
+
+    // Plain radius via typing still works (converges on the same command).
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    type("C");
+    type("0,0");
+    type("25");
+    const bool rad_ok = pump([&] {
+        return viewport_->line_vertex_count() > 0 && viewport_->content_bounds(mn, mx) &&
+               std::abs((mx.x - mn.x) - 50.0) < 0.5;
+    });
+    std::printf("[selftest] CIRCLE radius via typing: %s\n", rad_ok ? "PASS" : "FAIL");
+
+    all = all && ribbon_ok && diam_ok && rad_ok;
     engine_->submit(core::NewDocumentCommand{});
     return all;
 }

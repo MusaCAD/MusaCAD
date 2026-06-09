@@ -130,20 +130,35 @@ void CircleCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_last_point(*p);
             ctx.set_preview({PreviewKind::Circle, {center_}});
             state_ = State::Radius;
-            ctx.set_prompt("Specify radius: ");
+            ctx.set_prompt("Specify radius or [Diameter]: ");
         }
         return;
     }
-    double radius = 0.0;
-    if (parse_number(text, radius)) {
-        // explicit radius
+    // The [Diameter] option keyword -- switches the value step to diameter. Works
+    // identically from the command line and Dynamic Input (both feed input()).
+    if (state_ == State::Radius) {
+        const std::string up = upper(trimmed(text));
+        if (up == "D" || up == "DIAMETER") {
+            state_ = State::Diameter;
+            ctx.set_prompt("Specify diameter: ");
+            return;
+        }
+    }
+    const bool by_diameter = state_ == State::Diameter;
+    double value = 0.0;
+    if (parse_number(text, value)) {
+        // explicit radius/diameter
     } else if (const auto p = read_point(ctx, text)) {
-        radius = core::distance(center_, *p);
+        value = core::distance(center_, *p);
+        if (by_diameter) {
+            value *= 2.0; // a picked point gives the radius distance -> diameter
+        }
     } else {
         return; // read_point already echoed the error
     }
+    const double radius = by_diameter ? value * 0.5 : value;
     if (radius <= 0.0) {
-        ctx.echo("Radius must be positive.");
+        ctx.echo("Value must be positive.");
         return;
     }
     ctx.submit(core::AddCircleCommand{center_, radius, ctx.group_id()});

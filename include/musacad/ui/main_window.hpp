@@ -30,6 +30,8 @@ class CommandLineWidget;
 class RibbonBar;
 class ParameterDialog;
 class PropertiesPanel;
+class DynInput;
+class FanoutOutput;
 
 /// The application's top-level window: an AutoCAD-2023-style Ribbon frame
 /// (Quick Access Toolbar + tabbed ribbon panels + file/layout tabs), an OpenGL
@@ -91,6 +93,12 @@ public:
     bool selftest_linetype();
     /// Real-window self-test: PR dimension per-dim overrides (set/reset/undo/multi).
     bool selftest_dim_properties();
+    /// Real-window self-test: Dynamic Input (toggle, type-at-cursor, exact length,
+    /// and THE focus rule -- Delete/typing-guard/Esc still correct with DYN on).
+    bool selftest_dyn();
+    /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
+    /// submit the existing Command; the typed path converges; undo restores.
+    bool selftest_param_dialogs();
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
@@ -104,7 +112,9 @@ private:
     void build_status_bar();
     QAction* make_mode_action(const QString& text, int func_key, bool initial);
 
-    // ARRAY command dialog (AutoCAD-style parametric input).
+    // ARRAY command dialog (AutoCAD-style parametric input). Draw/transform commands
+    // are interactive (ribbon starts the command, pick on screen); the cursor value
+    // surface is Dynamic Input (Ph25), which mirrors the command line.
     void open_array_dialog();
     void submit_array_from_dialog(const ParameterDialog& dlg);
 
@@ -123,6 +133,9 @@ private:
     void sync_layer_combo();
     void toggle_properties();      ///< PR: show/hide the Properties palette dock
     void sync_properties_panel();  ///< push the latest selection summary to the panel
+    void set_dyn_enabled(bool on); ///< F12: enable/disable Dynamic Input (persisted)
+    void reposition_dyn(double local_px, double local_py); ///< anchor near the cursor
+    void refocus_dyn();            ///< re-acquire DYN field focus after a viewport pick
 
     // Persistence (UI side: file dialogs + messages; never touches the store).
     void file_new();
@@ -137,10 +150,13 @@ private:
     void update_title();
 
     std::unique_ptr<core::GeometryEngine> engine_;
+    std::unique_ptr<FanoutOutput> fanout_; // fans prompt/echo to the command line + DYN
     std::unique_ptr<command::CommandProcessor> processor_;
     RibbonBar* ribbon_ = nullptr;
     ViewportWindow* viewport_ = nullptr;          // owned by the window-container widget
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
+    DynInput* dyn_ = nullptr;                     // cursor-anchored Dynamic Input (F12)
+    QAction* dyn_action_ = nullptr;
     PropertiesPanel* properties_panel_ = nullptr; // owned by its dock
     QDockWidget* properties_dock_ = nullptr;
     QLabel* coord_label_ = nullptr;

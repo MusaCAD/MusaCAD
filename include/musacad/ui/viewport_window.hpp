@@ -45,8 +45,20 @@ public:
 
 Q_SIGNALS:
     void cursorWorldMoved(double x, double y);
+    /// Cursor position in the viewport's logical local pixels (for anchoring DYN).
+    void cursorScreenMoved(double px, double py);
+    /// The constrained (ortho/polar/snap) world cursor during a preview (DYN reads
+    /// this to show live length/angle/radius without recomputing geometry).
+    void constrainedCursorMoved(double cx, double cy);
+    /// A viewport pick/select interaction completed (so the host can re-acquire DYN
+    /// focus -- it is only re-grabbed after a viewport mouse event, never on a timer).
+    void pickerInteracted();
 
 public:
+    /// Cancel a grip drag if one is active, else the active command / selection.
+    /// Public so the Dynamic Input field can route Esc here (it holds focus when on).
+    void handle_escape();
+
     /// Latest measured frames-per-second (thread-safe).
     [[nodiscard]] double fps() const noexcept { return fps_.load(std::memory_order_relaxed); }
 
@@ -70,6 +82,13 @@ public:
     /// proves geometry edits actually reach the rendered snapshot).
     [[nodiscard]] int line_vertex_count() const noexcept {
         return line_vertex_count_.load(std::memory_order_relaxed);
+    }
+    /// World AABB of the current geometry (for self-tests). Returns false if empty.
+    [[nodiscard]] bool content_bounds(core::Vec2& mn, core::Vec2& mx) const {
+        std::scoped_lock lock(grips_mutex_);
+        mn = bounds_min_;
+        mx = bounds_max_;
+        return has_bounds_;
     }
 
     /// Number of grips published for the selected set (test hook: proves grips show).
@@ -143,6 +162,7 @@ public:
         properties_toggle_callback_ = std::move(cb);
     }
 
+
     /// Snapshot of the editable text contents (for self-tests / observed-outcome
     /// checks). Copied under the cache lock.
     [[nodiscard]] std::vector<std::string> text_contents() const {
@@ -211,6 +231,9 @@ private:
     std::vector<core::TextEditTarget> text_targets_; // for double-click-to-edit (same mutex)
     std::function<void(const TextEditRequest&)> text_edit_callback_;
     core::SelectionSummary selection_summary_; // PR palette (same mutex)
+    core::Vec2 bounds_min_{}; // content AABB (same mutex; for self-tests)
+    core::Vec2 bounds_max_{};
+    bool has_bounds_ = false;
     std::function<void()> properties_toggle_callback_;
     bool dragging_grip_ = false;
     core::Vec2 grip_origin_{};

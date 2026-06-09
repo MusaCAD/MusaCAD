@@ -195,6 +195,9 @@ void ViewportWindow::render_loop(std::stop_token token) {
             grips_cache_ = snap.grips;
             text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
             selection_summary_ = snap.selection_summary; // PR palette
+            bounds_min_ = snap.bounds_min;
+            bounds_max_ = snap.bounds_max;
+            has_bounds_ = snap.has_bounds;
         }
         {
             std::scoped_lock lock(layers_mutex_);
@@ -301,6 +304,9 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             sel_cur_world_ = world;
         }
     }
+    if (event->button() == Qt::LeftButton) {
+        Q_EMIT pickerInteracted(); // host re-acquires DYN focus after a viewport pick
+    }
 }
 
 void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
@@ -364,6 +370,7 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         scale = camera_.scale();
     }
     Q_EMIT cursorWorldMoved(world.x, world.y);
+    Q_EMIT cursorScreenMoved(event->position().x(), event->position().y());
 
     // Push the cursor to the geometry thread so it can compute the snap candidate
     // and publish it via the snapshot. Coalesced and non-blocking -- no per-move
@@ -461,6 +468,7 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
             engine_.submit(core::SelectWindowCommand{mn, mx, crossing, sel_additive_});
         }
         rebuild_overlay();
+        Q_EMIT pickerInteracted();
     }
 }
 
@@ -543,6 +551,7 @@ void ViewportWindow::rebuild_overlay() {
                               snap_y_.load(std::memory_order_relaxed)};
         }
         const core::Vec2 cur = processor_->resolve_pick(raw, snap);
+        Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();
         const auto& pts = pv.points;
         auto& seg = ov.preview_segments;
@@ -680,19 +689,26 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
     // MainWindow (so they work regardless of which window holds focus, while
     // still leaving text-entry keys to the command-line field).
     if (event->key() == Qt::Key_Escape) {
-        if (dragging_grip_) {
-            // Cancel the grip drag: the entity is left unchanged (no commit).
-            dragging_grip_ = false;
-            engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
-            processor_->clear_last_point();
-            rebuild_overlay();
-            return;
-        }
-        // Cancel the active command, or clear the selection when idle.
-        processor_->cancel();
+        handle_escape();
         return;
     }
     QWindow::keyPressEvent(event);
+}
+
+void ViewportWindow::handle_escape() {
+    if (processor_ == nullptr) {
+        return;
+    }
+    if (dragging_grip_) {
+        // Cancel the grip drag: the entity is left unchanged (no commit).
+        dragging_grip_ = false;
+        engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
+        processor_->clear_last_point();
+        rebuild_overlay();
+        return;
+    }
+    // Cancel the active command, or clear the selection when idle.
+    processor_->cancel();
 }
 
 void ViewportWindow::wheelEvent(QWheelEvent* event) {

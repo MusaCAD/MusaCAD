@@ -8,6 +8,8 @@
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+    QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
+    QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
 
     // Centralized, swappable styling: Fusion + dark palette + QSS, so the whole
     // UI -- including dialogs, message boxes and the file picker -- is consistent.
@@ -43,9 +45,11 @@ int main(int argc, char* argv[]) {
             const bool ok_props = window.selftest_properties();
             const bool ok_linetype = window.selftest_linetype();
             const bool ok_dimprops = window.selftest_dim_properties();
+            const bool ok_dyn = window.selftest_dyn();
+            const bool ok_pdlg = window.selftest_param_dialogs();
             const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
-                            ok_linetype && ok_dimprops;
+                            ok_linetype && ok_dimprops && ok_dyn && ok_pdlg;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

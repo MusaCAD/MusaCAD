@@ -878,6 +878,80 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## DYN autocomplete + parametric command dialogs (Phase 26)
+
+Two input surfaces over the existing pipeline — no new command/coordinate/
+suggestion logic.
+
+* **DYN autocomplete = the Ph6 source at the cursor.** `DynInput` gains a
+  `QListWidget` dropdown driven by `primary_->textChanged` → the **same**
+  `processor_->registry().suggest()` the bottom command line uses (one suggestion
+  source). It shows only while idle (a command token, not a value), anchored just
+  below the cursor field in global coords. The popup is a top-level **`NoFocus`**
+  window so it never steals typing from `primary_` (the focus lesson); DYN's
+  `eventFilter` drives it with the Ph6 keys (Down/Tab next, Up/Backtab prev, Esc
+  closes the list only, Enter runs-if-complete-else-accepts). It hides when DYN
+  hides.
+* **Draw/transform commands stay interactive (the AutoCAD model).** A ribbon draw
+  button **starts the command** (e.g. `submit_line("C")`) exactly like typing the
+  alias — it prompts *"Specify center point"* and the user **picks on screen**; it
+  never opens a fixed-position dialog that places at 0,0. The cursor-anchored
+  value surface during the command is **DYN** (Ph25), which mirrors the live prompt
+  and accepts the same input as the command line — that is the "floating box," not a
+  separate modal. (An earlier attempt at upfront draw modals was removed: a modal
+  that asks for position cannot be "identical to the command line"; DYN is.)
+* **Command options work identically in both surfaces.** Option keywords are part
+  of the command's state machine, so the command line *and* DYN get them for free.
+  CIRCLE now offers *"Specify radius or [Diameter]"* — typing `D` switches the value
+  step to a diameter (the prompt, which DYN mirrors, shows the option). RECTANGLE's
+  length/width and the rubber-band come through DYN's live dimensional input (Ph25).
+* **Multi-parameter dialogs stay the Ph11 ParameterDialog.** ARRAY (which has many
+  parameters and matches AutoCAD's array dialog) keeps its collect-and-submit dialog
+  via `array_dialog_spec()`/`submit_array_from_dialog()`. New parametric *commands*
+  (e.g. a future POLYGON) follow the same pattern when a dialog genuinely fits.
+* **Focus + threading.** The autocomplete popup is NoFocus; ARRAY's dialog is the
+  existing non-modal `ParameterDialog`. Neither changes the Delete/Esc/click/drag/
+  grip/double-click/PR + command-line + DYN routing — verified real-window. No
+  data-model change; insert/draw-call baselines unchanged.
+
+## Dynamic Input (DYN / F12) — type at the cursor (Phase 25)
+
+AutoCAD-style Dynamic Input: a cursor-anchored surface so the user types commands
+and values AT the crosshair. It is a new **input surface**, not new command logic.
+
+* **Thin over the existing pipeline.** `DynInput` (a frameless `Qt::Tool` window that
+  floats over the GL viewport and can take keyboard focus) routes everything through
+  the **same** `CommandProcessor`: typed text goes to `submit_line` (the Ph4 coordinate
+  parser, Ph6 tokens), and it *reads* `processor_->preview()` + `last_point()` for live
+  values. No command/coordinate parsing is duplicated. A `FanoutOutput : CommandOutput`
+  fans the prompt/echo to both the bottom command line and DYN, so the two surfaces are
+  always in sync and the command line keeps working unchanged.
+* **F12 toggle, persisted.** A status-bar `DYN` toggle / F12 turns it on/off; the state
+  is saved in `QSettings` (the one persisted UI toggle). OFF == pre-Ph25 behaviour. The
+  self-test/dump harness ignores the persisted value and runs DYN-off, so the canonical
+  default runtime state (Ph9) is unchanged regardless of a developer's preference.
+* **The focus-capture rule (the make-or-break).** When DYN is on, the DYN field **holds
+  keyboard focus**, re-acquired only after a *viewport* pick/select (the
+  `pickerInteracted` signal → a deferred refocus) — never on a timer, so it can't steal
+  keys the user directed at the command line or PR (those, when focused, get the keys
+  via normal Qt routing). The global Delete/Backspace erase-selection binding treats the
+  DYN field exactly like the command line: it yields only when DYN is *typing* (field
+  focused **and** non-empty); an empty focused field still lets Delete erase the
+  selection. Esc routes from the field to the viewport's `handle_escape()` (cancels a
+  grip drag or the command). Mouse picks / drag-select / grip / double-click are mouse
+  events — unaffected by keyboard focus. Verified real-window: every prior gesture still
+  works with DYN on.
+* **Live dimensional input.** The viewport already computes the constrained (ortho/
+  polar/snap) cursor and the `PreviewSpec` in `rebuild_overlay`; it emits the constrained
+  cursor (`constrainedCursorMoved`) and DYN derives the display values — length/angle
+  (line), radius (circle), width/height (rectangle) — and shows them as placeholders.
+  Typing an exact value commits through the **same** command step as a click by
+  composing the existing coordinate string (`@len<ang`, `@rad<ang` rel. to centre,
+  `@w,h`) from typed-or-live values and submitting it; ORTHO/POLAR/snap are honoured
+  because the angle comes from the constrained cursor. Tab switches the two fields.
+* **No data-model change; threading intact.** DYN is pure UI glue over the processor;
+  the renderer/snapshot are untouched. Insert/draw-call baselines unchanged.
+
 ## Dimension properties in PR — per-dimension overrides (Phase 24)
 
 The Properties palette's deep Dimension group edits **per-dimension overrides**
@@ -1180,6 +1254,21 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 26 — complete:** DYN autocomplete (the Ph6 registry suggestions anchored
+  at the cursor field, one source, NoFocus popup). Draw/transform stay interactive
+  (ribbon starts the command, pick on screen — the AutoCAD model; the cursor value
+  surface is DYN, not a modal); CIRCLE gained the radius/[Diameter] option keyword
+  (identical in command line + DYN). ARRAY keeps its Ph11 multi-parameter dialog. No
+  data-model change. 234 tests (dev) / 233 (TSan); real-window selftest (autocomplete,
+  ribbon-starts-interactive, [Diameter] option, typed radius).
+* **Phase 25 — complete:** Dynamic Input (DYN / F12). A cursor-anchored surface
+  (`DynInput`) over the existing CommandProcessor — typed text routes through
+  `submit_line` (Ph4 parser, Ph6 tokens), a `FanoutOutput` mirrors the prompt to the
+  bottom command line, and live dimensional input (length/angle, radius, w/h) reads the
+  preview's constrained cursor and commits via composed coordinate strings. Persisted
+  F12 toggle; the focus rule keeps Delete/Esc/click/drag/grip/double-click/PR+command-
+  line typing all working with DYN on (real-window verified). No data-model change. 233
+  tests (dev) / 232 (TSan); real-window selftest.
 * **Phase 24 — complete:** dimension properties in PR (per-dimension overrides). A
   compact `DimOverrides` bitmask+values (Ph12 ByLayer/override shape) in `DimData`,
   resolved override-first in the single `compute_dim_geometry` path; 8 PR rows via the

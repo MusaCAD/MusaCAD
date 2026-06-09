@@ -5,10 +5,12 @@ add_library(musacad_ui STATIC
     parameter_dialog.cpp
     layer_dialog.cpp
     properties_panel.cpp
+    dyn_input.cpp
     ribbon_bar.cpp
     command_icons.cpp
     theme.cpp
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/properties_panel.hpp"
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/dyn_input.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/main_window.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_window.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/command_line_widget.hpp"
