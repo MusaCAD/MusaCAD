@@ -878,6 +878,61 @@ recoverable radius.
   bulges (v1–v4 load as straight); DXF reads/writes LWPOLYLINE **code 42**
   (LibreCAD-verified). `DocPolyline.bulges` carries them in the IR.
 
+## DWG import/export via an external converter (Phase 27)
+
+DWG support the FreeCAD way: Musa CAD invokes a **separate external converter
+program** and reads the DXF it produces. It reuses the existing DXF importer/
+exporter end to end.
+
+* **LGPL process boundary (the rule).** Musa CAD is LGPL; the DWG converters
+  (LibreDWG = GPL, ODA File Converter = proprietary) are **never** linked, bundled,
+  vendored, or added to the build (no FetchContent/vcpkg/find_package for any of
+  them — verified: nothing DWG-related is in any CMakeLists). The converter is the
+  **user's** install, discovered at **runtime**, and invoked as a subprocess. The
+  licensing boundary is a process boundary — no GPL code enters the Musa CAD build
+  or shipped artifacts.
+* **Discovery + invocation** (`ui/dwg_converter.{hpp,cpp}`, Qt-only, in the UI layer
+  so core stays Qt-free). `DwgConverter::discover()` order: (1) the configured
+  `QSettings io/dwg_converter_path` (kind inferred from its basename), (2) ODA File
+  Converter on `PATH`, (3) LibreDWG `dwg2dxf` on `PATH`. `to_dxf`/`to_dwg` are
+  synchronous (`QProcess` + start/run timeouts + stderr capture, `QTemporaryDir`
+  workspace) and build the per-kind command line: Generic `<prog> <in> <out>`,
+  LibreDWG `dwg2dxf -y -o <out> <in>`, ODA's directory-batch protocol. No converter
+  found → `install_hint()` (what to install / how to point Musa CAD at it) — a clear
+  message, never a crash or silent failure. A **"DWG Setup" dialog**
+  (`configure_dwg_converter`) makes that actionable: it shows the detected converter,
+  lets the user **Browse** to one (`from_program`) or **auto-detect on PATH**
+  (`discover_on_path`), links to the ODA/LibreDWG downloads, and saves the
+  `io/dwg_converter_path` setting. When Import/Export DWG finds no converter it offers
+  a "Configure…" button straight into this dialog (no dead-end). Auto-download/install
+  is deliberately NOT done — a GPL/proprietary converter can't be fetched+installed for
+  the user (licensing/EULA/per-platform installers/security); the user installs it, the
+  dialog points at it.
+* **Off the UI thread, responsive.** The conversion is a separate OS process; the
+  blocking call runs on a short worker thread behind a modal indeterminate progress
+  dialog that pumps the event loop (`run_with_progress`). The store is never touched
+  during conversion.
+* **Import = convert then the EXISTING fail-safe DXF load.** DWG → temp DXF →
+  `open_from(tempDxf, dxf=true)` → `OpenDocumentCommand` → the geometry thread's
+  `load_document_replace` (one op; store unchanged on any converter/parse error).
+  The **gap catalog** is the existing importer's itemised `IoResult` message
+  ("Imported N…; skipped K unsupported (HATCH x12, IMAGE x4, …)") — echoed to the
+  command line **and** written to `<source>.dwg.import.log`, so migration gaps are
+  recorded, not silently dropped. The prioritised fidelity backlog lives in
+  `docs/TODO.md`.
+* **Export = the EXISTING DXF export then convert.** `SaveDocumentCommand{tempDxf}`
+  (geometry thread) → wait for the temp DXF → `to_dwg(tempDxf, out.dwg, "ACAD2018")`.
+  Honestly two-stage lossy: capped first by Musa→DXF fidelity, then by the converter
+  (dimensions/layers/linetypes/text round-trip; exotic content does not). Default DWG
+  version ACAD2018 (widely compatible). External-tool verification is the user's to
+  run (no converter in the build env).
+* **Wiring + tests.** Ribbon Import/Export DWG buttons + `DWGIN`/`DWGOUT` aliases
+  (via the `ViewControl` callback pattern). No data-model change; no second DXF path.
+  Tests drive the full pipeline with a **mock converter** (`<prog> <in> <out>` that
+  copies bytes, with a fake-DWG-that-is-DXF fixture) since no real converter exists in
+  CI — proving discovery, off-thread convert, fail-safe load, the gap catalog, and the
+  export round-trip.
+
 ## DYN autocomplete + parametric command dialogs (Phase 26)
 
 Two input surfaces over the existing pipeline — no new command/coordinate/
@@ -1254,6 +1309,14 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
   + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
   unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
+* **Phase 27 — complete:** DWG import/export via an EXTERNAL converter (FreeCAD
+  pattern). `ui/dwg_converter` discovers ODA File Converter / LibreDWG at runtime and
+  invokes it as a subprocess off the UI thread; import reuses the existing fail-safe
+  DXF load and surfaces an itemised gap catalog (+ a `.import.log`); export reuses the
+  DXF exporter then converts (two-stage lossy, stated). LGPL-clean: no GPL/converter is
+  linked, bundled, or in the build (process boundary). DWGIN/DWGOUT + ribbon. No
+  data-model change. 234 tests (dev) / 233 (TSan); real-window selftest via a mock
+  converter (graceful-degradation, discovery, import+catalog, export round-trip).
 * **Phase 26 — complete:** DYN autocomplete (the Ph6 registry suggestions anchored
   at the cursor field, one source, NoFocus popup). Draw/transform stay interactive
   (ribbon starts the command, pick on screen — the AutoCAD model; the cursor value

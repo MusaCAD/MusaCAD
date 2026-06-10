@@ -37,7 +37,10 @@ targeting a smooth 144 Hz+ viewport.
   snap; cursor-pick selection.
 - **Undo / redo** on the geometry thread, driven by command messages.
 - **Classic shortcuts** — `F3` osnap, `F7` grid, `F8` ortho, `F9` snap,
-  `F10` polar, `Ctrl+Z` / `Ctrl+Y`.
+  `F10` polar, `F12` dynamic input, `Ctrl+Z` / `Ctrl+Y`.
+- **DXF read/write** built in; **DWG import/export** via an external converter you
+  install (ODA File Converter or LibreDWG) — invoked as a subprocess, never linked,
+  so Musa CAD stays LGPL-clean. See [docs/BUILD.md](docs/BUILD.md).
 
 ---
 

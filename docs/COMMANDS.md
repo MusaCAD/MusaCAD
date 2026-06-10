@@ -126,6 +126,10 @@ suggests both); aliases are case-insensitive.
 | **CIRCLE radius/[Diameter] option** — type `D` at the radius prompt (command line or DYN) to enter a diameter instead | C → D | Implemented (Ph26) |
 | Parametric **multi-parameter dialog** (collect values → submit existing Command): ARRAY | ribbon | Implemented (Ph11) |
 | POLYGON command + dialog | — | Planned (no POLYGON command yet) |
+| **Import DWG** — runs an external converter (DWG→DXF) off-thread, then the existing DXF importer (fail-safe); writes a `<file>.dwg.import.log` gap catalog | ribbon / DWGIN | Implemented (Ph27; needs an installed converter — ODA File Converter or LibreDWG) |
+| **Export DWG** — existing DXF export, then the external converter (DXF→DWG, default ACAD2018) | ribbon / DWGOUT | Implemented (Ph27; two-stage lossy, see ARCHITECTURE) |
+| **DWG Setup** dialog — detect/Browse/auto-detect the converter, links to downloads; saves the path setting (offered via "Configure…" when none is found) | ribbon "DWG Setup" | Implemented (Ph27) |
+| DWG converter path (configurable) | `io/dwg_converter_path` setting / DWG Setup dialog | Implemented (Ph27; auto-detects ODA/LibreDWG on PATH otherwise) |
 | Per-entity linetype scale (CELTSCALE) | — | Planned |
 | Lineweight property (hundredths-mm) | — | Implemented (model + round-trip; visible weight Planned) |
 | LAYER command-line alias / PROPERTIES palette / MATCHPROP | LA / PR / MA | Planned (Phase 13) |

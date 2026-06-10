@@ -3,6 +3,31 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## DWG/DXF import fidelity backlog (Phase 27)
+
+DWG import (via the external converter) and DXF import both route through the one
+DXF importer, which **catalogs** what it cannot yet represent rather than silently
+dropping it (the per-type summary in the `IoResult` message + the `.import.log`
+written next to each imported DWG). That catalog is the prioritized migration
+roadmap — entity types the importer currently **skips**:
+
+- **HATCH / solid fills** — boundary + pattern fill (large; needs a fill model).
+- **INSERT / BLOCK** — block-definition + reference instancing (high value; many DWGs
+  are mostly blocks).
+- **IMAGE / raster underlays** — external image references (needs a raster layer).
+- **SPLINE variants** — NURBS/control-point splines beyond the current spline support.
+- **MTEXT inline formatting** — already deferred (see below); imported as plain runs.
+- **Exotic linetypes / complex linetypes with embedded text or shapes** — beyond the
+  Continuous/Dashed/Center/Hidden set.
+- **Tables, fields, dynamic blocks, 3D entities** — out of 2D scope or large.
+
+**Why parked:** each is a substantial entity + render + persistence addition; the
+external-converter import works today for the supported set and honestly reports the
+rest. **Done looks like:** each type gets a DocEntity + store kind + DXF read/write +
+render, removing it from the skip list; verify against a DWG/DXF that exercises it.
+**DWG export** is two-stage lossy (Musa→DXF→converter→DWG); raising DXF-export
+fidelity (above) lifts DWG-export fidelity too.
+
 ## Properties palette — staged deep groups (deferred 2026-06-09)
 
 **Status:** PR (Phase 22) ships the framework, the multiplicity/`*VARIES*` model, the

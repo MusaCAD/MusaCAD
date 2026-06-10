@@ -73,6 +73,28 @@ TEST_CASE("DXF import skips unsupported entities and reports a summary") {
     REQUIRE(r.message.find("SPLINE") != std::string::npos);
 }
 
+TEST_CASE("DXF import treats negative/invalid lineweights as inherit, not fat lines") {
+    // DXF code 370 < 0 is ByLayer(-1)/ByBlock(-2)/Default(-3); a naive uint8 cast turns
+    // -2 into 254 (a 2.54mm line) and fattens the whole import. Entities with such codes
+    // must stay ByLayer; only 0..211 are real widths.
+    const std::string dxf =
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nLINE\n8\n0\n370\n-2\n10\n0\n20\n0\n11\n5\n21\n5\n" // ByBlock -> inherit
+        "0\nLINE\n8\n0\n370\n-1\n10\n0\n20\n0\n11\n5\n21\n5\n" // ByLayer -> inherit
+        "0\nLINE\n8\n0\n370\n50\n10\n0\n20\n0\n11\n5\n21\n5\n"  // 0.50mm -> explicit
+        "0\nLINE\n8\n0\n370\n330\n10\n0\n20\n0\n11\n5\n21\n5\n" // out of range -> inherit
+        "0\nENDSEC\n0\nEOF\n";
+    Document out;
+    const IoResult r = parse_dxf(dxf, out);
+    REQUIRE(r.ok);
+    REQUIRE(out.lines.size() == 4);
+    REQUIRE(out.lines[0].props.lineweight_by_layer()); // -2 stays ByLayer
+    REQUIRE(out.lines[1].props.lineweight_by_layer()); // -1 stays ByLayer
+    REQUIRE_FALSE(out.lines[2].props.lineweight_by_layer()); // 50 is an explicit override
+    REQUIRE(out.lines[2].props.lineweight == 50);
+    REQUIRE(out.lines[3].props.lineweight_by_layer()); // 330 (>211) stays ByLayer
+}
+
 TEST_CASE("Malformed DXF fails gracefully, output untouched") {
     Document out;
     out.circles.push_back(DocCircle{{1, 1}, 1.0}); // sentinel preserved on failure

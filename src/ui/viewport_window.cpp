@@ -76,6 +76,18 @@ void ViewportWindow::open_properties() {
     }
 }
 
+void ViewportWindow::import_dwg() {
+    if (dwg_import_callback_) {
+        dwg_import_callback_();
+    }
+}
+
+void ViewportWindow::export_dwg() {
+    if (dwg_export_callback_) {
+        dwg_export_callback_();
+    }
+}
+
 void ViewportWindow::update_viewport_size() noexcept {
     const double dpr = devicePixelRatio();
     fb_width_.store(std::max(1, static_cast<int>(static_cast<double>(width()) * dpr)),

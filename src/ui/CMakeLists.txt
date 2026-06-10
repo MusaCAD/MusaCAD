@@ -6,6 +6,7 @@ add_library(musacad_ui STATIC
     layer_dialog.cpp
     properties_panel.cpp
     dyn_input.cpp
+    dwg_converter.cpp
     ribbon_bar.cpp
     command_icons.cpp
     theme.cpp

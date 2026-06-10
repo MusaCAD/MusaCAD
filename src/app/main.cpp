@@ -47,9 +47,10 @@ int main(int argc, char* argv[]) {
             const bool ok_dimprops = window.selftest_dim_properties();
             const bool ok_dyn = window.selftest_dyn();
             const bool ok_pdlg = window.selftest_param_dialogs();
+            const bool ok_dwg = window.selftest_dwg();
             const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
-                            ok_linetype && ok_dimprops && ok_dyn && ok_pdlg;
+                            ok_linetype && ok_dimprops && ok_dyn && ok_pdlg && ok_dwg;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

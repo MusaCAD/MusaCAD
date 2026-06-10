@@ -458,6 +458,32 @@ private:
     bool done_ = false;
 };
 
+/// DWGIN / DWGOUT: one-shot view commands that trigger the external-converter DWG
+/// import/export via ViewControl (the MainWindow owns the file dialog + converter).
+class DwgInCommand final : public ICommand {
+public:
+    std::string name() const override { return "DWGIN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+class DwgOutCommand final : public ICommand {
+public:
+    std::string name() const override { return "DWGOUT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// PR / PROPERTIES / PROPS / CH: toggle the Properties palette. A one-shot view
 /// command -- it opens the panel via ViewControl and finishes immediately.
 class PropertiesCommand final : public ICommand {

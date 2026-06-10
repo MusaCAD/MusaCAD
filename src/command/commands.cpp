@@ -1433,6 +1433,20 @@ void PropertiesCommand::start(CommandContext& ctx) {
     done_ = true;
 }
 
+void DwgInCommand::start(CommandContext& ctx) {
+    if (ViewControl* v = ctx.view(); v != nullptr) {
+        v->import_dwg();
+    }
+    done_ = true;
+}
+
+void DwgOutCommand::start(CommandContext& ctx) {
+    if (ViewControl* v = ctx.view(); v != nullptr) {
+        v->export_dwg();
+    }
+    done_ = true;
+}
+
 // ---------------------------------------------------------------------------
 // LTSCALE: prompt for the global linetype scale factor, then apply it.
 // ---------------------------------------------------------------------------

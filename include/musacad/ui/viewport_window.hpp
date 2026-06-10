@@ -42,6 +42,8 @@ public:
     void zoom_extents() override;
     void zoom_scale(double factor) override;
     void open_properties() override;
+    void import_dwg() override;
+    void export_dwg() override;
 
 Q_SIGNALS:
     void cursorWorldMoved(double x, double y);
@@ -161,6 +163,10 @@ public:
     void set_properties_toggle_callback(std::function<void()> cb) {
         properties_toggle_callback_ = std::move(cb);
     }
+    /// DWGIN/DWGOUT command -> the MainWindow (which owns the file dialogs + converter)
+    /// runs the import/export. ViewControl::import_dwg/export_dwg forward to these.
+    void set_dwg_import_callback(std::function<void()> cb) { dwg_import_callback_ = std::move(cb); }
+    void set_dwg_export_callback(std::function<void()> cb) { dwg_export_callback_ = std::move(cb); }
 
 
     /// Snapshot of the editable text contents (for self-tests / observed-outcome
@@ -235,6 +241,8 @@ private:
     core::Vec2 bounds_max_{};
     bool has_bounds_ = false;
     std::function<void()> properties_toggle_callback_;
+    std::function<void()> dwg_import_callback_;
+    std::function<void()> dwg_export_callback_;
     bool dragging_grip_ = false;
     core::Vec2 grip_origin_{};
 

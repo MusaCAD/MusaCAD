@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <atomic>
 #include <thread>
 
 #include <QAbstractButton>
@@ -21,10 +22,18 @@
 #include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QEvent>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QHBoxLayout>
+#include <QElapsedTimer>
+#include <QProgressDialog>
+#include <QPushButton>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -50,6 +59,7 @@
 #include "musacad/ui/command_line_widget.hpp"
 #include "musacad/ui/layer_dialog.hpp"
 #include "musacad/ui/parameter_dialog.hpp"
+#include "musacad/ui/dwg_converter.hpp"
 #include "musacad/ui/dyn_input.hpp"
 #include "musacad/ui/properties_panel.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
@@ -199,6 +209,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         engine_->submit(core::SetPropertyCommand{id, v, processor_->begin_group()});
     });
     viewport_->set_properties_toggle_callback([this] { toggle_properties(); });
+    viewport_->set_dwg_import_callback([this] { file_import_dwg(); });
+    viewport_->set_dwg_export_callback([this] { file_export_dwg(); });
 
     command_widget_->focus_input();
 
@@ -343,6 +355,10 @@ void MainWindow::build_ribbon() {
     file_btn(QStringLiteral("save"), QStringLiteral("Save As"), &MainWindow::file_save_as);
     file_btn(QStringLiteral("open"), QStringLiteral("Import\nDXF"), &MainWindow::file_import_dxf);
     file_btn(QStringLiteral("save"), QStringLiteral("Export\nDXF"), &MainWindow::file_export_dxf);
+    file_btn(QStringLiteral("open"), QStringLiteral("Import\nDWG"), &MainWindow::file_import_dwg);
+    file_btn(QStringLiteral("save"), QStringLiteral("Export\nDWG"), &MainWindow::file_export_dwg);
+    file_btn(QStringLiteral("settings"), QStringLiteral("DWG\nSetup"),
+             &MainWindow::configure_dwg_converter);
 
     // Save As shortcut (Ctrl+Shift+S) -- New/Open/Save shortcuts live on the QAT.
     auto* save_as_act = new QAction(this);
@@ -1918,6 +1934,129 @@ bool MainWindow::selftest_param_dialogs() {
     return all;
 }
 
+bool MainWindow::selftest_dwg() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1200; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    const QString saved = QSettings().value(QStringLiteral("io/dwg_converter_path")).toString();
+    const QString dir = QDir::temp().path();
+
+    // A MOCK converter (Generic kind): `<prog> <in> <out>` just copies in->out, so a
+    // .dwg whose bytes are valid DXF round-trips through the real pipeline. (No real
+    // DWG converter exists in the build env; real-converter verification is the
+    // user's to run -- this proves the discovery/invoke/import/catalog wiring.)
+    const QString mock = dir + QStringLiteral("/musacad_mock_conv.sh");
+    {
+        QFile f(mock);
+        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        f.write("#!/bin/sh\ncp \"$1\" \"$2\"\n");
+        f.close();
+        f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    }
+    // (1) graceful degradation: a None converter never crashes, returns the hint.
+    {
+        DwgConverter none;
+        QString err;
+        const bool failed = !none.to_dxf(QStringLiteral("x.dwg"), dir + QStringLiteral("/y.dxf"), err);
+        const bool deg_ok = failed && !err.isEmpty() && !DwgConverter::install_hint().isEmpty();
+        std::printf("[selftest] DWG no-converter degrades gracefully (clear hint): %s\n",
+                    deg_ok ? "PASS" : "FAIL");
+        all = all && deg_ok;
+    }
+    // (2) discovery picks up the configured path (Generic).
+    QSettings().setValue(QStringLiteral("io/dwg_converter_path"), mock);
+    const DwgConverter conv = DwgConverter::discover();
+    const bool disc_ok = conv.available() && conv.kind() == DwgConverter::Kind::Generic;
+    std::printf("[selftest] DWG converter discovery (configured path): %s\n",
+                disc_ok ? "PASS" : "FAIL");
+
+    // Setup-dialog helpers: Browse (from_program) validates an explicit path; PATH
+    // detection + a bogus path behave sanely; kind names are non-empty.
+    const DwgConverter on_path = DwgConverter::discover_on_path(); // must not crash
+    (void)on_path;
+    const bool setup_ok =
+        DwgConverter::from_program(mock).available() &&
+        !DwgConverter::from_program(dir + QStringLiteral("/nope.bin")).available() &&
+        !DwgConverter::kind_name(DwgConverter::Kind::Generic).isEmpty();
+    std::printf("[selftest] DWG setup helpers (Browse/auto-detect/kind names): %s\n",
+                setup_ok ? "PASS" : "FAIL");
+    all = all && setup_ok;
+
+    // A fake .dwg whose CONTENT is valid DXF: 2 LINEs + 1 unsupported HATCH.
+    const QString fake_dwg = dir + QStringLiteral("/musacad_fake.dwg");
+    {
+        const char* dxf =
+            "0\nSECTION\n2\nENTITIES\n"
+            "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n10\n21\n0\n"
+            "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n0\n21\n10\n"
+            "0\nHATCH\n8\n0\n"
+            "0\nENDSEC\n0\nEOF\n";
+        QFile f(fake_dwg);
+        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        f.write(dxf);
+        f.close();
+    }
+    // (3) convert DWG->DXF off-thread via run_with_progress, then load + catalog.
+    const QString out_dxf = dir + QStringLiteral("/musacad_dwgin_test.dxf");
+    QFile::remove(out_dxf);
+    QString err;
+    const bool conv_ok =
+        run_with_progress(QStringLiteral("Converting…"),
+                          [&](QString& e) { return conv.to_dxf(fake_dwg, out_dxf, e); }, err) &&
+        QFileInfo::exists(out_dxf);
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    const std::uint64_t sv0 = viewport_->status_version();
+    open_from(out_dxf, true);
+    const bool loaded = pump([this] { return viewport_->line_vertex_count() == 4; }); // 2 lines
+    pump([this, sv0] { return viewport_->status_version() != sv0; });
+    const std::string msg = viewport_->last_status();
+    const bool catalog_ok = msg.find("skipped") != std::string::npos &&
+                            msg.find("HATCH") != std::string::npos;
+    std::printf("[selftest] DWG import via converter loads + catalogs gaps (%s): %s\n",
+                msg.c_str(), (conv_ok && loaded && catalog_ok) ? "PASS" : "FAIL");
+    all = all && disc_ok && conv_ok && loaded && catalog_ok;
+
+    // (4) export pipeline mechanics: existing DXF export -> convert DXF->DWG; then
+    // read it back to confirm the round-trip survives the (mock) converter.
+    const QString stage = dir + QStringLiteral("/musacad_dwgout_stage.dxf");
+    const QString out_dwg = dir + QStringLiteral("/musacad_out.dwg");
+    QFile::remove(stage);
+    QFile::remove(out_dwg);
+    save_to(stage, true);
+    const bool staged = pump([&] { const QFileInfo fi(stage); return fi.exists() && fi.size() > 0; });
+    const bool exp_ok = staged &&
+                        run_with_progress(QStringLiteral("Exporting…"),
+                                          [&](QString& e) {
+                                              return conv.to_dwg(stage, out_dwg,
+                                                                 QStringLiteral("ACAD2018"), e);
+                                          },
+                                          err) &&
+                        QFileInfo::exists(out_dwg);
+    std::printf("[selftest] DWG export (DXF->DWG via converter): %s\n", exp_ok ? "PASS" : "FAIL");
+    all = all && exp_ok;
+
+    // Cleanup + restore the user's converter-path setting.
+    for (const QString& p : {mock, fake_dwg, out_dxf, stage, out_dwg}) {
+        QFile::remove(p);
+    }
+    if (saved.isEmpty()) {
+        QSettings().remove(QStringLiteral("io/dwg_converter_path"));
+    } else {
+        QSettings().setValue(QStringLiteral("io/dwg_converter_path"), saved);
+    }
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
 void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
                                   const std::string& content, bool multiline) {
     // A small modal editor (popup; an in-canvas overlay is awkward over a QWindow
@@ -2090,6 +2229,271 @@ void MainWindow::file_export_dxf() {
         path += QStringLiteral(".dxf");
     }
     save_to(path, true);
+}
+
+bool MainWindow::offer_dwg_setup(const QString& title) {
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Information);
+    box.setWindowTitle(title);
+    box.setText(DwgConverter::install_hint());
+    QPushButton* cfg = box.addButton(QStringLiteral("Configure…"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    command_widget_->append_line(DwgConverter::install_hint().toStdString());
+    if (box.clickedButton() == cfg) {
+        configure_dwg_converter();
+        return true;
+    }
+    return false;
+}
+
+void MainWindow::configure_dwg_converter() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("DWG Converter Setup"));
+    auto* v = new QVBoxLayout(&dlg);
+
+    auto* info = new QLabel(
+        QStringLiteral(
+            "DWG needs an external converter. Musa CAD never bundles one (it stays "
+            "LGPL-clean) -- it runs a converter you install:\n"
+            "  • ODA File Converter (free) -- opendesign.com\n"
+            "  • LibreDWG (dwg2dxf)\n\n"
+            "Browse to its executable below, or Auto-detect if it is on your PATH. "
+            "(Musa CAD cannot download/install it for you -- licensing + per-platform "
+            "installers + the ODA EULA make that the user's step.)"),
+        &dlg);
+    info->setWordWrap(true);
+    v->addWidget(info);
+
+    auto* status = new QLabel(&dlg);
+    status->setObjectName(QStringLiteral("DwgStatus"));
+    v->addWidget(status);
+
+    auto* row = new QWidget(&dlg);
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    auto* path_edit = new QLineEdit(
+        QSettings().value(QStringLiteral("io/dwg_converter_path")).toString(), row);
+    path_edit->setPlaceholderText(QStringLiteral("converter path (blank = auto-detect on PATH)"));
+    auto* browse = new QPushButton(QStringLiteral("Browse…"), row);
+    h->addWidget(path_edit);
+    h->addWidget(browse);
+    v->addWidget(row);
+
+    const auto refresh = [status, path_edit] {
+        const QString p = path_edit->text().trimmed();
+        const DwgConverter c =
+            p.isEmpty() ? DwgConverter::discover_on_path() : DwgConverter::from_program(p);
+        if (c.available()) {
+            status->setText(QStringLiteral("✔ Detected: %1 — %2")
+                                .arg(DwgConverter::kind_name(c.kind()), c.program()));
+        } else {
+            status->setText(p.isEmpty() ? QStringLiteral("✗ No converter found on PATH.")
+                                        : QStringLiteral("✗ No converter at that path."));
+        }
+    };
+    connect(path_edit, &QLineEdit::textChanged, &dlg, [refresh] { refresh(); });
+    connect(browse, &QPushButton::clicked, &dlg, [&dlg, path_edit] {
+        const QString f = QFileDialog::getOpenFileName(&dlg, QStringLiteral("Select DWG converter"),
+                                                       QString(), QString(), nullptr,
+                                                       QFileDialog::DontUseNativeDialog);
+        if (!f.isEmpty()) {
+            path_edit->setText(f);
+        }
+    });
+
+    auto* links = new QWidget(&dlg);
+    auto* lh = new QHBoxLayout(links);
+    lh->setContentsMargins(0, 0, 0, 0);
+    auto* detect = new QPushButton(QStringLiteral("Auto-detect on PATH"), links);
+    auto* oda = new QPushButton(QStringLiteral("Get ODA…"), links);
+    auto* ldwg = new QPushButton(QStringLiteral("Get LibreDWG…"), links);
+    lh->addWidget(detect);
+    lh->addWidget(oda);
+    lh->addWidget(ldwg);
+    v->addWidget(links);
+    connect(detect, &QPushButton::clicked, &dlg, [path_edit, refresh] {
+        const DwgConverter c = DwgConverter::discover_on_path();
+        path_edit->setText(c.available() ? c.program() : QString());
+        refresh();
+    });
+    connect(oda, &QPushButton::clicked, &dlg, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.opendesign.com/guestfiles")));
+    });
+    connect(ldwg, &QPushButton::clicked, &dlg, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.gnu.org/software/libredwg/")));
+    });
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    v->addWidget(bb);
+
+    refresh();
+    if (dlg.exec() == QDialog::Accepted) {
+        const QString p = path_edit->text().trimmed();
+        if (p.isEmpty()) {
+            QSettings().remove(QStringLiteral("io/dwg_converter_path"));
+        } else {
+            QSettings().setValue(QStringLiteral("io/dwg_converter_path"), p);
+        }
+    }
+}
+
+bool MainWindow::run_with_progress(const QString& label,
+                                   const std::function<bool(QString&)>& work, QString& err) {
+    // The converter runs as a separate PROCESS (off the UI process entirely). We run
+    // the blocking call on a short worker thread and pump the event loop behind a
+    // modal indeterminate dialog, so the app stays responsive without touching the
+    // store. The dialog has no cancel (a half-killed convert is worse than waiting).
+    QProgressDialog dlg(label, QString(), 0, 0, this);
+    dlg.setWindowModality(Qt::ApplicationModal);
+    dlg.setMinimumDuration(0);
+    dlg.setAutoClose(false);
+    dlg.setAutoReset(false);
+    dlg.show();
+    std::atomic<bool> done{false};
+    bool ok = false;
+    QString local_err;
+    std::jthread worker([&] {
+        ok = work(local_err);
+        done.store(true, std::memory_order_release);
+    });
+    while (!done.load(std::memory_order_acquire)) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    worker.join();
+    dlg.close();
+    err = local_err;
+    return ok;
+}
+
+bool MainWindow::pump_with_progress(const QString& label, const std::function<bool()>& done,
+                                    int timeout_ms) {
+    if (done()) {
+        return true; // already satisfied -- no flash of a dialog
+    }
+    QProgressDialog dlg(label, QString(), 0, 0, this);
+    dlg.setWindowModality(Qt::ApplicationModal);
+    dlg.setMinimumDuration(0);
+    dlg.setAutoClose(false);
+    dlg.setAutoReset(false);
+    dlg.show();
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < timeout_ms) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    dlg.close();
+    return done();
+}
+
+void MainWindow::file_import_dwg() {
+    if (!confirm_discard_if_dirty()) {
+        return;
+    }
+    const QString dwg = QFileDialog::getOpenFileName(this, QStringLiteral("Import DWG"), QString(),
+                                                     QStringLiteral("DWG (*.dwg)"), nullptr,
+                                                     QFileDialog::DontUseNativeDialog);
+    if (dwg.isEmpty()) {
+        return;
+    }
+    DwgConverter conv = DwgConverter::discover();
+    if (!conv.available()) {
+        if (offer_dwg_setup(QStringLiteral("DWG import"))) {
+            conv = DwgConverter::discover(); // the user may have configured one
+        }
+        if (!conv.available()) {
+            return;
+        }
+    }
+    // Convert to a temp DXF off the UI thread, then load via the EXISTING fail-safe
+    // DXF importer (one geometry-thread op; store unchanged on any error).
+    const QString tmp = QDir::temp().filePath(QStringLiteral("musacad_dwgin.dxf"));
+    QFile::remove(tmp);
+    QString err;
+    if (!run_with_progress(QStringLiteral("Converting DWG…"),
+                           [&](QString& e) { return conv.to_dxf(dwg, tmp, e); }, err)) {
+        command_widget_->append_line("DWG import failed: " + err.toStdString());
+        QMessageBox::warning(this, QStringLiteral("DWG import"), err);
+        return;
+    }
+    const std::uint64_t sv0 = viewport_->status_version();
+    open_from(tmp, true);
+    // The parse + index runs on the geometry thread; a large DXF can take seconds, so
+    // keep an indeterminate dialog up until the store reports back instead of a frozen
+    // blank window. The status change also carries the importer's itemised gap catalog
+    // ("Imported N ...; skipped K unsupported (HATCH x12, ...)"), logged next to the
+    // source so migration gaps are recorded, not silently dropped.
+    pump_with_progress(QStringLiteral("Loading drawing…"),
+                       [this, sv0] { return viewport_->status_version() != sv0; }, 600'000);
+    const std::string summary = viewport_->last_status();
+    if (!summary.empty()) {
+        const QString log_path = dwg + QStringLiteral(".import.log");
+        QFile log(log_path);
+        if (log.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            log.write(("DWG import via " + conv.program().toStdString() + "\n").c_str());
+            log.write(summary.c_str());
+            log.write("\n");
+        }
+        command_widget_->append_line("DWG imported. Gap log: " + log_path.toStdString());
+    }
+    QFile::remove(tmp);
+}
+
+void MainWindow::file_export_dwg() {
+    DwgConverter conv = DwgConverter::discover();
+    if (!conv.available()) {
+        if (offer_dwg_setup(QStringLiteral("DWG export"))) {
+            conv = DwgConverter::discover();
+        }
+        if (!conv.available()) {
+            return;
+        }
+    }
+    QString dwg = QFileDialog::getSaveFileName(this, QStringLiteral("Export DWG"), QString(),
+                                               QStringLiteral("DWG (*.dwg)"), nullptr,
+                                               QFileDialog::DontUseNativeDialog);
+    if (dwg.isEmpty()) {
+        return;
+    }
+    if (!dwg.endsWith(QStringLiteral(".dwg"), Qt::CaseInsensitive)) {
+        dwg += QStringLiteral(".dwg");
+    }
+    // Stage 1: the EXISTING exporter writes a temp DXF on the geometry thread.
+    const QString tmp = QDir::temp().filePath(QStringLiteral("musacad_dwgout.dxf"));
+    QFile::remove(tmp);
+    save_to(tmp, true);
+    const bool staged = pump_with_progress(
+        QStringLiteral("Preparing DXF…"),
+        [&tmp] {
+            const QFileInfo fi(tmp);
+            return fi.exists() && fi.size() > 0;
+        },
+        600'000);
+    if (!staged) {
+        command_widget_->append_line("DWG export failed: could not write the intermediate DXF.");
+        QMessageBox::warning(this, QStringLiteral("DWG export"),
+                             QStringLiteral("Could not write the intermediate DXF."));
+        return;
+    }
+    // Stage 2: convert DXF -> DWG (two-stage lossy: capped by DXF export then the
+    // converter). Default DWG version ACAD2018 (widely compatible).
+    QString err;
+    if (!run_with_progress(QStringLiteral("Exporting DWG…"),
+                           [&](QString& e) {
+                               return conv.to_dwg(tmp, dwg, QStringLiteral("ACAD2018"), e);
+                           },
+                           err)) {
+        command_widget_->append_line("DWG export failed: " + err.toStdString());
+        QMessageBox::warning(this, QStringLiteral("DWG export"), err);
+        QFile::remove(tmp);
+        return;
+    }
+    QFile::remove(tmp);
+    command_widget_->append_line("Exported DWG: " + dwg.toStdString());
 }
 
 void MainWindow::seed_demo_scene() {

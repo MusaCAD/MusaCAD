@@ -484,7 +484,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             l.linetype = linetype_from(*lt);
         }
         if (const std::string* lw = find(body, 370)) {
-            l.lineweight = static_cast<std::uint8_t>(to_l(*lw));
+            // Only 0..211 are real widths; -1/-2/-3 (ByLayer/ByBlock/Default) and any
+            // out-of-range value mean "inherit", not a literal 2.5mm line. A layer must
+            // hold a concrete width, so keep its default when the code isn't a real one.
+            if (const long w = to_l(*lw); w >= 0 && w <= 211) {
+                l.lineweight = static_cast<std::uint8_t>(w);
+            }
         }
     };
 
@@ -503,8 +508,13 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             p.linetype = linetype_from(*lt);
         }
         if (const std::string* lw = find(body, 370)) {
-            p.set_lineweight_by_layer(false);
-            p.lineweight = static_cast<std::uint8_t>(to_l(*lw));
+            // 0..211 = an explicit width; -1/-2/-3 (ByLayer/ByBlock/Default) or anything
+            // out of range means "inherit", so leave the ByLayer default rather than
+            // casting -2 to 254 (a 2.54mm line) and fattening the whole import.
+            if (const long w = to_l(*lw); w >= 0 && w <= 211) {
+                p.set_lineweight_by_layer(false);
+                p.lineweight = static_cast<std::uint8_t>(w);
+            }
         }
         return p;
     };

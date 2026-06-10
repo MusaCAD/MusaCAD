@@ -60,6 +60,29 @@ For GPU rendering at runtime you also need working Vulkan drivers
 No geometry/CAD kernel is a dependency: Musa CAD ships its own native 2D
 kernel behind the `IGeometryKernel` interface.
 
+## DWG import/export (optional external converter)
+
+DWG support is **not built in** and adds **no build dependency**. Musa CAD is
+LGPL; the DWG converters are GPL (LibreDWG) or proprietary (ODA File Converter),
+so Musa CAD never links, bundles, or vendors them. Instead it *invokes a converter
+you install* as a subprocess and reads the DXF it produces — the licensing boundary
+is a process boundary, keeping Musa CAD's code and shipped binaries GPL-free.
+
+To enable DWG import/export, install **one** converter:
+
+* **ODA File Converter** (free, from opendesign.com) — put `ODAFileConverter` on
+  your `PATH`, or
+* **LibreDWG** (`dwg2dxf` / `dxf2dwg`) — e.g. `sudo apt-get install libredwg-bin`,
+  or build from source; put `dwg2dxf` on your `PATH`.
+
+Musa CAD auto-detects either on `PATH`. Use the **"DWG Setup"** button (File panel)
+to see what was detected, **Browse** to a specific binary (or a custom wrapper
+invoked as `converter <in> <out>`), auto-detect on `PATH`, or open the download
+pages — it saves the `io/dwg_converter_path` setting for you. If no converter is
+found, Import/Export DWG shows that dialog via a "Configure…" button — nothing
+crashes. (Musa CAD does not download/install the converter for you: licensing, the
+ODA EULA, and per-platform installers make that the user's step.)
+
 ## Sanitizers
 
 The `dev` preset sets `ENABLE_SANITIZERS=ON`, enabling AddressSanitizer and

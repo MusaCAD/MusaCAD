@@ -58,6 +58,9 @@ public:
     virtual void zoom_scale(double factor) = 0;
     /// Toggle the Properties palette (PR). Default no-op (headless/tests).
     virtual void open_properties() {}
+    /// DWG import/export via the external converter. Default no-op (headless/tests).
+    virtual void import_dwg() {}
+    virtual void export_dwg() {}
 };
 
 /// The services a running command uses to interact with the system. Commands

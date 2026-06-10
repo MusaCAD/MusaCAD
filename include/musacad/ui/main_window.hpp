@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -99,6 +100,9 @@ public:
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
+    /// Real-window self-test: DWG import/export via a MOCK external converter --
+    /// discovery, off-thread convert, fail-safe load, gap catalog, export round-trip.
+    bool selftest_dwg();
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
@@ -144,6 +148,29 @@ private:
     void file_save_as();
     void file_import_dxf();
     void file_export_dxf();
+    // DWG via an external converter subprocess (LGPL-clean: never linked/bundled).
+    // Import = convert DWG->DXF then the existing fail-safe DXF load; export =
+    // existing DXF export then convert DXF->DWG. Conversion runs off the UI thread.
+    void file_import_dwg();
+    void file_export_dwg();
+    /// "DWG Converter Setup" dialog: shows the detected converter, lets the user
+    /// Browse to one / auto-detect on PATH / open the download pages, and saves the
+    /// io/dwg_converter_path setting. (No auto-download: a GPL/proprietary converter
+    /// can't be fetched+installed for the user -- licensing/EULA/platform/security.)
+    void configure_dwg_converter();
+    /// No-converter dead-end recovery: show the hint with a "Configure…" button.
+    /// Returns true if the user chose to configure (caller should re-discover).
+    bool offer_dwg_setup(const QString& title);
+    /// Run `work` (a blocking converter call) on a worker thread behind a modal
+    /// indeterminate progress dialog while the UI stays responsive. Returns work's
+    /// result; fills `err`.
+    bool run_with_progress(const QString& label, const std::function<bool(QString&)>& work,
+                           QString& err);
+    /// Pump the event loop behind a modal indeterminate progress dialog until `done`
+    /// returns true or `timeout_ms` elapses. For async waits the geometry thread drives
+    /// (a big DXF parse/index) so the window isn't a frozen blank during a slow load.
+    bool pump_with_progress(const QString& label, const std::function<bool()>& done,
+                            int timeout_ms);
     void save_to(const QString& path, bool dxf); // testable: send SaveDocumentCommand
     void open_from(const QString& path, bool dxf); // testable: send OpenDocumentCommand
     [[nodiscard]] bool confirm_discard_if_dirty(); // returns true to proceed
