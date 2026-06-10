@@ -7,6 +7,7 @@ add_library(musacad_ui STATIC
     properties_panel.cpp
     dyn_input.cpp
     dwg_converter.cpp
+    qt_font_engine.cpp
     ribbon_bar.cpp
     command_icons.cpp
     theme.cpp

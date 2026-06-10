@@ -18,6 +18,8 @@
 
 namespace musacad::core {
 
+class IFontEngine;
+
 /// Owns the geometry thread and everything it owns: the SoA GeometryStore, the
 /// kernel, the inbound command queue, and the outbound snapshot triple buffer.
 /// Producers (UI/command threads) call submit(); the render thread calls
@@ -33,6 +35,12 @@ public:
     GeometryEngine& operator=(const GeometryEngine&) = delete;
     GeometryEngine(GeometryEngine&&) = delete;
     GeometryEngine& operator=(GeometryEngine&&) = delete;
+
+    /// Injects the font engine used to render/measure outline (TTF/OTF) text. Must be set
+    /// before start() (read on the geometry thread; not changed afterwards). Null = stroke
+    /// font only. The engine is owned by the caller (the UI layer). Stored on the
+    /// GeometryStore so render/bounds/pick/grips all reach the same metrics (no fork).
+    void set_font_engine(const IFontEngine* engine) noexcept { store_.set_font_engine(engine); }
 
     /// Launches the geometry worker thread (idempotent).
     void start();

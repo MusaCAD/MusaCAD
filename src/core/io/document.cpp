@@ -74,7 +74,8 @@ Document document_from_store(const GeometryStore& store) {
         if (texts.alive(i)) {
             const TextData& t = texts.data()[i];
             doc.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify,
-                                        std::string(store.string_of(t)), t.props});
+                                        std::string(store.string_of(t)), t.props,
+                                        std::string(store.font_name(t.font))});
         }
     }
     const auto& dims = store.dimensions();
@@ -90,14 +91,16 @@ Document document_from_store(const GeometryStore& store) {
         if (leaders.alive(i)) {
             const LeaderData& ld = leaders.data()[i];
             doc.leaders.push_back(DocLeader{ld.tip, ld.knee, ld.text_height, ld.style,
-                                            std::string(store.string_of(ld)), ld.props});
+                                            std::string(store.string_of(ld)), ld.props,
+                                            std::string(store.font_name(ld.font))});
         }
     }
     const auto& mtx = store.mtexts();
     for (std::uint32_t i = 0; i < mtx.slot_count(); ++i) {
         if (mtx.alive(i)) {
             const MTextData& m = mtx.data()[i];
-            doc.mtexts.push_back(DocMText{m.text, std::string(store.string_of(m.text)), m.props});
+            doc.mtexts.push_back(DocMText{m.text, std::string(store.string_of(m.text)), m.props,
+                                          std::string(store.font_name(m.text.font))});
         }
     }
     const auto& mld = store.mleaders();
@@ -107,7 +110,7 @@ Document document_from_store(const GeometryStore& store) {
             const auto v = store.vertices_of(m);
             doc.mleaders.push_back(DocMLeader{std::vector<Vec2>(v.begin(), v.end()), m.style,
                                               m.text, std::string(store.string_of(m.text)),
-                                              m.props});
+                                              m.props, std::string(store.font_name(m.text.font))});
         }
     }
     // Block definitions (by name) + their self-contained content.
@@ -206,20 +209,26 @@ void populate_store(GeometryStore& store, const Document& doc) {
                          di.props);
     }
     for (const DocText& t : doc.texts) {
-        store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props);
+        store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props,
+                       store.add_font(t.font));
     }
     for (const DocDim& d : doc.dims) {
         store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,
                             d.overrides);
     }
     for (const DocLeader& l : doc.leaders) {
-        store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props);
+        store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
+                         store.add_font(l.font));
     }
     for (const DocMText& m : doc.mtexts) {
-        store.add_mtext(m.block, m.content, m.props);
+        MTextBlock b = m.block;
+        b.font = store.add_font(m.font);
+        store.add_mtext(b, m.content, m.props);
     }
     for (const DocMLeader& m : doc.mleaders) {
-        store.add_mleader(m.vertices, m.style, m.block, m.content, m.props);
+        MTextBlock b = m.block;
+        b.font = store.add_font(m.font);
+        store.add_mleader(m.vertices, m.style, b, m.content, m.props);
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);

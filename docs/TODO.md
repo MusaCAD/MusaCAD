@@ -3,6 +3,27 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Fonts: true SHX parsing + style table (Phase 29 follow-ups)
+
+Phase 29 added TrueType/OpenType rendering (filled glyphs via the fill pipeline) + an
+SHX-name → TTF **substitution** table for imports. Deferred:
+
+- **True SHX binary parsing** — render the actual `.shx` shape definitions instead of a
+  TTF lookalike. **Why parked:** substitution is the standard, low-risk approach and covers
+  imports faithfully (single-stroke CAD fonts have clean TTF equivalents). **Done looks
+  like:** an SHX shape-file reader producing stroke geometry, selected when the real `.shx`
+  is available, else substitute.
+- **Text-style table as a first-class entity** (STYLE command; named styles bundling font +
+  width factor + oblique). Font is **per-entity** today (a font-table index). **Done:** a
+  style table the entity references, with the font as a style default.
+- **Per-glyph kerning / inline rich runs** beyond the face's default advances and
+  width_factor (width_factor is not applied to TTF glyph geometry today — a noted minor gap).
+
+**The SHX → TTF substitution mapping** (`QtFontEngine`): `txt`/`simplex`/`isocp`/`isocpeur`
+/`iso` → a system **sans** (DejaVu/Noto/Liberation/Arial); `romans`/`romand`/`romanc`/
+`italic` → a system **serif** (else sans); `monotxt` → a **mono** face; a TTF family name
+resolves to itself; anything unmatched → the stroke font.
+
 ## DWG/DXF import fidelity backlog (Phase 27)
 
 DWG import (via the external converter) and DXF import both route through the one

@@ -171,6 +171,37 @@ handle), and move/erase/copy act on the instance's transform — the shared defi
 untouched. In-app block authoring (BLOCK/REFEDIT/EXPLODE/ATTDEF) is staged for a later
 phase; this phase is import + display + selection.
 
+### Text: two render paths behind one layout (Phase 29)
+
+Text has **two coexisting geometry sources**, selected per entity by a font reference:
+
+- **Stroke font** ("Standard", index 0) → **LINE** geometry through the line pipeline.
+  The built-in single-stroke CAD font; the default and the fallback. Qt-free.
+- **TrueType/OpenType** faces → **FILLED triangles** through the Phase-14 fill pipeline.
+  Glyph outlines come from Qt (`QRawFont`/`QPainterPath`), triangulated (ear-clip) once
+  per glyph and cached at unit em; N glyphs of one colour batch into **one draw call**.
+
+Only the **per-glyph geometry source** differs — wrap, attachment, line-spacing,
+justification, and rotation are **one shared layout** (`layout_mtext`), and the width
+metric is shared too (stroke `text_width` vs the face's advance), so layout, bounds, and
+pick never diverge from what is drawn. Glyphs are **generated at snapshot from (font,
+string, height), never baked** (the same derived-not-baked rule as dimensions/blocks):
+switching font or editing text re-generates next snapshot.
+
+Core stays **Qt-free behind an interface**: `IFontEngine` (mirrors `IGeometryKernel`) is
+implemented by `QtFontEngine` in the UI layer and injected via the store
+(`store.font_engine()`), so the snapshot, entity bounds, pick, and grips all reach the
+same metrics. Font **enumeration** runs once on the UI thread (`QFontDatabase`); glyph
+**outline extraction** runs lazily on the geometry thread on a cache miss (CPU-only,
+mutex-guarded, safe off the GUI thread); steady state is Qt-free cache lookups.
+
+A text entity stores a **font-table index** (`std::uint16_t`, 0 = stroke) — compact, no
+inline string on the hot path. **SHX-name → TTF substitution**: an imported `*.shx`
+reference (e.g. `romans.shx`, `isocp.shx`, `txt.shx`) or a TTF family name resolves
+through `QtFontEngine`'s substitution table (romans→serif, txt/simplex/isocp→sans, …) to a
+system face; an unresolved name falls back to the stroke font. True SHX *binary* parsing
+is staged — substitution covers imports (the standard approach).
+
 ## Rendering (Phase 3)
 
 ### GPU backend: OpenGL 4.6 Core (DSA), behind a backend-agnostic seam

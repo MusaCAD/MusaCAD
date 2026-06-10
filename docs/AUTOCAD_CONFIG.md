@@ -39,7 +39,7 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Text height | Implemented (Ph13) |
 | Text color | Implemented (Ph14) |
 | Text placement (above / centered) | Implemented (Ph13) |
-| Text style (font) | Planned (single stroke font for now) |
+| Text style (font) | Implemented (Ph29: stroke font + system TrueType/OpenType faces; SHX-name substitution on import) |
 | Text alignment (horizontal / aligned with dim line) | Implemented (Ph13, aligned) |
 | Text offset from dim line | Planned |
 | Fraction format / text frame | Planned |
@@ -100,7 +100,7 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Geometry group (line length/ends, circle/arc center+radius, text position) | Implemented (Ph22, read-only) |
 | Geometry numeric editing (type a new radius/length/endpoint) | Planned |
 | Text/MTEXT group (contents, height, rotation, justify, width factor, line spacing, defined width, attachment) | Implemented (Ph22) |
-| Font selection field | Implemented as read-only (single stroke font); real font system Planned |
+| Font selection field | Implemented (Ph29: PR Font dropdown lists Standard + system TTF/OTF faces; sets the entity font, persists, re-renders) |
 | Dimension group: per-dimension overrides (arrow type/size, dim/ext-line color, text height/color/placement, precision; ByStyle-or-Overridden + reset) | Implemented (Ph24; native round-trip, DXF override-vs-style native-only) |
 | Quick-select / filter by property | Planned |
 
@@ -113,7 +113,7 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | MTEXT attachment point (TL/TC/TR/ML/MC/MR/BL/BC/BR) | Implemented (Ph20) |
 | MTEXT line spacing / width factor / rotation | Implemented (Ph20) |
 | MTEXT inline formatting (bold, mid-string colour/height, stacked fractions) | Planned (Ph20 stub) |
-| Text/font selection (multiple fonts, TTF) | Planned (single stroke font; font ref stored) |
+| Text/font selection (multiple fonts, TTF) | Implemented (Ph29: TTF/OTF as filled glyphs via the fill pipeline; stroke font stays the default/fallback) |
 
 ## Leader / MLEADER
 

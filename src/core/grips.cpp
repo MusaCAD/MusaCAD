@@ -33,8 +33,14 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
-        return AddTextCommand{t->pos,   t->height, t->rotation, t->justify,
-                              std::string(store.string_of(*t)), 0, t->props};
+        return AddTextCommand{t->pos,
+                              t->height,
+                              t->rotation,
+                              t->justify,
+                              std::string(store.string_of(*t)),
+                              0,
+                              t->props,
+                              std::string(store.font_name(t->font))};
     }
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
@@ -51,12 +57,19 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
-        return AddLeaderCommand{l->tip, l->knee, l->text_height, l->style,
-                                std::string(store.string_of(*l)), 0, l->props};
+        return AddLeaderCommand{l->tip,
+                                l->knee,
+                                l->text_height,
+                                l->style,
+                                std::string(store.string_of(*l)),
+                                0,
+                                l->props,
+                                std::string(store.font_name(l->font))};
     }
     case EntityKind::MText: {
         const MTextData* m = store.mtext(h);
-        return AddMTextCommand{m->text, std::string(store.string_of(m->text)), 0, m->props};
+        return AddMTextCommand{m->text, std::string(store.string_of(m->text)), 0, m->props,
+                               std::string(store.font_name(m->text.font))};
     }
     case EntityKind::MLeader: {
         const MLeaderData* m = store.mleader(h);
@@ -93,15 +106,17 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                     store.add_arc(c.center, c.radius, c.start_angle, c.end_angle, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 handle = store.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
-                                        props_of(c.props));
+                                        props_of(c.props), store.add_font(c.font));
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                              c.style, props_of(c.props), c.overrides);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
-                                          props_of(c.props));
+                                          props_of(c.props), store.add_font(c.font));
             } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
-                handle = store.add_mtext(c.block, c.content, props_of(c.props));
+                MTextBlock b = c.block;
+                b.font = store.add_font(c.font);
+                handle = store.add_mtext(b, c.content, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 handle = store.add_mleader(c.vertices, c.style, c.block, c.content,
                                            props_of(c.props));
@@ -217,7 +232,9 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         if (m->text.width > 0.0) {
             push(out, m->text.pos + xdir * m->text.width, GripKind::DimLine, 1); // width grip
         } else {
-            const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+            const text::MTextLayout lay = text::layout_mtext(
+                m->text, store.string_of(m->text), store.font_engine(),
+                store.font_name(m->text.font));
             push(out, {lay.max.x, (lay.min.y + lay.max.y) * 0.5}, GripKind::DimLine, 1);
         }
         break;

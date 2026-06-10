@@ -19,6 +19,7 @@ struct MTextBlock {
     double width_factor = 1.0; ///< horizontal glyph scale
     double line_spacing = 1.0; ///< multiple of the single-line height
     std::uint8_t attach = 0;   ///< 0..8 = TL,TC,TR,ML,MC,MR,BL,BC,BR
+    std::uint16_t font = 0;    ///< index into the store's font table (0 = Standard/stroke)
     std::uint32_t str_offset = 0;
     std::uint32_t str_len = 0;
     friend bool operator==(const MTextBlock&, const MTextBlock&) = default;

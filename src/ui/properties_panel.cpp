@@ -448,11 +448,32 @@ void PropertiesPanel::rebuild() {
             break;
         }
         case PropEditor::FontCombo: {
-            // Read-only for now: a single stroke font. The field is wired so a real
-            // font system slots in later without UI changes.
+            // The font dropdown: "Standard" (the built-in stroke font) + the system
+            // outline (TTF/OTF) faces. value.text is the font name ("" = Standard).
             auto* e = new QComboBox();
-            e->addItem(QStringLiteral("Standard (stroke)"));
-            e->setEnabled(false);
+            for (const std::string& fam : font_names_) {
+                e->addItem(QString::fromStdString(fam));
+            }
+            if (e->count() == 0) {
+                e->addItem(QStringLiteral("Standard"));
+            }
+            if (varies) {
+                e->addItem(QString::fromLatin1(kVaries));
+                e->setCurrentIndex(e->count() - 1);
+            } else {
+                const QString cur = f.value.text.empty() ? QStringLiteral("Standard")
+                                                         : QString::fromStdString(f.value.text);
+                const int idx = e->findText(cur);
+                e->setCurrentIndex(idx < 0 ? 0 : idx);
+            }
+            connect(e, &QComboBox::activated, this, [this, id, e](int index) {
+                const QString name = e->itemText(index);
+                PropertyValue pv;
+                pv.text = (name == QStringLiteral("Standard") || name == QString::fromLatin1(kVaries))
+                              ? std::string()
+                              : name.toStdString();
+                emit_edit(id, pv);
+            });
             current_form->addRow(label, e);
             break;
         }

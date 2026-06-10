@@ -190,6 +190,29 @@ double block_double(const Command& c, Get get) {
     return v;
 }
 
+// The font name of a text-bearing command ("" = the stroke font). Only AddTextCommand/
+// AddLeaderCommand/AddMTextCommand carry a `.font` string.
+std::string font_of(const Command& c) {
+    std::string out;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.font; }) {
+                out = x.font;
+            }
+        },
+        c);
+    return out;
+}
+void set_font(Command& c, const std::string& name) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.font; }) {
+                x.font = name;
+            }
+        },
+        c);
+}
+
 std::string fmt(double v) {
     char buf[48];
     std::snprintf(buf, sizeof(buf), "%.4g", v);
@@ -416,12 +439,12 @@ const Desc kDescs[] = {
      },
      [](Command& c, const PropertyValue& v) { set_justify(c, v.choice); }},
     {PropertyId::TextFont, "Text", "Font", PropEditor::FontCombo, is_text,
-     [](const Command&) {
+     [](const Command& c) {
          PropertyValue v;
-         v.choice = 0;
+         v.text = font_of(c); // current font name ("" = the stroke "Standard")
          return v;
      },
-     nullptr}, // read-only: single stroke font today (font system is staged)
+     [](Command& c, const PropertyValue& v) { set_font(c, v.text); }},
     {PropertyId::MtWidthFactor, "Text", "Width factor", PropEditor::Number, is_mtext_only,
      [](const Command& c) {
          PropertyValue v;

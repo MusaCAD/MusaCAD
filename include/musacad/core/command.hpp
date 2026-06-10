@@ -231,7 +231,8 @@ struct NewDocumentCommand {};
 
 // --- Annotation (Phase 13): text + dimensions -------------------------------
 
-/// Single-line text. `justify`: 0 left, 1 centre, 2 right.
+/// Single-line text. `justify`: 0 left, 1 centre, 2 right. `font` is the font name
+/// ("" = the built-in stroke font); resolved to the store's font-table index on apply.
 struct AddTextCommand {
     Vec2 pos;
     double height = 2.5;
@@ -240,6 +241,7 @@ struct AddTextCommand {
     std::string content;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::string font{}; ///< font name ("" = stroke "Standard")
 };
 
 /// A dimension defined by `a`/`b` (def points) placed through `line_pt`, drawn
@@ -318,15 +320,18 @@ struct AddLeaderCommand {
     std::string content;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::string font{}; ///< font name ("" = stroke "Standard")
 };
 
 /// Multi-line paragraph text (MTEXT). `block.str_offset/str_len` are ignored;
-/// `content` is the raw paragraph string. Layout is computed at render time.
+/// `content` is the raw paragraph string. Layout is computed at render time. `font`
+/// is the font name (resolved to block.font, the store's font-table index, on apply).
 struct AddMTextCommand {
     MTextBlock block;
     std::string content;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::string font{}; ///< font name ("" = stroke "Standard")
 };
 
 /// Editable leader (QLEADER): leader `vertices` (vertex 0 = arrow tip), a dimstyle

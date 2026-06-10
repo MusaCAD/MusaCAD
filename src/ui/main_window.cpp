@@ -62,6 +62,7 @@
 #include "musacad/ui/dwg_converter.hpp"
 #include "musacad/ui/dyn_input.hpp"
 #include "musacad/ui/properties_panel.hpp"
+#include "musacad/ui/qt_font_engine.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
 #include "musacad/ui/viewport_window.hpp"
 
@@ -140,6 +141,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     resize(1320, 860);
 
     engine_ = std::make_unique<core::GeometryEngine>();
+    // The Qt-backed font engine enumerates system TTF/OTF faces (UI thread) and renders
+    // outline text as filled glyphs; injected before start() so the geometry thread sees
+    // it. Null would mean stroke-font only.
+    font_engine_ = std::make_unique<QtFontEngine>();
+    engine_->set_font_engine(font_engine_.get());
     engine_->start();
     // Normal launch opens an empty Model space. The demo/benchmark scene is only
     // seeded when MUSACAD_DEMO is set (perf harnesses build their own scenes).
@@ -198,6 +204,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // runtime state stays as before). PR toggles it; the panel edits flow back as
     // SetPropertyCommand on the geometry queue.
     properties_panel_ = new PropertiesPanel;
+    if (font_engine_) {
+        properties_panel_->set_font_names(font_engine_->available()); // PR Font dropdown
+    }
     properties_dock_ = new QDockWidget(QStringLiteral("Properties"), this);
     properties_dock_->setObjectName(QStringLiteral("PropertiesDock"));
     properties_dock_->setWidget(properties_panel_);

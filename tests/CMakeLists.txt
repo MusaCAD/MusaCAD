@@ -89,6 +89,7 @@ add_executable(musacad_tests
     test_bulge.cpp
     test_mtext.cpp
     test_blocks.cpp
+    test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp
     test_header_hygiene.cpp)

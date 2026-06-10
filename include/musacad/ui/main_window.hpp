@@ -33,6 +33,7 @@ class ParameterDialog;
 class PropertiesPanel;
 class DynInput;
 class FanoutOutput;
+class QtFontEngine;
 
 /// The application's top-level window: an AutoCAD-2023-style Ribbon frame
 /// (Quick Access Toolbar + tabbed ribbon panels + file/layout tabs), an OpenGL
@@ -176,6 +177,7 @@ private:
     [[nodiscard]] bool confirm_discard_if_dirty(); // returns true to proceed
     void update_title();
 
+    std::unique_ptr<QtFontEngine> font_engine_; // before engine_: outlives the geometry thread
     std::unique_ptr<core::GeometryEngine> engine_;
     std::unique_ptr<FanoutOutput> fanout_; // fans prompt/echo to the command line + DYN
     std::unique_ptr<command::CommandProcessor> processor_;

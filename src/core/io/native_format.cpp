@@ -273,6 +273,8 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += t.content;
         s += '\n';
+        s += t.font; // v10: font name on its own line (single-line; "" = stroke)
+        s += '\n';
     }
     for (const DocDim& d : doc.dims) {
         s += "DIM ";
@@ -324,6 +326,8 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += l.content;
         s += '\n';
+        s += l.font; // v10
+        s += '\n';
     }
     // v6: MTEXT and MLEADER. The MTextBlock numeric fields are written inline; the
     // content is on the following line (may contain spaces; \n stored as literal "\n").
@@ -364,6 +368,8 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += escape(m.content);
         s += '\n';
+        s += m.font; // v10
+        s += '\n';
     }
     for (const DocMLeader& m : doc.mleaders) {
         s += "MLEADER ";
@@ -379,6 +385,8 @@ std::string serialize_native(const Document& doc) {
         append_props(s, m.props);
         s += '\n';
         s += escape(m.content);
+        s += '\n';
+        s += m.font; // v10
         s += '\n';
     }
     // v9: model-space block references, then the block-definition table. A block's
@@ -457,6 +465,8 @@ std::string serialize_native(const Document& doc) {
             s += '\n';
             s += t.content;
             s += '\n';
+            s += t.font; // v10
+            s += '\n';
         }
         for (const DocMText& m : b.mtexts) {
             s += "MTEXT ";
@@ -464,6 +474,8 @@ std::string serialize_native(const Document& doc) {
             append_props(s, m.props);
             s += '\n';
             s += escape(m.content);
+            s += '\n';
+            s += m.font; // v10
             s += '\n';
         }
         for (const DocInsert& ni : b.inserts) {
@@ -531,6 +543,22 @@ IoResult parse_native(std::string_view text, Document& out) {
     };
 
     std::istringstream in{std::string(text)};
+    // v10: a font-name line follows the content of TEXT/MTEXT/LEADER/MLEADER. Older files
+    // have none -> the stroke font (""). Returns false only on a truncated v10 record.
+    const auto read_font = [&](std::string& font) -> bool {
+        font.clear();
+        if (version < 10) {
+            return true;
+        }
+        if (!std::getline(in, font)) {
+            return false;
+        }
+        ++line_no;
+        if (!font.empty() && font.back() == '\r') {
+            font.pop_back();
+        }
+        return true;
+    };
     std::string raw;
     std::vector<double> vals;
     // Reads a fixed-geometry entity: `geom` doubles, then (v2) 7 prop ints.
@@ -693,12 +721,17 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (!content.empty() && content.back() == '\r') {
                 content.pop_back();
             }
+            std::string tfont;
+            if (!read_font(tfont)) {
+                return fail("TEXT missing font line");
+            }
             t_texts->push_back(DocText{{vals[0], vals[1]},
                                         vals[2],
                                         vals[3],
                                         static_cast<std::uint8_t>(justify),
                                         std::move(content),
-                                        props});
+                                        props,
+                                        std::move(tfont)});
         } else if (key == "DIM") {
             // DIM type ax ay bx by lx ly style <props7> [override block of 15]
             std::uint64_t dtype = 0;
@@ -762,12 +795,17 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (!content.empty() && content.back() == '\r') {
                 content.pop_back();
             }
+            std::string lfont;
+            if (!read_font(lfont)) {
+                return fail("LEADER missing font line");
+            }
             doc.leaders.push_back(DocLeader{{vals[0], vals[1]},
                                             {vals[2], vals[3]},
                                             vals[4],
                                             static_cast<std::uint16_t>(style),
                                             std::move(content),
-                                            props});
+                                            props,
+                                            std::move(lfont)});
         } else if (key == "MTEXT") {
             // MTEXT px py width height rot wf ls attach <props7>; content next line.
             vals.clear();
@@ -793,7 +831,11 @@ IoResult parse_native(std::string_view text, Document& out) {
             b.width_factor = vals[5];
             b.line_spacing = vals[6];
             b.attach = static_cast<std::uint8_t>(attach);
-            t_mtexts->push_back(DocMText{b, unescape(content), props});
+            std::string mfont;
+            if (!read_font(mfont)) {
+                return fail("MTEXT missing font line");
+            }
+            t_mtexts->push_back(DocMText{b, unescape(content), props, std::move(mfont)});
         } else if (key == "MLEADER") {
             // MLEADER style nverts <x y...> px py width height rot wf ls attach <props7>.
             std::uint64_t style = 0;
@@ -833,8 +875,12 @@ IoResult parse_native(std::string_view text, Document& out) {
             b.width_factor = bvals[5];
             b.line_spacing = bvals[6];
             b.attach = static_cast<std::uint8_t>(attach);
+            std::string mlfont;
+            if (!read_font(mlfont)) {
+                return fail("MLEADER missing font line");
+            }
             doc.mleaders.push_back(DocMLeader{std::move(verts), static_cast<std::uint16_t>(style), b,
-                                              unescape(content), props});
+                                              unescape(content), props, std::move(mlfont)});
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {

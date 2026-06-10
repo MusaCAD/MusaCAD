@@ -22,8 +22,9 @@ namespace musacad::core::io {
 /// layers => layer 0; no dims; no bulges => straight polylines; no mtext/mleader;
 /// no LTSCALE => 1.0). v8: per-dimension style overrides (no overrides => ByStyle).
 /// v9: block definitions (BLOCKDEF..ENDBLOCKDEF) + block references (INSERT). Older
-/// files have no blocks; the keys simply never appear.
-inline constexpr std::uint32_t kFormatVersion = 9;
+/// files have no blocks; the keys simply never appear. v10: a font-name line after the
+/// content of TEXT/MTEXT/LEADER/MLEADER records (older files have none => stroke font).
+inline constexpr std::uint32_t kFormatVersion = 10;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -72,6 +73,7 @@ struct DocText {
     std::uint8_t justify = 0;
     std::string content;
     EntityProps props{};
+    std::string font{}; ///< font name ("" = stroke "Standard")
     friend bool operator==(const DocText&, const DocText&) = default;
 };
 struct DocDim {
@@ -91,12 +93,14 @@ struct DocLeader {
     std::uint16_t style = 0;
     std::string content;
     EntityProps props{};
+    std::string font{}; ///< font name ("" = stroke "Standard")
     friend bool operator==(const DocLeader&, const DocLeader&) = default;
 };
 struct DocMText {
     MTextBlock block;
     std::string content;
     EntityProps props{};
+    std::string font{}; ///< font name ("" = stroke "Standard"); maps to block.font index
     friend bool operator==(const DocMText&, const DocMText&) = default;
 };
 struct DocMLeader {
@@ -105,6 +109,7 @@ struct DocMLeader {
     MTextBlock block;
     std::string content;
     EntityProps props{};
+    std::string font{}; ///< font name ("" = stroke "Standard"); maps to block.font index
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 

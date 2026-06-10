@@ -8,6 +8,7 @@
 
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/font_engine.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -56,6 +57,7 @@ ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) 
 
 void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& kernel,
                            RenderSnapshot& out, double tolerance, double ltscale) {
+    const IFontEngine* fonts = store.font_engine();
     out.points.clear();
     out.line_vertices.clear();
     out.line_batches.clear();
@@ -83,6 +85,34 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     const auto add_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
         auto& v = fill_groups[pack_rgb(c)];
         v.insert(v.end(), tris.begin(), tris.end());
+    };
+
+    // The two coexisting text paths share one layout; only the per-glyph geometry source
+    // differs. An outline (TTF/OTF) font emits FILLED triangles; otherwise the built-in
+    // stroke font emits LINE segments. Glyphs are generated here, never baked.
+    std::vector<Vec2> trun;
+    const auto font_is_outline = [&](std::uint16_t font_id) {
+        return fonts != nullptr && fonts->is_outline_font(store.font_name(font_id));
+    };
+    const auto emit_text_run = [&](std::string_view str, Vec2 origin, double height,
+                                   double rotation, text::Justify justify, std::uint16_t font_id,
+                                   Rgb color) {
+        const std::string_view fname = store.font_name(font_id);
+        if (fonts != nullptr && fonts->is_outline_font(fname)) {
+            double off = 0.0; // justification along the baseline, using the TTF advance
+            if (justify != text::Justify::Left) {
+                const double w = fonts->advance(fname, str, height);
+                off = justify == text::Justify::Center ? -w * 0.5 : -w;
+            }
+            const Vec2 o{origin.x + off * std::cos(rotation), origin.y + off * std::sin(rotation)};
+            trun.clear();
+            fonts->glyph_fills(fname, str, o, height, rotation, trun);
+            add_fills(color, trun);
+        } else {
+            trun.clear();
+            text::append_text_segments(str, origin, height, rotation, justify, trun);
+            add_lines(color, 0, trun);
+        }
     };
 
     for_each_live(store.points(), EntityKind::Point, [&](EntityHandle h) {
@@ -138,12 +168,13 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             return;
         }
         const ResolvedProps r = entity_resolved(store, t->props);
-        tseg.clear();
-        text::append_text_segments(store.string_of(*t), t->pos, t->height, t->rotation,
-                                   static_cast<text::Justify>(t->justify), tseg);
-        add_lines(r.color, 0, tseg);
+        emit_text_run(store.string_of(*t), t->pos, t->height, t->rotation,
+                      static_cast<text::Justify>(t->justify), t->font, r.color);
         if (editable(store, t->props)) {
-            const double w = text::text_width(store.string_of(*t), t->height);
+            const double w = font_is_outline(t->font)
+                                 ? fonts->advance(store.font_name(t->font), store.string_of(*t),
+                                                  t->height)
+                                 : text::text_width(store.string_of(*t), t->height);
             out.text_edit_targets.push_back(TextEditTarget{
                 h, t->pos, {t->pos.x, t->pos.y}, {t->pos.x + w, t->pos.y + t->height}, t->height,
                 t->rotation, false, std::string(store.string_of(*t))});
@@ -190,10 +221,8 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                          static_cast<ArrowType>(s.arrow_type));
         add_fills(arrow_c, afill);
         add_lines(arrow_c, r.lineweight, aline);
-        tseg.clear();
-        text::append_text_segments(store.string_of(*l), l->knee + Vec2{s.arrow_size * 0.4, 0.0},
-                                   l->text_height, 0.0, text::Justify::Left, tseg);
-        add_lines(text_c, 0, tseg);
+        emit_text_run(store.string_of(*l), l->knee + Vec2{s.arrow_size * 0.4, 0.0}, l->text_height,
+                      0.0, text::Justify::Left, l->font, text_c);
     });
 
     // MTEXT: multi-line paragraph text. Layout is COMPUTED here from the stored
@@ -204,8 +233,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             return;
         }
         const ResolvedProps r = entity_resolved(store, m->props);
-        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
+                                                         store.font_name(m->text.font));
         add_lines(r.color, 0, lay.segments);
+        add_fills(r.color, lay.fills);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
@@ -236,8 +267,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             add_fills(arrow_c, afill);
             add_lines(arrow_c, r.lineweight, aline);
         }
-        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
+                                                         store.font_name(m->text.font));
         add_lines(text_c, 0, lay.segments);
+        add_fills(text_c, lay.fills);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,

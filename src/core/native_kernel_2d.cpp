@@ -316,7 +316,8 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     case EntityKind::Text: {
         // Pick/window-select against the (rotated) bounding box outline.
         const TextData* t = store.text(entity);
-        const double w = text::text_width(store.string_of(*t), t->height);
+        const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
+                                            store.string_of(*t), t->height);
         const double cs = std::cos(t->rotation);
         const double sn = std::sin(t->rotation);
         const Vec2 local[5] = {{0, 0}, {w, 0}, {w, t->height}, {0, t->height}, {0, 0}};
@@ -341,7 +342,9 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::MText: {
         const MTextData* m = store.mtext(entity);
-        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text),
+                                                         store.font_engine(),
+                                                         store.font_name(m->text.font));
         const Vec2 c[5] = {lay.min, {lay.max.x, lay.min.y}, lay.max, {lay.min.x, lay.max.y}, lay.min};
         for (const Vec2& p : c) {
             out.push_back(p);
@@ -421,7 +424,8 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     case EntityKind::Text: {
         // Closest point on the text bbox; the query inside the box reads distance 0.
         const TextData* t = store.text(entity);
-        const double w = text::text_width(store.string_of(*t), t->height);
+        const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
+                                            store.string_of(*t), t->height);
         const double cs = std::cos(t->rotation);
         const double sn = std::sin(t->rotation);
         // Transform the query into text-local space (un-rotate about pos).

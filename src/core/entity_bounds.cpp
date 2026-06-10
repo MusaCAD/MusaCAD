@@ -92,7 +92,8 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
-        const double w = text::text_width(store.string_of(*t), t->height);
+        const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
+                                            store.string_of(*t), t->height);
         const double cs = std::cos(t->rotation);
         const double sn = std::sin(t->rotation);
         const Vec2 corners[4] = {{0, 0}, {w, 0}, {w, t->height}, {0, t->height}};
@@ -134,7 +135,8 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
-        const double w = text::text_width(store.string_of(*l), l->text_height);
+        const double w = text::text_advance(store.font_engine(), store.font_name(l->font),
+                                            store.string_of(*l), l->text_height);
         box2(l->tip, l->knee);
         out_min = {std::min(out_min.x, l->knee.x), std::min(out_min.y, l->knee.y)};
         out_max = {std::max(out_max.x, l->knee.x + w), std::max(out_max.y, l->knee.y + l->text_height)};
@@ -142,14 +144,18 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     }
     case EntityKind::MText: {
         const MTextData* m = store.mtext(h);
-        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text),
+                                                         store.font_engine(),
+                                                         store.font_name(m->text.font));
         out_min = lay.min;
         out_max = lay.max;
         return true;
     }
     case EntityKind::MLeader: {
         const MLeaderData* m = store.mleader(h);
-        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text));
+        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text),
+                                                         store.font_engine(),
+                                                         store.font_name(m->text.font));
         out_min = lay.min;
         out_max = lay.max;
         for (const Vec2& v : store.vertices_of(*m)) {

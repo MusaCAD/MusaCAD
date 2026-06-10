@@ -58,11 +58,13 @@ EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std
 }
 
 EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
-                                     std::string_view content, EntityProps props) {
+                                     std::string_view content, EntityProps props,
+                                     std::uint16_t font) {
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
-    const auto slot = texts_.insert(TextData{pos, height, rotation, justify, offset,
-                                             static_cast<std::uint32_t>(content.size()), props});
+    const auto slot =
+        texts_.insert(TextData{pos, height, rotation, justify, font, offset,
+                               static_cast<std::uint32_t>(content.size()), props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Text};
 }
 
@@ -74,11 +76,13 @@ EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 lin
 }
 
 EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
-                                       std::string_view content, EntityProps props) {
+                                       std::string_view content, EntityProps props,
+                                       std::uint16_t font) {
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
-    const auto slot = leaders_.insert(LeaderData{tip, knee, text_height, style, offset,
-                                                 static_cast<std::uint32_t>(content.size()), props});
+    const auto slot =
+        leaders_.insert(LeaderData{tip, knee, text_height, style, font, offset,
+                                   static_cast<std::uint32_t>(content.size()), props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Leader};
 }
 
@@ -201,6 +205,7 @@ void GeometryStore::clear() noexcept {
     dimstyles_.assign(1, DimStyle{"Standard"});
     ltscale_ = 1.0;
     blocks_.clear();
+    fonts_.assign(1, std::string{}); // reset to just the stroke font
 }
 
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {
@@ -458,6 +463,28 @@ std::uint16_t GeometryStore::add_block(const BlockDef& def) {
     return static_cast<std::uint16_t>(blocks_.size() - 1);
 }
 void GeometryStore::set_block_table(std::vector<BlockDef> blocks) { blocks_ = std::move(blocks); }
+
+// --- font table ------------------------------------------------------------
+
+std::uint16_t GeometryStore::add_font(std::string_view name) {
+    if (name.empty()) {
+        return 0; // the built-in stroke font
+    }
+    for (std::size_t i = 0; i < fonts_.size(); ++i) {
+        if (fonts_[i] == name) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    fonts_.emplace_back(name);
+    return static_cast<std::uint16_t>(fonts_.size() - 1);
+}
+void GeometryStore::set_font_table(std::vector<std::string> fonts) {
+    fonts_ = std::move(fonts);
+    if (fonts_.empty()) {
+        fonts_.emplace_back(); // index 0 is always the stroke font
+    }
+    fonts_[0].clear();
+}
 
 // --- layer table -----------------------------------------------------------
 

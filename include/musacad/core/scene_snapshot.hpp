@@ -16,6 +16,9 @@ namespace musacad::core {
 /// The caller is responsible for setting `out.version` and `out.checksum`.
 /// `ltscale` is the global linetype scale (AutoCAD LTSCALE): dash patterns are
 /// derived here (never stored) and their lengths multiplied by it.
+/// Outline-font text is resolved to filled glyph geometry via the store's injected
+/// IFontEngine (store.font_engine()); when none is set, all text renders with the
+/// built-in stroke font.
 void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& kernel,
                            RenderSnapshot& out, double tolerance = kDefaultTessTolerance,
                            double ltscale = 1.0);

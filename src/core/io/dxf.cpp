@@ -293,6 +293,9 @@ std::string serialize_dxf(const Document& doc) {
         code(s, 1, t.content);
         code_d(s, 50, to_degrees(t.rotation));
         code_i(s, 72, t.justify); // 0 left, 1 centre, 2 right
+        if (!t.font.empty()) {
+            code(s, 7, t.font); // style name = font (re-imported via the code-7 fallback)
+        }
     }
     for (const DocDim& d : doc.dims) {
         const std::string style =
@@ -366,7 +369,7 @@ std::string serialize_dxf(const Document& doc) {
     }
     // MTEXT: standard group codes (read by AutoCAD/LibreCAD).
     const auto emit_mtext = [&](const MTextBlock& b, const std::string& content,
-                                const EntityProps& props) {
+                                const EntityProps& props, const std::string& font = {}) {
         code(s, 0, "MTEXT");
         emit_props(s, doc, props);
         code_d(s, 10, b.pos.x);
@@ -378,6 +381,9 @@ std::string serialize_dxf(const Document& doc) {
         }
         code_i(s, 71, b.attach + 1); // DXF attachment is 1..9
         code_d(s, 50, to_degrees(b.rotation));
+        if (!font.empty()) {
+            code(s, 7, font); // style name = font (re-imported via the code-7 fallback)
+        }
         // MTEXT encodes hard line breaks as "\P" (a literal newline would break the
         // DXF code/value line structure).
         std::string enc;
@@ -391,7 +397,7 @@ std::string serialize_dxf(const Document& doc) {
         code(s, 1, enc);
     };
     for (const DocMText& m : doc.mtexts) {
-        emit_mtext(m.block, m.content, m.props);
+        emit_mtext(m.block, m.content, m.props, m.font);
     }
     // MLEADER: full MLEADER block is heavy; write a readable LEADER (the leader
     // line via vertices) + an MTEXT label. Round-trips through Musa via the native
@@ -745,6 +751,30 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     std::size_t i = 0;
     const std::size_t n = pairs.size();
 
+    // STYLE table: text-style name (code 2) -> font file (code 3, e.g. "arial.ttf" or
+    // "txt.shx"). TEXT/MTEXT reference a style via code 7; we resolve it to the font name
+    // and the font engine substitutes SHX names to TTF lookalikes at render time.
+    std::map<std::string, std::string> styles;
+    const auto add_style_record = [&](const std::vector<Pair>& body) {
+        const std::string* name = find(body, 2);
+        const std::string* font = find(body, 3);
+        if (name != nullptr && font != nullptr && !font->empty()) {
+            styles[*name] = *font;
+        }
+    };
+    // The font name a text entity references (via its STYLE, code 7). Falls back to the
+    // code-7 value itself when the style is unknown (Musa export names styles after fonts).
+    const auto font_of_entity = [&](const std::vector<Pair>& body) -> std::string {
+        const std::string* style = find(body, 7);
+        if (style == nullptr || style->empty() || *style == "Standard" || *style == "STANDARD") {
+            return {};
+        }
+        if (const auto it = styles.find(*style); it != styles.end()) {
+            return it->second;
+        }
+        return *style; // unknown style: treat its name as the font reference
+    };
+
     const auto add_layer_record = [&](const std::vector<Pair>& body) {
         const std::string* name = find(body, 2);
         if (name == nullptr) {
@@ -893,6 +923,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 raw += *c;
             }
             m.content = strip_mtext(raw);
+            m.font = font_of_entity(body);
             sink.mtexts->push_back(std::move(m));
             return;
         }
@@ -912,6 +943,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* j = find(body, 72)) {
                 t.justify = static_cast<std::uint8_t>(to_l(*j));
             }
+            t.font = font_of_entity(body);
             sink.texts->push_back(std::move(t));
             return;
         }
@@ -1092,7 +1124,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (p.value == "EOF") {
             break;
         }
-        if (section == "TABLES" && (p.value == "LAYER" || p.value == "DIMSTYLE")) {
+        if (section == "TABLES" &&
+            (p.value == "LAYER" || p.value == "DIMSTYLE" || p.value == "STYLE")) {
             const std::string kind = p.value;
             std::vector<Pair> body;
             ++i;
@@ -1102,6 +1135,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
             if (kind == "LAYER") {
                 add_layer_record(body);
+            } else if (kind == "STYLE") {
+                add_style_record(body);
             } else {
                 add_dimstyle_record(body);
             }

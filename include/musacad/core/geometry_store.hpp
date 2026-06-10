@@ -14,6 +14,8 @@
 
 namespace musacad::core {
 
+class IFontEngine;
+
 // ---------------------------------------------------------------------------
 // Per-primitive SoA records. Fixed-size primitives store their data inline;
 // variable-length primitives (polyline, spline) store an (offset, count) view
@@ -73,6 +75,7 @@ struct TextData {
     double height = 1.0;
     double rotation = 0.0;     ///< radians, CCW
     std::uint8_t justify = 0;  ///< 0 = left, 1 = center, 2 = right
+    std::uint16_t font = 0;    ///< index into the store's font table (0 = Standard/stroke)
     std::uint32_t str_offset = 0;
     std::uint32_t str_len = 0;
     EntityProps props{};
@@ -99,6 +102,7 @@ struct LeaderData {
     Vec2 knee;            ///< landing / text anchor
     double text_height = 2.5;
     std::uint16_t style = 0; ///< dimstyle (for arrow type/size + colours)
+    std::uint16_t font = 0;  ///< index into the store's font table (0 = Standard/stroke)
     std::uint32_t str_offset = 0;
     std::uint32_t str_len = 0;
     EntityProps props{};
@@ -206,11 +210,12 @@ public:
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                             EntityProps props = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
-                          std::string_view content, EntityProps props = {});
+                          std::string_view content, EntityProps props = {}, std::uint16_t font = 0);
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {});
     EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
-                            std::string_view content, EntityProps props = {});
+                            std::string_view content, EntityProps props = {},
+                            std::uint16_t font = 0);
     /// Multi-line paragraph text. `block.str_offset/str_len` are ignored; `content`
     /// is copied into the shared string pool and the range is recorded.
     EntityHandle add_mtext(const MTextBlock& block, std::string_view content,
@@ -281,6 +286,24 @@ public:
     std::uint16_t add_block(const BlockDef& def);
     /// Replaces the block table (Open/Import).
     void set_block_table(std::vector<BlockDef> blocks);
+
+    // --- font table (index 0 = "" = the built-in stroke font "Standard") -----
+    // Few in number (the distinct font names a drawing references); a vector is
+    // plenty. A text entity's `font` field indexes here; the snapshot resolves the
+    // name through the injected IFontEngine (stroke vs TTF).
+    [[nodiscard]] const std::vector<std::string>& fonts() const noexcept { return fonts_; }
+    [[nodiscard]] std::string_view font_name(std::uint16_t index) const noexcept {
+        return index < fonts_.size() ? std::string_view(fonts_[index]) : std::string_view();
+    }
+    /// Adds a font name (or returns the existing index). Empty name maps to 0 (Standard).
+    std::uint16_t add_font(std::string_view name);
+    /// Replaces the font table (Open/Import); ensures index 0 is the stroke font ("").
+    void set_font_table(std::vector<std::string> fonts);
+    /// The injected font engine that resolves outline-font names to glyph geometry +
+    /// metrics. Non-owning; set by the GeometryEngine. Null = stroke font only. The same
+    /// pointer feeds render/bounds/pick/grips so text geometry never forks.
+    void set_font_engine(const IFontEngine* engine) noexcept { font_engine_ = engine; }
+    [[nodiscard]] const IFontEngine* font_engine() const noexcept { return font_engine_; }
 
     // --- dimension styles ("Standard" always at index 0) --------------------
     [[nodiscard]] const std::vector<DimStyle>& dimstyles() const noexcept { return dimstyles_; }
@@ -369,6 +392,8 @@ private:
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
     std::vector<BlockDef> blocks_;                          // block-definition table
+    std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
+    const IFontEngine* font_engine_ = nullptr;             // non-owning; injected service
 };
 
 } // namespace musacad::core
