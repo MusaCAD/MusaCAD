@@ -106,6 +106,12 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
 }
 
+EntityHandle GeometryStore::add_insert(std::uint16_t block, Vec2 pos, double scale_x,
+                                       double scale_y, double rotation, EntityProps props) {
+    const auto slot = inserts_.insert(InsertData{block, pos, scale_x, scale_y, rotation, props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Insert};
+}
+
 bool GeometryStore::remove(EntityHandle h) noexcept {
     switch (h.kind) {
     case EntityKind::Point:
@@ -130,6 +136,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return mtexts_.erase(h.index, h.generation);
     case EntityKind::MLeader:
         return mleaders_.erase(h.index, h.generation);
+    case EntityKind::Insert:
+        return inserts_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -158,6 +166,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return mtexts_.is_valid(h.index, h.generation);
     case EntityKind::MLeader:
         return mleaders_.is_valid(h.index, h.generation);
+    case EntityKind::Insert:
+        return inserts_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -166,7 +176,7 @@ std::size_t GeometryStore::live_count() const noexcept {
     return points_.live_count() + lines_.live_count() + polylines_.live_count() +
            circles_.live_count() + arcs_.live_count() + splines_.live_count() +
            texts_.live_count() + dims_.live_count() + leaders_.live_count() +
-           mtexts_.live_count() + mleaders_.live_count();
+           mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -181,6 +191,7 @@ void GeometryStore::clear() noexcept {
     leaders_.clear();
     mtexts_.clear();
     mleaders_.clear();
+    inserts_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
     spline_pool_.clear();
@@ -189,6 +200,7 @@ void GeometryStore::clear() noexcept {
     current_layer_ = 0;
     dimstyles_.assign(1, DimStyle{"Standard"});
     ltscale_ = 1.0;
+    blocks_.clear();
 }
 
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {
@@ -223,6 +235,9 @@ const MTextData* GeometryStore::mtext(EntityHandle h) const noexcept {
 }
 const MLeaderData* GeometryStore::mleader(EntityHandle h) const noexcept {
     return h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+}
+const InsertData* GeometryStore::insert(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Insert ? inserts_.get(h.index, h.generation) : nullptr;
 }
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
@@ -341,6 +356,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Insert:
+        if (const InsertData* d = insert(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -413,9 +433,31 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
             return true;
         }
         break;
+    case EntityKind::Insert:
+        if (InsertData* d = inserts_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
     }
     return false;
 }
+
+// --- block-definition table ------------------------------------------------
+
+const BlockDef* GeometryStore::block(std::uint16_t index) const noexcept {
+    return index < blocks_.size() ? &blocks_[index] : nullptr;
+}
+std::uint16_t GeometryStore::add_block(const BlockDef& def) {
+    for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        if (blocks_[i].name == def.name) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    blocks_.push_back(def);
+    return static_cast<std::uint16_t>(blocks_.size() - 1);
+}
+void GeometryStore::set_block_table(std::vector<BlockDef> blocks) { blocks_ = std::move(blocks); }
 
 // --- layer table -----------------------------------------------------------
 

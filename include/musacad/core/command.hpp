@@ -340,6 +340,19 @@ struct AddMLeaderCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Place a block reference (INSERT) in model space. `block` indexes the block-
+/// definition table; the transform is insertion point + X/Y scale + rotation. The
+/// referenced geometry is resolved (definition x transform) at snapshot, not copied.
+struct AddInsertCommand {
+    std::uint16_t block = 0;
+    Vec2 pos;
+    double scale_x = 1.0;
+    double scale_y = 1.0;
+    double rotation = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// Set one property (universal or type-specific) on every selected entity, as
 /// one undo group. The Properties palette's single write path: the descriptor
 /// registry (properties_registry.hpp) maps `id` to the field it mutates on each
@@ -429,6 +442,6 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 SetPropertyCommand, SetLtscaleCommand>;
+                 SetPropertyCommand, SetLtscaleCommand, AddInsertCommand>;
 
 } // namespace musacad::core

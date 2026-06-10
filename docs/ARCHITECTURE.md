@@ -144,6 +144,33 @@ and skip dead slots via `alive(i)`. No virtual dispatch is used on these paths.
 Insertion throughput (release build, this machine): **~32 ns/line**, i.e. 1,000,000
 lines in ~32 ms.
 
+### Blocks: definition table + INSERT references (Phase 28)
+
+A **block definition** is a named, self-contained collection of geometry held in a
+block-definition table on the store (parallel to the layer table) — deliberately
+**outside** the model-space arenas, so a definition never appears in the snapshot, pick,
+or `all_live` on its own. Model space holds lightweight **`InsertData`** entities (their
+own arena + generational handle, like every other kind): a definition index + a transform
+(insertion point, X/Y scale, rotation). 10 instances of a block are 10 small inserts, not
+10 geometry copies.
+
+An insert's drawable geometry is **resolved at snapshot from definition × transform, never
+baked** (the same parametric, derived-not-baked rule as dimensions, Ph16/23). One function —
+`resolve_insert` (`block_resolve.cpp`) — produces the world-space segments, composing
+`translate · rotate · scale`; nested inserts compose `parent × child` with a depth guard
+(cap 16) against cyclic definitions. That single path feeds **every** consumer — the render
+snapshot, entity bounds (AABB / window-select / zoom-extents), the kernel's `tessellate`
+(window/crossing/hover) and `closest_point` (pick) — so the displayed, picked, and bounded
+geometry can never diverge. Inserts emit into the existing colour/lineweight line batches,
+so N identical instances add vertices but **no extra draw calls**.
+
+Like dimensions, an insert resolves to **disjoint segment pairs** (each primitive its own
+run, no phantom connectors); `closest_point` and the window/hover consumers step those
+pairs. Clicking anywhere on the instance's geometry selects the **whole insert** (one
+handle), and move/erase/copy act on the instance's transform — the shared definition is
+untouched. In-app block authoring (BLOCK/REFEDIT/EXPLODE/ATTDEF) is staged for a later
+phase; this phase is import + display + selection.
+
 ## Rendering (Phase 3)
 
 ### GPU backend: OpenGL 4.6 Core (DSA), behind a backend-agnostic seam

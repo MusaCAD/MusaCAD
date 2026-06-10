@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 
+#include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/text/mtext.hpp"
@@ -241,6 +242,24 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
                                                            std::string(store.string_of(m->text))});
+        }
+    });
+
+    // INSERT (block reference): resolve the definition x transform to world segments
+    // (the same one path pick/bounds use) and route them into the colour/lineweight
+    // line groups. N identical inserts add vertices but NOT draw calls -- they batch by
+    // (colour, lineweight) like every other line. Geometry lives once in the definition;
+    // nothing is baked into the store per instance (Ph16/23 derived-not-baked).
+    std::vector<InsertSeg> isegs;
+    for_each_live(store.inserts(), EntityKind::Insert, [&](EntityHandle h) {
+        const InsertData* in = store.insert(h);
+        if (!visible(store, in->props)) {
+            return;
+        }
+        isegs.clear();
+        resolve_insert(store, *in, tolerance, isegs);
+        for (const InsertSeg& s : isegs) {
+            add_line(s.color, s.lineweight, s.a, s.b);
         }
     });
 

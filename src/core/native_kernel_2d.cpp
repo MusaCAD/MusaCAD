@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/geometry_store.hpp"
@@ -354,6 +355,19 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         }
         break;
     }
+    case EntityKind::Insert: {
+        // The whole instance is one selectable object: resolve the definition to world
+        // segments and emit them as pairs (disjoint primitives, no phantom connectors).
+        const InsertData* in = store.insert(entity);
+        std::vector<InsertSeg> segs;
+        resolve_insert(store, *in, tolerance, segs);
+        out.reserve(segs.size() * 2);
+        for (const InsertSeg& s : segs) {
+            out.push_back(s.a);
+            out.push_back(s.b);
+        }
+        break;
+    }
     }
 }
 
@@ -464,6 +478,25 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         }
         return found;
     }
+    case EntityKind::Insert: {
+        // Nearest point on the instance's real (transformed) geometry -- segment pairs,
+        // stepped by 2 so empty gaps between primitives are never falsely hit.
+        const InsertData* in = store.insert(entity);
+        std::vector<InsertSeg> segs;
+        resolve_insert(store, *in, kDefaultTessTolerance, segs);
+        bool found = false;
+        double best = 0.0;
+        for (const InsertSeg& s : segs) {
+            const Vec2 cp = closest_on_segment(s.a, s.b, query);
+            const double d2 = length_squared(query - cp);
+            if (!found || d2 < best) {
+                found = true;
+                best = d2;
+                out_point = cp;
+            }
+        }
+        return found;
+    }
     }
     return false;
 }
@@ -540,6 +573,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Leader:
     case EntityKind::MText:
     case EntityKind::MLeader:
+    case EntityKind::Insert: // offsetting a block reference is not defined
         break;
     }
     return false;

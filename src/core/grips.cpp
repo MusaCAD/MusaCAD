@@ -64,6 +64,11 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         return AddMLeaderCommand{std::vector<Vec2>(v.begin(), v.end()), m->style, m->text,
                                  std::string(store.string_of(m->text)), 0, m->props};
     }
+    case EntityKind::Insert: {
+        const InsertData* in = store.insert(h);
+        return AddInsertCommand{in->block,    in->pos, in->scale_x, in->scale_y,
+                                in->rotation, 0,       in->props};
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -100,6 +105,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 handle = store.add_mleader(c.vertices, c.style, c.block, c.content,
                                            props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
+                                          props_of(c.props));
             }
         },
         cmd);
@@ -223,6 +231,11 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         push(out, m->text.pos, GripKind::Move, static_cast<std::uint32_t>(v.size())); // text
         break;
     }
+    case EntityKind::Insert: {
+        const InsertData* in = store.insert(h);
+        push(out, in->pos, GripKind::Move, 0); // insertion point moves the instance
+        break;
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -306,6 +319,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                 } else {
                     x.block.pos = newpos; // text grip
                 }
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                x.pos = newpos; // insertion-point grip moves the whole instance
             }
         },
         c);

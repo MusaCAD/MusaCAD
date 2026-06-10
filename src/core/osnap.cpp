@@ -195,6 +195,9 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
             }
             break;
         }
+        case EntityKind::Insert:
+            consider(SnapType::Node, store.insert(h)->pos); // block insertion point
+            break;
         case EntityKind::Spline:
         case EntityKind::Text:
         case EntityKind::Dimension:

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/mtext.hpp"
@@ -154,6 +155,32 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         for (const Vec2& v : store.vertices_of(*m)) {
             out_min = {std::min(out_min.x, v.x), std::min(out_min.y, v.y)};
             out_max = {std::max(out_max.x, v.x), std::max(out_max.y, v.y)};
+        }
+        return true;
+    }
+    case EntityKind::Insert: {
+        // AABB over the instance's resolved world geometry (the same path the renderer
+        // and pick use), so window-select / zoom-extents agree with what is drawn.
+        const InsertData* in = store.insert(h);
+        std::vector<InsertSeg> segs;
+        resolve_insert(store, *in, kDefaultTessTolerance, segs);
+        if (segs.empty()) {
+            out_min = out_max = in->pos; // empty/dangling block: a point at the insertion
+            return true;
+        }
+        bool first = true;
+        const auto extend = [&](Vec2 p) {
+            if (first) {
+                out_min = out_max = p;
+                first = false;
+            } else {
+                out_min = {std::min(out_min.x, p.x), std::min(out_min.y, p.y)};
+                out_max = {std::max(out_max.x, p.x), std::max(out_max.y, p.y)};
+            }
+        };
+        for (const InsertSeg& s : segs) {
+            extend(s.a);
+            extend(s.b);
         }
         return true;
     }

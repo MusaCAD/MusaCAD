@@ -160,6 +160,7 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.leaders(), EntityKind::Leader);
     collect(store_.mtexts(), EntityKind::MText);
     collect(store_.mleaders(), EntityKind::MLeader);
+    collect(store_.inserts(), EntityKind::Insert);
     return live;
 }
 
@@ -287,9 +288,18 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
             continue;
         }
         bool selected = false;
+        // An INSERT tessellates to disjoint segment PAIRS (no phantom connectors);
+        // crossing must test pair (2i, 2i+1), not consecutive points.
+        const bool pairs = h.kind == EntityKind::Insert;
         if (crossing) {
-            for (std::size_t i = 1; i < tess.size() && !selected; ++i) {
-                selected = segment_hits_rect(tess[i - 1], tess[i], mn, mx);
+            if (pairs) {
+                for (std::size_t i = 0; i + 1 < tess.size() && !selected; i += 2) {
+                    selected = segment_hits_rect(tess[i], tess[i + 1], mn, mx);
+                }
+            } else {
+                for (std::size_t i = 1; i < tess.size() && !selected; ++i) {
+                    selected = segment_hits_rect(tess[i - 1], tess[i], mn, mx);
+                }
             }
             if (!selected && tess.size() == 1) {
                 selected = point_in_rect(tess[0], mn, mx);
@@ -346,6 +356,8 @@ void translate_cmd(Command& c, Vec2 d) {
                     v += d;
                 }
                 x.block.pos += d; // the owned label moves with the leader
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                x.pos += d;
             }
         },
         c);
@@ -401,6 +413,12 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 }
                 x.block.pos = refl(x.block.pos);
                 x.block.rotation = refl_ang(x.block.rotation);
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                // Mirror the insertion point + orientation; negating one scale axis
+                // reflects the referenced geometry without baking it.
+                x.pos = refl(x.pos);
+                x.rotation = refl_ang(x.rotation);
+                x.scale_y = -x.scale_y;
             }
         },
         c);
@@ -448,6 +466,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 }
                 x.block.pos = rot(x.block.pos);
                 x.block.rotation += ang;
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                x.pos = rot(x.pos);
+                x.rotation += ang;
             }
         },
         c);
@@ -494,6 +515,8 @@ Vec2 command_anchor(const Command& c) {
                 out = x.block.pos;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 out = x.vertices.empty() ? x.block.pos : x.vertices.front();
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                out = x.pos;
             }
         },
         c);
@@ -540,6 +563,10 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.block.pos = scl(x.block.pos);
                 x.block.height *= f;
                 x.block.width *= f;
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                x.pos = scl(x.pos);
+                x.scale_x *= f;
+                x.scale_y *= f;
             }
         },
         c);
@@ -1371,7 +1398,8 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
                           std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddDimensionCommand> ||
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
-                          std::is_same_v<T, AddMLeaderCommand>) {
+                          std::is_same_v<T, AddMLeaderCommand> ||
+                          std::is_same_v<T, AddInsertCommand>) {
                 if (!x.props) {
                     x.props = EntityProps{};
                 }
@@ -1561,7 +1589,8 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
                           std::is_same_v<T, AddDimensionCommand> ||
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
-                          std::is_same_v<T, AddMLeaderCommand>) {
+                          std::is_same_v<T, AddMLeaderCommand> ||
+                          std::is_same_v<T, AddInsertCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();
@@ -1867,9 +1896,16 @@ void GeometryEngine::rebuild_and_publish() {
         std::vector<Vec2> tess;
         for (const EntityHandle h : selection_) {
             kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
-            for (std::size_t s = 1; s < tess.size(); ++s) {
-                buf.selected_line_vertices.push_back(tess[s - 1]);
-                buf.selected_line_vertices.push_back(tess[s]);
+            if (h.kind == EntityKind::Insert) { // disjoint pairs: no phantom connectors
+                for (std::size_t s = 0; s + 1 < tess.size(); s += 2) {
+                    buf.selected_line_vertices.push_back(tess[s]);
+                    buf.selected_line_vertices.push_back(tess[s + 1]);
+                }
+            } else {
+                for (std::size_t s = 1; s < tess.size(); ++s) {
+                    buf.selected_line_vertices.push_back(tess[s - 1]);
+                    buf.selected_line_vertices.push_back(tess[s]);
+                }
             }
         }
     }
@@ -1940,9 +1976,16 @@ void GeometryEngine::rebuild_and_publish() {
             buf.has_hover = true;
             std::vector<Vec2> tess;
             kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
-            for (std::size_t s = 1; s < tess.size(); ++s) {
-                buf.hover_line_vertices.push_back(tess[s - 1]);
-                buf.hover_line_vertices.push_back(tess[s]);
+            if (hv.kind == EntityKind::Insert) { // disjoint pairs: no phantom connectors
+                for (std::size_t s = 0; s + 1 < tess.size(); s += 2) {
+                    buf.hover_line_vertices.push_back(tess[s]);
+                    buf.hover_line_vertices.push_back(tess[s + 1]);
+                }
+            } else {
+                for (std::size_t s = 1; s < tess.size(); ++s) {
+                    buf.hover_line_vertices.push_back(tess[s - 1]);
+                    buf.hover_line_vertices.push_back(tess[s]);
+                }
             }
         }
     }

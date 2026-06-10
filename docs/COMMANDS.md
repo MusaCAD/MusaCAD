@@ -136,11 +136,19 @@ suggests both); aliases are case-insensitive.
 
 ## Blocks / Reference
 
+Block **definitions** + **INSERT** references (transform-at-snapshot, not exploded). This
+phase covers **import, display, and selection**; in-app authoring is staged.
+
 | Command | Alias | Status |
 |---|---|---|
-| BLOCK / WBLOCK | B | Planned (Phase 11) |
-| INSERT | I | Planned (Phase 11) |
-| XREF | XR | Planned (Phase 11) |
+| Block import (BLOCKS + INSERT, nested, scale/rotation) from DWG/DXF | File ▸ Import | Implemented (Ph28) |
+| Display block instances (definition × transform, resolved at snapshot; per-instance colour/layer; batched — N instances add no draw calls) | — | Implemented (Ph28) |
+| Select / hover / window-crossing a block as one object; move / erase / copy the instance (not the definition); insertion-point grip; INS osnap | click / grips / Modify | Implemented (Ph28) |
+| BLOCK / WBLOCK — define a block from selected geometry | B | Staged (authoring half) |
+| REFEDIT — edit a definition; all instances update | — | Staged |
+| EXPLODE — instance → its geometry | X | Staged |
+| ATTDEF / ATTRIB — block attribute text | ATT | Staged |
+| XREF | XR | Planned |
 
 ## File / Plot
 
@@ -156,7 +164,7 @@ suggests both); aliases are case-insensitive.
 | SAVE | Ctrl+S | Implemented |
 | SAVE AS | Ctrl+Shift+S | Implemented |
 | DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
-| DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT; reads the LAYER table) | File ▸ Import DXF | Implemented |
+| DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
 | DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT | Ctrl+P | Planned (Phase 13) |

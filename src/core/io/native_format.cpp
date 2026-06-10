@@ -381,6 +381,107 @@ std::string serialize_native(const Document& doc) {
         s += escape(m.content);
         s += '\n';
     }
+    // v9: model-space block references, then the block-definition table. A block's
+    // content reuses the same per-entity record formats, bracketed BLOCKDEF..ENDBLOCKDEF.
+    const auto emit_insert_rec = [&](const DocInsert& ins) {
+        s += "INSERT ";
+        append_vec(s, ins.pos);
+        s += ' ';
+        append_double(s, ins.scale_x);
+        s += ' ';
+        append_double(s, ins.scale_y);
+        s += ' ';
+        append_double(s, ins.rotation);
+        append_props(s, ins.props);
+        s += '\n';
+        s += escape(ins.block_name); // own line: may contain spaces
+        s += '\n';
+    };
+    const auto emit_block_content = [&](const DocBlockDef& b) {
+        for (const DocLine& l : b.lines) {
+            s += "LINE ";
+            append_vec(s, l.a);
+            s += ' ';
+            append_vec(s, l.b);
+            append_props(s, l.props);
+            s += '\n';
+        }
+        for (const DocCircle& c : b.circles) {
+            s += "CIRCLE ";
+            append_vec(s, c.center);
+            s += ' ';
+            append_double(s, c.radius);
+            append_props(s, c.props);
+            s += '\n';
+        }
+        for (const DocArc& a : b.arcs) {
+            s += "ARC ";
+            append_vec(s, a.center);
+            s += ' ';
+            append_double(s, a.radius);
+            s += ' ';
+            append_double(s, a.start_angle);
+            s += ' ';
+            append_double(s, a.end_angle);
+            append_props(s, a.props);
+            s += '\n';
+        }
+        for (const DocPolyline& p : b.polylines) {
+            s += "POLYLINE ";
+            s += p.closed ? '1' : '0';
+            s += ' ';
+            append_uint(s, p.points.size());
+            for (const Vec2& v : p.points) {
+                s += ' ';
+                append_vec(s, v);
+            }
+            append_props(s, p.props);
+            if (p.bulges.size() == p.points.size()) {
+                for (const double bg : p.bulges) {
+                    s += ' ';
+                    append_double(s, bg);
+                }
+            }
+            s += '\n';
+        }
+        for (const DocText& t : b.texts) {
+            s += "TEXT ";
+            append_vec(s, t.pos);
+            s += ' ';
+            append_double(s, t.height);
+            s += ' ';
+            append_double(s, t.rotation);
+            s += ' ';
+            append_uint(s, t.justify);
+            append_props(s, t.props);
+            s += '\n';
+            s += t.content;
+            s += '\n';
+        }
+        for (const DocMText& m : b.mtexts) {
+            s += "MTEXT ";
+            append_block(m.block);
+            append_props(s, m.props);
+            s += '\n';
+            s += escape(m.content);
+            s += '\n';
+        }
+        for (const DocInsert& ni : b.inserts) {
+            emit_insert_rec(ni);
+        }
+    };
+    for (const DocInsert& ins : doc.inserts) {
+        emit_insert_rec(ins);
+    }
+    for (const DocBlockDef& b : doc.block_defs) {
+        s += "BLOCKDEF ";
+        append_vec(s, b.base);
+        s += '\n';
+        s += escape(b.name);
+        s += '\n';
+        emit_block_content(b);
+        s += "ENDBLOCKDEF\n";
+    }
     s += "END\n";
     return s;
 }
@@ -393,6 +494,37 @@ IoResult parse_native(std::string_view text, Document& out) {
     bool end_seen = false;
     std::uint32_t version = 0;
     std::size_t line_no = 0;
+
+    // Entity records route to model space by default, or to the block currently being
+    // read between BLOCKDEF and ENDBLOCKDEF (v9). The DocBlockDef is a stable local, so
+    // the target pointers stay valid as it is filled then moved into the doc.
+    DocBlockDef cur_block;
+    bool in_block = false;
+    std::vector<DocLine>* t_lines = &doc.lines;
+    std::vector<DocCircle>* t_circles = &doc.circles;
+    std::vector<DocArc>* t_arcs = &doc.arcs;
+    std::vector<DocPolyline>* t_polylines = &doc.polylines;
+    std::vector<DocText>* t_texts = &doc.texts;
+    std::vector<DocMText>* t_mtexts = &doc.mtexts;
+    std::vector<DocInsert>* t_inserts = &doc.inserts;
+    const auto target_model = [&] {
+        t_lines = &doc.lines;
+        t_circles = &doc.circles;
+        t_arcs = &doc.arcs;
+        t_polylines = &doc.polylines;
+        t_texts = &doc.texts;
+        t_mtexts = &doc.mtexts;
+        t_inserts = &doc.inserts;
+    };
+    const auto target_block = [&] {
+        t_lines = &cur_block.lines;
+        t_circles = &cur_block.circles;
+        t_arcs = &cur_block.arcs;
+        t_polylines = &cur_block.polylines;
+        t_texts = &cur_block.texts;
+        t_mtexts = &cur_block.mtexts;
+        t_inserts = &cur_block.inserts;
+    };
 
     const auto fail = [&](const std::string& why) {
         return IoResult::failure("Line " + std::to_string(line_no) + ": " + why);
@@ -561,7 +693,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (!content.empty() && content.back() == '\r') {
                 content.pop_back();
             }
-            doc.texts.push_back(DocText{{vals[0], vals[1]},
+            t_texts->push_back(DocText{{vals[0], vals[1]},
                                         vals[2],
                                         vals[3],
                                         static_cast<std::uint8_t>(justify),
@@ -661,7 +793,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             b.width_factor = vals[5];
             b.line_spacing = vals[6];
             b.attach = static_cast<std::uint8_t>(attach);
-            doc.mtexts.push_back(DocMText{b, unescape(content), props});
+            t_mtexts->push_back(DocMText{b, unescape(content), props});
         } else if (key == "MLEADER") {
             // MLEADER style nverts <x y...> px py width height rot wf ls attach <props7>.
             std::uint64_t style = 0;
@@ -714,19 +846,19 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (!read_fixed(tok, 4, p)) {
                 return fail("LINE record malformed");
             }
-            doc.lines.push_back(DocLine{{vals[0], vals[1]}, {vals[2], vals[3]}, p});
+            t_lines->push_back(DocLine{{vals[0], vals[1]}, {vals[2], vals[3]}, p});
         } else if (key == "CIRCLE") {
             EntityProps p;
             if (!read_fixed(tok, 3, p)) {
                 return fail("CIRCLE record malformed");
             }
-            doc.circles.push_back(DocCircle{{vals[0], vals[1]}, vals[2], p});
+            t_circles->push_back(DocCircle{{vals[0], vals[1]}, vals[2], p});
         } else if (key == "ARC") {
             EntityProps p;
             if (!read_fixed(tok, 5, p)) {
                 return fail("ARC record malformed");
             }
-            doc.arcs.push_back(DocArc{{vals[0], vals[1]}, vals[2], vals[3], vals[4], p});
+            t_arcs->push_back(DocArc{{vals[0], vals[1]}, vals[2], vals[3], vals[4], p});
         } else if (key == "POLYLINE") {
             std::uint64_t closed = 0;
             std::uint64_t n = 0;
@@ -761,7 +893,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             } else if (tok.size() != 3 + n * 2) {
                 return fail("POLYLINE record malformed");
             }
-            doc.polylines.push_back(std::move(pl));
+            t_polylines->push_back(std::move(pl));
         } else if (key == "SPLINE") {
             std::uint64_t degree = 0;
             std::uint64_t n = 0;
@@ -786,6 +918,53 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("SPLINE record malformed");
             }
             doc.splines.push_back(std::move(sp));
+        } else if (key == "INSERT") {
+            // INSERT px py sx sy rot <props7>; block name on the next line (v9).
+            vals.clear();
+            EntityProps props;
+            if (tok.size() != 13 || !parse_doubles(tok, 1, 5, vals) || !parse_props(tok, 6, props)) {
+                return fail("INSERT record malformed");
+            }
+            std::string name;
+            if (!std::getline(in, name)) {
+                return fail("INSERT missing block name");
+            }
+            ++line_no;
+            if (!name.empty() && name.back() == '\r') {
+                name.pop_back();
+            }
+            t_inserts->push_back(DocInsert{unescape(name),
+                                           {vals[0], vals[1]},
+                                           vals[2],
+                                           vals[3],
+                                           vals[4],
+                                           props});
+        } else if (key == "BLOCKDEF") {
+            // BLOCKDEF basex basey; name on the next line; content until ENDBLOCKDEF (v9).
+            vals.clear();
+            if (!parse_doubles(tok, 1, 2, vals)) {
+                return fail("BLOCKDEF header malformed");
+            }
+            std::string name;
+            if (!std::getline(in, name)) {
+                return fail("BLOCKDEF missing name");
+            }
+            ++line_no;
+            if (!name.empty() && name.back() == '\r') {
+                name.pop_back();
+            }
+            cur_block = DocBlockDef{};
+            cur_block.name = unescape(name);
+            cur_block.base = {vals[0], vals[1]};
+            in_block = true;
+            target_block();
+        } else if (key == "ENDBLOCKDEF") {
+            if (in_block) {
+                doc.block_defs.push_back(std::move(cur_block));
+                cur_block = DocBlockDef{};
+                in_block = false;
+            }
+            target_model();
         } else {
             return fail("unknown record \"" + std::string(key) + "\"");
         }

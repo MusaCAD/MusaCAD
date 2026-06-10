@@ -21,7 +21,9 @@ namespace musacad::core::io {
 /// v7: global LTSCALE. Readers reject newer versions; older files load fine (no
 /// layers => layer 0; no dims; no bulges => straight polylines; no mtext/mleader;
 /// no LTSCALE => 1.0). v8: per-dimension style overrides (no overrides => ByStyle).
-inline constexpr std::uint32_t kFormatVersion = 8;
+/// v9: block definitions (BLOCKDEF..ENDBLOCKDEF) + block references (INSERT). Older
+/// files have no blocks; the keys simply never appear.
+inline constexpr std::uint32_t kFormatVersion = 9;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -106,6 +108,34 @@ struct DocMLeader {
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 
+/// A block reference: a transform (insertion point + X/Y scale + rotation) and the
+/// name of the block definition it places. Name-based (DXF/interchange convention);
+/// resolved to a block-table index when loaded into the store.
+struct DocInsert {
+    std::string block_name;
+    Vec2 pos;
+    double scale_x = 1.0;
+    double scale_y = 1.0;
+    double rotation = 0.0; ///< radians, CCW
+    EntityProps props{};
+    friend bool operator==(const DocInsert&, const DocInsert&) = default;
+};
+
+/// A block definition: a name, a base point, and self-contained geometry (the
+/// importable subset, mirroring the store's BlockContent). Inserts may nest.
+struct DocBlockDef {
+    std::string name;
+    Vec2 base{0.0, 0.0};
+    std::vector<DocLine> lines;
+    std::vector<DocCircle> circles;
+    std::vector<DocArc> arcs;
+    std::vector<DocPolyline> polylines;
+    std::vector<DocText> texts;
+    std::vector<DocMText> mtexts;
+    std::vector<DocInsert> inserts; ///< nested block references
+    friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
+};
+
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
 struct Document {
@@ -128,11 +158,13 @@ struct Document {
     std::vector<DocLeader> leaders;
     std::vector<DocMText> mtexts;
     std::vector<DocMLeader> mleaders;
+    std::vector<DocInsert> inserts;        ///< model-space block references
+    std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
-               mleaders.size();
+               mleaders.size() + inserts.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

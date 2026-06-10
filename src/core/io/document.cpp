@@ -1,8 +1,20 @@
 #include "musacad/core/io/document.hpp"
 
+#include <unordered_map>
+
 #include "musacad/core/geometry_store.hpp"
 
 namespace musacad::core::io {
+
+namespace {
+std::string block_name_of(const GeometryStore& store, std::uint16_t idx) {
+    const BlockDef* b = store.block(idx);
+    return b != nullptr ? b->name : std::string();
+}
+DocInsert insert_to_doc(const GeometryStore& store, const InsertData& d) {
+    return DocInsert{block_name_of(store, d.block), d.pos, d.scale_x, d.scale_y, d.rotation, d.props};
+}
+} // namespace
 
 Document document_from_store(const GeometryStore& store) {
     Document doc;
@@ -98,6 +110,41 @@ Document document_from_store(const GeometryStore& store) {
                                               m.props});
         }
     }
+    // Block definitions (by name) + their self-contained content.
+    for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store.block_count()); ++bi) {
+        const BlockDef* b = store.block(bi);
+        DocBlockDef bd;
+        bd.name = b->name;
+        bd.base = b->base;
+        for (const LineData& l : b->content.lines) {
+            bd.lines.push_back(DocLine{l.a, l.b, l.props});
+        }
+        for (const CircleData& c : b->content.circles) {
+            bd.circles.push_back(DocCircle{c.center, c.radius, c.props});
+        }
+        for (const ArcData& a : b->content.arcs) {
+            bd.arcs.push_back(DocArc{a.center, a.radius, a.start_angle, a.end_angle, a.props});
+        }
+        for (const BlockPolyline& p : b->content.polylines) {
+            bd.polylines.push_back(DocPolyline{p.verts, p.closed, p.props, p.bulges});
+        }
+        for (const BlockText& t : b->content.texts) {
+            bd.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
+        }
+        for (const BlockMText& m : b->content.mtexts) {
+            bd.mtexts.push_back(DocMText{m.block, m.content, m.props});
+        }
+        for (const InsertData& ni : b->content.inserts) {
+            bd.inserts.push_back(insert_to_doc(store, ni));
+        }
+        doc.block_defs.push_back(std::move(bd));
+    }
+    const auto& ins = store.inserts();
+    for (std::uint32_t i = 0; i < ins.slot_count(); ++i) {
+        if (ins.alive(i)) {
+            doc.inserts.push_back(insert_to_doc(store, ins.data()[i]));
+        }
+    }
     return doc;
 }
 
@@ -105,6 +152,59 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
     store.set_ltscale(doc.ltscale);
+
+    // Block definitions: name -> index (defs may reference each other; resolve all by
+    // name against the full list). Then build the core block table and model inserts.
+    std::unordered_map<std::string, std::uint16_t> block_index;
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(doc.block_defs.size()); ++i) {
+        block_index.emplace(doc.block_defs[i].name, i);
+    }
+    const auto resolve_block = [&](const std::string& name) -> std::uint16_t {
+        const auto it = block_index.find(name);
+        return it != block_index.end() ? it->second : 0;
+    };
+    const auto to_insert = [&](const DocInsert& di) {
+        return InsertData{resolve_block(di.block_name), di.pos,     di.scale_x,
+                          di.scale_y,                   di.rotation, di.props};
+    };
+    if (!doc.block_defs.empty()) {
+        std::vector<BlockDef> blocks;
+        blocks.reserve(doc.block_defs.size());
+        for (const DocBlockDef& bd : doc.block_defs) {
+            BlockDef cb;
+            cb.name = bd.name;
+            cb.base = bd.base;
+            for (const DocLine& l : bd.lines) {
+                cb.content.lines.push_back(LineData{l.a, l.b, l.props});
+            }
+            for (const DocCircle& c : bd.circles) {
+                cb.content.circles.push_back(CircleData{c.center, c.radius, c.props});
+            }
+            for (const DocArc& a : bd.arcs) {
+                cb.content.arcs.push_back(
+                    ArcData{a.center, a.radius, a.start_angle, a.end_angle, a.props});
+            }
+            for (const DocPolyline& p : bd.polylines) {
+                cb.content.polylines.push_back(BlockPolyline{p.points, p.bulges, p.closed, p.props});
+            }
+            for (const DocText& t : bd.texts) {
+                cb.content.texts.push_back(
+                    BlockText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
+            }
+            for (const DocMText& m : bd.mtexts) {
+                cb.content.mtexts.push_back(BlockMText{m.block, m.content, m.props});
+            }
+            for (const DocInsert& ni : bd.inserts) {
+                cb.content.inserts.push_back(to_insert(ni));
+            }
+            blocks.push_back(std::move(cb));
+        }
+        store.set_block_table(std::move(blocks));
+    }
+    for (const DocInsert& di : doc.inserts) {
+        store.add_insert(resolve_block(di.block_name), di.pos, di.scale_x, di.scale_y, di.rotation,
+                         di.props);
+    }
     for (const DocText& t : doc.texts) {
         store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props);
     }

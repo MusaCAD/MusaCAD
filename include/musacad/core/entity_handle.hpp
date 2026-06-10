@@ -19,6 +19,7 @@ enum class EntityKind : std::uint16_t {
     Leader,
     MText,
     MLeader,
+    Insert,
 };
 
 /// A generational handle to an entity in the GeometryStore.

@@ -33,16 +33,21 @@ LWPOLYLINE, TEXT, MTEXT, DIMENSION, LEADER.
 - Per-run inline styling (font/bold/colour/height/stacked fractions) is intentionally
   flattened to plain text (Musa has no rich-text model).
 
+**INSERT / BLOCK — DONE (Phase 28).** Real block entities: a block-definition table +
+INSERT references with a transform, resolved (definition × transform) at snapshot — NOT
+exploded. Import (BLOCKS + INSERT), display, select/hover/window, move/erase/copy, native
+v9 + DXF round-trip. The vendor flange went from 14 visible lines to 12 block instances
+over 53 definitions. **Staged (the editing half, deferred):** in-app BLOCK creation
+(define from selection), REFEDIT redefinition (edit a definition, all instances update),
+EXPLODE (instance → its geometry), ATTDEF/ATTRIB block attributes. **Partial in blocks:**
+DIMENSION/LEADER/POINT/SPLINE entities *inside* a block definition are skipped (catalogued)
+— block content supports line/circle/arc/polyline/text/mtext/nested-insert. ByBlock colour
+is approximated (a ByLayer member on layer 0 inherits the insert's resolved props).
+
 That catalog is the prioritized migration roadmap — entity types still **skipped**,
 roughly in value order for real-world drawings:
 
-1. **INSERT / BLOCK** — block-definition table + reference instancing (position/scale/
-   rotation, nested blocks, ATTRIB). **Highest value: most real DWGs are mostly blocks,**
-   so today a block-heavy file imports nearly empty (e.g. the vendor flange: only its few
-   top-level lines come in; ~200 lines live inside block defs). Needs a block table on the
-   document + an INSERT expander (explode-on-import is the cheap first cut; true block
-   instances later).
-2. **Old-style POLYLINE / VERTEX** — heavyweight 2D and 3D polylines (vs LWPOLYLINE);
+1. **Old-style POLYLINE / VERTEX** — heavyweight 2D and 3D polylines (vs LWPOLYLINE);
    some converters/older DWGs emit these. Bulges, widths, closed flag.
 3. **ELLIPSE** — major/minor axis + ratio + param range; approximate as a polyline first.
 4. **SPLINE variants** — NURBS/control-point/fit-point splines beyond current support;
@@ -61,9 +66,11 @@ roughly in value order for real-world drawings:
 external-converter import works today for the supported set and honestly reports the
 rest. **Done looks like:** each type gets a DocEntity + store kind + DXF read/write +
 render, removing it from the skip list; verify against a DWG/DXF that exercises it.
-**Order of attack:** INSERT/BLOCK first (unlocks the most geometry), then the curve
-types (POLYLINE/ELLIPSE/SPLINE), then fills (HATCH/SOLID). **DWG export** is two-stage
-lossy (Musa→DXF→converter→DWG); raising DXF-export fidelity (above) lifts it too.
+**Order of attack:** INSERT/BLOCK done; next the curve types (POLYLINE/ELLIPSE/SPLINE),
+then fills (HATCH/SOLID), then block attributes (ATTRIB) + dims-in-blocks. **DWG export**
+is two-stage lossy (Musa→DXF→converter→DWG); raising DXF-export fidelity (above) lifts it
+too. (Native DXF export writes BLOCKS *after* ENTITIES — Musa's importer is order-agnostic;
+strict BLOCKS-before-ENTITIES ordering for other readers is a minor noted item.)
 
 ## Properties palette — staged deep groups (deferred 2026-06-09)
 

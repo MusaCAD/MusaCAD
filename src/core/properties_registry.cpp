@@ -180,7 +180,9 @@ double block_double(const Command& c, Get get) {
     double v = 0.0;
     std::visit(
         [&](const auto& x) {
-            if constexpr (requires { x.block; }) {
+            // .block.height distinguishes the MTextBlock-bearing commands from
+            // AddInsertCommand, whose `block` is a uint16 definition index.
+            if constexpr (requires { x.block.height; }) {
                 v = get(x.block);
             }
         },
@@ -633,6 +635,8 @@ const char* kind_name(EntityKind k) {
         return "MText";
     case EntityKind::MLeader:
         return "MLeader";
+    case EntityKind::Insert:
+        return "Block Reference";
     }
     return "Entity";
 }
@@ -662,6 +666,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::MText;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 k = EntityKind::MLeader;
+            } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                k = EntityKind::Insert;
             }
         },
         c);

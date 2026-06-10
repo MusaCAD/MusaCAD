@@ -123,6 +123,66 @@ struct MLeaderData {
     EntityProps props{};
 };
 
+// ---------------------------------------------------------------------------
+// Blocks. A block DEFINITION is a named, self-contained collection of geometry
+// (kept in the block-definition table, parallel to the layer table -- NOT in the
+// model-space arenas, so it never appears in snapshot/pick/all_live on its own).
+// A model-space INSERT references a definition by index and carries a transform;
+// its geometry is resolved (definition x transform) at snapshot, never baked.
+// ---------------------------------------------------------------------------
+
+/// A model-space block reference (its own arena). `block` indexes the block table.
+struct InsertData {
+    std::uint16_t block = 0; ///< index into the block-definition table
+    Vec2 pos;                ///< insertion point (world)
+    double scale_x = 1.0;
+    double scale_y = 1.0;
+    double rotation = 0.0; ///< radians, CCW
+    EntityProps props{};   ///< the insert's own layer/colour (ByBlock source for members)
+};
+
+// Self-contained block-content primitives (pool-free, unlike the model-space
+// records that index shared pools). LineData/CircleData/ArcData are already
+// self-contained, so they are reused directly.
+struct BlockPolyline {
+    std::vector<Vec2> verts;
+    std::vector<double> bulges; ///< empty (all straight) or same length as verts
+    bool closed = false;
+    EntityProps props{};
+};
+struct BlockText {
+    Vec2 pos;
+    double height = 1.0;
+    double rotation = 0.0;
+    std::uint8_t justify = 0;
+    std::string content;
+    EntityProps props{};
+};
+struct BlockMText {
+    MTextBlock block; ///< str_offset/str_len ignored; content is inline
+    std::string content;
+    EntityProps props{};
+};
+
+/// The geometry of a block definition. Inserts may nest (a block placing other
+/// blocks); resolution composes transforms with a depth guard.
+struct BlockContent {
+    std::vector<LineData> lines;
+    std::vector<CircleData> circles;
+    std::vector<ArcData> arcs;
+    std::vector<BlockPolyline> polylines;
+    std::vector<BlockText> texts;
+    std::vector<BlockMText> mtexts;
+    std::vector<InsertData> inserts; ///< nested block references
+};
+
+/// A named block definition + its base point (the local origin INSERTs align to).
+struct BlockDef {
+    std::string name;
+    Vec2 base{0.0, 0.0};
+    BlockContent content;
+};
+
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own
 /// GenerationalArena; variable-length vertex data lives in shared pools. All
 /// access is non-virtual.
@@ -159,6 +219,9 @@ public:
     EntityHandle add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
                              const MTextBlock& text, std::string_view content,
                              EntityProps props = {});
+    /// A model-space block reference into the block-definition table.
+    EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
+                            double rotation, EntityProps props = {});
 
     // --- removal / validity -------------------------------------------------
     bool remove(EntityHandle handle) noexcept;
@@ -181,6 +244,7 @@ public:
     [[nodiscard]] const LeaderData* leader(EntityHandle h) const noexcept;
     [[nodiscard]] const MTextData* mtext(EntityHandle h) const noexcept;
     [[nodiscard]] const MLeaderData* mleader(EntityHandle h) const noexcept;
+    [[nodiscard]] const InsertData* insert(EntityHandle h) const noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
@@ -205,6 +269,18 @@ public:
     [[nodiscard]] const GenerationalArena<MLeaderData>& mleaders() const noexcept {
         return mleaders_;
     }
+    [[nodiscard]] const GenerationalArena<InsertData>& inserts() const noexcept { return inserts_; }
+
+    // --- block-definition table (parallel to the layer table) ---------------
+    // Definitions are referenced by INSERTs by index. Few in number; a vector is
+    // plenty. Indices are stable for a session.
+    [[nodiscard]] const std::vector<BlockDef>& blocks() const noexcept { return blocks_; }
+    [[nodiscard]] std::size_t block_count() const noexcept { return blocks_.size(); }
+    [[nodiscard]] const BlockDef* block(std::uint16_t index) const noexcept;
+    /// Adds a block definition, or returns the existing index if the name is taken.
+    std::uint16_t add_block(const BlockDef& def);
+    /// Replaces the block table (Open/Import).
+    void set_block_table(std::vector<BlockDef> blocks);
 
     // --- dimension styles ("Standard" always at index 0) --------------------
     [[nodiscard]] const std::vector<DimStyle>& dimstyles() const noexcept { return dimstyles_; }
@@ -281,6 +357,7 @@ private:
     GenerationalArena<LeaderData> leaders_;
     GenerationalArena<MTextData> mtexts_;
     GenerationalArena<MLeaderData> mleaders_;
+    GenerationalArena<InsertData> inserts_;
 
     std::vector<Vec2> polyline_pool_;
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
@@ -291,6 +368,7 @@ private:
     std::uint16_t current_layer_ = 0;
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
+    std::vector<BlockDef> blocks_;                          // block-definition table
 };
 
 } // namespace musacad::core

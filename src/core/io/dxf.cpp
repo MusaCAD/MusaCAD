@@ -412,7 +412,98 @@ std::string serialize_dxf(const Document& doc) {
             emit_mtext(m.block, m.content, m.props);
         }
     }
+    // Model-space block references.
+    const auto emit_insert = [&](const DocInsert& in) {
+        code(s, 0, "INSERT");
+        emit_props(s, doc, in.props);
+        code(s, 2, in.block_name);
+        code_d(s, 10, in.pos.x);
+        code_d(s, 20, in.pos.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 41, in.scale_x);
+        code_d(s, 42, in.scale_y);
+        code_d(s, 43, 1.0);
+        code_d(s, 50, to_degrees(in.rotation));
+    };
+    for (const DocInsert& in : doc.inserts) {
+        emit_insert(in);
+    }
     code(s, 0, "ENDSEC");
+
+    // BLOCKS section: each definition's geometry between BLOCK/ENDBLK. (Emitted after
+    // ENTITIES; Musa's importer is section-order-agnostic. Strict BLOCKS-before-ENTITIES
+    // ordering for other readers is a noted minor fidelity item.)
+    if (!doc.block_defs.empty()) {
+        code(s, 0, "SECTION");
+        code(s, 2, "BLOCKS");
+        for (const DocBlockDef& b : doc.block_defs) {
+            code(s, 0, "BLOCK");
+            code(s, 8, "0");
+            code(s, 2, b.name);
+            code_i(s, 70, 0);
+            code_d(s, 10, b.base.x);
+            code_d(s, 20, b.base.y);
+            code_d(s, 30, 0.0);
+            code(s, 3, b.name);
+            for (const DocLine& l : b.lines) {
+                code(s, 0, "LINE");
+                emit_props(s, doc, l.props);
+                code_d(s, 10, l.a.x);
+                code_d(s, 20, l.a.y);
+                code_d(s, 11, l.b.x);
+                code_d(s, 21, l.b.y);
+            }
+            for (const DocCircle& c : b.circles) {
+                code(s, 0, "CIRCLE");
+                emit_props(s, doc, c.props);
+                code_d(s, 10, c.center.x);
+                code_d(s, 20, c.center.y);
+                code_d(s, 40, c.radius);
+            }
+            for (const DocArc& a : b.arcs) {
+                code(s, 0, "ARC");
+                emit_props(s, doc, a.props);
+                code_d(s, 10, a.center.x);
+                code_d(s, 20, a.center.y);
+                code_d(s, 40, a.radius);
+                code_d(s, 50, to_degrees(a.start_angle));
+                code_d(s, 51, to_degrees(a.end_angle));
+            }
+            for (const DocPolyline& p : b.polylines) {
+                code(s, 0, "LWPOLYLINE");
+                emit_props(s, doc, p.props);
+                code_i(s, 90, static_cast<long>(p.points.size()));
+                code_i(s, 70, p.closed ? 1 : 0);
+                const bool hb = p.bulges.size() == p.points.size();
+                for (std::size_t i = 0; i < p.points.size(); ++i) {
+                    code_d(s, 10, p.points[i].x);
+                    code_d(s, 20, p.points[i].y);
+                    if (hb && p.bulges[i] != 0.0) {
+                        code_d(s, 42, p.bulges[i]);
+                    }
+                }
+            }
+            for (const DocText& t : b.texts) {
+                code(s, 0, "TEXT");
+                emit_props(s, doc, t.props);
+                code_d(s, 10, t.pos.x);
+                code_d(s, 20, t.pos.y);
+                code_d(s, 40, t.height);
+                code(s, 1, t.content);
+                code_d(s, 50, to_degrees(t.rotation));
+                code_i(s, 72, t.justify);
+            }
+            for (const DocMText& m : b.mtexts) {
+                emit_mtext(m.block, m.content, m.props);
+            }
+            for (const DocInsert& in : b.inserts) {
+                emit_insert(in); // nested block reference
+            }
+            code(s, 0, "ENDBLK");
+            code(s, 8, "0");
+        }
+        code(s, 0, "ENDSEC");
+    }
     code(s, 0, "EOF");
     return s;
 }
@@ -737,8 +828,44 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
     };
 
-    const auto build_entity = [&](const std::string& type, const std::vector<Pair>& body) {
+    // An entity destination: model space (all targets) or a block definition (the
+    // importable subset; dims/leaders/points inside a block route to `skipped`).
+    struct Sink {
+        std::vector<DocLine>* lines = nullptr;
+        std::vector<DocCircle>* circles = nullptr;
+        std::vector<DocArc>* arcs = nullptr;
+        std::vector<DocPolyline>* polylines = nullptr;
+        std::vector<DocText>* texts = nullptr;
+        std::vector<DocMText>* mtexts = nullptr;
+        std::vector<DocDim>* dims = nullptr;
+        std::vector<DocLeader>* leaders = nullptr;
+        std::vector<DocPoint>* points = nullptr;
+        std::vector<DocInsert>* inserts = nullptr;
+    };
+
+    const auto build_entity = [&](Sink& sink, const std::string& type,
+                                  const std::vector<Pair>& body) {
+        if (type == "INSERT") {
+            if (sink.inserts == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            DocInsert ins;
+            ins.props = props_of(body);
+            const std::string* name = find(body, 2);
+            ins.block_name = name != nullptr ? *name : std::string();
+            ins.pos = {getd(body, 10), getd(body, 20)};
+            ins.scale_x = getd(body, 41, 1.0);
+            ins.scale_y = getd(body, 42, 1.0);
+            ins.rotation = to_radians(getd(body, 50));
+            sink.inserts->push_back(std::move(ins));
+            return;
+        }
         if (type == "MTEXT") {
+            if (sink.mtexts == nullptr) {
+                ++skipped[type];
+                return;
+            }
             DocMText m;
             m.props = props_of(body);
             m.block.pos = {getd(body, 10), getd(body, 20)};
@@ -766,10 +893,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 raw += *c;
             }
             m.content = strip_mtext(raw);
-            doc.mtexts.push_back(std::move(m));
+            sink.mtexts->push_back(std::move(m));
             return;
         }
         if (type == "TEXT") {
+            if (sink.texts == nullptr) {
+                ++skipped[type];
+                return;
+            }
             DocText t;
             t.props = props_of(body);
             t.pos = {getd(body, 10), getd(body, 20)};
@@ -781,10 +912,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* j = find(body, 72)) {
                 t.justify = static_cast<std::uint8_t>(to_l(*j));
             }
-            doc.texts.push_back(std::move(t));
+            sink.texts->push_back(std::move(t));
             return;
         }
         if (type == "DIMENSION") {
+            if (sink.dims == nullptr) {
+                ++skipped[type];
+                return;
+            }
             const std::string* flag_v = find(body, 70);
             const long flag = flag_v != nullptr ? (to_l(*flag_v) & 7) : 0;
             DocDim d;
@@ -818,10 +953,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* st = find(body, 3)) {
                 d.style = ensure_dimstyle(*st);
             }
-            doc.dims.push_back(std::move(d));
+            sink.dims->push_back(std::move(d));
             return;
         }
         if (type == "LEADER") {
+            if (sink.leaders == nullptr) {
+                ++skipped[type];
+                return;
+            }
             // Reconstruct from the two vertices; the label is the following TEXT.
             DocLeader l;
             l.props = props_of(body);
@@ -843,24 +982,44 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* st = find(body, 3)) {
                 l.style = ensure_dimstyle(*st);
             }
-            doc.leaders.push_back(std::move(l));
+            sink.leaders->push_back(std::move(l));
             return;
         }
         if (type == "LINE") {
-            doc.lines.push_back(DocLine{{getd(body, 10), getd(body, 20)},
-                                        {getd(body, 11), getd(body, 21)}, props_of(body)});
+            if (sink.lines != nullptr) {
+                sink.lines->push_back(DocLine{{getd(body, 10), getd(body, 20)},
+                                              {getd(body, 11), getd(body, 21)}, props_of(body)});
+            } else {
+                ++skipped[type];
+            }
         } else if (type == "CIRCLE") {
-            doc.circles.push_back(
-                DocCircle{{getd(body, 10), getd(body, 20)}, getd(body, 40), props_of(body)});
+            if (sink.circles != nullptr) {
+                sink.circles->push_back(
+                    DocCircle{{getd(body, 10), getd(body, 20)}, getd(body, 40), props_of(body)});
+            } else {
+                ++skipped[type];
+            }
         } else if (type == "ARC") {
-            doc.arcs.push_back(DocArc{{getd(body, 10), getd(body, 20)},
-                                      getd(body, 40),
-                                      to_radians(getd(body, 50)),
-                                      to_radians(getd(body, 51)),
-                                      props_of(body)});
+            if (sink.arcs != nullptr) {
+                sink.arcs->push_back(DocArc{{getd(body, 10), getd(body, 20)},
+                                            getd(body, 40),
+                                            to_radians(getd(body, 50)),
+                                            to_radians(getd(body, 51)),
+                                            props_of(body)});
+            } else {
+                ++skipped[type];
+            }
         } else if (type == "POINT") {
-            doc.points.push_back(DocPoint{{getd(body, 10), getd(body, 20)}, props_of(body)});
+            if (sink.points != nullptr) {
+                sink.points->push_back(DocPoint{{getd(body, 10), getd(body, 20)}, props_of(body)});
+            } else {
+                ++skipped[type];
+            }
         } else if (type == "LWPOLYLINE") {
+            if (sink.polylines == nullptr) {
+                ++skipped[type];
+                return;
+            }
             DocPolyline pl;
             const std::string* flag = find(body, 70);
             pl.closed = flag != nullptr && (to_l(*flag) & 1) != 0;
@@ -884,11 +1043,25 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 pl.bulges.clear(); // all straight -> store none
             }
             pl.props = props_of(body);
-            doc.polylines.push_back(std::move(pl));
+            sink.polylines->push_back(std::move(pl));
         } else {
             ++skipped[type];
         }
     };
+
+    // Model space writes to every doc vector; block content takes the importable subset
+    // (dims/leaders/points inside a block route to the skip catalog).
+    Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,   &doc.polylines, &doc.texts,
+                    &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,   &doc.inserts};
+
+    // The block currently being read in the BLOCKS section. Its sink takes the
+    // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't
+    // hold route to `skipped`. The DocBlockDef is reused across blocks (stable address),
+    // so the sink's pointers stay valid as each block is filled then moved into the doc.
+    DocBlockDef block;
+    Sink block_sink{&block.lines, &block.circles, &block.arcs,    &block.polylines, &block.texts,
+                    &block.mtexts, nullptr,        nullptr,        nullptr,          &block.inserts};
+    bool in_block = false;
 
     while (i < n) {
         const Pair& p = pairs[i];
@@ -942,7 +1115,33 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 body.push_back(pairs[i]);
                 ++i;
             }
-            build_entity(type, body);
+            build_entity(model_sink, type, body);
+            continue;
+        }
+        if (section == "BLOCKS") {
+            const std::string type = p.value;
+            std::vector<Pair> body;
+            ++i;
+            while (i < n && pairs[i].code != 0) {
+                body.push_back(pairs[i]);
+                ++i;
+            }
+            if (type == "BLOCK") {
+                block = DocBlockDef{};
+                if (const std::string* nm = find(body, 2)) {
+                    block.name = *nm;
+                }
+                block.base = {getd(body, 10), getd(body, 20)};
+                in_block = true;
+            } else if (type == "ENDBLK") {
+                if (in_block) {
+                    doc.block_defs.push_back(std::move(block));
+                    block = DocBlockDef{};
+                    in_block = false;
+                }
+            } else if (in_block) {
+                build_entity(block_sink, type, body); // entities accumulate into the block
+            }
             continue;
         }
         ++i;
@@ -954,6 +1153,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities on " +
                       std::to_string(doc.layers.size()) + " layers";
+    if (!doc.block_defs.empty()) {
+        msg += " (" + std::to_string(doc.inserts.size()) + " block refs over " +
+               std::to_string(doc.block_defs.size()) + " definitions)";
+    }
     if (!skipped.empty()) {
         int total = 0;
         std::string names;
