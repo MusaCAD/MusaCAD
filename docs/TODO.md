@@ -8,25 +8,49 @@ parked and *what done looks like*, so it can be picked up cleanly later.
 DWG import (via the external converter) and DXF import both route through the one
 DXF importer, which **catalogs** what it cannot yet represent rather than silently
 dropping it (the per-type summary in the `IoResult` message + the `.import.log`
-written next to each imported DWG). That catalog is the prioritized migration
-roadmap — entity types the importer currently **skips**:
+written next to each imported DWG). The importer handles LINE, POINT, ARC, CIRCLE,
+LWPOLYLINE, TEXT, MTEXT, DIMENSION, LEADER.
 
-- **HATCH / solid fills** — boundary + pattern fill (large; needs a fill model).
-- **INSERT / BLOCK** — block-definition + reference instancing (high value; many DWGs
-  are mostly blocks).
-- **IMAGE / raster underlays** — external image references (needs a raster layer).
-- **SPLINE variants** — NURBS/control-point splines beyond the current spline support.
-- **MTEXT inline formatting** — already deferred (see below); imported as plain runs.
-- **Exotic linetypes / complex linetypes with embedded text or shapes** — beyond the
-  Continuous/Dashed/Center/Hidden set.
-- **Tables, fields, dynamic blocks, 3D entities** — out of 2D scope or large.
+**Fixed from real-DWG testing (Phase 27.1):**
+- Lineweight code 370 negative sentinels (`-1/-2/-3` = ByLayer/ByBlock/Default) and
+  out-of-range values were cast to a literal uint8 (→ 2.5mm fat lines everywhere); now
+  only 0..211 are explicit widths, the rest inherit.
+- MTEXT inline formatting runs (`\fCambria|…;`, `\C1;`, `{…}`, `\A1;`, …) rendered
+  verbatim as garbage; now converted to plain text (`\P`→newline, escaped literals
+  kept, styling runs dropped). Long group-3 chunks are concatenated. TEXT `%%c/%%d/%%p`
+  overrides decoded.
+
+That catalog is the prioritized migration roadmap — entity types still **skipped**,
+roughly in value order for real-world drawings:
+
+1. **INSERT / BLOCK** — block-definition table + reference instancing (position/scale/
+   rotation, nested blocks, ATTRIB). **Highest value: most real DWGs are mostly blocks,**
+   so today a block-heavy file imports nearly empty (e.g. the vendor flange: only its few
+   top-level lines come in; ~200 lines live inside block defs). Needs a block table on the
+   document + an INSERT expander (explode-on-import is the cheap first cut; true block
+   instances later).
+2. **Old-style POLYLINE / VERTEX** — heavyweight 2D and 3D polylines (vs LWPOLYLINE);
+   some converters/older DWGs emit these. Bulges, widths, closed flag.
+3. **ELLIPSE** — major/minor axis + ratio + param range; approximate as a polyline first.
+4. **SPLINE variants** — NURBS/control-point/fit-point splines beyond current support;
+   tessellate to a polyline.
+5. **HATCH / solid fills** — boundary loops + pattern fill (needs a fill model). At least
+   import the boundary as polylines so the shape is visible.
+6. **SOLID / 3DFACE / WIPEOUT** — filled triangles/quads and masks.
+7. **ATTRIB / ATTDEF** — block attribute text (titles, tags) — pairs with INSERT.
+8. **IMAGE / OLE2FRAME** — raster/OLE underlays (needs a raster layer).
+9. **Exotic / complex linetypes** — patterns with embedded text or shapes, beyond the
+   Continuous/Dashed/Center/Hidden set.
+10. **VIEWPORT, ACAD_PROXY_ENTITY, tables, fields, dynamic blocks, 3D solids** — paper-
+    space/out-of-2D-scope or large; lowest priority.
 
 **Why parked:** each is a substantial entity + render + persistence addition; the
 external-converter import works today for the supported set and honestly reports the
 rest. **Done looks like:** each type gets a DocEntity + store kind + DXF read/write +
 render, removing it from the skip list; verify against a DWG/DXF that exercises it.
-**DWG export** is two-stage lossy (Musa→DXF→converter→DWG); raising DXF-export
-fidelity (above) lifts DWG-export fidelity too.
+**Order of attack:** INSERT/BLOCK first (unlocks the most geometry), then the curve
+types (POLYLINE/ELLIPSE/SPLINE), then fills (HATCH/SOLID). **DWG export** is two-stage
+lossy (Musa→DXF→converter→DWG); raising DXF-export fidelity (above) lifts it too.
 
 ## Properties palette — staged deep groups (deferred 2026-06-09)
 

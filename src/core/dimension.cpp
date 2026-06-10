@@ -197,16 +197,20 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     }
 
     const Vec2 mid = (fa + fb) * 0.5;
-    Vec2 perp{-dir.y, dir.x};
-    if (perp.y < 0.0 || (std::abs(perp.y) < 1e-9 && perp.x < 0.0)) {
-        perp = perp * -1.0;
-    }
-    const double lift = style.text_above ? style.text_height * 0.4 : -style.text_height * 0.5;
-    g.text_pos = mid + perp * lift;
     g.text_rotation = std::atan2(dir.y, dir.x);
     if (g.text_rotation > 1.5708 || g.text_rotation < -1.5708) {
         g.text_rotation += kPi;
     }
+    // Offset along the text's own baseline->cap direction ("up"), derived from the final
+    // text rotation -- NOT the geometric perpendicular. The stroke font grows glyphs from
+    // the baseline toward the cap; for a rotated (e.g. vertical) dimension that direction
+    // is not the geometric perp, so anchoring to perp inverts Above/Centered. "Centered"
+    // straddles the dim line (baseline half a glyph below it); "Above" clears it.
+    const double cs = std::cos(g.text_rotation);
+    const double sn = std::sin(g.text_rotation);
+    const Vec2 text_up{-sn, cs};
+    const double off = style.text_above ? style.text_height * 0.4 : -style.text_height * 0.5;
+    g.text_pos = mid + text_up * off;
     g.label = format_measurement(value, style.precision);
     return g;
 }

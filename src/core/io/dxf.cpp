@@ -400,6 +400,116 @@ double getd(const std::vector<Pair>& body, int c, double def = 0.0) {
     return v != nullptr ? to_d(*v) : def;
 }
 
+// Convert MTEXT inline-formatted content to plain text. MTEXT (AutoCAD/LibreCAD/ODA)
+// wraps text in backslash control runs -- \fCambria|b0|i0|c0|p18; (font), \C1; (colour),
+// \H2x; (height), \A1; (alignment), {...} groups, \P (hard return), etc. Musa's text model
+// is plain, so we honour structure (\P -> newline, \~ -> space, escaped literals) and DROP
+// the styling runs rather than render them verbatim as "\fCambria...". Losing font/bold/
+// colour is an intentional, catalogued fidelity gap -- not garbled output.
+std::string strip_mtext(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        const char c = in[i];
+        if (c == '{' || c == '}') {
+            continue; // grouping delimiters -- formatting scope, no glyphs
+        }
+        if (c != '\\' || i + 1 >= in.size()) {
+            out += c;
+            continue;
+        }
+        const char n = in[i + 1];
+        switch (n) {
+        case 'P':
+            out += '\n'; // hard paragraph break (note: \P upper; \p... is a format run)
+            ++i;
+            break;
+        case '~':
+            out += ' '; // non-breaking space
+            ++i;
+            break;
+        case '\\':
+        case '{':
+        case '}':
+            out += n; // escaped literal
+            ++i;
+            break;
+        case 'L':
+        case 'l':
+        case 'O':
+        case 'o':
+        case 'K':
+        case 'k':
+            i += 1; // underline/overline/strike toggles: no argument
+            break;
+        case 'f':
+        case 'F':
+        case 'C':
+        case 'c':
+        case 'H':
+        case 'W':
+        case 'T':
+        case 'Q':
+        case 'A':
+        case 'p':
+        case 'S': {
+            // A formatting run with an argument terminated by ';' (or, for \S stacking,
+            // the fraction body). Skip through the ';'. For \S keep the operands so a
+            // fraction like 1^2; / 1/2; still reads as text.
+            const std::size_t semi = in.find(';', i + 2);
+            const std::size_t end = (semi == std::string::npos) ? in.size() : semi;
+            if (n == 'S') {
+                for (std::size_t k = i + 2; k < end; ++k) {
+                    const char s = in[k];
+                    out += (s == '^' || s == '#') ? '/' : s;
+                }
+            }
+            i = end; // loop ++i steps past the ';'
+            break;
+        }
+        default:
+            out += n; // unknown escape: keep the char, drop the backslash
+            ++i;
+            break;
+        }
+    }
+    return out;
+}
+
+// Decode single-line TEXT (DTEXT) overrides: %%c -> diameter, %%d -> degree, %%p -> +/-,
+// %%%/%%% -> percent, and strip the %%u/%%o under/overline toggles.
+std::string decode_dtext(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size() && in[i + 1] == '%') {
+            const char k = static_cast<char>(std::tolower(static_cast<unsigned char>(in[i + 2])));
+            switch (k) {
+            case 'c':
+                out += "Ø"; // diameter
+                i += 2;
+                continue;
+            case 'd':
+                out += "°"; // degree
+                i += 2;
+                continue;
+            case 'p':
+                out += "±"; // plus/minus
+                i += 2;
+                continue;
+            case 'u':
+            case 'o':
+                i += 2; // under/overline toggle: strip
+                continue;
+            default:
+                break;
+            }
+        }
+        out += in[i];
+    }
+    return out;
+}
+
 } // namespace
 
 IoResult parse_dxf(const std::string& text, Document& out) {
@@ -548,19 +658,18 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 const long att = to_l(*a) - 1; // DXF 1..9 -> 0..8
                 m.block.attach = static_cast<std::uint8_t>(att < 0 ? 0 : att);
             }
-            if (const std::string* c = find(body, 1)) {
-                std::string dec;
-                for (std::size_t k = 0; k < c->size(); ++k) {
-                    if ((*c)[k] == '\\' && k + 1 < c->size() &&
-                        ((*c)[k + 1] == 'P' || (*c)[k + 1] == 'p')) {
-                        dec += '\n';
-                        ++k;
-                    } else {
-                        dec += (*c)[k];
-                    }
+            // Long MTEXT splits into 250-char group-3 chunks followed by a final group 1;
+            // concatenate them in order, then convert the inline formatting to plain text.
+            std::string raw;
+            for (const Pair& p : body) {
+                if (p.code == 3) {
+                    raw += p.value;
                 }
-                m.content = dec;
             }
+            if (const std::string* c = find(body, 1)) {
+                raw += *c;
+            }
+            m.content = strip_mtext(raw);
             doc.mtexts.push_back(std::move(m));
             return;
         }
@@ -571,7 +680,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             t.height = getd(body, 40, 2.5);
             t.rotation = to_radians(getd(body, 50));
             if (const std::string* c = find(body, 1)) {
-                t.content = *c;
+                t.content = decode_dtext(*c);
             }
             if (const std::string* j = find(body, 72)) {
                 t.justify = static_cast<std::uint8_t>(to_l(*j));

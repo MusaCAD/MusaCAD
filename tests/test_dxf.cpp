@@ -95,6 +95,33 @@ TEST_CASE("DXF import treats negative/invalid lineweights as inherit, not fat li
     REQUIRE(out.lines[3].props.lineweight_by_layer()); // 330 (>211) stays ByLayer
 }
 
+TEST_CASE("MTEXT import strips inline formatting to plain, readable text") {
+    // Real title-block cells come in as inline-formatted MTEXT; rendering the control
+    // runs verbatim is the "\fCambria|b0|i0|c0|p18;REV" garbage seen on import.
+    const std::string dxf =
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n"
+        "1\n\\fCambria|b0|i0|c0|p18;REDUCE BOLT \\C1;SIZE\\PTO M6\n"
+        "0\nENDSEC\n0\nEOF\n";
+    Document out;
+    const IoResult r = parse_dxf(dxf, out);
+    REQUIRE(r.ok);
+    REQUIRE(out.mtexts.size() == 1);
+    REQUIRE(out.mtexts[0].content == "REDUCE BOLT SIZE\nTO M6");
+}
+
+TEST_CASE("TEXT import decodes %% overrides") {
+    const std::string dxf =
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n1\n%%c12 %%d slope %%p0.5\n"
+        "0\nENDSEC\n0\nEOF\n";
+    Document out;
+    const IoResult r = parse_dxf(dxf, out);
+    REQUIRE(r.ok);
+    REQUIRE(out.texts.size() == 1);
+    REQUIRE(out.texts[0].content == "Ø12 ° slope ±0.5");
+}
+
 TEST_CASE("Malformed DXF fails gracefully, output untouched") {
     Document out;
     out.circles.push_back(DocCircle{{1, 1}, 1.0}); // sentinel preserved on failure

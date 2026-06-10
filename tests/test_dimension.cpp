@@ -287,3 +287,37 @@ TEST_CASE("Per-dimension overrides resolve override-first in compute_dim_geometr
     d.overrides.set(DimOverrides::kTextHeight, false);
     REQUIRE(compute_dim_geometry(d, s, Rgb{255, 255, 255}).text_height == Catch::Approx(4.0));
 }
+
+TEST_CASE("Dimension text placement is consistent for rotated (vertical) dimensions") {
+    // Regression: Above/Centered offset along the geometric perp inverted for vertical
+    // dims (the rotated glyphs grow toward the line, not away). Now both axes agree:
+    // Centered straddles the dim line; Above clears it on the offset side.
+    DimStyle above;
+    above.text_above = true;
+    DimStyle centered;
+    centered.text_above = false;
+
+    // Horizontal dim line (along +x at y=0).
+    DimData h;
+    h.type = DimType::Linear;
+    h.a = {0, 0};
+    h.b = {100, 0};
+    h.line_pt = {50, 0};
+    const double hi = compute_dim_geometry(h, above, Rgb{255, 255, 255}).text_pos.y;
+    const double hc = compute_dim_geometry(h, centered, Rgb{255, 255, 255}).text_pos.y;
+    REQUIRE(hi > 0.0);  // Above: baseline above the line
+    REQUIRE(hc < 0.0);  // Centered: baseline dropped half a glyph so the body straddles
+
+    // Vertical dim line (along +y at x=0). The text reads rotated; its "up" points -x,
+    // so Above must sit on -x and Centered must straddle x=0 -- the mirror of horizontal.
+    DimData v;
+    v.type = DimType::Linear;
+    v.a = {0, 0};
+    v.b = {0, 100};
+    v.line_pt = {0, 50};
+    const double vi = compute_dim_geometry(v, above, Rgb{255, 255, 255}).text_pos.x;
+    const double vc = compute_dim_geometry(v, centered, Rgb{255, 255, 255}).text_pos.x;
+    REQUIRE(vi < 0.0);  // Above: baseline on the offset side
+    REQUIRE(vc > 0.0);  // Centered: baseline shifted +x so the leftward body straddles
+    REQUIRE(((vi < 0.0) != (vc < 0.0))); // the two placements land on opposite sides
+}
