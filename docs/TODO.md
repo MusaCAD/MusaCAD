@@ -11,14 +11,27 @@ dropping it (the per-type summary in the `IoResult` message + the `.import.log`
 written next to each imported DWG). The importer handles LINE, POINT, ARC, CIRCLE,
 LWPOLYLINE, TEXT, MTEXT, DIMENSION, LEADER.
 
-**Fixed from real-DWG testing (Phase 27.1):**
+**Fixed from real-DWG testing (Phase 27.1 / 27.2):**
 - Lineweight code 370 negative sentinels (`-1/-2/-3` = ByLayer/ByBlock/Default) and
   out-of-range values were cast to a literal uint8 (→ 2.5mm fat lines everywhere); now
   only 0..211 are explicit widths, the rest inherit.
 - MTEXT inline formatting runs (`\fCambria|…;`, `\C1;`, `{…}`, `\A1;`, …) rendered
-  verbatim as garbage; now converted to plain text (`\P`→newline, escaped literals
-  kept, styling runs dropped). Long group-3 chunks are concatenated. TEXT `%%c/%%d/%%p`
-  overrides decoded.
+  verbatim as garbage; now converted to plain text (`\P`→newline, `^I` caret-tab→space,
+  escaped literals kept, styling runs dropped). Long group-3 chunks are concatenated.
+  TEXT `%%c/%%d/%%p` overrides decoded.
+- **Colours** were all white: ACI colour (code 62) was ignored for layers and only set
+  the by-layer flag (never the RGB) for entities. Now resolved through the standard ACI
+  palette for both; true colour (420) still wins.
+- MTEXT lines **overlapped** (baselines stacked exactly one cap-height apart). Now use
+  AutoCAD single spacing (5/3 of cap height) and read the line-spacing factor (code 44).
+- Dimension text placement (Above/Centered) was inverted for rotated/vertical dims;
+  now offsets along the text's own up-vector so both axes agree.
+
+**Still imperfect (lower priority, catalogued):**
+- MTEXT paragraph alignment (`\pxqc;`/`\pxql;` = centre/left) is dropped — centred
+  title text (e.g. "GENERAL NOTES") imports left-aligned.
+- Per-run inline styling (font/bold/colour/height/stacked fractions) is intentionally
+  flattened to plain text (Musa has no rich-text model).
 
 That catalog is the prioritized migration roadmap — entity types still **skipped**,
 roughly in value order for real-world drawings:

@@ -67,6 +67,73 @@ Rgb from_true_color(long v) {
             static_cast<std::uint8_t>(v & 0xff)};
 }
 
+// The standard AutoCAD Color Index (ACI) palette, indices 1..255. Most DWG layers
+// (and many entities) carry colour as an ACI in group code 62, not a 24-bit true
+// colour (420); without this table they all resolve to the default white. 0=ByBlock
+// and 256=ByLayer are handled by the caller (left to inherit). 7 maps to white, which
+// is correct on Musa's dark viewport.
+Rgb aci_to_rgb(long aci) {
+    static constexpr std::uint8_t kPalette[256][3] = {
+        {0, 0, 0},       {255, 0, 0},     {255, 255, 0},   {0, 255, 0},     {0, 255, 255},
+        {0, 0, 255},     {255, 0, 255},   {255, 255, 255}, {128, 128, 128}, {192, 192, 192},
+        {255, 0, 0},     {255, 127, 127}, {165, 0, 0},     {165, 82, 82},   {127, 0, 0},
+        {127, 63, 63},   {76, 0, 0},      {76, 38, 38},    {38, 0, 0},      {38, 19, 19},
+        {255, 63, 0},    {255, 159, 127}, {165, 41, 0},    {165, 103, 82},  {127, 31, 0},
+        {127, 79, 63},   {76, 19, 0},     {76, 47, 38},    {38, 9, 0},      {38, 23, 19},
+        {255, 127, 0},   {255, 191, 127}, {165, 82, 0},    {165, 124, 82},  {127, 63, 0},
+        {127, 95, 63},   {76, 38, 0},     {76, 57, 38},    {38, 19, 0},     {38, 28, 19},
+        {255, 191, 0},   {255, 223, 127}, {165, 124, 0},   {165, 145, 82},  {127, 95, 0},
+        {127, 111, 63},  {76, 57, 0},     {76, 66, 38},    {38, 28, 0},     {38, 33, 19},
+        {255, 255, 0},   {255, 255, 127}, {165, 165, 0},   {165, 165, 82},  {127, 127, 0},
+        {127, 127, 63},  {76, 76, 0},     {76, 76, 38},    {38, 38, 0},     {38, 38, 19},
+        {191, 255, 0},   {223, 255, 127}, {124, 165, 0},   {145, 165, 82},  {95, 127, 0},
+        {111, 127, 63},  {57, 76, 0},     {66, 76, 38},    {28, 38, 0},     {33, 38, 19},
+        {127, 255, 0},   {191, 255, 127}, {82, 165, 0},    {124, 165, 82},  {63, 127, 0},
+        {95, 127, 63},   {38, 76, 0},     {57, 76, 38},    {19, 38, 0},     {28, 38, 19},
+        {63, 255, 0},    {159, 255, 127}, {41, 165, 0},    {103, 165, 82},  {31, 127, 0},
+        {79, 127, 63},   {19, 76, 0},     {47, 76, 38},    {9, 38, 0},      {23, 38, 19},
+        {0, 255, 0},     {127, 255, 127}, {0, 165, 0},     {82, 165, 82},   {0, 127, 0},
+        {63, 127, 63},   {0, 76, 0},      {38, 76, 38},    {0, 38, 0},      {19, 38, 19},
+        {0, 255, 63},    {127, 255, 159}, {0, 165, 41},    {82, 165, 103},  {0, 127, 31},
+        {63, 127, 79},   {0, 76, 19},     {38, 76, 47},    {0, 38, 9},      {19, 38, 23},
+        {0, 255, 127},   {127, 255, 191}, {0, 165, 82},    {82, 165, 124},  {0, 127, 63},
+        {63, 127, 95},   {0, 76, 38},     {38, 76, 57},    {0, 38, 19},     {19, 38, 28},
+        {0, 255, 191},   {127, 255, 223}, {0, 165, 124},   {82, 165, 145},  {0, 127, 95},
+        {63, 127, 111},  {0, 76, 57},     {38, 76, 66},    {0, 38, 28},     {19, 38, 33},
+        {0, 255, 255},   {127, 255, 255}, {0, 165, 165},   {82, 165, 165},  {0, 127, 127},
+        {63, 127, 127},  {0, 76, 76},     {38, 76, 76},    {0, 38, 38},     {19, 38, 38},
+        {0, 191, 255},   {127, 223, 255}, {0, 124, 165},   {82, 145, 165},  {0, 95, 127},
+        {63, 111, 127},  {0, 57, 76},     {38, 66, 76},    {0, 28, 38},     {19, 33, 38},
+        {0, 127, 255},   {127, 191, 255}, {0, 82, 165},    {82, 124, 165},  {0, 63, 127},
+        {63, 95, 127},   {0, 38, 76},     {38, 57, 76},    {0, 19, 38},     {19, 28, 38},
+        {0, 63, 255},    {127, 159, 255}, {0, 41, 165},    {82, 103, 165},  {0, 31, 127},
+        {63, 79, 127},   {0, 19, 76},     {38, 47, 76},    {0, 9, 38},      {19, 23, 38},
+        {0, 0, 255},     {127, 127, 255}, {0, 0, 165},     {82, 82, 165},   {0, 0, 127},
+        {63, 63, 127},   {0, 0, 76},      {38, 38, 76},    {0, 0, 38},      {19, 19, 38},
+        {63, 0, 255},    {159, 127, 255}, {41, 0, 165},    {103, 82, 165},  {31, 0, 127},
+        {79, 63, 127},   {19, 0, 76},     {47, 38, 76},    {9, 0, 38},      {23, 19, 38},
+        {127, 0, 255},   {191, 127, 255}, {82, 0, 165},    {124, 82, 165},  {63, 0, 127},
+        {95, 63, 127},   {38, 0, 76},     {57, 38, 76},    {19, 0, 38},     {28, 19, 38},
+        {191, 0, 255},   {223, 127, 255}, {124, 0, 165},   {145, 82, 165},  {95, 0, 127},
+        {111, 63, 127},  {57, 0, 76},     {66, 38, 76},    {28, 0, 38},     {33, 19, 38},
+        {255, 0, 255},   {255, 127, 255}, {165, 0, 165},   {165, 82, 165},  {127, 0, 127},
+        {127, 63, 127},  {76, 0, 76},     {76, 38, 76},    {38, 0, 38},     {38, 19, 38},
+        {255, 0, 191},   {255, 127, 223}, {165, 0, 124},   {165, 82, 145},  {127, 0, 95},
+        {127, 63, 111},  {76, 0, 57},     {76, 38, 66},    {38, 0, 28},     {38, 19, 33},
+        {255, 0, 127},   {255, 127, 191}, {165, 0, 82},    {165, 82, 124},  {127, 0, 63},
+        {127, 63, 95},   {76, 0, 38},     {76, 38, 57},    {38, 0, 19},     {38, 19, 28},
+        {255, 0, 63},    {255, 127, 159}, {165, 0, 41},    {165, 82, 103},  {127, 0, 31},
+        {127, 63, 79},   {76, 0, 19},     {76, 38, 47},    {38, 0, 9},      {38, 19, 23},
+        {51, 51, 51},    {91, 91, 91},    {132, 132, 132}, {173, 173, 173}, {214, 214, 214},
+        {255, 255, 255},
+    };
+    if (aci < 1 || aci > 255) {
+        return {255, 255, 255};
+    }
+    const auto& c = kPalette[aci];
+    return {c[0], c[1], c[2]};
+}
+
 void emit_header(std::string& s, const Document& doc) {
     code(s, 0, "SECTION");
     code(s, 2, "HEADER");
@@ -414,6 +481,21 @@ std::string strip_mtext(const std::string& in) {
         if (c == '{' || c == '}') {
             continue; // grouping delimiters -- formatting scope, no glyphs
         }
+        if (c == '^' && i + 1 < in.size()) {
+            // Caret notation for control chars: ^I = tab (used to indent list items after
+            // \P), ^J/^M = lf/cr. Without this the bare 'I' leaks in as "\P^I 2." -> "I 2.".
+            const char n2 = in[i + 1];
+            if (n2 == 'I') {
+                out += ' '; // tab -> space (keeps the indent, drops the stray glyph)
+                ++i;
+                continue;
+            }
+            if (n2 == 'J' || n2 == 'M') {
+                ++i; // line feed / carriage return -- \P already drives breaks
+                continue;
+            }
+            // any other ^x: a literal caret, emitted by the normal path below
+        }
         if (c != '\\' || i + 1 >= in.size()) {
             out += c;
             continue;
@@ -585,10 +667,15 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             l.locked = (f & 4) != 0;
         }
         if (const std::string* col = find(body, 62)) {
-            l.on = to_l(*col) >= 0; // negative ACI = layer off
+            const long aci = to_l(*col);
+            l.on = aci >= 0;                  // negative ACI = layer off
+            const long mag = aci < 0 ? -aci : aci; // |ACI| is the colour even when off
+            if (mag >= 1 && mag <= 255) {
+                l.color = aci_to_rgb(mag);
+            }
         }
         if (const std::string* tc = find(body, 420)) {
-            l.color = from_true_color(to_l(*tc));
+            l.color = from_true_color(to_l(*tc)); // true colour wins over the ACI
         }
         if (const std::string* lt = find(body, 6)) {
             l.linetype = linetype_from(*lt);
@@ -610,8 +697,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (const std::string* tc = find(body, 420)) {
             p.set_color_by_layer(false);
             p.color = from_true_color(to_l(*tc));
-        } else if (const std::string* aci = find(body, 62); aci != nullptr && to_l(*aci) != 256) {
-            p.set_color_by_layer(false); // a concrete ACI override (approximate)
+        } else if (const std::string* aci = find(body, 62)) {
+            // 0=ByBlock, 256=ByLayer both inherit; 1..255 is a concrete colour override.
+            if (const long v = to_l(*aci); v >= 1 && v <= 255) {
+                p.set_color_by_layer(false);
+                p.color = aci_to_rgb(v);
+            }
         }
         if (const std::string* lt = find(body, 6)) {
             p.set_linetype_by_layer(false);
@@ -657,6 +748,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* a = find(body, 71)) {
                 const long att = to_l(*a) - 1; // DXF 1..9 -> 0..8
                 m.block.attach = static_cast<std::uint8_t>(att < 0 ? 0 : att);
+            }
+            if (const std::string* ls = find(body, 44)) { // line-spacing factor
+                if (const double f = to_d(*ls); f > 0.0) {
+                    m.block.line_spacing = f;
+                }
             }
             // Long MTEXT splits into 250-char group-3 chunks followed by a final group 1;
             // concatenate them in order, then convert the inline formatting to plain text.

@@ -122,6 +122,51 @@ TEST_CASE("TEXT import decodes %% overrides") {
     REQUIRE(out.texts[0].content == "Ø12 ° slope ±0.5");
 }
 
+TEST_CASE("DXF import resolves ACI colors (code 62) for layers and entities") {
+    // Most DWG layers carry colour as an ACI index in code 62, not a true colour (420).
+    // Without the palette they all collapse to white; this is the "colours not imported"
+    // bug. 1=red, 5=blue; 256=ByLayer must stay inherited.
+    const std::string dxf =
+        "0\nSECTION\n2\nTABLES\n"
+        "0\nTABLE\n2\nLAYER\n"
+        "0\nLAYER\n2\nWALLS\n70\n0\n62\n1\n" // ACI 1 = red
+        "0\nENDTAB\n0\nENDSEC\n"
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nLINE\n8\nWALLS\n62\n5\n10\n0\n20\n0\n11\n5\n21\n5\n"  // ACI 5 = blue override
+        "0\nLINE\n8\nWALLS\n62\n256\n10\n0\n20\n0\n11\n5\n21\n5\n" // ByLayer -> inherit
+        "0\nENDSEC\n0\nEOF\n";
+    Document out;
+    const IoResult r = parse_dxf(dxf, out);
+    REQUIRE(r.ok);
+    // Layer WALLS resolved to red.
+    bool found = false;
+    for (const auto& l : out.layers) {
+        if (l.name == "WALLS") {
+            REQUIRE(l.color == Rgb{255, 0, 0});
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    REQUIRE(out.lines.size() == 2);
+    REQUIRE_FALSE(out.lines[0].props.color_by_layer()); // explicit ACI 5
+    REQUIRE(out.lines[0].props.color == Rgb{0, 0, 255});
+    REQUIRE(out.lines[1].props.color_by_layer()); // 256 = ByLayer
+}
+
+TEST_CASE("MTEXT import decodes caret tabs and reads the line-spacing factor") {
+    const std::string dxf =
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n44\n1.5\n"
+        "1\nLINE ONE\\P^I 2. TWO\n"
+        "0\nENDSEC\n0\nEOF\n";
+    Document out;
+    const IoResult r = parse_dxf(dxf, out);
+    REQUIRE(r.ok);
+    REQUIRE(out.mtexts.size() == 1);
+    REQUIRE(out.mtexts[0].content == "LINE ONE\n  2. TWO"); // ^I -> space, no stray 'I'
+    REQUIRE(out.mtexts[0].block.line_spacing == Approx(1.5));
+}
+
 TEST_CASE("Malformed DXF fails gracefully, output untouched") {
     Document out;
     out.circles.push_back(DocCircle{{1, 1}, 1.0}); // sentinel preserved on failure

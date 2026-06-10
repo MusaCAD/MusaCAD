@@ -55,7 +55,11 @@ MTextLayout layout_mtext(const MTextBlock& block, std::string_view content) {
     MTextLayout out;
     const double height = block.height > 0.0 ? block.height : 1.0;
     const double wf = block.width_factor > 0.0 ? block.width_factor : 1.0;
-    const double line_height = height * (block.line_spacing > 0.0 ? block.line_spacing : 1.0);
+    // AutoCAD MTEXT single spacing puts baselines 5/3 of the cap height apart (a ~0.67h
+    // gap between lines); stacking exactly one cap height apart makes lines touch/overlap.
+    constexpr double kSingleSpacing = 5.0 / 3.0;
+    const double line_height =
+        height * kSingleSpacing * (block.line_spacing > 0.0 ? block.line_spacing : 1.0);
     const std::vector<std::string> lines = wrap_lines(content, block.width, height, wf);
     const int n = static_cast<int>(lines.size());
     out.line_count = n;
