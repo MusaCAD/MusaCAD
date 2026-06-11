@@ -463,8 +463,14 @@ void PropertiesPanel::rebuild() {
             } else {
                 const QString cur = f.value.text.empty() ? QStringLiteral("Standard")
                                                          : QString::fromStdString(f.value.text);
-                const int idx = e->findText(cur);
-                e->setCurrentIndex(idx < 0 ? 0 : idx);
+                int idx = e->findText(cur);
+                if (idx < 0) {
+                    // An imported font name (e.g. "isocp.shx") not in the system list:
+                    // show it as-is rather than silently snapping to "Standard".
+                    e->addItem(cur);
+                    idx = e->count() - 1;
+                }
+                e->setCurrentIndex(idx);
             }
             connect(e, &QComboBox::activated, this, [this, id, e](int index) {
                 const QString name = e->itemText(index);

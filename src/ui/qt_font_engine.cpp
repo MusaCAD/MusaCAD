@@ -25,86 +25,57 @@ std::string to_lower(std::string_view s) {
     return o;
 }
 
-// Signed area of a polygon (px space). Positive = CCW in a y-up frame.
-double signed_area(const std::vector<Vec2>& p) {
-    double a = 0.0;
-    for (std::size_t i = 0, n = p.size(); i < n; ++i) {
-        const Vec2& u = p[i];
-        const Vec2& v = p[(i + 1) % n];
-        a += u.x * v.y - v.x * u.y;
+// Fill a glyph (outer rings + holes) by horizontal scanlines using the even-odd rule:
+// at each band's mid-y, collect the x where the line crosses every contour edge, sort
+// them, and the [x0,x1],[x2,x3],... pairs are the filled spans (holes drop out naturally
+// -- no bridging, no ear-clipping, no per-glyph special cases, so it never corrupts).
+// Each span becomes a quad (two triangles). Bands are fine enough that the horizontal
+// stepping is sub-pixel at any realistic text size.
+void triangulate_glyph(const std::vector<std::vector<Vec2>>& contours, std::vector<Vec2>& out) {
+    double ymin = 1e300;
+    double ymax = -1e300;
+    for (const std::vector<Vec2>& c : contours) {
+        for (const Vec2& p : c) {
+            ymin = std::min(ymin, p.y);
+            ymax = std::max(ymax, p.y);
+        }
     }
-    return 0.5 * a;
-}
-
-bool point_in_tri(const Vec2& a, const Vec2& b, const Vec2& c, const Vec2& p) {
-    const double d1 = (p.x - b.x) * (a.y - b.y) - (a.x - b.x) * (p.y - b.y);
-    const double d2 = (p.x - c.x) * (b.y - c.y) - (b.x - c.x) * (p.y - c.y);
-    const double d3 = (p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y);
-    const bool neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
-    const bool pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
-    return !(neg && pos); // all same sign (or on edge) => inside
-}
-
-// Ear-clip a (weakly-)simple polygon into triangles. `poly` comes from
-// QPainterPath::toFillPolygon(), which bridges holes into one outline, so we triangulate
-// a single ring. A force-progress guard prevents stalls on the zero-area bridge slivers.
-void ear_clip(std::vector<Vec2> v, std::vector<Vec2>& out) {
-    if (v.size() < 3) {
+    if (!(ymax > ymin)) {
         return;
     }
-    if (signed_area(v) < 0.0) {
-        std::reverse(v.begin(), v.end()); // orient CCW so the convexity test is consistent
-    }
-    std::vector<std::size_t> idx(v.size());
-    for (std::size_t i = 0; i < v.size(); ++i) {
-        idx[i] = i;
-    }
-    std::size_t guard = 0;
-    const std::size_t guard_max = idx.size() * idx.size() + 16;
-    while (idx.size() > 3 && guard++ < guard_max) {
-        bool clipped = false;
-        const std::size_t n = idx.size();
-        for (std::size_t i = 0; i < n; ++i) {
-            const std::size_t ia = idx[(i + n - 1) % n];
-            const std::size_t ib = idx[i];
-            const std::size_t ic = idx[(i + 1) % n];
-            const Vec2& a = v[ia];
-            const Vec2& b = v[ib];
-            const Vec2& c = v[ic];
-            const double cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-            if (cross <= 0.0) {
-                continue; // reflex or collinear: not an ear
-            }
-            bool ear = true;
-            for (std::size_t j = 0; j < n; ++j) {
-                const std::size_t ip = idx[j];
-                if (ip == ia || ip == ib || ip == ic) {
-                    continue;
-                }
-                if (point_in_tri(a, b, c, v[ip])) {
-                    ear = false;
-                    break;
+    constexpr int kBands = 96; // over the glyph height (cached once at unit em)
+    const double dy = (ymax - ymin) / kBands;
+    std::vector<double> xs;
+    for (int row = 0; row < kBands; ++row) {
+        const double y0 = ymin + static_cast<double>(row) * dy;
+        const double y1 = y0 + dy;
+        const double ym = 0.5 * (y0 + y1);
+        xs.clear();
+        for (const std::vector<Vec2>& c : contours) {
+            const std::size_t m = c.size();
+            for (std::size_t k = 0; k < m; ++k) {
+                const Vec2 a = c[k];
+                const Vec2 b = c[(k + 1) % m];
+                // Half-open test (a.y <= ym < b.y or vice versa) so shared vertices count once.
+                if ((a.y <= ym) != (b.y <= ym)) {
+                    xs.push_back(a.x + (ym - a.y) / (b.y - a.y) * (b.x - a.x));
                 }
             }
-            if (!ear) {
+        }
+        std::sort(xs.begin(), xs.end());
+        for (std::size_t k = 0; k + 1 < xs.size(); k += 2) {
+            const double xa = xs[k];
+            const double xb = xs[k + 1];
+            if (xb - xa < 1e-9) {
                 continue;
             }
-            out.push_back(a);
-            out.push_back(b);
-            out.push_back(c);
-            idx.erase(idx.begin() + static_cast<std::ptrdiff_t>(i));
-            clipped = true;
-            break;
+            out.push_back({xa, y0});
+            out.push_back({xb, y0});
+            out.push_back({xb, y1});
+            out.push_back({xa, y0});
+            out.push_back({xb, y1});
+            out.push_back({xa, y1});
         }
-        if (!clipped) {
-            // No ear found (degenerate/bridge sliver): drop the sharpest vertex to progress.
-            idx.erase(idx.begin());
-        }
-    }
-    if (idx.size() == 3) {
-        out.push_back(v[idx[0]]);
-        out.push_back(v[idx[1]]);
-        out.push_back(v[idx[2]]);
     }
 }
 
@@ -130,25 +101,19 @@ QtFontEngine::QtFontEngine() {
         }
         return {};
     };
-    const std::string sans = pick({"DejaVu Sans", "Noto Sans", "Liberation Sans", "Arial"});
-    const std::string serif = pick({"DejaVu Serif", "Noto Serif", "Liberation Serif", "Times New Roman"});
-    const std::string mono = pick({"DejaVu Sans Mono", "Liberation Mono", "Courier New"});
-    const auto add = [&](const char* shx, const std::string& fam) {
+    // Substitution table for common proprietary TTF *families* not installed by name
+    // (e.g. "arial.ttf" -> Liberation/DejaVu Sans). Single-stroke SHX shape fonts are NOT
+    // here: substitute() short-circuits every *.shx to the built-in stroke font, which is
+    // their faithful single-stroke representation (a filled TTF looks wrong for them).
+    const auto add = [&](const char* alias, const std::string& fam) {
         if (!fam.empty()) {
-            subst_[shx] = fam;
+            subst_[alias] = fam;
         }
     };
-    add("txt", sans);
-    add("simplex", sans);
-    add("romans", serif.empty() ? sans : serif);
-    add("romand", serif.empty() ? sans : serif);
-    add("romanc", serif.empty() ? sans : serif);
-    add("italic", serif.empty() ? sans : serif);
-    add("isocp", sans);
-    add("isocpeur", sans);
-    add("iso", sans);
-    add("monotxt", mono.empty() ? sans : mono);
     add("arial", pick({"Arial", "Liberation Sans", "DejaVu Sans"}));
+    add("helvetica", pick({"Helvetica", "Liberation Sans", "DejaVu Sans"}));
+    add("times new roman", pick({"Times New Roman", "Liberation Serif", "DejaVu Serif"}));
+    add("courier new", pick({"Courier New", "Liberation Mono", "DejaVu Sans Mono"}));
 }
 
 bool QtFontEngine::is_outline_font(std::string_view name) const {
@@ -206,14 +171,26 @@ const QtFontEngine::Glyph& QtFontEngine::glyph_for(Face& f, char32_t cp) const {
     const QList<quint32> idx = raw.glyphIndexesForString(s);
     if (!idx.isEmpty()) {
         const QPainterPath path = raw.pathForGlyph(idx.front());
-        const QPolygonF poly = path.toFillPolygon(); // holes bridged into one ring
-        std::vector<Vec2> ring;
-        ring.reserve(static_cast<std::size_t>(poly.size()));
-        for (const QPointF& p : poly) {
-            ring.push_back({p.x(), p.y()}); // px, y-down
+        // Clean closed contours (outer rings + holes), NOT the seam-bridged single ring --
+        // the triangulator handles holes by even-odd nesting.
+        const QList<QPolygonF> subs = path.toSubpathPolygons();
+        std::vector<std::vector<Vec2>> contours;
+        contours.reserve(static_cast<std::size_t>(subs.size()));
+        for (const QPolygonF& poly : subs) {
+            std::vector<Vec2> ring;
+            ring.reserve(static_cast<std::size_t>(poly.size()));
+            for (const QPointF& p : poly) {
+                ring.push_back({p.x(), p.y()}); // px, y-down
+            }
+            // toSubpathPolygons repeats the first point to close; drop the duplicate.
+            if (ring.size() >= 2 && std::abs(ring.front().x - ring.back().x) < 1e-9 &&
+                std::abs(ring.front().y - ring.back().y) < 1e-9) {
+                ring.pop_back();
+            }
+            contours.push_back(std::move(ring));
         }
         std::vector<Vec2> tris_px;
-        ear_clip(std::move(ring), tris_px);
+        triangulate_glyph(std::move(contours), tris_px);
         g.tris.reserve(tris_px.size());
         for (const Vec2& p : tris_px) {
             g.tris.push_back({p.x / f.cap, -p.y / f.cap}); // normalise + flip to y-up
@@ -265,8 +242,14 @@ std::string QtFontEngine::substitute(std::string_view requested) const {
         return {};
     }
     std::string key = to_lower(requested);
-    // Strip a trailing ".shx" / ".ttf" / ".otf" extension for the table lookup.
-    for (const char* ext : {".shx", ".ttf", ".otf"}) {
+    // Single-stroke SHX shape fonts (txt/simplex/romans/isocp/...) are faithfully drawn by
+    // the built-in single-stroke font; a filled TTF substitute looks wrong and loses the CAD
+    // look. Map every *.shx to the stroke font ("") so imported text matches the original.
+    if (key.size() >= 4 && key.compare(key.size() - 4, 4, ".shx") == 0) {
+        return {};
+    }
+    // Strip a trailing ".ttf" / ".otf" extension for the table lookup.
+    for (const char* ext : {".ttf", ".otf"}) {
         const std::string e(ext);
         if (key.size() > e.size() && key.compare(key.size() - e.size(), e.size(), e) == 0) {
             key.erase(key.size() - e.size());

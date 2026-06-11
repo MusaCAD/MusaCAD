@@ -19,10 +19,11 @@ SHX-name → TTF **substitution** table for imports. Deferred:
 - **Per-glyph kerning / inline rich runs** beyond the face's default advances and
   width_factor (width_factor is not applied to TTF glyph geometry today — a noted minor gap).
 
-**The SHX → TTF substitution mapping** (`QtFontEngine`): `txt`/`simplex`/`isocp`/`isocpeur`
-/`iso` → a system **sans** (DejaVu/Noto/Liberation/Arial); `romans`/`romand`/`romanc`/
-`italic` → a system **serif** (else sans); `monotxt` → a **mono** face; a TTF family name
-resolves to itself; anything unmatched → the stroke font.
+**The import substitution** (`QtFontEngine::substitute`): every `*.shx` (single-stroke CAD
+shape font) → the built-in **stroke font** (its faithful single-stroke match); a TTF/OTF
+family name or `*.ttf` → that installed face, with aliases for common proprietary families
+(`arial`/`helvetica` → Liberation/DejaVu Sans, `times new roman` → Liberation/DejaVu Serif,
+`courier new` → a mono face); anything unmatched → the stroke font.
 
 ## DWG/DXF import fidelity backlog (Phase 27)
 

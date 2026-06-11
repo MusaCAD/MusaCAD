@@ -196,11 +196,16 @@ same metrics. Font **enumeration** runs once on the UI thread (`QFontDatabase`);
 mutex-guarded, safe off the GUI thread); steady state is Qt-free cache lookups.
 
 A text entity stores a **font-table index** (`std::uint16_t`, 0 = stroke) — compact, no
-inline string on the hot path. **SHX-name → TTF substitution**: an imported `*.shx`
-reference (e.g. `romans.shx`, `isocp.shx`, `txt.shx`) or a TTF family name resolves
-through `QtFontEngine`'s substitution table (romans→serif, txt/simplex/isocp→sans, …) to a
-system face; an unresolved name falls back to the stroke font. True SHX *binary* parsing
-is staged — substitution covers imports (the standard approach).
+inline string on the hot path. **Import substitution**: a `*.shx` reference (single-stroke
+CAD shape fonts: `txt`, `simplex`, `romans`, `isocp`, …) renders with the built-in
+single-stroke font — its faithful match (a filled TTF looks wrong) — while a TTF/OTF family
+name (or `*.ttf`) resolves to that installed face (or a Liberation/DejaVu equivalent), drawn
+as filled glyphs. An unresolved name falls back to the stroke font; nothing is ever blank.
+True SHX *binary* parsing is staged.
+
+Glyph fill geometry is produced by a **scanline rasterizer-into-triangles** (even-odd spans
+at fine horizontal bands → quads), which is robust to any number of counters/holes — no
+ear-clipping corner cases. The triangles are cached per (face, glyph) at unit em.
 
 ## Rendering (Phase 3)
 
