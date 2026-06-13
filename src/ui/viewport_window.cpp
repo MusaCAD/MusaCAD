@@ -88,6 +88,12 @@ void ViewportWindow::export_dwg() {
     }
 }
 
+void ViewportWindow::plot_dialog() {
+    if (plot_dialog_callback_) {
+        plot_dialog_callback_();
+    }
+}
+
 void ViewportWindow::update_viewport_size() noexcept {
     const double dpr = devicePixelRatio();
     fb_width_.store(std::max(1, static_cast<int>(static_cast<double>(width()) * dpr)),
@@ -284,7 +290,14 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             world = camera_.screen_to_world(screen_px);
             scale = camera_.scale();
         }
-        if (processor_->has_active_command()) {
+        if (plot_picking_) {
+            // Picking a plot window: begin a plain rubber-band drag, ignoring grips/commands.
+            selecting_ = true;
+            sel_additive_ = false;
+            sel_start_screen_ = screen_px;
+            sel_start_world_ = world;
+            sel_cur_world_ = world;
+        } else if (processor_->has_active_command()) {
             std::optional<core::Vec2> snap;
             if (snap_has_.load(std::memory_order_relaxed)) {
                 snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
@@ -465,6 +478,27 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
             std::scoped_lock lock(camera_mutex_);
             world = camera_.screen_to_world(rel_screen);
             scale = camera_.scale();
+        }
+        if (plot_picking_) {
+            // Deliver the picked plot window (two world corners) and disarm. A real drag
+            // delivers ok=true; a click-without-drag delivers ok=false (cancel). Either
+            // way the callback fires exactly once so the host re-opens the dialog.
+            plot_picking_ = false;
+            const double drag = core::length(rel_screen - sel_start_screen_);
+            if (auto cb = std::move(plot_pick_callback_)) {
+                plot_pick_callback_ = nullptr;
+                if (drag >= 4.0 * dpr) {
+                    const core::Vec2 mn{std::min(sel_start_world_.x, world.x),
+                                        std::min(sel_start_world_.y, world.y)};
+                    const core::Vec2 mx{std::max(sel_start_world_.x, world.x),
+                                        std::max(sel_start_world_.y, world.y)};
+                    cb(true, mn, mx);
+                } else {
+                    cb(false, {}, {});
+                }
+            }
+            rebuild_overlay();
+            return;
         }
         const double drag_px = core::length(rel_screen - sel_start_screen_);
         if (drag_px < 4.0 * dpr) {
@@ -701,6 +735,10 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
     // MainWindow (so they work regardless of which window holds focus, while
     // still leaving text-entry keys to the command-line field).
     if (event->key() == Qt::Key_Escape) {
+        if (plot_picking_) {
+            cancel_plot_window_pick(); // re-opens the plot dialog (ok=false)
+            return;
+        }
         handle_escape();
         return;
     }

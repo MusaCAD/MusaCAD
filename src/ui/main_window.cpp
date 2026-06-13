@@ -36,6 +36,7 @@
 #include <QPushButton>
 #include <QKeySequence>
 #include <QLabel>
+#include <QInputDialog>
 #include <QLineEdit>
 #include <QMenu>
 #include <QPalette>
@@ -59,8 +60,18 @@
 #include "musacad/ui/command_line_widget.hpp"
 #include "musacad/ui/layer_dialog.hpp"
 #include "musacad/ui/parameter_dialog.hpp"
+#include <QImage>
+#include <QLabel>
+#include <QPageSize>
+#include <QPdfWriter>
+#include <QPixmap>
+#include <QPrinter>
+#include <QPrinterInfo>
+
 #include "musacad/ui/dwg_converter.hpp"
 #include "musacad/ui/dyn_input.hpp"
+#include "musacad/ui/plot.hpp"
+#include "musacad/ui/plot_dialog.hpp"
 #include "musacad/ui/properties_panel.hpp"
 #include "musacad/ui/qt_font_engine.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
@@ -220,6 +231,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_properties_toggle_callback([this] { toggle_properties(); });
     viewport_->set_dwg_import_callback([this] { file_import_dwg(); });
     viewport_->set_dwg_export_callback([this] { file_export_dwg(); });
+    viewport_->set_plot_dialog_callback([this] { open_plot_dialog(); });
 
     command_widget_->focus_input();
 
@@ -321,6 +333,8 @@ void MainWindow::build_ribbon() {
              &MainWindow::file_open);
     qat_file(QStringLiteral("save"), QStringLiteral("Save"), QKeySequence::Save,
              &MainWindow::file_save);
+    qat_file(QStringLiteral("print"), QStringLiteral("Plot"), QKeySequence::Print,
+             &MainWindow::open_plot_dialog);
 
     auto* qat_undo = new QAction(make_icon(QStringLiteral("undo")), QStringLiteral("Undo"), this);
     qat_undo->setShortcut(QKeySequence::Undo);
@@ -368,6 +382,7 @@ void MainWindow::build_ribbon() {
     file_btn(QStringLiteral("save"), QStringLiteral("Export\nDWG"), &MainWindow::file_export_dwg);
     file_btn(QStringLiteral("settings"), QStringLiteral("DWG\nSetup"),
              &MainWindow::configure_dwg_converter);
+    file_btn(QStringLiteral("print"), QStringLiteral("Plot"), &MainWindow::open_plot_dialog);
 
     // Save As shortcut (Ctrl+Shift+S) -- New/Open/Save shortcuts live on the QAT.
     auto* save_as_act = new QAction(this);
@@ -2144,7 +2159,11 @@ void MainWindow::update_title() {
     const QString mark = (viewport_ != nullptr && viewport_->dirty()) ? QStringLiteral("*")
                                                                       : QString();
     const int fps = viewport_ != nullptr ? static_cast<int>(viewport_->fps() + 0.5) : 0;
-    setWindowTitle(QStringLiteral("%1%2  —  %3  —  %4 FPS").arg(name, mark, app).arg(fps));
+    // Build stamp in the title so "the user ran an old binary" is checkable at a glance.
+    setWindowTitle(QStringLiteral("%1%2  —  %3  —  %4 FPS  —  built %5")
+                       .arg(name, mark, app)
+                       .arg(fps)
+                       .arg(QStringLiteral(__DATE__ " " __TIME__)));
 }
 
 bool MainWindow::confirm_discard_if_dirty() {
@@ -2181,6 +2200,12 @@ void MainWindow::open_from(const QString& path, bool dxf) {
     if (!dxf) {
         current_path_ = path;
     }
+    // A remembered plot Window holds the PREVIOUS drawing's world coordinates, which are
+    // meaningless for a new file (and would plot off-sheet garbage). Reset to Extents.
+    last_plot_spec_.area = PlotSpec::Area::Window == last_plot_spec_.area ? PlotSpec::Area::Extents
+                                                                          : last_plot_spec_.area;
+    last_plot_spec_.win_min = {};
+    last_plot_spec_.win_max = {};
     engine_->submit(core::OpenDocumentCommand{path.toStdString(), dxf});
 }
 
@@ -2503,6 +2528,397 @@ void MainWindow::file_export_dwg() {
     }
     QFile::remove(tmp);
     command_widget_->append_line("Exported DWG: " + dwg.toStdString());
+}
+
+// --- Plot / print ----------------------------------------------------------
+
+namespace {
+// Compile-time build stamp so a stale binary is obvious at a glance (provenance + title).
+constexpr const char* kBuildStamp = __DATE__ " " __TIME__;
+
+// One self-documenting provenance line: the FULLY RESOLVED spec actually being plotted,
+// plus the build that produced it. Every plot logs this so each PDF is evidence.
+std::string describe_plot_spec(const PlotSpec& s, const char* ctx) {
+    const char* area = s.area == PlotSpec::Area::Display  ? "Display"
+                       : s.area == PlotSpec::Area::Window ? "Window"
+                                                          : "Extents";
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+                  "[plot-spec] %s | build=%s | area=%s win=(%.1f,%.1f)..(%.1f,%.1f) fit=%d "
+                  "scale=%.4f:%.4f orient=%s paper=%.0fx%.0fmm center=%d lw=%d target=%s",
+                  ctx, kBuildStamp, area, s.win_min.x, s.win_min.y, s.win_max.x, s.win_max.y,
+                  s.fit ? 1 : 0, s.scale_num, s.scale_den, s.landscape ? "landscape" : "portrait",
+                  s.paper_w_mm, s.paper_h_mm, s.center ? 1 : 0, s.plot_lineweights ? 1 : 0,
+                  s.target.c_str());
+    return buf;
+}
+} // namespace
+
+void MainWindow::open_plot_dialog() {
+    // Default the paper orientation to the drawing's aspect (a landscape drawing -> a
+    // landscape sheet), so a fit plot uses the page well. The dialog still lets the user
+    // override. Only nudge when nothing was deliberately picked (still the default A4).
+    engine_->consume_snapshot();
+    const core::RenderSnapshot& live = engine_->snapshot();
+    if (live.has_bounds) {
+        const double w = live.bounds_max.x - live.bounds_min.x;
+        const double h = live.bounds_max.y - live.bounds_min.y;
+        if (w > 0.0 && h > 0.0) {
+            const bool want_landscape = w >= h;
+            if (want_landscape != last_plot_spec_.landscape) {
+                last_plot_spec_.landscape = want_landscape;
+                std::swap(last_plot_spec_.paper_w_mm, last_plot_spec_.paper_h_mm);
+            }
+        }
+    }
+    open_plot_dialog_seeded(last_plot_spec_);
+}
+
+void MainWindow::open_plot_dialog_seeded(const PlotSpec& seed) {
+    std::vector<std::string> printers;
+    for (const QPrinterInfo& pi : QPrinterInfo::availablePrinters()) {
+        printers.push_back(pi.printerName().toStdString());
+    }
+    auto* dlg = new PlotDialog(seed, printers, page_setup_names(), this);
+    // Pick window: the dialog is modal over a native (QWindow) GL viewport, so a hidden
+    // modal can't reliably yield input on X11. Fully CLOSE it, activate the viewport, let
+    // the user drag a rectangle, then re-open a fresh dialog seeded with the result. The
+    // pick callback always fires (drag = window; click/Esc = unchanged) so the dialog
+    // always comes back -- the user is never stranded without it.
+    connect(dlg, &PlotDialog::pickWindowRequested, this, [this, dlg] {
+        const PlotSpec s = dlg->spec();
+        dlg->close(); // ends the modal session (deleteLater via the finished connect)
+        activateWindow();
+        raise();
+        viewport_->requestActivate(); // the embedded GL QWindow must be active for input
+        command_widget_->append_line(
+            "Pick the plot window: drag a rectangle in the drawing (Esc to cancel).");
+        viewport_->begin_plot_window_pick([this, s](bool ok, core::Vec2 mn, core::Vec2 mx) {
+            PlotSpec u = s;
+            if (ok) {
+                u.area = PlotSpec::Area::Window;
+                u.win_min = mn;
+                u.win_max = mx;
+            }
+            open_plot_dialog_seeded(u);
+        });
+    });
+    connect(dlg, &PlotDialog::previewRequested, this, [this, dlg] { plot_preview(dlg->spec()); });
+    connect(dlg, &PlotDialog::saveSetupRequested, this, [this, dlg] { save_page_setup(dlg->spec()); });
+    connect(dlg, &PlotDialog::recallSetupRequested, this, [this, dlg](const QString& name) {
+        PlotSpec s;
+        if (recall_page_setup(name.toStdString(), s)) {
+            dlg->set_spec(s);
+        }
+    });
+    connect(dlg, &QDialog::accepted, this, [this, dlg] {
+        last_plot_spec_ = dlg->spec();
+        do_plot(last_plot_spec_);
+    });
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
+}
+
+bool MainWindow::prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax) {
+    // The live snapshot supplies the extents (same geometry) + a size to scale tolerance by.
+    engine_->consume_snapshot();
+    const core::RenderSnapshot& live = engine_->snapshot();
+    if (spec.area == PlotSpec::Area::Display) {
+        viewport_->view_world_rect(amin, amax);
+    } else if (spec.area == PlotSpec::Area::Window) {
+        amin = spec.win_min;
+        amax = spec.win_max;
+    } else { // Extents
+        if (!live.has_bounds) {
+            QMessageBox::information(this, QStringLiteral("Plot"), QStringLiteral("Nothing to plot."));
+            return false;
+        }
+        amin = live.bounds_min;
+        amax = live.bounds_max;
+    }
+    // Safety net: a degenerate or off-drawing plot area maps every entity off the sheet,
+    // producing the "stray lines crossing an empty page" garbage. This happens with a
+    // Window remembered from a DIFFERENT drawing (its world coords don't bracket this one)
+    // or a Display view not aimed at the geometry. Fall back to Extents so PLOT is never
+    // silently bogus.
+    if (spec.area != PlotSpec::Area::Extents && live.has_bounds) {
+        const bool degenerate = !(amax.x - amin.x > 1e-9) || !(amax.y - amin.y > 1e-9);
+        const bool disjoint = amax.x < live.bounds_min.x || amin.x > live.bounds_max.x ||
+                              amax.y < live.bounds_min.y || amin.y > live.bounds_max.y;
+        if (degenerate || disjoint) {
+            amin = live.bounds_min;
+            amax = live.bounds_max;
+            command_widget_->append_line(
+                "Plot: the chosen area was empty or off the drawing -- using Extents instead.");
+        }
+    }
+    // Build a fine plot snapshot (smooth arcs) on the geometry thread. Tessellate to the
+    // PLOTTED region at paper-pixel resolution -- NOT the whole-drawing extents. A large
+    // drawing (or stray far-off geometry) inflates an extents-based tolerance so a circle
+    // that fills the picked window collapses into a polygon. ~0.3 px chord deviation at
+    // 300 DPI keeps every on-page feature smooth while staying cheap for tiny ones.
+    const double area_diag = std::max(core::length(amax - amin), 1e-9);
+    const double paper_diag_px = std::hypot(spec.paper_w_mm, spec.paper_h_mm) / 25.4 * 300.0;
+    const double tol = std::max(area_diag / paper_diag_px * 0.3, 1e-9);
+    const std::uint64_t v0 = engine_->plot_snapshot_version();
+    engine_->submit(core::BuildPlotSnapshotCommand{tol});
+    pump_with_progress(QStringLiteral("Preparing plot…"),
+                       [this, v0] { return engine_->plot_snapshot_version() != v0; }, 60'000);
+    return true;
+}
+
+void MainWindow::do_plot(const PlotSpec& spec) {
+    command_widget_->append_line(describe_plot_spec(spec, "do_plot"));
+    core::Vec2 amin;
+    core::Vec2 amax;
+    if (!prepare_plot(spec, amin, amax)) {
+        return;
+    }
+    const core::RenderSnapshot& snap = engine_->plot_snapshot();
+    const QSizeF paper(spec.paper_w_mm, spec.paper_h_mm);
+
+    if (spec.target == "PDF") {
+        QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Plot to PDF"), QString(),
+                                                    QStringLiteral("PDF (*.pdf)"), nullptr,
+                                                    QFileDialog::DontUseNativeDialog);
+        if (path.isEmpty()) {
+            return;
+        }
+        if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) {
+            path += QStringLiteral(".pdf");
+        }
+        QString err;
+        run_with_progress(QStringLiteral("Plotting…"),
+                          [&](QString&) -> bool {
+                              QPdfWriter w(path);
+                              w.setPageSize(QPageSize(paper, QPageSize::Millimeter));
+                              w.setResolution(300);
+                              paint_plot(w, snap, spec, amin, amax);
+                              return true;
+                          },
+                          err);
+        const QFileInfo fi(path);
+        if (!fi.exists() || fi.size() == 0) {
+            QMessageBox::warning(this, QStringLiteral("Plot"),
+                                 QStringLiteral("Could not write the PDF: ") + path);
+            return;
+        }
+        command_widget_->append_line("Plotted to PDF: " + path.toStdString());
+        return;
+    }
+
+    // A physical printer.
+    QPrinterInfo info = QPrinterInfo::printerInfo(QString::fromStdString(spec.target));
+    if (info.isNull()) {
+        QMessageBox::warning(this, QStringLiteral("Plot"),
+                             QStringLiteral("Printer not found: ") + QString::fromStdString(spec.target));
+        return;
+    }
+    QString err;
+    bool ok = run_with_progress(
+        QStringLiteral("Printing…"),
+        [&](QString& e) -> bool {
+            QPrinter pr(info, QPrinter::HighResolution);
+            if (!pr.setPageSize(QPageSize(paper, QPageSize::Millimeter))) {
+                e = QStringLiteral("The printer rejected the page size.");
+                return false;
+            }
+            pr.setCopyCount(std::max(1, spec.copies));
+            paint_plot(pr, snap, spec, amin, amax);
+            return true;
+        },
+        err);
+    if (!ok) {
+        QMessageBox::warning(this, QStringLiteral("Plot"),
+                             err.isEmpty() ? QStringLiteral("Printing failed.") : err);
+        return;
+    }
+    command_widget_->append_line("Sent to printer: " + spec.target);
+}
+
+void MainWindow::plot_preview(const PlotSpec& spec) {
+    core::Vec2 amin;
+    core::Vec2 amax;
+    if (!prepare_plot(spec, amin, amax)) {
+        return;
+    }
+    // Reuse paint_plot onto a raster image at the paper's aspect (the preview is a screen
+    // image; the actual plot output stays vector).
+    const double aspect = spec.paper_h_mm > 0 ? spec.paper_w_mm / spec.paper_h_mm : 1.4;
+    const int w = 900;
+    const int h = std::max(1, static_cast<int>(w / aspect));
+    QImage img(w, h, QImage::Format_RGB32);
+    img.fill(Qt::white);
+    paint_plot(img, engine_->plot_snapshot(), spec, amin, amax);
+    auto* dlg = new QDialog(this);
+    dlg->setWindowTitle(QStringLiteral("Plot Preview"));
+    auto* lay = new QVBoxLayout(dlg);
+    auto* lbl = new QLabel(dlg);
+    lbl->setPixmap(QPixmap::fromImage(img));
+    lay->addWidget(lbl);
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
+}
+
+bool MainWindow::selftest_plot_file(const QString& in_path, const QString& out_pdf, int area) {
+    const std::uint64_t sv0 = viewport_->status_version();
+    open_from(in_path, in_path.endsWith(QStringLiteral(".dxf"), Qt::CaseInsensitive));
+    pump_with_progress(QStringLiteral("Loading…"),
+                       [this, sv0] { return viewport_->status_version() != sv0; }, 120'000);
+    PlotSpec spec;
+    spec.area = static_cast<PlotSpec::Area>(std::clamp(area, 0, 2));
+    spec.paper_w_mm = 297.0;
+    spec.paper_h_mm = 210.0;
+    spec.landscape = true;
+    spec.fit = true;
+    spec.center = true;
+    core::Vec2 amin;
+    core::Vec2 amax;
+    if (!prepare_plot(spec, amin, amax)) {
+        std::printf("[plot_test] prepare_plot returned false (nothing to plot)\n");
+        return false;
+    }
+    const core::RenderSnapshot& snap = engine_->plot_snapshot();
+    std::printf("[plot_test] area=%d lines=%zu fills=%zu amin=(%.1f,%.1f) amax=(%.1f,%.1f)\n", area,
+                snap.line_vertices.size(), snap.fill_vertices.size(), amin.x, amin.y, amax.x, amax.y);
+    QPdfWriter w(out_pdf);
+    w.setPageSize(QPageSize(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter));
+    w.setResolution(300);
+    paint_plot(w, snap, spec, amin, amax);
+    std::printf("[plot_test] wrote %s\n", out_pdf.toStdString().c_str());
+    return true;
+}
+
+bool MainWindow::selftest_gui_plot_file(const QString& in_path, const QString& out_pdf) {
+    // REAL GUI PATH (no harness shortcuts): open the file, then resolve the spec EXACTLY as
+    // Ctrl+P -> open_plot_dialog does -- including the orientation default and the dialog's
+    // own set_spec()->widgets->spec() round-trip -- and plot the dialog's INITIAL state.
+    const std::uint64_t sv0 = viewport_->status_version();
+    open_from(in_path, in_path.endsWith(QStringLiteral(".dxf"), Qt::CaseInsensitive));
+    pump_with_progress(QStringLiteral("Loading…"),
+                       [this, sv0] { return viewport_->status_version() != sv0; }, 120'000);
+
+    // 1:1 with open_plot_dialog: orientation default from the drawing aspect.
+    engine_->consume_snapshot();
+    const core::RenderSnapshot& live = engine_->snapshot();
+    if (live.has_bounds) {
+        const double w = live.bounds_max.x - live.bounds_min.x;
+        const double h = live.bounds_max.y - live.bounds_min.y;
+        if (w > 0.0 && h > 0.0) {
+            const bool want_landscape = w >= h;
+            if (want_landscape != last_plot_spec_.landscape) {
+                last_plot_spec_.landscape = want_landscape;
+                std::swap(last_plot_spec_.paper_w_mm, last_plot_spec_.paper_h_mm);
+            }
+        }
+    }
+    // Construct the ACTUAL dialog (no show) and read its INITIAL resolved spec.
+    std::vector<std::string> printers;
+    PlotDialog dlg(last_plot_spec_, printers, page_setup_names(), this);
+    const PlotSpec spec = dlg.spec();
+    std::printf("%s\n", describe_plot_spec(spec, "GUI-dialog-initial").c_str());
+
+    core::Vec2 amin;
+    core::Vec2 amax;
+    if (!prepare_plot(spec, amin, amax)) {
+        std::printf("[gui-plot] prepare_plot returned false\n");
+        return false;
+    }
+    const core::RenderSnapshot& snap = engine_->plot_snapshot();
+
+    // Where does the geometry actually map on the page? Compute the device bbox of EVERY
+    // painted vertex (ignoring the clip) -- if it blows far past the page, the spec is
+    // garbage (off-area geometry). This is the assertion that must catch the user's bug.
+    const double dpi = 300.0;
+    const double pxw = spec.paper_w_mm / 25.4 * dpi;
+    const double pxh = spec.paper_h_mm / 25.4 * dpi;
+    double aw = std::max(amax.x - amin.x, 1e-9);
+    double ah = std::max(amax.y - amin.y, 1e-9);
+    double mmpu = spec.fit ? std::min(spec.paper_w_mm / aw, spec.paper_h_mm / ah)
+                           : (spec.scale_den != 0.0 ? spec.scale_num / spec.scale_den : 1.0);
+    if (!(mmpu > 0.0)) {
+        mmpu = 1.0;
+    }
+    const double ppu = mmpu / 25.4 * dpi;
+    const double scaled_w = aw * ppu, scaled_h = ah * ppu;
+    const double ox = (spec.center ? (pxw - scaled_w) * 0.5 : 0.0);
+    const double oy = (spec.center ? (pxh - scaled_h) * 0.5 : 0.0);
+    double dlo_x = 1e300, dlo_y = 1e300, dhi_x = -1e300, dhi_y = -1e300;
+    for (const core::Vec2& v : snap.line_vertices) {
+        const double x = ox + (v.x - amin.x) * ppu;
+        const double y = oy + (ah - (v.y - amin.y)) * ppu;
+        dlo_x = std::min(dlo_x, x);
+        dlo_y = std::min(dlo_y, y);
+        dhi_x = std::max(dhi_x, x);
+        dhi_y = std::max(dhi_y, y);
+    }
+    std::printf("[gui-plot] page=%.0fx%.0fpx  painted device bbox=(%.0f,%.0f)..(%.0f,%.0f)\n", pxw,
+                pxh, dlo_x, dlo_y, dhi_x, dhi_y);
+    const double slack = std::max(pxw, pxh); // 1 page of tolerance
+    const bool within = dlo_x > -slack && dlo_y > -slack && dhi_x < pxw + slack &&
+                        dhi_y < pxh + slack;
+    std::printf("[gui-plot] painted-bbox %s page (%s)\n", within ? "WITHIN" : "OVERFLOWS",
+                within ? "ok" : "GARBAGE SPEC");
+
+    QPdfWriter w(out_pdf);
+    w.setPageSize(QPageSize(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter));
+    w.setResolution(static_cast<int>(dpi));
+    paint_plot(w, snap, spec, amin, amax);
+    std::printf("[gui-plot] wrote %s\n", out_pdf.toStdString().c_str());
+    return within;
+}
+
+// Page setups live in the document (native v11); the snapshot carries them to the UI and
+// AddPageSetupCommand saves one (one model -- no QSettings fork).
+std::vector<std::string> MainWindow::page_setup_names() {
+    engine_->consume_snapshot();
+    std::vector<std::string> names;
+    for (const core::PageSetup& ps : engine_->snapshot().page_setups) {
+        names.push_back(ps.name);
+    }
+    return names;
+}
+
+void MainWindow::save_page_setup(const PlotSpec& spec) {
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, QStringLiteral("Save Page Setup"),
+                                               QStringLiteral("Name:"), QLineEdit::Normal,
+                                               QStringLiteral("Setup1"), &ok);
+    if (!ok || name.trimmed().isEmpty()) {
+        return;
+    }
+    engine_->submit(core::AddPageSetupCommand{to_page_setup(spec, name.trimmed().toStdString())});
+    command_widget_->append_line("Page setup saved: " + name.trimmed().toStdString());
+}
+
+bool MainWindow::recall_page_setup(const std::string& name, PlotSpec& out) {
+    engine_->consume_snapshot();
+    const core::RenderSnapshot& snap = engine_->snapshot();
+    for (const core::PageSetup& ps : snap.page_setups) {
+        if (ps.name == name) {
+            out = from_page_setup(ps);
+            // Validate a recalled Window against THIS drawing: a setup carried in from a
+            // different drawing can hold a window that doesn't bracket the geometry. A
+            // recalled setup must never bypass the plot-time fallback -- sanitise here too.
+            if (out.area == PlotSpec::Area::Window && snap.has_bounds) {
+                const bool degenerate = !(out.win_max.x - out.win_min.x > 1e-9) ||
+                                        !(out.win_max.y - out.win_min.y > 1e-9);
+                const bool disjoint = out.win_max.x < snap.bounds_min.x ||
+                                      out.win_min.x > snap.bounds_max.x ||
+                                      out.win_max.y < snap.bounds_min.y ||
+                                      out.win_min.y > snap.bounds_max.y;
+                if (degenerate || disjoint) {
+                    out.area = PlotSpec::Area::Extents;
+                    out.win_min = {};
+                    out.win_max = {};
+                    command_widget_->append_line("Page setup \"" + name +
+                                                 "\": window is off this drawing -- using Extents.");
+                }
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 void MainWindow::seed_demo_scene() {

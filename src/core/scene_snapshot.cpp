@@ -67,6 +67,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     out.text_edit_targets.clear();
     out.layers.assign(store.layers().begin(), store.layers().end());
     out.current_layer = store.current_layer();
+    out.page_setups = store.page_setups();
 
     // Lines group by (colour, lineweight); points and fills by colour.
     std::map<std::uint64_t, std::vector<Vec2>> line_groups;

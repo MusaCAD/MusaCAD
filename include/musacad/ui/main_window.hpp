@@ -9,6 +9,7 @@
 #include <QString>
 
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/ui/plot.hpp"
 #include "musacad/ui/viewport_modes.hpp"
 
 class QTimer;
@@ -104,6 +105,14 @@ public:
     /// Real-window self-test: DWG import/export via a MOCK external converter --
     /// discovery, off-thread convert, fail-safe load, gap catalog, export round-trip.
     bool selftest_dwg();
+    /// Headless plot of a real file through the EXACT app path (engine load -> prepare_plot
+    /// -> paint_plot to PDF), bypassing the file dialogs. `area`: 0 Display, 1 Extents,
+    /// 2 Window. For diagnosing plot output without the GUI.
+    bool selftest_plot_file(const QString& in_path, const QString& out_pdf, int area);
+    /// Headless reproduction of the REAL Ctrl+P GUI path: open the file, resolve the spec
+    /// exactly as open_plot_dialog (orientation + the dialog's set/get round-trip), plot the
+    /// dialog's INITIAL state, and assert the painted geometry maps within the page.
+    bool selftest_gui_plot_file(const QString& in_path, const QString& out_pdf);
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
@@ -162,6 +171,23 @@ private:
     /// No-converter dead-end recovery: show the hint with a "Configure…" button.
     /// Returns true if the user chose to configure (caller should re-discover).
     bool offer_dwg_setup(const QString& title);
+
+    // --- Plot / print (Phase 30) -------------------------------------------
+    /// Open the PLOT dialog (PDF + printers). Wired to PLOT/PRINT + Ctrl+P + the ribbon.
+    void open_plot_dialog();
+    void open_plot_dialog_seeded(const PlotSpec& seed); // re-opens after a window pick
+    /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
+    /// false (with a message) if there's nothing to plot.
+    [[nodiscard]] bool prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax);
+    /// Render the plot to its target (PDF file or printer) off the UI thread, fail-safe.
+    void do_plot(const PlotSpec& spec);
+    /// Render a raster preview of the plot (reuses paint_plot) into a small dialog.
+    void plot_preview(const PlotSpec& spec);
+    // Saved page setups (Phase 30 Part C): names for the dialog, save current, recall.
+    [[nodiscard]] std::vector<std::string> page_setup_names();
+    void save_page_setup(const PlotSpec& spec);
+    [[nodiscard]] bool recall_page_setup(const std::string& name, PlotSpec& out);
+    PlotSpec last_plot_spec_; // remembered between dialog opens
     /// Run `work` (a blocking converter call) on a worker thread behind a modal
     /// indeterminate progress dialog while the UI stays responsive. Returns work's
     /// result; fills `err`.

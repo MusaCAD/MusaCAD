@@ -26,6 +26,18 @@ musacad_enable_sanitizers(musacad_render_offscreen)
 set_target_properties(musacad_render_offscreen PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# Headless plot verification harness (manual): plots a known circle to a PDF.
+add_executable(musacad_plot_check ${CMAKE_CURRENT_SOURCE_DIR}/../tools/plot_check.cpp)
+target_link_libraries(musacad_plot_check PRIVATE
+    musacad::core
+    musacad::render
+    musacad::ui
+    Qt6::Gui
+    Qt6::Widgets)
+musacad_enable_sanitizers(musacad_plot_check)
+set_target_properties(musacad_plot_check PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ---------------------------------------------------------------------------
 # Unit tests (Catch2 via FetchContent). Only when MUSACAD_BUILD_TESTS is ON.
 # ---------------------------------------------------------------------------

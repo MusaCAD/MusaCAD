@@ -194,6 +194,60 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
     }
 
+    // PAGESETUP <name> <paper> <target> pw ph land area wminx wminy wmaxx wmaxy fit
+    //           snum sden center offx offy plw style  -- the three strings have their
+    //           spaces escaped to 0x1f so every field is one whitespace-free token.
+    const auto enc = [](const std::string& in) -> std::string {
+        std::string out = in.empty() ? std::string("-") : in;
+        for (char& c : out) {
+            if (c == ' ') {
+                c = '\x1f';
+            }
+        }
+        return out;
+    };
+    for (const PageSetup& ps : doc.page_setups) {
+        s += "PAGESETUP ";
+        s += enc(ps.name);
+        s += ' ';
+        s += enc(ps.paper);
+        s += ' ';
+        s += enc(ps.target);
+        s += ' ';
+        append_double(s, ps.paper_w_mm);
+        s += ' ';
+        append_double(s, ps.paper_h_mm);
+        s += ' ';
+        append_uint(s, ps.landscape ? 1 : 0);
+        s += ' ';
+        append_uint(s, ps.area);
+        s += ' ';
+        append_double(s, ps.win_min.x);
+        s += ' ';
+        append_double(s, ps.win_min.y);
+        s += ' ';
+        append_double(s, ps.win_max.x);
+        s += ' ';
+        append_double(s, ps.win_max.y);
+        s += ' ';
+        append_uint(s, ps.fit ? 1 : 0);
+        s += ' ';
+        append_double(s, ps.scale_num);
+        s += ' ';
+        append_double(s, ps.scale_den);
+        s += ' ';
+        append_uint(s, ps.center ? 1 : 0);
+        s += ' ';
+        append_double(s, ps.off_x_mm);
+        s += ' ';
+        append_double(s, ps.off_y_mm);
+        s += ' ';
+        append_uint(s, ps.plot_lineweights ? 1 : 0);
+        s += ' ';
+        append_uint(s, ps.style);
+        s += '\n';
+    }
+
     for (const DocPoint& p : doc.points) {
         s += "POINT ";
         append_vec(s, p.p);
@@ -618,6 +672,51 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed LTSCALE");
             }
             doc.ltscale = ls;
+        } else if (key == "PAGESETUP") {
+            // PAGESETUP name paper target pw ph land area wminx wminy wmaxx wmaxy fit
+            //           snum sden center offx offy plw style  (3 strings space-escaped)
+            if (tok.size() != 20) {
+                return fail("malformed PAGESETUP");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            PageSetup ps;
+            ps.name = dec(tok[1]);
+            ps.paper = dec(tok[2]);
+            ps.target = dec(tok[3]);
+            double d[8];
+            std::uint64_t u[6];
+            const bool ok = to_double(tok[4], ps.paper_w_mm) && to_double(tok[5], ps.paper_h_mm) &&
+                            to_uint(tok[6], u[0]) && to_uint(tok[7], u[1]) &&
+                            to_double(tok[8], d[0]) && to_double(tok[9], d[1]) &&
+                            to_double(tok[10], d[2]) && to_double(tok[11], d[3]) &&
+                            to_uint(tok[12], u[2]) && to_double(tok[13], d[4]) &&
+                            to_double(tok[14], d[5]) && to_uint(tok[15], u[3]) &&
+                            to_double(tok[16], d[6]) && to_double(tok[17], d[7]) &&
+                            to_uint(tok[18], u[4]) && to_uint(tok[19], u[5]);
+            if (!ok) {
+                return fail("malformed PAGESETUP");
+            }
+            ps.landscape = u[0] != 0;
+            ps.area = static_cast<std::uint8_t>(u[1]);
+            ps.win_min = {d[0], d[1]};
+            ps.win_max = {d[2], d[3]};
+            ps.fit = u[2] != 0;
+            ps.scale_num = d[4];
+            ps.scale_den = d[5];
+            ps.center = u[3] != 0;
+            ps.off_x_mm = d[6];
+            ps.off_y_mm = d[7];
+            ps.plot_lineweights = u[4] != 0;
+            ps.style = static_cast<std::uint8_t>(u[5]);
+            doc.page_setups.push_back(std::move(ps));
         } else if (key == "LAYER") {
             // LAYER r g b linetype lineweight on frozen locked name...
             std::uint64_t f[8];

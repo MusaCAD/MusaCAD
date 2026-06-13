@@ -3,6 +3,29 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Plotting / printing (Phase 30 follow-ups)
+
+Phase 30 added the PLOT pipeline: a shared vector renderer (`paint_plot`) used by both
+the PDF (`QPdfWriter`) and printer (`QPrinter`) targets, a dark PLOT dialog (paper /
+orientation / area / scale / centre+offset / lineweights / CTB / copies), Ctrl+P + the
+`PLOT` command + a ribbon button, window-pick from the viewport, a print-preview, a
+fine-tolerance plot snapshot (crisp arcs at any paper scale), three built-in CTB plot
+styles (None / Monochrome / Grayscale, with the universal near-white→black rule), and
+saved page setups persisted in the native format (v11) + recalled in the dialog. The
+converter/target call runs off the UI thread behind a modal indeterminate dialog; a
+failed target degrades gracefully. Deferred:
+
+- **Named CTB/STB plot-style tables** — today there are three built-in styles applied at
+  plot time. **Why parked:** the built-ins cover the common "print it black" / grayscale
+  needs without a per-colour pen-mapping editor. **Done looks like:** import/edit `.ctb`
+  pen tables (per-ACI colour → plotted colour / lineweight / screening) selectable per plot.
+- **Layouts / paper space** — Phase 30 plots model space (Display / Extents / Window).
+  **Why parked:** model-space plotting is the 80% path; layout tabs are a larger feature
+  (viewports, per-layout page setup, title-block blocks). **Done looks like:** named
+  layout tabs each with their own page setup + one or more scaled model-space viewports.
+- **Plot stamp, batch/publish, raster/shaded output** — no plot-stamp footer, no
+  multi-sheet publish, vector-only (no rendered/raster mode). Parked as out-of-scope niceties.
+
 ## Fonts: true SHX parsing + style table (Phase 29 follow-ups)
 
 Phase 29 added TrueType/OpenType rendering (filled glyphs via the fill pipeline) + an

@@ -1,5 +1,6 @@
 #include "musacad/core/io/dxf.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -14,6 +15,84 @@
 namespace musacad::core::io {
 
 namespace {
+
+// --- B-spline (NURBS) evaluation for SPLINE import -------------------------
+// Real DXF splines are non-uniform: they carry an explicit knot vector. Evaluating them
+// as a uniform B-spline gives wild curves, so we evaluate the ACTUAL curve (de Boor with
+// the imported knots) and tessellate to a polyline -- correct regardless of the internal
+// spline model.
+
+// Evaluate a B-spline at parameter u via de Boor. knots.size() must be ctrl.size()+p+1.
+Vec2 deboor_eval(const std::vector<Vec2>& ctrl, int p, const std::vector<double>& knots,
+                 double u) {
+    const int n = static_cast<int>(ctrl.size()) - 1;
+    int k = p;
+    while (k < n && knots[static_cast<std::size_t>(k) + 1] <= u) {
+        ++k;
+    }
+    std::vector<Vec2> d(static_cast<std::size_t>(p) + 1);
+    for (int j = 0; j <= p; ++j) {
+        d[static_cast<std::size_t>(j)] = ctrl[static_cast<std::size_t>(k - p + j)];
+    }
+    for (int r = 1; r <= p; ++r) {
+        for (int j = p; j >= r; --j) {
+            const int i = k - p + j;
+            const double lo = knots[static_cast<std::size_t>(i)];
+            const double hi = knots[static_cast<std::size_t>(i + p - r + 1)];
+            const double a = (hi - lo) > 1e-12 ? (u - lo) / (hi - lo) : 0.0;
+            d[static_cast<std::size_t>(j)] = d[static_cast<std::size_t>(j - 1)] * (1.0 - a) +
+                                             d[static_cast<std::size_t>(j)] * a;
+        }
+    }
+    return d[static_cast<std::size_t>(p)];
+}
+
+// Tessellate a B-spline (control points + degree + optional knots) to a point chain. A
+// missing/mismatched knot vector falls back to a clamped-uniform one (open B-spline).
+std::vector<Vec2> tessellate_bspline(const std::vector<Vec2>& ctrl, int degree,
+                                     std::vector<double> knots) {
+    std::vector<Vec2> out;
+    const int n = static_cast<int>(ctrl.size()) - 1;
+    int p = degree;
+    if (p < 1) {
+        p = 1;
+    }
+    if (p > n) {
+        p = n; // degree can't exceed control count - 1
+    }
+    const std::size_t need = ctrl.size() + static_cast<std::size_t>(p) + 1;
+    if (knots.size() != need) {
+        // Clamped-uniform: p+1 zeros, interior 1..(n-p), p+1 of (n-p+1).
+        knots.clear();
+        const int interior = n - p; // number of interior knots
+        for (int i = 0; i <= p; ++i) {
+            knots.push_back(0.0);
+        }
+        for (int i = 1; i <= interior; ++i) {
+            knots.push_back(static_cast<double>(i));
+        }
+        const double last = static_cast<double>(interior) + 1.0;
+        for (int i = 0; i <= p; ++i) {
+            knots.push_back(last);
+        }
+    }
+    const double u0 = knots[static_cast<std::size_t>(p)];
+    const double u1 = knots[static_cast<std::size_t>(n) + 1];
+    if (!(u1 > u0)) {
+        return ctrl; // degenerate -- just return the control polygon
+    }
+    // Sample density scales with the control count (these splines reach ~1000 points).
+    const auto steps = static_cast<int>(std::clamp<std::size_t>(ctrl.size() * 4, 32, 4000));
+    out.reserve(static_cast<std::size_t>(steps) + 1);
+    for (int s = 0; s <= steps; ++s) {
+        double u = u0 + (u1 - u0) * (static_cast<double>(s) / static_cast<double>(steps));
+        if (u > u1) {
+            u = u1;
+        }
+        out.push_back(deboor_eval(ctrl, p, knots, u));
+    }
+    return out;
+}
 
 // --- writing ---------------------------------------------------------------
 
@@ -1073,6 +1152,85 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
             if (!any_bulge) {
                 pl.bulges.clear(); // all straight -> store none
+            }
+            pl.props = props_of(body);
+            sink.polylines->push_back(std::move(pl));
+        } else if (type == "SPLINE") {
+            // Evaluate the ACTUAL B-spline (control points 10/20 + degree 71 + knots 40)
+            // via de Boor and store the tessellated curve as a polyline -- real DXF splines
+            // are non-uniform, so a uniform approximation gives wild curves. Falls back to
+            // fit points (11/21) if there are no control points.
+            if (sink.polylines == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            int degree = 3;
+            if (const std::string* d = find(body, 71)) {
+                degree = static_cast<int>(to_l(*d));
+            }
+            std::vector<Vec2> ctrl;
+            std::vector<double> knots;
+            double x = 0.0;
+            bool have_x = false;
+            for (const Pair& p : body) {
+                if (p.code == 10) {
+                    x = to_d(p.value);
+                    have_x = true;
+                } else if (p.code == 20 && have_x) {
+                    ctrl.push_back({x, to_d(p.value)});
+                    have_x = false;
+                } else if (p.code == 40) {
+                    knots.push_back(to_d(p.value));
+                }
+            }
+            if (ctrl.empty()) { // fall back to fit points (11/21); no usable knots then
+                have_x = false;
+                knots.clear();
+                for (const Pair& p : body) {
+                    if (p.code == 11) {
+                        x = to_d(p.value);
+                        have_x = true;
+                    } else if (p.code == 21 && have_x) {
+                        ctrl.push_back({x, to_d(p.value)});
+                        have_x = false;
+                    }
+                }
+            }
+            if (ctrl.size() < 2) {
+                ++skipped[type];
+                return;
+            }
+            DocPolyline pl;
+            pl.points = tessellate_bspline(ctrl, degree, std::move(knots));
+            pl.props = props_of(body);
+            sink.polylines->push_back(std::move(pl));
+        } else if (type == "ELLIPSE") {
+            // Musa has no ellipse primitive -- tessellate to a polyline (one path, no
+            // phantom connectors). DXF: 10/20 centre, 11/21 major-axis endpoint RELATIVE
+            // to centre, 40 minor/major ratio, 41/42 start/end angle (radians).
+            if (sink.polylines == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            const Vec2 c{getd(body, 10), getd(body, 20)};
+            const Vec2 major{getd(body, 11), getd(body, 21)};
+            const double ratio = getd(body, 40, 1.0);
+            const double a0 = getd(body, 41, 0.0);
+            const double a1 = getd(body, 42, 6.283185307179586);
+            const Vec2 minor{-major.y * ratio, major.x * ratio}; // perp(major) * ratio
+            double sweep = a1 - a0;
+            if (sweep <= 0.0) {
+                sweep += 6.283185307179586;
+            }
+            const bool full = sweep >= 6.283185307179586 - 1e-6;
+            const auto segs = static_cast<std::size_t>(std::clamp(sweep / 0.1, 24.0, 256.0));
+            DocPolyline pl;
+            pl.closed = full;
+            const std::size_t np = full ? segs : segs + 1;
+            for (std::size_t k = 0; k < np; ++k) {
+                const double t = a0 + sweep * (static_cast<double>(k) / static_cast<double>(segs));
+                pl.points.push_back({c.x + major.x * std::cos(t) + minor.x * std::sin(t),
+                                     c.y + major.y * std::cos(t) + minor.y * std::sin(t)});
             }
             pl.props = props_of(body);
             sink.polylines->push_back(std::move(pl));

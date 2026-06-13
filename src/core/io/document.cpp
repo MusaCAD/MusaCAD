@@ -21,6 +21,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.layers.assign(store.layers().begin(), store.layers().end());
     doc.current_layer = store.current_layer();
     doc.ltscale = store.ltscale();
+    doc.page_setups = store.page_setups();
 
     const auto& pts = store.points();
     for (std::uint32_t i = 0; i < pts.slot_count(); ++i) {
@@ -155,6 +156,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
     store.set_ltscale(doc.ltscale);
+    store.set_page_setups(doc.page_setups);
 
     // Block definitions: name -> index (defs may reference each other; resolve all by
     // name against the full list). Then build the core block table and model inserts.

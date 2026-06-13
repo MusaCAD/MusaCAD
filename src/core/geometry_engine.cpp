@@ -1704,6 +1704,13 @@ void GeometryEngine::apply(const Command& command) {
                     tess_tolerance_ = std::max(1e-9, kChordPx * view_world_per_px_);
                     geom_dirty_ = true; // force re-tessellation at the new resolution
                 }
+            } else if constexpr (std::is_same_v<T, BuildPlotSnapshotCommand>) {
+                // Read-only: build a fine-tolerance snapshot into the plot buffer (smooth
+                // arcs at any paper scale), then bump the version the UI waits on. The
+                // store is never mutated; the live snapshot/triple-buffer is untouched.
+                const double tol = c.tolerance > 0.0 ? c.tolerance : kDefaultTessTolerance;
+                build_render_snapshot(store_, kernel_, plot_snapshot_, tol, store_.ltscale());
+                plot_version_.fetch_add(1, std::memory_order_release);
             } else if constexpr (std::is_same_v<T, GripDragCommand>) {
                 using P = GripDragCommand::Phase;
                 if (c.phase == P::Begin) {
@@ -1770,6 +1777,11 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, SetLtscaleCommand>) {
                 store_.set_ltscale(c.scale);
                 geom_dirty_ = true; // re-dash all non-continuous entities at rebuild
+            } else if constexpr (std::is_same_v<T, AddPageSetupCommand>) {
+                store_.add_page_setup(c.setup);
+                dirty_ = true;      // an unsaved document change
+                geom_dirty_ = true; // republish so the snapshot carries the new setup
+                report("Page setup \"" + c.setup.name + "\" saved.");
             }
         },
         command);
@@ -1788,6 +1800,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||
+                std::is_same_v<T, BuildPlotSnapshotCommand> || // read-only plot build
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;

@@ -40,3 +40,4 @@ Thumbs.db
 # ---- Local DWG/DXF test samples (not redistributable) ----
 dwg_samples/
 *.dwg.import.log
+plot_out/

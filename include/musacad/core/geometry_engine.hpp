@@ -65,6 +65,14 @@ public:
         return version_.load(std::memory_order_acquire);
     }
 
+    /// The dedicated fine-tolerance snapshot built by BuildPlotSnapshotCommand (for
+    /// PLOT/print). Stable after `plot_snapshot_version()` bumps until the next request;
+    /// the geometry thread only writes it inside that command handler.
+    [[nodiscard]] const RenderSnapshot& plot_snapshot() const noexcept { return plot_snapshot_; }
+    [[nodiscard]] std::uint64_t plot_snapshot_version() const noexcept {
+        return plot_version_.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] bool running() const noexcept { return worker_.joinable(); }
 
 private:
@@ -156,6 +164,8 @@ private:
 
     RenderSnapshot geom_cache_; // payload rebuilt only when geometry changes
     bool geom_dirty_ = true;
+    RenderSnapshot plot_snapshot_;          // fine-tolerance buffer for PLOT (geom-thread written)
+    std::atomic<std::uint64_t> plot_version_{0};
     std::uint64_t geom_version_ = 0; // bumps only when geometry changes
 
     // Honest command-result feedback, published in every snapshot. `report()`

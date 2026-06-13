@@ -1447,6 +1447,13 @@ void DwgOutCommand::start(CommandContext& ctx) {
     done_ = true;
 }
 
+void PlotCommand::start(CommandContext& ctx) {
+    if (ViewControl* v = ctx.view(); v != nullptr) {
+        v->plot_dialog();
+    }
+    done_ = true;
+}
+
 // ---------------------------------------------------------------------------
 // LTSCALE: prompt for the global linetype scale factor, then apply it.
 // ---------------------------------------------------------------------------

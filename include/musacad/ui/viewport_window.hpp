@@ -44,6 +44,7 @@ public:
     void open_properties() override;
     void import_dwg() override;
     void export_dwg() override;
+    void plot_dialog() override;
 
 Q_SIGNALS:
     void cursorWorldMoved(double x, double y);
@@ -167,6 +168,36 @@ public:
     /// runs the import/export. ViewControl::import_dwg/export_dwg forward to these.
     void set_dwg_import_callback(std::function<void()> cb) { dwg_import_callback_ = std::move(cb); }
     void set_dwg_export_callback(std::function<void()> cb) { dwg_export_callback_ = std::move(cb); }
+    /// PLOT command -> the MainWindow opens the plot dialog. ViewControl::plot_dialog()
+    /// forwards here on the GUI thread.
+    void set_plot_dialog_callback(std::function<void()> cb) { plot_dialog_callback_ = std::move(cb); }
+    /// Arm "pick a plot window": the next left-drag rectangle is delivered to `cb`
+    /// instead of selecting. `cb(true, mn, mx)` for a real drag; `cb(false, …)` for a
+    /// click-without-drag or Esc (cancel). The callback ALWAYS fires exactly once so the
+    /// host can re-open the dialog either way (the user is never left with no dialog).
+    void begin_plot_window_pick(std::function<void(bool, core::Vec2, core::Vec2)> cb) {
+        plot_pick_callback_ = std::move(cb);
+        plot_picking_ = true;
+        selecting_ = false;
+    }
+    /// Cancel an armed plot-window pick (Esc) -- fires the callback with ok=false.
+    void cancel_plot_window_pick() {
+        if (plot_picking_) {
+            plot_picking_ = false;
+            selecting_ = false;
+            if (auto cb = std::move(plot_pick_callback_)) {
+                plot_pick_callback_ = nullptr;
+                cb(false, {}, {});
+            }
+            rebuild_overlay();
+        }
+    }
+    /// The current view's world-space rectangle (for the "Display" plot area).
+    void view_world_rect(core::Vec2& out_min, core::Vec2& out_max) {
+        std::scoped_lock lock(camera_mutex_);
+        out_min = camera_.visible_min();
+        out_max = camera_.visible_max();
+    }
 
 
     /// Snapshot of the editable text contents (for self-tests / observed-outcome
@@ -243,6 +274,9 @@ private:
     std::function<void()> properties_toggle_callback_;
     std::function<void()> dwg_import_callback_;
     std::function<void()> dwg_export_callback_;
+    std::function<void()> plot_dialog_callback_;
+    std::function<void(bool, core::Vec2, core::Vec2)> plot_pick_callback_; // armed window pick
+    bool plot_picking_ = false;
     bool dragging_grip_ = false;
     core::Vec2 grip_origin_{};
 

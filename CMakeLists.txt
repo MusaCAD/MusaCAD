@@ -50,7 +50,7 @@ include(EmbedShaders)
 # math uses our own types (Phase 2); the Catch2 test framework is fetched via
 # FetchContent and wired starting in Phase 2 when the first tests exist.
 # ---------------------------------------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets PrintSupport)
 # Vulkan headers/loader are located so the GPU-backend seam is validated, but the
 # active backend is OpenGL 4.6 Core (see docs/ARCHITECTURE.md for the rationale).
 find_package(Vulkan REQUIRED)

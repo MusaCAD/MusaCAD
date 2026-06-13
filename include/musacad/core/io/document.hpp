@@ -6,6 +6,7 @@
 
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
+#include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 
 namespace musacad::core {
@@ -24,7 +25,8 @@ namespace musacad::core::io {
 /// v9: block definitions (BLOCKDEF..ENDBLOCKDEF) + block references (INSERT). Older
 /// files have no blocks; the keys simply never appear. v10: a font-name line after the
 /// content of TEXT/MTEXT/LEADER/MLEADER records (older files have none => stroke font).
-inline constexpr std::uint32_t kFormatVersion = 10;
+/// v11: saved plot page setups (PAGESETUP records; older files have none).
+inline constexpr std::uint32_t kFormatVersion = 11;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -151,6 +153,7 @@ struct Document {
     std::uint16_t current_layer = 0;
     std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
     double ltscale = 1.0;                                  // global linetype scale (LTSCALE)
+    std::vector<PageSetup> page_setups;                    // saved PLOT configurations (v11)
 
     std::vector<DocPoint> points;
     std::vector<DocLine> lines;

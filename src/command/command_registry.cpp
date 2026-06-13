@@ -126,6 +126,7 @@ CommandRegistry CommandRegistry::make_default() {
                        [] { return std::make_unique<PropertiesCommand>(); });
     r.register_command({"DWGIN"}, [] { return std::make_unique<DwgInCommand>(); });
     r.register_command({"DWGOUT"}, [] { return std::make_unique<DwgOutCommand>(); });
+    r.register_command({"PLOT", "PRINT"}, [] { return std::make_unique<PlotCommand>(); });
     r.register_command({"LTSCALE", "LTS"}, [] { return std::make_unique<LtscaleCommand>(); });
     return r;
 }

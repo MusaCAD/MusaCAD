@@ -61,6 +61,8 @@ public:
     /// DWG import/export via the external converter. Default no-op (headless/tests).
     virtual void import_dwg() {}
     virtual void export_dwg() {}
+    /// Open the PLOT/print dialog (PDF + printer). Default no-op (headless/tests).
+    virtual void plot_dialog() {}
 };
 
 /// The services a running command uses to interact with the system. Commands

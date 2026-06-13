@@ -169,7 +169,8 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
 | DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
-| PLOT / PRINT | Ctrl+P | Planned (Phase 13) |
+| PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
+| Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |
 
 ## Object snap (OSNAP)
 

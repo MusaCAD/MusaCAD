@@ -1,6 +1,7 @@
 #include <cstdio>
 
 #include <QApplication>
+#include <QStringList>
 #include <QTimer>
 
 #include "musacad/ui/main_window.hpp"
@@ -52,6 +53,31 @@ int main(int argc, char* argv[]) {
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
                             ok_linetype && ok_dimprops && ok_dyn && ok_pdlg && ok_dwg;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
+    // Headless plot diagnosis: MUSACAD_PLOT_TEST="in.musa|out.pdf|area" (area 0/1/2 =
+    // Display/Extents/Window) loads the file and plots it through the real app path, quits.
+    if (qEnvironmentVariableIsSet("MUSACAD_PLOT_TEST")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a = qEnvironmentVariable("MUSACAD_PLOT_TEST").split(QLatin1Char('|'));
+            const QString in = a.value(0);
+            const QString out = a.value(1, QStringLiteral("/tmp/plot_test.pdf"));
+            const int area = a.value(2, QStringLiteral("1")).toInt();
+            const bool ok = window.selftest_plot_file(in, out, area);
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
+    // Headless REAL-GUI-path plot repro: MUSACAD_GUI_PLOT_TEST="in.musa|out.pdf" loads the
+    // file and plots the DIALOG's initial spec (exactly as Ctrl+P), logging provenance.
+    if (qEnvironmentVariableIsSet("MUSACAD_GUI_PLOT_TEST")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a =
+                qEnvironmentVariable("MUSACAD_GUI_PLOT_TEST").split(QLatin1Char('|'));
+            const bool ok = window.selftest_gui_plot_file(
+                a.value(0), a.value(1, QStringLiteral("/tmp/gui_plot.pdf")));
             app.exit(ok ? 0 : 1);
         });
     }

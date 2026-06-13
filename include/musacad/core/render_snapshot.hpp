@@ -7,6 +7,7 @@
 
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/core/snap.hpp"
@@ -18,8 +19,13 @@ namespace musacad::core {
 /// frozen layers contribute no batches (they are skipped before batching).
 struct ColorBatch {
     Rgb color;
-    std::uint32_t first = 0;      ///< first segment/point/vertex index
-    std::uint32_t count = 0;      ///< number of segments/points/vertices
+    /// UNITS DIFFER BY ARRAY. line_batches: first/count are in SEGMENTS (segment s spans
+    /// line_vertices[2*(first+s)] and [+1]). point_batches: vertices in `points`. fill_batches:
+    /// vertices in `fill_vertices` (3 per triangle). For lines, always go through
+    /// for_each_line_segment() so consumers can't mis-index (treating segment units as vertex
+    /// indices drew phantom connectors across batches and dropped half the lines).
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
     std::uint8_t lineweight = 25; ///< resolved display lineweight (hundredths mm); 0 = points/fills
 };
 
@@ -71,6 +77,7 @@ struct RenderSnapshot {
     std::vector<Layer> layers;
     std::uint16_t current_layer = 0;
     std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
+    std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
     // any future hatching. `lineweight_display` is the LWDISPLAY toggle.
@@ -162,6 +169,7 @@ struct RenderSnapshot {
         lineweight_display = true;
         layers.clear();
         dimstyles.clear();
+        page_setups.clear();
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;
@@ -214,5 +222,17 @@ struct RenderSnapshot {
 
     [[nodiscard]] bool consistent() const noexcept { return checksum == compute_checksum(); }
 };
+
+/// THE one way to read a line batch's segments. `line_batches` store first/count in
+/// SEGMENT units; segment s is the vertex pair [2*(first+s), 2*(first+s)+1]. Every line
+/// consumer (plot + viewport) must agree on this -- mis-indexing it drew phantom connector
+/// lines across batches and dropped half the geometry in plots.
+template <class Fn>
+inline void for_each_line_segment(const RenderSnapshot& snap, const ColorBatch& b, Fn fn) {
+    for (std::uint32_t s = 0; s < b.count; ++s) {
+        const std::uint32_t base = 2u * (b.first + s);
+        fn(snap.line_vertices[base], snap.line_vertices[base + 1]);
+    }
+}
 
 } // namespace musacad::core

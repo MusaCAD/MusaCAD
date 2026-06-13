@@ -10,6 +10,7 @@
 #include "musacad/core/generational_arena.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
+#include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 
 namespace musacad::core {
@@ -350,6 +351,21 @@ public:
     [[nodiscard]] double ltscale() const noexcept { return ltscale_; }
     void set_ltscale(double scale) noexcept { ltscale_ = scale > 0.0 ? scale : ltscale_; }
 
+    /// Saved PLOT page setups (persisted in the native format). Read-only for plotting;
+    /// mutated only via add_page_setup / set_page_setups (Open/Import + the Save action).
+    [[nodiscard]] const std::vector<PageSetup>& page_setups() const noexcept { return page_setups_; }
+    void set_page_setups(std::vector<PageSetup> setups) { page_setups_ = std::move(setups); }
+    /// Adds a setup, replacing any existing one with the same name (names are unique).
+    void add_page_setup(const PageSetup& setup) {
+        for (PageSetup& p : page_setups_) {
+            if (p.name == setup.name) {
+                p = setup;
+                return;
+            }
+        }
+        page_setups_.push_back(setup);
+    }
+
     /// Adds a layer, or returns the existing index if the name is already taken
     /// (layer names are unique, AutoCAD-style).
     std::uint16_t add_layer(const Layer& layer);
@@ -391,6 +407,7 @@ private:
     std::uint16_t current_layer_ = 0;
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
+    std::vector<PageSetup> page_setups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
     const IFontEngine* font_engine_ = nullptr;             // non-owning; injected service

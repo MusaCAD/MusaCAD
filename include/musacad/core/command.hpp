@@ -9,6 +9,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
+#include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
 
@@ -311,6 +312,20 @@ struct SetViewScaleCommand {
     double world_per_px = 1.0;
 };
 
+/// Builds a FINE-tolerance snapshot into a dedicated plot buffer (smooth arcs at any
+/// paper scale), independent of the live view's tessellation. Read-only -- it never
+/// mutates the store. The UI reads it via plot_snapshot() once plot_snapshot_version()
+/// bumps. Used by PLOT/print so the output geometry is crisp regardless of zoom.
+struct BuildPlotSnapshotCommand {
+    double tolerance = 0.01;
+};
+
+/// Saves a named PLOT page setup into the document (replacing one of the same name).
+/// Marks the document dirty and republishes so the PLOT dialog sees it.
+struct AddPageSetupCommand {
+    PageSetup setup;
+};
+
 /// A quick leader: arrowhead at `tip`, line to `knee`, text label at `knee`.
 struct AddLeaderCommand {
     Vec2 tip;
@@ -447,6 +462,7 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 SetPropertyCommand, SetLtscaleCommand, AddInsertCommand>;
+                 SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand>;
 
 } // namespace musacad::core

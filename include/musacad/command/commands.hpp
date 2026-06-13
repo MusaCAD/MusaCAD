@@ -498,4 +498,17 @@ private:
     bool done_ = false;
 };
 
+/// PLOT / PRINT: open the plot dialog (PDF + printer). One-shot view command.
+class PlotCommand final : public ICommand {
+public:
+    std::string name() const override { return "PLOT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 } // namespace musacad::command

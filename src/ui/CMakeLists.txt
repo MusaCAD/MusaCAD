@@ -8,6 +8,8 @@ add_library(musacad_ui STATIC
     dyn_input.cpp
     dwg_converter.cpp
     qt_font_engine.cpp
+    plot.cpp
+    plot_dialog.cpp
     ribbon_bar.cpp
     command_icons.cpp
     theme.cpp
@@ -18,6 +20,7 @@ add_library(musacad_ui STATIC
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/command_line_widget.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/parameter_dialog.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/layer_dialog.hpp"
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/plot_dialog.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/ribbon_bar.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_modes.hpp")
 
@@ -37,6 +40,7 @@ target_link_libraries(musacad_ui
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
+        Qt6::PrintSupport
     PRIVATE
         Qt6::OpenGL)
 
