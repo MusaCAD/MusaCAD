@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 Kiran Pranay
+
 #pragma once
 
 // Aggregate math header for the Musa CAD core. Own types only -- no external

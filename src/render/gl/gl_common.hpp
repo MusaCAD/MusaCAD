@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 Kiran Pranay
+
 #pragma once
 
 // Private to the render lib. Pulls in the Qt-provided OpenGL 4.5 Core function

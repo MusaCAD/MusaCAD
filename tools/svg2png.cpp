@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 Kiran Pranay
+
 // Branding raster generator: render an SVG to crisp square PNGs at the requested sizes,
 // using Qt's SVG support (QIcon -> the svg iconengine plugin, which rasterises the vector
 // natively at each size). Only needs Qt6::Gui -- no Qt6Svg dev package. ImageMagick can't

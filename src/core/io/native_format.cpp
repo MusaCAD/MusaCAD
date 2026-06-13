@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 Kiran Pranay
+
 #include "musacad/core/io/native_format.hpp"
 
 #include <charconv>

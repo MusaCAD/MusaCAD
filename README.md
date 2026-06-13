@@ -102,4 +102,21 @@ responsible for the final code.
 
 ## License
 
-License: TBD by the project maintainers.
+Musa CAD is licensed under the **GNU Lesser General Public License, version 3 or
+(at your option) any later version (LGPL-3.0-or-later)**. The full texts are in
+[`COPYING`](COPYING) (GPL-3.0) and [`COPYING.LESSER`](COPYING.LESSER) (LGPL-3.0);
+see [`LICENSE`](LICENSE) for a summary.
+
+In plain terms (not legal advice): you may link Musa CAD into your own software,
+**including proprietary software**, as long as you preserve the user's ability to
+replace the Musa CAD component with a modified build (the LGPL "relink"
+requirement) and keep the license notices. Modifications to **Musa CAD itself**,
+if distributed, must remain available under the LGPL-3. Qt6 is linked
+dynamically (also LGPL-3); DWG import/export runs through an **external converter
+invoked as a separate process** — no DWG library is linked or shipped. Per-file
+notices use SPDX identifiers; third-party licenses and the GPL-boundary evidence
+are in [`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md).
+
+> These are compliance materials to make a human/legal review cheap, not legal
+> certification. A maintainer/legal review is recommended before the first public
+> release.
