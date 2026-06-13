@@ -1,0 +1,3 @@
+// Windows executable icon resource (referenced by src/app/CMakeLists.txt under if(WIN32)).
+// The .ico is regenerated from the SVG by assets/branding/regen_icons.sh.
+IDI_ICON1 ICON "musacad.ico"

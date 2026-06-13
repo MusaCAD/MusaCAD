@@ -174,6 +174,7 @@ private:
 
     // --- Plot / print (Phase 30) -------------------------------------------
     /// Open the PLOT dialog (PDF + printers). Wired to PLOT/PRINT + Ctrl+P + the ribbon.
+    void show_about(); // Help -> About: logo + name + version + build stamp + LGPL
     void open_plot_dialog();
     void open_plot_dialog_seeded(const PlotSpec& seed); // re-opens after a window pick
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns

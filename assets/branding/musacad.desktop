@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Musa CAD
+GenericName=2D CAD
+Comment=High-performance, multi-threaded 2D CAD engine
+Exec=musacad_app %F
+Icon=musacad
+Terminal=false
+Categories=Graphics;Engineering;2DGraphics;
+StartupNotify=true
+StartupWMClass=musacad_app

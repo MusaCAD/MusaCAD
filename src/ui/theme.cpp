@@ -74,14 +74,18 @@ QWidget#QatStrip {
     background: #3c3c3c;
     border-bottom: 1px solid #1f1f1f;
 }
-QToolButton#AppButton {
-    background: #cc3333;
-    color: white;
-    font-weight: bold;
+/* QAT application button: a clean, flat "Musa CAD" wordmark (matches the QPushButton
+   by objectName), highlighting on hover. */
+#AppButton {
+    background: transparent;
+    color: #e6e6e6;
+    font-weight: 600;
     border: none;
-    padding: 4px 10px;
+    border-radius: 3px;
+    padding: 2px 10px;
 }
-QToolButton#AppButton:hover { background: #dd4444; }
+#AppButton:hover { background: #3a3a3a; }
+#AppButton:pressed { background: #454545; }
 QWidget#QatStrip QToolButton {
     background: transparent;
     border: none;

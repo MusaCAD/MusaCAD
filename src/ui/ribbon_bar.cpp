@@ -78,7 +78,10 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     qat_layout_->setContentsMargins(2, 2, 2, 2);
     qat_layout_->setSpacing(2);
 
-    app_button_ = new QPushButton(QStringLiteral("M"), qat);
+    // QAT application button: the "Musa CAD" wordmark (not a logo); MainWindow wires
+    // its click to the application menu (About). The brand logo lives in the
+    // window/taskbar icon, not here.
+    app_button_ = new QPushButton(QStringLiteral("Musa CAD"), qat);
     app_button_->setObjectName(QStringLiteral("AppButton"));
     app_button_->setToolTip(QStringLiteral("Application menu"));
     qat_layout_->addWidget(app_button_);

@@ -1,6 +1,7 @@
 #include <cstdio>
 
 #include <QApplication>
+#include <QIcon>
 #include <QStringList>
 #include <QTimer>
 
@@ -11,6 +12,10 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
     QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
+
+    // Branding: window / taskbar icon from the embedded logo (Qt renders the SVG at every
+    // size the desktop asks for). The .desktop entry + .ico cover launcher/Windows icons.
+    app.setWindowIcon(QIcon(QStringLiteral(":/branding/musacad_logo.svg")));
 
     // Centralized, swappable styling: Fusion + dark palette + QSS, so the whole
     // UI -- including dialogs, message boxes and the file picker -- is consistent.

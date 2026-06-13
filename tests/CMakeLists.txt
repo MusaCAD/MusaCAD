@@ -38,6 +38,13 @@ musacad_enable_sanitizers(musacad_plot_check)
 set_target_properties(musacad_plot_check PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# Branding raster generator: SVG -> PNGs via Qt (assets/branding/regen_icons.sh drives it).
+add_executable(musacad_svg2png ${CMAKE_CURRENT_SOURCE_DIR}/../tools/svg2png.cpp)
+target_link_libraries(musacad_svg2png PRIVATE Qt6::Gui)
+musacad_enable_sanitizers(musacad_svg2png)
+set_target_properties(musacad_svg2png PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ---------------------------------------------------------------------------
 # Unit tests (Catch2 via FetchContent). Only when MUSACAD_BUILD_TESTS is ON.
 # ---------------------------------------------------------------------------

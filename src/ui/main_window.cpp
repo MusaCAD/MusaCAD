@@ -311,6 +311,15 @@ QWidget* MainWindow::build_central() {
 
 void MainWindow::build_ribbon() {
     ribbon_ = new RibbonBar(this);
+    // The QAT logo button opens the application menu (currently: About Musa CAD).
+    if (QPushButton* app_btn = ribbon_->app_button()) {
+        connect(app_btn, &QPushButton::clicked, this, [this, app_btn] {
+            QMenu menu(this);
+            connect(menu.addAction(QStringLiteral("About Musa CAD…")), &QAction::triggered, this,
+                    &MainWindow::show_about);
+            menu.exec(app_btn->mapToGlobal(QPoint(0, app_btn->height())));
+        });
+    }
 
     // --- Quick Access Toolbar ---
     const auto placeholder_qat = [&](const QString& kind, const QString& tip) {
@@ -2528,6 +2537,42 @@ void MainWindow::file_export_dwg() {
     }
     QFile::remove(tmp);
     command_widget_->append_line("Exported DWG: " + dwg.toStdString());
+}
+
+void MainWindow::show_about() {
+    const auto sv = [](std::string_view s) { return QString::fromUtf8(s.data(), int(s.size())); };
+    const QString app = sv(core::app_name());
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("About %1").arg(app));
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->setSpacing(10);
+    lay->setContentsMargins(28, 22, 28, 18);
+
+    auto* logo = new QLabel(&dlg);
+    logo->setPixmap(QIcon(QStringLiteral(":/branding/musacad_logo.svg")).pixmap(96, 96));
+    logo->setAlignment(Qt::AlignCenter);
+    lay->addWidget(logo);
+
+    auto* title = new QLabel(QStringLiteral("<span style='font-size:15pt; font-weight:600'>%1</span>")
+                                 .arg(app), &dlg);
+    title->setAlignment(Qt::AlignCenter);
+    lay->addWidget(title);
+
+    auto* info = new QLabel(
+        QStringLiteral("Version %1<br>Built %2<br><br>"
+                       "A high-performance, multi-threaded 2D CAD engine.<br>"
+                       "© Musa CAD contributors — licensed under the "
+                       "<b>GNU LGPL-3.0-or-later</b>.")
+            .arg(sv(core::version_string()), QStringLiteral(__DATE__ " " __TIME__)),
+        &dlg);
+    info->setTextFormat(Qt::RichText);
+    info->setAlignment(Qt::AlignCenter);
+    lay->addWidget(info);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    lay->addWidget(buttons);
+    dlg.exec();
 }
 
 // --- Plot / print ----------------------------------------------------------

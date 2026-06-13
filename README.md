@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/branding/musacad_logo.svg" alt="Musa CAD logo" width="140" height="140">
+</p>
+
 # Musa CAD
 
 A high-performance, multi-threaded **2D CAD engine** in modern C++23 for Linux
