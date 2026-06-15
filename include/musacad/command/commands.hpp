@@ -77,8 +77,26 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { First, Second } state_ = State::First;
+    // AwaitCorner is the AutoCAD "Specify other corner or [Area/Dimensions/Rotation]"
+    // hub: it accepts the placement pick OR the option keywords. The Dim*/Area*/Rot
+    // states gather typed values, exactly like CIRCLE's [Diameter] sub-step.
+    enum class State {
+        First,
+        AwaitCorner,
+        DimLen,
+        DimWid,
+        AreaVal,
+        AreaSide,
+        AreaSideVal,
+        RotVal,
+    } state_ = State::First;
     core::Vec2 first_{};
+    double length_ = 0.0;   ///< fixed width along X (0 => corner-to-corner, no fixed size)
+    double width_ = 0.0;    ///< fixed width along Y
+    double rotation_ = 0.0; ///< radians, applied about first_
+    double area_ = 0.0;
+    bool area_by_length_ = true; ///< Area option: user gave Length (else Width)
+    bool has_dims_ = false;      ///< fixed (length_, width_) chosen -> quadrant-flip placement
     bool done_ = false;
 };
 

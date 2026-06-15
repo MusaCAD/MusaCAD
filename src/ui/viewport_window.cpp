@@ -624,11 +624,28 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Rectangle:
             if (!pts.empty()) {
                 const core::Vec2 a = pts[0];
-                const core::Vec2 b = cur;
-                seg.push_back({a.x, a.y}); seg.push_back({b.x, a.y});
-                seg.push_back({b.x, a.y}); seg.push_back({b.x, b.y});
-                seg.push_back({b.x, b.y}); seg.push_back({a.x, b.y});
-                seg.push_back({a.x, b.y}); seg.push_back({a.x, a.y});
+                core::Vec2 b = cur;
+                if (pv.fixed_w > 0.0 && pv.fixed_h > 0.0) {
+                    // RECTANGLE Dimensions/Area: fixed size; the cursor's quadrant relative
+                    // to `a` flips which way the rectangle extends (NE/NW/SE/SW).
+                    const double sx = (cur.x >= a.x) ? 1.0 : -1.0;
+                    const double sy = (cur.y >= a.y) ? 1.0 : -1.0;
+                    b = {a.x + sx * pv.fixed_w, a.y + sy * pv.fixed_h};
+                }
+                core::Vec2 c[4] = {{a.x, a.y}, {b.x, a.y}, {b.x, b.y}, {a.x, b.y}};
+                if (pv.rect_rotation != 0.0) { // RECTANGLE Rotation: spin about `a`
+                    const double cs = std::cos(pv.rect_rotation);
+                    const double sn = std::sin(pv.rect_rotation);
+                    for (core::Vec2& q : c) {
+                        const double dx = q.x - a.x;
+                        const double dy = q.y - a.y;
+                        q = {a.x + dx * cs - dy * sn, a.y + dx * sn + dy * cs};
+                    }
+                }
+                seg.push_back(c[0]); seg.push_back(c[1]);
+                seg.push_back(c[1]); seg.push_back(c[2]);
+                seg.push_back(c[2]); seg.push_back(c[3]);
+                seg.push_back(c[3]); seg.push_back(c[0]);
             }
             break;
         case command::PreviewKind::Circle:

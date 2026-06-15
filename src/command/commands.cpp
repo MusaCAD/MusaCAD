@@ -315,28 +315,155 @@ void RectangleCommand::start(CommandContext& ctx) {
 }
 
 void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
-    if (state_ == State::First) {
+    constexpr const char* kCornerPrompt = "Specify other corner or [Area/Dimensions/Rotation]: ";
+    const std::string up = upper(trimmed(text));
+
+    // Push the cursor preview for the current state: corner-to-corner by default, or a
+    // FIXED-SIZE quadrant-flip rectangle once dimensions/area are chosen. Carries rotation.
+    const auto refresh_preview = [&] {
+        PreviewSpec pv{PreviewKind::Rectangle, {first_}};
+        if (has_dims_) {
+            pv.fixed_w = length_;
+            pv.fixed_h = width_;
+        }
+        pv.rect_rotation = rotation_;
+        ctx.set_preview(pv);
+    };
+    // Commit the closed 4-corner polyline from first_ to `other`, rotated about first_.
+    const auto commit = [&](core::Vec2 other) {
+        std::vector<core::Vec2> c{{first_.x, first_.y},
+                                  {other.x, first_.y},
+                                  {other.x, other.y},
+                                  {first_.x, other.y}};
+        if (rotation_ != 0.0) {
+            const double cs = std::cos(rotation_);
+            const double sn = std::sin(rotation_);
+            for (core::Vec2& q : c) {
+                const double dx = q.x - first_.x;
+                const double dy = q.y - first_.y;
+                q = {first_.x + dx * cs - dy * sn, first_.y + dx * sn + dy * cs};
+            }
+        }
+        ctx.submit(core::AddPolylineCommand{std::move(c), true, ctx.group_id()});
+        ctx.echo("Rectangle created.");
+        done_ = true;
+    };
+    // A non-numeric entry at a value prompt must not trap the user: drop back to the
+    // other-corner pick (AutoCAD-style), preserving any dims/rotation already chosen.
+    const auto revert_to_corner = [&] {
+        state_ = State::AwaitCorner;
+        refresh_preview();
+        ctx.set_prompt(kCornerPrompt);
+    };
+
+    switch (state_) {
+    case State::First:
         if (const auto p = read_point(ctx, text)) {
             first_ = *p;
             ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Rectangle, {first_}});
-            state_ = State::Second;
-            ctx.set_prompt("Specify other corner point: ");
+            state_ = State::AwaitCorner;
+            refresh_preview();
+            ctx.set_prompt(kCornerPrompt);
         }
         return;
-    }
-    const auto p = read_point(ctx, text);
-    if (!p) {
+
+    case State::AwaitCorner: {
+        if (up == "D" || up == "DIMENSIONS") {
+            state_ = State::DimLen;
+            ctx.set_prompt("Specify length for rectangles: ");
+            return;
+        }
+        if (up == "A" || up == "AREA") {
+            state_ = State::AreaVal;
+            ctx.set_prompt("Enter area of rectangle in current units: ");
+            return;
+        }
+        if (up == "R" || up == "ROTATION") {
+            state_ = State::RotVal;
+            ctx.set_prompt("Specify rotation angle: ");
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return; // read_point echoed the error; stay put
+        }
+        core::Vec2 other = *p;
+        if (has_dims_) {
+            // Fixed size; the pick's quadrant relative to first_ flips the direction.
+            const double sx = (p->x >= first_.x) ? 1.0 : -1.0;
+            const double sy = (p->y >= first_.y) ? 1.0 : -1.0;
+            other = {first_.x + sx * length_, first_.y + sy * width_};
+        }
+        commit(other);
         return;
     }
-    const core::Vec2 o = *p;
-    std::vector<core::Vec2> corners{{first_.x, first_.y},
-                                    {o.x, first_.y},
-                                    {o.x, o.y},
-                                    {first_.x, o.y}};
-    ctx.submit(core::AddPolylineCommand{std::move(corners), true, ctx.group_id()});
-    ctx.echo("Rectangle created.");
-    done_ = true;
+
+    case State::DimLen: {
+        double v = 0.0;
+        if (!parse_number(text, v) || v <= 0.0) {
+            revert_to_corner();
+            return;
+        }
+        length_ = v;
+        state_ = State::DimWid;
+        ctx.set_prompt("Specify width for rectangles: ");
+        return;
+    }
+    case State::DimWid: {
+        double v = 0.0;
+        if (!parse_number(text, v) || v <= 0.0) {
+            revert_to_corner();
+            return;
+        }
+        width_ = v;
+        has_dims_ = true;
+        revert_to_corner(); // back to the corner pick, now with a fixed-size preview
+        return;
+    }
+
+    case State::AreaVal: {
+        double v = 0.0;
+        if (!parse_number(text, v) || v <= 0.0) {
+            revert_to_corner();
+            return;
+        }
+        area_ = v;
+        state_ = State::AreaSide;
+        ctx.set_prompt("Calculate rectangle dimensions based on [Length/Width] <Length>: ");
+        return;
+    }
+    case State::AreaSide:
+        area_by_length_ = !(up == "W" || up == "WIDTH"); // default + L/Length -> length
+        ctx.set_prompt(area_by_length_ ? "Enter rectangle length: " : "Enter rectangle width: ");
+        state_ = State::AreaSideVal;
+        return;
+    case State::AreaSideVal: {
+        double v = 0.0;
+        if (!parse_number(text, v) || v <= 0.0) {
+            revert_to_corner();
+            return;
+        }
+        if (area_by_length_) {
+            length_ = v;
+            width_ = area_ / v; // other side computed from the area
+        } else {
+            width_ = v;
+            length_ = area_ / v;
+        }
+        has_dims_ = true;
+        revert_to_corner();
+        return;
+    }
+
+    case State::RotVal: {
+        double deg = 0.0;
+        if (parse_number(text, deg)) {
+            rotation_ = deg * (3.14159265358979323846 / 180.0);
+        }
+        revert_to_corner(); // a non-number simply leaves rotation unchanged
+        return;
+    }
+    }
 }
 
 void RectangleCommand::cancel(CommandContext& ctx) {

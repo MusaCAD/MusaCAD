@@ -1,3 +1,4 @@
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -96,6 +97,127 @@ TEST_CASE("Processor: RECTANGLE makes a closed 4-point polyline") {
     REQUIRE(pl->closed);
     REQUIRE(pl->points.size() == 4);
     REQUIRE(pl->points[2] == Vec2{10.0, 5.0});
+}
+
+namespace {
+// Pull the single committed closed polyline out of the harness.
+const musacad::core::AddPolylineCommand* only_polyline(const Harness& h) {
+    if (h.cmds.size() != 1) {
+        return nullptr;
+    }
+    return std::get_if<musacad::core::AddPolylineCommand>(&h.cmds[0]);
+}
+} // namespace
+
+TEST_CASE("RECTANGLE Dimensions: 50x30, quadrant follows the placement click") {
+    SECTION("click NE of the first corner -> extends NE") {
+        Harness h;
+        h.proc.submit_line("REC");
+        h.proc.submit_line("0,0"); // first corner
+        h.proc.submit_line("D");   // Dimensions option keyword
+        h.proc.submit_line("50");  // length
+        h.proc.submit_line("30");  // width
+        h.proc.submit_line("10,10"); // placement click, NE quadrant
+        const auto* pl = only_polyline(h);
+        REQUIRE(pl != nullptr);
+        REQUIRE(pl->closed);
+        REQUIRE(pl->points.size() == 4);
+        REQUIRE(pl->points[0] == Vec2{0.0, 0.0});
+        REQUIRE(pl->points[1] == Vec2{50.0, 0.0});
+        REQUIRE(pl->points[2] == Vec2{50.0, 30.0});
+        REQUIRE(pl->points[3] == Vec2{0.0, 30.0});
+    }
+    SECTION("click SW of the first corner -> same 50x30 extends SW") {
+        Harness h;
+        h.proc.submit_line("REC");
+        h.proc.submit_line("0,0");
+        h.proc.submit_line("D");
+        h.proc.submit_line("50");
+        h.proc.submit_line("30");
+        h.proc.submit_line("-10,-10"); // placement click, SW quadrant
+        const auto* pl = only_polyline(h);
+        REQUIRE(pl != nullptr);
+        REQUIRE(pl->points[1] == Vec2{-50.0, 0.0});
+        REQUIRE(pl->points[2] == Vec2{-50.0, -30.0});
+        REQUIRE(pl->points[3] == Vec2{0.0, -30.0});
+    }
+}
+
+TEST_CASE("RECTANGLE Area: requested area within float tolerance, L and W paths") {
+    SECTION("Length given -> width computed") {
+        Harness h;
+        h.proc.submit_line("REC");
+        h.proc.submit_line("0,0");
+        h.proc.submit_line("A");    // Area option
+        h.proc.submit_line("1500"); // area
+        h.proc.submit_line("L");    // calculate from Length
+        h.proc.submit_line("50");   // length -> width = 1500/50 = 30
+        h.proc.submit_line("10,10");
+        const auto* pl = only_polyline(h);
+        REQUIRE(pl != nullptr);
+        REQUIRE(pl->points[2].x == Approx(50.0));
+        REQUIRE(pl->points[2].y == Approx(30.0));
+        const double area = std::abs(pl->points[2].x) * std::abs(pl->points[2].y);
+        REQUIRE(area == Approx(1500.0));
+    }
+    SECTION("Width given -> length computed") {
+        Harness h;
+        h.proc.submit_line("REC");
+        h.proc.submit_line("0,0");
+        h.proc.submit_line("A");
+        h.proc.submit_line("1500");
+        h.proc.submit_line("W");  // calculate from Width
+        h.proc.submit_line("30"); // width -> length = 1500/30 = 50
+        h.proc.submit_line("10,10");
+        const auto* pl = only_polyline(h);
+        REQUIRE(pl != nullptr);
+        REQUIRE(pl->points[2].x == Approx(50.0));
+        REQUIRE(pl->points[2].y == Approx(30.0));
+    }
+}
+
+TEST_CASE("RECTANGLE Rotation: fixed-size rectangle is rotated about the first corner") {
+    Harness h;
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("R");   // Rotation option
+    h.proc.submit_line("90");  // 90 degrees
+    h.proc.submit_line("D");   // then Dimensions 50x30
+    h.proc.submit_line("50");
+    h.proc.submit_line("30");
+    h.proc.submit_line("10,10"); // NE quadrant, then rotated 90 deg about (0,0)
+    const auto* pl = only_polyline(h);
+    REQUIRE(pl != nullptr);
+    // (50,0) rotated +90 about origin -> (0,50); (50,30) -> (-30,50).
+    REQUIRE(pl->points[1].x == Approx(0.0).margin(1e-9));
+    REQUIRE(pl->points[1].y == Approx(50.0));
+    REQUIRE(pl->points[2].x == Approx(-30.0));
+    REQUIRE(pl->points[2].y == Approx(50.0));
+}
+
+TEST_CASE("RECTANGLE: a non-number at a value prompt reverts to the corner pick") {
+    Harness h;
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("D");     // Dimensions
+    h.proc.submit_line("oops");  // not a number -> revert to other-corner pick
+    REQUIRE(h.proc.has_active_command());
+    REQUIRE(h.cmds.empty());
+    h.proc.submit_line("10,5");  // now a normal two-point corner
+    const auto* pl = only_polyline(h);
+    REQUIRE(pl != nullptr);
+    REQUIRE(pl->points[2] == Vec2{10.0, 5.0}); // corner-to-corner, unchanged behaviour
+}
+
+TEST_CASE("RECTANGLE: ESC after the first corner cancels cleanly") {
+    Harness h;
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("D");
+    h.proc.submit_line("50");
+    h.proc.cancel(); // ESC mid-flow
+    REQUIRE_FALSE(h.proc.has_active_command());
+    REQUIRE(h.cmds.empty());
 }
 
 TEST_CASE("Processor: 3-point ARC") {

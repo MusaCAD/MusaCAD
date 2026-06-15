@@ -126,3 +126,23 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | MLEADER content blocks / DXF MLEADER round-trip | Planned (DXF writes LEADER + MTEXT; native v6 is lossless) |
 | Leader landing / dogleg auto-geometry | Planned |
 | Leader style (own table) | Planned (uses dimstyle arrow for now) |
+
+## RECTANGLE (RECTANG) options
+
+Typed mid-command as option keywords (the same state-machine pattern as CIRCLE's
+`[Diameter]`), matching AutoCAD's `RECTANG` prompts.
+
+| Option | Prompt | Status |
+|---|---|---|
+| **Dimensions** (`D`) | length → width, then the cursor quadrant flips placement (NE/NW/SE/SW); click commits | Implemented |
+| **Area** (`A`) | area → `[Length/Width]` → that side; the other = area / side; same quadrant-flip placement | Implemented |
+| **Rotation** (`R`) | angle (degrees); the rectangle is rotated about the first corner | Implemented |
+| First-corner **Chamfer** (`C`) | two chamfer distances applied to each corner | Planned |
+| First-corner **Fillet** (`F`) | fillet radius applied to each corner | Planned |
+| First-corner **Width** (`W`) | polyline line-width for the rectangle | Planned |
+| First-corner **Elevation** (`E`) / **Thickness** (`T`) | Z elevation / 3D thickness | Planned (2D engine; Z staged) |
+
+Notes: a non-numeric entry at a value prompt reverts to the plain other-corner pick (you
+are never trapped); Esc cancels. Length/width/area entry mirrors into the Dynamic Input
+box because it mirrors the command line; per-field DYN entry (length/width fields *in* the
+DYN box) is the deferred context-aware DYN-box item in [TODO.md](TODO.md).

@@ -35,6 +35,15 @@ struct PreviewSpec {
     PreviewKind kind = PreviewKind::None;
     std::vector<core::Vec2> points; ///< committed anchors so far
 
+    // Rectangle preview parameters (RECTANGLE Dimensions/Area/Rotation options). When
+    // fixed_w/fixed_h are > 0 the previewed rectangle is that fixed size and only its
+    // QUADRANT follows the cursor (relative to points[0]); otherwise it is the normal
+    // corner-to-corner rubber band. `rect_rotation` (radians) rotates it about points[0].
+    // These parameterise the existing PreviewKind::Rectangle path -- not a new pipeline.
+    double fixed_w = 0.0;
+    double fixed_h = 0.0;
+    double rect_rotation = 0.0;
+
     // Dimension preview only: the subtype (core::DimType) and style index. `points`
     // holds the def points (a, b) for two-point dims; for object-based dims it is
     // empty and the def points come from the snapshot's pending_dim_* (resolved once

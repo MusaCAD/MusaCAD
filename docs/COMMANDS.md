@@ -17,6 +17,8 @@ suggests both); aliases are case-insensitive.
 | CIRCLE | C | Implemented |
 | ARC (3-point) | A | Implemented |
 | RECTANGLE | REC | Implemented |
+| RECTANGLE options: **Dimensions** (`D` → length → width → quadrant-flip placement click), **Area** (`A` → area → `[Length/Width]` → side → placement), **Rotation** (`R` → angle) | typed mid-command | Implemented (option keywords, same state machine as CIRCLE `[Diameter]`) |
+| RECTANGLE first-corner options: Chamfer / Elevation / Fillet / Thickness / Width | C/E/F/T/W | Planned |
 | SPLINE | SPL | Planned (Phase 7) |
 | ELLIPSE | EL | Planned (Phase 7) |
 | POLYGON | POL | Planned (Phase 7) |
