@@ -18,6 +18,9 @@
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
+#include <QMouseEvent>
+#include <QScreen>
+#include <QWindow>
 #include <QCoreApplication>
 #include <QColorDialog>
 #include <QComboBox>
@@ -72,6 +75,7 @@
 #include <QPrinterInfo>
 
 #include "musacad/ui/dwg_converter.hpp"
+#include "musacad/ui/dyn_field_tips.hpp"
 #include "musacad/ui/dyn_input.hpp"
 #include "musacad/ui/plot.hpp"
 #include "musacad/ui/plot_dialog.hpp"
@@ -200,17 +204,59 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     dyn_->set_processor(processor_.get());
     dyn_->set_escape_callback([this] {
         viewport_->handle_escape();
+        if (tips_ != nullptr) {
+            tips_->hide_all();
+        }
         refocus_dyn();
     });
     fanout_->add(dyn_);
     dyn_->hide();
-    connect(viewport_, &ViewportWindow::cursorScreenMoved, this,
-            [this](double px, double py) { reposition_dyn(px, py); });
+
+    // On-geometry Dynamic Input: small value tooltips floated ON the rubber-band
+    // (length under one edge, width by the other, radius on the radius line) plus a
+    // free-floating prompt -- AutoCAD's true Dynamic Input. It SUPPLEMENTS the cursor
+    // box (which stays the keyword/command-entry path); both route typed text through
+    // the SAME processor via command::compose_dyn_submit. Hidden until F12.
+    tips_ = new DynFieldTips(this, this);
+    tips_->set_processor(processor_.get());
+    tips_->set_project([this](core::Vec2 w) -> QPoint {
+        // Camera works in device pixels; convert to logical for the widget's mapToGlobal.
+        // Map through the CONTAINER QWidget (reliable) rather than the embedded QWindow.
+        const double dpr = viewport_->devicePixelRatio();
+        const core::Vec2 dev = viewport_->world_to_screen_px(w);
+        const QPoint local(static_cast<int>(dev.x / dpr), static_cast<int>(dev.y / dpr));
+        return viewport_container_->mapToGlobal(local);
+    });
+    tips_->set_bounds_provider([this]() -> QRect {
+        // The viewport's on-screen rect: tips are clamped here so they stay over the
+        // drawing area (never the ribbon) and on the geometry's monitor.
+        return QRect(viewport_container_->mapToGlobal(QPoint(0, 0)), viewport_container_->size());
+    });
+    tips_->set_escape_callback([this] {
+        viewport_->handle_escape();
+        tips_->hide_all();
+        refocus_dyn();
+    });
+    tips_->set_lock_callback([this](std::optional<double> p, std::optional<double> s) {
+        if (viewport_ != nullptr) {
+            viewport_->set_dyn_lock(p, s); // render-side: rubber-band reflects locked dims
+        }
+    });
+    fanout_->add(tips_); // the prompt mirrors to the free-floating prompt label too
+
+    connect(viewport_, &ViewportWindow::cursorScreenMoved, this, [this](double px, double py) {
+        reposition_dyn(px, py);
+        update_dyn_surfaces(); // box reappears once a tip-driven command ends
+    });
     connect(viewport_, &ViewportWindow::constrainedCursorMoved, this,
             [this](double cx, double cy) {
                 if (dyn_ != nullptr) {
                     dyn_->on_constrained_cursor(cx, cy);
                 }
+                if (tips_ != nullptr) {
+                    tips_->on_constrained_cursor(cx, cy);
+                }
+                update_dyn_surfaces(); // entering a rubber-band hides the cursor box
             });
     connect(viewport_, &ViewportWindow::pickerInteracted, this, [this] { refocus_dyn(); });
 
@@ -299,6 +345,7 @@ QWidget* MainWindow::build_central() {
     container->setMinimumSize(320, 240);
     container->setFocusPolicy(Qt::StrongFocus);
     col->addWidget(container, 1);
+    viewport_container_ = container; // QWidget mapToGlobal is reliable (unlike the embedded QWindow)
 
     // Model/Layout tabs, bottom-left.
     auto* layout_tabs = new QTabBar(central);
@@ -1080,14 +1127,57 @@ void MainWindow::sync_properties_panel() {
                                    viewport_->current_layer());
 }
 
+bool MainWindow::dyn_tips_active() const {
+    if (dyn_action_ == nullptr || !dyn_action_->isChecked() || processor_ == nullptr) {
+        return false;
+    }
+    using command::PreviewKind;
+    const PreviewKind k = processor_->preview().kind;
+    return k == PreviewKind::Segment || k == PreviewKind::Circle || k == PreviewKind::Rectangle;
+}
+
+void MainWindow::update_dyn_surfaces() {
+    if (dyn_ == nullptr || dyn_action_ == nullptr) {
+        return;
+    }
+    if (!dyn_action_->isChecked()) {
+        dyn_->hide();
+        return;
+    }
+    // During a tip-driven rubber-band the on-geometry tooltips ARE the surface; the
+    // cursor box steps aside (no double entry). It returns for keyword/idle steps.
+    if (dyn_tips_active()) {
+        if (dyn_->isVisible()) {
+            dyn_->hide();
+        }
+        // AutoCAD's dynamic input: typing flows straight into the active field and Tab
+        // switches fields -- no click. Auto-focus the first tip once (the mouse still
+        // drives the rubber-band; only keystrokes route here). Yield to the Properties
+        // palette, and to the command line ONLY while the user is actively typing there
+        // (e.g. an option keyword) -- the empty default-focused command line is grabbed.
+        QWidget* fw = QApplication::focusWidget();
+        const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
+                              properties_dock_->isAncestorOf(fw);
+        const bool cmd_typing = command_widget_ != nullptr && command_widget_->is_typing();
+        if (tips_ != nullptr && !in_props && !cmd_typing && !tips_->any_field_focused()) {
+            tips_->focus_first();
+        }
+    } else if (!dyn_->isVisible()) {
+        dyn_->show();
+        dyn_->raise();
+    }
+}
+
 void MainWindow::set_dyn_enabled(bool on) {
     if (dyn_ == nullptr) {
         return;
     }
     QSettings().setValue(QStringLiteral("dyn/enabled"), on);
+    if (tips_ != nullptr) {
+        tips_->set_enabled(on); // the on-geometry tooltips follow the same F12 toggle
+    }
     if (on) {
-        dyn_->show();
-        dyn_->raise();
+        update_dyn_surfaces(); // show the box unless a tip-driven rubber-band is active
         refocus_dyn();
     } else {
         dyn_->hide();
@@ -1116,6 +1206,19 @@ void MainWindow::refocus_dyn() {
     // PR) -- so DYN never steals keys the user directed elsewhere.
     QTimer::singleShot(0, this, [this] {
         if (dyn_ == nullptr || !dyn_action_->isChecked()) {
+            return;
+        }
+        if (dyn_tips_active()) {
+            dyn_->hide(); // the on-geometry tooltips are the surface, not the cursor box
+            // Auto-focus the first tip so the user types into it without clicking
+            // (AutoCAD dynamic input). Yield only to the Properties palette.
+            QWidget* fwd = QApplication::focusWidget();
+            const bool in_props_d = properties_dock_ != nullptr && fwd != nullptr &&
+                                    properties_dock_->isAncestorOf(fwd);
+            const bool cmd_typing_d = command_widget_ != nullptr && command_widget_->is_typing();
+            if (tips_ != nullptr && !in_props_d && !cmd_typing_d && !tips_->any_field_focused()) {
+                tips_->focus_first();
+            }
             return;
         }
         QWidget* fw = QApplication::focusWidget();
@@ -1829,21 +1932,33 @@ bool MainWindow::selftest_dyn() {
     std::printf("[selftest] DYN starts a command at the cursor + mirrors prompt: %s\n",
                 (start_ok && prompt_ok) ? "PASS" : "FAIL");
 
-    // (3) A coordinate (abs) via DYN, then an EXACT length (length+angle fields).
+    // (3) First point via the DYN box (keyword/idle surface). Once the rubber-band is
+    // live, the on-geometry TOOLTIPS take over and the cursor box HIDES (Fix B): there
+    // is exactly one place to type. The tips show length + angle.
     dyn_->test_set_primary("0,0");
     dyn_->test_submit();
-    const bool two_fields = pump([this] { return dyn_->secondary_visible(); }); // length + angle
-    dyn_->test_set_primary("50"); // length
-    dyn_->test_set_secondary("0"); // angle (deg)
-    dyn_->test_submit();
+    const bool tips_took_over = pump([this] {
+        return tips_ != nullptr && tips_->visible_field_count() == 2 && !dyn_->isVisible();
+    });
+    // Tab cycles focus between the two tooltips, in schema order (Fix C).
+    tips_->focus_slot(0);
+    pump([] { return true; });
+    tips_->press_tab_on(0, +1);
+    const bool tab_ok = pump([this] { return tips_->tip_field_focused(1); });
+    // An EXACT length typed INTO a tooltip commits through the SAME pipeline as a click.
+    tips_->set_field_text(0, "50"); // length tip
+    tips_->set_field_text(1, "0");  // angle tip
+    tips_->submit_slot(0);
     Vec2 mn{}, mx{};
     const bool exact_ok = pump([&] {
         return viewport_->line_vertex_count() == 2 && viewport_->content_bounds(mn, mx) &&
                std::abs((mx.x - mn.x) - 50.0) < 0.01 && std::abs(mx.y - mn.y) < 0.01;
     });
-    std::printf("[selftest] DYN exact-length line (typed 50 -> 50.000 long): %s\n",
-                (two_fields && exact_ok) ? "PASS" : "FAIL");
-    all = all && on_ok && start_ok && prompt_ok && two_fields && exact_ok;
+    std::printf("[selftest] DYN tips take over (box hidden=%d, 2 fields) + Tab cycle=%d + "
+                "exact-length-via-tip=%d: %s\n",
+                tips_took_over ? 1 : 0, tab_ok ? 1 : 0, exact_ok ? 1 : 0,
+                (tips_took_over && exact_ok) ? "PASS" : "FAIL");
+    all = all && on_ok && start_ok && prompt_ok && tips_took_over && exact_ok;
 
     // (4) THE FOCUS CHECK -- with DYN on, the prior gestures still work. First end
     // the still-active LINE chain (a command being active would block erase-select).
@@ -1904,6 +2019,126 @@ bool MainWindow::selftest_dyn() {
     QSettings().setValue(QStringLiteral("dyn/enabled"), saved_pref);
     engine_->submit(core::NewDocumentCommand{});
     return all;
+}
+
+bool MainWindow::dyn_shot(int kind, const std::string& out_png) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    // A known-size window so the captured region is just the app.
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700); // let the GL viewport render a first frame
+
+    engine_->submit(core::NewDocumentCommand{});
+    pump(200);
+    dyn_action_->setChecked(true); // F12: enable DYN box + on-geometry tooltips
+    pump(150);
+
+    // Start the command and drop the first point (world origin = viewport centre).
+    const char* cmd = (kind == 1) ? "LINE" : (kind == 2) ? "CIRCLE" : "REC";
+    processor_->submit_line(cmd);
+    pump(100);
+    processor_->submit_line("0,0");
+    pump(100);
+
+    // Synthesize a constrained cursor move to a point in the lower-right quadrant,
+    // exactly as a mouse drag would -- this drives rebuild_overlay() + the
+    // constrainedCursorMoved signal that positions the rubber-band AND the tooltips.
+    const double vw = static_cast<double>(viewport_->width());
+    const double vh = static_cast<double>(viewport_->height());
+    const QPointF lp(vw * 0.66, vh * 0.66);
+    const QPoint gp = viewport_->mapToGlobal(lp.toPoint());
+    for (int i = 0; i < 4; ++i) { // a few moves so the render thread latches the overlay
+        QMouseEvent mv(QEvent::MouseMove, lp, QPointF(gp), Qt::NoButton, Qt::NoButton,
+                       Qt::NoModifier);
+        QCoreApplication::sendEvent(viewport_, &mv);
+        pump(120);
+    }
+
+    // Diagnostic: where SHOULD the tips be vs where they ARE.
+    const QPoint vp_origin = viewport_->mapToGlobal(QPoint(0, 0));
+    const QPoint cont_origin = viewport_container_->mapToGlobal(QPoint(0, 0));
+    std::printf("[dyn_shot] kind=%d viewport(QWindow) originG=(%d,%d)  container(QWidget) originG=(%d,%d)\n",
+                kind, vp_origin.x(), vp_origin.y(), cont_origin.x(), cont_origin.y());
+    std::printf("[dyn_shot] size=%.0fx%.0f dpr=%.2f containerScreen=%s\n", vw, vh,
+                viewport_->devicePixelRatio(),
+                viewport_container_->screen() ? viewport_container_->screen()->name().toStdString().c_str()
+                                              : "?");
+    std::printf("[dyn_shot] DYN box visible=%d geomG=(%d,%d)\n", dyn_->isVisible() ? 1 : 0,
+                dyn_->pos().x(), dyn_->pos().y());
+    std::printf("[dyn_shot] tips visible_field_count=%d on_anchor(8px)=%d\n",
+                tips_->visible_field_count(), tips_->all_tips_on_anchor(8) ? 1 : 0);
+    const QRect mfr = frameGeometry();
+    std::printf("[dyn_shot] WINID main=0x%lx frameG=(%d,%d %dx%d) viewport=0x%lx\n",
+                static_cast<unsigned long>(winId()), mfr.x(), mfr.y(), mfr.width(), mfr.height(),
+                static_cast<unsigned long>(viewport_->winId()));
+    std::printf("%s", tips_->debug_state().c_str());
+    std::printf("[dyn_shot] TIPWINS\n%s", tips_->debug_winids().c_str());
+
+    // AutoCAD behaviour: a tip is auto-focused during the rubber-band -- the user
+    // types WITHOUT clicking it first.
+    const bool autofocus = tips_->any_field_focused();
+    std::printf("[dyn_shot] AUTOFOCUS (type without click): %d\n", autofocus ? 1 : 0);
+
+    // Fix C verification: Tab cycles focus in schema order; Shift-Tab reverses.
+    if (tips_->visible_field_count() >= 2) {
+        tips_->focus_slot(0);
+        pump(60);
+        const bool f0 = tips_->tip_field_focused(0);
+        tips_->press_tab_on(0, +1);
+        pump(60);
+        const bool f1 = tips_->tip_field_focused(1);
+        tips_->press_tab_on(1, -1);
+        pump(60);
+        const bool back0 = tips_->tip_field_focused(0);
+        std::printf("[dyn_shot] TAB cycle: focus0=%d ->Tab-> focus1=%d ->ShiftTab-> focus0=%d\n", f0,
+                    f1, back0);
+    }
+    // Fix C verification: the tip is draggable by its frame (sticky offset).
+    if (tips_->visible_field_count() >= 1) {
+        const bool dragged = tips_->drag_slot(0, 40, 25);
+        std::printf("[dyn_shot] DRAG tip0 by (40,25): moved=%d\n", dragged ? 1 : 0);
+    }
+    std::fflush(stdout);
+
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[dyn_shot] HOLD: window up for external capture...\n");
+        std::fflush(stdout);
+        pump(12000); // keep the rubber-band on screen so `import -window <id>` can grab it
+    }
+
+    // Grab the app. Use the screen the window is actually ON (multi-monitor), and grab
+    // the whole screen so the overlapping tool-window tooltips are composited in.
+    bool ok = false;
+    QScreen* scr = (windowHandle() != nullptr && windowHandle()->screen() != nullptr)
+                       ? windowHandle()->screen()
+                       : QApplication::primaryScreen();
+    if (scr != nullptr) {
+        const QRect sg = scr->geometry();
+        std::printf("[dyn_shot] screen=%s geomG=(%d,%d %dx%d)\n",
+                    scr->name().toStdString().c_str(), sg.x(), sg.y(), sg.width(), sg.height());
+        // (a) the app window itself (GL child included) -- proves GL is captured.
+        const QPixmap win = scr->grabWindow(winId());
+        const std::string win_png = out_png + ".win.png";
+        const bool okw = !win.isNull() && win.save(QString::fromStdString(win_png), "PNG");
+        std::printf("[dyn_shot] saved %s = %d (%dx%d)\n", win_png.c_str(), okw ? 1 : 0, win.width(),
+                    win.height());
+        // (b) the full screen (tooltips composited) -- the eyes-on shot.
+        const QPixmap shot = scr->grabWindow(0);
+        ok = !shot.isNull() && shot.save(QString::fromStdString(out_png), "PNG");
+        std::printf("[dyn_shot] saved %s = %d (%dx%d)\n", out_png.c_str(), ok ? 1 : 0, shot.width(),
+                    shot.height());
+    }
+    const bool anchored = tips_->all_tips_on_anchor(8);
+    dyn_action_->setChecked(false);
+    return ok && anchored;
 }
 
 bool MainWindow::selftest_param_dialogs() {

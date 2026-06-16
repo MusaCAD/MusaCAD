@@ -74,6 +74,7 @@ add_executable(musacad_tests
     test_coordinate.cpp
     test_command_processor.cpp
     test_command_roundtrip.cpp
+    test_dyn_fields.cpp
     test_command_suggest.cpp
     test_spatial_grid.cpp
     test_osnap.cpp

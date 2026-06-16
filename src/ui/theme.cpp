@@ -169,6 +169,21 @@ QListWidget#CommandSuggest::item:selected {
     color: #ffffff;
 }
 
+/* ----- Dynamic Input: on-geometry field tooltips ----- */
+QFrame#DynFieldTip {
+    background: #1e1e1e;
+    border: 1px solid #4a90d9;
+    border-radius: 2px;
+}
+QLabel#DynFieldLabel { color: #9a9a9a; }
+QLineEdit#DynFieldValue {
+    background: #161616;
+    border: 1px solid #3a3a3a;
+    padding: 1px 3px;
+    color: #ffffff;
+}
+QLineEdit#DynFieldValue:focus { border: 1px solid #7cc0ff; }
+
 /* ----- Status bar ----- */
 QStatusBar { background: #232323; }
 QStatusBar QToolButton {

@@ -45,7 +45,7 @@ suggests both); aliases are case-insensitive.
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
 | EXTEND an arc/polyline *entity* | EX | Partial (line entities only) |
 | FILLET (line/line; radius 0 or tangent arc) | F | Implemented |
-| FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented |
+| FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented (incl. RECTANGLE corners — a rectangle IS a closed polyline; verified end-to-end through the full F-command path, including the closing-edge wrap corner) |
 | Polyline arc segments (per-vertex bulge, AutoCAD LWPOLYLINE) | — | Implemented |
 | FILLET (arc/curve cases) | F | Partial (line + polyline-corner only) |
 | CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
@@ -124,7 +124,8 @@ suggests both); aliases are case-insensitive.
 | **LTSCALE** (global linetype scale; re-dashes live; native + DXF round-trip) | LTSCALE / LTS | Implemented (Ph23) |
 | **Dynamic Input** — type commands/values AT the crosshair; cursor-anchored field shows the live prompt | F12 / status DYN toggle | Implemented (Ph25; state persisted) |
 | DYN live dimensional input: type an exact length/angle (line), radius (circle), width/height (rectangle) during the rubber-band; Tab between fields | — | Implemented (Ph25; honors ORTHO/POLAR/snap) |
-| DYN is additive: the bottom command line still works and stays in sync (same processor) | — | Implemented (Ph25) |
+| **DYN on-geometry field tooltips** — small floating value boxes anchored ON the rubber-band geometry, tracking it each cursor frame (length under one edge, width by the other for RECTANGLE; length + angle for LINE; radius for CIRCLE) plus a free-floating prompt label. The active field is **auto-focused** so you just start typing (no click); **Tab/Shift-Tab** switch fields; **Enter** commits; the mouse still drives the rubber-band. Each tip is draggable by its frame; a typed value locks that dimension while the cursor drives the other(s). Clamped to the viewport so they never sit in the ribbon / off the geometry's monitor | F12 | Implemented (RECTANGLE/LINE/CIRCLE; other commands staged) |
+| Single input surface per step: during a tip-driven rubber-band the cursor box **gives way** to the on-geometry tooltips (no double entry); it returns for keyword/idle steps. The bottom command line still works and stays in sync; everything submits through the same pipeline (`compose_dyn_submit`) | — | Implemented |
 | **DYN autocomplete**: the Ph6 command-suggestion dropdown anchored at the cursor field (one suggestion source: the registry) | — | Implemented (Ph26) |
 | Draw/transform ribbon buttons **start the interactive command** (pick on screen, like typing — never a fixed-position dialog): Line/Circle/Arc/Rectangle/Rotate/Scale | ribbon | Implemented (AutoCAD model) |
 | **CIRCLE radius/[Diameter] option** — type `D` at the radius prompt (command line or DYN) to enter a diameter instead | C → D | Implemented (Ph26) |
@@ -260,4 +261,4 @@ button dropdown).
 | Honest command results (engine echoes what actually happened) | Implemented |
 | Parametric input dialog (ARRAY: rectangular + polar) | Implemented |
 | Input dialogs for Rotate/Scale + live ghost preview | Planned (Phase 11.2) |
-| Dynamic input tooltips at cursor | Planned (Phase 13) |
+| Dynamic input tooltips at cursor | Implemented (on-geometry field tooltips for RECTANGLE/LINE/CIRCLE; draggable, Tab-cycle, type-to-lock; other commands staged) |

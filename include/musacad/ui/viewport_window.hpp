@@ -202,6 +202,22 @@ public:
         out_max = camera_.visible_max();
     }
 
+    /// Project a world point to viewport-local (device-independent) pixels, for
+    /// anchoring on-geometry overlays such as the Dynamic-Input field tooltips.
+    [[nodiscard]] core::Vec2 world_to_screen_px(core::Vec2 world) {
+        std::scoped_lock lock(camera_mutex_);
+        return camera_.world_to_screen(world);
+    }
+    /// Lock one or both rubber-band DOFs to a typed Dynamic-Input value, so the
+    /// preview visibly reflects it while the cursor still drives the unlocked DOF.
+    /// Render-side only (no geometry-thread round-trip, zero op-log churn); nullopt
+    /// clears the lock. Called on the UI thread (same as rebuild_overlay()).
+    void set_dyn_lock(std::optional<double> primary, std::optional<double> secondary) {
+        dyn_lock_primary_ = primary;
+        dyn_lock_secondary_ = secondary;
+        rebuild_overlay();
+    }
+
 
     /// Snapshot of the editable text contents (for self-tests / observed-outcome
     /// checks). Copied under the cache lock.
@@ -241,6 +257,11 @@ private:
 
     std::mutex overlay_mutex_;
     render::RenderOverlay overlay_; // guarded by overlay_mutex_
+
+    // Dynamic-Input dimension lock (UI thread): a typed field value pins one/both
+    // rubber-band DOFs in the preview; nullopt = that DOF follows the cursor.
+    std::optional<double> dyn_lock_primary_;
+    std::optional<double> dyn_lock_secondary_;
 
     // Selection drag state (UI thread).
     bool selecting_ = false;

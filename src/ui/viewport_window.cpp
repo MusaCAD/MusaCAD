@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "musacad/command/command_processor.hpp"
+#include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -603,12 +604,16 @@ void ViewportWindow::rebuild_overlay() {
         Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();
         const auto& pts = pv.points;
+        // A typed Dynamic-Input field pins a dimension: the preview draws to the
+        // locked point while the cursor still drives the unlocked DOF (render-side).
+        const core::Vec2 cur_eff =
+            command::apply_dyn_lock(pv, cur, dyn_lock_primary_, dyn_lock_secondary_);
         auto& seg = ov.preview_segments;
         switch (pv.kind) {
         case command::PreviewKind::Segment:
             if (!pts.empty()) {
                 seg.push_back(pts[0]);
-                seg.push_back(cur);
+                seg.push_back(cur_eff);
             }
             break;
         case command::PreviewKind::Polyline:
@@ -624,7 +629,7 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Rectangle:
             if (!pts.empty()) {
                 const core::Vec2 a = pts[0];
-                core::Vec2 b = cur;
+                core::Vec2 b = cur_eff;
                 if (pv.fixed_w > 0.0 && pv.fixed_h > 0.0) {
                     // RECTANGLE Dimensions/Area: fixed size; the cursor's quadrant relative
                     // to `a` flips which way the rectangle extends (NE/NW/SE/SW).
@@ -650,7 +655,7 @@ void ViewportWindow::rebuild_overlay() {
             break;
         case command::PreviewKind::Circle:
             if (!pts.empty()) {
-                tess_circle(pts[0], core::distance(pts[0], cur), seg);
+                tess_circle(pts[0], core::distance(pts[0], cur_eff), seg);
             }
             break;
         case command::PreviewKind::Arc:

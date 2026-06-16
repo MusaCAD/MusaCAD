@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <algorithm>
+#include <optional>
 
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -16,6 +17,7 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/command/command_registry.hpp"
+#include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/math/math.hpp"
 
 namespace musacad::ui {
@@ -255,55 +257,31 @@ void DynInput::submit() {
     }
 
     const command::PreviewSpec& pv = processor_->preview();
-    const auto& pts = pv.points;
     const core::Vec2 cur{cx_, cy_};
-    const core::Vec2 anchor = pts.empty() ? core::Vec2{0, 0} : pts[0];
     std::string line;
 
-    switch (pv.kind) {
-    case PreviewKind::Segment: {
-        if (p.isEmpty() && s.isEmpty()) {
-            return; // need at least one typed value to override the cursor
+    if (pv.kind == PreviewKind::Segment || pv.kind == PreviewKind::Circle ||
+        pv.kind == PreviewKind::Rectangle) {
+        // A dimensional drag: compose the same coordinate string the on-geometry
+        // field tooltips do (one shared source). A non-empty, parseable field is a
+        // typed override; anything else follows the live cursor for that slot.
+        bool okp = false;
+        bool oks = false;
+        const double vp = to_num(p, okp);
+        const double vs = to_num(s, oks);
+        const std::optional<double> prim =
+            (!p.isEmpty() && okp) ? std::optional<double>(vp) : std::nullopt;
+        const std::optional<double> sec =
+            (!s.isEmpty() && oks) ? std::optional<double>(vs) : std::nullopt;
+        line = command::compose_dyn_submit(pv, cur, prim, sec);
+        if (line.empty()) {
+            return; // nothing typed where a value is required
         }
-        bool ok = false;
-        const double live_len = core::distance(anchor, cur);
-        const double live_ang = std::atan2(cur.y - anchor.y, cur.x - anchor.x) * kRadToDeg;
-        const double len = p.isEmpty() ? live_len : to_num(p, ok);
-        const double ang = s.isEmpty() ? live_ang : to_num(s, ok);
-        line = "@" + std::to_string(len) + "<" + std::to_string(ang);
-        break;
-    }
-    case PreviewKind::Circle: {
-        if (p.isEmpty()) {
-            return;
-        }
-        bool ok = false;
-        const double rad = to_num(p, ok);
-        double ang = std::atan2(cur.y - anchor.y, cur.x - anchor.x) * kRadToDeg;
-        if (core::distance(anchor, cur) < 1e-9) {
-            ang = 0.0;
-        }
-        line = "@" + std::to_string(rad) + "<" + std::to_string(ang);
-        break;
-    }
-    case PreviewKind::Rectangle: {
-        if (p.isEmpty() && s.isEmpty()) {
-            return;
-        }
-        bool ok = false;
-        const double live_w = cur.x - anchor.x;
-        const double live_h = cur.y - anchor.y;
-        const double w = p.isEmpty() ? live_w : to_num(p, ok);
-        const double h = s.isEmpty() ? live_h : to_num(s, ok);
-        line = "@" + std::to_string(w) + "," + std::to_string(h);
-        break;
-    }
-    default:
+    } else {
         if (p.isEmpty()) {
             return;
         }
         line = p.toStdString(); // a coordinate (x,y / @dx,dy / @d<a) or an option keyword
-        break;
     }
     processor_->submit_line(line);
     primary_->clear();

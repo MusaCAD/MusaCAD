@@ -172,23 +172,24 @@ untouched (collect-and-submit only).
    keyword, surfaced via the mirrored prompt.
 2. **POLYGON** — no POLYGON command exists yet (build the command + its sides/
    inscribed-circumscribed/radius options).
-3. **Context-aware Dynamic Input box (deferred 2026-06-09)** — TODAY the DYN box is a
-   faithful *mirror* of the command line (prompt + a generic value field); it is
-   correct but adds little beyond the command line. AutoCAD's DYN box is
-   **context-sensitive**: its fields and structure change with the active command,
-   the current step, and the selected object — e.g. CIRCLE shows a radius field with a
-   radius/diameter switch *in the box*; RECTANGLE shows length + width fields with the
-   visual rubber-band; each command surfaces its own helpers/option chips right there.
-   It is not a fixed always-on layout.
-   - **Why parked:** purely UI/UX (no functional gap — every value is already
-     enterable via the command line / the generic DYN field). It needs a per-command
-     *field schema* the DYN box renders (which dovetails with item 4), plus
-     option-keyword chips / a Down-arrow dropdown for the bracketed `[Diameter]`-style
-     options (today they are typed).
-   - **Done looks like:** selecting/typing a command drives the DYN box to show that
-     command's labelled fields + option chips for the current step; editing them
-     submits the same `Command` (no parallel pipeline) — the box becomes a genuine
-     shortcut, not just an echo.
+3. **Context-aware Dynamic Input — on-geometry field tooltips (PARTIALLY DONE
+   2026-06-15)** — AutoCAD's DYN is not one cursor box but **multiple small value
+   tooltips positioned ON the geometry** they describe, plus a free-floating prompt.
+   - **Done (RECTANGLE / LINE / CIRCLE):** on-geometry field tooltips landed —
+     RECTANGLE shows Length (under one edge) + Width (by the other), LINE shows
+     Length + Angle, CIRCLE shows Radius, plus a free-floating prompt label. Each
+     tooltip is **draggable** (remembers an offset for the command), **Tab** cycles
+     focus, and **typing a value locks that dimension** while the cursor drives the
+     other (render-side lock, zero op-log churn). The fields come from a **declarative
+     per-command schema** (`command::dyn_fields`, one switch over `PreviewKind` — a row
+     per command, the PR/grips discipline); typed values submit through the SAME
+     pipeline as the command line (`command::compose_dyn_submit`, shared with the DYN
+     box). Tooltips SUPPLEMENT the cursor box (F12 governs both).
+   - **Still deferred:** the schema for the remaining commands (ARC, POLYLINE,
+     MOVE/ROTATE/SCALE, dimensions, …) — each is a new `dyn_fields` case; **option
+     chips / a Down-arrow dropdown** for the bracketed `[Diameter]`/`[Area/Dimensions/
+     Rotation]`-style keywords *in the box* (today they are typed); and a
+     radius/diameter-style **switch in the box** for CIRCLE.
 4. **A declarative command schema** so each command declares its fields/options
    *once* and gets the command-line prompts, the dialog, and dynamic input for
    free (avoid hand-writing each surface). `DialogSpec` is the seed of this.

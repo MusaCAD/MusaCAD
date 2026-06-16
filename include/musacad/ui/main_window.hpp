@@ -36,6 +36,7 @@ class RibbonBar;
 class ParameterDialog;
 class PropertiesPanel;
 class DynInput;
+class DynFieldTips;
 class FanoutOutput;
 class QtFontEngine;
 
@@ -102,6 +103,11 @@ public:
     /// Real-window self-test: Dynamic Input (toggle, type-at-cursor, exact length,
     /// and THE focus rule -- Delete/typing-guard/Esc still correct with DYN on).
     bool selftest_dyn();
+    /// Real-window capture: drive a RECTANGLE/LINE/CIRCLE rubber-band with DYN on,
+    /// print the anchor->project->tip-geometry diagnostic, and grab the app region to
+    /// `out_png` for eyes-on verification of the on-geometry tooltips. `kind`: 0 REC,
+    /// 1 LINE, 2 CIRCLE. Returns true if the tips landed on their geometry anchors.
+    bool dyn_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
@@ -153,6 +159,11 @@ private:
     void set_dyn_enabled(bool on); ///< F12: enable/disable Dynamic Input (persisted)
     void reposition_dyn(double local_px, double local_py); ///< anchor near the cursor
     void refocus_dyn();            ///< re-acquire DYN field focus after a viewport pick
+    /// Pick the active DYN surface: during a tip-driven rubber-band (RECT/LINE/CIRCLE)
+    /// the on-geometry tooltips take over and the cursor box hides; otherwise (keyword
+    /// entry / idle / commands without tips) the box shows. One place to type per step.
+    void update_dyn_surfaces();
+    [[nodiscard]] bool dyn_tips_active() const; ///< F12 on AND the preview has field tips
 
     // Persistence (UI side: file dialogs + messages; never touches the store).
     void file_new();
@@ -213,8 +224,10 @@ private:
     std::unique_ptr<command::CommandProcessor> processor_;
     RibbonBar* ribbon_ = nullptr;
     ViewportWindow* viewport_ = nullptr;          // owned by the window-container widget
+    QWidget* viewport_container_ = nullptr;       // createWindowContainer host (reliable mapToGlobal)
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
     DynInput* dyn_ = nullptr;                     // cursor-anchored Dynamic Input (F12)
+    DynFieldTips* tips_ = nullptr;                // on-geometry Dynamic Input field tooltips
     QAction* dyn_action_ = nullptr;
     PropertiesPanel* properties_panel_ = nullptr; // owned by its dock
     QDockWidget* properties_dock_ = nullptr;

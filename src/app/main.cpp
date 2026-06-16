@@ -90,6 +90,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // Real-window DYN tooltip capture: MUSACAD_DYN_SHOT="kind|out.png" (kind 0 REC,
+    // 1 LINE, 2 CIRCLE) drives a rubber-band with DYN on, prints the anchor diagnostic,
+    // and grabs the app region for eyes-on verification of the on-geometry tooltips.
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a = qEnvironmentVariable("MUSACAD_DYN_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/dyn_shot.png"));
+            const bool ok = window.dyn_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {
