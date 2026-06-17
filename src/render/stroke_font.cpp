@@ -43,6 +43,7 @@ bool glyph(char c, std::vector<Seg>& out) {
     case '8': out = {A, B, C, D, E, F, G}; return true;
     case '9': out = {A, B, C, D, F, G}; return true;
     case '.': out = {Seg{{0.35, 0.0}, {0.55, 0.0}}}; return true;
+    case '-': out = {G}; return true;
     case 'F': out = {Seg{TL, BL}, A, G}; return true;
     case 'P': out = {Seg{TL, BL}, A, B, G}; return true;
     case 'S': out = {A, F, G, C, D}; return true;

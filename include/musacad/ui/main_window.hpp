@@ -36,7 +36,6 @@ class RibbonBar;
 class ParameterDialog;
 class PropertiesPanel;
 class DynInput;
-class DynFieldTips;
 class FanoutOutput;
 class QtFontEngine;
 
@@ -227,7 +226,6 @@ private:
     QWidget* viewport_container_ = nullptr;       // createWindowContainer host (reliable mapToGlobal)
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
     DynInput* dyn_ = nullptr;                     // cursor-anchored Dynamic Input (F12)
-    DynFieldTips* tips_ = nullptr;                // on-geometry Dynamic Input field tooltips
     QAction* dyn_action_ = nullptr;
     PropertiesPanel* properties_panel_ = nullptr; // owned by its dock
     QDockWidget* properties_dock_ = nullptr;

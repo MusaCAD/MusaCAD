@@ -3,11 +3,26 @@
 
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
 
 namespace musacad::render {
+
+/// One AutoCAD-style Dynamic Input value field drawn ON the canvas (not an OS
+/// window), so it is always glued to the geometry it describes. The renderer
+/// projects `anchor` (world) with the SAME camera as the rubber-band, then draws a
+/// small boxed number there. `focused` marks the active type-into field (brighter +
+/// caret). Canvas rendering replaces the floating tooltip windows, which drifted
+/// off the geometry on multi-monitor / certain window managers.
+struct DynLabel {
+    core::Vec2 anchor{};  ///< world-space anchor on the live geometry (edge midpoint, etc.)
+    core::Vec2 out{};     ///< world-space OUTWARD unit dir; the box is nudged this way (screen)
+                          ///< so it sits just OUTSIDE the edge and fields never overlap
+    std::string text;     ///< value string (digits / '.' / '-'), drawn by the stroke font
+    bool focused = false; ///< the active field: brighter border + a text caret
+};
 
 /// Transient, render-side interaction visuals: the live command preview
 /// (rubber-banding), the selection rubber-band rectangle, and the move/mirror
@@ -33,10 +48,14 @@ struct RenderOverlay {
     core::Vec2 ghost_b{};
     double ghost_param = 0.0;
 
+    /// On-canvas Dynamic Input value fields, anchored to the live geometry.
+    std::vector<DynLabel> dyn_labels;
+
     void clear() noexcept {
         preview_segments.clear();
         rect_mode = 0;
         ghost_mode = 0;
+        dyn_labels.clear();
     }
 };
 

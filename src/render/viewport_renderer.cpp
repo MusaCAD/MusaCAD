@@ -385,6 +385,7 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
     draw_selection_and_interaction(*cmd_, snapshot, view);
     draw_crosshair_and_snap(*cmd_, target.width(), target.height(), snapshot, camera);
     draw_overlay(*cmd_, target.width(), target.height());
+    draw_dyn_labels(*cmd_, target.width(), target.height(), camera);
 
     cmd_->end();
     device_.submit(*cmd_);
@@ -416,6 +417,102 @@ void ViewportRenderer::draw_overlay(GpuCommandBuffer& cmd, int width, int height
     cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
     cmd.draw_instanced(2, static_cast<std::uint32_t>(count));
     ++stats_.draw_calls;
+}
+
+void ViewportRenderer::draw_dyn_labels(GpuCommandBuffer& cmd, int width, int height,
+                                       const Camera2D& camera) {
+    if (overlay_.dyn_labels.empty()) {
+        return;
+    }
+    const double dpr = static_cast<double>(device_pixel_ratio_);
+    const double h = 15.0 * dpr;       // glyph height (device px)
+    const double pad = 6.0 * dpr;      // box padding
+    const double caret_gap = 3.0 * dpr;
+
+    std::vector<core::Vec2> fills;     // box backgrounds (triangles: 6 verts/box)
+    std::vector<core::Vec2> lines;     // unfocused borders + ALL text + caret
+    std::vector<core::Vec2> focus;     // focused box border (brighter)
+
+    for (const DynLabel& label : overlay_.dyn_labels) {
+        const core::Vec2 s = camera.world_to_screen(label.anchor); // device px
+        std::vector<core::Vec2> txt;
+        const double tw = append_text_segments(label.text, {0.0, 0.0}, h, txt);
+        const double bw = tw + 2.0 * pad + (label.focused ? caret_gap + 2.0 * dpr : 0.0);
+        const double bh = h + 2.0 * pad;
+        // Nudge the box OUTWARD from the geometry (along the projected `out` dir) so it
+        // sits just outside the edge and the fields never overlap each other.
+        core::Vec2 c = s;
+        if (label.out.x != 0.0 || label.out.y != 0.0) {
+            const core::Vec2 o = camera.world_to_screen(label.anchor + label.out);
+            const core::Vec2 d = o - s;
+            const double len = core::length(d);
+            if (len > 1e-6) {
+                const core::Vec2 dir{d.x / len, d.y / len};
+                const double push =
+                    0.5 * (std::abs(dir.x) * bw + std::abs(dir.y) * bh) + 8.0 * dpr;
+                c = {s.x + dir.x * push, s.y + dir.y * push};
+            }
+        }
+        const double bx = c.x - bw * 0.5;
+        const double by = c.y - bh * 0.5;
+
+        // Filled dark background (two triangles).
+        fills.push_back({bx, by});
+        fills.push_back({bx + bw, by});
+        fills.push_back({bx + bw, by + bh});
+        fills.push_back({bx, by});
+        fills.push_back({bx + bw, by + bh});
+        fills.push_back({bx, by + bh});
+
+        // Border (brighter when focused).
+        std::vector<core::Vec2>& border = label.focused ? focus : lines;
+        edge(border, {bx, by}, {bx + bw, by});
+        edge(border, {bx + bw, by}, {bx + bw, by + bh});
+        edge(border, {bx + bw, by + bh}, {bx, by + bh});
+        edge(border, {bx, by + bh}, {bx, by});
+
+        // The number text.
+        append_text_segments(label.text, {bx + pad, by + pad}, h, lines);
+
+        // Text caret on the active field.
+        if (label.focused) {
+            const double cx = bx + pad + tw + caret_gap;
+            edge(lines, {cx, by + pad}, {cx, by + pad + h});
+        }
+    }
+
+    const core::Mat3 screen = screen_to_ndc(width, height);
+
+    if (!fills.empty()) {
+        const std::size_t n = pack_positions(fills, scratch_);
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.bind_pipeline(*fill_pipeline_);
+        cmd.set_uniform_mat3("u_transform", screen);
+        cmd.set_uniform_vec4("u_color", 0.16f, 0.17f, 0.20f, 0.96f); // visible dark box fill
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
+        ++stats_.draw_calls;
+    }
+
+    cmd.bind_pipeline(*line_pipeline_);
+    cmd.set_uniform_mat3("u_transform", screen);
+    if (!lines.empty()) {
+        const std::size_t n = pack_segments(lines, scratch_);
+        overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", kOverlayColor[0], kOverlayColor[1], kOverlayColor[2],
+                             kOverlayColor[3]);
+        cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
+    if (!focus.empty()) {
+        const std::size_t n = pack_segments(focus, scratch_);
+        overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", 0.48f, 0.78f, 1.0f, 1.0f); // active-field highlight
+        cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
 }
 
 void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,

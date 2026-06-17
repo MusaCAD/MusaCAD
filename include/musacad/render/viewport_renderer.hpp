@@ -86,6 +86,9 @@ public:
 private:
     void upload_scene(const core::RenderSnapshot& snapshot);
     void draw_overlay(GpuCommandBuffer& cmd, int width, int height);
+    /// On-canvas Dynamic Input value fields: a boxed number at each label's
+    /// world anchor (projected with the scene camera, so always glued to geometry).
+    void draw_dyn_labels(GpuCommandBuffer& cmd, int width, int height, const Camera2D& camera);
     void draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,
                                  const core::RenderSnapshot& snapshot, const Camera2D& camera);
     void draw_selection_and_interaction(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,

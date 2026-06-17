@@ -6,7 +6,6 @@ add_library(musacad_ui STATIC
     layer_dialog.cpp
     properties_panel.cpp
     dyn_input.cpp
-    dyn_field_tips.cpp
     dwg_converter.cpp
     qt_font_engine.cpp
     plot.cpp
@@ -16,7 +15,6 @@ add_library(musacad_ui STATIC
     theme.cpp
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/properties_panel.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/dyn_input.hpp"
-    "${CMAKE_SOURCE_DIR}/include/musacad/ui/dyn_field_tips.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/main_window.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_window.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/command_line_widget.hpp"

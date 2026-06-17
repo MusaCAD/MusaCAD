@@ -3,9 +3,11 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include <QWindow>
@@ -208,14 +210,35 @@ public:
         std::scoped_lock lock(camera_mutex_);
         return camera_.world_to_screen(world);
     }
-    /// Lock one or both rubber-band DOFs to a typed Dynamic-Input value, so the
-    /// preview visibly reflects it while the cursor still drives the unlocked DOF.
-    /// Render-side only (no geometry-thread round-trip, zero op-log churn); nullopt
-    /// clears the lock. Called on the UI thread (same as rebuild_overlay()).
-    void set_dyn_lock(std::optional<double> primary, std::optional<double> secondary) {
-        dyn_lock_primary_ = primary;
-        dyn_lock_secondary_ = secondary;
-        rebuild_overlay();
+    /// Dynamic Input (F12): enable the on-canvas value fields. When on and a
+    /// dimensional rubber-band is active, the viewport draws the value boxes ON the
+    /// geometry (overlay-rendered, never an OS window) and captures dimension
+    /// keystrokes (type without a click; Tab/Enter/Esc).
+    void set_dyn_enabled(bool on);
+    /// True while DYN is on AND a tip-driven rubber-band is active -- the viewport is
+    /// capturing dimension keystrokes for the on-canvas fields.
+    [[nodiscard]] bool dyn_capturing() const;
+    /// Route one key into the on-canvas fields (digits/'.'/'-' edit, Tab/Shift-Tab
+    /// switch, Enter commit, Backspace delete, letters -> option keyword). Returns true
+    /// if consumed. Called from the app-wide event filter so dimension keystrokes reach
+    /// the canvas fields regardless of which widget holds focus (the command line does
+    /// by default). Enter/Backspace on an empty field return false so normal handling
+    /// (e.g. Enter ends a LINE) still works.
+    bool dyn_handle_key(int key, const QString& text);
+
+    // --- test / diagnostic accessors (real-window verification) ---
+    [[nodiscard]] int dyn_field_count() const;           ///< 2 (rect/line), 1 (circle), else 0
+    [[nodiscard]] int dyn_active_slot() const noexcept { return dyn_active_slot_; }
+    [[nodiscard]] std::string dyn_value(int slot) const; ///< typed-or-live shown value
+    [[nodiscard]] bool dyn_typing() const;               ///< capturing AND a buffer non-empty
+    void dyn_test_type(const std::string& chars);        ///< tests: type into the active field
+    void dyn_test_tab();                                 ///< tests: Tab to the next field
+    bool dyn_test_commit();                              ///< tests: Enter (compose + submit)
+    /// Project a world point to viewport screen pixels (device) -- used by tests to
+    /// check a label sits on the rendered geometry.
+    [[nodiscard]] core::Vec2 dyn_project(core::Vec2 world) {
+        std::scoped_lock lock(camera_mutex_);
+        return camera_.world_to_screen(world);
     }
 
 
@@ -258,10 +281,22 @@ private:
     std::mutex overlay_mutex_;
     render::RenderOverlay overlay_; // guarded by overlay_mutex_
 
-    // Dynamic-Input dimension lock (UI thread): a typed field value pins one/both
-    // rubber-band DOFs in the preview; nullopt = that DOF follows the cursor.
-    std::optional<double> dyn_lock_primary_;
-    std::optional<double> dyn_lock_secondary_;
+    // On-canvas Dynamic Input (UI thread). The viewport owns the dimension input:
+    // per-slot typed buffers (Length/Width or Length/Angle or Radius), the active
+    // slot, and the last constrained cursor (for composing on Enter). Labels are
+    // rebuilt into the overlay each frame; a typed value also pins that DOF in the
+    // rubber-band (apply_dyn_lock) so the preview reflects it.
+    bool dyn_enabled_ = false;
+    int dyn_active_slot_ = 0;
+    std::array<std::string, 2> dyn_buf_{};
+    core::Vec2 dyn_cursor_{}; // last constrained cursor (world)
+    [[nodiscard]] bool dyn_dimensional() const; ///< the live preview has on-canvas fields
+    bool dyn_commit();                          ///< Enter: compose + submit; false if nothing typed
+    void dyn_reset() noexcept {
+        dyn_buf_[0].clear();
+        dyn_buf_[1].clear();
+        dyn_active_slot_ = 0;
+    }
 
     // Selection drag state (UI thread).
     bool selecting_ = false;

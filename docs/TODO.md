@@ -172,19 +172,22 @@ untouched (collect-and-submit only).
    keyword, surfaced via the mirrored prompt.
 2. **POLYGON** — no POLYGON command exists yet (build the command + its sides/
    inscribed-circumscribed/radius options).
-3. **Context-aware Dynamic Input — on-geometry field tooltips (PARTIALLY DONE
-   2026-06-15)** — AutoCAD's DYN is not one cursor box but **multiple small value
-   tooltips positioned ON the geometry** they describe, plus a free-floating prompt.
-   - **Done (RECTANGLE / LINE / CIRCLE):** on-geometry field tooltips landed —
-     RECTANGLE shows Length (under one edge) + Width (by the other), LINE shows
-     Length + Angle, CIRCLE shows Radius, plus a free-floating prompt label. Each
-     tooltip is **draggable** (remembers an offset for the command), **Tab** cycles
-     focus, and **typing a value locks that dimension** while the cursor drives the
-     other (render-side lock, zero op-log churn). The fields come from a **declarative
-     per-command schema** (`command::dyn_fields`, one switch over `PreviewKind` — a row
-     per command, the PR/grips discipline); typed values submit through the SAME
-     pipeline as the command line (`command::compose_dyn_submit`, shared with the DYN
-     box). Tooltips SUPPLEMENT the cursor box (F12 governs both).
+3. **Context-aware Dynamic Input — on-geometry value fields (PARTIALLY DONE
+   2026-06-16)** — AutoCAD's DYN is not one cursor box but **value boxes positioned ON
+   the geometry** they describe.
+   - **Done (RECTANGLE / LINE / CIRCLE):** value fields **drawn on the CANVAS** (the GL
+     viewport overlay, NOT OS windows — the first QWidget-tooltip attempt drifted off
+     the geometry on multi-monitor; canvas rendering is glued to the geometry by
+     construction). RECTANGLE shows Length + Width on the two edges, LINE Length +
+     Angle, CIRCLE Radius, each nudged just outside its edge so they never overlap.
+     You **type WITHOUT a click** (the viewport captures dimension keystrokes during the
+     rubber-band), **Tab/Shift-Tab** switch fields, **Enter** commits, **Esc** cancels;
+     a typed value **locks that dimension** while the cursor drives the other
+     (render-side, zero op-log churn). Fields come from the **declarative per-command
+     schema** (`command::dyn_fields`, one switch over `PreviewKind` — a row per command,
+     the PR/grips discipline); typed values submit through the SAME pipeline as the
+     command line (`command::compose_dyn_submit`). The cursor box gives way during the
+     rubber-band and returns for keyword/idle steps (F12 governs both).
    - **Still deferred:** the schema for the remaining commands (ARC, POLYLINE,
      MOVE/ROTATE/SCALE, dimensions, …) — each is a new `dyn_fields` case; **option
      chips / a Down-arrow dropdown** for the bracketed `[Diameter]`/`[Area/Dimensions/

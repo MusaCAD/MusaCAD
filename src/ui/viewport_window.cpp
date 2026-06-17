@@ -40,6 +40,37 @@ std::string overlay_text(double fps, double ms) {
                   static_cast<int>(ms + 0.5));
     return std::string(buf);
 }
+
+// Parse a Dynamic-Input field buffer to a number (nullopt if empty/invalid).
+std::optional<double> dyn_parse(const std::string& s) {
+    if (s.empty() || s == "-" || s == ".") {
+        return std::nullopt;
+    }
+    try {
+        std::size_t used = 0;
+        const double v = std::stod(s, &used);
+        return used == s.size() ? std::optional<double>(v) : std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+// Format a live value for an on-canvas field: up to 4 decimals, no trailing zeros
+// or exponent (the stroke font only has digits / '.' / '-').
+std::string dyn_format(double v) {
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "%.4f", v);
+    std::string s(buf);
+    if (s.find('.') != std::string::npos) {
+        while (s.back() == '0') {
+            s.pop_back();
+        }
+        if (s.back() == '.') {
+            s.pop_back();
+        }
+    }
+    return s;
+}
 } // namespace
 
 ViewportWindow::ViewportWindow(core::GeometryEngine& engine, QWindow* parent)
@@ -577,6 +608,12 @@ int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
 void ViewportWindow::rebuild_overlay() {
     render::RenderOverlay ov;
 
+    // Drop any typed Dynamic-Input value once the command/rubber-band ends, so a new
+    // command never inherits stale field text.
+    if (!dyn_capturing() && (!dyn_buf_[0].empty() || !dyn_buf_[1].empty() || dyn_active_slot_ != 0)) {
+        dyn_reset();
+    }
+
     if (selecting_) {
         const double drag_px = std::abs(cursor_px_x_.load(std::memory_order_relaxed) -
                                         sel_start_screen_.x);
@@ -601,13 +638,20 @@ void ViewportWindow::rebuild_overlay() {
                               snap_y_.load(std::memory_order_relaxed)};
         }
         const core::Vec2 cur = processor_->resolve_pick(raw, snap);
+        dyn_cursor_ = cur; // for composing a typed value on Enter
         Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();
         const auto& pts = pv.points;
-        // A typed Dynamic-Input field pins a dimension: the preview draws to the
-        // locked point while the cursor still drives the unlocked DOF (render-side).
-        const core::Vec2 cur_eff =
-            command::apply_dyn_lock(pv, cur, dyn_lock_primary_, dyn_lock_secondary_);
+        // On-canvas Dynamic Input: a typed field pins that dimension -- the preview
+        // draws to the locked point while the cursor drives the unlocked DOF.
+        const bool dim = dyn_enabled_ && dyn_dimensional();
+        std::optional<double> dyn_prim;
+        std::optional<double> dyn_sec;
+        if (dim) {
+            dyn_prim = dyn_parse(dyn_buf_[0]);
+            dyn_sec = dyn_parse(dyn_buf_[1]);
+        }
+        const core::Vec2 cur_eff = command::apply_dyn_lock(pv, cur, dyn_prim, dyn_sec);
         auto& seg = ov.preview_segments;
         switch (pv.kind) {
         case command::PreviewKind::Segment:
@@ -745,10 +789,177 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::None:
             break;
         }
+
+        // On-canvas Dynamic Input value fields: anchored to the live geometry (drawn
+        // by the renderer with the same camera as the rubber-band, so they never
+        // drift). The shown value is the typed buffer if any, else the live value.
+        if (dim) {
+            const core::Vec2 a = pts.empty() ? core::Vec2{0, 0} : pts[0];
+            const core::Vec2 b = cur_eff;
+            const auto unit = [](core::Vec2 v) -> core::Vec2 {
+                const double l = core::length(v);
+                return l > 1e-9 ? core::Vec2{v.x / l, v.y / l} : core::Vec2{0, 0};
+            };
+            const core::Vec2 rcenter = (a + b) * 0.5;
+            const std::vector<command::DynField> fields = command::dyn_fields(pv, cur_eff);
+            for (const command::DynField& f : fields) {
+                render::DynLabel label;
+                label.anchor = f.anchor;
+                // Push the box OUTWARD so fields never overlap and sit just off the edge.
+                if (pv.kind == command::PreviewKind::Rectangle) {
+                    label.out = unit(f.anchor - rcenter);
+                } else if (pv.kind == command::PreviewKind::Segment) {
+                    label.out = (f.slot == 0) ? unit({-(b.y - a.y), b.x - a.x}) // Length: aside
+                                              : unit(b - a);                    // Angle: ahead
+                } else { // Circle radius: beside the radius line
+                    label.out = unit({-(b.y - a.y), b.x - a.x});
+                }
+                const std::string& buf =
+                    (f.slot >= 0 && f.slot < 2) ? dyn_buf_[static_cast<std::size_t>(f.slot)]
+                                                : std::string{};
+                label.text = buf.empty() ? dyn_format(f.value) : buf;
+                label.focused = (f.slot == dyn_active_slot_);
+                ov.dyn_labels.push_back(std::move(label));
+            }
+        }
     }
 
     std::scoped_lock lock(overlay_mutex_);
     overlay_ = std::move(ov);
+}
+
+// ---------------------------------------------------------------------------
+// On-canvas Dynamic Input (the value fields drawn ON the geometry by the renderer)
+// ---------------------------------------------------------------------------
+bool ViewportWindow::dyn_dimensional() const {
+    if (processor_ == nullptr) {
+        return false;
+    }
+    using command::PreviewKind;
+    const PreviewKind k = processor_->preview().kind;
+    return k == PreviewKind::Segment || k == PreviewKind::Circle || k == PreviewKind::Rectangle;
+}
+
+int ViewportWindow::dyn_field_count() const {
+    if (processor_ == nullptr) {
+        return 0;
+    }
+    using command::PreviewKind;
+    switch (processor_->preview().kind) {
+    case PreviewKind::Rectangle:
+    case PreviewKind::Segment:
+        return 2;
+    case PreviewKind::Circle:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+bool ViewportWindow::dyn_capturing() const {
+    return dyn_enabled_ && processor_ != nullptr && processor_->has_active_command() &&
+           dyn_dimensional();
+}
+
+bool ViewportWindow::dyn_typing() const {
+    return dyn_capturing() && (!dyn_buf_[0].empty() || !dyn_buf_[1].empty());
+}
+
+std::string ViewportWindow::dyn_value(int slot) const {
+    if (slot < 0 || slot >= 2) {
+        return {};
+    }
+    return dyn_buf_[static_cast<std::size_t>(slot)];
+}
+
+void ViewportWindow::set_dyn_enabled(bool on) {
+    dyn_enabled_ = on;
+    if (!on) {
+        dyn_reset();
+    }
+    rebuild_overlay();
+}
+
+bool ViewportWindow::dyn_commit() {
+    if (processor_ == nullptr) {
+        return false;
+    }
+    const std::string line = command::compose_dyn_submit(processor_->preview(), dyn_cursor_,
+                                                         dyn_parse(dyn_buf_[0]),
+                                                         dyn_parse(dyn_buf_[1]));
+    if (line.empty()) {
+        return false;
+    }
+    dyn_reset();
+    processor_->submit_line(line);
+    return true;
+}
+
+void ViewportWindow::dyn_test_type(const std::string& chars) {
+    if (!dyn_capturing()) {
+        return;
+    }
+    dyn_buf_[static_cast<std::size_t>(dyn_active_slot_)] += chars;
+    rebuild_overlay();
+}
+
+void ViewportWindow::dyn_test_tab() {
+    const int n = dyn_field_count();
+    if (n > 1) {
+        dyn_active_slot_ = (dyn_active_slot_ + 1) % n;
+        rebuild_overlay();
+    }
+}
+
+bool ViewportWindow::dyn_test_commit() {
+    return dyn_commit();
+}
+
+// On-canvas Dynamic Input keystroke routing. Returns true if the key was consumed by a
+// canvas field. Called from MainWindow's app-wide event filter (so dimension keystrokes
+// reach the fields even though the command line holds focus) AND from keyPressEvent.
+bool ViewportWindow::dyn_handle_key(int key, const QString& text) {
+    if (!dyn_capturing()) {
+        return false;
+    }
+    if (key == Qt::Key_Tab || key == Qt::Key_Backtab) {
+        const int n = dyn_field_count();
+        if (n <= 1) {
+            return false;
+        }
+        dyn_active_slot_ = (dyn_active_slot_ + (key == Qt::Key_Tab ? 1 : n - 1)) % n;
+        rebuild_overlay();
+        return true;
+    }
+    if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+        return dyn_commit(); // false if nothing typed -> Enter still ends the command
+    }
+    if (key == Qt::Key_Backspace) {
+        std::string& b = dyn_buf_[static_cast<std::size_t>(dyn_active_slot_)];
+        if (b.empty()) {
+            return false;
+        }
+        b.pop_back();
+        rebuild_overlay();
+        return true;
+    }
+    if (key == Qt::Key_Escape || text.isEmpty()) {
+        return false; // Esc -> cancel handled by the caller
+    }
+    const QChar c = text.at(0);
+    if (c.isDigit() || c == QLatin1Char('.') || c == QLatin1Char('-') || c == QLatin1Char(',') ||
+        c == QLatin1Char('@') || c == QLatin1Char('<')) {
+        dyn_buf_[static_cast<std::size_t>(dyn_active_slot_)] += c.toLatin1();
+        rebuild_overlay();
+        return true;
+    }
+    if (c.isLetter()) {
+        // An option keyword (e.g. Area/Dimensions/Rotation, Close/Undo) -> the pipeline.
+        processor_->submit_line(std::string(1, c.toUpper().toLatin1()));
+        dyn_reset();
+        return true;
+    }
+    return false;
 }
 
 void ViewportWindow::keyPressEvent(QKeyEvent* event) {
@@ -756,9 +967,9 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
         QWindow::keyPressEvent(event);
         return;
     }
-    // Delete/Backspace are handled by the application-wide event filter in
-    // MainWindow (so they work regardless of which window holds focus, while
-    // still leaving text-entry keys to the command-line field).
+    if (dyn_handle_key(event->key(), event->text())) {
+        return; // consumed by an on-canvas Dynamic Input field
+    }
     if (event->key() == Qt::Key_Escape) {
         if (plot_picking_) {
             cancel_plot_window_pick(); // re-opens the plot dialog (ok=false)
