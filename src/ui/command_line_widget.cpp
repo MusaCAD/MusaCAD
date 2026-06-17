@@ -162,14 +162,10 @@ void CommandLineWidget::accept_highlighted() {
 void CommandLineWidget::on_return() {
     const QString entry = input_->text();
     append_line(prompt_text_.toStdString() + entry.toStdString()); // echo the typed line
-    if (!entry.isEmpty()) {
-        history_.push_back(entry);
-    }
-    history_index_ = static_cast<int>(history_.size());
     input_->clear();
     hide_suggestions();
     if (processor_) {
-        processor_->submit_line(entry.toStdString());
+        processor_->submit_line(entry.toStdString()); // history is recorded by the processor
     }
 }
 
@@ -209,18 +205,13 @@ bool CommandLineWidget::eventFilter(QObject* watched, QEvent* event) {
 
         switch (key->key()) {
         case Qt::Key_Up:
-            if (!history_.empty()) {
-                history_index_ = std::max(0, history_index_ - 1);
-                input_->setText(history_[static_cast<std::size_t>(history_index_)]);
+            if (processor_ != nullptr) {
+                input_->setText(QString::fromStdString(processor_->history_recall(+1))); // older
             }
             return true;
         case Qt::Key_Down:
-            if (history_index_ < static_cast<int>(history_.size()) - 1) {
-                ++history_index_;
-                input_->setText(history_[static_cast<std::size_t>(history_index_)]);
-            } else {
-                history_index_ = static_cast<int>(history_.size());
-                input_->clear();
+            if (processor_ != nullptr) {
+                input_->setText(QString::fromStdString(processor_->history_recall(-1))); // newer
             }
             return true;
         case Qt::Key_Escape:

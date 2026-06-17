@@ -162,7 +162,6 @@ private:
     /// the on-geometry tooltips take over and the cursor box hides; otherwise (keyword
     /// entry / idle / commands without tips) the box shows. One place to type per step.
     void update_dyn_surfaces();
-    [[nodiscard]] bool dyn_tips_active() const; ///< F12 on AND the preview has field tips
 
     // Persistence (UI side: file dialogs + messages; never touches the store).
     void file_new();
@@ -218,6 +217,7 @@ private:
     void update_title();
 
     std::unique_ptr<QtFontEngine> font_engine_; // before engine_: outlives the geometry thread
+    std::unique_ptr<QtFontEngine> ui_font_engine_; // UI-thread font for the on-canvas command UI
     std::unique_ptr<core::GeometryEngine> engine_;
     std::unique_ptr<FanoutOutput> fanout_; // fans prompt/echo to the command line + DYN
     std::unique_ptr<command::CommandProcessor> processor_;
@@ -225,6 +225,7 @@ private:
     ViewportWindow* viewport_ = nullptr;          // owned by the window-container widget
     QWidget* viewport_container_ = nullptr;       // createWindowContainer host (reliable mapToGlobal)
     CommandLineWidget* command_widget_ = nullptr; // owned by its dock
+    QDockWidget* command_dock_ = nullptr;         // bottom command-line dock (hidden in canvas-only DYN)
     DynInput* dyn_ = nullptr;                     // cursor-anchored Dynamic Input (F12)
     QAction* dyn_action_ = nullptr;
     PropertiesPanel* properties_panel_ = nullptr; // owned by its dock

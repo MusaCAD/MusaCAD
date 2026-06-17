@@ -89,6 +89,9 @@ private:
     /// On-canvas Dynamic Input value fields: a boxed number at each label's
     /// world anchor (projected with the scene camera, so always glued to geometry).
     void draw_dyn_labels(GpuCommandBuffer& cmd, int width, int height, const Camera2D& camera);
+    /// On-canvas command-input surface (entry box + autocomplete + sub-prompts). The
+    /// primitives are pre-laid-out screen-space by the UI thread; this just batches them.
+    void draw_canvas_command(GpuCommandBuffer& cmd, int width, int height);
     void draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,
                                  const core::RenderSnapshot& snapshot, const Camera2D& camera);
     void draw_selection_and_interaction(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,

@@ -24,6 +24,19 @@ struct DynLabel {
     bool focused = false; ///< the active field: brighter border + a text caret
 };
 
+/// The on-canvas command-input surface (idle command entry + autocomplete dropdown,
+/// and mid-command sub-prompts), pre-laid-out by the UI thread into SCREEN-space
+/// primitives so the renderer just draws them -- the TTF glyph triangles come from the
+/// font engine (UI thread), the boxes/borders are plain quads/lines. Bounded draw
+/// calls: one batch each for fills, glyphs and lines regardless of suggestion count.
+struct CanvasCommandUI {
+    bool active = false;
+    std::vector<core::Vec2> box_fills;    ///< panel/box backgrounds (triangles, screen px)
+    std::vector<core::Vec2> hi_fills;     ///< highlighted suggestion row background (triangles)
+    std::vector<core::Vec2> glyph_fills;  ///< TTF glyph triangles for ALL text (one batch)
+    std::vector<core::Vec2> lines;        ///< box borders + caret (line segments)
+};
+
 /// Transient, render-side interaction visuals: the live command preview
 /// (rubber-banding), the selection rubber-band rectangle, and the move/mirror
 /// "ghost" transform applied to the currently-selected geometry. None of this is
@@ -51,11 +64,15 @@ struct RenderOverlay {
     /// On-canvas Dynamic Input value fields, anchored to the live geometry.
     std::vector<DynLabel> dyn_labels;
 
+    /// On-canvas command-input surface (idle entry + autocomplete + sub-prompts).
+    CanvasCommandUI command_ui;
+
     void clear() noexcept {
         preview_segments.clear();
         rect_mode = 0;
         ghost_mode = 0;
         dyn_labels.clear();
+        command_ui = CanvasCommandUI{};
     }
 };
 

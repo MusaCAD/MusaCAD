@@ -75,8 +75,6 @@ private:
     QLabel* prompt_label_ = nullptr;
     QLineEdit* input_ = nullptr;
     QListWidget* suggest_popup_ = nullptr;
-    std::vector<QString> history_;
-    int history_index_ = 0;
     bool enter_picks_first_ = false;
     QString prompt_text_ = QStringLiteral("Command: ");
 };

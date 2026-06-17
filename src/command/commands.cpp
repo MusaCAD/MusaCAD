@@ -327,6 +327,9 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
             pv.fixed_h = width_;
         }
         pv.rect_rotation = rotation_;
+        // Every state except the corner pick is a single scalar/keyword sub-prompt:
+        // with DYN on it shows the at-cursor cell, not the two-field corner drag.
+        pv.scalar_prompt = state_ != State::First && state_ != State::AwaitCorner;
         ctx.set_preview(pv);
     };
     // Commit the closed 4-corner polyline from first_ to `other`, rotated about first_.
@@ -370,16 +373,19 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
     case State::AwaitCorner: {
         if (up == "D" || up == "DIMENSIONS") {
             state_ = State::DimLen;
+            refresh_preview();
             ctx.set_prompt("Specify length for rectangles: ");
             return;
         }
         if (up == "A" || up == "AREA") {
             state_ = State::AreaVal;
+            refresh_preview();
             ctx.set_prompt("Enter area of rectangle in current units: ");
             return;
         }
         if (up == "R" || up == "ROTATION") {
             state_ = State::RotVal;
+            refresh_preview();
             ctx.set_prompt("Specify rotation angle: ");
             return;
         }
@@ -406,6 +412,7 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         }
         length_ = v;
         state_ = State::DimWid;
+        refresh_preview();
         ctx.set_prompt("Specify width for rectangles: ");
         return;
     }
@@ -429,13 +436,15 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         }
         area_ = v;
         state_ = State::AreaSide;
+        refresh_preview();
         ctx.set_prompt("Calculate rectangle dimensions based on [Length/Width] <Length>: ");
         return;
     }
     case State::AreaSide:
         area_by_length_ = !(up == "W" || up == "WIDTH"); // default + L/Length -> length
-        ctx.set_prompt(area_by_length_ ? "Enter rectangle length: " : "Enter rectangle width: ");
         state_ = State::AreaSideVal;
+        refresh_preview();
+        ctx.set_prompt(area_by_length_ ? "Enter rectangle length: " : "Enter rectangle width: ");
         return;
     case State::AreaSideVal: {
         double v = 0.0;

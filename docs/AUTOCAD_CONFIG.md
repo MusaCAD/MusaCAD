@@ -143,6 +143,10 @@ Typed mid-command as option keywords (the same state-machine pattern as CIRCLE's
 | First-corner **Elevation** (`E`) / **Thickness** (`T`) | Z elevation / 3D thickness | Planned (2D engine; Z staged) |
 
 Notes: a non-numeric entry at a value prompt reverts to the plain other-corner pick (you
-are never trapped); Esc cancels. Length/width/area entry mirrors into the Dynamic Input
-box because it mirrors the command line; per-field DYN entry (length/width fields *in* the
-DYN box) is the deferred context-aware DYN-box item in [TODO.md](TODO.md).
+are never trapped); Esc cancels. With Dynamic Input on (the default), each of these steps
+renders on the canvas at the cursor: the `[Area/Dimensions/Rotation]` keyword is typed at
+the other-corner step, then **Length**/**Width**/**Area**/**Rotation** each appear as an
+at-cursor **sub-prompt cell** (driven by `PreviewSpec::scalar_prompt`, distinct from the
+on-geometry Length/Width drag fields), and the size, once fixed, previews as a
+quadrant-flipped rectangle for the final corner pick. The earlier deferred context-aware
+DYN-box item is now closed — see [TODO.md](TODO.md).

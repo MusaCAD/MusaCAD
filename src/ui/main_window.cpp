@@ -163,6 +163,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // it. Null would mean stroke-font only.
     font_engine_ = std::make_unique<QtFontEngine>();
     engine_->set_font_engine(font_engine_.get());
+    // A SEPARATE font engine for the UI thread's on-canvas command text (the geometry
+    // engine's instance is used on the geometry thread; a font face is not shared across
+    // threads).
+    ui_font_engine_ = std::make_unique<QtFontEngine>();
     engine_->start();
     // Normal launch opens an empty Model space. The demo/benchmark scene is only
     // seeded when MUSACAD_DEMO is set (perf harnesses build their own scenes).
@@ -182,6 +186,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     dock->setWidget(command_widget_);
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::BottomDockWidgetArea, dock);
+    command_dock_ = dock; // hidden in canvas-only DYN mode (F12 on); shown classic (F12 off)
 
     // The processor speaks to ONE CommandOutput; a fan-out mirrors prompt/echo to
     // both the bottom command line and the cursor-anchored Dynamic Input.
@@ -192,6 +197,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     processor_->set_grid_spacing(10.0);
     command_widget_->set_processor(processor_.get());
     viewport_->set_processor(processor_.get());
+    viewport_->set_font_engine(ui_font_engine_.get()); // TTF for the on-canvas command UI
     viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
         open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
     });
@@ -538,7 +544,10 @@ void MainWindow::build_status_bar() {
     snap_action_ = make_mode_action(QStringLiteral("SNAP"), Qt::Key_F9, modes_.snap);
     polar_action_ = make_mode_action(QStringLiteral("POLAR"), Qt::Key_F10, modes_.polar);
     // Dynamic Input (F12). Persisted across runs (the only persisted UI toggle).
-    const bool dyn_initial = QSettings().value(QStringLiteral("dyn/enabled"), false).toBool();
+    // Default ON: the app is canvas-only out of the box (on-canvas command entry,
+    // sub-prompts and dimension fields). F12 OFF reverts to the classic bottom
+    // command-line bar -- the toggleable fallback.
+    const bool dyn_initial = QSettings().value(QStringLiteral("dyn/enabled"), true).toBool();
     dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial);
     connect(dyn_action_, &QAction::toggled, this, [this](bool on) { set_dyn_enabled(on); });
 
@@ -676,6 +685,26 @@ void MainWindow::dump_ui() {
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(event);
+        // On-canvas command ENTRY (idle, canvas mode): route command keystrokes to the
+        // canvas entry box + autocomplete BEFORE the bottom command line. Gated on F12
+        // (canvas mode) + idle; yields to the Properties palette. Non-command keys
+        // (Delete with nothing typed, etc.) return false and fall through to the guards.
+        if (viewport_ != nullptr && dyn_action_ != nullptr && dyn_action_->isChecked() &&
+            processor_ != nullptr && !processor_->has_active_command()) {
+            // Only the drawing-focus contexts (the command line, or the viewport itself)
+            // route to the canvas entry -- NEVER a dialog, the Properties palette, or any
+            // other text field (those keep their own keystrokes).
+            QWidget* fw = QApplication::focusWidget();
+            const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
+                                (fw == static_cast<QWidget*>(command_widget_) ||
+                                 command_widget_->isAncestorOf(fw));
+            const bool in_vp = fw == nullptr ||
+                               (viewport_container_ != nullptr &&
+                                (fw == viewport_container_ || viewport_container_->isAncestorOf(fw)));
+            if ((in_cmd || in_vp) && viewport_->cmd_entry_handle_key(ke->key(), ke->text())) {
+                return true;
+            }
+        }
         // On-canvas Dynamic Input: during a dimensional rubber-band, route dimension
         // keystrokes (digits/'.'/'-', Tab, Enter, Backspace, option-keyword letters)
         // to the viewport's canvas fields BEFORE the command line (which holds keyboard
@@ -690,6 +719,24 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
                 return true; // consumed by an on-canvas field
             }
         }
+        // On-canvas SUB-PROMPT (active command, not a rubber-band): route value/keyword
+        // keystrokes (FILLET radius, CHAMFER distances, option letters) to the at-cursor
+        // prompt cell. A command is RUNNING, so -- like the dimensional field path above --
+        // it owns the keystrokes wherever drawing focus happens to sit (viewport, a ribbon
+        // button, a tab). The only contexts that keep their own keys are the Properties
+        // palette and a genuine text editor (a dialog field). Esc / empty-Backspace fall
+        // through.
+        if (viewport_ != nullptr && processor_ != nullptr && viewport_->sub_prompt_active()) {
+            QWidget* fw = QApplication::focusWidget();
+            const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
+                                  properties_dock_->isAncestorOf(fw);
+            const bool in_text_input = qobject_cast<QLineEdit*>(fw) != nullptr ||
+                                       qobject_cast<QPlainTextEdit*>(fw) != nullptr;
+            if (!in_props && !in_text_input &&
+                viewport_->sub_prompt_handle_key(ke->key(), ke->text())) {
+                return true;
+            }
+        }
         if (ke->key() == Qt::Key_Delete || ke->key() == Qt::Key_Backspace) {
             // Block only when the user is actively editing the command-line field
             // (focused AND non-empty). An empty/idle command line -- which is the
@@ -700,6 +747,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             // blocks erase-selection ONLY when actually typing (focused + non-empty);
             // an empty focused DYN field still lets Delete erase the selection.
             const bool dyn_typing = dyn_ != nullptr && dyn_->is_typing();
+            // Canvas-mode equivalent: an open on-canvas command-entry box is "actively
+            // typing a command" -- Delete (Backspace is consumed by the entry itself)
+            // must edit the command, never erase the selection underneath.
+            const bool canvas_typing = viewport_ != nullptr && viewport_->cmd_entry_active();
             // ...but also never hijack the key away from a focused text editor or a
             // Properties-palette field (else Backspace while editing e.g. text height
             // would erase the selected entity instead of a digit).
@@ -717,8 +768,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
                                         qobject_cast<QPlainTextEdit*>(fw) != nullptr);
             const bool in_properties = properties_dock_ != nullptr && fw != nullptr &&
                                        properties_dock_->isAncestorOf(fw);
-            if (!typing && !dyn_typing && !in_text_input && !in_properties && processor_ != nullptr &&
-                viewport_ != nullptr && !processor_->has_active_command() &&
+            if (!typing && !dyn_typing && !canvas_typing && !in_text_input && !in_properties &&
+                processor_ != nullptr && viewport_ != nullptr && !processor_->has_active_command() &&
                 viewport_->selection_count() > 0) {
                 processor_->delete_selection();
                 return true; // consume: erased the selection
@@ -1107,15 +1158,6 @@ void MainWindow::sync_properties_panel() {
                                    viewport_->current_layer());
 }
 
-bool MainWindow::dyn_tips_active() const {
-    if (dyn_action_ == nullptr || !dyn_action_->isChecked() || processor_ == nullptr) {
-        return false;
-    }
-    using command::PreviewKind;
-    const PreviewKind k = processor_->preview().kind;
-    return k == PreviewKind::Segment || k == PreviewKind::Circle || k == PreviewKind::Rectangle;
-}
-
 void MainWindow::update_dyn_surfaces() {
     if (dyn_ == nullptr || dyn_action_ == nullptr) {
         return;
@@ -1124,27 +1166,23 @@ void MainWindow::update_dyn_surfaces() {
         dyn_->hide();
         return;
     }
-    // During a tip-driven rubber-band the on-CANVAS value fields ARE the surface; the
-    // cursor box steps aside (no double entry). It returns for keyword/idle steps.
-    if (dyn_tips_active()) {
-        if (dyn_->isVisible()) {
-            dyn_->hide();
-        }
-        // AutoCAD's dynamic input: typing flows straight into the active field, no
-        // click. The viewport renders + captures the fields, so give IT keyboard focus
-        // (unless the user is editing the Properties palette or actively typing a
-        // keyword in the command line -- the empty default-focused command line yields).
-        QWidget* fw = QApplication::focusWidget();
-        const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
-                              properties_dock_->isAncestorOf(fw);
-        const bool cmd_typing = command_widget_ != nullptr && command_widget_->is_typing();
-        const bool vp_focused = viewport_container_ != nullptr && viewport_container_->hasFocus();
-        if (viewport_container_ != nullptr && !in_props && !cmd_typing && !vp_focused) {
-            viewport_container_->setFocus(Qt::OtherFocusReason);
-        }
-    } else if (!dyn_->isVisible()) {
-        dyn_->show();
-        dyn_->raise();
+    // Canvas-only mode: the on-canvas surfaces -- command entry (idle), sub-prompt
+    // cells (FILLET/CHAMFER/option keywords) and on-geometry dimension fields -- are
+    // the single input surface. The legacy cursor box is retired so there is never a
+    // duplicate place to type.
+    if (dyn_->isVisible()) {
+        dyn_->hide();
+    }
+    // AutoCAD's dynamic input: typing flows straight into the active surface, no click.
+    // The viewport renders + captures keys, so give IT keyboard focus -- unless the
+    // user is editing the Properties palette or actively typing in the command line.
+    QWidget* fw = QApplication::focusWidget();
+    const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
+                          properties_dock_->isAncestorOf(fw);
+    const bool cmd_typing = command_widget_ != nullptr && command_widget_->is_typing();
+    const bool vp_focused = viewport_container_ != nullptr && viewport_container_->hasFocus();
+    if (viewport_container_ != nullptr && !in_props && !cmd_typing && !vp_focused) {
+        viewport_container_->setFocus(Qt::OtherFocusReason);
     }
 }
 
@@ -1154,13 +1192,25 @@ void MainWindow::set_dyn_enabled(bool on) {
     }
     QSettings().setValue(QStringLiteral("dyn/enabled"), on);
     if (viewport_ != nullptr) {
-        viewport_->set_dyn_enabled(on); // the on-canvas value fields follow the F12 toggle
+        viewport_->set_dyn_enabled(on); // the on-canvas surfaces follow the F12 toggle
     }
     if (on) {
-        update_dyn_surfaces(); // show the box unless a tip-driven rubber-band is active
+        // Canvas-only mode: the on-canvas surfaces (command entry, sub-prompts,
+        // dimension fields) ARE the input; the bottom command-line bar steps aside so
+        // there is exactly one place to type. State is untouched -- it lives in the
+        // CommandProcessor (prompt + history), so hiding the bar loses nothing.
+        if (command_dock_ != nullptr) {
+            command_dock_->hide();
+        }
+        update_dyn_surfaces(); // route keys to the viewport; retire the legacy cursor box
         refocus_dyn();
     } else {
+        // Classic mode: the bottom command-line bar is the input surface again. The
+        // no-stuck fallback -- F12 (or the status-bar DYN button) always brings it back.
         dyn_->hide();
+        if (command_dock_ != nullptr) {
+            command_dock_->show();
+        }
         if (command_widget_ != nullptr) {
             command_widget_->focus_input(); // keys go back to the bottom command line
         }
@@ -1188,32 +1238,18 @@ void MainWindow::refocus_dyn() {
         if (dyn_ == nullptr || !dyn_action_->isChecked()) {
             return;
         }
-        if (dyn_tips_active()) {
-            dyn_->hide(); // the on-canvas value fields are the surface, not the cursor box
-            // Give the viewport keyboard focus so dimension keystrokes flow into the
-            // on-canvas fields without a click. Yield to the Properties palette and an
-            // actively-typed command line.
-            QWidget* fwd = QApplication::focusWidget();
-            const bool in_props_d = properties_dock_ != nullptr && fwd != nullptr &&
-                                    properties_dock_->isAncestorOf(fwd);
-            const bool cmd_typing_d = command_widget_ != nullptr && command_widget_->is_typing();
-            if (viewport_container_ != nullptr && !in_props_d && !cmd_typing_d &&
-                !viewport_container_->hasFocus()) {
-                viewport_container_->setFocus(Qt::OtherFocusReason);
-            }
-            return;
-        }
-        QWidget* fw = QApplication::focusWidget();
-        const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
-                            (fw == static_cast<QWidget*>(command_widget_) ||
-                             command_widget_->isAncestorOf(fw));
-        const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
-                              properties_dock_->isAncestorOf(fw);
-        if (!in_cmd && !in_props) {
-            dyn_->show();
-            dyn_->raise();
-            dyn_->activateWindow();
-            dyn_->focus_field();
+        // Canvas-only mode: the on-canvas surfaces are the input; the legacy cursor box
+        // stays hidden. Give the viewport keyboard focus so keystrokes flow into the
+        // active surface without a click -- yielding to the Properties palette and an
+        // actively-typed command line.
+        dyn_->hide();
+        QWidget* fwd = QApplication::focusWidget();
+        const bool in_props_d = properties_dock_ != nullptr && fwd != nullptr &&
+                                properties_dock_->isAncestorOf(fwd);
+        const bool cmd_typing_d = command_widget_ != nullptr && command_widget_->is_typing();
+        if (viewport_container_ != nullptr && !in_props_d && !cmd_typing_d &&
+            !viewport_container_->hasFocus()) {
+            viewport_container_->setFocus(Qt::OtherFocusReason);
         }
     });
 }
@@ -1874,56 +1910,71 @@ bool MainWindow::selftest_dyn() {
         }
         return false;
     };
-    const auto send_key = [](int key) {
+    // A real key event to whoever holds focus -- traverses the app event filter, the
+    // routing path the canvas surfaces actually use in production.
+    const auto send_key = [](int key, const QString& t = QString()) {
         QWidget* target = QApplication::focusWidget();
-        QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier);
+        QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier, t);
         QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
                                                   : static_cast<QObject*>(QApplication::instance()),
                                 &ev);
     };
+    // Give the viewport keyboard focus (canvas mode: it captures the keystrokes).
+    const auto focus_vp = [this] {
+        if (viewport_container_ != nullptr) {
+            viewport_container_->setFocus(Qt::OtherFocusReason);
+        }
+        QCoreApplication::processEvents();
+    };
     bool all = true;
     const bool saved_pref = QSettings().value(QStringLiteral("dyn/enabled"), false).toBool();
 
-    // (1) F12 toggle on -> the surface shows and the state persists.
+    // (1) F12 on -> canvas-only mode: the bottom command-line bar hides (the on-canvas
+    // surfaces are the input) and the preference persists.
     dyn_action_->setChecked(true);
-    const bool on_ok = pump([this] { return dyn_->isVisible(); }) &&
-                       QSettings().value(QStringLiteral("dyn/enabled")).toBool();
-    std::printf("[selftest] DYN F12 toggle on + persisted: %s\n", on_ok ? "PASS" : "FAIL");
+    const bool on_ok =
+        pump([this] { return command_dock_ != nullptr && command_dock_->isHidden(); }) &&
+        QSettings().value(QStringLiteral("dyn/enabled")).toBool();
+    std::printf("[selftest] DYN F12 on -> canvas-only (bottom bar hidden) + persisted: %s\n",
+                on_ok ? "PASS" : "FAIL");
 
     engine_->submit(core::NewDocumentCommand{});
     pump([this] { return viewport_->line_vertex_count() == 0; });
 
-    // (1b) Autocomplete at the cursor: typing a partial command shows the SAME Ph6
-    // suggestion list, anchored to the DYN field. "C" must include CIRCLE.
-    dyn_->focus_field();
-    QCoreApplication::processEvents();
-    dyn_->test_set_primary("C");
-    const bool sugg_ok = pump([this] { return dyn_->suggestions_visible() && dyn_->suggestion_count() > 0; });
-    dyn_->test_set_primary(""); // clear -> popup hides
-    pump([this] { return !dyn_->suggestions_visible(); });
-    std::printf("[selftest] DYN autocomplete shows registry suggestions at cursor: %s\n",
+    // (1b) Autocomplete on canvas: typing a partial command opens the entry box and the
+    // SAME Ph6 suggestion list from the registry. "C" must yield suggestions.
+    viewport_->cmd_entry_handle_key(Qt::Key_C, QStringLiteral("C"));
+    const bool sugg_ok =
+        pump([this] { return viewport_->cmd_entry_active() && viewport_->cmd_suggestion_count() > 0; });
+    viewport_->cmd_entry_handle_key(Qt::Key_Escape, QString()); // clear -> entry closes
+    pump([this] { return !viewport_->cmd_entry_active(); });
+    std::printf("[selftest] DYN canvas autocomplete shows registry suggestions: %s\n",
                 sugg_ok ? "PASS" : "FAIL");
     all = all && sugg_ok;
 
-    // (2) Start LINE by typing at the cursor surface; prompt mirrors live state.
-    dyn_->test_set_primary("LINE");
-    dyn_->test_submit();
+    // (2) Start LINE by typing into the canvas entry box; Enter runs it.
+    for (QChar ch : QStringLiteral("LINE")) {
+        viewport_->cmd_entry_handle_key(0, ch);
+    }
+    viewport_->cmd_entry_handle_key(Qt::Key_Return, QString());
     const bool start_ok = pump([this] { return processor_->has_active_command(); });
-    const bool prompt_ok =
-        pump([this] { const std::string p = dyn_->prompt_text(); return !p.empty() && p != "Command:"; });
-    std::printf("[selftest] DYN starts a command at the cursor + mirrors prompt: %s\n",
+    const bool prompt_ok = pump([this] {
+        const std::string p = processor_->current_prompt();
+        return !p.empty() && p != "Command: ";
+    });
+    std::printf("[selftest] DYN canvas entry starts a command + processor prompt advances: %s\n",
                 (start_ok && prompt_ok) ? "PASS" : "FAIL");
 
-    // (3) First point via the DYN box (keyword/idle surface). Once the rubber-band is
-    // live, the on-CANVAS value fields take over and the cursor box HIDES: there is one
-    // place to type. The viewport captures dimension keystrokes (no click) + Tab.
-    dyn_->test_set_primary("0,0");
-    dyn_->test_submit();
+    // (3) First point via the at-cursor SUB-PROMPT cell. Once the rubber-band is live the
+    // on-canvas value FIELDS take over: there is one place to type. The viewport captures
+    // dimension keystrokes (no click) + Tab through the shared compose pipeline.
+    for (QChar ch : QStringLiteral("0,0")) {
+        viewport_->sub_prompt_handle_key(0, ch);
+    }
+    viewport_->sub_prompt_handle_key(Qt::Key_Return, QString());
     const bool tips_took_over = pump([this] {
-        return viewport_->dyn_field_count() == 2 && viewport_->dyn_capturing() && !dyn_->isVisible();
+        return viewport_->dyn_field_count() == 2 && viewport_->dyn_capturing();
     });
-    // Type an EXACT length into the active (Length) field, Tab to Angle, set 0, commit
-    // -- all through the viewport's on-canvas capture + the shared compose pipeline.
     viewport_->dyn_test_type("50"); // Length
     const bool tab_ok = (viewport_->dyn_active_slot() == 0);
     viewport_->dyn_test_tab();      // -> Angle
@@ -1935,14 +1986,14 @@ bool MainWindow::selftest_dyn() {
         return viewport_->line_vertex_count() == 2 && viewport_->content_bounds(mn, mx) &&
                std::abs((mx.x - mn.x) - 50.0) < 0.01 && std::abs(mx.y - mn.y) < 0.01;
     });
-    std::printf("[selftest] DYN canvas fields take over (box hidden + 2 fields=%d) + Tab=%d + "
+    std::printf("[selftest] DYN sub-prompt point -> canvas fields take over (2 fields=%d) + Tab=%d + "
                 "exact-length-typed-no-click=%d: %s\n",
                 tips_took_over ? 1 : 0, (tab_ok && tabbed) ? 1 : 0, exact_ok ? 1 : 0,
                 (tips_took_over && exact_ok) ? "PASS" : "FAIL");
     all = all && on_ok && start_ok && prompt_ok && tips_took_over && exact_ok;
 
-    // (4) THE FOCUS CHECK -- with DYN on, the prior gestures still work. First end
-    // the still-active LINE chain (a command being active would block erase-select).
+    // (4) THE FOCUS CHECK -- with DYN on (canvas mode), the prior gestures still work.
+    // First end the still-active LINE chain (an active command would block erase-select).
     processor_->cancel();
     pump([this] { return !processor_->has_active_command(); });
     engine_->submit(core::NewDocumentCommand{});
@@ -1952,44 +2003,39 @@ bool MainWindow::selftest_dyn() {
     engine_->submit(core::SelectAllCommand{});
     pump([this] { return viewport_->selection_count() == 1; });
 
-    const auto settle_dyn_focus = [&] {
-        dyn_->show();
-        dyn_->raise();
-        dyn_->activateWindow();
-        dyn_->focus_field();
-        for (int i = 0; i < 80 && !dyn_->field_has_focus(); ++i) {
-            QCoreApplication::processEvents();
-            dyn_->activateWindow();
-            dyn_->focus_field();
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-    };
-
-    // 4a. Delete with an EMPTY focused DYN field still erases the selection.
-    dyn_->test_set_primary("");
-    settle_dyn_focus();
+    // 4a. Delete with NO canvas entry open still erases the selection (viewport focused).
+    viewport_->cmd_entry_handle_key(Qt::Key_Escape, QString()); // ensure entry closed
+    focus_vp();
     send_key(Qt::Key_Delete);
     const bool del_ok = pump([this] { return viewport_->selection_count() == 0; });
 
-    // 4b. Backspace WHILE typing in DYN must NOT erase the selection.
+    // 4b. Backspace WHILE typing in the canvas entry edits the command, NOT the selection.
     engine_->submit(AddLineCommand{Vec2{0, 5}, Vec2{20, 5}, 2});
     pump([this] { return viewport_->line_vertex_count() == 2; });
     engine_->submit(core::SelectAllCommand{});
     pump([this] { return viewport_->selection_count() == 1; });
-    dyn_->test_set_primary("5"); // now "typing"
-    settle_dyn_focus();
-    send_key(Qt::Key_Backspace);
+    focus_vp();
+    send_key(Qt::Key_R, QStringLiteral("R")); // open the entry: now "typing"
+    send_key(Qt::Key_E, QStringLiteral("E"));
+    pump([this] { return viewport_->cmd_entry_active(); });
+    send_key(Qt::Key_Backspace); // consumed by the entry -> "R"; selection untouched
     QCoreApplication::processEvents();
     const bool guard_ok = !pump([this] { return viewport_->selection_count() == 0; }); // stays selected
+    viewport_->cmd_entry_handle_key(Qt::Key_Escape, QString());
 
-    // 4c. Esc from the DYN field cancels (routes to the viewport escape handler).
-    dyn_->test_set_primary("");
+    // 4c. Esc cancels the active command (routes to the viewport escape handler). The
+    // sub-prompt handler returns false on Esc by design (the viewport cancels), so the
+    // key must reach the viewport window itself -- in the real app it holds focus; here
+    // post it straight to the viewport so the assertion exercises the same handler.
     engine_->submit(core::ClearSelectionCommand{});
     pump([this] { return viewport_->selection_count() == 0; });
     processor_->submit_line("LINE");
     pump([this] { return processor_->has_active_command(); });
-    settle_dyn_focus();
-    send_key(Qt::Key_Escape);
+    focus_vp();
+    {
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(viewport_, &esc);
+    }
     const bool esc_ok = pump([this] { return !processor_->has_active_command(); });
     std::printf("[selftest] DYN focus rule: Delete-erase(empty)=%d typing-guard=%d Esc=%d\n",
                 del_ok, guard_ok, esc_ok);
@@ -2021,6 +2067,220 @@ bool MainWindow::dyn_shot(int kind, const std::string& out_png) {
     pump(200);
     dyn_action_->setChecked(true); // F12: enable DYN box + on-geometry tooltips
     pump(150);
+
+    // kind 6 = F12 OFF (classic: bottom command-line bar visible), kind 7 = F12 ON
+    // (canvas-only: bottom bar hidden, on-canvas command entry is the surface). Proves
+    // the Part-3 toggle + the no-stuck fallback (the bar always returns on F12 off).
+    if (kind == 6 || kind == 7) {
+        const bool canvas = (kind == 7);
+        dyn_action_->setChecked(canvas);
+        pump(200);
+        const bool bar_visible = command_dock_ != nullptr && command_dock_->isVisible();
+        const auto send_key = [](int key, const QString& t) {
+            QWidget* target = QApplication::focusWidget();
+            QKeyEvent ke(QEvent::KeyPress, key, Qt::NoModifier, t);
+            QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
+                                                      : static_cast<QObject*>(QApplication::instance()),
+                                    &ke);
+        };
+        if (canvas) {
+            // Canvas-only: type "REC" into the on-canvas entry box (the bar is gone).
+            activateWindow();
+            if (viewport_container_ != nullptr) {
+                viewport_container_->setFocus(Qt::OtherFocusReason);
+            }
+            pump(60);
+            send_key(Qt::Key_R, "R");
+            send_key(Qt::Key_E, "E");
+            send_key(Qt::Key_C, "C");
+            pump(120);
+        } else if (command_widget_ != nullptr) {
+            // Classic: focus the bottom bar so the screenshot shows the active surface.
+            command_widget_->focus_input();
+            pump(60);
+        }
+        const QRect mfr6 = frameGeometry();
+        std::printf("[dyn_shot] kind=%d F12=%s bottom-bar-visible=%d canvas-entry-active=%d "
+                    "main=0x%lx frameG=(%d,%d %dx%d)\n",
+                    kind, canvas ? "ON" : "OFF", bar_visible ? 1 : 0,
+                    viewport_->cmd_entry_active() ? 1 : 0, static_cast<unsigned long>(winId()),
+                    mfr6.x(), mfr6.y(), mfr6.width(), mfr6.height());
+        std::fflush(stdout);
+        if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+            std::printf("[dyn_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                        static_cast<unsigned long>(winId()), out_png.c_str());
+            std::fflush(stdout);
+            pump(12000);
+        }
+        // F12 ON expects the bar hidden; F12 OFF expects it visible.
+        const bool ok6 = canvas ? !bar_visible : bar_visible;
+        dyn_action_->setChecked(false);
+        return ok6;
+    }
+
+    // kind 8: RECTANGLE Dimensions option on canvas -- after the first corner, type the
+    // "D" keyword (routed by the on-geometry field path), then the length + width as
+    // at-cursor SUB-PROMPT cells (the scalar_prompt flag flips them off the 2-field drag).
+    if (kind == 8) {
+        const auto send_key = [](int key, const QString& t) {
+            QWidget* target = QApplication::focusWidget();
+            QKeyEvent ke(QEvent::KeyPress, key, Qt::NoModifier, t);
+            QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
+                                                      : static_cast<QObject*>(QApplication::instance()),
+                                    &ke);
+        };
+        activateWindow();
+        if (viewport_container_ != nullptr) {
+            viewport_container_->setFocus(Qt::OtherFocusReason);
+        }
+        pump(60);
+        processor_->submit_line("REC");
+        pump(80);
+        processor_->submit_line("0,0"); // first corner -> AwaitCorner (2-field drag)
+        pump(120);
+        const bool drag_fields = viewport_->dyn_capturing() && viewport_->dyn_field_count() == 2;
+        send_key(Qt::Key_D, "D"); // Dimensions keyword (option-letter routing)
+        pump(120);
+        const bool sub_len = viewport_->sub_prompt_active();
+        const std::string plen = processor_->current_prompt();
+        send_key(Qt::Key_5, "5");
+        send_key(Qt::Key_0, "0");
+        pump(60);
+        const bool typed_len = viewport_->sub_prompt_value() == "50";
+        std::printf("[dyn_shot] kind=8 corner-drag-fields=%d Dim-keyword->sub-prompt=%d prompt='%s' "
+                    "typed-len=%d value='%s' main=0x%lx frameG=(%d,%d %dx%d)\n",
+                    drag_fields ? 1 : 0, sub_len ? 1 : 0, plen.c_str(), typed_len ? 1 : 0,
+                    viewport_->sub_prompt_value().c_str(), static_cast<unsigned long>(winId()),
+                    frameGeometry().x(), frameGeometry().y(), frameGeometry().width(),
+                    frameGeometry().height());
+        std::fflush(stdout);
+        if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+            std::printf("[dyn_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                        static_cast<unsigned long>(winId()), out_png.c_str());
+            std::fflush(stdout);
+            pump(12000);
+        }
+        send_key(Qt::Key_Enter, QStringLiteral("\r")); // commit length -> width sub-prompt
+        pump(120);
+        const std::string pwid = processor_->current_prompt();
+        const bool to_width = pwid != plen && viewport_->sub_prompt_active();
+        send_key(Qt::Key_3, "3");
+        send_key(Qt::Key_0, "0");
+        pump(40);
+        const bool typed_wid = viewport_->sub_prompt_value() == "30";
+        send_key(Qt::Key_Enter, QStringLiteral("\r")); // commit width -> fixed-size corner pick
+        pump(120);
+        const bool back_to_drag = viewport_->dyn_capturing() && viewport_->dyn_field_count() == 2;
+        std::printf("[dyn_shot] kind=8 length->width prompt='%s' to-width=%d typed-wid=%d "
+                    "back-to-fixed-corner=%d\n",
+                    pwid.c_str(), to_width ? 1 : 0, typed_wid ? 1 : 0, back_to_drag ? 1 : 0);
+        std::fflush(stdout);
+        dyn_action_->setChecked(false);
+        return drag_fields && sub_len && typed_len && to_width && typed_wid && back_to_drag;
+    }
+
+    // kind 3: idle command ENTRY -- type "REC" via real key events to the focused
+    // command line; the app event filter must route them to the canvas entry box.
+    if (kind == 3) {
+        const auto send_key = [](int key, const QString& t) {
+            QWidget* target = QApplication::focusWidget();
+            QKeyEvent ke(QEvent::KeyPress, key, Qt::NoModifier, t);
+            QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
+                                                      : static_cast<QObject*>(QApplication::instance()),
+                                    &ke);
+        };
+        // Focus a drawing context (the viewport) -- as if the user clicked the canvas --
+        // so the routing guard passes deterministically in the automated run.
+        activateWindow();
+        if (viewport_container_ != nullptr) {
+            viewport_container_->setFocus(Qt::OtherFocusReason);
+        }
+        pump(60);
+        QWidget* fw3 = QApplication::focusWidget();
+        const bool cmd_focused = viewport_container_ != nullptr && fw3 != nullptr &&
+                                 (fw3 == viewport_container_ || viewport_container_->isAncestorOf(fw3));
+        send_key(Qt::Key_R, "R");
+        send_key(Qt::Key_E, "E");
+        send_key(Qt::Key_C, "C");
+        pump(120);
+        const QRect mfr3 = frameGeometry();
+        std::printf("[dyn_shot] kind=3 cmd-line-focused=%d canvas-entry-active=%d entry='%s' "
+                    "suggestions=%d main=0x%lx frameG=(%d,%d %dx%d)\n",
+                    cmd_focused ? 1 : 0, viewport_->cmd_entry_active() ? 1 : 0,
+                    viewport_->cmd_entry_text().c_str(), viewport_->cmd_suggestion_count(),
+                    static_cast<unsigned long>(winId()), mfr3.x(), mfr3.y(), mfr3.width(),
+                    mfr3.height());
+        std::fflush(stdout);
+        if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+            std::printf("[dyn_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                        static_cast<unsigned long>(winId()), out_png.c_str());
+            std::fflush(stdout);
+            pump(12000);
+        }
+        const bool shown = viewport_->cmd_entry_active() && viewport_->cmd_suggestion_count() > 0;
+        // Enter runs the typed command via the same pipeline (Ph6 behaviour on canvas).
+        send_key(Qt::Key_Return, QStringLiteral("\r"));
+        pump(150);
+        const bool ran = processor_->has_active_command();
+        const bool cleared = !viewport_->cmd_entry_active();
+        std::printf("[dyn_shot] kind=3 Enter-runs-command=%d (active='%s') entry-cleared=%d\n",
+                    ran ? 1 : 0, processor_->last_command().c_str(), cleared ? 1 : 0);
+        std::fflush(stdout);
+        dyn_action_->setChecked(false);
+        return shown && ran && cleared;
+    }
+
+    // kind 4 = FILLET, kind 5 = CHAMFER: drive the mid-command sub-prompts on canvas.
+    if (kind == 4 || kind == 5) {
+        const auto send_key = [](int key, const QString& t) {
+            QWidget* target = QApplication::focusWidget();
+            QKeyEvent ke(QEvent::KeyPress, key, Qt::NoModifier, t);
+            QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
+                                                      : static_cast<QObject*>(QApplication::instance()),
+                                    &ke);
+        };
+        activateWindow();
+        if (viewport_container_ != nullptr) {
+            viewport_container_->setFocus(Qt::OtherFocusReason);
+        }
+        pump(60);
+        processor_->submit_line(kind == 4 ? "FILLET" : "CHAMFER");
+        pump(120);
+        const bool sub1 = viewport_->sub_prompt_active();
+        const std::string p1 = processor_->current_prompt();
+        // Type the first value via real keys (routed by the app filter to the canvas).
+        send_key(Qt::Key_3, "3");
+        pump(60);
+        const bool typed1 = viewport_->sub_prompt_value() == "3";
+        std::printf("[dyn_shot] kind=%d sub-prompt-active=%d prompt1='%s' typed1=%d value='%s'\n",
+                    kind, sub1 ? 1 : 0, p1.c_str(), typed1 ? 1 : 0,
+                    viewport_->sub_prompt_value().c_str());
+        std::fflush(stdout);
+        if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+            std::printf("[dyn_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                        static_cast<unsigned long>(winId()), out_png.c_str());
+            std::fflush(stdout);
+            pump(12000);
+        }
+        send_key(Qt::Key_Enter, QStringLiteral("\r")); // commit first value -> next step
+        pump(120);
+        const std::string p2 = processor_->current_prompt();
+        const bool advanced = p2 != p1;
+        // CHAMFER: a second distance sub-prompt; type it too.
+        bool typed2 = true;
+        if (kind == 5) {
+            send_key(Qt::Key_3, "3");
+            pump(60);
+            typed2 = viewport_->sub_prompt_value() == "3";
+            send_key(Qt::Key_Enter, QStringLiteral("\r"));
+            pump(120);
+        }
+        std::printf("[dyn_shot] kind=%d after-Enter prompt2='%s' advanced=%d typed2=%d\n", kind,
+                    p2.c_str(), advanced ? 1 : 0, typed2 ? 1 : 0);
+        std::fflush(stdout);
+        dyn_action_->setChecked(false);
+        return sub1 && typed1 && advanced && typed2;
+    }
 
     // Start the command and drop the first point (world origin = viewport centre).
     const char* cmd = (kind == 1) ? "LINE" : (kind == 2) ? "CIRCLE" : "REC";

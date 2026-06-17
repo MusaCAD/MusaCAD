@@ -14,6 +14,7 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/command/dyn_fields.hpp"
+#include "musacad/core/font_engine.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -70,6 +71,18 @@ std::string dyn_format(double v) {
         }
     }
     return s;
+}
+
+// Screen-space box helpers for the on-canvas command surfaces (filled quad / outline).
+void ui_quad(std::vector<core::Vec2>& v, double x, double y, double w, double h) {
+    v.push_back({x, y});     v.push_back({x + w, y});     v.push_back({x + w, y + h});
+    v.push_back({x, y});     v.push_back({x + w, y + h}); v.push_back({x, y + h});
+}
+void ui_outline(std::vector<core::Vec2>& v, double x, double y, double w, double h) {
+    v.push_back({x, y});        v.push_back({x + w, y});
+    v.push_back({x + w, y});    v.push_back({x + w, y + h});
+    v.push_back({x + w, y + h});v.push_back({x, y + h});
+    v.push_back({x, y + h});    v.push_back({x, y});
 }
 } // namespace
 
@@ -824,6 +837,17 @@ void ViewportWindow::rebuild_overlay() {
         }
     }
 
+    // On-canvas command input: idle entry + autocomplete, OR the mid-command sub-prompt
+    // cell (FILLET radius, CHAMFER distances, option keywords) -- one primitive, two
+    // anchor strategies (screen-fixed entry vs at-cursor sub-prompt).
+    if (cmd_active_) {
+        build_command_ui(ov.command_ui);
+    } else if (sub_prompt_active()) {
+        build_sub_prompt_ui(ov.command_ui); // buffer is cleared on Enter (per step)
+    } else if (!sub_entry_.empty()) {
+        sub_entry_.clear(); // command ended / entered a rubber-band: drop stale text
+    }
+
     std::scoped_lock lock(overlay_mutex_);
     overlay_ = std::move(ov);
 }
@@ -835,9 +859,15 @@ bool ViewportWindow::dyn_dimensional() const {
     if (processor_ == nullptr) {
         return false;
     }
+    const command::PreviewSpec& pv = processor_->preview();
+    // A single scalar/keyword sub-step (e.g. RECTANGLE Dimensions length/width) uses the
+    // at-cursor sub-prompt cell, not the on-geometry Length/Width drag fields.
+    if (pv.scalar_prompt) {
+        return false;
+    }
     using command::PreviewKind;
-    const PreviewKind k = processor_->preview().kind;
-    return k == PreviewKind::Segment || k == PreviewKind::Circle || k == PreviewKind::Rectangle;
+    return pv.kind == PreviewKind::Segment || pv.kind == PreviewKind::Circle ||
+           pv.kind == PreviewKind::Rectangle;
 }
 
 int ViewportWindow::dyn_field_count() const {
@@ -913,6 +943,272 @@ void ViewportWindow::dyn_test_tab() {
 
 bool ViewportWindow::dyn_test_commit() {
     return dyn_commit();
+}
+
+// ---------------------------------------------------------------------------
+// On-canvas command entry (idle): typed command + autocomplete, drawn on the canvas
+// ---------------------------------------------------------------------------
+void ViewportWindow::cmd_clear() noexcept {
+    cmd_entry_.clear();
+    cmd_suggestions_.clear();
+    cmd_active_ = false;
+    cmd_sel_ = 0;
+}
+
+void ViewportWindow::cmd_recompute() {
+    cmd_suggestions_.clear();
+    cmd_sel_ = 0;
+    if (processor_ != nullptr && !cmd_entry_.empty()) {
+        cmd_suggestions_ = processor_->registry().suggest(cmd_entry_);
+    }
+}
+
+std::string ViewportWindow::cmd_font() {
+    if (!cmd_font_name_.empty() || font_engine_ == nullptr) {
+        return cmd_font_name_;
+    }
+    for (const std::string& n : font_engine_->available()) {
+        if (font_engine_->is_outline_font(n)) {
+            cmd_font_name_ = n;
+            break;
+        }
+    }
+    return cmd_font_name_;
+}
+
+void ViewportWindow::append_glyphs(const std::string& text, double ox, double baseline_y, double h,
+                                   std::vector<core::Vec2>& out) {
+    const std::string face = cmd_font();
+    if (font_engine_ == nullptr || face.empty() || text.empty()) {
+        return;
+    }
+    std::vector<core::Vec2> tris;
+    font_engine_->glyph_fills(face, text, {0.0, 0.0}, h, 0.0, tris);
+    out.reserve(out.size() + tris.size());
+    for (const core::Vec2& v : tris) {
+        out.push_back({ox + v.x, baseline_y - v.y}); // font is y-up; screen is y-down
+    }
+}
+
+bool ViewportWindow::cmd_entry_handle_key(int key, const QString& text) {
+    if (processor_ == nullptr) {
+        return false;
+    }
+    const int n = static_cast<int>(cmd_suggestions_.size());
+    switch (key) {
+    case Qt::Key_Escape:
+        if (cmd_active_) {
+            cmd_clear();
+            rebuild_overlay();
+            return true;
+        }
+        return false;
+    case Qt::Key_Return:
+    case Qt::Key_Enter: {
+        if (!cmd_active_) {
+            return false;
+        }
+        std::string run = cmd_entry_;
+        if (!processor_->registry().contains(cmd_entry_) && n > 0) {
+            run = cmd_suggestions_[static_cast<std::size_t>(std::clamp(cmd_sel_, 0, n - 1))].alias;
+        }
+        cmd_clear();
+        rebuild_overlay();
+        if (!run.empty()) {
+            processor_->submit_line(run);
+        }
+        return true;
+    }
+    case Qt::Key_Backspace:
+        if (!cmd_active_) {
+            return false;
+        }
+        if (!cmd_entry_.empty()) {
+            cmd_entry_.pop_back();
+        }
+        if (cmd_entry_.empty()) {
+            cmd_clear();
+        } else {
+            cmd_recompute();
+        }
+        rebuild_overlay();
+        return true;
+    case Qt::Key_Down:
+    case Qt::Key_Tab:
+        if (cmd_active_ && n > 0) {
+            cmd_sel_ = (cmd_sel_ + 1) % n;
+            rebuild_overlay();
+            return true;
+        }
+        return false;
+    case Qt::Key_Up:
+    case Qt::Key_Backtab:
+        if (cmd_active_ && n > 0) {
+            cmd_sel_ = (cmd_sel_ - 1 + n) % n;
+            rebuild_overlay();
+            return true;
+        }
+        return false;
+    default:
+        break;
+    }
+    if (!text.isEmpty()) {
+        const QChar c = text.at(0);
+        if (c.isLetterOrNumber() || c == QLatin1Char('-') || c == QLatin1Char('_')) {
+            if (!cmd_active_) {
+                cmd_active_ = true;
+                cmd_anchor_px_ = {cursor_px_x_.load(std::memory_order_relaxed),
+                                  cursor_px_y_.load(std::memory_order_relaxed)};
+            }
+            cmd_entry_ += c.toLatin1();
+            cmd_recompute();
+            rebuild_overlay();
+            return true;
+        }
+    }
+    return false;
+}
+
+void ViewportWindow::build_command_ui(render::CanvasCommandUI& ui) {
+    ui.active = true;
+    const double dpr = devicePixelRatio();
+    const double h = 16.0 * dpr;        // input glyph cap height
+    const double rh = 14.0 * dpr;       // dropdown glyph cap height
+    const double padx = 8.0 * dpr;
+    const double pady = 5.0 * dpr;
+    const double inrow = h + 2.0 * pady;
+    const double droprow = rh + 2.0 * pady;
+    const std::string face = cmd_font();
+    const auto adv = [&](const std::string& s, double gh) {
+        return (font_engine_ != nullptr && !face.empty())
+                   ? font_engine_->advance(face, s, gh)
+                   : static_cast<double>(s.size()) * gh * 0.55; // fallback width estimate
+    };
+    const auto quad = [](std::vector<core::Vec2>& v, double x, double y, double w, double hh) {
+        ui_quad(v, x, y, w, hh);
+    };
+    const auto outline = [](std::vector<core::Vec2>& v, double x, double y, double w, double hh) {
+        ui_outline(v, x, y, w, hh);
+    };
+
+    // Clamp the panel so it stays on-screen (anchored where it first appeared).
+    const double vw = static_cast<double>(width()) * dpr;
+    const double ax = std::min(cmd_anchor_px_.x + 18.0 * dpr, vw - 320.0 * dpr);
+    const double ay = cmd_anchor_px_.y + 18.0 * dpr;
+
+    // Input box.
+    const double tw = adv(cmd_entry_, h);
+    double bw = std::max(tw + 2.0 * padx, 150.0 * dpr);
+    const int rows = std::min(static_cast<int>(cmd_suggestions_.size()), 9);
+    for (int i = 0; i < rows; ++i) {
+        const std::string s = cmd_suggestions_[static_cast<std::size_t>(i)].alias + "    " +
+                              cmd_suggestions_[static_cast<std::size_t>(i)].name;
+        bw = std::max(bw, adv(s, rh) + 2.0 * padx);
+    }
+    quad(ui.box_fills, ax, ay, bw, inrow);
+    append_glyphs(cmd_entry_, ax + padx, ay + pady + h, h, ui.glyph_fills);
+    const double cx = ax + padx + tw + 1.0 * dpr; // caret
+    ui.lines.push_back({cx, ay + pady});
+    ui.lines.push_back({cx, ay + pady + h});
+    outline(ui.lines, ax, ay, bw, inrow);
+
+    // Autocomplete dropdown.
+    for (int i = 0; i < rows; ++i) {
+        const double ry = ay + inrow + static_cast<double>(i) * droprow;
+        quad(ui.box_fills, ax, ry, bw, droprow);
+        if (i == std::clamp(cmd_sel_, 0, rows - 1)) {
+            quad(ui.hi_fills, ax, ry, bw, droprow);
+        }
+        const std::string s = cmd_suggestions_[static_cast<std::size_t>(i)].alias + "    " +
+                              cmd_suggestions_[static_cast<std::size_t>(i)].name;
+        append_glyphs(s, ax + padx, ry + pady + rh, rh, ui.glyph_fills);
+    }
+    if (rows > 0) {
+        outline(ui.lines, ax, ay + inrow, bw, static_cast<double>(rows) * droprow);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// On-canvas mid-command sub-prompt (FILLET radius, CHAMFER distances, options)
+// ---------------------------------------------------------------------------
+bool ViewportWindow::sub_prompt_active() const {
+    // A command is running but not in a dimensional rubber-band (those use the value
+    // fields). This step's input surface is the at-cursor prompt cell.
+    return dyn_enabled_ && processor_ != nullptr && processor_->has_active_command() &&
+           !dyn_dimensional();
+}
+
+bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
+    if (!sub_prompt_active()) {
+        return false;
+    }
+    switch (key) {
+    case Qt::Key_Escape:
+        return false; // the caller cancels the command
+    case Qt::Key_Return:
+    case Qt::Key_Enter: {
+        const std::string v = sub_entry_;
+        sub_entry_.clear();
+        processor_->submit_line(v); // empty -> the command's default (accept <0>, end LINE, ...)
+        rebuild_overlay();
+        return true;
+    }
+    case Qt::Key_Backspace:
+        if (sub_entry_.empty()) {
+            return false;
+        }
+        sub_entry_.pop_back();
+        rebuild_overlay();
+        return true;
+    default:
+        break;
+    }
+    if (!text.isEmpty()) {
+        const QChar c = text.at(0);
+        if (c.isLetterOrNumber() || c == QLatin1Char('.') || c == QLatin1Char('-') ||
+            c == QLatin1Char(',') || c == QLatin1Char('@') || c == QLatin1Char('<') ||
+            c == QLatin1Char('/')) {
+            sub_entry_ += c.toLatin1();
+            rebuild_overlay();
+            return true;
+        }
+    }
+    return false;
+}
+
+void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
+    ui.active = true;
+    const double dpr = devicePixelRatio();
+    const double h = 15.0 * dpr;
+    const double padx = 8.0 * dpr;
+    const double pady = 5.0 * dpr;
+    const double row = h + 2.0 * pady;
+    const std::string face = cmd_font();
+    const auto adv = [&](const std::string& s) {
+        return (font_engine_ != nullptr && !face.empty())
+                   ? font_engine_->advance(face, s, h)
+                   : static_cast<double>(s.size()) * h * 0.55;
+    };
+    const std::string label = processor_ != nullptr ? processor_->current_prompt() : std::string{};
+    const double lw = adv(label);
+    const double gap = sub_entry_.empty() ? 0.0 : 6.0 * dpr;
+    const double vw = adv(sub_entry_);
+    const double bw = lw + gap + vw + 2.0 * padx + 10.0 * dpr; // trailing room for the caret
+
+    // At-cursor anchor (follows the cursor), clamped on-screen.
+    const double scrw = static_cast<double>(width()) * dpr;
+    const double ax = std::min(cursor_px_x_.load(std::memory_order_relaxed) + 18.0 * dpr,
+                               std::max(0.0, scrw - bw));
+    const double ay = cursor_px_y_.load(std::memory_order_relaxed) + 18.0 * dpr;
+
+    ui_quad(ui.box_fills, ax, ay, bw, row);
+    const double baseline = ay + pady + h;
+    append_glyphs(label, ax + padx, baseline, h, ui.glyph_fills);
+    append_glyphs(sub_entry_, ax + padx + lw + gap, baseline, h, ui.glyph_fills);
+    const double cx = ax + padx + lw + gap + vw + 2.0 * dpr;
+    ui.lines.push_back({cx, ay + pady});
+    ui.lines.push_back({cx, ay + pady + h});
+    ui_outline(ui.lines, ax, ay, bw, row);
 }
 
 // On-canvas Dynamic Input keystroke routing. Returns true if the key was consumed by a

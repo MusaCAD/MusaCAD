@@ -386,6 +386,7 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
     draw_crosshair_and_snap(*cmd_, target.width(), target.height(), snapshot, camera);
     draw_overlay(*cmd_, target.width(), target.height());
     draw_dyn_labels(*cmd_, target.width(), target.height(), camera);
+    draw_canvas_command(*cmd_, target.width(), target.height());
 
     cmd_->end();
     device_.submit(*cmd_);
@@ -509,6 +510,40 @@ void ViewportRenderer::draw_dyn_labels(GpuCommandBuffer& cmd, int width, int hei
         const std::size_t n = pack_segments(focus, scratch_);
         overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
         cmd.set_uniform_vec4("u_color", 0.48f, 0.78f, 1.0f, 1.0f); // active-field highlight
+        cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
+}
+
+void ViewportRenderer::draw_canvas_command(GpuCommandBuffer& cmd, int width, int height) {
+    const CanvasCommandUI& ui = overlay_.command_ui;
+    if (!ui.active) {
+        return;
+    }
+    const core::Mat3 screen = screen_to_ndc(width, height);
+    const auto fill = [&](const std::vector<core::Vec2>& tris, float r, float g, float b, float a) {
+        if (tris.empty()) {
+            return;
+        }
+        const std::size_t n = pack_positions(tris, scratch_);
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.bind_pipeline(*fill_pipeline_);
+        cmd.set_uniform_mat3("u_transform", screen);
+        cmd.set_uniform_vec4("u_color", r, g, b, a);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
+        ++stats_.draw_calls;
+    };
+    fill(ui.box_fills, 0.12f, 0.13f, 0.16f, 0.96f);   // panel / cells (dark)
+    fill(ui.hi_fills, 0.18f, 0.34f, 0.52f, 0.96f);    // highlighted suggestion row
+    fill(ui.glyph_fills, 0.90f, 0.92f, 0.95f, 1.0f);  // TTF text (one batch, all rows)
+    if (!ui.lines.empty()) {
+        const std::size_t n = pack_segments(ui.lines, scratch_);
+        overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.bind_pipeline(*line_pipeline_);
+        cmd.set_uniform_mat3("u_transform", screen);
+        cmd.set_uniform_vec4("u_color", 0.40f, 0.55f, 0.75f, 1.0f); // borders + caret
         cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
         cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
         ++stats_.draw_calls;

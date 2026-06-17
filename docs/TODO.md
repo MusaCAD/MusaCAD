@@ -156,14 +156,19 @@ verbatim, so adding a parser later is non-breaking.
 
 ## Dialog boxes / dynamic input everywhere (deferred 2026-06-06)
 
-**Status:** The cursor surface is settled. Draw/transform commands are **interactive**
-(ribbon starts the command, pick on screen — the AutoCAD model); the cursor value box
-is **DYN** (Phase 25), which mirrors the command line, with an **autocomplete dropdown**
-(Phase 26) and **option keywords** surfaced in both (e.g. CIRCLE radius/[Diameter]).
-The **ARRAY** multi-parameter dialog (Ph11 `ParameterDialog`) remains for genuinely
-parametric commands. Earlier upfront draw modals were removed — a modal that asks for
-position isn't "identical to the command line"; DYN is. The command pipeline is
-untouched (collect-and-submit only).
+**Status:** Settled — **DYN is now canvas-only by default** (Phase 27). ALL command
+input is drawn on the GL canvas at the crosshair through ONE overlay primitive: command
+entry + autocomplete (idle), mid-command sub-prompts (FILLET/CHAMFER/RECTANGLE
+Dimensions/option keywords), and on-geometry dimension fields (rubber-band). **F12**
+toggles canvas-only ⇄ the classic bottom command-line bar (the toggleable fallback; the
+bar always returns on F12 / the status DYN toggle — no-stuck). Draw/transform commands
+are **interactive** (ribbon starts the command, pick on screen). Command-input state
+(prompt + history) lives in the `CommandProcessor`, so hiding the bar loses nothing; the
+legacy cursor box is retired. One focus-routing path (app-wide event filter), one
+suggestion source (the registry), one submit pipeline (`compose_dyn_submit` /
+`submit_line`). The **ARRAY** multi-parameter dialog (Ph11 `ParameterDialog`) remains
+for genuinely parametric commands. The command pipeline is untouched (collect-and-submit
+only).
 
 **Remaining:**
 
@@ -172,27 +177,28 @@ untouched (collect-and-submit only).
    keyword, surfaced via the mirrored prompt.
 2. **POLYGON** — no POLYGON command exists yet (build the command + its sides/
    inscribed-circumscribed/radius options).
-3. **Context-aware Dynamic Input — on-geometry value fields (PARTIALLY DONE
-   2026-06-16)** — AutoCAD's DYN is not one cursor box but **value boxes positioned ON
-   the geometry** they describe.
-   - **Done (RECTANGLE / LINE / CIRCLE):** value fields **drawn on the CANVAS** (the GL
-     viewport overlay, NOT OS windows — the first QWidget-tooltip attempt drifted off
-     the geometry on multi-monitor; canvas rendering is glued to the geometry by
-     construction). RECTANGLE shows Length + Width on the two edges, LINE Length +
-     Angle, CIRCLE Radius, each nudged just outside its edge so they never overlap.
-     You **type WITHOUT a click** (the viewport captures dimension keystrokes during the
-     rubber-band), **Tab/Shift-Tab** switch fields, **Enter** commits, **Esc** cancels;
-     a typed value **locks that dimension** while the cursor drives the other
-     (render-side, zero op-log churn). Fields come from the **declarative per-command
-     schema** (`command::dyn_fields`, one switch over `PreviewKind` — a row per command,
-     the PR/grips discipline); typed values submit through the SAME pipeline as the
-     command line (`command::compose_dyn_submit`). The cursor box gives way during the
-     rubber-band and returns for keyword/idle steps (F12 governs both).
-   - **Still deferred:** the schema for the remaining commands (ARC, POLYLINE,
-     MOVE/ROTATE/SCALE, dimensions, …) — each is a new `dyn_fields` case; **option
-     chips / a Down-arrow dropdown** for the bracketed `[Diameter]`/`[Area/Dimensions/
-     Rotation]`-style keywords *in the box* (today they are typed); and a
-     radius/diameter-style **switch in the box** for CIRCLE.
+3. **Context-aware Dynamic Input — full canvas surfaces (DONE 2026-06-17)** —
+   AutoCAD's DYN is not one cursor box but input drawn ON the canvas at the cursor.
+   - **Done (all three surfaces, one primitive):** (a) **command entry + autocomplete**
+     near the cursor when typing on an idle canvas; (b) **mid-command sub-prompts** at
+     the cursor for any scalar/keyword step (FILLET radius, CHAMFER distances, RECTANGLE
+     Dimensions length/width, Area, Rotation, option keywords); (c) **on-geometry
+     dimension fields** during a rubber-band (RECTANGLE Length + Width on the two edges,
+     LINE Length + Angle, CIRCLE Radius). All **drawn on the CANVAS** (the GL viewport
+     overlay, NOT OS windows — the QWidget-tooltip attempt drifted off the geometry on
+     multi-monitor; canvas rendering is glued by construction). You **type WITHOUT a
+     click** (the app-wide event filter routes keystrokes), **Tab/Shift-Tab** switch
+     dimension fields, **Enter** commits/advances, **Esc** cancels; a typed dimension
+     **locks** while the cursor drives the others (render-side, zero op-log churn).
+     Dimension fields come from the declarative per-command schema (`command::dyn_fields`
+     over `PreviewKind`); scalar sub-steps set `PreviewSpec::scalar_prompt` so they route
+     to the sub-prompt cell, not the field drag. Everything submits through the SAME
+     pipeline as the command line (`compose_dyn_submit` / `submit_line`). **F12** toggles
+     canvas-only ⇄ the classic bottom bar (state in `CommandProcessor`; no-stuck).
+   - **Still deferred:** the dimension-field schema for the remaining draw/modify
+     commands (ARC, POLYLINE, MOVE/ROTATE/SCALE, dimensions, …) — each a new `dyn_fields`
+     case; **option chips / a Down-arrow dropdown** for bracketed `[Diameter]`/`[Area/
+     Dimensions/Rotation]` keywords *in the cell* (today they are typed).
 4. **A declarative command schema** so each command declares its fields/options
    *once* and gets the command-line prompts, the dialog, and dynamic input for
    free (avoid hand-writing each surface). `DialogSpec` is the seed of this.

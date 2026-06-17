@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "musacad/command/command_context.hpp"
 #include "musacad/command/command_registry.hpp"
@@ -89,6 +90,18 @@ public:
     [[nodiscard]] const CommandRegistry& registry() const noexcept { return registry_; }
     [[nodiscard]] CommandRegistry& registry() noexcept { return registry_; }
 
+    /// The current prompt ("Command: " when idle). Owned here so any surface (the
+    /// bottom bar OR the on-canvas Dynamic Input) renders the same prompt; hiding the
+    /// bar never loses it.
+    [[nodiscard]] const std::string& current_prompt() const noexcept { return current_prompt_; }
+
+    /// Submitted-line history (newest last), owned here so the bottom bar and the
+    /// canvas command-entry box recall from ONE place. `history_recall(+1)` steps to
+    /// older entries, `-1` to newer; returns "" past the newest.
+    [[nodiscard]] const std::vector<std::string>& history() const noexcept { return history_; }
+    [[nodiscard]] std::string history_recall(int dir);
+    void history_reset_cursor() noexcept { history_cursor_ = static_cast<int>(history_.size()); }
+
     // --- CommandContext ---
     void echo(const std::string& line) override;
     void set_prompt(const std::string& prompt) override;
@@ -123,6 +136,9 @@ private:
     std::uint64_t group_counter_ = 0;
     std::uint64_t current_group_ = 0;
     std::string last_command_alias_;
+    std::string current_prompt_ = "Command: "; ///< mirrored to every input surface
+    std::vector<std::string> history_;          ///< submitted lines (newest last)
+    int history_cursor_ = 0;                     ///< recall position into history_
 
     bool ortho_ = false;
     bool polar_ = false;

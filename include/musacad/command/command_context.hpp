@@ -43,6 +43,11 @@ struct PreviewSpec {
     double fixed_w = 0.0;
     double fixed_h = 0.0;
     double rect_rotation = 0.0;
+    // True while the command is awaiting a single scalar/keyword at a value sub-prompt
+    // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
+    // corner drag. With Dynamic Input on this routes the step to the at-cursor
+    // sub-prompt cell instead of the on-geometry Length/Width fields.
+    bool scalar_prompt = false;
 
     // Dimension preview only: the subtype (core::DimType) and style index. `points`
     // holds the def points (a, b) for two-point dims; for object-based dims it is

@@ -90,9 +90,10 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // Real-window DYN tooltip capture: MUSACAD_DYN_SHOT="kind|out.png" (kind 0 REC,
-    // 1 LINE, 2 CIRCLE) drives a rubber-band with DYN on, prints the anchor diagnostic,
-    // and grabs the app region for eyes-on verification of the on-geometry tooltips.
+    // Real-window DYN capture: MUSACAD_DYN_SHOT="kind|out.png". kinds 0 REC / 1 LINE /
+    // 2 CIRCLE drive a rubber-band (on-geometry value fields); 3 idle command entry;
+    // 4 FILLET / 5 CHAMFER sub-prompts; 6 F12-OFF (classic bottom bar) / 7 F12-ON
+    // (canvas-only). Prints the diagnostic + grabs the app region for eyes-on review.
     if (qEnvironmentVariableIsSet("MUSACAD_DYN_SHOT")) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_DYN_SHOT").split(QLatin1Char('|'));

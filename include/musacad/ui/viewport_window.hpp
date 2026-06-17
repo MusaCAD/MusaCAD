@@ -13,6 +13,7 @@
 #include <QWindow>
 
 #include "musacad/command/command_context.hpp"
+#include "musacad/command/command_registry.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/render/camera.hpp"
 #include "musacad/render/overlay.hpp"
@@ -23,6 +24,10 @@ class QMouseEvent;
 class QWheelEvent;
 class QResizeEvent;
 class QKeyEvent;
+
+namespace musacad::core {
+class IFontEngine;
+}
 
 namespace musacad::command {
 class CommandProcessor;
@@ -226,7 +231,32 @@ public:
     /// (e.g. Enter ends a LINE) still works.
     bool dyn_handle_key(int key, const QString& text);
 
+    /// The (UI-thread) font engine used to lay out TTF glyphs for the on-canvas
+    /// command UI. A DEDICATED instance (not the geometry engine's) so the UI thread
+    /// never shares a font face with the geometry thread.
+    void set_font_engine(core::IFontEngine* fe) noexcept { font_engine_ = fe; }
+    /// True while the on-canvas command-entry box is showing (idle command input).
+    [[nodiscard]] bool cmd_entry_active() const noexcept { return cmd_active_; }
+    /// Route one key into the idle command-entry box (letters/digits type, Down/Up/Tab
+    /// navigate the autocomplete, Enter runs, Esc closes, Backspace edits). Returns true
+    /// if consumed. Called from the app-wide event filter when idle + canvas mode.
+    bool cmd_entry_handle_key(int key, const QString& text);
+
+    /// True while a command is active but NOT in a dimensional rubber-band -- the
+    /// on-canvas sub-prompt cell (FILLET radius, CHAMFER distances, option keywords) is
+    /// the input surface for this step.
+    [[nodiscard]] bool sub_prompt_active() const;
+    /// Route one key into the on-canvas sub-prompt field (printable edits, Enter commits
+    /// to the next step, Backspace edits). Returns true if consumed. Esc returns false
+    /// (the caller cancels). Called from the app-wide event filter.
+    bool sub_prompt_handle_key(int key, const QString& text);
+
     // --- test / diagnostic accessors (real-window verification) ---
+    [[nodiscard]] int cmd_suggestion_count() const noexcept {
+        return static_cast<int>(cmd_suggestions_.size());
+    }
+    [[nodiscard]] std::string cmd_entry_text() const { return cmd_entry_; }
+    [[nodiscard]] std::string sub_prompt_value() const { return sub_entry_; }
     [[nodiscard]] int dyn_field_count() const;           ///< 2 (rect/line), 1 (circle), else 0
     [[nodiscard]] int dyn_active_slot() const noexcept { return dyn_active_slot_; }
     [[nodiscard]] std::string dyn_value(int slot) const; ///< typed-or-live shown value
@@ -297,6 +327,29 @@ private:
         dyn_buf_[1].clear();
         dyn_active_slot_ = 0;
     }
+
+    // On-canvas command entry (idle): the typed command text + autocomplete state. Built
+    // into overlay_.command_ui each frame; keystrokes routed via the app-wide filter.
+    core::IFontEngine* font_engine_ = nullptr; // UI-thread font face for TTF glyph fills
+    std::string cmd_font_name_;                // a resolved outline face name (cached)
+    std::string cmd_entry_;                    // typed command text
+    bool cmd_active_ = false;                  // entry box showing
+    core::Vec2 cmd_anchor_px_{};               // device-px anchor (fixed when it appears)
+    int cmd_sel_ = 0;                          // highlighted suggestion
+    std::vector<command::CommandSuggestion> cmd_suggestions_;
+    void cmd_clear() noexcept;
+    void cmd_recompute();                       ///< refresh suggestions + reset selection
+    [[nodiscard]] std::string cmd_font() ;      ///< the resolved outline face (lazy)
+    /// Append TTF glyph triangles (screen px, y-flipped) for `text` at (ox, baseline_y).
+    void append_glyphs(const std::string& text, double ox, double baseline_y, double h,
+                       std::vector<core::Vec2>& out);
+    void build_command_ui(render::CanvasCommandUI& ui); ///< lay out box + dropdown near cursor
+
+    // On-canvas mid-command sub-prompt (FILLET radius, CHAMFER distances, option
+    // keywords): the prompt label + an editable value/keyword field at the cursor,
+    // shown whenever a command is active but NOT in a dimensional rubber-band.
+    std::string sub_entry_; // typed value/keyword for the current sub-prompt
+    void build_sub_prompt_ui(render::CanvasCommandUI& ui);
 
     // Selection drag state (UI thread).
     bool selecting_ = false;

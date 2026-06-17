@@ -4,6 +4,7 @@
 #include "musacad/command/command_processor.hpp"
 
 #include <cctype>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <utility>
@@ -40,6 +41,16 @@ CommandProcessor::CommandProcessor(CommandSink sink, ViewControl* view, CommandO
 }
 
 void CommandProcessor::submit_line(const std::string& text) {
+    // History: record every non-empty submitted line (newest last) so the bottom bar
+    // AND the on-canvas command-entry box recall from one place. Reset the recall
+    // cursor to the newest on each new submission.
+    if (!trimmed(text).empty()) {
+        if (history_.empty() || history_.back() != text) {
+            history_.push_back(text);
+        }
+    }
+    history_cursor_ = static_cast<int>(history_.size());
+
     if (active_) {
         active_->input(*this, text);
         finalize_if_done();
@@ -159,11 +170,29 @@ void CommandProcessor::finalize_if_done() {
     }
 }
 
-void CommandProcessor::show_ready() { output_.set_prompt("Command: "); }
+void CommandProcessor::show_ready() {
+    current_prompt_ = "Command: ";
+    output_.set_prompt(current_prompt_);
+}
+
+std::string CommandProcessor::history_recall(int dir) {
+    if (history_.empty()) {
+        return {};
+    }
+    // dir +1 = older, -1 = newer. Cursor in [0, size]; size == "past the newest" (blank).
+    history_cursor_ = std::clamp(history_cursor_ - dir, 0, static_cast<int>(history_.size()));
+    if (history_cursor_ >= static_cast<int>(history_.size())) {
+        return {};
+    }
+    return history_[static_cast<std::size_t>(history_cursor_)];
+}
 
 void CommandProcessor::echo(const std::string& line) { output_.append_line(line); }
 
-void CommandProcessor::set_prompt(const std::string& prompt) { output_.set_prompt(prompt); }
+void CommandProcessor::set_prompt(const std::string& prompt) {
+    current_prompt_ = prompt;
+    output_.set_prompt(prompt);
+}
 
 void CommandProcessor::submit(core::Command command) {
     if (sink_) {
