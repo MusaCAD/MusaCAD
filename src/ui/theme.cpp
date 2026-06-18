@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Copyright (C) 2026 Kiran Pranay
+// Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/ui/theme.hpp"
 

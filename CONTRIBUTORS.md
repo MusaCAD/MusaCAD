@@ -5,7 +5,7 @@ has contributed.
 
 ## Maintainers
 
-- **Kiran Pranay** ([@KiranPranay](https://github.com/KiranPranay)) — author and
+- **Pranay Kiran** ([@KiranPranay](https://github.com/KiranPranay)) — author and
   maintainer; architecture, direction, and review.
 
 ## AI assistance

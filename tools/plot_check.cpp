@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Copyright (C) 2026 Kiran Pranay
+// Copyright (C) 2026 Pranay Kiran
 
 // Headless plot verification tool. Renders through the REAL pipeline (parse -> store ->
 // build_render_snapshot -> paint_plot) so a PDF can be checked without the GUI.

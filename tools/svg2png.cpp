@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Copyright (C) 2026 Kiran Pranay
+// Copyright (C) 2026 Pranay Kiran
 
 // Branding raster generator: render an SVG to crisp square PNGs at the requested sizes,
 // using Qt's SVG support (QIcon -> the svg iconengine plugin, which rasterises the vector

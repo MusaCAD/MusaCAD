@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Copyright (C) 2026 Kiran Pranay
+// Copyright (C) 2026 Pranay Kiran
 
 // The pure Dynamic-Input field schema: positioned tooltips, the coordinate-string
 // composition shared with the DYN box, and the render-side dimension lock. No Qt --
