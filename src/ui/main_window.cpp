@@ -2436,6 +2436,25 @@ bool MainWindow::offset_shot(int kind, const std::string& out_png) {
         engine_->submit(core::JoinPickCommand{{{0, -30}, {40, 0}, {0, 30}, {-40, 0}}, 2.0, 2});
         pump(200);
         engine_->submit(core::OffsetPickCommand{{0, -30}, 2.0, 10.0, {0, 0}, 3});
+    } else if (kind == 5) {
+        // The user's workflow: six SEPARATE connected lines (a hexagon), SELECT all, then
+        // JOIN the selection -> one closed polyline (offset inward proves it is one entity).
+        const double r = 45.0;
+        core::Vec2 v[6];
+        for (int i = 0; i < 6; ++i) {
+            const double a = static_cast<double>(i) / 6.0 * 2.0 * 3.14159265358979323846;
+            v[i] = {r * std::cos(a), r * std::sin(a)};
+        }
+        for (int i = 0; i < 6; ++i) {
+            engine_->submit(core::AddLineCommand{v[i], v[(i + 1) % 6], 1});
+        }
+        pump(200);
+        engine_->submit(core::SelectAllCommand{});
+        pump(150);
+        engine_->submit(core::JoinSelectionCommand{2.0, 2}); // noun-verb JOIN
+        pump(200);
+        engine_->submit(core::OffsetPickCommand{{(v[0].x + v[1].x) * 0.5, (v[0].y + v[1].y) * 0.5},
+                                                2.0, 8.0, {0, 0}, 3});
     }
     pump(300);
     viewport_->zoom_extents();

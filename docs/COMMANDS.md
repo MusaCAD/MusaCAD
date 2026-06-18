@@ -51,7 +51,7 @@ suggests both); aliases are case-insensitive.
 | FILLET (arc/curve cases) | F | Partial (line + polyline-corner only) |
 | CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
 | CHAMFER (polyline corner) | CHA | Implemented |
-| JOIN — pick a source object then lines/arcs/open polylines that share endpoints (within the snap tolerance); merges them into ONE polyline (arcs become bulged segments), inheriting the source layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). Disconnected picks are skipped and counted. One undo group | J | Implemented |
+| JOIN — **select** lines/arcs/open polylines (any way), then JOIN merges every connected chain among them into ONE polyline each (arcs become bulged segments), inheriting the source's layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). The merged polyline is a single entity — moving it or a grip keeps it connected. With nothing pre-selected, JOIN falls back to picking a source + targets. One undo group | J | Implemented |
 | ARRAY dialog (interactive grid/preview) | AR | Planned (Phase 13) |
 | STRETCH | S | Planned (Phase 13) |
 | EXPLODE | X | Planned (Phase 13) |

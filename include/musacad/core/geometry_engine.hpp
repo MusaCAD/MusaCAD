@@ -130,6 +130,10 @@ private:
     void apply_offset(Vec2 pick, double radius, double distance, Vec2 side, std::uint64_t group);
     void apply_trim(Vec2 pick, double radius, std::uint64_t group);
     void apply_join(const std::vector<Vec2>& picks, double radius, std::uint64_t group);
+    void apply_join_selection(double radius, std::uint64_t group);
+    /// Shared JOIN core: merge every connected sub-chain among `ents` (lines/arcs/open
+    /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
+    void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group);
     void apply_rotate(Vec2 base, double angle, std::uint64_t group);
     void apply_scale(Vec2 base, double factor, std::uint64_t group);
     void apply_array_rect(int rows, int cols, double dx, double dy, std::uint64_t group);

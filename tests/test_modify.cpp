@@ -168,3 +168,53 @@ TEST_CASE("JOIN connects sharing lines and skips a disjoint one") {
     }));
     engine.stop();
 }
+
+// The user's workflow: SELECT the connected lines, then JOIN -- the whole selection
+// becomes one polyline (noun-verb), which then OFFSETs uniformly.
+TEST_CASE("JOIN on the current selection merges all connected lines into one polyline") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 2});
+    engine.submit(AddLineCommand{{10, 10}, {0, 10}, 3});
+    engine.submit(AddLineCommand{{0, 10}, {0, 0}, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 8; }));
+
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selected_line_vertices.size() == 8; }));
+
+    // JOIN the selection -> one closed polyline (still 4 segments selected).
+    engine.submit(JoinSelectionCommand{1.0, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selected_line_vertices.size() == 8; }));
+
+    // Proof it is ONE closed polyline: a single offset pick yields all four inner edges.
+    engine.submit(OffsetPickCommand{{5, 0}, 1.0, 2.0, {5, 5}, 11});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return has_segment(s, {2, 2}, {8, 2}) && has_segment(s, {8, 2}, {8, 8}) &&
+               has_segment(s, {8, 8}, {2, 8}) && has_segment(s, {2, 8}, {2, 2});
+    }));
+    engine.stop();
+}
+
+// A selection spanning two separate connected chains -> one polyline per chain.
+TEST_CASE("JOIN on a selection makes one polyline per connected chain") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});     // chain A
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 1});   // chain A
+    engine.submit(AddLineCommand{{100, 0}, {110, 0}, 2});  // chain B (far away)
+    engine.submit(AddLineCommand{{110, 0}, {110, 10}, 2}); // chain B
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 8; }));
+
+    engine.submit(SelectAllCommand{});
+    engine.submit(JoinSelectionCommand{1.0, 10});
+    // Two 2-segment polylines, both selected -> 4 segments -> 8 selected vertices.
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selected_line_vertices.size() == 8; }));
+
+    // Offsetting chain A's polyline re-miters its corner -> it is a single entity.
+    engine.submit(OffsetPickCommand{{5, 0}, 1.0, 2.0, {5, 5}, 11});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return has_segment(s, {0, 2}, {8, 2}) && has_segment(s, {8, 2}, {8, 10});
+    }));
+    engine.stop();
+}

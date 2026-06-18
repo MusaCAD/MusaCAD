@@ -734,6 +734,13 @@ void OffsetCommand::cancel(CommandContext& ctx) {
 // JOIN (pick a source, then targets that share endpoints -> one polyline)
 // ---------------------------------------------------------------------------
 void JoinCommand::start(CommandContext& ctx) {
+    // Noun-verb (the usual workflow): if objects are already selected, join all of them
+    // that share endpoints -- each connected chain becomes one polyline -- in one step.
+    if (ctx.has_selection()) {
+        ctx.submit(core::JoinSelectionCommand{ctx.pick_radius(), ctx.group_id()});
+        done_ = true;
+        return;
+    }
     ctx.set_prompt("Select source object: ");
 }
 

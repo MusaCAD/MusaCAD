@@ -171,6 +171,15 @@ struct JoinPickCommand {
     std::uint64_t group = 0;
 };
 
+/// Join every currently-selected line/arc/open polyline that shares endpoints (within
+/// `radius`, the snap tolerance) -- each connected chain becomes one polyline; a chain
+/// whose ends meet becomes closed. AutoCAD noun-verb JOIN (select objects, then JOIN).
+/// One undo group. Entities that connect to nothing else selected are left untouched.
+struct JoinSelectionCommand {
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
+
 /// Rotate the selection by `angle` (radians) about `base`.
 struct RotateSelectionCommand {
     Vec2 base;
@@ -476,6 +485,7 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand>;
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
+                 JoinSelectionCommand>;
 
 } // namespace musacad::core

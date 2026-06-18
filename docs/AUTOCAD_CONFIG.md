@@ -167,10 +167,11 @@ inherits the source entity's layer/properties.
 
 | Step | Behaviour | Status |
 |---|---|---|
-| Select source, then objects to join | Lines / arcs / open polylines that share endpoints within the snap tolerance merge into ONE polyline (arcs become bulged segments); the result inherits the source's layer/properties | Implemented |
+| **Select objects, then JOIN** (noun-verb) | Every selected line / arc / open polyline that shares endpoints (within the snap tolerance) merges — each connected chain becomes ONE polyline (arcs → bulged segments), inheriting the source's layer/properties. The merged polyline is a single entity, so moving it or dragging a grip keeps it connected | Implemented |
+| Multiple chains in one selection | Each connected group becomes its own polyline; an object that connects to nothing else selected stays separate | Implemented |
 | Closed loop | A chain whose ends meet within tolerance becomes a **closed** polyline (which then OFFSETs uniformly) | Implemented |
-| Disconnected picks | Skipped and reported with a count | Implemented |
+| No pre-selection | Falls back to picking a source object, then targets | Implemented |
 | Undo | The whole join is one undo group | Implemented |
 
 Alias `J`; Modify-panel ribbon button. Closed polylines (no free endpoints) and non-curve
-entities are not joinable and are skipped.
+entities are not joinable and are left untouched.
