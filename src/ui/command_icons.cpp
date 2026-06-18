@@ -71,6 +71,11 @@ void draw_glyph(QPainter& p, const QString& kind) {
         p.drawLine(QPointF(x0, y1), QPointF(x1, y0));
         p.drawEllipse(QPointF(x0 + 2, y1 - 2), 2.0, 2.0);
         p.drawEllipse(QPointF(x0 + 2, y1 - 6), 2.0, 2.0);
+    } else if (kind == "join") {
+        // Two segments meeting at a highlighted junction (chain joined into one).
+        p.drawLine(QPointF(x0, y1), QPointF(cx, cy));
+        p.drawLine(QPointF(cx, cy), QPointF(x1, y0));
+        p.drawEllipse(QPointF(cx, cy), 2.2, 2.2);
     } else if (kind == "layers") {
         for (int i = 0; i < 3; ++i) {
             const double yy = y0 + i * 4.0;

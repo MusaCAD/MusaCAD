@@ -36,7 +36,8 @@ suggests both); aliases are case-insensitive.
 | MOVE | M | Implemented |
 | COPY | CO / CP | Implemented |
 | MIRROR | MI | Implemented |
-| OFFSET (line/circle/arc/polyline) | O | Implemented |
+| OFFSET (line/circle/arc) | O | Implemented |
+| OFFSET (polyline, incl. closed rectangles + bulged/filleted corners) — each segment offset (lines parallel, arcs concentric with the bulge preserved) and **corners re-mitered** as the intersection of adjacent offset curves (line/line, line/arc, arc/arc via the shared line_line / line_circle / circle_circle primitives), so edges stay at distance d with clean corners (no trapezoid). Over-large offsets that would fold the shape fail gracefully ("Offset distance too large for this polyline.") leaving the geometry unchanged | O | Implemented |
 | ROTATE | RO | Implemented |
 | SCALE | SC | Implemented |
 | ARRAY (rectangular + polar, command-line) | AR | Implemented |
@@ -50,6 +51,7 @@ suggests both); aliases are case-insensitive.
 | FILLET (arc/curve cases) | F | Partial (line + polyline-corner only) |
 | CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
 | CHAMFER (polyline corner) | CHA | Implemented |
+| JOIN — pick a source object then lines/arcs/open polylines that share endpoints (within the snap tolerance); merges them into ONE polyline (arcs become bulged segments), inheriting the source layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). Disconnected picks are skipped and counted. One undo group | J | Implemented |
 | ARRAY dialog (interactive grid/preview) | AR | Planned (Phase 13) |
 | STRETCH | S | Planned (Phase 13) |
 | EXPLODE | X | Planned (Phase 13) |

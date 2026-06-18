@@ -117,3 +117,54 @@ TEST_CASE("TRIM cuts a line at its nearest intersection") {
     REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 0}, {10, 0}); }));
     engine.stop();
 }
+
+// The closing-the-workflow case: four separate edges -> JOIN -> one CLOSED polyline,
+// which then OFFSETs uniformly (Item 1). If JOIN failed (still four lines), a single
+// offset pick could not produce all four inner edges.
+TEST_CASE("JOIN merges four lines into a closed polyline that OFFSETs uniformly") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 2});
+    engine.submit(AddLineCommand{{10, 10}, {0, 10}, 3});
+    engine.submit(AddLineCommand{{0, 10}, {0, 0}, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 8; }));
+
+    // Pick each edge (midpoints); the chain loops -> a single closed polyline (selected).
+    engine.submit(JoinPickCommand{{{5, 0}, {10, 5}, {5, 10}, {0, 5}}, 1.0, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selected_line_vertices.size() == 8; }));
+
+    // Offset that ONE closed polyline inward by 2 -> a uniform inner rectangle.
+    engine.submit(OffsetPickCommand{{5, 0}, 1.0, 2.0, {5, 5}, 11});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return has_segment(s, {2, 2}, {8, 2}) && has_segment(s, {8, 2}, {8, 8}) &&
+               has_segment(s, {8, 8}, {2, 8}) && has_segment(s, {2, 8}, {2, 2});
+    }));
+    // The outer (source) polyline is untouched by OFFSET (create-only).
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 0}, {10, 0}); }));
+    engine.stop();
+}
+
+// JOIN connects entities sharing endpoints and skips disjoint ones; the joined open
+// polyline then offsets with a properly re-mitered corner.
+TEST_CASE("JOIN connects sharing lines and skips a disjoint one") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});    // source
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 2});  // shares (10,0)
+    engine.submit(AddLineCommand{{20, 20}, {30, 20}, 3}); // disjoint -> skipped
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 6; }));
+
+    engine.submit(JoinPickCommand{{{5, 0}, {10, 5}, {25, 20}}, 1.0, 10});
+    // Two of three joined into one open polyline (2 segments -> 4 selected vertices).
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selected_line_vertices.size() == 4; }));
+
+    // Offsetting the joined polyline re-miters the corner (a single line could not yield
+    // the (8,2) corner); the disjoint line is left alone.
+    engine.submit(OffsetPickCommand{{5, 0}, 1.0, 2.0, {5, 5}, 11});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return has_segment(s, {0, 2}, {8, 2}) && has_segment(s, {8, 2}, {8, 10}) &&
+               has_segment(s, {20, 20}, {30, 20});
+    }));
+    engine.stop();
+}

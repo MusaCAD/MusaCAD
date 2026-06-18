@@ -104,6 +104,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // OFFSET-polyline-fix + JOIN capture: MUSACAD_OFFSET_SHOT="kind|out.png" (kind 0
+    // rectangle offset, 1 filleted-rectangle offset, 2 open-polyline offset, 3 over-large
+    // failure message, 4 JOIN four lines -> closed polyline -> uniform offset).
+    if (qEnvironmentVariableIsSet("MUSACAD_OFFSET_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a = qEnvironmentVariable("MUSACAD_OFFSET_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/offset_shot.png"));
+            const bool ok = window.offset_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {

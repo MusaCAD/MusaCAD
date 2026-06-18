@@ -36,6 +36,12 @@ public:
     /// number of hits (0/1/2), filling p0 (and p1 for 2).
     [[nodiscard]] static int line_circle_intersection(Vec2 a, Vec2 b, Vec2 center, double radius,
                                                        Vec2& p0, Vec2& p1);
+
+    /// Intersection of two circles. Returns the number of hits (0 = separate / one inside
+    /// the other / concentric, 1 = tangent, 2), filling p0 (and p1 for 2). Used to re-miter
+    /// arc/arc corners when offsetting a bulged polyline.
+    [[nodiscard]] static int circle_circle_intersection(Vec2 c0, double r0, Vec2 c1, double r1,
+                                                        Vec2& p0, Vec2& p1);
 };
 
 } // namespace musacad::core

@@ -95,6 +95,7 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"MI", "MIRROR"}, [] { return std::make_unique<MirrorCommand>(); });
     r.register_command({"O", "OFFSET"}, [] { return std::make_unique<OffsetCommand>(); });
     r.register_command({"TR", "TRIM"}, [] { return std::make_unique<TrimCommand>(); });
+    r.register_command({"J", "JOIN"}, [] { return std::make_unique<JoinCommand>(); });
     // Modify (Phase 10).
     r.register_command({"RO", "ROTATE"}, [] { return std::make_unique<RotateCommand>(); });
     r.register_command({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); });

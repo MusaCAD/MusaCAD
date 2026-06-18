@@ -161,6 +161,16 @@ struct TrimPickCommand {
     std::uint64_t group = 0;
 };
 
+/// Join the picked lines/arcs/open polylines into a single polyline. `picks[0]` is the
+/// source (its layer/props are inherited); the rest are candidates. Endpoints must meet
+/// within `radius` (the snap tolerance); candidates that don't connect are skipped (and
+/// counted). A chain whose ends meet -> a closed polyline. One undo group.
+struct JoinPickCommand {
+    std::vector<Vec2> picks;
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
+
 /// Rotate the selection by `angle` (radians) about `base`.
 struct RotateSelectionCommand {
     Vec2 base;
@@ -466,6 +476,6 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand>;
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand>;
 
 } // namespace musacad::core

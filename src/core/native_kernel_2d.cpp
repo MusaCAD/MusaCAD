@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
@@ -508,6 +509,179 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     return false;
 }
 
+// Proper polyline offset: offset each segment (straight -> parallel line; arc/bulge ->
+// concentric arc) by `distance` to the side the pick lies on, then re-MITER every corner
+// as the intersection of the two adjacent offset curves -- so edges stay at distance d
+// and corners meet cleanly (no trapezoid). Reuses the Ph10 intersection primitives
+// (line/line, line/circle). Bulges (arc segments) are preserved. Returns false if the
+// offset collapses/folds (too large for the polyline), leaving the store unchanged.
+static bool offset_polyline(const GeometryStore& store, const PolylineData& p, double distance,
+                            Vec2 side, Command& out) {
+    const std::span<const Vec2> v = store.vertices_of(p);
+    const std::span<const double> bl = store.bulges_of(p);
+    const std::size_t n = v.size();
+    if (n < 2) {
+        return false;
+    }
+    const bool closed = p.closed;
+    const std::size_t nseg = closed ? n : n - 1;
+    if (nseg < 1) {
+        return false;
+    }
+    const auto bulge_at = [&](std::size_t i) { return bl.empty() ? 0.0 : bl[i]; };
+
+    // Offset side: +1 = left of travel, -1 = right. Take it from the segment whose chord
+    // is nearest the pick (robust for open/closed polylines and any first segment).
+    double sign = 1.0;
+    {
+        double best = std::numeric_limits<double>::max();
+        for (std::size_t i = 0; i < nseg; ++i) {
+            const Vec2 a = v[i];
+            const Vec2 b = v[(i + 1) % n];
+            const Vec2 cp = closest_on_segment(a, b, side);
+            const double dd = length(side - cp);
+            if (dd < best) {
+                best = dd;
+                const Vec2 dir = normalized(b - a);
+                const Vec2 nrm{-dir.y, dir.x}; // left normal of travel
+                sign = dot(side - cp, nrm) >= 0.0 ? 1.0 : -1.0;
+            }
+        }
+    }
+
+    // One offset curve per segment: a parallel line (straight) or a concentric circle (arc).
+    struct OffSeg {
+        bool arc = false;
+        Vec2 s{}, e{};      // naive offset endpoints (parallel / radially-scaled)
+        Vec2 center{};      // arc: circle centre
+        double radius = 0.0; // arc: offset radius
+        double bulge = 0.0; // output segment bulge (0 = straight)
+        Vec2 in_dir{};      // input chord direction (fold check)
+    };
+    std::vector<OffSeg> seg(nseg);
+    for (std::size_t i = 0; i < nseg; ++i) {
+        const Vec2 a = v[i];
+        const Vec2 b = v[(i + 1) % n];
+        const double bg = bulge_at(i);
+        OffSeg os;
+        os.in_dir = normalized(b - a);
+        if (bg == 0.0) {
+            const Vec2 dir = normalized(b - a);
+            const Vec2 nrm{-dir.y, dir.x};
+            const Vec2 d = nrm * (sign * distance);
+            os.s = a + d;
+            os.e = b + d;
+        } else {
+            const BulgeArc ba = arc_from_bulge(a, b, bg);
+            const double sweep_sign = ba.sweep >= 0.0 ? 1.0 : -1.0;
+            // Centre is left of travel for a CCW arc, right for CW; offsetting toward the
+            // centre shrinks the radius, away grows it.
+            const double r2 = ba.radius - sign * sweep_sign * distance;
+            if (r2 <= kIntersectEps) {
+                return false; // arc collapses -> offset too large
+            }
+            const double k = r2 / ba.radius;
+            os.arc = true;
+            os.center = ba.center;
+            os.radius = r2;
+            os.s = ba.center + (a - ba.center) * k;
+            os.e = ba.center + (b - ba.center) * k;
+            os.bulge = bg; // concentric arc: same sweep -> same bulge
+        }
+        seg[i] = os;
+    }
+
+    // Re-miter each corner: vertex j is the intersection of seg[j-1] and seg[j].
+    const std::size_t nv = closed ? nseg : nseg + 1;
+    std::vector<Vec2> pts(nv);
+    std::vector<double> bulges(nv, 0.0);
+
+    const auto corner = [](const OffSeg& A, const OffSeg& B, Vec2 naive, Vec2& res) -> bool {
+        if (!A.arc && !B.arc) {
+            Vec2 hit{};
+            if (NativeKernel2D::line_line_intersection(A.s, A.e, B.s, B.e, hit)) {
+                res = hit;
+            } else {
+                res = naive; // parallel (collinear continuation): the shared point
+            }
+            return true;
+        }
+        if (A.arc != B.arc) {
+            const OffSeg& ln = A.arc ? B : A;
+            const OffSeg& ac = A.arc ? A : B;
+            Vec2 p0{};
+            Vec2 p1{};
+            const int k = NativeKernel2D::line_circle_intersection(ln.s, ln.e, ac.center, ac.radius,
+                                                                   p0, p1);
+            if (k == 0) {
+                return false; // offset line misses the offset arc -> too large
+            }
+            res = (k == 1 || length(p0 - naive) <= length(p1 - naive)) ? p0 : p1;
+            return true;
+        }
+        // arc/arc: intersect the two offset circles; pick the hit nearest the ideal
+        // corner. (Reachable via JOIN of two arcs or a DXF polyline with consecutive
+        // bulges.) No intersection -> the offset folded this corner: fail gracefully.
+        Vec2 q0{};
+        Vec2 q1{};
+        const int k = NativeKernel2D::circle_circle_intersection(A.center, A.radius, B.center,
+                                                                 B.radius, q0, q1);
+        if (k == 0) {
+            return false;
+        }
+        res = (k == 1 || length(q0 - naive) <= length(q1 - naive)) ? q0 : q1;
+        return true;
+    };
+
+    if (closed) {
+        for (std::size_t j = 0; j < nseg; ++j) {
+            const OffSeg& A = seg[(j + nseg - 1) % nseg];
+            const OffSeg& B = seg[j];
+            Vec2 c{};
+            if (!corner(A, B, (A.e + B.s) * 0.5, c)) {
+                return false;
+            }
+            pts[j] = c;
+            bulges[j] = B.bulge;
+        }
+    } else {
+        pts[0] = seg[0].s;
+        for (std::size_t j = 1; j < nseg; ++j) {
+            Vec2 c{};
+            if (!corner(seg[j - 1], seg[j], (seg[j - 1].e + seg[j].s) * 0.5, c)) {
+                return false;
+            }
+            pts[j] = c;
+        }
+        pts[nseg] = seg[nseg - 1].e;
+        for (std::size_t i = 0; i < nseg; ++i) {
+            bulges[i] = seg[i].bulge;
+        }
+    }
+
+    // Fold detection: a valid offset keeps each segment's direction. A reversed or
+    // zero-length output segment means the offset is too large (it self-intersects).
+    for (std::size_t i = 0; i < nseg; ++i) {
+        const Vec2 a = pts[i];
+        const Vec2 b = pts[(i + 1) % nv];
+        const Vec2 d = b - a;
+        if (length(d) < kIntersectEps || dot(normalized(d), seg[i].in_dir) <= 0.0) {
+            return false;
+        }
+    }
+
+    AddPolylineCommand cmd;
+    cmd.points = std::move(pts);
+    cmd.closed = closed;
+    cmd.group = 0;
+    cmd.props = p.props;
+    if (std::any_of(bulges.begin(), bulges.end(), [](double b) { return b != 0.0; })) {
+        cmd.bulges = std::move(bulges);
+    }
+    out = cmd;
+    return true;
+}
+
 bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, double distance,
                             Vec2 side, Command& out) const {
     if (!store.is_valid(entity) || distance <= 0.0) {
@@ -545,33 +719,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     }
     case EntityKind::Polyline: {
         const PolylineData* p = store.polyline(entity);
-        const std::span<const Vec2> v = store.vertices_of(*p);
-        if (v.size() < 2) {
-            return false;
-        }
-        // Determine offset side from the first segment, then offset every vertex
-        // along its averaged adjacent-segment normal (simple miter -- adequate
-        // for gentle polylines; sharp corners are approximate).
-        const Vec2 d0 = normalized(v[1] - v[0]);
-        const Vec2 n0{-d0.y, d0.x};
-        const double sign = dot(side - v[0], n0) >= 0.0 ? 1.0 : -1.0;
-        std::vector<Vec2> out_pts;
-        out_pts.reserve(v.size());
-        for (std::size_t i = 0; i < v.size(); ++i) {
-            Vec2 n{0.0, 0.0};
-            if (i > 0) {
-                const Vec2 d = normalized(v[i] - v[i - 1]);
-                n += Vec2{-d.y, d.x};
-            }
-            if (i + 1 < v.size()) {
-                const Vec2 d = normalized(v[i + 1] - v[i]);
-                n += Vec2{-d.y, d.x};
-            }
-            n = normalized(n);
-            out_pts.push_back(v[i] + n * (sign * distance));
-        }
-        out = AddPolylineCommand{std::move(out_pts), p->closed, 0};
-        return true;
+        return offset_polyline(store, *p, distance, side, out);
     }
     case EntityKind::Point:
     case EntityKind::Spline:
@@ -674,6 +822,32 @@ int NativeKernel2D::line_circle_intersection(Vec2 a, Vec2 b, Vec2 center, double
     disc = std::sqrt(disc);
     p0 = a + d * ((-B - disc) / (2.0 * A));
     p1 = a + d * ((-B + disc) / (2.0 * A));
+    return 2;
+}
+
+int NativeKernel2D::circle_circle_intersection(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0,
+                                               Vec2& p1) {
+    const Vec2 d = c1 - c0;
+    const double dist2 = dot(d, d);
+    const double dist = std::sqrt(dist2);
+    if (dist < 1e-12) {
+        return 0; // concentric (or coincident) -- no isolated intersection points
+    }
+    if (dist > r0 + r1 + 1e-9 || dist < std::abs(r0 - r1) - 1e-9) {
+        return 0; // circles are separate, or one is wholly inside the other
+    }
+    // Distance from c0 to the radical line, along d; h = half-chord perpendicular to d.
+    const double a = (dist2 + r0 * r0 - r1 * r1) / (2.0 * dist);
+    const double h2 = r0 * r0 - a * a;
+    const Vec2 mid = c0 + d * (a / dist);
+    if (h2 <= 1e-18) {
+        p0 = mid;
+        return 1; // tangent
+    }
+    const double h = std::sqrt(h2);
+    const Vec2 perp{-d.y / dist * h, d.x / dist * h};
+    p0 = mid + perp;
+    p1 = mid - perp;
     return 2;
 }
 

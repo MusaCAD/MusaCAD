@@ -1503,6 +1503,12 @@ void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec
         redo_.clear();
         geom_dirty_ = true;
         report("Offset created.");
+    } else if (h.kind == EntityKind::Polyline) {
+        // A valid polyline only fails to offset when the distance collapses/folds it.
+        report("Offset distance too large for this polyline.");
+    } else if (h.kind == EntityKind::Circle || h.kind == EntityKind::Arc) {
+        // Circle/arc offset only fails when shrinking inward past radius 0.
+        report("Offset distance too large (would collapse the curve).");
     } else {
         report("Offset: can't offset that entity.");
     }
@@ -1580,6 +1586,218 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     redo_.clear();
     geom_dirty_ = true;
     report("Trimmed.");
+}
+
+namespace {
+// One entity's contribution to a joined polyline: an ordered vertex list with a bulge
+// per segment (size == verts.size()-1). Lines -> 2 verts / 1 zero bulge; arcs -> 2 verts
+// / 1 bulge (tan(sweep/4)); open polylines -> their own verts + bulges (closed ones have
+// no free endpoints and can't be joined).
+struct JoinSeg {
+    std::vector<Vec2> verts;
+    std::vector<double> bulges;
+    EntityHandle handle{};
+    EntityProps props{};
+};
+
+// Reverse a vertex+bulge chain: vertices flip order and each arc's sweep sign flips, so
+// the new per-segment bulges are the reverse of the negated old ones.
+void reverse_join(std::vector<Vec2>& verts, std::vector<double>& bulges) {
+    std::reverse(verts.begin(), verts.end());
+    const std::size_t m = bulges.size();
+    std::vector<double> nb(m);
+    for (std::size_t i = 0; i < m; ++i) {
+        nb[i] = -bulges[m - 1 - i];
+    }
+    bulges = std::move(nb);
+}
+
+std::optional<JoinSeg> to_join_seg(const GeometryStore& store, EntityHandle h) {
+    JoinSeg js;
+    js.handle = h;
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store.line(h);
+        if (l == nullptr) {
+            return std::nullopt;
+        }
+        js.verts = {l->a, l->b};
+        js.bulges = {0.0};
+        js.props = l->props;
+        return js;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store.arc(h);
+        if (a == nullptr) {
+            return std::nullopt;
+        }
+        double sweep = a->end_angle - a->start_angle;
+        while (sweep <= 0.0) {
+            sweep += kTwoPi; // arcs run CCW from start to end
+        }
+        js.verts = {{a->center.x + a->radius * std::cos(a->start_angle),
+                     a->center.y + a->radius * std::sin(a->start_angle)},
+                    {a->center.x + a->radius * std::cos(a->end_angle),
+                     a->center.y + a->radius * std::sin(a->end_angle)}};
+        js.bulges = {std::tan(sweep / 4.0)};
+        js.props = a->props;
+        return js;
+    }
+    case EntityKind::Polyline: {
+        const PolylineData* p = store.polyline(h);
+        if (p == nullptr || p->closed) {
+            return std::nullopt; // a closed polyline has no free endpoints to join
+        }
+        const std::span<const Vec2> v = store.vertices_of(*p);
+        if (v.size() < 2) {
+            return std::nullopt;
+        }
+        const std::span<const double> bl = store.bulges_of(*p);
+        js.verts.assign(v.begin(), v.end());
+        js.bulges.assign(v.size() - 1, 0.0);
+        for (std::size_t i = 0; i + 1 < v.size(); ++i) {
+            js.bulges[i] = bl.empty() ? 0.0 : bl[i];
+        }
+        js.props = p->props;
+        return js;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+} // namespace
+
+void GeometryEngine::apply_join(const std::vector<Vec2>& picks, double radius,
+                                std::uint64_t group) {
+    // Resolve picks -> unique entity handles (source first, in pick order).
+    std::vector<EntityHandle> ents;
+    for (const Vec2 pk : picks) {
+        const EntityHandle h = pick_nearest(pk, radius);
+        if (h.is_null()) {
+            continue;
+        }
+        if (std::find(ents.begin(), ents.end(), h) == ents.end()) {
+            ents.push_back(h);
+        }
+    }
+    if (ents.size() < 2) {
+        report("JOIN: need at least two objects under the picks.");
+        return;
+    }
+
+    // The source seeds the chain (and donates its layer/properties); the rest are
+    // candidates to splice on by matching endpoints.
+    std::optional<JoinSeg> src = to_join_seg(store_, ents[0]);
+    if (!src) {
+        report("JOIN: the source object can't be joined.");
+        return;
+    }
+    std::vector<JoinSeg> cands;
+    for (std::size_t i = 1; i < ents.size(); ++i) {
+        if (auto js = to_join_seg(store_, ents[i])) {
+            cands.push_back(std::move(*js));
+        }
+    }
+
+    std::vector<Vec2> cv = src->verts;
+    std::vector<double> cb = src->bulges; // invariant: cb.size() == cv.size() - 1
+    std::vector<EntityHandle> joined{ents[0]};
+    std::vector<bool> used(cands.size(), false);
+    const double tol = radius > 0.0 ? radius : 1e-6;
+    const auto approx = [tol](Vec2 a, Vec2 b) { return length(a - b) <= tol; };
+
+    // Append a segment whose first vertex coincides with the chain tail.
+    const auto append_tail = [&](const JoinSeg& seg) {
+        for (std::size_t k = 1; k < seg.verts.size(); ++k) {
+            cb.push_back(seg.bulges[k - 1]);
+            cv.push_back(seg.verts[k]);
+        }
+    };
+
+    // Greedy growth at either end. To grow at the head we reverse the chain (so the head
+    // becomes the tail) and append there -- keeps all splicing as tail-appends.
+    bool progress = true;
+    while (progress) {
+        progress = false;
+        for (std::size_t i = 0; i < cands.size(); ++i) {
+            if (used[i]) {
+                continue;
+            }
+            JoinSeg e = cands[i]; // a working copy we may reverse
+            bool connected = true;
+            if (approx(e.verts.front(), cv.back())) {
+                append_tail(e);
+            } else if (approx(e.verts.back(), cv.back())) {
+                reverse_join(e.verts, e.bulges);
+                append_tail(e);
+            } else if (approx(e.verts.back(), cv.front())) {
+                reverse_join(cv, cb);
+                append_tail(e);
+            } else if (approx(e.verts.front(), cv.front())) {
+                reverse_join(cv, cb);
+                reverse_join(e.verts, e.bulges);
+                append_tail(e);
+            } else {
+                connected = false;
+            }
+            if (connected) {
+                used[i] = true;
+                joined.push_back(cands[i].handle);
+                progress = true;
+            }
+        }
+    }
+
+    const auto skipped = static_cast<std::size_t>(std::count(used.begin(), used.end(), false));
+    if (joined.size() < 2) {
+        report("JOIN: no objects connect to the source (endpoints must meet).");
+        return;
+    }
+
+    // A chain whose ends meet closes into a closed polyline (which OFFSETs uniformly).
+    bool closed = false;
+    if (cv.size() >= 3 && approx(cv.front(), cv.back())) {
+        closed = true;
+        cv.pop_back(); // drop the duplicate closing vertex; cb already wraps it
+    }
+
+    // Bulges: empty when all straight; otherwise sized to match points (open polylines
+    // pad the trailing, segment-less vertex with 0).
+    std::vector<double> out_bulges;
+    if (std::any_of(cb.begin(), cb.end(), [](double b) { return b != 0.0; })) {
+        out_bulges = cb;
+        if (!closed) {
+            out_bulges.push_back(0.0);
+        }
+    }
+
+    // One undo group: erase the joined sources, add the single polyline.
+    for (const EntityHandle h : joined) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, original);
+    }
+    AddPolylineCommand cmd;
+    cmd.points = cv;
+    cmd.closed = closed;
+    cmd.group = group;
+    cmd.props = src->props; // result inherits the source's layer/colour/linetype
+    cmd.bulges = out_bulges;
+    const EntityHandle nh = create_indexed(cmd);
+    push_create_item(group, nh, cmd);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+
+    std::string msg = std::to_string(joined.size()) + " objects joined into a " +
+                      (closed ? "closed polyline." : "polyline.");
+    if (skipped > 0) {
+        msg += " " + std::to_string(skipped) + " skipped (endpoints did not meet).";
+    }
+    report(msg);
 }
 
 void GeometryEngine::apply(const Command& command) {
@@ -1671,6 +1889,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_offset(c.pick, c.radius, c.distance, c.side, c.group);
             } else if constexpr (std::is_same_v<T, TrimPickCommand>) {
                 apply_trim(c.pick, c.radius, c.group);
+            } else if constexpr (std::is_same_v<T, JoinPickCommand>) {
+                apply_join(c.picks, c.radius, c.group);
             } else if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
                 apply_rotate(c.base, c.angle, c.group);
             } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {

@@ -150,3 +150,27 @@ at-cursor **sub-prompt cell** (driven by `PreviewSpec::scalar_prompt`, distinct 
 on-geometry Length/Width drag fields), and the size, once fixed, previews as a
 quadrant-flipped rectangle for the final corner pick. The earlier deferred context-aware
 DYN-box item is now closed — see [TODO.md](TODO.md).
+
+## OFFSET — entity handling
+
+`OFFSET` prompts for a distance, an object, and a side point (AutoCAD-standard). The result
+inherits the source entity's layer/properties.
+
+| Entity | Behaviour | Status |
+|---|---|---|
+| Line | Parallel line at ±distance on the picked side | Implemented |
+| Circle / Arc | Concentric (radius ± distance); shrinking past radius 0 fails cleanly | Implemented |
+| **Polyline (open/closed, incl. rectangles & bulged/filleted corners)** | Each segment offset (lines parallel, arcs concentric with the bulge kept), corners **re-mitered** as the intersection of adjacent offset curves — line/line, line/arc, and arc/arc (via the shared line_line / line_circle / circle_circle primitives) — uniform spacing, clean corners (no trapezoid). An over-large inward offset that would fold the shape fails with "Offset distance too large for this polyline." and leaves the geometry unchanged | Implemented |
+| `[Through/Erase/Layer]` options + multiple (repeat) | AutoCAD OFFSET sub-options | Planned (distance + side only today) |
+
+## JOIN
+
+| Step | Behaviour | Status |
+|---|---|---|
+| Select source, then objects to join | Lines / arcs / open polylines that share endpoints within the snap tolerance merge into ONE polyline (arcs become bulged segments); the result inherits the source's layer/properties | Implemented |
+| Closed loop | A chain whose ends meet within tolerance becomes a **closed** polyline (which then OFFSETs uniformly) | Implemented |
+| Disconnected picks | Skipped and reported with a count | Implemented |
+| Undo | The whole join is one undo group | Implemented |
+
+Alias `J`; Modify-panel ribbon button. Closed polylines (no free endpoints) and non-curve
+entities are not joinable and are skipped.

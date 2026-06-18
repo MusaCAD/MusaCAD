@@ -446,6 +446,7 @@ void MainWindow::build_ribbon() {
     add_cmd(modify, QStringLiteral("extend"), QStringLiteral("Extend"), "EX");   // pick-based
     add_cmd(modify, QStringLiteral("fillet"), QStringLiteral("Fillet"), "F");    // pick-based
     add_cmd(modify, QStringLiteral("chamfer"), QStringLiteral("Chamfer"), "CHA"); // pick-based
+    add_cmd(modify, QStringLiteral("join"), QStringLiteral("Join"), "J");        // pick-based
     // Move/Copy/Mirror/Rotate/Scale/Array operate on an existing selection.
     selection_required_buttons_ = {move_btn, copy_btn, mirror_btn, rotate_btn, scale_btn, array_btn};
     for (QToolButton* b : selection_required_buttons_) {
@@ -2373,6 +2374,85 @@ bool MainWindow::dyn_shot(int kind, const std::string& out_png) {
     const bool fields_ok = viewport_->dyn_field_count() == expect && viewport_->dyn_capturing();
     dyn_action_->setChecked(false);
     return fields_ok;
+}
+
+bool MainWindow::offset_shot(int kind, const std::string& out_png) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    // Classic mode (bottom command line visible) so the failure-case message is on screen.
+    dyn_action_->setChecked(false);
+    engine_->submit(core::NewDocumentCommand{});
+    pump(200);
+
+    const double b90 = std::tan((3.14159265358979323846 / 2.0) / 4.0); // 90-degree-arc bulge
+
+    if (kind == 0) {
+        // Rectangle -> offset inward: a uniform inner rectangle, square corners.
+        engine_->submit(core::AddPolylineCommand{
+            {{-40, -30}, {40, -30}, {40, 30}, {-40, 30}}, true, 1});
+        pump(200);
+        engine_->submit(core::OffsetPickCommand{{0, -30}, 2.0, 10.0, {0, 0}, 2});
+    } else if (kind == 1) {
+        // Rounded (filleted) rectangle -> offset inward: smaller fillet arcs (bulges kept).
+        core::AddPolylineCommand pc;
+        const double W = 40, H = 30, r = 12;
+        pc.points = {{-W + r, -H}, {W - r, -H}, {W, -H + r}, {W, H - r},
+                     {W - r, H},   {-W + r, H}, {-W, H - r}, {-W, -H + r}};
+        pc.bulges = {0, b90, 0, b90, 0, b90, 0, b90};
+        pc.closed = true;
+        pc.group = 1;
+        engine_->submit(pc);
+        pump(200);
+        engine_->submit(core::OffsetPickCommand{{0, -30}, 2.0, 8.0, {0, 0}, 2});
+    } else if (kind == 2) {
+        // Open polyline (3 connected segments) -> offset inward with re-mitered corners.
+        engine_->submit(core::AddPolylineCommand{
+            {{-40, 30}, {-40, -30}, {40, -30}, {40, 30}}, false, 1});
+        pump(200);
+        engine_->submit(core::OffsetPickCommand{{0, -30}, 2.0, 8.0, {0, 0}, 2});
+    } else if (kind == 3) {
+        // Over-large inward offset -> graceful failure message, geometry unchanged.
+        engine_->submit(core::AddPolylineCommand{
+            {{-10, -10}, {10, -10}, {10, 10}, {-10, 10}}, true, 1});
+        pump(200);
+        engine_->submit(core::OffsetPickCommand{{0, -10}, 2.0, 15.0, {0, 0}, 2}); // > half-width
+    } else if (kind == 4) {
+        // Four separate lines -> JOIN -> one closed polyline -> uniform inward offset.
+        engine_->submit(core::AddLineCommand{{-40, -30}, {40, -30}, 1});
+        engine_->submit(core::AddLineCommand{{40, -30}, {40, 30}, 1});
+        engine_->submit(core::AddLineCommand{{40, 30}, {-40, 30}, 1});
+        engine_->submit(core::AddLineCommand{{-40, 30}, {-40, -30}, 1});
+        pump(200);
+        engine_->submit(core::JoinPickCommand{{{0, -30}, {40, 0}, {0, 30}, {-40, 0}}, 2.0, 2});
+        pump(200);
+        engine_->submit(core::OffsetPickCommand{{0, -30}, 2.0, 10.0, {0, 0}, 3});
+    }
+    pump(300);
+    viewport_->zoom_extents();
+    pump(500);
+
+    const QRect mfr = frameGeometry();
+    std::printf("[offset_shot] kind=%d line_vertex_count=%d main=0x%lx frameG=(%d,%d %dx%d)\n", kind,
+                viewport_->line_vertex_count(), static_cast<unsigned long>(winId()), mfr.x(), mfr.y(),
+                mfr.width(), mfr.height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[offset_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
+    }
+    return viewport_->line_vertex_count() > 0;
 }
 
 bool MainWindow::selftest_param_dialogs() {

@@ -195,6 +195,22 @@ private:
     bool done_ = false;
 };
 
+// JOIN: pick a source object, then pick lines/arcs/open polylines that share endpoints
+// with it; commits a single polyline (closed if the chain loops). Pick-based like OFFSET.
+class JoinCommand final : public ICommand {
+public:
+    std::string name() const override { return "JOIN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Source, Targets } state_ = State::Source;
+    std::vector<core::Vec2> picks_;
+    bool done_ = false;
+};
+
 class TrimCommand final : public ICommand {
 public:
     std::string name() const override { return "TRIM"; }

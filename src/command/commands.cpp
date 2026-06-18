@@ -731,6 +731,46 @@ void OffsetCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// JOIN (pick a source, then targets that share endpoints -> one polyline)
+// ---------------------------------------------------------------------------
+void JoinCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Select source object: ");
+}
+
+void JoinCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (state_ == State::Source) {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        picks_.push_back(*p);
+        state_ = State::Targets;
+        ctx.set_prompt("Select objects to join to source: ");
+        return;
+    }
+    // Targets: pick more objects; Enter commits the join (the engine resolves entities,
+    // walks the connected chain, and reports how many joined / were skipped).
+    if (t.empty()) {
+        if (picks_.size() >= 2) {
+            ctx.submit(core::JoinPickCommand{picks_, ctx.pick_radius(), ctx.group_id()});
+        } else {
+            ctx.echo("JOIN: select at least one object to join to the source.");
+        }
+        done_ = true;
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        picks_.push_back(*p);
+    }
+}
+
+void JoinCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // TRIM (line subset; repeats)
 // ---------------------------------------------------------------------------
 void TrimCommand::start(CommandContext& ctx) {
