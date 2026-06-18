@@ -3,6 +3,8 @@
 
 #include "musacad/render/viewport_renderer.hpp"
 
+#include <algorithm>
+
 #include "musacad/core/math/math.hpp"
 #include "musacad/render/gpu/buffer.hpp"
 #include "musacad/render/gpu/command_buffer.hpp"
@@ -95,6 +97,12 @@ float lineweight_px(std::uint8_t hundredths_mm, float device_px_per_mm) {
 // SCREEN ONLY: the PLOT path honours the entity's actual 0 weight, so paper ink is
 // unchanged. Empirical, screenshot-tuned; not a user/entity property.
 constexpr std::uint8_t kTextScreenWeightHmm = 50;
+
+// The text weight above is the CAP. For small text it is capped further to this fraction of
+// the glyph's ON-SCREEN height, so tiny title-block fields read crisp instead of blocky while
+// title-size text keeps the full ~0.5 mm presence (the cap only binds below ~glyph height /
+// frac). Floored at a 1px hairline so text never disappears.
+constexpr float kTextStrokeFrac = 0.12f;
 
 /// Converts world-space segment endpoint pairs (2 Vec2 per segment) into a flat
 /// vec4-per-instance float buffer. Returns the instance count.
@@ -330,16 +338,24 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         // density is the logical px/mm times the device-pixel-ratio -- without this
         // every line is dpr x too thin on a HiDPI display.
         const float eff_px_per_mm = device_px_per_mm_ * device_pixel_ratio_;
+        // Physical pixels per world unit (camera viewport is the physical framebuffer), used to
+        // taper the text weight to the glyph's on-screen size.
+        const float world_to_px = static_cast<float>(camera.scale());
         const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
-                                    std::uint32_t count, bool is_text) {
+                                    std::uint32_t count, bool is_text, float text_height) {
             // Single-stroke TEXT gets a dedicated, heavier screen weight so it reads crisp
             // and present (not the 1px hairline that looked dull) -- independent of the
             // LWDISPLAY toggle, since text carries no real lineweight to display/suppress.
-            // PLOT is a separate path that honours the entity's 0 weight (hairline), so this
-            // never reaches paper. Line geometry keeps the AutoCAD-accurate weight.
+            // The ~0.5mm weight is a CAP: small text is capped further to a fraction of its
+            // on-screen glyph height so tiny title-block fields aren't blocky, while title-size
+            // text keeps full presence (floored at a 1px hairline). PLOT is a separate path
+            // that honours the entity's 0 weight (hairline), so this never reaches paper.
+            // Line geometry keeps the AutoCAD-accurate weight.
             float w;
             if (is_text) {
-                w = lineweight_px(kTextScreenWeightHmm, eff_px_per_mm);
+                const float cap = lineweight_px(kTextScreenWeightHmm, eff_px_per_mm);
+                const float glyph_px = text_height * world_to_px;
+                w = std::clamp(glyph_px * kTextStrokeFrac, 1.0f, cap);
             } else {
                 w = snapshot.lineweight_display ? lineweight_px(lw, eff_px_per_mm)
                                                 : device_pixel_ratio_;
@@ -356,10 +372,10 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
             draw_batch(core::Rgb{static_cast<std::uint8_t>(kSceneColor[0] * 255),
                                  static_cast<std::uint8_t>(kSceneColor[1] * 255),
                                  static_cast<std::uint8_t>(kSceneColor[2] * 255)},
-                       25, 0, static_cast<std::uint32_t>(line_count_), false);
+                       25, 0, static_cast<std::uint32_t>(line_count_), false, 0.0f);
         } else {
             for (const core::ColorBatch& b : line_batches_) {
-                draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text);
+                draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height);
             }
         }
     }

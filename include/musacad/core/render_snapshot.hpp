@@ -37,6 +37,11 @@ struct ColorBatch {
     /// hairline), so the on-screen polish never reaches paper. Only ever set on
     /// `line_batches` -- filled TTF text lives in `fill_batches`, untouched (Ph29).
     bool is_text = false;
+    /// World-space cap height of the text in this batch (0 for non-text). Text batches are
+    /// keyed by quantised height so the renderer can taper the on-screen text weight by the
+    /// glyph's on-screen size -- tiny text reads crisp, title-size text keeps full presence.
+    /// Derived at snapshot build; not baked, not in the checksum; ignored by PLOT.
+    float text_height = 0.0f;
 };
 
 /// An immutable (from the renderer's perspective) view of the scene, produced

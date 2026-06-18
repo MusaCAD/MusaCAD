@@ -26,13 +26,13 @@ paper is ink-for-ink identical, verified 0-pixel diff); (2) real lowercase a–z
 built-in stroke font (simplex/Hershey-class, true ascenders/x-height/descenders), replacing
 the Phase-13 small-caps fallback, monospace metrics unchanged; (3) analytic ~1 px edge
 antialiasing in `thickline.frag` + alpha blending. SHX→stroke substitution still routes to
-the improved font. Both presets clean, ctest green. **Staged refinement** (small, non-blocking):
+the improved font. Both presets clean, ctest green.
 
-1. **Per-text-height adaptive screen weight** — the screen weight is a single fixed
-   mm-equivalent, so very small text (≈2.5 mm at low zoom) reads slightly heavy. **Why parked:**
-   batches mix all text of a colour, so per-glyph-height weighting needs height in the batch key
-   (or a separate text-by-height batching). **Done looks like:** a gentle taper so tiny text
-   gets proportionally lighter strokes while title-size text keeps full presence.
+1. **Per-text-height adaptive screen weight (DONE 2026-06-18)** — text batches now carry their
+   quantised cap height (`ColorBatch::text_height`, keyed in `line_key`); the renderer caps the
+   stroke at a fraction (~12%) of the glyph's on-screen height (`text_height × camera.scale()`),
+   floored at a 1 px hairline. Tiny title-block fields read crisp; title-size text keeps full
+   presence. Screen-only (plot ink 0-pixel diff, verified). **Staged refinement** (non-blocking):
 2. **Fuller Hershey glyph coverage** — the hand-authored set covers ASCII + 3 CAD symbols.
    A future pass could fold in more of the public-domain Hershey occidental set (accents,
    extended punctuation) behind the same parser.

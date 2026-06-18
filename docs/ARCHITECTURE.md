@@ -274,8 +274,12 @@ professional **on screen** without changing what reaches paper:
   that read as "dull" — sub-pixel thin on HiDPI. The snapshot now tags those batches with
   `ColorBatch::is_text` (derived at build, not baked, not in the checksum; only ever set on
   `line_batches` — filled TTF lives in `fill_batches`). The **viewport** renderer draws
-  `is_text` batches at a fixed ~0.5 mm-equivalent screen weight (`kTextScreenWeightHmm`)
-  through the *same* thick-line pipeline — no second code path, no extra geometry. The
+  `is_text` batches at a ~0.5 mm-equivalent screen weight (`kTextScreenWeightHmm`) through
+  the *same* thick-line pipeline — no second code path, no extra geometry. That weight is a
+  **cap**: each text batch carries its quantised cap height (`ColorBatch::text_height`, keyed
+  into the batch), and the renderer tapers the stroke to a fraction of the glyph's *on-screen*
+  height (`text_height × camera.scale()`), floored at a 1 px hairline — so tiny title-block
+  fields read crisp instead of blocky while title-size text keeps full presence. The
   **plot** path is a separate route (QPainter) that ignores `is_text` and honours the entity
   weight (0 → cosmetic hairline), so the on-screen polish **never reaches paper**: a plot of
   the same drawing is ink-for-ink identical before/after (verified: 0-pixel raster diff). This
