@@ -2707,6 +2707,90 @@ bool MainWindow::multidoc_shot(int kind, const std::string& out_png) {
     return true;
 }
 
+bool MainWindow::text_shot(int kind, const std::string& out_png) {
+    using core::Vec2;
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+
+    const std::uint64_t g = 1;
+    const auto poly = [&](std::vector<Vec2> pts, bool closed) {
+        engine_->submit(core::AddPolylineCommand{std::move(pts), closed, g});
+    };
+    const auto seg = [&](double x0, double y0, double x1, double y1) {
+        poly({{x0, y0}, {x1, y1}}, false);
+    };
+    const auto txt = [&](double x, double y, double h, const std::string& s) {
+        engine_->submit(core::AddTextCommand{Vec2{x, y}, h, 0.0, std::uint8_t{0}, s, g});
+    };
+
+    // A representative drafting title block: sheet border + a lower-right title-block
+    // grid + mixed-case single-line labels + a lowercase MTEXT note. This is the
+    // user's "title block" equivalent -- the same scene renders before and after the
+    // text-quality work (geometry is identical; only stroke rendering changes).
+    (void)kind;
+    poly({{0, 0}, {260, 0}, {260, 180}, {0, 180}}, true); // sheet border
+    // Title-block box (lower right) with internal divisions.
+    poly({{150, 0}, {260, 0}, {260, 50}, {150, 50}}, true);
+    seg(150, 38, 260, 38);
+    seg(150, 26, 260, 26);
+    seg(150, 14, 260, 14);
+    seg(205, 38, 205, 0);
+
+    txt(156, 41, 6.0, "MUSA CAD");
+    txt(156, 29, 4.0, "Mounting Bracket");
+    txt(156, 16.5, 3.0, "Drawn by: Pranay Kiran");
+    txt(156, 4, 3.0, "Material: Al 6061-T6");
+    txt(209, 41, 2.6, "Scale 1:2");
+    txt(209, 29, 2.6, "Sheet 1 of 1");
+    txt(209, 16.5, 2.6, "Rev: A");
+    txt(209, 4, 2.6, "Part No: MC-0042");
+    txt(10, 168, 5.0, "Drawing Title Block (text quality sample)");
+
+    core::MTextBlock note;
+    note.pos = {10, 70};
+    note.height = 4.0;
+    note.line_spacing = 1.4;
+    engine_->submit(core::AddMTextCommand{
+        note,
+        "Notes:\n1. all dimensions in mm.\n2. break sharp edges 0.5 max.\n"
+        "3. tolerances per ISO 2768-m.\n4. deburr and clean surfaces.",
+        g});
+    pump(300);
+    viewport_->zoom_extents();
+    pump(400);
+
+    // Save the scene so the plot path can be exercised on the identical drawing
+    // (the plot-unchanged proof): MUSACAD_PLOT_TEST="<scene>.musa|out.pdf|1".
+    const std::filesystem::path scene =
+        std::filesystem::path(out_png).replace_extension(".musa");
+    save_to(QString::fromStdString(scene.string()), false);
+    pump(400);
+
+    const QRect mfr = frameGeometry();
+    std::printf("[text_shot] kind=%d line_vertex_count=%d scene=%s main=0x%lx "
+                "frameG=(%d,%d %dx%d)\n",
+                kind, viewport_->line_vertex_count(), scene.string().c_str(),
+                static_cast<unsigned long>(winId()), mfr.x(), mfr.y(), mfr.width(), mfr.height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[text_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
+    }
+    return true;
+}
+
 bool MainWindow::selftest_param_dialogs() {
     using core::Vec2;
     const auto pump = [](auto pred) {

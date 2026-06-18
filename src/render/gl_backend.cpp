@@ -34,6 +34,12 @@ std::unique_ptr<GpuDevice> create_gl_device() {
     // 2D rendering: no depth test; allow the vertex shader to set point size.
     fns->glDisable(GL_DEPTH_TEST);
     fns->glEnable(GL_PROGRAM_POINT_SIZE);
+    // Alpha blending for antialiased stroke edges (thickline.frag emits ~1px coverage
+    // on the capsule boundary). All opaque geometry writes alpha 1, so interiors are
+    // unaffected; only stroke edges feather against the background. Standard
+    // src-alpha / one-minus-src-alpha.
+    fns->glEnable(GL_BLEND);
+    fns->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     return std::make_unique<gl::GlDevice>(fns);
 }
 

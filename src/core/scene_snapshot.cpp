@@ -36,9 +36,12 @@ Rgb unpack_rgb(std::uint32_t v) {
     return {static_cast<std::uint8_t>((v >> 16) & 0xff), static_cast<std::uint8_t>((v >> 8) & 0xff),
             static_cast<std::uint8_t>(v & 0xff)};
 }
-// Line batch key = colour (24 bits) << 8 | display lineweight (8 bits).
-std::uint64_t line_key(Rgb c, std::uint8_t lw) {
-    return (static_cast<std::uint64_t>(pack_rgb(c)) << 8) | lw;
+// Line batch key = colour (24 bits) << 9 | text flag (bit 8) | display lineweight (8 bits).
+// The text flag keeps stroke-text segments in their own batches so the renderer can give
+// them a heavier on-screen weight (it never merges with same-colour line geometry).
+std::uint64_t line_key(Rgb c, std::uint8_t lw, bool is_text) {
+    return (static_cast<std::uint64_t>(pack_rgb(c)) << 9) |
+           (static_cast<std::uint64_t>(is_text) << 8) | lw;
 }
 
 /// Off/frozen layers contribute no geometry, so the renderer never sees them.
@@ -77,13 +80,14 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     std::map<std::uint32_t, std::vector<Vec2>> point_groups;
     std::map<std::uint32_t, std::vector<Vec2>> fill_groups;
 
-    const auto add_line = [&](Rgb c, std::uint8_t lw, Vec2 a, Vec2 b) {
-        auto& v = line_groups[line_key(c, lw)];
+    const auto add_line = [&](Rgb c, std::uint8_t lw, Vec2 a, Vec2 b, bool is_text = false) {
+        auto& v = line_groups[line_key(c, lw, is_text)];
         v.push_back(a);
         v.push_back(b);
     };
-    const auto add_lines = [&](Rgb c, std::uint8_t lw, const std::vector<Vec2>& segs) {
-        auto& v = line_groups[line_key(c, lw)];
+    const auto add_lines = [&](Rgb c, std::uint8_t lw, const std::vector<Vec2>& segs,
+                               bool is_text = false) {
+        auto& v = line_groups[line_key(c, lw, is_text)];
         v.insert(v.end(), segs.begin(), segs.end());
     };
     const auto add_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
@@ -115,7 +119,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         } else {
             trun.clear();
             text::append_text_segments(str, origin, height, rotation, justify, trun);
-            add_lines(color, 0, trun);
+            add_lines(color, 0, trun, /*is_text=*/true);
         }
     };
 
@@ -202,7 +206,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         tseg.clear();
         text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation,
                                    g.text_justify, tseg);
-        add_lines(g.text_color, 0, tseg);
+        add_lines(g.text_color, 0, tseg, /*is_text=*/true);
     });
 
     // Leaders: arrowhead + leader line + text label (shares the dimstyle arrow).
@@ -239,7 +243,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         const ResolvedProps r = entity_resolved(store, m->props);
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(r.color, 0, lay.segments);
+        add_lines(r.color, 0, lay.segments, /*is_text=*/true);
         add_fills(r.color, lay.fills);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
@@ -273,7 +277,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(text_c, 0, lay.segments);
+        add_lines(text_c, 0, lay.segments, /*is_text=*/true);
         add_fills(text_c, lay.fills);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
@@ -303,10 +307,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     // Flatten groups into contiguous batches over the payload arrays.
     for (auto& [key, verts] : line_groups) {
         out.line_batches.push_back(
-            ColorBatch{unpack_rgb(static_cast<std::uint32_t>(key >> 8)),
+            ColorBatch{unpack_rgb(static_cast<std::uint32_t>(key >> 9)),
                        static_cast<std::uint32_t>(out.line_vertices.size() / 2),
                        static_cast<std::uint32_t>(verts.size() / 2),
-                       static_cast<std::uint8_t>(key & 0xff)});
+                       static_cast<std::uint8_t>(key & 0xff), ((key >> 8) & 1u) != 0});
         out.line_vertices.insert(out.line_vertices.end(), verts.begin(), verts.end());
     }
     for (auto& [key, pts] : point_groups) {

@@ -264,6 +264,35 @@ Glyph fill geometry is produced by a **scanline rasterizer-into-triangles** (eve
 at fine horizontal bands → quads), which is robust to any number of counters/holes — no
 ear-clipping corner cases. The triangles are cached per (face, glyph) at unit em.
 
+### Stroke-text quality: on-screen weight, real lowercase, edge AA (Phase 31)
+
+Single-stroke text stays the engineering default ("Standard"); three changes make it look
+professional **on screen** without changing what reaches paper:
+
+- **Screen-only text weight (one render path, a policy parameter).** Stroke text carries no
+  real lineweight (it is emitted at `lineweight = 0`), so it used to draw as a 1 px hairline
+  that read as "dull" — sub-pixel thin on HiDPI. The snapshot now tags those batches with
+  `ColorBatch::is_text` (derived at build, not baked, not in the checksum; only ever set on
+  `line_batches` — filled TTF lives in `fill_batches`). The **viewport** renderer draws
+  `is_text` batches at a fixed ~0.5 mm-equivalent screen weight (`kTextScreenWeightHmm`)
+  through the *same* thick-line pipeline — no second code path, no extra geometry. The
+  **plot** path is a separate route (QPainter) that ignores `is_text` and honours the entity
+  weight (0 → cosmetic hairline), so the on-screen polish **never reaches paper**: a plot of
+  the same drawing is ink-for-ink identical before/after (verified: 0-pixel raster diff). This
+  is the "same entity, two render contexts" pattern (cf. screen vs plot lineweight).
+- **Real lowercase.** The built-in stroke font (`core::text::stroke_font`) gained true
+  lowercase a–z (simplex/Hershey-class, hand-authored on the existing 6×8 cell with proper
+  ascenders/x-height/descenders), replacing the Phase-13 small-caps fallback (kept only as a
+  defensive path for a missing glyph). The font stays **monospace** (one shared advance), so
+  `text_width`, layout, bounds, and pick are unchanged. SHX→stroke substitution still routes
+  here, so every imported `*.shx` drawing benefits automatically; the plot shows the improved
+  letterforms too (ink *weight* unchanged — a font-quality improvement, not a weight change).
+- **Antialiased edges.** `thickline.frag` replaced its hard `discard` with an analytic ~1 px
+  coverage feather (interior stays fully opaque; only the capsule boundary fades), and the GL
+  backend enables standard alpha blending. The Phase-16B round caps/joins are preserved. This
+  applies to all thick-line geometry, not just text; all theme colours are opaque so interiors
+  are unaffected. The plot path is QPainter and unaffected.
+
 ## Rendering (Phase 3)
 
 ### GPU backend: OpenGL 4.6 Core (DSA), behind a backend-agnostic seam

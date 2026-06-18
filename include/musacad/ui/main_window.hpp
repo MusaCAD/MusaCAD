@@ -120,6 +120,12 @@ public:
     /// Save/Discard/Cancel prompt, 3 Open makes a new tab (original intact), 4 undo
     /// per-tab. Sets up the scenario, then grabs the app region for eyes-on review.
     bool multidoc_shot(int kind, const std::string& out_png);
+    /// Real-window capture for the TEXT-QUALITY phase: builds a representative title
+    /// block (border + mixed-case single-line TEXT + a lowercase MTEXT note), zooms to
+    /// fit, saves the scene to `<out_png>.musa` for the plot-unchanged proof, and grabs
+    /// the app region. `kind` 0 = title block. Used for the before/after stroke-text
+    /// comparison; the scene is rendering-neutral (same geometry before and after).
+    bool text_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();

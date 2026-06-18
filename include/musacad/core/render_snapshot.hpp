@@ -30,6 +30,13 @@ struct ColorBatch {
     std::uint32_t first = 0;
     std::uint32_t count = 0;
     std::uint8_t lineweight = 25; ///< resolved display lineweight (hundredths mm); 0 = points/fills
+    /// True for batches of single-stroke TEXT segments (TEXT / MTEXT / dimension & leader
+    /// labels). Derived at snapshot build (never baked, not in the checksum). On SCREEN
+    /// these render at a heavier "text weight" so single-stroke glyphs read crisp and
+    /// present instead of a dull 1px hairline; on PLOT they honour `lineweight` (0 =
+    /// hairline), so the on-screen polish never reaches paper. Only ever set on
+    /// `line_batches` -- filled TTF text lives in `fill_batches`, untouched (Ph29).
+    bool is_text = false;
 };
 
 /// An immutable (from the renderer's perspective) view of the scene, produced

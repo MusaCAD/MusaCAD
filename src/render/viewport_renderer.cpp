@@ -88,6 +88,14 @@ float lineweight_px(std::uint8_t hundredths_mm, float device_px_per_mm) {
     return std::max(1.0f, (static_cast<float>(hundredths_mm) / 100.0f) * device_px_per_mm);
 }
 
+// On-screen weight for single-stroke TEXT (hundredths mm). Text carries no real
+// lineweight (0 -> a 1px hairline that reads as "dull" at typical zoom on a dark
+// background). Rendering stroke text at a ~0.5 mm-equivalent fattens the glyphs so they
+// look professional and present while staying single-stroke (engineering convention).
+// SCREEN ONLY: the PLOT path honours the entity's actual 0 weight, so paper ink is
+// unchanged. Empirical, screenshot-tuned; not a user/entity property.
+constexpr std::uint8_t kTextScreenWeightHmm = 50;
+
 /// Converts world-space segment endpoint pairs (2 Vec2 per segment) into a flat
 /// vec4-per-instance float buffer. Returns the instance count.
 std::size_t pack_segments(const std::vector<core::Vec2>& endpoints, std::vector<float>& out) {
@@ -323,9 +331,19 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         // every line is dpr x too thin on a HiDPI display.
         const float eff_px_per_mm = device_px_per_mm_ * device_pixel_ratio_;
         const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
-                                    std::uint32_t count) {
-            const float w =
-                snapshot.lineweight_display ? lineweight_px(lw, eff_px_per_mm) : device_pixel_ratio_;
+                                    std::uint32_t count, bool is_text) {
+            // Single-stroke TEXT gets a dedicated, heavier screen weight so it reads crisp
+            // and present (not the 1px hairline that looked dull) -- independent of the
+            // LWDISPLAY toggle, since text carries no real lineweight to display/suppress.
+            // PLOT is a separate path that honours the entity's 0 weight (hairline), so this
+            // never reaches paper. Line geometry keeps the AutoCAD-accurate weight.
+            float w;
+            if (is_text) {
+                w = lineweight_px(kTextScreenWeightHmm, eff_px_per_mm);
+            } else {
+                w = snapshot.lineweight_display ? lineweight_px(lw, eff_px_per_mm)
+                                                : device_pixel_ratio_;
+            }
             cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
             cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
                                    static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
@@ -338,10 +356,10 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
             draw_batch(core::Rgb{static_cast<std::uint8_t>(kSceneColor[0] * 255),
                                  static_cast<std::uint8_t>(kSceneColor[1] * 255),
                                  static_cast<std::uint8_t>(kSceneColor[2] * 255)},
-                       25, 0, static_cast<std::uint32_t>(line_count_));
+                       25, 0, static_cast<std::uint32_t>(line_count_), false);
         } else {
             for (const core::ColorBatch& b : line_batches_) {
-                draw_batch(b.color, b.lineweight, b.first, b.count);
+                draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text);
             }
         }
     }

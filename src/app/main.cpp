@@ -130,6 +130,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // Text-quality capture: MUSACAD_TEXT_SHOT="kind|out.png" builds a representative
+    // title block (kind 0), saves it to "<out>.musa" for the plot-unchanged proof, and
+    // grabs the app region for the before/after stroke-text comparison.
+    if (qEnvironmentVariableIsSet("MUSACAD_TEXT_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a = qEnvironmentVariable("MUSACAD_TEXT_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/text_shot.png"));
+            const bool ok = window.text_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {

@@ -17,8 +17,10 @@ enum class Justify { Left, Center, Right };
 /// vector CAD viewport must stay crisp at every zoom and batches naturally with
 /// the existing line-segment pipeline -- no texture backend. Covers ASCII
 /// 0x20-0x7E plus the CAD symbols U+00B0 (degree), U+00B1 (plus-minus), U+2300
-/// (diameter). Lowercase a-z render as small capitals (a documented CAD-font
-/// simplification).
+/// (diameter). Letterforms are simplex/Hershey-class (engineering single-stroke);
+/// lowercase a-z are real glyphs with true ascenders, x-height and descenders
+/// (small capitals remain only as a defensive fallback for a missing glyph). The
+/// font is monospace: every glyph shares one advance.
 ///
 /// `append_text_segments` emits world-space line segments (two Vec2 per segment)
 /// for `text`: glyphs sit on a baseline through `origin`, `height` tall, rotated

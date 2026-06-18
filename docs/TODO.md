@@ -16,6 +16,27 @@ guard on malformed self-referential blocks (see [ARCHITECTURE.md](ARCHITECTURE.m
    block that shares a name even if its attributes differ (AutoCAD-style "keep destination").
    A future option could rename-on-conflict; today it silently reuses.
 
+## Text quality — stroke text on screen (DONE 2026-06-18; refinements staged)
+
+**Status:** Done. Single-stroke text stays the engineering default; three changes make it
+read professional on screen without changing plotted ink (see [ARCHITECTURE.md](ARCHITECTURE.md)
+"Stroke-text quality"): (1) a screen-only ~0.5 mm text weight via `ColorBatch::is_text`
+through the existing thick-line pipeline (plot honours the entity's 0 weight → hairline, so
+paper is ink-for-ink identical, verified 0-pixel diff); (2) real lowercase a–z in the
+built-in stroke font (simplex/Hershey-class, true ascenders/x-height/descenders), replacing
+the Phase-13 small-caps fallback, monospace metrics unchanged; (3) analytic ~1 px edge
+antialiasing in `thickline.frag` + alpha blending. SHX→stroke substitution still routes to
+the improved font. Both presets clean, ctest green. **Staged refinement** (small, non-blocking):
+
+1. **Per-text-height adaptive screen weight** — the screen weight is a single fixed
+   mm-equivalent, so very small text (≈2.5 mm at low zoom) reads slightly heavy. **Why parked:**
+   batches mix all text of a colour, so per-glyph-height weighting needs height in the batch key
+   (or a separate text-by-height batching). **Done looks like:** a gentle taper so tiny text
+   gets proportionally lighter strokes while title-size text keeps full presence.
+2. **Fuller Hershey glyph coverage** — the hand-authored set covers ASCII + 3 CAD symbols.
+   A future pass could fold in more of the public-domain Hershey occidental set (accents,
+   extended punctuation) behind the same parser.
+
 ## Plotting / printing (Phase 30 follow-ups)
 
 Phase 30 added the PLOT pipeline: a shared vector renderer (`paint_plot`) used by both

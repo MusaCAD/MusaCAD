@@ -135,6 +135,35 @@ constexpr Entry kFont[] = {
     {'*', "3,5 3,7|2,5 4,7|4,5 2,7"},
     {'\'', "3,8 3,7"},
     {'"', "2,8 2,7|4,8 4,7"},
+    // Real lowercase (simplex/Hershey-class, single-stroke). x-height = gy 6, ascenders
+    // reach the cap line (gy 8), descenders drop to gy 0. Hand-authored on the same grid;
+    // monospace advance is unchanged (kAdvance), so layout/width metrics are preserved.
+    {'a', "5,2 5,6|5,5 4,6 2,6 1,5 1,3 2,2 4,2 5,3"},
+    {'b', "1,8 1,2|1,3 2,2 4,2 5,3 5,5 4,6 2,6 1,5"},
+    {'c', "5,5 4,6 2,6 1,5 1,3 2,2 4,2 5,3"},
+    {'d', "5,8 5,2|5,3 4,2 2,2 1,3 1,5 2,6 4,6 5,5"},
+    {'e', "1,4 5,4 5,5 4,6 2,6 1,5 1,3 2,2 4,2 5,3"},
+    {'f', "5,7 4,8 3,8 3,2|1,6 5,6"},
+    {'g', "5,6 5,1 4,0 2,0 1,1|5,5 4,6 2,6 1,5 1,3 2,2 4,2 5,3"},
+    {'h', "1,8 1,2|1,5 2,6 4,6 5,5 5,2"},
+    {'i', "3,2 3,6|3,7 3,8"},
+    {'j', "4,6 4,1 3,0 2,0 1,1|4,7 4,8"},
+    {'k', "1,8 1,2|5,6 1,4 5,2"},
+    {'l', "3,8 3,2 4,2"},
+    {'m', "1,2 1,6|1,5 2,6 3,6 3,2|3,5 4,6 5,6 5,2"},
+    {'n', "1,2 1,6|1,5 2,6 4,6 5,5 5,2"},
+    {'o', "1,3 1,5 2,6 4,6 5,5 5,3 4,2 2,2 1,3"},
+    {'p', "1,6 1,0|1,3 2,2 4,2 5,3 5,5 4,6 2,6 1,5"},
+    {'q', "5,6 5,0|5,3 4,2 2,2 1,3 1,5 2,6 4,6 5,5"},
+    {'r', "1,2 1,6|1,5 2,6 4,6 5,5"},
+    {'s', "5,5 4,6 2,6 1,5 2,4 4,4 5,3 4,2 2,2 1,3"},
+    {'t', "3,8 3,3 4,2|1,6 5,6"},
+    {'u', "1,6 1,3 2,2 4,2 5,3 5,6"},
+    {'v', "1,6 3,2 5,6"},
+    {'w', "1,6 2,2 3,4 4,2 5,6"},
+    {'x', "1,6 5,2|1,2 5,6"},
+    {'y', "1,6 3,2|5,6 1,0"},
+    {'z', "1,6 5,6 1,2 5,2"},
 };
 
 // Special CAD symbols (Unicode), authored directly in normalised cell points.
@@ -212,8 +241,12 @@ const Glyph* glyph_for(char32_t cp, bool& small_cap) {
         return &g;
     }
     if (cp >= 'a' && cp <= 'z') {
-        small_cap = true;
-        cp = cp - 'a' + 'A'; // small capitals
+        const Glyph& lower = ascii_table()[static_cast<std::size_t>(cp)];
+        if (!lower.empty()) {
+            return &lower; // real lowercase glyph (true ascenders/x-height/descenders)
+        }
+        small_cap = true;    // defensive fallback: small capitals if a glyph is missing
+        cp = cp - 'a' + 'A';
     }
     if (cp < 128) {
         return &ascii_table()[static_cast<std::size_t>(cp)];
