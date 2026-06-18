@@ -168,10 +168,15 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | DXF TEXT + DIMENSION (all subtypes) + LEADER + DIMSTYLE table | — | Implemented (leader label imports as separate TEXT) |
 | LWDISPLAY (lineweight display on/off) | LWT ribbon toggle | Implemented |
 | Lineweight display: DPI-anchored `px = mm × DPI/25.4`, zoom-independent, Default = 1px hairline (AutoCAD-accurate) | — | Implemented |
-| NEW (native .musa) | Ctrl+N | Implemented |
-| OPEN (native .musa) | Ctrl+O | Implemented |
-| SAVE | Ctrl+S | Implemented |
-| SAVE AS | Ctrl+Shift+S | Implemented |
+| NEW — opens a new untitled drawing in a **new tab** (existing tabs untouched) | Ctrl+N / "+" tab button | Implemented |
+| OPEN (native .musa) — **always opens into a new tab**; unsaved work in the current tab is never overwritten | Ctrl+O | Implemented |
+| SAVE / SAVE AS — operate on the **active** document (its own path) | Ctrl+S / Ctrl+Shift+S | Implemented |
+| **Multiple documents as tabs** — N drawings open at once; each tab shows its name + a `*` dirty marker. ONE engine swaps the active document on switch; ONE viewport renders the active document's snapshot | tab strip | Implemented (Phase A) |
+| **Switch tab** — click a tab, or cycle with Ctrl+Tab / Ctrl+Shift+Tab. Each tab restores its own camera (zoom/pan), selection, and undo/redo history | Ctrl+Tab / Ctrl+Shift+Tab | Implemented |
+| **Close tab** — the × on each tab, or Ctrl+W. A dirty tab prompts Save / Discard / Cancel; closing the last tab leaves one empty "DrawingN" (never zero tabs) | × / Ctrl+W | Implemented |
+| **Undo/redo is per document** — Ctrl+Z on tab A rewinds tab A's last op even after edits in tab B | Ctrl+Z / Ctrl+Y | Implemented |
+| **Quit guard** — closing the window prompts to save every dirty document (Cancel aborts the quit) | — | Implemented |
+| Cross-document copy/paste + tab-to-tab drag | — | Planned (Phase B) |
 | DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
 | DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
 | DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |

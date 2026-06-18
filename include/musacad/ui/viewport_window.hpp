@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 #include <QWindow>
 
@@ -131,6 +132,17 @@ public:
     [[nodiscard]] bool dirty() const noexcept { return dirty_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t document_version() const noexcept {
         return document_version_.load(std::memory_order_relaxed);
+    }
+
+    /// Multi-document: the open-document list (tab strip) + the active document id, as of
+    /// the latest consumed snapshot. The GUI thread reads these to render the tabs/title.
+    [[nodiscard]] std::vector<core::DocumentInfo> documents() const {
+        std::scoped_lock lock(docs_mutex_);
+        return docs_cache_;
+    }
+    [[nodiscard]] std::uint64_t active_document_id() const {
+        std::scoped_lock lock(docs_mutex_);
+        return active_doc_id_cache_;
     }
 
     /// The published layer table + current layer (for the Layer Manager / combo).
@@ -307,6 +319,10 @@ private:
 
     std::mutex camera_mutex_;
     render::Camera2D camera_; // guarded by camera_mutex_
+    // Per-document camera: each tab's view (zoom/pan) is remembered and restored on
+    // switch. Render-thread-only (touched solely in the render loop), under camera_mutex_.
+    std::unordered_map<std::uint64_t, render::Camera2D> doc_cameras_;
+    std::uint64_t cam_doc_id_ = 0; // active document the camera currently reflects
 
     std::mutex overlay_mutex_;
     render::RenderOverlay overlay_; // guarded by overlay_mutex_
@@ -362,6 +378,11 @@ private:
     std::atomic<int> hovered_kind_{0}; // EntityKind+1, or 0 for nothing hovered
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
+
+    // Multi-document tab list, cached from the snapshot for the GUI thread.
+    mutable std::mutex docs_mutex_;
+    std::vector<core::DocumentInfo> docs_cache_;
+    std::uint64_t active_doc_id_cache_ = 0;
 
     // Resolved object-dimension def points + the Standard style, cached from the
     // snapshot for the GUI-thread placement preview (Phase 16 Part C).

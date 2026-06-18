@@ -22,6 +22,12 @@
 namespace musacad::core {
 
 namespace {
+/// Filename portion of a path (after the last '/' or '\\'), for a document tab name.
+std::string doc_basename(const std::string& path) {
+    const std::size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
 /// Segment-segment intersection (returns the crossing point if within both).
 bool segment_intersection(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2& out) {
     const Vec2 r = p2 - p1;
@@ -44,6 +50,15 @@ bool segment_intersection(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2& out) {
 void GeometryEngine::start() {
     if (worker_.joinable()) {
         return; // already running
+    }
+    // The first document ("Drawing1") -- its heavy state is the engine's live members.
+    // Initialised here (before the worker launches, so the geometry thread sees it).
+    if (doc_metas_.empty()) {
+        DocMeta m;
+        m.id = next_doc_id_++;
+        m.name = "Drawing" + std::to_string(++doc_name_counter_);
+        doc_metas_.push_back(std::move(m));
+        active_idx_ = 0;
     }
     worker_ = std::jthread([this](std::stop_token token) { run(std::move(token)); });
 }
@@ -1983,12 +1998,29 @@ void GeometryEngine::apply(const Command& command) {
                 if (r.ok) {
                     dirty_ = false;
                     ++document_version_;
+                    // A native save (re)binds the active document's path + tab name; a DXF
+                    // export does not change the document's identity.
+                    if (!c.dxf && active_idx_ < doc_metas_.size()) {
+                        doc_metas_[active_idx_].path = c.path;
+                        doc_metas_[active_idx_].name = doc_basename(c.path);
+                        doc_metas_[active_idx_].is_dxf_path = false;
+                    }
                 }
                 report(r.message);
             } else if constexpr (std::is_same_v<T, OpenDocumentCommand>) {
-                load_document_replace(command);
+                if (c.new_tab) {
+                    open_into_new_tab(command);
+                } else {
+                    load_document_replace(command);
+                }
             } else if constexpr (std::is_same_v<T, NewDocumentCommand>) {
                 new_document();
+            } else if constexpr (std::is_same_v<T, CreateDocumentCommand>) {
+                create_document(c.name);
+            } else if constexpr (std::is_same_v<T, SwitchDocumentCommand>) {
+                switch_document(c.id);
+            } else if constexpr (std::is_same_v<T, CloseDocumentCommand>) {
+                close_document(c.id);
             } else if constexpr (std::is_same_v<T, AddLayerCommand>) {
                 store_.add_layer(c.layer);
                 geom_dirty_ = true;
@@ -2042,6 +2074,9 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, ClearSelectionCommand> ||
                 std::is_same_v<T, SaveDocumentCommand> ||
                 std::is_same_v<T, OpenDocumentCommand> || std::is_same_v<T, NewDocumentCommand> ||
+                std::is_same_v<T, CreateDocumentCommand> ||
+                std::is_same_v<T, SwitchDocumentCommand> ||
+                std::is_same_v<T, CloseDocumentCommand> ||
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||
@@ -2086,16 +2121,188 @@ void GeometryEngine::load_document_replace(const Command& command) {
     report(r.message);
 }
 
-void GeometryEngine::new_document() {
+void GeometryEngine::reset_active_state() {
+    // Reset the live (active-document) heavy state to a fresh empty drawing.
     store_.clear();
+    store_.set_font_engine(font_engine_); // re-bind metrics (clear may drop the engine)
     grid_.clear();
     undo_.clear();
     redo_.clear();
     selection_.clear();
+    geom_cache_.clear();
+    geom_dirty_ = true;
+    geom_version_ = 0;
+    dirty_ = false;
+    document_version_ = 0;
+    has_pending_dim_ = false;
+    pending_dim_ = DimData{};
+    grip_active_ = false;
+    grip_handle_ = EntityHandle{};
+    grip_index_ = 0;
+    grip_preview_store_.clear();
+}
+
+void GeometryEngine::new_document() {
+    reset_active_state();
+    ++document_version_;
+    report("New drawing.");
+}
+
+void GeometryEngine::park_active(DocState& d) {
+    d.store = std::move(store_);
+    d.grid = std::move(grid_);
+    d.undo = std::move(undo_);
+    d.redo = std::move(redo_);
+    d.selection = std::move(selection_);
+    d.geom_cache = std::move(geom_cache_);
+    d.geom_dirty = geom_dirty_;
+    d.geom_version = geom_version_;
+    d.dirty = dirty_;
+    d.document_version = document_version_;
+    d.has_pending_dim = has_pending_dim_;
+    d.pending_dim = pending_dim_;
+    d.pending_dim_version = pending_dim_version_;
+    d.grip_active = grip_active_;
+    d.grip_handle = grip_handle_;
+    d.grip_index = grip_index_;
+    d.grip_pos = grip_pos_;
+    d.grip_preview_store = std::move(grip_preview_store_);
+}
+
+void GeometryEngine::load_active(DocState& d) {
+    store_ = std::move(d.store);
+    store_.set_font_engine(font_engine_); // font engine is engine-global
+    grid_ = std::move(d.grid);
+    undo_ = std::move(d.undo);
+    redo_ = std::move(d.redo);
+    selection_ = std::move(d.selection);
+    geom_cache_ = std::move(d.geom_cache);
+    geom_dirty_ = true; // force a rebuild at the current zoom for the new active document
+    geom_version_ = d.geom_version;
+    dirty_ = d.dirty;
+    document_version_ = d.document_version;
+    has_pending_dim_ = d.has_pending_dim;
+    pending_dim_ = d.pending_dim;
+    pending_dim_version_ = d.pending_dim_version;
+    grip_active_ = d.grip_active;
+    grip_handle_ = d.grip_handle;
+    grip_index_ = d.grip_index;
+    grip_pos_ = d.grip_pos;
+    grip_preview_store_ = std::move(d.grip_preview_store);
+}
+
+std::size_t GeometryEngine::doc_index(std::uint64_t id) const {
+    for (std::size_t i = 0; i < doc_metas_.size(); ++i) {
+        if (doc_metas_[i].id == id) {
+            return i;
+        }
+    }
+    return doc_metas_.size(); // not found
+}
+
+void GeometryEngine::create_document(const std::string& name) {
+    DocState parked;
+    park_active(parked);
+    parked_[doc_metas_[active_idx_].id] = std::move(parked);
+    reset_active_state();
+    ++document_version_;
+    DocMeta m;
+    m.id = next_doc_id_++;
+    m.name = name.empty() ? ("Drawing" + std::to_string(++doc_name_counter_)) : name;
+    doc_metas_.push_back(std::move(m));
+    active_idx_ = doc_metas_.size() - 1;
+    report("New drawing.");
+}
+
+void GeometryEngine::switch_document(std::uint64_t id) {
+    const std::size_t idx = doc_index(id);
+    if (idx >= doc_metas_.size() || idx == active_idx_) {
+        return;
+    }
+    DocState parked;
+    park_active(parked);
+    parked_[doc_metas_[active_idx_].id] = std::move(parked);
+    auto it = parked_.find(id);
+    if (it == parked_.end()) {
+        return; // should not happen: every inactive doc is parked
+    }
+    load_active(it->second);
+    parked_.erase(it);
+    active_idx_ = idx;
+}
+
+void GeometryEngine::open_into_new_tab(const Command& command) {
+    const auto* open = std::get_if<OpenDocumentCommand>(&command);
+    if (open == nullptr) {
+        return;
+    }
+    io::Document doc;
+    const io::IoResult r =
+        open->dxf ? io::load_dxf(open->path, doc) : io::load_native(open->path, doc);
+    if (!r.ok) {
+        report(r.message); // load failed -> no tab created, nothing disturbed
+        return;
+    }
+    // Park the current active, make a fresh active document, populate it from the file.
+    DocState parked;
+    park_active(parked);
+    parked_[doc_metas_[active_idx_].id] = std::move(parked);
+    reset_active_state();
+    io::populate_store(store_, doc);
+    for (const EntityHandle h : all_live()) {
+        Vec2 lo;
+        Vec2 hi;
+        if (entity_aabb(store_, h, lo, hi)) {
+            grid_.insert(h, lo, hi);
+        }
+    }
     geom_dirty_ = true;
     dirty_ = false;
     ++document_version_;
-    report("New drawing.");
+    DocMeta m;
+    m.id = next_doc_id_++;
+    m.name = open->name.empty() ? doc_basename(open->path) : open->name;
+    m.path = open->dxf ? std::string{} : open->path; // DXF import has no native path
+    m.is_dxf_path = open->dxf;
+    doc_metas_.push_back(std::move(m));
+    active_idx_ = doc_metas_.size() - 1;
+    report(r.message);
+}
+
+void GeometryEngine::close_document(std::uint64_t id) {
+    const std::size_t idx = doc_index(id);
+    if (idx >= doc_metas_.size()) {
+        return;
+    }
+    if (doc_metas_.size() == 1) {
+        // Never zero tabs: reset the sole document to a fresh empty drawing.
+        reset_active_state();
+        ++document_version_;
+        doc_metas_[0].name = "Drawing" + std::to_string(++doc_name_counter_);
+        doc_metas_[0].path.clear();
+        doc_metas_[0].is_dxf_path = false;
+        active_idx_ = 0;
+        report("New drawing.");
+        return;
+    }
+    if (idx == active_idx_) {
+        // Activate a neighbour (next, else previous), then drop the closing doc.
+        const std::size_t nb = (idx + 1 < doc_metas_.size()) ? idx + 1 : idx - 1;
+        const std::uint64_t nb_id = doc_metas_[nb].id;
+        auto it = parked_.find(nb_id);
+        if (it != parked_.end()) {
+            load_active(it->second); // the closing doc's live state is discarded
+            parked_.erase(it);
+        }
+        doc_metas_.erase(doc_metas_.begin() + static_cast<std::ptrdiff_t>(idx));
+        active_idx_ = doc_index(nb_id);
+    } else {
+        const std::uint64_t active_id = doc_metas_[active_idx_].id;
+        parked_.erase(id);
+        doc_metas_.erase(doc_metas_.begin() + static_cast<std::ptrdiff_t>(idx));
+        active_idx_ = doc_index(active_id);
+    }
+    report("Drawing closed.");
 }
 
 void GeometryEngine::rebuild_and_publish() {
@@ -2266,6 +2473,26 @@ void GeometryEngine::rebuild_and_publish() {
     buf.dirty = dirty_;
     buf.document_version = document_version_;
     buf.lineweight_display = lineweight_display_;
+
+    // Multi-document tab strip: every open document (active doc's dirty is the live flag;
+    // inactive docs report their parked dirty). The UI renders the tabs purely from this.
+    buf.documents.clear();
+    buf.documents.reserve(doc_metas_.size());
+    for (std::size_t i = 0; i < doc_metas_.size(); ++i) {
+        DocumentInfo di;
+        di.id = doc_metas_[i].id;
+        di.name = doc_metas_[i].name;
+        di.path = doc_metas_[i].path;
+        if (i == active_idx_) {
+            di.dirty = dirty_;
+        } else {
+            const auto it = parked_.find(doc_metas_[i].id);
+            di.dirty = it != parked_.end() && it->second.dirty;
+        }
+        buf.documents.push_back(std::move(di));
+    }
+    buf.active_document_id =
+        active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].id : 0;
 
     buf.geometry_version = geom_version_;
     buf.version = version_.fetch_add(1, std::memory_order_acq_rel) + 1;

@@ -249,8 +249,33 @@ struct SaveDocumentCommand {
 struct OpenDocumentCommand {
     std::string path;
     bool dxf = false;
+    /// Multi-document: true (the UI default) loads into a NEW tab and activates it,
+    /// leaving other documents untouched; false replaces the active document in place
+    /// (legacy / tests). `name` is the tab display name (empty -> derived from the path).
+    bool new_tab = false;
+    std::string name;
 };
+/// Resets the ACTIVE document to an empty drawing in place (internal/test reset). For a
+/// new TAB use CreateDocumentCommand.
 struct NewDocumentCommand {};
+
+// --- Multi-document (Phase A) ----------------------------------------------
+/// Create a new empty untitled document in a new tab and make it active.
+struct CreateDocumentCommand {
+    std::string name; ///< display name; empty -> the engine assigns "DrawingN"
+};
+/// Make the document with this id active. The previous active document is parked
+/// (its store/undo/selection/dirty preserved in memory); the next snapshot is built
+/// from the new active document.
+struct SwitchDocumentCommand {
+    std::uint64_t id = 0;
+};
+/// Close the document with this id. Closing the last remaining document resets it to a
+/// fresh empty drawing (the app always has one active document). Dirty prompting is the
+/// UI's responsibility before this is sent.
+struct CloseDocumentCommand {
+    std::uint64_t id = 0;
+};
 
 // --- Annotation (Phase 13): text + dimensions -------------------------------
 
@@ -486,6 +511,7 @@ using Command =
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
-                 JoinSelectionCommand>;
+                 JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
+                 CloseDocumentCommand>;
 
 } // namespace musacad::core

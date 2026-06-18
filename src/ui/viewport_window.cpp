@@ -216,6 +216,27 @@ void ViewportWindow::render_loop(std::stop_token token) {
 
         engine_.consume_snapshot();
         const core::RenderSnapshot& snap = engine_.snapshot();
+        // Per-document camera: each tab remembers its own zoom/pan. When the active
+        // document changes (the snapshot now reports a new id), save the outgoing tab's
+        // view and restore the incoming tab's -- or frame a never-seen document's extents.
+        if (snap.active_document_id != 0 && snap.active_document_id != cam_doc_id_) {
+            std::scoped_lock lock(camera_mutex_);
+            if (cam_doc_id_ != 0) {
+                doc_cameras_[cam_doc_id_] = camera_; // remember the outgoing tab's view
+            }
+            const auto it = doc_cameras_.find(snap.active_document_id);
+            if (it != doc_cameras_.end()) {
+                camera_ = it->second; // restore the tab's exact view
+                camera_.set_viewport(w, h);
+            } else {
+                camera_ = render::Camera2D{}; // first time: default, then frame content below
+                camera_.set_viewport(w, h);
+                camera_.frame_bounds(init_min_, init_max_, 0.1);
+                zoom_extents_requested_.store(true, std::memory_order_relaxed);
+            }
+            cam = camera_;
+            cam_doc_id_ = snap.active_document_id;
+        }
         if (zoom_extents_requested_.exchange(false, std::memory_order_relaxed) && snap.has_bounds) {
             std::scoped_lock lock(camera_mutex_);
             camera_.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
@@ -244,6 +265,12 @@ void ViewportWindow::render_loop(std::stop_token token) {
         dirty_.store(snap.dirty, std::memory_order_relaxed);
         document_version_.store(snap.document_version, std::memory_order_relaxed);
         current_layer_.store(snap.current_layer, std::memory_order_relaxed);
+        {
+            // Multi-document tab list, for the GUI thread to render the tab strip + title.
+            std::scoped_lock lock(docs_mutex_);
+            docs_cache_ = snap.documents;
+            active_doc_id_cache_ = snap.active_document_id;
+        }
         {
             // Cache resolved object-dimension def points + Standard style for the
             // GUI-thread placement preview (read in rebuild_overlay).

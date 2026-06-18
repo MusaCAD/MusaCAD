@@ -33,6 +33,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QCloseEvent>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMessageBox>
@@ -55,6 +56,7 @@
 #include <QTimer>
 #include <QSettings>
 #include <QToolButton>
+#include <QVariant>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -173,6 +175,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     if (std::getenv("MUSACAD_DEMO") != nullptr) {
         seed_demo_scene();
     }
+    // Force an initial publish so the document tab strip shows "Drawing1" at launch
+    // (the worker only publishes after a command; this harmless one triggers the first).
+    engine_->submit(core::SetCursorCommand{});
 
     viewport_ = new ViewportWindow(*engine_);
     viewport_->set_initial_view({0.0, 0.0}, {100.0, 100.0});
@@ -277,6 +282,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         sync_layer_combo();
         sync_properties_panel();
+        sync_document_tabs(); // mirror the engine's open-document list into the tab strip
         // Echo each new engine command-result (honest feedback) once.
         const std::uint64_t sv = viewport_->status_version();
         if (sv != last_status_version_) {
@@ -305,12 +311,41 @@ QWidget* MainWindow::build_central() {
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(0);
 
-    // Drawing (file) tabs, just below the ribbon.
-    auto* file_tabs = new QTabBar(central);
-    file_tabs->setObjectName(QStringLiteral("FileTabs"));
-    file_tabs->addTab(QStringLiteral("Drawing1"));
-    file_tabs->setExpanding(false);
-    col->addWidget(file_tabs);
+    // Drawing (file) tabs + a "+" new-tab button, just below the ribbon. Multi-document:
+    // the tabs mirror the engine's open-document list (rendered in sync_document_tabs).
+    auto* tab_row = new QWidget(central);
+    auto* tab_lay = new QHBoxLayout(tab_row);
+    tab_lay->setContentsMargins(0, 0, 0, 0);
+    tab_lay->setSpacing(0);
+    file_tabs_ = new QTabBar(tab_row);
+    file_tabs_->setObjectName(QStringLiteral("FileTabs"));
+    file_tabs_->setExpanding(false);
+    file_tabs_->setTabsClosable(true);
+    file_tabs_->setDrawBase(false);
+    tab_lay->addWidget(file_tabs_);
+    auto* new_tab = new QToolButton(tab_row);
+    new_tab->setObjectName(QStringLiteral("FileTabsNew"));
+    new_tab->setText(QStringLiteral("+"));
+    new_tab->setToolTip(QStringLiteral("New drawing (Ctrl+N)"));
+    connect(new_tab, &QToolButton::clicked, this, [this] { create_new_tab(); });
+    tab_lay->addWidget(new_tab);
+    tab_lay->addStretch(1);
+    col->addWidget(tab_row);
+    // Click a tab -> switch active document (programmatic syncs are signal-blocked).
+    connect(file_tabs_, &QTabBar::currentChanged, this, [this](int idx) {
+        if (idx < 0 || viewport_ == nullptr) {
+            return;
+        }
+        const std::uint64_t id = file_tabs_->tabData(idx).toULongLong();
+        if (id != 0 && id != viewport_->active_document_id()) {
+            switch_to_document(id);
+        }
+    });
+    connect(file_tabs_, &QTabBar::tabCloseRequested, this, [this](int idx) {
+        if (idx >= 0) {
+            close_document_tab(file_tabs_->tabData(idx).toULongLong());
+        }
+    });
 
     // Viewport.
     QWidget* container = QWidget::createWindowContainer(viewport_, central);
@@ -421,6 +456,23 @@ void MainWindow::build_ribbon() {
     save_as_act->setShortcutContext(Qt::ApplicationShortcut);
     connect(save_as_act, &QAction::triggered, this, &MainWindow::file_save_as);
     addAction(save_as_act);
+
+    // Multi-document tab shortcuts: Ctrl+Tab / Ctrl+Shift+Tab cycle, Ctrl+W closes active.
+    const auto add_app_shortcut = [this](const QKeySequence& seq, auto slot) {
+        auto* act = new QAction(this);
+        act->setShortcut(seq);
+        act->setShortcutContext(Qt::ApplicationShortcut);
+        connect(act, &QAction::triggered, this, slot);
+        addAction(act);
+    };
+    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Tab")), [this] { cycle_document(1); });
+    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Tab")),
+                     [this] { cycle_document(-1); });
+    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+W")), [this] {
+        if (viewport_ != nullptr) {
+            close_document_tab(viewport_->active_document_id());
+        }
+    });
 
     RibbonPanel* draw = ribbon_->add_panel(home, QStringLiteral("Draw"));
     add_cmd(draw, QStringLiteral("line"), QStringLiteral("Line"), "L");
@@ -2474,6 +2526,122 @@ bool MainWindow::offset_shot(int kind, const std::string& out_png) {
     return viewport_->line_vertex_count() > 0;
 }
 
+bool MainWindow::multidoc_shot(int kind, const std::string& out_png) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    const auto rect = [&](double x0, double y0, double x1, double y1, std::uint64_t g) {
+        engine_->submit(core::AddPolylineCommand{
+            {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, g});
+    };
+
+    QMessageBox* box = nullptr; // kind 2 keeps the (non-modal) prompt up for the grab
+
+    if (kind == 0) {
+        // Two tabs: Drawing1 with content (dirty), Drawing2 empty. Active = Drawing1.
+        rect(-40, -30, 40, 30, 1);
+        pump(150);
+        create_new_tab(); // Drawing2 (empty, active)
+        pump(250);
+        switch_to_document(viewport_->documents().front().id); // back to Drawing1 (content)
+        pump(300);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 1) {
+        // Per-tab view: Drawing1 framed tight on a small rect; Drawing2 on a big rect.
+        rect(-5, -5, 5, 5, 1); // small
+        pump(150);
+        viewport_->zoom_extents();
+        pump(300);
+        create_new_tab();
+        pump(250);
+        rect(-200, -150, 200, 150, 2); // big
+        pump(150);
+        viewport_->zoom_extents();
+        pump(300);
+        // Switch back to Drawing1: its tight view must be RESTORED (not re-derived).
+        switch_to_document(viewport_->documents().front().id);
+        pump(500);
+    } else if (kind == 2) {
+        // Close a dirty tab -> the Save/Discard/Cancel prompt (shown non-modally to grab).
+        rect(-40, -30, 40, 30, 1);
+        pump(150);
+        create_new_tab();
+        pump(200);
+        rect(-30, -20, 30, 20, 2); // Drawing2 dirty
+        pump(200);
+        box = new QMessageBox(QMessageBox::Warning, QStringLiteral("Unsaved changes"),
+                              QStringLiteral("Save changes to Drawing2?"),
+                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+        box->setModal(false);
+        box->show();
+        pump(300);
+    } else if (kind == 3) {
+        // Open makes a NEW tab; the unsaved work in the current tab is intact.
+        rect(-40, -30, 40, 30, 1); // Drawing1: unsaved rectangle
+        pump(150);
+        const QString file =
+            QString::fromStdString((std::filesystem::temp_directory_path() / "saved.musa").string());
+        create_new_tab();        // Drawing2
+        pump(200);
+        engine_->submit(core::AddCircleCommand{{0, 0}, 30, 3}); // a circle
+        pump(150);
+        save_to(file, false);    // Drawing2 -> "saved.musa" (clean)
+        pump(400);
+        switch_to_document(viewport_->documents().front().id); // back to Drawing1 (unsaved)
+        pump(300);
+        open_from(file, false);  // opens "saved.musa" into a NEW (third) tab
+        pump(500);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 4) {
+        // Undo per tab: Drawing1 has two SEPARATE ops (distinct undo groups); undo
+        // rewinds only its last op (the line), leaving the rectangle.
+        rect(-40, -30, 40, 30, 1);             // op 1 (group 1): rectangle
+        pump(120);
+        engine_->submit(core::AddLineCommand{{-40, 40}, {40, 40}, 2}); // op 2 (group 2): a line
+        pump(150);
+        create_new_tab();
+        pump(200);
+        engine_->submit(core::AddCircleCommand{{0, 0}, 20, 3}); // Drawing2: a circle
+        pump(150);
+        switch_to_document(viewport_->documents().front().id); // back to Drawing1
+        pump(300);
+        engine_->submit(core::UndoLastGroupCommand{});         // undo the line only
+        pump(200);
+        viewport_->zoom_extents();
+        pump(300);
+    }
+
+    const QRect mfr = frameGeometry();
+    std::printf("[multidoc_shot] kind=%d docs=%d active=%llu line_vertex_count=%d main=0x%lx "
+                "frameG=(%d,%d %dx%d)\n",
+                kind, static_cast<int>(viewport_->documents().size()),
+                static_cast<unsigned long long>(viewport_->active_document_id()),
+                viewport_->line_vertex_count(), static_cast<unsigned long>(winId()), mfr.x(),
+                mfr.y(), mfr.width(), mfr.height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[multidoc_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
+    }
+    if (box != nullptr) {
+        box->close();
+    }
+    return true;
+}
+
 bool MainWindow::selftest_param_dialogs() {
     using core::Vec2;
     const auto pump = [](auto pred) {
@@ -2734,8 +2902,7 @@ void MainWindow::submit_array_from_dialog(const ParameterDialog& dlg) {
 void MainWindow::update_title() {
     const auto n = core::app_name();
     const QString app = QString::fromUtf8(n.data(), static_cast<int>(n.size()));
-    const QString name = current_path_.isEmpty() ? QStringLiteral("Drawing1")
-                                                  : QFileInfo(current_path_).fileName();
+    const QString name = active_doc_name(); // the active document's tab name (filename / DrawingN)
     const QString mark = (viewport_ != nullptr && viewport_->dirty()) ? QStringLiteral("*")
                                                                       : QString();
     const int fps = viewport_ != nullptr ? static_cast<int>(viewport_->fps() + 0.5) : 0;
@@ -2746,6 +2913,32 @@ void MainWindow::update_title() {
                        .arg(QStringLiteral(__DATE__ " " __TIME__)));
 }
 
+QString MainWindow::active_doc_name() const {
+    if (viewport_ != nullptr) {
+        const std::uint64_t active = viewport_->active_document_id();
+        for (const core::DocumentInfo& d : viewport_->documents()) {
+            if (d.id == active) {
+                return QString::fromStdString(d.name);
+            }
+        }
+    }
+    return QStringLiteral("Drawing1");
+}
+
+QString MainWindow::active_doc_path() const {
+    if (viewport_ != nullptr) {
+        const std::uint64_t active = viewport_->active_document_id();
+        for (const core::DocumentInfo& d : viewport_->documents()) {
+            if (d.id == active) {
+                return QString::fromStdString(d.path);
+            }
+        }
+    }
+    return {};
+}
+
+// Retained for any single-document path that still wants a discard guard; the
+// multi-document lifecycle prompts per-tab on close / per-document on quit instead.
 bool MainWindow::confirm_discard_if_dirty() {
     if (viewport_ == nullptr || !viewport_->dirty()) {
         return true;
@@ -2767,9 +2960,7 @@ void MainWindow::save_to(const QString& path, bool dxf) {
     if (path.isEmpty()) {
         return;
     }
-    if (!dxf) {
-        current_path_ = path;
-    }
+    // The engine binds the active document's path/tab-name on a successful native save.
     engine_->submit(core::SaveDocumentCommand{path.toStdString(), dxf});
 }
 
@@ -2777,30 +2968,31 @@ void MainWindow::open_from(const QString& path, bool dxf) {
     if (path.isEmpty()) {
         return;
     }
-    if (!dxf) {
-        current_path_ = path;
-    }
     // A remembered plot Window holds the PREVIOUS drawing's world coordinates, which are
     // meaningless for a new file (and would plot off-sheet garbage). Reset to Extents.
     last_plot_spec_.area = PlotSpec::Area::Window == last_plot_spec_.area ? PlotSpec::Area::Extents
                                                                           : last_plot_spec_.area;
     last_plot_spec_.win_min = {};
     last_plot_spec_.win_max = {};
-    engine_->submit(core::OpenDocumentCommand{path.toStdString(), dxf});
+    // Open/Import ALWAYS creates a new tab and activates it -- never overwriting the work
+    // in the current tab. The tab name is the filename.
+    core::OpenDocumentCommand oc;
+    oc.path = path.toStdString();
+    oc.dxf = dxf;
+    oc.new_tab = true;
+    oc.name = QFileInfo(path).fileName().toStdString();
+    engine_->submit(std::move(oc));
+}
+
+void MainWindow::create_new_tab() {
+    engine_->submit(core::CreateDocumentCommand{});
 }
 
 void MainWindow::file_new() {
-    if (!confirm_discard_if_dirty()) {
-        return;
-    }
-    current_path_.clear();
-    engine_->submit(core::NewDocumentCommand{});
+    create_new_tab(); // a new untitled tab; existing tabs are untouched
 }
 
 void MainWindow::file_open() {
-    if (!confirm_discard_if_dirty()) {
-        return;
-    }
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Drawing"),
                                                       QString(), QStringLiteral("Musa CAD (*.musa)"),
                                                       nullptr, QFileDialog::DontUseNativeDialog);
@@ -2808,11 +3000,12 @@ void MainWindow::file_open() {
 }
 
 void MainWindow::file_save() {
-    if (current_path_.isEmpty()) {
+    const QString path = active_doc_path();
+    if (path.isEmpty()) {
         file_save_as();
         return;
     }
-    save_to(current_path_, false);
+    save_to(path, false);
 }
 
 void MainWindow::file_save_as() {
@@ -2825,14 +3018,182 @@ void MainWindow::file_save_as() {
     save_to(path, false);
 }
 
-void MainWindow::file_import_dxf() {
-    if (!confirm_discard_if_dirty()) {
+// --- multi-document tab strip ---------------------------------------------
+
+void MainWindow::sync_document_tabs() {
+    if (file_tabs_ == nullptr || viewport_ == nullptr) {
         return;
     }
+    const std::vector<core::DocumentInfo> docs = viewport_->documents();
+    if (docs.empty()) {
+        return; // before the first snapshot
+    }
+    const std::uint64_t active = viewport_->active_document_id();
+    const auto label = [](const core::DocumentInfo& d) {
+        return QString::fromStdString(d.name) + (d.dirty ? QStringLiteral(" *") : QString());
+    };
+    // Rebuild only when the set / labels actually changed (avoids flicker + spurious
+    // currentChanged signals that would re-issue a switch). Programmatic edits are
+    // signal-blocked so they never feed back into switch_to_document.
+    bool changed = static_cast<int>(docs.size()) != file_tabs_->count();
+    for (int i = 0; !changed && i < file_tabs_->count(); ++i) {
+        const auto& d = docs[static_cast<std::size_t>(i)];
+        changed = file_tabs_->tabData(i).toULongLong() != d.id || file_tabs_->tabText(i) != label(d);
+    }
+    const QSignalBlocker block(file_tabs_);
+    if (changed) {
+        while (file_tabs_->count() > static_cast<int>(docs.size())) {
+            file_tabs_->removeTab(file_tabs_->count() - 1);
+        }
+        for (int i = 0; i < static_cast<int>(docs.size()); ++i) {
+            const auto& d = docs[static_cast<std::size_t>(i)];
+            if (i < file_tabs_->count()) {
+                file_tabs_->setTabText(i, label(d));
+            } else {
+                file_tabs_->addTab(label(d));
+            }
+            file_tabs_->setTabData(i, QVariant::fromValue<qulonglong>(d.id));
+        }
+    }
+    int active_idx = -1;
+    for (int i = 0; i < file_tabs_->count(); ++i) {
+        if (file_tabs_->tabData(i).toULongLong() == active) {
+            active_idx = i;
+        }
+    }
+    if (active_idx >= 0 && file_tabs_->currentIndex() != active_idx) {
+        file_tabs_->setCurrentIndex(active_idx);
+    }
+}
+
+void MainWindow::switch_to_document(std::uint64_t id) {
+    if (id == 0 || engine_ == nullptr) {
+        return;
+    }
+    // Cancel-on-switch: an in-flight command belongs to the outgoing document.
+    if (processor_ != nullptr) {
+        processor_->cancel();
+    }
+    engine_->submit(core::SwitchDocumentCommand{id});
+}
+
+void MainWindow::cycle_document(int dir) {
+    if (viewport_ == nullptr) {
+        return;
+    }
+    const std::vector<core::DocumentInfo> docs = viewport_->documents();
+    if (docs.size() < 2) {
+        return;
+    }
+    const std::uint64_t active = viewport_->active_document_id();
+    int idx = 0;
+    for (int i = 0; i < static_cast<int>(docs.size()); ++i) {
+        if (docs[static_cast<std::size_t>(i)].id == active) {
+            idx = i;
+        }
+    }
+    const int n = static_cast<int>(docs.size());
+    const int next = ((idx + dir) % n + n) % n;
+    switch_to_document(docs[static_cast<std::size_t>(next)].id);
+}
+
+// Returns false only if the user CANCELS (the close/quit must be aborted). On Save it
+// queues the save (the caller flushes before tearing down); on Discard it does nothing.
+bool MainWindow::prompt_save_document(std::uint64_t id, const QString& name, const QString& path) {
+    if (viewport_ != nullptr && viewport_->active_document_id() != id) {
+        switch_to_document(id); // make it active so Save targets the right store (FIFO)
+    }
+    const auto choice = QMessageBox::warning(
+        this, QStringLiteral("Unsaved changes"),
+        QStringLiteral("Save changes to %1?").arg(name),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    if (choice == QMessageBox::Cancel) {
+        return false;
+    }
+    if (choice == QMessageBox::Save) {
+        QString p = path;
+        if (p.isEmpty()) {
+            p = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
+                                             QStringLiteral("Musa CAD (*.musa)"), nullptr,
+                                             QFileDialog::DontUseNativeDialog);
+            if (p.isEmpty()) {
+                return false; // cancelled the path dialog -> abort
+            }
+            if (!p.endsWith(QStringLiteral(".musa"), Qt::CaseInsensitive)) {
+                p += QStringLiteral(".musa");
+            }
+        }
+        engine_->submit(core::SaveDocumentCommand{p.toStdString(), false});
+    }
+    return true;
+}
+
+void MainWindow::close_document_tab(std::uint64_t id) {
+    if (id == 0 || viewport_ == nullptr) {
+        return;
+    }
+    bool found = false;
+    bool dirty = false;
+    QString name;
+    QString path;
+    for (const core::DocumentInfo& d : viewport_->documents()) {
+        if (d.id == id) {
+            found = true;
+            dirty = d.dirty;
+            name = QString::fromStdString(d.name);
+            path = QString::fromStdString(d.path);
+        }
+    }
+    if (!found) {
+        return;
+    }
+    if (dirty && !prompt_save_document(id, name, path)) {
+        return; // user cancelled the close
+    }
+    engine_->submit(core::CloseDocumentCommand{id}); // queues after any Save (FIFO)
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    // Quit guard: prompt to save every dirty document, then flush the saves before the
+    // window (and engine) tear down so nothing is silently lost.
+    if (viewport_ == nullptr) {
+        event->accept();
+        return;
+    }
+    const std::vector<core::DocumentInfo> docs = viewport_->documents();
+    for (const core::DocumentInfo& d : docs) {
+        if (d.dirty &&
+            !prompt_save_document(d.id, QString::fromStdString(d.name),
+                                  QString::fromStdString(d.path))) {
+            event->ignore(); // a Cancel anywhere aborts the quit
+            return;
+        }
+    }
+    // Let the geometry thread drain the queued saves (per-doc dirty clears) before close.
+    bool any_dirty = false;
+    for (const core::DocumentInfo& d : docs) {
+        any_dirty = any_dirty || d.dirty;
+    }
+    if (any_dirty) {
+        pump_with_progress(QStringLiteral("Saving…"),
+                           [this] {
+                               for (const core::DocumentInfo& d : viewport_->documents()) {
+                                   if (d.dirty) {
+                                       return false;
+                                   }
+                               }
+                               return true;
+                           },
+                           10'000);
+    }
+    event->accept();
+}
+
+void MainWindow::file_import_dxf() {
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import DXF"), QString(),
                                                       QStringLiteral("DXF (*.dxf)"), nullptr,
                                                       QFileDialog::DontUseNativeDialog);
-    open_from(path, true);
+    open_from(path, true); // a new tab; current work is untouched
 }
 
 void MainWindow::file_export_dxf() {
@@ -3005,9 +3366,6 @@ bool MainWindow::pump_with_progress(const QString& label, const std::function<bo
 }
 
 void MainWindow::file_import_dwg() {
-    if (!confirm_discard_if_dirty()) {
-        return;
-    }
     const QString dwg = QFileDialog::getOpenFileName(this, QStringLiteral("Import DWG"), QString(),
                                                      QStringLiteral("DWG (*.dwg)"), nullptr,
                                                      QFileDialog::DontUseNativeDialog);

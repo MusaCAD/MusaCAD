@@ -65,6 +65,16 @@ struct TextEditTarget {
     std::string content;
 };
 
+/// One open document, surfaced for the multi-document tab strip. `name` is the display
+/// name (a filename or "DrawingN"); `dirty` drives the per-tab "*" marker. The list is
+/// the single source of truth for the tabs (the UI is a pure view). Not checksummed.
+struct DocumentInfo {
+    std::uint64_t id = 0;
+    std::string name;  ///< tab display name (filename or "DrawingN")
+    std::string path;  ///< native file path ("" = untitled); drives Ctrl+S vs Save As
+    bool dirty = false;
+};
+
 struct RenderSnapshot {
     std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
     std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
@@ -160,6 +170,12 @@ struct RenderSnapshot {
     bool dirty = false;
     std::uint64_t document_version = 0;
 
+    // Multi-document: every open document (in tab order) + which one this snapshot is
+    // from. The tab strip is rendered purely from this. `dirty` above is the ACTIVE
+    // document's flag (mirrors the active entry here). Not part of the checksum.
+    std::vector<DocumentInfo> documents;
+    std::uint64_t active_document_id = 0;
+
     void clear() noexcept {
         version = 0;
         geometry_version = 0;
@@ -198,6 +214,8 @@ struct RenderSnapshot {
         status_version = 0;
         dirty = false;
         document_version = 0;
+        documents.clear();
+        active_document_id = 0;
     }
 
     /// FNV-1a over the version and payload. Cheap and order-sensitive; enough to

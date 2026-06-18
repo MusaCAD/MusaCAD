@@ -84,6 +84,7 @@ add_executable(musacad_tests
     test_preview_no_mutation.cpp
     test_selection.cpp
     test_modify.cpp
+    test_multidoc.cpp
     test_kernel_offset.cpp
     test_osnap_types.cpp
     test_delete_selection.cpp

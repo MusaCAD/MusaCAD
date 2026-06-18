@@ -7,7 +7,9 @@
 #include <functional>
 #include <cstdint>
 #include <stop_token>
+#include <string>
 #include <thread>
+#include <unordered_map>
 
 #include <vector>
 
@@ -43,7 +45,10 @@ public:
     /// before start() (read on the geometry thread; not changed afterwards). Null = stroke
     /// font only. The engine is owned by the caller (the UI layer). Stored on the
     /// GeometryStore so render/bounds/pick/grips all reach the same metrics (no fork).
-    void set_font_engine(const IFontEngine* engine) noexcept { store_.set_font_engine(engine); }
+    void set_font_engine(const IFontEngine* engine) noexcept {
+        font_engine_ = engine;       // remembered so every NEW document's store gets it too
+        store_.set_font_engine(engine);
+    }
 
     /// Launches the geometry worker thread (idempotent).
     void start();
@@ -94,6 +99,56 @@ private:
         std::uint64_t id = 0;
         std::vector<Item> items;
     };
+
+    // --- multi-document ----------------------------------------------------
+    // The HEAVY per-document state. The ACTIVE document's heavy state lives in the
+    // engine's live members (store_, grid_, undo_, ... below) so all 30+ phases of
+    // single-document code is untouched; INACTIVE documents park their heavy state here
+    // (moved in/out on switch -- GeometryStore/SpatialGrid are movable). Display
+    // metadata (id/name/path) lives in DocMeta, kept for every document at all times.
+    struct DocState {
+        GeometryStore store;
+        SpatialGrid grid;
+        std::vector<Group> undo;
+        std::vector<Group> redo;
+        std::vector<EntityHandle> selection;
+        RenderSnapshot geom_cache;
+        bool geom_dirty = true;
+        std::uint64_t geom_version = 0;
+        bool dirty = false;
+        std::uint64_t document_version = 0;
+        bool has_pending_dim = false;
+        DimData pending_dim{};
+        std::uint64_t pending_dim_version = 0;
+        bool grip_active = false;
+        EntityHandle grip_handle{};
+        std::uint32_t grip_index = 0;
+        Vec2 grip_pos{};
+        GeometryStore grip_preview_store;
+    };
+    struct DocMeta {
+        std::uint64_t id = 0;
+        std::string name;      ///< tab display name ("DrawingN" or a filename)
+        std::string path;      ///< native file path ("" = untitled)
+        bool is_dxf_path = false;
+    };
+    // Park the active document's live heavy state into `d` (move); restore it from `d`.
+    void park_active(DocState& d);
+    void load_active(DocState& d);
+    // Reset the live members to a fresh empty document (used by NewDocument + Create).
+    void reset_active_state();
+    void create_document(const std::string& name); // new tab, activated
+    void switch_document(std::uint64_t id);
+    void close_document(std::uint64_t id);
+    void open_into_new_tab(const Command& command); // OpenDocument with new_tab
+    [[nodiscard]] std::size_t doc_index(std::uint64_t id) const; // SIZE_MAX if absent
+
+    std::vector<DocMeta> doc_metas_;                       // all open docs, in tab order
+    std::unordered_map<std::uint64_t, DocState> parked_;   // heavy state of INACTIVE docs
+    std::size_t active_idx_ = 0;                           // index into doc_metas_
+    std::uint64_t next_doc_id_ = 1;                        // monotonic document id
+    std::uint64_t doc_name_counter_ = 0;                   // monotonic "DrawingN" sequence
+    const IFontEngine* font_engine_ = nullptr;            // applied to every new doc's store
 
     void run(std::stop_token token);
     void apply(const Command& command);

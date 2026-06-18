@@ -117,6 +117,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // Multi-document capture: MUSACAD_MULTIDOC_SHOT="kind|out.png" (kind 0 two tabs,
+    // 1 per-tab view preserved, 2 close-dirty prompt, 3 open makes a new tab, 4 undo per tab).
+    if (qEnvironmentVariableIsSet("MUSACAD_MULTIDOC_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a =
+                qEnvironmentVariable("MUSACAD_MULTIDOC_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/multidoc_shot.png"));
+            const bool ok = window.multidoc_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {

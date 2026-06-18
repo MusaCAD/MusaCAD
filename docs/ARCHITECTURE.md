@@ -40,6 +40,48 @@ snapshots — never shared mutable state:
   stop token wakes `wait_pop`, the loop exits, and the destructor joins. No
   detached threads, no manual join races. _(core, Phase 2)_
 
+## Multi-document model (Phase A)
+
+N drawings are open at once, but there is still **ONE engine, ONE viewport, ONE renderer,
+ONE command queue, ONE snapshot triple buffer** — multi-document is a layer *above* the
+threading model, not a fork of it.
+
+**Per-document vs global.** Per-document state (the `GeometryStore`, spatial index,
+undo/redo op-log, selection set, dirty flag, document version, pending-dim + grip-drag
+state) is bundled in `GeometryEngine::DocState`. Global state stays on the engine: the
+kernel, the MPSC command queue, the snapshot triple buffer, the worker thread, view-scale
+/ tessellation buckets, input state (cursor/pick/osnap), and the status feedback channel.
+The **camera is per-document** but lives UI-side (a `docId → Camera2D` map in the
+viewport), since panning/zooming is pure CPU and never touches the geometry thread.
+**LWDISPLAY** is treated as global (app-wide), matching AutoCAD.
+
+**The "DocumentManager" is the engine's document registry, on the geometry thread.** The
+prompt's notion of a global DocumentManager is realised here as the engine owning the
+documents — because the engine owns the stores, and a UI-thread manager owning stores
+would violate the "UI never touches the store" invariant the codebase has held since
+Phase 2. The engine keeps the **active** document's heavy state in its live members (so
+all single-document code is unchanged) and **parks** inactive documents' state in a
+`docId → DocState` map. `GeometryStore`/`SpatialGrid` are movable, so a switch is a
+move-swap of those members — no copy, no churn at the ~200 `store_` call sites.
+
+**One engine, swappable active document.** Tab actions are geometry-thread commands:
+`SwitchDocumentCommand{id}` parks the active doc and unparks the target (the next
+snapshot is built from the new store); `CreateDocumentCommand` / `CloseDocumentCommand`
+add/remove documents; `OpenDocumentCommand` gains a `new_tab` flag (the UI always opens
+into a new tab). `NewDocumentCommand` still means "reset the active document in place"
+(internal/test resets). The cross-document snapshot transition is **tear-free for free**:
+the triple buffer doesn't care which document a snapshot was built from — a snapshot built
+for doc A renders for doc A, and the next published one is doc B's.
+
+**The UI is a pure view of the snapshot.** `RenderSnapshot` carries `documents`
+(`{id, name, path, dirty}` per open doc, in tab order) + `active_document_id`; the
+`FileTabs` strip, the window title, and Save's target path are all derived from it. The
+viewport caches that list for the GUI thread; clicking a tab / Ctrl+Tab submits a
+`SwitchDocumentCommand` (cancel-on-switch: an in-flight command is cancelled). Closing a
+dirty tab (or quitting with dirty tabs) prompts Save/Discard/Cancel and flushes the queued
+saves before teardown; closing the last tab resets it to an empty drawing (never zero
+tabs). Cross-document copy/paste and tab-to-tab drag are **Phase B** (deferred).
+
 ### Snapshot handoff: triple buffer with an atomic latest-ready index
 
 **Decision.** The geometry→render handoff uses a **lock-free single-producer /

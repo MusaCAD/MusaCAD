@@ -3,6 +3,26 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Multi-document — Phase B (deferred 2026-06-18)
+
+**Status:** Phase A is done — N drawings open as tabs, switch/close/new/open, dirty
+prompts, per-document camera/selection/undo, one engine swapping the active document (see
+[ARCHITECTURE.md](ARCHITECTURE.md) "Multi-document model"). The following CROSS-document
+operations are explicitly **staged for Phase B**:
+
+1. **Cross-document copy/paste** — copy entities from document A and paste them into
+   document B. Needs a clipboard model (serialise the selected entities to a portable form
+   — likely the existing `io::Document` fragment or capture commands — and re-create them in
+   the target document's store, remapping layers/blocks/dimstyles by name). *Done looks
+   like:* select in A, Ctrl+C, switch to B, Ctrl+V places them (one undo group in B), with
+   layer/style references resolved or created in B.
+2. **Tab-to-tab drag** — drag entities (or a tab) between documents. Builds on the
+   clipboard/transfer model from (1) plus a drag-and-drop affordance on the tab strip.
+
+Why deferred: Phase A's exit criterion was "N drawings open simultaneously without
+anything breaking." Cross-document data transfer is a separate concern (entity
+serialisation + reference remapping across stores) and was scoped out deliberately.
+
 ## Plotting / printing (Phase 30 follow-ups)
 
 Phase 30 added the PLOT pipeline: a shared vector renderer (`paint_plot`) used by both

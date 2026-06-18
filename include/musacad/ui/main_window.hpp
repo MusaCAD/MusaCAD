@@ -23,6 +23,8 @@ class QToolButton;
 class QComboBox;
 class QEvent;
 class QObject;
+class QCloseEvent;
+class QTabBar;
 
 namespace musacad::command {
 class CommandProcessor;
@@ -112,6 +114,11 @@ public:
     /// 1 filleted-rectangle offset, 2 open-polyline offset, 3 over-large offset (graceful
     /// failure message), 4 JOIN four lines -> closed polyline -> uniform offset.
     bool offset_shot(int kind, const std::string& out_png);
+    /// Real-window capture for multi-document (Phase A). `kind`: 0 two tabs (content +
+    /// empty, dirty markers), 1 per-tab view preserved across a switch, 2 close-dirty
+    /// Save/Discard/Cancel prompt, 3 Open makes a new tab (original intact), 4 undo
+    /// per-tab. Sets up the scenario, then grabs the app region for eyes-on review.
+    bool multidoc_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
@@ -131,9 +138,22 @@ protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
     bool eventFilter(QObject* watched, QEvent* event) override;
+    /// Quit guard: prompt to save every dirty document before the window closes.
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void seed_demo_scene();
+
+    // --- multi-document tab strip (Phase A) --------------------------------
+    void sync_document_tabs();                  ///< mirror the engine's doc list into FileTabs
+    void create_new_tab();                      ///< File->New / "+" : a new untitled tab
+    void switch_to_document(std::uint64_t id);  ///< click/Ctrl+Tab: cancel-on-switch + Switch cmd
+    void close_document_tab(std::uint64_t id);  ///< ×/Ctrl+W: dirty prompt, then Close cmd
+    void cycle_document(int dir);               ///< Ctrl+Tab (+1) / Ctrl+Shift+Tab (-1)
+    /// Prompt Save/Discard/Cancel for one document (queues the Save). Returns false on Cancel.
+    bool prompt_save_document(std::uint64_t id, const QString& name, const QString& path);
+    [[nodiscard]] QString active_doc_path() const; ///< the active document's native path ("")
+    [[nodiscard]] QString active_doc_name() const; ///< the active document's display name
     void build_ribbon();
     QWidget* build_central();
     void build_status_bar();
@@ -239,7 +259,7 @@ private:
     QTimer* title_timer_ = nullptr;
     std::vector<QToolButton*> selection_required_buttons_;
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
-    QString current_path_;                  // path of the open .musa file (empty = untitled)
+    QTabBar* file_tabs_ = nullptr;          // multi-document tab strip (mirrors the engine)
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
 
     ViewportModes modes_;
