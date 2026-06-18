@@ -175,6 +175,14 @@ public:
         text_edit_callback_ = std::move(cb);
     }
 
+    /// Tab-to-tab drag: invoked on release of a selection-drag at the global drop point.
+    /// The host maps it to a document tab and, if it lands on a different document,
+    /// transfers the selection there and returns true (the drag is then consumed instead
+    /// of performing a normal window-select).
+    void set_selection_drop_callback(std::function<bool(QPoint)> cb) {
+        selection_drop_cb_ = std::move(cb);
+    }
+
     /// The aggregated property view of the current selection (PR palette). Copied
     /// lock-free under the cache lock; the UI never queries the store.
     [[nodiscard]] core::SelectionSummary selection_summary() const {
@@ -400,6 +408,8 @@ private:
     std::vector<core::GripInfo> grips_cache_;
     std::vector<core::TextEditTarget> text_targets_; // for double-click-to-edit (same mutex)
     std::function<void(const TextEditRequest&)> text_edit_callback_;
+    std::function<bool(QPoint)> selection_drop_cb_; // tab-to-tab drag (host maps to a tab)
+    bool had_selection_at_press_ = false;           // a selection existed when a drag began
     core::SelectionSummary selection_summary_; // PR palette (same mutex)
     core::Vec2 bounds_min_{}; // content AABB (same mutex; for self-tests)
     core::Vec2 bounds_max_{};

@@ -277,6 +277,27 @@ struct CloseDocumentCommand {
     std::uint64_t id = 0;
 };
 
+// --- Cross-document clipboard (Phase B) ------------------------------------
+/// Copy the current selection into the engine's in-process clipboard (snapshots the
+/// entities + the source document's layer/dimstyle/block tables, so paste works even
+/// after switching or closing the source). Read-only; does not modify any document.
+struct CopyClipboardCommand {};
+/// Cut = copy the selection to the clipboard, then erase it (one undo group).
+struct CutClipboardCommand {
+    std::uint64_t group = 0;
+};
+/// Paste the clipboard into the ACTIVE document at `at` (the clip's reference point lands
+/// there), remapping layer/dimstyle/block references by NAME into the active document's
+/// tables (creating any that are missing). The pasted entities become the selection. One
+/// undo group. Enables cross-document copy/paste + tab-to-tab drag.
+struct PasteClipboardCommand {
+    Vec2 at;
+    std::uint64_t group = 0;
+    /// true: place the clip's reference point at `at` (paste-at-cursor, Ctrl+V). false:
+    /// keep the entities' original world coordinates (offset 0) -- used by tab-to-tab drag.
+    bool at_cursor = true;
+};
+
 // --- Annotation (Phase 13): text + dimensions -------------------------------
 
 /// Single-line text. `justify`: 0 left, 1 centre, 2 right. `font` is the font name
@@ -512,6 +533,7 @@ using Command =
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
-                 CloseDocumentCommand>;
+                 CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand,
+                 PasteClipboardCommand>;
 
 } // namespace musacad::core

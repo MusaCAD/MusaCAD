@@ -176,7 +176,8 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | **Close tab** — the × on each tab, or Ctrl+W. A dirty tab prompts Save / Discard / Cancel; closing the last tab leaves one empty "DrawingN" (never zero tabs) | × / Ctrl+W | Implemented |
 | **Undo/redo is per document** — Ctrl+Z on tab A rewinds tab A's last op even after edits in tab B | Ctrl+Z / Ctrl+Y | Implemented |
 | **Quit guard** — closing the window prompts to save every dirty document (Cancel aborts the quit) | — | Implemented |
-| Cross-document copy/paste + tab-to-tab drag | — | Planned (Phase B) |
+| **Cross-document copy/paste** — Ctrl+C / Ctrl+X copy/cut the selection to an in-process clipboard; Ctrl+V pastes into the ACTIVE document at the cursor, remapping layer/dimstyle/block references by NAME (creating any missing in the target). One undo group; the clipboard survives switching/closing the source | Ctrl+C / Ctrl+X / Ctrl+V | Implemented (Phase B) |
+| **Tab-to-tab drag** — drag a selection onto another document's tab to transfer it there (copy → switch → paste, original coordinates) | drag to tab | Implemented (Phase B) |
 | DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
 | DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
 | DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |

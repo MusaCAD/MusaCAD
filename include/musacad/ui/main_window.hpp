@@ -25,6 +25,7 @@ class QEvent;
 class QObject;
 class QCloseEvent;
 class QTabBar;
+class QPoint;
 
 namespace musacad::command {
 class CommandProcessor;
@@ -150,6 +151,9 @@ private:
     void switch_to_document(std::uint64_t id);  ///< click/Ctrl+Tab: cancel-on-switch + Switch cmd
     void close_document_tab(std::uint64_t id);  ///< ×/Ctrl+W: dirty prompt, then Close cmd
     void cycle_document(int dir);               ///< Ctrl+Tab (+1) / Ctrl+Shift+Tab (-1)
+    /// Tab-to-tab drag: if `global_pos` lands on a different document's tab, transfer the
+    /// current selection there (copy -> switch -> paste). Returns true if it transferred.
+    [[nodiscard]] bool drop_selection_on_tab(QPoint global_pos);
     /// Prompt Save/Discard/Cancel for one document (queues the Save). Returns false on Cancel.
     bool prompt_save_document(std::uint64_t id, const QString& name, const QString& path);
     [[nodiscard]] QString active_doc_path() const; ///< the active document's native path ("")
@@ -260,6 +264,7 @@ private:
     std::vector<QToolButton*> selection_required_buttons_;
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
     QTabBar* file_tabs_ = nullptr;          // multi-document tab strip (mirrors the engine)
+    core::Vec2 last_cursor_world_{};        // latest cursor world pos (paste-at-cursor)
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
 
     ViewportModes modes_;

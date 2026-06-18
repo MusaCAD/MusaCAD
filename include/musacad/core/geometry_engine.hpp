@@ -179,6 +179,24 @@ private:
     void prune_selection();
     void select_window(Vec2 min, Vec2 max, bool crossing, bool additive);
 
+    // --- cross-document clipboard (Phase B) ---
+    // In-process, app-global clipboard (NOT per-document, so a copy survives switching /
+    // closing the source). Self-contained: it snapshots the source document's named
+    // tables so paste can remap layer/dimstyle/block references by NAME into the target.
+    struct Clipboard {
+        std::vector<Command> items;        // captured entities (Add* commands)
+        std::vector<Layer> src_layers;     // source layer table (index -> Layer)
+        std::vector<DimStyle> src_dimstyles;
+        std::vector<BlockDef> src_blocks;
+        std::vector<std::string> src_fonts; // source font table (index -> name)
+        Vec2 base{};                       // reference point (selection AABB min)
+        bool has = false;
+    };
+    Clipboard clipboard_;
+    void apply_copy_clipboard();
+    void apply_cut_clipboard(std::uint64_t group);
+    void apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at_cursor);
+
     // --- modify (operate on the selection / a pick) ---
     void apply_move(Vec2 delta, bool copy, std::uint64_t group);
     void apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group);

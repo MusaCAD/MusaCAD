@@ -206,6 +206,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
         open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
     });
+    // Tab-to-tab drag: dropping a selection-drag on another document's tab transfers it.
+    viewport_->set_selection_drop_callback([this](QPoint global) { return drop_selection_on_tab(global); });
 
     // Dynamic Input (F12): a frameless surface that floats at the crosshair. It
     // routes typed text through the SAME processor (submit_line) and mirrors the
@@ -465,6 +467,21 @@ void MainWindow::build_ribbon() {
         connect(act, &QAction::triggered, this, slot);
         addAction(act);
     };
+    // Cross-document clipboard (Phase B): Copy/Cut snapshot the selection; Paste recreates
+    // into the ACTIVE document at the cursor, remapping layers/styles/blocks by name.
+    add_app_shortcut(QKeySequence::Copy, [this] {
+        if (viewport_ != nullptr && viewport_->selection_count() > 0) {
+            engine_->submit(core::CopyClipboardCommand{});
+        }
+    });
+    add_app_shortcut(QKeySequence::Cut, [this] {
+        if (viewport_ != nullptr && viewport_->selection_count() > 0) {
+            engine_->submit(core::CutClipboardCommand{processor_->begin_group()});
+        }
+    });
+    add_app_shortcut(QKeySequence::Paste, [this] {
+        engine_->submit(core::PasteClipboardCommand{last_cursor_world_, processor_->begin_group()});
+    });
     add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Tab")), [this] { cycle_document(1); });
     add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Tab")),
                      [this] { cycle_document(-1); });
@@ -674,6 +691,7 @@ void MainWindow::build_status_bar() {
     coord_label_->setObjectName(QStringLiteral("CoordReadout"));
     statusBar()->addPermanentWidget(coord_label_);
     connect(viewport_, &ViewportWindow::cursorWorldMoved, this, [this](double x, double y) {
+        last_cursor_world_ = core::Vec2{x, y}; // for paste-at-cursor (Ctrl+V)
         coord_label_->setText(QStringLiteral("%1, %2").arg(x, 0, 'f', 3).arg(y, 0, 'f', 3));
     });
 }
@@ -2620,6 +2638,53 @@ bool MainWindow::multidoc_shot(int kind, const std::string& out_png) {
         pump(200);
         viewport_->zoom_extents();
         pump(300);
+    } else if (kind == 5) {
+        // Cross-document clipboard: copy a rectangle (on a custom layer) from Drawing1,
+        // paste it into Drawing2 (Ctrl+C / Ctrl+V); the layer is remapped by name.
+        core::Layer walls;
+        walls.name = "Walls";
+        engine_->submit(core::AddLayerCommand{walls});
+        pump(120);
+        std::uint16_t walls_idx = 0;
+        for (std::uint16_t i = 0; i < viewport_->layers().size(); ++i) {
+            if (viewport_->layers()[i].name == "Walls") {
+                walls_idx = i;
+            }
+        }
+        engine_->submit(core::SetCurrentLayerCommand{walls_idx});
+        rect(-40, -30, 40, 30, 1);
+        pump(120);
+        engine_->submit(core::SelectAllCommand{});
+        pump(150);
+        engine_->submit(core::CopyClipboardCommand{}); // Ctrl+C
+        pump(120);
+        create_new_tab();                              // Drawing2 (no "Walls")
+        pump(250);
+        core::PasteClipboardCommand paste;             // Ctrl+V (keep coordinates here)
+        paste.at_cursor = false;
+        paste.group = 100;
+        engine_->submit(std::move(paste));
+        pump(200);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 6) {
+        // Tab-to-tab drag: select in Drawing1, then drop on Drawing2's tab (the real
+        // drop handler: copy -> switch -> paste). The rectangle appears in Drawing2.
+        rect(-40, -30, 40, 30, 1);
+        pump(120);
+        engine_->submit(core::SelectAllCommand{});
+        pump(150);
+        create_new_tab(); // Drawing2
+        pump(200);
+        switch_to_document(viewport_->documents().front().id); // back to Drawing1 (selected)
+        pump(300);
+        if (file_tabs_ != nullptr && file_tabs_->count() >= 2) {
+            const QPoint g = file_tabs_->mapToGlobal(file_tabs_->tabRect(1).center());
+            drop_selection_on_tab(g); // simulate dropping the selection on Drawing2's tab
+        }
+        pump(300);
+        viewport_->zoom_extents();
+        pump(300);
     }
 
     const QRect mfr = frameGeometry();
@@ -3095,6 +3160,34 @@ void MainWindow::cycle_document(int dir) {
     const int n = static_cast<int>(docs.size());
     const int next = ((idx + dir) % n + n) % n;
     switch_to_document(docs[static_cast<std::size_t>(next)].id);
+}
+
+bool MainWindow::drop_selection_on_tab(QPoint global_pos) {
+    if (file_tabs_ == nullptr || viewport_ == nullptr) {
+        return false;
+    }
+    const QPoint local = file_tabs_->mapFromGlobal(global_pos);
+    if (!file_tabs_->rect().contains(local)) {
+        return false; // not dropped on the tab strip
+    }
+    const int idx = file_tabs_->tabAt(local);
+    if (idx < 0) {
+        return false;
+    }
+    const std::uint64_t target = file_tabs_->tabData(idx).toULongLong();
+    if (target == 0 || target == viewport_->active_document_id() ||
+        viewport_->selection_count() <= 0) {
+        return false; // same document (or nothing selected) -> not a transfer
+    }
+    // Transfer: snapshot the source selection, switch to the target, paste at the original
+    // coordinates as one undo group. FIFO ordering guarantees the copy reads the source.
+    engine_->submit(core::CopyClipboardCommand{});
+    switch_to_document(target);
+    core::PasteClipboardCommand paste;
+    paste.at_cursor = false; // keep original world coordinates in the target
+    paste.group = processor_->begin_group();
+    engine_->submit(std::move(paste));
+    return true;
 }
 
 // Returns false only if the user CANCELS (the close/quit must be aborted). On Save it

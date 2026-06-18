@@ -396,12 +396,15 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
                                                  ginfo.index, {}, 0});
         } else {
-            // Idle: begin a selection drag (single click or window/crossing box).
+            // Idle: begin a selection drag (single click or window/crossing box). If a
+            // selection already exists, this drag may instead be a tab-to-tab transfer
+            // (resolved on release if it ends over a document tab).
             selecting_ = true;
             sel_additive_ = (event->modifiers() & Qt::ShiftModifier) != 0;
             sel_start_screen_ = screen_px;
             sel_start_world_ = world;
             sel_cur_world_ = world;
+            had_selection_at_press_ = selection_count_.load(std::memory_order_relaxed) > 0;
         }
     }
     if (event->button() == Qt::LeftButton) {
@@ -576,6 +579,17 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
             return;
         }
         const double drag_px = core::length(rel_screen - sel_start_screen_);
+        // Tab-to-tab drag: a selection existed at press and the user dragged it onto a
+        // different document's tab. The host maps the drop position to a tab and performs
+        // the cross-document transfer (copy -> switch -> paste). Selection is still the
+        // press-time set here (the window-select below has not run yet).
+        if (had_selection_at_press_ && drag_px >= 4.0 * dpr && selection_drop_cb_ &&
+            selection_drop_cb_(event->globalPosition().toPoint())) {
+            had_selection_at_press_ = false;
+            rebuild_overlay();
+            return;
+        }
+        had_selection_at_press_ = false;
         if (drag_px < 4.0 * dpr) {
             // Single-click pick.
             engine_.submit(core::SelectPickCommand{world, 10.0 * dpr / scale, sel_additive_});

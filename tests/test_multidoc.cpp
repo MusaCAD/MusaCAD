@@ -158,6 +158,100 @@ TEST_CASE("Multidoc: open creates a new tab without disturbing the current one")
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Clipboard: copy in one document, paste into another at the cursor") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 0}, {10, 0}); }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(CopyClipboardCommand{});
+
+    engine.submit(CreateDocumentCommand{}); // new empty tab
+    REQUIRE(wait_until(engine,
+                       [](const auto& s) { return s.documents.size() == 2 && s.line_vertices.empty(); }));
+    // Paste at (50,50): the clip's reference point (0,0) lands there -> line at (50,50)-(60,50).
+    engine.submit(PasteClipboardCommand{{50, 50}, 100});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return has_segment(s, {50, 50}, {60, 50}) && s.selection.size() == 1;
+    }));
+    engine.stop();
+}
+
+TEST_CASE("Clipboard: paste remaps the layer by name into the target document") {
+    GeometryEngine engine;
+    engine.start();
+    Layer walls;
+    walls.name = "Walls";
+    engine.submit(AddLayerCommand{walls});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        for (const auto& l : s.layers) {
+            if (l.name == "Walls") {
+                return true;
+            }
+        }
+        return false;
+    }));
+    std::uint16_t walls_idx = 0;
+    for (std::uint16_t i = 0; i < engine.snapshot().layers.size(); ++i) {
+        if (engine.snapshot().layers[i].name == "Walls") {
+            walls_idx = i;
+        }
+    }
+    engine.submit(SetCurrentLayerCommand{walls_idx});
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1}); // stamped on "Walls"
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 0}, {10, 0}); }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(CopyClipboardCommand{});
+
+    engine.submit(CreateDocumentCommand{}); // B has only layer 0, no "Walls"
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        if (s.documents.size() != 2 || !s.line_vertices.empty()) {
+            return false;
+        }
+        for (const auto& l : s.layers) {
+            if (l.name == "Walls") {
+                return false; // B must NOT have Walls before paste
+            }
+        }
+        return true;
+    }));
+    engine.submit(PasteClipboardCommand{{0, 0}, 100});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        bool has_walls = false;
+        for (const auto& l : s.layers) {
+            if (l.name == "Walls") {
+                has_walls = true;
+            }
+        }
+        return has_walls && has_segment(s, {0, 0}, {10, 0}); // layer created + entity pasted
+    }));
+    engine.stop();
+}
+
+TEST_CASE("Clipboard: paste is one undo group; copy leaves the source intact") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{0, 5}, {10, 5}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(CopyClipboardCommand{}); // read-only: source still has its 2 lines
+
+    engine.submit(PasteClipboardCommand{{0, 20}, 100}); // paste into the same doc, offset +20y
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.line_vertices.size() == 8 && has_segment(s, {0, 0}, {10, 0}) &&
+               has_segment(s, {0, 20}, {10, 20}); // originals + pasted copies
+    }));
+    engine.submit(UndoLastGroupCommand{}); // the whole paste rewinds as one group
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.line_vertices.size() == 4 && has_segment(s, {0, 0}, {10, 0});
+    }));
+    engine.stop();
+}
+
 TEST_CASE("Multidoc: close activates a neighbour; closing the last resets to empty") {
     GeometryEngine engine;
     engine.start();

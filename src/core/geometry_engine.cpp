@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
@@ -615,6 +616,188 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
     }
     redo_.clear();
     geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_copy_clipboard() {
+    if (selection_.empty()) {
+        report("Nothing selected to copy.");
+        return;
+    }
+    Clipboard cb;
+    // Snapshot the source document's named tables so paste can remap by name even after
+    // the source document is switched away or closed.
+    cb.src_layers.assign(store_.layers().begin(), store_.layers().end());
+    cb.src_dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
+    cb.src_blocks.assign(store_.blocks().begin(), store_.blocks().end());
+    cb.src_fonts.assign(store_.fonts().begin(), store_.fonts().end());
+    Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+    Vec2 hi{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
+    bool any_bounds = false;
+    for (const EntityHandle h : selection_) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        cb.items.push_back(capture_entity(h));
+        Vec2 a;
+        Vec2 b;
+        if (entity_aabb(store_, h, a, b)) {
+            lo = {std::min(lo.x, a.x), std::min(lo.y, a.y)};
+            hi = {std::max(hi.x, b.x), std::max(hi.y, b.y)};
+            any_bounds = true;
+        }
+    }
+    if (cb.items.empty()) {
+        report("Nothing selected to copy.");
+        return;
+    }
+    cb.base = any_bounds ? lo : Vec2{0.0, 0.0};
+    cb.has = true;
+    clipboard_ = std::move(cb);
+    report(std::to_string(clipboard_.items.size()) + " copied to clipboard.");
+}
+
+void GeometryEngine::apply_cut_clipboard(std::uint64_t group) {
+    apply_copy_clipboard();
+    if (!clipboard_.has) {
+        return; // nothing to cut
+    }
+    const std::vector<EntityHandle> sel = selection_;
+    std::size_t erased = 0;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, original);
+        ++erased;
+    }
+    selection_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(erased) + " cut to clipboard.");
+}
+
+void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at_cursor) {
+    if (!clipboard_.has || clipboard_.items.empty()) {
+        report("Clipboard is empty.");
+        return;
+    }
+    // Paste-at-cursor lands the clip's reference point at `at`; otherwise keep the
+    // original world coordinates (tab-to-tab drag).
+    const Vec2 offset = at_cursor ? (at - clipboard_.base) : Vec2{0.0, 0.0};
+    // Resolve a source table index -> a target index BY NAME (creating if missing), the
+    // same get-or-add pattern DXF import uses. Memoised per paste.
+    std::unordered_map<std::uint16_t, std::uint16_t> layer_map;
+    std::unordered_map<std::uint16_t, std::uint16_t> dim_map;
+    std::unordered_map<std::uint16_t, std::uint16_t> block_map;
+    const auto ensure_layer = [&](std::uint16_t i) -> std::uint16_t {
+        const auto it = layer_map.find(i);
+        if (it != layer_map.end()) {
+            return it->second;
+        }
+        const std::uint16_t out =
+            i < clipboard_.src_layers.size() ? store_.add_layer(clipboard_.src_layers[i]) : 0;
+        layer_map[i] = out;
+        return out;
+    };
+    const auto ensure_dim = [&](std::uint16_t i) -> std::uint16_t {
+        const auto it = dim_map.find(i);
+        if (it != dim_map.end()) {
+            return it->second;
+        }
+        const std::uint16_t out = i < clipboard_.src_dimstyles.size()
+                                      ? store_.add_dimstyle(clipboard_.src_dimstyles[i])
+                                      : 0;
+        dim_map[i] = out;
+        return out;
+    };
+    // Font references travel as a SOURCE font-table index; resolve to the source NAME, then
+    // get-or-add it in the target. (Empty name = the built-in stroke font, index 0.)
+    const auto ensure_font = [&](std::uint16_t i) -> std::uint16_t {
+        return store_.add_font(i < clipboard_.src_fonts.size() ? std::string_view{clipboard_.src_fonts[i]}
+                                                               : std::string_view{});
+    };
+    // Deep-copy a referenced block definition tree by name, remapping nested-insert block
+    // indices AND block-internal entity layers/fonts so the pasted block resolves + renders.
+    // `in_progress` breaks self-referential / cyclic block definitions (malformed input)
+    // instead of recursing forever.
+    std::unordered_set<std::uint16_t> in_progress;
+    std::function<std::uint16_t(std::uint16_t)> ensure_block = [&](std::uint16_t i) -> std::uint16_t {
+        const auto it = block_map.find(i);
+        if (it != block_map.end()) {
+            return it->second;
+        }
+        if (i >= clipboard_.src_blocks.size() || !in_progress.insert(i).second) {
+            return 0; // out of range, or a cycle -> placeholder block 0 (no infinite loop)
+        }
+        BlockDef def = clipboard_.src_blocks[i];
+        for (auto& e : def.content.lines) {
+            e.props.layer = ensure_layer(e.props.layer);
+        }
+        for (auto& e : def.content.circles) {
+            e.props.layer = ensure_layer(e.props.layer);
+        }
+        for (auto& e : def.content.arcs) {
+            e.props.layer = ensure_layer(e.props.layer);
+        }
+        for (auto& e : def.content.polylines) {
+            e.props.layer = ensure_layer(e.props.layer);
+        }
+        for (auto& e : def.content.texts) {
+            e.props.layer = ensure_layer(e.props.layer);
+        }
+        for (auto& e : def.content.mtexts) {
+            e.props.layer = ensure_layer(e.props.layer);
+            e.block.font = ensure_font(e.block.font);
+        }
+        for (auto& ins : def.content.inserts) {
+            ins.block = ensure_block(ins.block); // recursive closure (block tree)
+            ins.props.layer = ensure_layer(ins.props.layer);
+        }
+        const std::uint16_t out = store_.add_block(def);
+        block_map[i] = out;
+        in_progress.erase(i);
+        return out;
+    };
+
+    std::vector<EntityHandle> pasted;
+    pasted.reserve(clipboard_.items.size());
+    for (Command cmd : clipboard_.items) { // a working copy per item
+        std::visit(
+            [&](auto& c) {
+                using T = std::decay_t<decltype(c)>;
+                if constexpr (requires { c.props; }) {
+                    if (c.props) {
+                        c.props->layer = ensure_layer(c.props->layer);
+                    }
+                }
+                if constexpr (std::is_same_v<T, AddDimensionCommand> ||
+                              std::is_same_v<T, AddLeaderCommand> ||
+                              std::is_same_v<T, AddMLeaderCommand>) {
+                    c.style = ensure_dim(c.style);
+                }
+                if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                    // MLeader carries its label font as an index inside MTextBlock (unlike
+                    // TEXT/MTEXT/LEADER which travel as a name) -> remap it here.
+                    c.block.font = ensure_font(c.block.font);
+                }
+                if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                    c.block = ensure_block(c.block);
+                }
+            },
+            cmd);
+        translate_cmd(cmd, offset);
+        const EntityHandle nh = create_indexed(cmd);
+        push_create_item(group, nh, cmd);
+        pasted.push_back(nh);
+    }
+    selection_ = pasted; // the pasted entities become the new selection
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(pasted.size()) + " pasted.");
 }
 
 void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group) {
@@ -2021,6 +2204,12 @@ void GeometryEngine::apply(const Command& command) {
                 switch_document(c.id);
             } else if constexpr (std::is_same_v<T, CloseDocumentCommand>) {
                 close_document(c.id);
+            } else if constexpr (std::is_same_v<T, CopyClipboardCommand>) {
+                apply_copy_clipboard();
+            } else if constexpr (std::is_same_v<T, CutClipboardCommand>) {
+                apply_cut_clipboard(c.group);
+            } else if constexpr (std::is_same_v<T, PasteClipboardCommand>) {
+                apply_paste_clipboard(c.at, c.group, c.at_cursor);
             } else if constexpr (std::is_same_v<T, AddLayerCommand>) {
                 store_.add_layer(c.layer);
                 geom_dirty_ = true;
@@ -2077,6 +2266,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, CreateDocumentCommand> ||
                 std::is_same_v<T, SwitchDocumentCommand> ||
                 std::is_same_v<T, CloseDocumentCommand> ||
+                std::is_same_v<T, CopyClipboardCommand> || // read-only (snapshots selection)
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||

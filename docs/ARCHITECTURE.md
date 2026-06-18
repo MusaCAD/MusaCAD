@@ -80,7 +80,22 @@ viewport caches that list for the GUI thread; clicking a tab / Ctrl+Tab submits 
 `SwitchDocumentCommand` (cancel-on-switch: an in-flight command is cancelled). Closing a
 dirty tab (or quitting with dirty tabs) prompts Save/Discard/Cancel and flushes the queued
 saves before teardown; closing the last tab resets it to an empty drawing (never zero
-tabs). Cross-document copy/paste and tab-to-tab drag are **Phase B** (deferred).
+tabs).
+
+**Cross-document clipboard (Phase B).** Copy/Cut/Paste (Ctrl+C/X/V) move entities BETWEEN
+documents. The clipboard is an engine-global, geometry-thread-owned buffer (NOT parked
+per-document, so it survives switching/closing the source) that snapshots the captured
+entities PLUS the source document's named tables (layers, dimstyles, block defs). Paste
+recreates into the active document, remapping every layer/dimstyle/block reference by
+NAME via the store's get-or-add accessors (the same `add_layer`/`add_dimstyle`/`add_block`
+pattern DXF import uses), creating any missing in the target; pasting an INSERT deep-copies
+its block-definition closure (nested inserts + block-internal layers remapped). All on the
+geometry thread, one undo group, the UI never touches a store. Layer/dimstyle/block AND
+font references are all remapped (top-level text fonts travel as names; MLeader + block-
+internal fonts remap via a snapshotted source font table). A self-referential or cyclic
+block definition (malformed input) is broken with an in-progress guard rather than
+recursing forever. Tab-to-tab drag is the same path: dragging a selection onto another
+document's tab does copy → switch → paste.
 
 ### Snapshot handoff: triple buffer with an atomic latest-ready index
 
