@@ -143,6 +143,12 @@ public:
     /// (commit a typed length, then end), 3 a ribbon click cancels the active command and
     /// starts the new one. Returns true if the expected dispatch happened.
     bool cmdctl_shot(int kind, const std::string& out_png);
+    /// Real-window capture for MLeader text-family PR + text control codes. `kind`: 0 MLeader
+    /// selected -> PR shows General + a Text section (font/height/justify) + a clean Color row,
+    /// 1 MATCHPROP TEXT(height 5) -> MLeader label adopts the height, 2 MATCHPROP MLeader ->
+    /// MLeader (label + leader props copy), 3 TEXT "%%c50 H7 %%p0.02" -> diameter/plus-minus,
+    /// 4 MTEXT "\\U+2300 50" -> diameter via the Unicode escape, 5 TEXT "Pipe %%oOD%%o" overline.
+    bool mleader_text_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();

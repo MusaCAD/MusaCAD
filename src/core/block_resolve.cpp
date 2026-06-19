@@ -11,6 +11,7 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
+#include "musacad/core/text/text_codes.hpp"
 
 namespace musacad::core {
 
@@ -169,7 +170,10 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
         const ResolvedProps rp = member_props(store, t.props, inherited);
         const auto j = static_cast<text::Justify>(t.justify <= 2 ? t.justify : 0);
         tseg.clear();
-        text::append_text_segments(t.content, t.pos, t.height, t.rotation, j, tseg);
+        // Expand control codes at render time, like the top-level TEXT path (block MTEXT goes
+        // through layout_mtext, which already substitutes).
+        text::append_text_segments(text::substitute_text(t.content), t.pos, t.height, t.rotation, j,
+                                   tseg);
         emit_pairs_transformed(xform, tseg, rp, out);
     }
     for (const BlockMText& mt : bc.mtexts) {

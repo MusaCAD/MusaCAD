@@ -9,6 +9,7 @@
 
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/text/text_codes.hpp"
 
 using namespace musacad::core;
 using namespace musacad::core::io;
@@ -110,7 +111,7 @@ TEST_CASE("MTEXT import strips inline formatting to plain, readable text") {
     REQUIRE(out.mtexts[0].content == "REDUCE BOLT SIZE\nTO M6");
 }
 
-TEST_CASE("TEXT import decodes %% overrides") {
+TEST_CASE("TEXT import keeps %% overrides RAW (codes expand at render time)") {
     const std::string dxf =
         "0\nSECTION\n2\nENTITIES\n"
         "0\nTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n1\n%%c12 %%d slope %%p0.5\n"
@@ -119,7 +120,11 @@ TEST_CASE("TEXT import decodes %% overrides") {
     const IoResult r = parse_dxf(dxf, out);
     REQUIRE(r.ok);
     REQUIRE(out.texts.size() == 1);
-    REQUIRE(out.texts[0].content == "Ø12 ° slope ±0.5");
+    // Derived-not-baked: storage keeps the raw codes (lossless round-trip back to DXF);
+    // the render/layout pass is what turns them into glyphs.
+    REQUIRE(out.texts[0].content == "%%c12 %%d slope %%p0.5");
+    REQUIRE(musacad::core::text::substitute_text(out.texts[0].content) ==
+            "\xE2\x8C\x80" "12 \xC2\xB0" " slope \xC2\xB1" "0.5");
 }
 
 TEST_CASE("DXF import resolves ACI colors (code 62) for layers and entities") {

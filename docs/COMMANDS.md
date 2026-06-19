@@ -70,6 +70,8 @@ suggests both); aliases are case-insensitive.
 | **Double-click a TEXT / MTEXT / QLEADER label → edit its content** (dark modal editor, pre-filled) | (double-click) | Implemented (Ph21) |
 | **TEXTEDIT / DDEDIT** (pick text → type new content; scriptable path) | ED / TEXTEDIT / DDEDIT | Implemented (Ph21) |
 | Text edit = one undo group, preserves layer/properties/position (not delete+recreate) | — | Implemented (Ph21) |
+| **AutoCAD control codes in TEXT & MTEXT** — `%%d`→°, `%%p`→±, `%%c`→⌀, `%%%`→literal %, `%%nnn`→char by code, `%%o`/`%%u`→overline/underline toggles; MTEXT also `\U+XXXX`→Unicode. Codes are **stored raw and expanded at render time** (editing shows the raw codes; save/load + DXF round-trip them). Shared with the Leader/MLeader labels | (type in any text) | Implemented |
+| **Leader / MLeader label properties in PR + MATCHPROP** — selecting a Leader or MLeader shows a Text section (Contents, Height, Font; MLeader also Width factor / Line spacing / Attachment); MATCHPROP copies the label font/height across the whole text family (TEXT ↔ MTEXT ↔ Leader ↔ MLeader) | PR / MA | Implemented |
 | **Properties palette (PR): dockable, context-sensitive panel for the selection** | PR / PROPERTIES / PROPS / CH | Implemented (Ph22) |
 | PR multiplicity: nothing / one / many-same / many-mixed, with **\*VARIES\*** where values differ; edits set all | — | Implemented (Ph22) |
 | PR universal props: **Layer / Color / Linetype / Lineweight** (ByLayer or override) editable single + multi + mixed | — | Implemented (Ph22) |

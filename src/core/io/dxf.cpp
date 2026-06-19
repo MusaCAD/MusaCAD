@@ -509,7 +509,7 @@ std::string serialize_dxf(const Document& doc) {
             }
         }
         if (m.block.str_len != 0 || !m.content.empty()) {
-            emit_mtext(m.block, m.content, m.props);
+            emit_mtext(m.block, m.content, m.props, m.font); // carry the label font (code 7)
         }
     }
     // Model-space block references.
@@ -715,6 +715,16 @@ std::string strip_mtext(const std::string& in) {
         case 'k':
             i += 1; // underline/overline/strike toggles: no argument
             break;
+        case 'U':
+        case 'u':
+            if (i + 2 < in.size() && in[i + 2] == '+') {
+                out += "\\U+"; // keep the Unicode escape -- it expands at render time
+                i += 2;        // step past 'U'; the loop's ++i steps past '+'
+            } else {
+                out += n; // bare \U: drop the backslash (default behaviour)
+                ++i;
+            }
+            break;
         case 'f':
         case 'F':
         case 'C':
@@ -745,40 +755,6 @@ std::string strip_mtext(const std::string& in) {
             ++i;
             break;
         }
-    }
-    return out;
-}
-
-// Decode single-line TEXT (DTEXT) overrides: %%c -> diameter, %%d -> degree, %%p -> +/-,
-// %%%/%%% -> percent, and strip the %%u/%%o under/overline toggles.
-std::string decode_dtext(const std::string& in) {
-    std::string out;
-    out.reserve(in.size());
-    for (std::size_t i = 0; i < in.size(); ++i) {
-        if (in[i] == '%' && i + 2 < in.size() && in[i + 1] == '%') {
-            const char k = static_cast<char>(std::tolower(static_cast<unsigned char>(in[i + 2])));
-            switch (k) {
-            case 'c':
-                out += "Ø"; // diameter
-                i += 2;
-                continue;
-            case 'd':
-                out += "°"; // degree
-                i += 2;
-                continue;
-            case 'p':
-                out += "±"; // plus/minus
-                i += 2;
-                continue;
-            case 'u':
-            case 'o':
-                i += 2; // under/overline toggle: strip
-                continue;
-            default:
-                break;
-            }
-        }
-        out += in[i];
     }
     return out;
 }
@@ -1032,7 +1008,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             t.height = getd(body, 40, 2.5);
             t.rotation = to_radians(getd(body, 50));
             if (const std::string* c = find(body, 1)) {
-                t.content = decode_dtext(*c);
+                t.content = *c; // keep the RAW %%-codes; they expand at render time
             }
             if (const std::string* j = find(body, 72)) {
                 t.justify = static_cast<std::uint8_t>(to_l(*j));

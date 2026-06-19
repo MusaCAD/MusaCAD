@@ -264,6 +264,35 @@ Glyph fill geometry is produced by a **scanline rasterizer-into-triangles** (eve
 at fine horizontal bands → quads), which is robust to any number of counters/holes — no
 ear-clipping corner cases. The triangles are cached per (face, glyph) at unit em.
 
+### Text control codes: render-time substitution (derived-not-baked)
+
+AutoCAD control codes (`%%d`→°, `%%p`→±, `%%c`→⌀, `%%%`→`%`, `%%nnn`→Latin-1 char, the
+`%%o`/`%%u` over/under-line toggles, and the MTEXT `\U+XXXX` Unicode escape) are expanded
+by **one function**, `core::text::substitute_text_codes`, **at render/layout/measure time** —
+the entity keeps the **raw** string (the same derived-not-baked rule as dimensions/blocks).
+So editing re-shows `%%c50`, and native + DXF round-trip the codes byte-for-byte (DXF import
+no longer bakes them — `strip_mtext` even preserves `\U+`). The pass returns the visible
+UTF-8 string plus the over/under-line runs; it is called at the three "raw string → layout"
+seams — `text_advance` (single-line measure), `layout_mtext` (paragraph measure+emit), and
+the single-line `emit_text_run` — so measurement, bounds, and glyphs never diverge.
+Over/underline are drawn as a horizontal stroke spanning each toggled run (single-line
+today; the symbol codes work in both TEXT and MTEXT). The stroke font carries °, ±, ⌀ as
+glyphs; a TTF face supplies them when selected.
+
+### Leader / MLeader labels are text-family (no new family)
+
+`family_of` already groups `Text`, `MText`, `Leader`, and `MLeader` into
+`EntityFamily::Text`, so MATCHPROP's family gate already lets label properties travel across
+the whole text family. Exposing them in the PR registry was therefore **not** a new family —
+it was broadening the descriptors' `applies` predicate (`is_text_family` = the four kinds;
+`is_paragraph` = the MTextBlock-bearing MText + MLeader) and letting the existing
+`requires`-based accessors reach the label fields (`get_height` gained an `x.text_height`
+branch for the flat LEADER). The one structural change: `AddMLeaderCommand` gained a
+top-level `font` **name** (it previously carried only the resolved `block.font` index),
+captured/applied/clipboard-remapped exactly like MTEXT, so the font descriptor and MATCHPROP
+read/write it as a name. A separate `MLeaderFamily` was explicitly **rejected** — it would
+have broken the existing TEXT↔MLeader matching.
+
 ### Stroke-text quality: on-screen weight, real lowercase, edge AA (Phase 31)
 
 Single-stroke text stays the engineering default ("Standard"); three changes make it look
@@ -1421,9 +1450,10 @@ its own.
 * **Honest model limits (stated).** LTSCALE is a global (not a per-entity property) and plot
   style/hatch are unmodelled, so those Settings toggles are present for AutoCAD parity but
   gate no descriptors (disabled in the dialog). Polyline has no type-specific registry
-  descriptor yet, and Leader/MLeader label text props aren't registry-exposed — those kinds
-  receive universal properties only. Copying the **dimstyle index** itself would need a new
-  registry descriptor (MA copies the per-dim *overrides* the registry exposes); deferred.
+  descriptor yet. (Leader/MLeader label text props **are now registry-exposed** — see
+  "Leader / MLeader labels are text-family" above — so MATCHPROP copies the label
+  font/height across the whole text family.) Copying the **dimstyle index** itself would need
+  a new registry descriptor (MA copies the per-dim *overrides* the registry exposes); deferred.
 
 ## Editable text — double-click & TEXTEDIT (Phase 21)
 

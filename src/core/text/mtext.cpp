@@ -9,6 +9,7 @@
 
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/text/stroke_font.hpp"
+#include "musacad/core/text/text_codes.hpp"
 
 namespace musacad::core::text {
 
@@ -59,15 +60,23 @@ std::vector<std::string> wrap_lines(std::string_view content, double max_w,
 
 double text_advance(const IFontEngine* fonts, std::string_view font_name, std::string_view text,
                     double height) {
+    // Measure the VISIBLE text -- control codes (%%c50 -> "(diameter)50") expand at render
+    // time, so the width must match the rendered glyphs (storage stays raw).
+    const std::string vis = substitute_text(text);
     if (fonts != nullptr && fonts->is_outline_font(font_name)) {
-        return fonts->advance(font_name, text, height);
+        return fonts->advance(font_name, vis, height);
     }
-    return text_width(text, height);
+    return text_width(vis, height);
 }
 
-MTextLayout layout_mtext(const MTextBlock& block, std::string_view content,
+MTextLayout layout_mtext(const MTextBlock& block, std::string_view raw_content,
                          const IFontEngine* fonts, std::string_view font_name) {
     MTextLayout out;
+    // Expand control codes (%%c, %%d, %%p, %%nnn, and the MTEXT \U+XXXX escape) to Unicode
+    // before wrap/measure/emit so the rendered glyphs and the wrap box reflect the visible
+    // text. Storage stays the raw string (derived-not-baked). Overline/underline toggles are
+    // stripped here (the single-line TEXT path draws the bars); MTEXT decoration is deferred.
+    const std::string content = substitute_text(raw_content, /*mtext=*/true);
     const double height = block.height > 0.0 ? block.height : 1.0;
     const double wf = block.width_factor > 0.0 ? block.width_factor : 1.0;
     // An outline (TTF) face emits filled glyphs and uses its own advances; the stroke font

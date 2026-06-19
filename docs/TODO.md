@@ -115,8 +115,10 @@ LWPOLYLINE, TEXT, MTEXT, DIMENSION, LEADER.
   only 0..211 are explicit widths, the rest inherit.
 - MTEXT inline formatting runs (`\fCambria|…;`, `\C1;`, `{…}`, `\A1;`, …) rendered
   verbatim as garbage; now converted to plain text (`\P`→newline, `^I` caret-tab→space,
-  escaped literals kept, styling runs dropped). Long group-3 chunks are concatenated.
-  TEXT `%%c/%%d/%%p` overrides decoded.
+  escaped literals kept, styling runs dropped, but `\U+XXXX` Unicode escapes PRESERVED).
+  Long group-3 chunks are concatenated. TEXT `%%c/%%d/%%p`/`%%o`/`%%u`/`%%nnn` overrides are
+  now kept RAW on import and expanded at render time (`core::text::substitute_text_codes`,
+  derived-not-baked), so the codes round-trip losslessly back out to DXF.
 - **Colours** were all white: ACI colour (code 62) was ignored for layers and only set
   the by-layer flag (never the RGB) for entities. Now resolved through the standard ACI
   palette for both; true colour (420) still wins.

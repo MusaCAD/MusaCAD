@@ -778,11 +778,9 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
                               std::is_same_v<T, AddMLeaderCommand>) {
                     c.style = ensure_dim(c.style);
                 }
-                if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
-                    // MLeader carries its label font as an index inside MTextBlock (unlike
-                    // TEXT/MTEXT/LEADER which travel as a name) -> remap it here.
-                    c.block.font = ensure_font(c.block.font);
-                }
+                // MLeader's label font now travels as a NAME (c.font, like TEXT/MTEXT/LEADER)
+                // and is resolved to the target document's font table on apply -- no index
+                // remap needed.
                 if constexpr (std::is_same_v<T, AddInsertCommand>) {
                     c.block = ensure_block(c.block);
                 }

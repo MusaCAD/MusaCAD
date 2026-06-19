@@ -115,6 +115,7 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | MTEXT line spacing / width factor / rotation | Implemented (Ph20) |
 | MTEXT inline formatting (bold, mid-string colour/height, stacked fractions) | Planned (Ph20 stub) |
 | Text/font selection (multiple fonts, TTF) | Implemented (Ph29: TTF/OTF as filled glyphs via the fill pipeline; stroke font stays the default/fallback) |
+| Control codes `%%d`/`%%p`/`%%c`/`%%%`/`%%nnn`, `%%o`/`%%u` over/underline; MTEXT `\U+XXXX` | Implemented (stored raw, expanded at render time; over/underline single-line — MTEXT decoration deferred) |
 
 ## Leader / MLEADER
 
@@ -124,6 +125,7 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | QLEADER (arrow + multi-vertex line + attached MTEXT, editable) | Implemented (Ph20) |
 | Leader–text association (text owned by the leader; moves with it) | Implemented (Ph20) |
 | Leader grips (arrow tip, each vertex, text position) | Implemented (Ph20) |
+| Leader / MLeader label properties in PR + MATCHPROP (font/height/justify; MLeader also width factor/line spacing/attach) | Implemented (text-family registry descriptors; MA copies the label across TEXT↔MTEXT↔Leader↔MLeader) |
 | MLEADER content blocks / DXF MLEADER round-trip | Planned (DXF writes LEADER + MTEXT; native v6 is lossless) |
 | Leader landing / dogleg auto-geometry | Planned |
 | Leader style (own table) | Planned (uses dimstyle arrow for now) |

@@ -82,8 +82,13 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     case EntityKind::MLeader: {
         const MLeaderData* m = store.mleader(h);
         const auto v = store.vertices_of(*m);
-        return AddMLeaderCommand{std::vector<Vec2>(v.begin(), v.end()), m->style, m->text,
-                                 std::string(store.string_of(m->text)), 0, m->props};
+        return AddMLeaderCommand{std::vector<Vec2>(v.begin(), v.end()),
+                                 m->style,
+                                 m->text,
+                                 std::string(store.string_of(m->text)),
+                                 0,
+                                 m->props,
+                                 std::string(store.font_name(m->text.font))};
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
@@ -130,8 +135,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 b.font = store.add_font(c.font);
                 handle = store.add_mtext(b, c.content, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
-                handle = store.add_mleader(c.vertices, c.style, c.block, c.content,
-                                           props_of(c.props));
+                MTextBlock b = c.block;
+                b.font = store.add_font(c.font); // label font travels as a name (like MTEXT)
+                handle = store.add_mleader(c.vertices, c.style, b, c.content, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
                                           props_of(c.props));

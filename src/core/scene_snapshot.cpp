@@ -15,6 +15,9 @@
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
+#include "musacad/core/text/text_codes.hpp"
+
+#include <cmath>
 
 namespace musacad::core {
 
@@ -113,24 +116,49 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     const auto font_is_outline = [&](std::uint16_t font_id) {
         return fonts != nullptr && fonts->is_outline_font(store.font_name(font_id));
     };
-    const auto emit_text_run = [&](std::string_view str, Vec2 origin, double height,
+    const auto emit_text_run = [&](std::string_view raw, Vec2 origin, double height,
                                    double rotation, text::Justify justify, std::uint16_t font_id,
                                    Rgb color) {
+        // Expand control codes at render time (storage stays raw). `vis` drives every metric
+        // and glyph; the over/under-line toggles become decoration bars below.
+        const text::SubstitutedText sub = text::substitute_text_codes(raw);
+        const std::string_view str = sub.text;
         const std::string_view fname = store.font_name(font_id);
-        if (fonts != nullptr && fonts->is_outline_font(fname)) {
-            double off = 0.0; // justification along the baseline, using the TTF advance
-            if (justify != text::Justify::Left) {
-                const double w = fonts->advance(fname, str, height);
-                off = justify == text::Justify::Center ? -w * 0.5 : -w;
-            }
-            const Vec2 o{origin.x + off * std::cos(rotation), origin.y + off * std::sin(rotation)};
+        const bool outline = fonts != nullptr && fonts->is_outline_font(fname);
+        const auto measure = [&](std::string_view s) {
+            return outline ? fonts->advance(fname, s, height) : text::text_width(s, height);
+        };
+        double off = 0.0; // justification along the baseline
+        if (justify != text::Justify::Left) {
+            const double w = measure(str);
+            off = justify == text::Justify::Center ? -w * 0.5 : -w;
+        }
+        const double cs = std::cos(rotation);
+        const double sn = std::sin(rotation);
+        const Vec2 o{origin.x + off * cs, origin.y + off * sn};
+        if (outline) {
             trun.clear();
             fonts->glyph_fills(fname, str, o, height, rotation, trun);
             add_fills(color, trun);
         } else {
             trun.clear();
-            text::append_text_segments(str, origin, height, rotation, justify, trun);
+            text::append_text_segments(str, o, height, rotation, text::Justify::Left, trun);
             add_lines(color, 0, trun, /*is_text=*/true, height);
+        }
+        // Overline (%%o) / underline (%%u): a horizontal stroke spanning each toggled run,
+        // placed just above the cap height / just below the baseline, in the text colour.
+        if (sub.has_decor()) {
+            const auto bar = [&](const std::vector<text::DecorSpan>& spans, double ly) {
+                for (const text::DecorSpan& s : spans) {
+                    const double x0 = measure(str.substr(0, s.begin));
+                    const double x1 = measure(str.substr(0, s.end));
+                    const Vec2 a{o.x + x0 * cs - ly * sn, o.y + x0 * sn + ly * cs};
+                    const Vec2 b{o.x + x1 * cs - ly * sn, o.y + x1 * sn + ly * cs};
+                    add_line(color, 0, a, b, /*is_text=*/true, height);
+                }
+            };
+            bar(sub.overline, height * 1.15);
+            bar(sub.underline, -height * 0.22);
         }
     };
 
@@ -193,10 +221,12 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         emit_text_run(store.string_of(*t), t->pos, t->height, t->rotation,
                       static_cast<text::Justify>(t->justify), t->font, r.color);
         if (editable(store, t->props)) {
+            // The selection box uses the VISIBLE width (codes expanded); the edit target
+            // keeps the RAW string so double-click editing shows %%c50, not the symbol.
+            const std::string vis = text::substitute_text(store.string_of(*t));
             const double w = font_is_outline(t->font)
-                                 ? fonts->advance(store.font_name(t->font), store.string_of(*t),
-                                                  t->height)
-                                 : text::text_width(store.string_of(*t), t->height);
+                                 ? fonts->advance(store.font_name(t->font), vis, t->height)
+                                 : text::text_width(vis, t->height);
             out.text_edit_targets.push_back(TextEditTarget{
                 h, t->pos, {t->pos.x, t->pos.y}, {t->pos.x + w, t->pos.y + t->height}, t->height,
                 t->rotation, false, std::string(store.string_of(*t))});

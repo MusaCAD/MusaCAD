@@ -268,6 +268,52 @@ TEST_CASE("MATCHPROP within the text family copies height; cross-family is skipp
     engine.stop();
 }
 
+TEST_CASE("MATCHPROP text-family closure reaches Leader + MLeader labels (font + height)") {
+    GeometryEngine engine;
+    engine.start();
+    // Source TEXT: height 5, font "Arial".
+    engine.submit(AddTextCommand{{0, 0}, 5.0, 0.0, 0, "SRC", 1, {}, "Arial"});
+    // Target MLeader: paragraph label height 2.5, default (stroke) font.
+    MTextBlock blk;
+    blk.pos = {10, 30};
+    blk.height = 2.5;
+    engine.submit(AddMLeaderCommand{{{0, 30}, {10, 30}}, 0, blk, "ML", 2});
+    // Target flat LEADER: text_height 2.5, default font.
+    engine.submit(AddLeaderCommand{{0, 60}, {10, 60}, 2.5, 0, "LD", 3});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 3; }));
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+
+    engine.submit(MatchPropPickSourceCommand{{0, 0}, 2.0});                     // TEXT source
+    engine.submit(MatchPropApplyCommand{{5, 30}, 2.0, MatchPropFilter{}, 9});   // -> MLeader (leader line)
+    engine.submit(MatchPropApplyCommand{{5, 60}, 2.0, MatchPropFilter{}, 10});  // -> Leader (leader line)
+
+    // The MLeader label adopts the source font + height (text-family, both in EntityFamily::Text).
+    engine.submit(SelectPickCommand{{5, 30}, 2.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::MLeader) {
+            return false;
+        }
+        const PropertyField* h = field_of(s.selection_summary, PropertyId::TextHeight);
+        const PropertyField* f = field_of(s.selection_summary, PropertyId::TextFont);
+        return h != nullptr && h->value.num == Approx(5.0) && f != nullptr && f->value.text == "Arial";
+    }));
+
+    // The flat LEADER label adopts the source font + height too.
+    engine.submit(ClearSelectionCommand{});
+    engine.submit(SelectPickCommand{{5, 60}, 2.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::Leader) {
+            return false;
+        }
+        const PropertyField* h = field_of(s.selection_summary, PropertyId::TextHeight);
+        const PropertyField* f = field_of(s.selection_summary, PropertyId::TextFont);
+        return h != nullptr && h->value.num == Approx(5.0) && f != nullptr && f->value.text == "Arial";
+    }));
+    engine.stop();
+}
+
 TEST_CASE("MATCHPROP Settings filter gates a category (Color off keeps target colour)") {
     GeometryEngine engine;
     engine.start();

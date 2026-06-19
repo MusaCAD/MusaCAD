@@ -169,6 +169,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // MLeader text-family + text control codes capture: MUSACAD_MLT_SHOT="kind|out.png"
+    // (0 MLeader PR Text section + Color row, 1 MA TEXT->MLeader, 2 MA MLeader->MLeader,
+    // 3 TEXT %%c/%%p codes, 4 MTEXT \U+ escape, 5 TEXT overline).
+    if (qEnvironmentVariableIsSet("MUSACAD_MLT_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a = qEnvironmentVariable("MUSACAD_MLT_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/mlt_shot.png"));
+            const bool ok = window.mleader_text_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // DYN COMMAND CONTROL capture: MUSACAD_CMDCTL_SHOT="kind|out.png" (kind 0 Esc cancels a
     // LINE mid-rubber-band, 1 Enter ends a LINE, 2 Enter two-step commit-then-end, 3 a ribbon
     // click cancels the active command and starts the new one). Drives the keys through the

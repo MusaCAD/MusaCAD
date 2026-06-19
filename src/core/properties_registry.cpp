@@ -115,7 +115,9 @@ double get_height(const Command& c) {
             if constexpr (requires { x.height; }) {
                 v = x.height;
             } else if constexpr (requires { x.block.height; }) {
-                v = x.block.height;
+                v = x.block.height; // MTEXT + MLeader label
+            } else if constexpr (requires { x.text_height; }) {
+                v = x.text_height; // flat LEADER label
             }
         },
         c);
@@ -127,7 +129,9 @@ void set_height(Command& c, double v) {
             if constexpr (requires { x.height; }) {
                 x.height = v;
             } else if constexpr (requires { x.block.height; }) {
-                x.block.height = v;
+                x.block.height = v; // MTEXT + MLeader label
+            } else if constexpr (requires { x.text_height; }) {
+                x.text_height = v; // flat LEADER label
             }
         },
         c);
@@ -280,6 +284,16 @@ bool is_circular(EntityKind k) { return k == EntityKind::Circle || k == EntityKi
 bool is_text(EntityKind k) { return k == EntityKind::Text || k == EntityKind::MText; }
 bool is_text_only(EntityKind k) { return k == EntityKind::Text; }
 bool is_mtext_only(EntityKind k) { return k == EntityKind::MText; }
+// The whole Text family -- single-line TEXT, paragraph MTEXT, and the Leader/MLeader
+// LABELS (both carry a font + height; MLeader's label is a full MTextBlock). Their label
+// text props (font, height, content) are registry-exposed and MATCHPROP-matchable here.
+bool is_text_family(EntityKind k) {
+    return k == EntityKind::Text || k == EntityKind::MText || k == EntityKind::Leader ||
+           k == EntityKind::MLeader;
+}
+// Paragraph-block text: MTEXT and the MLeader label (both own an MTextBlock, so width
+// factor / line spacing / attachment apply). The flat LEADER label has none of these.
+bool is_paragraph(EntityKind k) { return k == EntityKind::MText || k == EntityKind::MLeader; }
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
 // Entities whose linetype actually dashes (so a per-entity linetype scale matters). These
 // are the kinds whose Add*Command carries a celtscale field + go through dash_polyline.
@@ -449,14 +463,14 @@ const Desc kDescs[] = {
      [](const Command& c) { return read_text_pt(c, false); }, nullptr},
 
     // -- Text / MTEXT --
-    {PropertyId::TextContent, "Text", "Contents", PropEditor::TextContentEdit, is_text,
+    {PropertyId::TextContent, "Text", "Contents", PropEditor::TextContentEdit, is_text_family,
      [](const Command& c) {
          PropertyValue v;
          v.text = get_content(c);
          return v;
      },
      [](Command& c, const PropertyValue& v) { set_content(c, v.text); }},
-    {PropertyId::TextHeight, "Text", "Height", PropEditor::Number, is_text,
+    {PropertyId::TextHeight, "Text", "Height", PropEditor::Number, is_text_family,
      [](const Command& c) {
          PropertyValue v;
          v.num = get_height(c);
@@ -477,14 +491,14 @@ const Desc kDescs[] = {
          return v;
      },
      [](Command& c, const PropertyValue& v) { set_justify(c, v.choice); }},
-    {PropertyId::TextFont, "Text", "Font", PropEditor::FontCombo, is_text,
+    {PropertyId::TextFont, "Text", "Font", PropEditor::FontCombo, is_text_family,
      [](const Command& c) {
          PropertyValue v;
          v.text = font_of(c); // current font name ("" = the stroke "Standard")
          return v;
      },
      [](Command& c, const PropertyValue& v) { set_font(c, v.text); }},
-    {PropertyId::MtWidthFactor, "Text", "Width factor", PropEditor::Number, is_mtext_only,
+    {PropertyId::MtWidthFactor, "Text", "Width factor", PropEditor::Number, is_paragraph,
      [](const Command& c) {
          PropertyValue v;
          v.num = block_double(c, [](const auto& b) { return b.width_factor; });
@@ -499,7 +513,7 @@ const Desc kDescs[] = {
              },
              c);
      }},
-    {PropertyId::MtLineSpacing, "Text", "Line spacing", PropEditor::Number, is_mtext_only,
+    {PropertyId::MtLineSpacing, "Text", "Line spacing", PropEditor::Number, is_paragraph,
      [](const Command& c) {
          PropertyValue v;
          v.num = block_double(c, [](const auto& b) { return b.line_spacing; });
@@ -529,7 +543,7 @@ const Desc kDescs[] = {
              },
              c);
      }},
-    {PropertyId::MtAttach, "Text", "Attachment", PropEditor::AttachCombo, is_mtext_only,
+    {PropertyId::MtAttach, "Text", "Attachment", PropEditor::AttachCombo, is_paragraph,
      [](const Command& c) {
          PropertyValue v;
          std::visit(

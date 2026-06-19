@@ -433,6 +433,7 @@ struct AddMLeaderCommand {
     std::string content;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::string font{}; ///< label font NAME ("" = stroke "Standard"); resolved to block.font
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-

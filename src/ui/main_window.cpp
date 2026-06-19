@@ -3098,6 +3098,146 @@ bool MainWindow::text_shot(int kind, const std::string& out_png) {
     return true;
 }
 
+bool MainWindow::mleader_text_shot(int kind, const std::string& out_png) {
+    using core::Vec2;
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    engine_->submit(core::NewDocumentCommand{});
+    pump(150);
+    const double r = 6.0;
+
+    if (kind == 0) {
+        // MLeader selected -> PR shows General + a Text section (Contents/Height/Font/Attach)
+        // and a clean Color row (default = ByLayer, no contradictory swatch).
+        core::MTextBlock b;
+        b.pos = {22, 10};
+        b.height = 3.0;
+        b.attach = 0;
+        engine_->submit(core::AddMLeaderCommand{{{0, 0}, {14, 8}, {22, 8}}, 0, b, "DETAIL A", 1});
+        pump(250);
+        viewport_->zoom_extents();
+        pump(250);
+        engine_->submit(core::SelectPickCommand{{7, 4}, r, false}); // pick the leader line
+        pump(300);
+        if (!properties_dock_->isVisible()) {
+            toggle_properties();
+        }
+        pump(350);
+        const core::SelectionSummary sum = viewport_->selection_summary();
+        bool has_text_section = false;
+        bool color_by_layer = false;
+        for (const core::PropertyField& f : sum.fields) {
+            if (f.id == core::PropertyId::TextHeight || f.id == core::PropertyId::TextFont) {
+                has_text_section = true;
+            }
+            if (f.id == core::PropertyId::Color) {
+                color_by_layer = f.value.flag;
+            }
+        }
+        std::printf("[mleader_text_shot] kind=0 PR: selection=%d text_section=%d color_by_layer=%d\n",
+                    viewport_->selection_count(), has_text_section ? 1 : 0, color_by_layer ? 1 : 0);
+    } else if (kind == 1) {
+        // MATCHPROP TEXT (height 5) -> MLeader: the label adopts the source height (2 -> 5).
+        engine_->submit(core::AddTextCommand{{-60, 22}, 5.0, 0.0, std::uint8_t{0}, "SOURCE h5", 1});
+        core::MTextBlock b;
+        b.pos = {12, 0};
+        b.height = 2.0;
+        engine_->submit(core::AddMLeaderCommand{{{-20, -14}, {0, 0}, {10, 0}}, 0, b, "label", 2});
+        pump(250);
+        engine_->submit(core::MatchPropPickSourceCommand{{-52, 24}, r});
+        pump(140);
+        engine_->submit(core::MatchPropApplyCommand{{5, 0}, r, core::MatchPropFilter{}, 9}); // horiz seg
+        pump(250);
+        engine_->submit(core::SelectPickCommand{{5, 0}, r, false});
+        pump(200);
+        double mh = 0.0;
+        for (const core::PropertyField& f : viewport_->selection_summary().fields) {
+            if (f.id == core::PropertyId::TextHeight) {
+                mh = f.value.num;
+            }
+        }
+        engine_->submit(core::ClearSelectionCommand{});
+        pump(120);
+        std::printf("[mleader_text_shot] kind=1 MLeader label height after MA = %.3g (want 5)\n", mh);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 2) {
+        // MATCHPROP MLeader -> MLeader: label height + leader style copy.
+        core::MTextBlock sb;
+        sb.pos = {-28, 16};
+        sb.height = 6.0;
+        engine_->submit(core::AddMLeaderCommand{{{-50, 2}, {-38, 14}, {-28, 14}}, 0, sb, "SRC h6", 1});
+        core::MTextBlock tb;
+        tb.pos = {32, 0};
+        tb.height = 2.0;
+        engine_->submit(core::AddMLeaderCommand{{{10, -14}, {22, 0}, {32, 0}}, 0, tb, "dst", 2});
+        pump(250);
+        engine_->submit(core::MatchPropPickSourceCommand{{-33, 14}, r}); // src horiz seg
+        pump(140);
+        engine_->submit(core::MatchPropApplyCommand{{27, 0}, r, core::MatchPropFilter{}, 9}); // dst horiz seg
+        pump(250);
+        engine_->submit(core::SelectPickCommand{{27, 0}, r, false});
+        pump(200);
+        double mh = 0.0;
+        for (const core::PropertyField& f : viewport_->selection_summary().fields) {
+            if (f.id == core::PropertyId::TextHeight) {
+                mh = f.value.num;
+            }
+        }
+        engine_->submit(core::ClearSelectionCommand{});
+        pump(120);
+        std::printf("[mleader_text_shot] kind=2 dst MLeader label height after MA = %.3g (want 6)\n",
+                    mh);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 3) {
+        // TEXT control codes: %%c -> diameter, %%p -> plus-minus (a real callout).
+        engine_->submit(
+            core::AddTextCommand{{0, 0}, 10.0, 0.0, std::uint8_t{0}, "%%c50 H7 %%p0.02", 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 4) {
+        // MTEXT Unicode escape: \U+2300 -> diameter sign.
+        core::MTextBlock b;
+        b.pos = {0, 0};
+        b.height = 10.0;
+        engine_->submit(core::AddMTextCommand{b, "\\U+2300 50 BORE", 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 5) {
+        // TEXT overline toggle: "Pipe [OD] = 50" with OD overlined.
+        engine_->submit(
+            core::AddTextCommand{{0, 0}, 10.0, 0.0, std::uint8_t{0}, "Pipe %%oOD%%o = 50mm", 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(300);
+    }
+
+    std::printf("[mleader_text_shot] kind=%d main=0x%lx frameG=(%d,%d %dx%d)\n", kind,
+                static_cast<unsigned long>(winId()), frameGeometry().x(), frameGeometry().y(),
+                frameGeometry().width(), frameGeometry().height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[mleader_text_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
+    }
+    return true;
+}
+
 bool MainWindow::matchprop_shot(int kind, const std::string& out_png) {
     using core::Vec2;
     const auto pump = [](int ms) {
