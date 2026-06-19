@@ -516,6 +516,26 @@ struct SetEntityColorCommand {
     std::uint64_t group = 0;
 };
 
+/// MATCHPROP step 1: capture the entity nearest `point` (within `radius`) as the match
+/// source. Snapshots its property values on the geometry thread (UI never reads the
+/// store). No undo entry -- it only records the source for subsequent applies.
+struct MatchPropPickSourceCommand {
+    Vec2 point;
+    double radius = 0.0;
+};
+/// MATCHPROP noun-verb: use the FIRST selected entity as the match source (when MA is run
+/// with a selection already active). Reduces the selection to that source. No undo entry.
+struct MatchPropSourceFromSelectionCommand {};
+/// MATCHPROP step 2: apply the captured source's properties (filtered by `filter`) onto
+/// the entity nearest `point`. Each target is its own undo group, so individual matches
+/// undo in reverse (AutoCAD behaviour). No-op if there is no captured source / no target.
+struct MatchPropApplyCommand {
+    Vec2 point;
+    double radius = 0.0;
+    MatchPropFilter filter{};
+    std::uint64_t group = 0;
+};
+
 using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
                  ErasePickCommand, UndoLastGroupCommand, RedoLastGroupCommand, UndoLastOpCommand,
@@ -534,6 +554,7 @@ using Command =
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand,
-                 PasteClipboardCommand>;
+                 PasteClipboardCommand, MatchPropPickSourceCommand,
+                 MatchPropSourceFromSelectionCommand, MatchPropApplyCommand>;
 
 } // namespace musacad::core

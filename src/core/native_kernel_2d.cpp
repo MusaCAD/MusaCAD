@@ -447,20 +447,39 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
         bool found = false;
         double best_d2 = 0.0;
+        const auto consider = [&](Vec2 cp) {
+            const double d2 = length_squared(query - cp);
+            if (!found || d2 < best_d2) {
+                found = true;
+                best_d2 = d2;
+                out_point = cp;
+            }
+        };
         const auto consider_list = [&](const std::vector<Vec2>& v) {
             for (std::size_t i = 0; i + 1 < v.size(); i += 2) {
-                const Vec2 cp = closest_on_segment(v[i], v[i + 1], query);
-                const double d2 = length_squared(query - cp);
-                if (!found || d2 < best_d2) {
-                    found = true;
-                    best_d2 = d2;
-                    out_point = cp;
-                }
+                consider(closest_on_segment(v[i], v[i + 1], query));
             }
         };
         consider_list(g.ext_lines);
         consider_list(g.dim_lines);
         consider_list(g.arrow_lines);
+        // The measured TEXT label is part of the dimension (not a separate entity), so a
+        // click on the text must pick the dim -- match the Text bbox test, honouring the
+        // label's justification (offset of the run relative to text_pos) and rotation.
+        if (!g.label.empty()) {
+            const double w = text::text_width(g.label, g.text_height);
+            const double off = g.text_justify == text::Justify::Center  ? -w / 2.0
+                               : g.text_justify == text::Justify::Right ? -w
+                                                                        : 0.0;
+            const double cs = std::cos(g.text_rotation);
+            const double sn = std::sin(g.text_rotation);
+            const Vec2 q = query - g.text_pos;
+            const double lx = q.x * cs + q.y * sn;
+            const double ly = -q.x * sn + q.y * cs;
+            const double cx = std::clamp(lx, off, off + w);
+            const double cy = std::clamp(ly, 0.0, g.text_height);
+            consider({g.text_pos.x + cx * cs - cy * sn, g.text_pos.y + cx * sn + cy * cs});
+        }
         return found;
     }
     case EntityKind::Leader: {

@@ -713,6 +713,76 @@ void write_property(Command& c, PropertyId id, const PropertyValue& value) {
     d->write(c, value);
 }
 
+namespace {
+// The MATCHPROP category each property belongs to -- the single categorization table,
+// kept here next to the descriptors it tags (MA reads it; it defines no table of its
+// own). Content (TextContent), placement (TextRotation), the MTEXT wrap box (MtWidth)
+// and read-only geometry are intentionally NOT matched, matching AutoCAD's MATCHPROP.
+MatchSlot match_slot_for(PropertyId id) noexcept {
+    switch (id) {
+    case PropertyId::Color:
+        return MatchSlot::Color;
+    case PropertyId::Layer:
+        return MatchSlot::Layer;
+    case PropertyId::Lineweight:
+        return MatchSlot::Lineweight;
+    case PropertyId::Linetype:
+        return MatchSlot::Linetype;
+    case PropertyId::TextHeight:
+    case PropertyId::TextJustify:
+    case PropertyId::TextFont:
+    case PropertyId::MtWidthFactor:
+    case PropertyId::MtLineSpacing:
+    case PropertyId::MtAttach:
+        return MatchSlot::Text;
+    case PropertyId::DimArrowType:
+    case PropertyId::DimArrowSize:
+    case PropertyId::DimDimColor:
+    case PropertyId::DimExtColor:
+    case PropertyId::DimTextHeight:
+    case PropertyId::DimTextColor:
+    case PropertyId::DimTextPlacement:
+    case PropertyId::DimPrecision:
+        return MatchSlot::Dimension;
+    default:
+        return MatchSlot::None;
+    }
+}
+} // namespace
+
+int match_properties(const Command& source, Command& target, const MatchPropFilter& filter) {
+    // ONE property-write path: reuse each descriptor's read()/write() (the same the PR
+    // palette uses) -- no MA-specific entity-write logic. ByLayer/ByBlock travels as
+    // state because the colour/linetype/lineweight write() functions set the flag and
+    // only assign the literal when the flag is clear.
+    const EntityKind sk = kind_of(source);
+    const EntityKind tk = kind_of(target);
+    int applied = 0;
+    for (const Desc& d : kDescs) {
+        if (d.write == nullptr) {
+            continue;
+        }
+        const MatchSlot slot = match_slot_for(d.id);
+        if (slot == MatchSlot::None || !filter.allows(slot)) {
+            continue;
+        }
+        if (match_slot_universal(slot)) {
+            if (!d.applies(tk)) { // universal applies to any kind; guard defensively
+                continue;
+            }
+        } else {
+            // Family-scoped: only when source and target share a family AND the
+            // descriptor applies to both kinds (e.g. font copies Text<->MText).
+            if (family_of(sk) != family_of(tk) || !d.applies(sk) || !d.applies(tk)) {
+                continue;
+            }
+        }
+        d.write(target, d.read(source));
+        ++applied;
+    }
+    return applied;
+}
+
 SelectionSummary summarize_selection(const std::vector<Command>& captured) {
     SelectionSummary s;
     s.count = static_cast<int>(captured.size());

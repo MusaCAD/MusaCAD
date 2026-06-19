@@ -56,6 +56,9 @@ public:
     void import_dwg() override;
     void export_dwg() override;
     void plot_dialog() override;
+    [[nodiscard]] core::MatchPropFilter match_filter() const override;
+    void match_settings_dialog() override;
+    void set_match_cursor(bool on) override;
 
 Q_SIGNALS:
     void cursorWorldMoved(double x, double y);
@@ -201,6 +204,15 @@ public:
     /// PLOT command -> the MainWindow opens the plot dialog. ViewControl::plot_dialog()
     /// forwards here on the GUI thread.
     void set_plot_dialog_callback(std::function<void()> cb) { plot_dialog_callback_ = std::move(cb); }
+    /// MATCHPROP: the MainWindow supplies the current Settings filter (from QSettings) and
+    /// owns the modal Settings dialog. ViewControl::match_filter/match_settings_dialog
+    /// forward here on the GUI thread.
+    void set_match_filter_callback(std::function<core::MatchPropFilter()> cb) {
+        match_filter_callback_ = std::move(cb);
+    }
+    void set_match_settings_callback(std::function<void()> cb) {
+        match_settings_callback_ = std::move(cb);
+    }
     /// Arm "pick a plot window": the next left-drag rectangle is delivered to `cb`
     /// instead of selecting. `cb(true, mn, mx)` for a real drag; `cb(false, …)` for a
     /// click-without-drag or Esc (cancel). The callback ALWAYS fires exactly once so the
@@ -418,6 +430,8 @@ private:
     std::function<void()> dwg_import_callback_;
     std::function<void()> dwg_export_callback_;
     std::function<void()> plot_dialog_callback_;
+    std::function<core::MatchPropFilter()> match_filter_callback_;
+    std::function<void()> match_settings_callback_;
     std::function<void(bool, core::Vec2, core::Vec2)> plot_pick_callback_; // armed window pick
     bool plot_picking_ = false;
     bool dragging_grip_ = false;

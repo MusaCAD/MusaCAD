@@ -19,8 +19,12 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
+#include <QCursor>
 #include <QExposeEvent>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPixmap>
+#include <QPolygon>
 #include <QOpenGLContext>
 #include <QResizeEvent>
 #include <QScreen>
@@ -139,6 +143,44 @@ void ViewportWindow::export_dwg() {
 void ViewportWindow::plot_dialog() {
     if (plot_dialog_callback_) {
         plot_dialog_callback_();
+    }
+}
+
+core::MatchPropFilter ViewportWindow::match_filter() const {
+    return match_filter_callback_ ? match_filter_callback_() : core::MatchPropFilter{};
+}
+
+void ViewportWindow::match_settings_dialog() {
+    if (match_settings_callback_) {
+        match_settings_callback_(); // MainWindow owns the modal dialog (GUI thread)
+    }
+}
+
+void ViewportWindow::set_match_cursor(bool on) {
+    if (on) {
+        // A simple drawn paintbrush (Qt has no built-in one): a wooden handle, a metal
+        // ferrule, and a blue paint tip; hotspot at the tip so it marks the pick point.
+        // The AutoCAD "match mode" signal. Built once.
+        static const QCursor brush = [] {
+            QPixmap pm(32, 32);
+            pm.fill(Qt::transparent);
+            QPainter p(&pm);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QPen(QColor(170, 120, 60), 3)); // handle
+            p.drawLine(29, 29, 12, 12);
+            p.setPen(QPen(QColor(185, 185, 195), 4)); // ferrule
+            p.drawLine(12, 12, 8, 8);
+            p.setPen(Qt::NoPen); // paint tip
+            p.setBrush(QColor(60, 140, 230));
+            QPolygon tip;
+            tip << QPoint(9, 9) << QPoint(1, 7) << QPoint(7, 1);
+            p.drawPolygon(tip);
+            p.end();
+            return QCursor(pm, 3, 3);
+        }();
+        setCursor(brush);
+    } else {
+        unsetCursor();
     }
 }
 

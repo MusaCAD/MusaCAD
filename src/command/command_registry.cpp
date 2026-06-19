@@ -103,6 +103,8 @@ CommandRegistry CommandRegistry::make_default() {
     r.register_command({"EX", "EXTEND"}, [] { return std::make_unique<ExtendCommand>(); });
     r.register_command({"F", "FILLET"}, [] { return std::make_unique<FilletCommand>(); });
     r.register_command({"CHA", "CHAMFER"}, [] { return std::make_unique<ChamferCommand>(); });
+    r.register_command({"MA", "MATCHPROP", "PAINTER"},
+                       [] { return std::make_unique<MatchPropCommand>(); });
     // Annotation (Phase 13).
     r.register_command({"DT", "TEXT"}, [] { return std::make_unique<TextCommand>(); });
     r.register_command({"DLI", "DIMLINEAR"}, [] {

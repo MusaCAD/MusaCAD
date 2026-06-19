@@ -3,6 +3,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/native_kernel_2d.hpp"
 
@@ -67,6 +68,24 @@ TEST_CASE("Kernel: closest point on circle") {
     REQUIRE(kernel.closest_point(store, circle, {10.0, 0.0}, cp));
     REQUIRE(cp.x == Approx(5.0));
     REQUIRE(cp.y == Approx(0.0).margin(1e-12));
+}
+
+TEST_CASE("Kernel: a dimension is pickable by its TEXT label, not just the dim line") {
+    GeometryStore store;
+    NativeKernel2D kernel;
+    // Linear dim: measured points on y=0, the dimension line (and the text) up at y=15.
+    const EntityHandle dim =
+        store.add_dimension(DimType::Linear, {0.0, 0.0}, {40.0, 0.0}, {20.0, 15.0}, 0);
+    const DimData* d = store.dimension(dim);
+    REQUIRE(d != nullptr);
+    const DimGeometry g = compute_dim_geometry(*d, DimStyle{}, Rgb{});
+    REQUIRE_FALSE(g.label.empty());
+
+    // Picking at the text origin resolves to the text (~0 away). Before the fix the nearest
+    // dim/ext/arrow line was returned instead, so clicking the label missed the dimension.
+    Vec2 cp{};
+    REQUIRE(kernel.closest_point(store, dim, g.text_pos, cp));
+    REQUIRE(distance(g.text_pos, cp) < 0.01);
 }
 
 TEST_CASE("Kernel: closest point invalid handle returns false") {

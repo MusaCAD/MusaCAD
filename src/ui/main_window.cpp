@@ -24,8 +24,10 @@
 #include <QCoreApplication>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QGroupBox>
 #include <QDockWidget>
 #include <QEvent>
 #include <QDesktopServices>
@@ -208,6 +210,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     // Tab-to-tab drag: dropping a selection-drag on another document's tab transfers it.
     viewport_->set_selection_drop_callback([this](QPoint global) { return drop_selection_on_tab(global); });
+
+    // MATCHPROP: the running command reads the Settings filter and opens the Settings
+    // dialog through the viewport's ViewControl, which forwards to the MainWindow.
+    viewport_->set_match_filter_callback([this] { return read_match_filter(); });
+    viewport_->set_match_settings_callback([this] { open_matchprop_dialog(); });
 
     // Dynamic Input (F12): a frameless surface that floats at the crosshair. It
     // routes typed text through the SAME processor (submit_line) and mirrors the
@@ -1323,6 +1330,88 @@ void MainWindow::refocus_dyn() {
             viewport_container_->setFocus(Qt::OtherFocusReason);
         }
     });
+}
+
+core::MatchPropFilter MainWindow::read_match_filter() const {
+    // Persisted for the session (QSettings), defaulting to all-on like AutoCAD. Only the
+    // categories with real registry descriptors are stored; the rest stay on (no effect).
+    const QSettings s;
+    core::MatchPropFilter f;
+    f.color = s.value(QStringLiteral("matchprop/color"), true).toBool();
+    f.layer = s.value(QStringLiteral("matchprop/layer"), true).toBool();
+    f.lineweight = s.value(QStringLiteral("matchprop/lineweight"), true).toBool();
+    f.linetype = s.value(QStringLiteral("matchprop/linetype"), true).toBool();
+    f.text = s.value(QStringLiteral("matchprop/text"), true).toBool();
+    f.dimension = s.value(QStringLiteral("matchprop/dimension"), true).toBool();
+    return f;
+}
+
+void MainWindow::write_match_filter(const core::MatchPropFilter& f) {
+    QSettings s;
+    s.setValue(QStringLiteral("matchprop/color"), f.color);
+    s.setValue(QStringLiteral("matchprop/layer"), f.layer);
+    s.setValue(QStringLiteral("matchprop/lineweight"), f.lineweight);
+    s.setValue(QStringLiteral("matchprop/linetype"), f.linetype);
+    s.setValue(QStringLiteral("matchprop/text"), f.text);
+    s.setValue(QStringLiteral("matchprop/dimension"), f.dimension);
+}
+
+void MainWindow::open_matchprop_dialog() {
+    // Modal category dialog (inherits the app-wide dark Fusion palette). Cancel reverts to
+    // the previously-applied state; OK persists. Reserved categories (LTScale/Plotstyle/
+    // Hatch/Polyline) are shown for AutoCAD parity but disabled -- they gate no registry
+    // descriptors yet (LTSCALE is a global; plot style/hatch/polyline-width unmodelled).
+    const core::MatchPropFilter cur = read_match_filter();
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Property Settings"));
+    dlg.setObjectName(QStringLiteral("MatchPropSettings"));
+    auto* outer = new QVBoxLayout(&dlg);
+
+    const auto add_check = [&dlg](QVBoxLayout* lay, const QString& label, bool on, bool enabled) {
+        auto* cb = new QCheckBox(label, &dlg);
+        cb->setChecked(on);
+        cb->setEnabled(enabled);
+        if (!enabled) {
+            cb->setToolTip(QStringLiteral("Not yet applicable in Musa CAD"));
+        }
+        lay->addWidget(cb);
+        return cb;
+    };
+
+    auto* basic = new QGroupBox(QStringLiteral("Basic Properties"), &dlg);
+    auto* bl = new QVBoxLayout(basic);
+    QCheckBox* c_color = add_check(bl, QStringLiteral("Color"), cur.color, true);
+    QCheckBox* c_layer = add_check(bl, QStringLiteral("Layer"), cur.layer, true);
+    QCheckBox* c_lw = add_check(bl, QStringLiteral("Lineweight"), cur.lineweight, true);
+    QCheckBox* c_lt = add_check(bl, QStringLiteral("Linetype"), cur.linetype, true);
+    add_check(bl, QStringLiteral("Linetype Scale"), cur.ltscale, false);
+    add_check(bl, QStringLiteral("Plot Style"), cur.plotstyle, false);
+    outer->addWidget(basic);
+
+    auto* special = new QGroupBox(QStringLiteral("Special Properties"), &dlg);
+    auto* sl = new QVBoxLayout(special);
+    QCheckBox* c_text = add_check(sl, QStringLiteral("Text"), cur.text, true);
+    QCheckBox* c_dim = add_check(sl, QStringLiteral("Dimension"), cur.dimension, true);
+    add_check(sl, QStringLiteral("Hatch"), cur.hatch, false);
+    add_check(sl, QStringLiteral("Polyline"), cur.polyline, false);
+    outer->addWidget(special);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+
+    if (dlg.exec() != QDialog::Accepted) {
+        return; // Cancel: keep the previously-applied state
+    }
+    core::MatchPropFilter f = cur; // preserves the reserved flags
+    f.color = c_color->isChecked();
+    f.layer = c_layer->isChecked();
+    f.lineweight = c_lw->isChecked();
+    f.linetype = c_lt->isChecked();
+    f.text = c_text->isChecked();
+    f.dimension = c_dim->isChecked();
+    write_match_filter(f);
 }
 
 void MainWindow::open_layer_dialog() {
@@ -2680,7 +2769,7 @@ bool MainWindow::multidoc_shot(int kind, const std::string& out_png) {
         pump(300);
         if (file_tabs_ != nullptr && file_tabs_->count() >= 2) {
             const QPoint g = file_tabs_->mapToGlobal(file_tabs_->tabRect(1).center());
-            drop_selection_on_tab(g); // simulate dropping the selection on Drawing2's tab
+            (void)drop_selection_on_tab(g); // simulate dropping the selection on Drawing2's tab
         }
         pump(300);
         viewport_->zoom_extents();
@@ -2787,6 +2876,164 @@ bool MainWindow::text_shot(int kind, const std::string& out_png) {
                     static_cast<unsigned long>(winId()), out_png.c_str());
         std::fflush(stdout);
         pump(12000);
+    }
+    return true;
+}
+
+bool MainWindow::matchprop_shot(int kind, const std::string& out_png) {
+    using core::Vec2;
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    const double r = 6.0; // generous world pick radius for the scripted picks
+    QDialog* box = nullptr;
+
+    if (kind == 0) {
+        // Cross-kind universal: a blue / "Walls" / 0.5mm line -> a default circle. The
+        // circle adopts colour/layer/lineweight but stays a circle.
+        core::Layer walls;
+        walls.name = "Walls";
+        walls.color = {60, 140, 255};
+        engine_->submit(core::AddLayerCommand{walls});
+        pump(120);
+        std::uint16_t wi = 0;
+        for (std::uint16_t i = 0; i < viewport_->layers().size(); ++i) {
+            if (viewport_->layers()[i].name == "Walls") {
+                wi = i;
+            }
+        }
+        core::EntityProps sp;
+        sp.layer = wi;
+        sp.set_color_by_layer(false);
+        sp.color = {60, 140, 255};
+        sp.set_lineweight_by_layer(false);
+        sp.lineweight = 50;
+        engine_->submit(core::AddLineCommand{{-70, 15}, {-25, 15}, 1, sp});
+        engine_->submit(core::AddCircleCommand{{30, 15}, 18, 2}); // default (ByLayer, layer 0)
+        pump(220);
+        engine_->submit(core::MatchPropPickSourceCommand{{-47, 15}, r});
+        pump(140);
+        engine_->submit(core::MatchPropApplyCommand{{48, 15}, r, core::MatchPropFilter{}, 9});
+        pump(220);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 1) {
+        // Within text family: TEXT (height 8) -> MTEXT (height 3). MTEXT adopts the height.
+        engine_->submit(core::AddTextCommand{{-70, 15}, 8.0, 0.0, std::uint8_t{0}, "SOURCE", 1});
+        core::MTextBlock blk;
+        blk.pos = {20, 18};
+        blk.height = 3.0;
+        engine_->submit(core::AddMTextCommand{blk, "target text", 2});
+        pump(220);
+        engine_->submit(core::MatchPropPickSourceCommand{{-60, 16}, r});
+        pump(140);
+        engine_->submit(core::MatchPropApplyCommand{{24, 16}, r, core::MatchPropFilter{}, 9});
+        pump(220);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 2) {
+        // Within dim family: a source linear dim with per-dim overrides (bigger arrows +
+        // text) -> a default target dim, which inherits the overrides.
+        engine_->submit(core::AddDimensionCommand{std::uint8_t{0}, {-70, 5}, {-25, 5}, {-47, 20}, 0, 1});
+        pump(160);
+        engine_->submit(core::SelectPickCommand{{-47, 20}, r, false});
+        pump(160);
+        core::PropertyValue av;
+        av.flag = false;
+        av.num = 6.0;
+        engine_->submit(core::SetPropertyCommand{core::PropertyId::DimArrowSize, av, 2});
+        pump(100);
+        core::PropertyValue tv;
+        tv.flag = false;
+        tv.num = 6.0;
+        engine_->submit(core::SetPropertyCommand{core::PropertyId::DimTextHeight, tv, 3});
+        pump(100);
+        engine_->submit(core::ClearSelectionCommand{});
+        pump(100);
+        engine_->submit(core::AddDimensionCommand{std::uint8_t{0}, {15, 5}, {60, 5}, {37, 20}, 0, 4});
+        pump(160);
+        engine_->submit(core::MatchPropPickSourceCommand{{-47, 20}, r});
+        pump(140);
+        engine_->submit(core::MatchPropApplyCommand{{37, 20}, r, core::MatchPropFilter{}, 9});
+        pump(220);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 3) {
+        // The Settings dialog (shown non-modally for the grab) with Color UNCHECKED -- the
+        // visual proof; the gating behaviour itself is covered by the engine tests.
+        auto* dlg = new QDialog(this);
+        dlg->setWindowTitle(QStringLiteral("Property Settings"));
+        dlg->setModal(false);
+        auto* outer = new QVBoxLayout(dlg);
+        const auto add_check = [dlg](QVBoxLayout* lay, const QString& label, bool on, bool en) {
+            auto* cb = new QCheckBox(label, dlg);
+            cb->setChecked(on);
+            cb->setEnabled(en);
+            lay->addWidget(cb);
+        };
+        auto* basic = new QGroupBox(QStringLiteral("Basic Properties"), dlg);
+        auto* bl = new QVBoxLayout(basic);
+        add_check(bl, QStringLiteral("Color"), false, true); // unchecked -> colour kept
+        add_check(bl, QStringLiteral("Layer"), true, true);
+        add_check(bl, QStringLiteral("Lineweight"), true, true);
+        add_check(bl, QStringLiteral("Linetype"), true, true);
+        add_check(bl, QStringLiteral("Linetype Scale"), true, false);
+        add_check(bl, QStringLiteral("Plot Style"), true, false);
+        outer->addWidget(basic);
+        auto* special = new QGroupBox(QStringLiteral("Special Properties"), dlg);
+        auto* sl = new QVBoxLayout(special);
+        add_check(sl, QStringLiteral("Text"), true, true);
+        add_check(sl, QStringLiteral("Dimension"), true, true);
+        add_check(sl, QStringLiteral("Hatch"), true, false);
+        add_check(sl, QStringLiteral("Polyline"), true, false);
+        outer->addWidget(special);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dlg);
+        outer->addWidget(buttons);
+        dlg->resize(280, 360);
+        dlg->move(x() + 360, y() + 220);
+        dlg->show();
+        dlg->raise();
+        box = dlg;
+        pump(300);
+    } else if (kind == 4) {
+        // Skips inapplicable: TEXT (green) source -> LINE target. The line takes the
+        // universal colour but the text-specific properties are silently skipped.
+        core::EntityProps sp;
+        sp.set_color_by_layer(false);
+        sp.color = {70, 210, 120};
+        engine_->submit(core::AddTextCommand{{-70, 15}, 8.0, 0.0, std::uint8_t{0}, "SOURCE", 1, sp});
+        engine_->submit(core::AddLineCommand{{15, 15}, {60, 15}, 2});
+        pump(220);
+        engine_->submit(core::MatchPropPickSourceCommand{{-60, 16}, r});
+        pump(140);
+        engine_->submit(core::MatchPropApplyCommand{{37, 15}, r, core::MatchPropFilter{}, 9});
+        pump(220);
+        viewport_->zoom_extents();
+        pump(300);
+    }
+
+    const QRect mfr = frameGeometry();
+    std::printf("[matchprop_shot] kind=%d line_vertex_count=%d main=0x%lx frameG=(%d,%d %dx%d)\n",
+                kind, viewport_->line_vertex_count(), static_cast<unsigned long>(winId()), mfr.x(),
+                mfr.y(), mfr.width(), mfr.height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[matchprop_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
+    }
+    if (box != nullptr) {
+        box->close();
     }
     return true;
 }

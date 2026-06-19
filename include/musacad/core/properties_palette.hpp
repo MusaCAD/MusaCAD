@@ -89,6 +89,67 @@ struct PropertyValue {
     friend bool operator==(const PropertyValue&, const PropertyValue&) = default;
 };
 
+/// The MATCHPROP category a property belongs to -- the registry tags each descriptor
+/// with one. Each slot maps 1:1 to a checkbox in the MA Settings dialog. `None` means
+/// the property is not copied by MATCHPROP (content, placement, or read-only geometry).
+/// Universal slots (Color/Layer/Lineweight/Linetype) copy across any entity kinds;
+/// family-scoped slots (Text/Dimension) copy only within a shared EntityFamily.
+enum class MatchSlot : std::uint8_t {
+    None = 0,
+    Color,
+    Layer,
+    Lineweight,
+    Linetype,
+    Text,
+    Dimension,
+};
+
+/// True for the universal MATCHPROP slots (copy regardless of entity family).
+[[nodiscard]] constexpr bool match_slot_universal(MatchSlot s) noexcept {
+    return s == MatchSlot::Color || s == MatchSlot::Layer || s == MatchSlot::Lineweight ||
+           s == MatchSlot::Linetype;
+}
+
+/// Which MATCHPROP categories a run copies (the Settings dialog state). All on by
+/// default (AutoCAD's default-all-on). `ltscale`/`plotstyle`/`hatch`/`polyline` are
+/// surfaced for AutoCAD parity but gate no registry descriptors yet (LTSCALE is global,
+/// plot style/hatch unmodelled, polyline has no type-specific registry property).
+struct MatchPropFilter {
+    bool color = true;
+    bool layer = true;
+    bool lineweight = true;
+    bool linetype = true;
+    bool ltscale = true;   ///< reserved (LTSCALE is a global, not a per-entity property)
+    bool plotstyle = true; ///< reserved (plot style not modelled)
+    bool text = true;
+    bool dimension = true;
+    bool hatch = true;     ///< reserved (hatch not implemented)
+    bool polyline = true;  ///< reserved (no polyline-specific registry descriptor yet)
+
+    /// Whether the category gating `slot` is currently enabled.
+    [[nodiscard]] constexpr bool allows(MatchSlot s) const noexcept {
+        switch (s) {
+        case MatchSlot::Color:
+            return color;
+        case MatchSlot::Layer:
+            return layer;
+        case MatchSlot::Lineweight:
+            return lineweight;
+        case MatchSlot::Linetype:
+            return linetype;
+        case MatchSlot::Text:
+            return text;
+        case MatchSlot::Dimension:
+            return dimension;
+        case MatchSlot::None:
+            return false;
+        }
+        return false;
+    }
+
+    friend bool operator==(const MatchPropFilter&, const MatchPropFilter&) = default;
+};
+
 /// One aggregated row for the panel.
 struct PropertyField {
     PropertyId id{};

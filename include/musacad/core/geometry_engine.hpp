@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -243,6 +244,13 @@ private:
     std::vector<Group> redo_;
     std::vector<EntityHandle> selection_;
 
+    // MATCHPROP source: the captured source entity (a snapshot of its property values as
+    // an Add*Command) plus its handle, set by MatchPropPickSourceCommand and reused by
+    // each MatchPropApplyCommand. Engine-side only; persists across a command's target
+    // picks and is replaced on the next source pick. Does not affect the selection.
+    std::optional<Command> match_source_;
+    EntityHandle match_source_handle_;
+
     RenderSnapshot geom_cache_; // payload rebuilt only when geometry changes
     bool geom_dirty_ = true;
     RenderSnapshot plot_snapshot_;          // fine-tolerance buffer for PLOT (geom-thread written)
@@ -293,6 +301,12 @@ private:
                          std::uint64_t group);
     // PR palette: set one property on every selected entity as one undo group.
     void apply_set_property(PropertyId id, const PropertyValue& value, std::uint64_t group);
+    // MATCHPROP: capture the entity nearest `point` as the source; apply the captured
+    // source's filtered properties to the entity nearest `point` (one undo group each).
+    void apply_match_pick_source(Vec2 point, double radius);
+    void apply_match_source_from_selection(); // noun-verb: source = first selected entity
+    void apply_match_apply(Vec2 point, double radius, const MatchPropFilter& filter,
+                           std::uint64_t group);
     bool grip_active_ = false;
     EntityHandle grip_handle_{};
     std::uint32_t grip_index_ = 0;

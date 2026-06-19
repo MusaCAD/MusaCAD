@@ -211,6 +211,23 @@ private:
     bool done_ = false;
 };
 
+// MATCHPROP / MA: pick a source object, then pick destination object(s) or [Settings].
+// Each destination immediately adopts the source's matched properties (universal always;
+// family-scoped only within a shared family). A paintbrush cursor is shown while picking
+// targets, and each matched target is its own undo entry. Pick-based like JOIN.
+class MatchPropCommand final : public ICommand {
+public:
+    std::string name() const override { return "MATCHPROP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Source, Targets } state_ = State::Source;
+    bool done_ = false;
+};
+
 class TrimCommand final : public ICommand {
 public:
     std::string name() const override { return "TRIM"; }

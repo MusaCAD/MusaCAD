@@ -1670,6 +1670,73 @@ void GeometryEngine::apply_set_property(PropertyId id, const PropertyValue& valu
     }
 }
 
+void GeometryEngine::apply_match_pick_source(Vec2 point, double radius) {
+    // Capture the source's property values once (snapshot as an Add*Command). The source
+    // entity is never mutated; subsequent applies read from this snapshot.
+    const EntityHandle h = pick_nearest(point, radius);
+    if (h.is_null() || !store_.is_valid(h) || !selectable(h)) {
+        match_source_.reset();
+        report("MATCHPROP: no source object found.");
+        return;
+    }
+    match_source_ = capture_entity(h);
+    match_source_handle_ = h;
+    report("MATCHPROP: source selected -- pick destination objects.");
+}
+
+void GeometryEngine::apply_match_source_from_selection() {
+    // Noun-verb: MA was run with a selection active -> the first selected (selectable)
+    // entity is the source. Reduce the selection to just it so the source is highlighted
+    // while picking targets; no undo entry (this only records the source).
+    EntityHandle src;
+    for (const EntityHandle h : selection_) {
+        if (store_.is_valid(h) && selectable(h)) {
+            src = h;
+            break;
+        }
+    }
+    if (src.is_null()) {
+        match_source_.reset();
+        report("MATCHPROP: nothing selectable in the current selection.");
+        return;
+    }
+    match_source_ = capture_entity(src);
+    match_source_handle_ = src;
+    selection_ = {src};
+    report("MATCHPROP: source = selection -- pick destination objects.");
+}
+
+void GeometryEngine::apply_match_apply(Vec2 point, double radius, const MatchPropFilter& filter,
+                                       std::uint64_t group) {
+    if (!match_source_.has_value()) {
+        report("MATCHPROP: select a source object first.");
+        return;
+    }
+    const EntityHandle h = pick_nearest(point, radius);
+    // Targets respect the same selectable() gate (off/frozen/locked layers excluded);
+    // matching to the source itself is a no-op. Missing the geometry is silent (clean).
+    if (h.is_null() || !store_.is_valid(h) || !selectable(h) || h == match_source_handle_) {
+        return;
+    }
+    // ONE property-write path: registry copies the applicable properties into the captured
+    // target command; then the standard capture/erase/recreate as one undo group (the same
+    // pattern as apply_set_property). ByLayer/ByBlock travels as state, not resolved literal.
+    const Command original = capture_entity(h);
+    Command modified = original;
+    const int applied = match_properties(*match_source_, modified, filter);
+    if (applied == 0) {
+        return; // every category filtered off -> nothing to do, no undo entry
+    }
+    remove_indexed(h);
+    push_erase_item(group, original);
+    const EntityHandle nh = create_indexed(modified);
+    push_create_item(group, nh, modified);
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Properties matched.");
+}
+
 void GeometryEngine::apply_entity_layer(std::uint16_t layer, std::uint64_t group) {
     apply_props_change([layer](EntityProps& p) { p.layer = layer; }, group);
     report("Moved selection to layer.");
@@ -2174,6 +2241,12 @@ void GeometryEngine::apply(const Command& command) {
                 apply_text_edit(c.at, c.pick_radius, c.content, c.group);
             } else if constexpr (std::is_same_v<T, SetPropertyCommand>) {
                 apply_set_property(c.id, c.value, c.group);
+            } else if constexpr (std::is_same_v<T, MatchPropPickSourceCommand>) {
+                apply_match_pick_source(c.point, c.radius);
+            } else if constexpr (std::is_same_v<T, MatchPropSourceFromSelectionCommand>) {
+                apply_match_source_from_selection();
+            } else if constexpr (std::is_same_v<T, MatchPropApplyCommand>) {
+                apply_match_apply(c.point, c.radius, c.filter, c.group);
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =

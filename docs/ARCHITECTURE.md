@@ -1297,6 +1297,59 @@ entity capability, no data-model change.
   `LineData` 40 unchanged); insert ~33 ns; native/DXF untouched. `selection_summary`
   is interaction metadata (not in the checksum).
 
+## MATCHPROP / MA — match properties source → targets (Phase 32)
+
+MATCHPROP copies one source entity's properties onto N picked targets. It is a thin
+workflow over the **Phase 22 descriptor registry** — there is **one property-write path**
+and **one family/category source of truth**; MA adds no entity-write code and no table of
+its own.
+
+* **The one write path.** A new registry helper `match_properties(source_cmd, target_cmd,
+  filter)` walks `kDescs` and, for each enabled+applicable property, calls the **same**
+  per-descriptor `read()`/`write()` the PR palette uses. The engine resolves source/target
+  via `pick_nearest`, captures them with `capture_entity`, runs `match_properties`, then
+  does the standard **capture → write → erase → recreate** as one undo group — identical to
+  `apply_set_property`. No SetProperty/PR path is modified (PR's varies/set-all is untouched).
+* **Family classification (the small registry extension).** `family_of(EntityKind)` (in
+  `entity_handle.hpp`) tags each kind: **SimpleGeometry** (Point/Line/Circle/Arc/Spline),
+  **Text** (Text/MText/Leader/MLeader), **Dimension**, **Polyline**, **Insert**, **Hatch**
+  (reserved). Each descriptor is tagged with a `MatchSlot` (`match_slot_for(PropertyId)` —
+  one switch next to the descriptors): **universal** slots (Color/Layer/Lineweight/Linetype,
+  `any_kind`) copy across ANY kinds; **family-scoped** slots (Text, Dimension) copy only when
+  `family_of(source)==family_of(target)` AND the descriptor applies to both kinds. Content
+  (TextContent), placement (TextRotation), the MTEXT wrap box (MtWidth), and read-only
+  geometry are slot `None` — never matched (AutoCAD-clean).
+* **ByLayer/ByBlock as state.** Copying is free of resolution: the colour/linetype/lineweight
+  descriptors carry `{flag = by_layer, literal}` and `write()` only assigns the literal when
+  the flag is clear — so a ByLayer source yields a ByLayer target, never the source's resolved
+  colour (Ph12 discipline, preserved automatically).
+* **The command.** `MatchPropCommand` (alias **MA**/PAINTER) is pick-based like JOIN
+  (`wants_selection()` stays false; clicks arrive as points; the engine resolves entities).
+  State machine: source pick → `MatchPropPickSourceCommand` (engine captures the source on
+  the geometry thread — the UI never reads the store); then a target loop submitting
+  `MatchPropApplyCommand{point, radius, filter, group}` with a **fresh undo group per target**
+  (`CommandContext::new_group()`) so each match undoes in reverse. Targets respect the same
+  `selectable()` gate (off/frozen/locked excluded); the source itself is skipped.
+  **Noun-verb:** running MA with a selection already active uses the first selected entity as
+  the source (`MatchPropSourceFromSelectionCommand`, reducing the selection to it) and goes
+  straight to the destination loop — the JOIN convenience. **Sub-entity picking:** a dimension
+  is pickable by its measured **text** label (the kernel's `closest_point` for a Dimension
+  includes the label's bbox, not just the ext/dim/arrow lines), because the text is part of
+  the dim entity — so a click on the text resolves to the dimension at both source and target.
+* **Settings + cursor (UI).** Typing `S` opens a dark modal (the existing Fusion palette) of
+  category checkboxes (Basic: Color/Layer/Lineweight/Linetype, + reserved LTScale/PlotStyle;
+  Special: Text/Dimension, + reserved Hatch/Polyline); all on by default, persisted in
+  QSettings for the session. The choice is read for every target apply. A drawn paintbrush
+  cursor signals match mode while picking. Both reach the command via three `ViewControl`
+  hooks (`match_filter`/`match_settings_dialog`/`set_match_cursor`) the `ViewportWindow`
+  implements and forwards to the `MainWindow` — the command/geometry layers never touch Qt.
+* **Honest model limits (stated).** LTSCALE is a global (not a per-entity property) and plot
+  style/hatch are unmodelled, so those Settings toggles are present for AutoCAD parity but
+  gate no descriptors (disabled in the dialog). Polyline has no type-specific registry
+  descriptor yet, and Leader/MLeader label text props aren't registry-exposed — those kinds
+  receive universal properties only. Copying the **dimstyle index** itself would need a new
+  registry descriptor (MA copies the per-dim *overrides* the registry exposes); deferred.
+
 ## Editable text — double-click & TEXTEDIT (Phase 21)
 
 The text data model was already edit-ready (content is a discrete stored field,

@@ -153,6 +153,187 @@ TEST_CASE("write_property only touches applicable kinds (Geometry/text are gated
     REQUIRE_FALSE(property_applies(PropertyId::MtWidthFactor, EntityKind::Text));
 }
 
+namespace {
+const PropertyField* field_of(const SelectionSummary& s, PropertyId id) {
+    for (const auto& f : s.fields) {
+        if (f.id == id) {
+            return &f;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("MATCHPROP copies universal properties across entity kinds (line -> circle)") {
+    GeometryEngine engine;
+    engine.start();
+    // A distinct layer so the layer copy is observable.
+    Layer walls;
+    walls.name = "Walls";
+    walls.color = {255, 0, 0};
+    engine.submit(AddLayerCommand{walls});
+    std::uint16_t walls_idx = 0;
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        for (std::uint16_t i = 0; i < s.layers.size(); ++i) {
+            if (s.layers[i].name == "Walls") {
+                walls_idx = i;
+                return true;
+            }
+        }
+        return false;
+    }));
+    // Source line: explicit blue override + lineweight 50, on Walls.
+    EntityProps sp;
+    sp.layer = walls_idx;
+    sp.set_color_by_layer(false);
+    sp.color = {0, 0, 255};
+    sp.set_lineweight_by_layer(false);
+    sp.lineweight = 50;
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, sp});
+    engine.submit(AddCircleCommand{{50, 0}, 10, 2}); // target: default (ByLayer, layer 0)
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+
+    // MATCHPROP: source = line midpoint, target = circle's rightmost point.
+    engine.submit(MatchPropPickSourceCommand{{5, 0}, 1.0});
+    engine.submit(MatchPropApplyCommand{{60, 0}, 1.0, MatchPropFilter{}, 9});
+    engine.submit(SelectPickCommand{{60, 0}, 1.0, false}); // re-select the circle to read it
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::Circle) {
+            return false; // still a circle, not turned into a line
+        }
+        const PropertyField* col = field_of(s.selection_summary, PropertyId::Color);
+        const PropertyField* lw = field_of(s.selection_summary, PropertyId::Lineweight);
+        const PropertyField* ly = field_of(s.selection_summary, PropertyId::Layer);
+        return col != nullptr && !col->value.flag && col->value.color == Rgb{0, 0, 255} &&
+               lw != nullptr && lw->value.num == Approx(50.0) && ly != nullptr &&
+               ly->value.choice == static_cast<int>(walls_idx);
+    }));
+    engine.stop();
+}
+
+TEST_CASE("MATCHPROP copies ByLayer state, not the resolved literal") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1}); // source: default -> colour ByLayer
+    EntityProps tp;                                    // target: explicit red override
+    tp.set_color_by_layer(false);
+    tp.color = {255, 0, 0};
+    engine.submit(AddLineCommand{{0, 5}, {10, 5}, 2, tp});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+
+    engine.submit(MatchPropPickSourceCommand{{5, 0}, 1.0});      // ByLayer source
+    engine.submit(MatchPropApplyCommand{{5, 5}, 1.0, MatchPropFilter{}, 9}); // red target
+    engine.submit(SelectPickCommand{{5, 5}, 1.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1) {
+            return false;
+        }
+        const PropertyField* col = field_of(s.selection_summary, PropertyId::Color);
+        return col != nullptr && col->value.flag; // ByLayer state copied, not "blue/red" literal
+    }));
+    engine.stop();
+}
+
+TEST_CASE("MATCHPROP within the text family copies height; cross-family is skipped cleanly") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddTextCommand{{0, 0}, 5.0, 0.0, 0, "SRC", 1, {}}); // source TEXT, height 5
+    MTextBlock blk;
+    blk.pos = {0, 20};
+    blk.height = 2.5;
+    engine.submit(AddMTextCommand{blk, "DST", 2, {}}); // target MTEXT, height 2.5
+    engine.submit(AddLineCommand{{0, 40}, {10, 40}, 3}); // a LINE (different family)
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 3; }));
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+
+    engine.submit(MatchPropPickSourceCommand{{1, 0}, 2.0});                 // TEXT source
+    engine.submit(MatchPropApplyCommand{{0, 20}, 2.0, MatchPropFilter{}, 9}); // -> MTEXT
+    engine.submit(MatchPropApplyCommand{{5, 40}, 2.0, MatchPropFilter{}, 10}); // -> LINE (no crash)
+    engine.submit(SelectPickCommand{{0, 20}, 2.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::MText) {
+            return false;
+        }
+        const PropertyField* h = field_of(s.selection_summary, PropertyId::TextHeight);
+        return h != nullptr && h->value.num == Approx(5.0); // text-family height travelled
+    }));
+    engine.stop();
+}
+
+TEST_CASE("MATCHPROP Settings filter gates a category (Color off keeps target colour)") {
+    GeometryEngine engine;
+    engine.start();
+    EntityProps sp; // source: blue + lineweight 70
+    sp.set_color_by_layer(false);
+    sp.color = {0, 0, 255};
+    sp.set_lineweight_by_layer(false);
+    sp.lineweight = 70;
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, sp});
+    EntityProps tp; // target: red override, default lineweight
+    tp.set_color_by_layer(false);
+    tp.color = {255, 0, 0};
+    engine.submit(AddLineCommand{{0, 5}, {10, 5}, 2, tp});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+
+    MatchPropFilter f; // Color OFF, everything else on
+    f.color = false;
+    engine.submit(MatchPropPickSourceCommand{{5, 0}, 1.0});
+    engine.submit(MatchPropApplyCommand{{5, 5}, 1.0, f, 9});
+    engine.submit(SelectPickCommand{{5, 5}, 1.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1) {
+            return false;
+        }
+        const PropertyField* col = field_of(s.selection_summary, PropertyId::Color);
+        const PropertyField* lw = field_of(s.selection_summary, PropertyId::Lineweight);
+        // Colour unchanged (still red); lineweight DID copy (70).
+        return col != nullptr && !col->value.flag && col->value.color == Rgb{255, 0, 0} &&
+               lw != nullptr && lw->value.num == Approx(70.0);
+    }));
+    engine.stop();
+}
+
+TEST_CASE("MATCHPROP noun-verb: a pre-selected object becomes the source") {
+    GeometryEngine engine;
+    engine.start();
+    EntityProps sp; // source line: blue + lineweight 40
+    sp.set_color_by_layer(false);
+    sp.color = {0, 0, 255};
+    sp.set_lineweight_by_layer(false);
+    sp.lineweight = 40;
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, sp});
+    engine.submit(AddCircleCommand{{50, 0}, 10, 2}); // target, default props
+    // Pre-select ONLY the line (the future source) -- noun-verb entry into MA.
+    engine.submit(SelectPickCommand{{5, 0}, 1.0, false});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.selection.size() == 1 && s.selection[0].kind == EntityKind::Line;
+    }));
+    engine.submit(MatchPropSourceFromSelectionCommand{}); // source = the selection
+    engine.submit(MatchPropApplyCommand{{60, 0}, 1.0, MatchPropFilter{}, 9});
+    engine.submit(SelectPickCommand{{60, 0}, 1.0, false}); // re-select the circle to read it
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::Circle) {
+            return false;
+        }
+        const PropertyField* col = field_of(s.selection_summary, PropertyId::Color);
+        const PropertyField* lw = field_of(s.selection_summary, PropertyId::Lineweight);
+        return col != nullptr && !col->value.flag && col->value.color == Rgb{0, 0, 255} &&
+               lw != nullptr && lw->value.num == Approx(40.0);
+    }));
+    engine.stop();
+}
+
 TEST_CASE("Dimension PR group: arrow-size override set + reset via SetPropertyCommand") {
     GeometryEngine engine;
     engine.start();

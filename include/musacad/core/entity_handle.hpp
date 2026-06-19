@@ -25,6 +25,44 @@ enum class EntityKind : std::uint16_t {
     Insert,
 };
 
+/// Coarse classification of an EntityKind, used by MATCHPROP to decide when
+/// type-specific (family-scoped) properties may travel from a source to a target.
+/// Universal properties (colour/layer/lineweight/linetype) ignore this; family-scoped
+/// ones (text, dimension, …) only copy when source and target share a family.
+enum class EntityFamily : std::uint8_t {
+    SimpleGeometry, ///< Point, Line, Circle, Arc, Spline (no type-specific properties)
+    Text,           ///< Text, MText, Leader, MLeader (font/height/justify/…)
+    Dimension,      ///< Dimension (dimstyle + per-dim overrides)
+    Polyline,       ///< Polyline
+    Insert,         ///< block reference (no type-specific properties matched)
+    Hatch,          ///< reserved (not yet implemented)
+};
+
+/// The family an EntityKind belongs to. The single classification table MATCHPROP
+/// reads; it never defines its own.
+[[nodiscard]] constexpr EntityFamily family_of(EntityKind k) noexcept {
+    switch (k) {
+    case EntityKind::Text:
+    case EntityKind::MText:
+    case EntityKind::Leader:
+    case EntityKind::MLeader:
+        return EntityFamily::Text;
+    case EntityKind::Dimension:
+        return EntityFamily::Dimension;
+    case EntityKind::Polyline:
+        return EntityFamily::Polyline;
+    case EntityKind::Insert:
+        return EntityFamily::Insert;
+    case EntityKind::Point:
+    case EntityKind::Line:
+    case EntityKind::Circle:
+    case EntityKind::Arc:
+    case EntityKind::Spline:
+        return EntityFamily::SimpleGeometry;
+    }
+    return EntityFamily::SimpleGeometry;
+}
+
 /// A generational handle to an entity in the GeometryStore.
 ///
 /// `index` selects a slot; `generation` detects stale handles: when a slot is

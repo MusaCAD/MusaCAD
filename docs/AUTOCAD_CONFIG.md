@@ -175,3 +175,22 @@ inherits the source entity's layer/properties.
 
 Alias `J`; Modify-panel ribbon button. Closed polylines (no free endpoints) and non-curve
 entities are not joinable and are left untouched.
+
+## MATCHPROP (MA)
+
+| Step | Behaviour | Status |
+|---|---|---|
+| `MATCHPROP` / `MA` (also `PAINTER`) | Prompt **"Select source object:"** → pick ONE source | Implemented |
+| Noun-verb source | If objects are already selected when MA runs, the first becomes the source automatically (skips the source prompt), mirroring JOIN | Implemented |
+| Picking a dimension | A click on the dimension's **measured text** picks the dimension (the text is part of the dim, not a separate entity) — works for both source and destination | Implemented |
+| Destination loop | Prompt **"Select destination object(s) or [Settings]:"** → each pick immediately applies the matched properties; **Enter / right-click** ends; **Esc** cancels | Implemented |
+| Paintbrush cursor | Shown between the source pick and the end of the command (AutoCAD's match-mode signal) | Implemented (a drawn brush cursor) |
+| Universal properties | Color, Layer, Lineweight, Linetype copy across ANY source/target kinds. **ByLayer/ByBlock copies as state**, not as the resolved literal | Implemented |
+| Type-specific (Basic Properties group) | **Text** (height/font/justify/width-factor) and **Dimension** (per-dim overrides) copy only within a shared family; non-applicable properties are silently skipped | Implemented |
+| LTScale / Plot Style / Hatch / Polyline | Shown in Settings for AutoCAD parity but disabled — LTSCALE is a global, plot style/hatch are not modelled, and Polyline has no type-specific registry property yet | Stated limitation |
+| Per-target undo | Each matched target is its own undo entry (Ctrl+Z undoes matches in reverse) | Implemented |
+| Settings (`S`) | Opens a dark modal listing Basic + Special categories with checkboxes (all on by default). State **persists in QSettings for the session** and the next MA invocation; OK applies, Cancel reverts | Implemented |
+
+MATCHPROP reuses the Phase 22 property-descriptor write path; whatever the registry exposes
+as read/write, MA can match. It never changes geometry — only properties — so a circle
+matched from a line stays a circle.

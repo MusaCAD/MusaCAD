@@ -126,6 +126,11 @@ public:
     /// the app region. `kind` 0 = title block. Used for the before/after stroke-text
     /// comparison; the scene is rendering-neutral (same geometry before and after).
     bool text_shot(int kind, const std::string& out_png);
+    /// Real-window capture for MATCHPROP / MA. `kind`: 0 cross-kind universal (line ->
+    /// circle), 1 within text family (TEXT -> MTEXT), 2 within dim family (overrides), 3
+    /// the Settings dialog (Color unchecked), 4 skips inapplicable (TEXT -> LINE, universal
+    /// only). Builds the scene, runs the match, zooms, and grabs the app region.
+    bool matchprop_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
@@ -183,6 +188,13 @@ private:
     // Annotation (UI side: dimension-style dialog).
     void open_dimstyle_dialog();
     void submit_dimstyle_from_dialog(const ParameterDialog& dlg);
+
+    // MATCHPROP Settings: modal category dialog (dark palette) opened via "S" at the
+    // destination prompt; choices persist in QSettings for the session. read_match_filter
+    // is what the running MATCHPROP command reads for each target (via the viewport).
+    void open_matchprop_dialog();
+    [[nodiscard]] core::MatchPropFilter read_match_filter() const;
+    void write_match_filter(const core::MatchPropFilter& f);
 
     // Layers (UI side: dialog + ribbon combo; issues commands, never the store).
     void open_layer_dialog();

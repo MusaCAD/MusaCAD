@@ -119,6 +119,7 @@ suggests both); aliases are case-insensitive.
 | ByLayer / per-entity override resolution | — | Implemented |
 | Move selection to layer | Layer Mgr ▸ Assign | Implemented |
 | Set selection colour override | ribbon ▸ Set Colour | Implemented |
+| **MATCHPROP / MA** — pick a source object (**or run MA with an object already selected → it becomes the source**, noun-verb), then pick destination object(s) (or **[Settings]**); each destination immediately adopts the source's properties via the Ph22 SetProperty descriptor path (the SAME write path the PR palette uses — no MA-specific entity-write code). **Universal** properties (colour / layer / lineweight / linetype — **ByLayer state preserved**, not the resolved literal) copy across ANY source/target kinds; **family-scoped** (text: height/font/justify/width-factor; dimension: per-dim overrides) copy only within a shared family; non-applicable properties are silently skipped. A **paintbrush cursor** shows while picking; **each matched target is its own undo entry** (undo in reverse). **Settings** (type `S`) opens a dark modal listing the categories (all on by default; persisted in QSettings for the session) | MA / PAINTER | Implemented |
 | Off / Frozen layers skip rendering | — | Implemented |
 | Locked layers (drawn, not selectable/modifiable) | — | Implemented |
 | Linetype property (Continuous/Dashed/Center/Hidden) | — | Implemented (model + round-trip + **dashed rendering**, Ph23) |

@@ -107,6 +107,7 @@ public:
     void set_prompt(const std::string& prompt) override;
     void submit(core::Command command) override;
     [[nodiscard]] std::uint64_t group_id() const override { return current_group_; }
+    [[nodiscard]] std::uint64_t new_group() override { return begin_group(); }
     [[nodiscard]] std::optional<core::Vec2> last_point() const override { return last_point_; }
     void set_last_point(core::Vec2 p) override { last_point_ = p; }
     void clear_last_point() override { last_point_.reset(); }

@@ -80,6 +80,13 @@ public:
     virtual void export_dwg() {}
     /// Open the PLOT/print dialog (PDF + printer). Default no-op (headless/tests).
     virtual void plot_dialog() {}
+    /// MATCHPROP: the current Settings filter (which categories copy). Default all-on.
+    [[nodiscard]] virtual core::MatchPropFilter match_filter() const { return {}; }
+    /// MATCHPROP: open the modal Settings dialog (persists the filter). No-op headless.
+    virtual void match_settings_dialog() {}
+    /// MATCHPROP: switch the viewport to the match (paintbrush) cursor while picking
+    /// targets; restore the normal cursor when `on` is false. No-op headless.
+    virtual void set_match_cursor(bool on) { (void)on; }
 };
 
 /// The services a running command uses to interact with the system. Commands
@@ -95,6 +102,9 @@ public:
 
     virtual void submit(core::Command command) = 0;     ///< -> geometry queue
     [[nodiscard]] virtual std::uint64_t group_id() const = 0;
+    /// Mint a FRESH undo group, so a command can make each step individually undoable
+    /// (MATCHPROP: one undo entry per matched target). Default = the current group.
+    [[nodiscard]] virtual std::uint64_t new_group() { return group_id(); }
 
     [[nodiscard]] virtual std::optional<core::Vec2> last_point() const = 0;
     virtual void set_last_point(core::Vec2 p) = 0;

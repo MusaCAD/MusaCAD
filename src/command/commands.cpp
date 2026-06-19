@@ -778,6 +778,71 @@ void JoinCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// MATCHPROP / MA (source -> N targets; paintbrush cursor; per-target undo)
+// ---------------------------------------------------------------------------
+void MatchPropCommand::start(CommandContext& ctx) {
+    // Noun-verb: if objects are already selected, the first becomes the source and we go
+    // straight to picking destinations (same convenience as JOIN).
+    if (ctx.has_selection()) {
+        ctx.submit(core::MatchPropSourceFromSelectionCommand{});
+        state_ = State::Targets;
+        if (ctx.view() != nullptr) {
+            ctx.view()->set_match_cursor(true);
+        }
+        ctx.set_prompt("Select destination object(s) or [Settings]: ");
+        return;
+    }
+    ctx.set_prompt("Select source object: ");
+}
+
+void MatchPropCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (state_ == State::Source) {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return; // read_point already echoed the error / awaits a real pick
+        }
+        // Capture the source on the geometry thread (the UI never reads the store).
+        ctx.submit(core::MatchPropPickSourceCommand{*p, ctx.pick_radius()});
+        state_ = State::Targets;
+        if (ctx.view() != nullptr) {
+            ctx.view()->set_match_cursor(true); // paintbrush while matching
+        }
+        ctx.set_prompt("Select destination object(s) or [Settings]: ");
+        return;
+    }
+    // Targets: Enter finishes; "S"/"Settings" opens the category dialog; else apply.
+    if (t.empty()) {
+        if (ctx.view() != nullptr) {
+            ctx.view()->set_match_cursor(false);
+        }
+        done_ = true;
+        return;
+    }
+    if (upper(t) == "S" || upper(t) == "SETTINGS") {
+        if (ctx.view() != nullptr) {
+            ctx.view()->match_settings_dialog(); // modal; persists the filter
+        }
+        ctx.set_prompt("Select destination object(s) or [Settings]: ");
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        const core::MatchPropFilter filter =
+            ctx.view() != nullptr ? ctx.view()->match_filter() : core::MatchPropFilter{};
+        // Each matched target is its OWN undo group, so Ctrl+Z undoes them in reverse.
+        ctx.submit(core::MatchPropApplyCommand{*p, ctx.pick_radius(), filter, ctx.new_group()});
+    }
+}
+
+void MatchPropCommand::cancel(CommandContext& ctx) {
+    if (ctx.view() != nullptr) {
+        ctx.view()->set_match_cursor(false);
+    }
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // TRIM (line subset; repeats)
 // ---------------------------------------------------------------------------
 void TrimCommand::start(CommandContext& ctx) {

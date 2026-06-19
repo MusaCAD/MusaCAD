@@ -33,4 +33,13 @@ namespace musacad::core {
 /// SetPropertyCommand apply, per selected entity.
 void write_property(Command& c, PropertyId id, const PropertyValue& value);
 
+/// MATCHPROP: copy every enabled, applicable property from `source` onto `target`
+/// (in place), using the same per-descriptor read/write the PR palette uses -- there is
+/// no MA-specific entity-write code. Universal properties (colour/layer/lineweight/
+/// linetype) copy across any kinds; family-scoped (text/dimension) copy only within a
+/// shared EntityFamily. ByLayer/ByBlock travels as state, not the resolved literal.
+/// `filter` is the MA Settings selection. Returns the number of properties written.
+[[nodiscard]] int match_properties(const Command& source, Command& target,
+                                   const MatchPropFilter& filter);
+
 } // namespace musacad::core

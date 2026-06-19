@@ -143,6 +143,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // MATCHPROP / MA capture: MUSACAD_MATCHPROP_SHOT="kind|out.png" (kind 0 cross-kind
+    // universal, 1 text family, 2 dim family, 3 Settings dialog, 4 skips inapplicable).
+    if (qEnvironmentVariableIsSet("MUSACAD_MATCHPROP_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a =
+                qEnvironmentVariable("MUSACAD_MATCHPROP_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/matchprop_shot.png"));
+            const bool ok = window.matchprop_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {
