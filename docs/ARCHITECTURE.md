@@ -1237,12 +1237,48 @@ phase only renders it, with no data-model change.
   `LTSCALE` header line; v1–v6 load as 1.0) and DXF (`$LTSCALE` header var). DXF
   export also writes an **LTYPE table** (Continuous/DASHED/HIDDEN/CENTER with element
   lengths mirroring `linetype.cpp`) so the dashes render dashed in other CAD apps
-  (LibreCAD-verified). Per-entity scale (CELTSCALE) is **Planned**.
+  (LibreCAD-verified). Per-entity scale (CELTSCALE) layers on top — see Phase 33.
 * **PR gap closed.** Setting an entity's linetype in the Properties palette (Ph22)
   now visibly dashes it — the write path was already there; this phase makes it draw.
 * **No regressions.** No entity-struct change (`LineData` 40 / `CircleData` 32
   unchanged; `ltscale_` is one double on the store); insert ~31 ns; draw calls 4/6;
   dense dashed scene (5000 fine circles) ~6.6 ms/frame.
+
+## Per-entity linetype scale — CELTSCALE (Phase 33)
+
+LTSCALE is the drawing-wide scale; **CELTSCALE** is the per-entity multiplier (AutoCAD's
+two knobs). The effective dash scale is `LTSCALE × CELTSCALE`, default 1.0 so existing
+drawings are unchanged. (This also corrects the MATCHPROP report's "LTSCALE is global"
+note: LTSCALE lives on `GeometryStore`, which is the per-document DocState under multi-doc,
+so it is drawing-level **per document**, not process-global.)
+
+* **Sparse, cold storage — hot structs unfattened.** Most entities use 1.0, so CELTSCALE is
+  NOT a field on `EntityProps`/`LineData` (that would add 8 bytes to every hot struct).
+  Instead it is a default-skipping sparse map on the store,
+  `std::unordered_map<key, double> celtscale_` keyed by `(kind<<32)|slot`; absent = 1.0,
+  set-to-1.0 erases the entry, `remove()`/`clear()` drop it. `sizeof(LineData)`/`EntityProps`
+  are unchanged (asserted in tests). It travels capture→undo→clipboard as a top-level
+  `celtscale` field on the dashing Add*Commands (Line/Circle/Arc/Polyline), applied in
+  `add_command_to_store` via `set_celtscale`.
+* **One multiplication, one path.** `scene_snapshot.cpp` computes
+  `ltscale * store.celtscale(h)` at the two `dash_polyline` call sites (line + the curve
+  lambda) — the single effective-scale point. The plot path (Ph30) uses the same
+  `build_render_snapshot`, so a plot honours `LTSCALE × CELTSCALE` with no fork (verified:
+  a plot at LTSCALE 0.5 dashes at the same density as the viewport).
+* **PR + MATCHPROP.** A universal `PropertyId::Celtscale` descriptor (`PropEditor::Number`,
+  `applies` = the dashing kinds) sits between Linetype and Lineweight in the General group;
+  it reads/writes the `celtscale` command field via a `requires{x.celtscale}` accessor (the
+  same registry mechanism as every other property — no special path). `MatchSlot::Celtscale`
+  (universal) lets MATCHPROP's "Linetype scale" toggle copy it across the dashing kinds.
+* **Persistence.** Native bumps to **v12**: decoupled trailing `CELTSCALE <kind> <ordinal>
+  <value>` records (only non-default values; older files have none → 1.0), so the per-entity
+  record formats are unchanged. DXF uses the standard per-entity **code 48**. Both round-trip
+  (tested); older files default to 1.0.
+* **Scope (honest).** Only line/circle/arc/polyline dash via `dash_polyline`, so CELTSCALE is
+  exposed/effective only there. Dimensions, leaders, and block-internal (INSERT) geometry
+  render solid today (pre-existing — they don't route through `dash_polyline`), so CELTSCALE
+  is not surfaced for them; block-internal dashing (and thus INSERT CELTSCALE) is deferred.
+  Splines dash at LTSCALE only (no Add-command/PR path to set their CELTSCALE).
 
 ## Properties palette (PR) — framework, multiplicity, per-type registration (Phase 22)
 

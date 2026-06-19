@@ -153,3 +153,71 @@ TEST_CASE("LTSCALE + per-entity linetype round-trip through DXF") {
     REQUIRE(back.lines[0].props.linetype == Linetype::Center);
     REQUIRE_FALSE(back.lines[0].props.linetype_by_layer());
 }
+
+TEST_CASE("CELTSCALE: per-entity scale feeds the dash renderer (effective = LTSCALE x CELTSCALE)") {
+    GeometryStore store;
+    NativeKernel2D kernel;
+    EntityProps center;
+    center.set_linetype_by_layer(false);
+    center.linetype = Linetype::Center;
+    const EntityHandle h = store.add_line({0, 0}, {100, 0}, center);
+
+    const auto segs = [&](double lts) {
+        RenderSnapshot s;
+        build_render_snapshot(store, kernel, s, kDefaultTessTolerance, lts);
+        return s.line_vertices.size();
+    };
+    const std::size_t base = segs(1.0); // CELTSCALE 1.0
+    store.set_celtscale(h, 0.25);
+    REQUIRE(segs(1.0) > base); // a smaller per-entity scale -> finer dashes -> more segments
+
+    // ONE multiplication: CELTSCALE 0.25 at LTSCALE 1.0 == CELTSCALE 1.0 at LTSCALE 0.25.
+    const std::size_t via_celt = segs(1.0); // celtscale still 0.25
+    store.set_celtscale(h, 1.0);
+    const std::size_t via_lts = segs(0.25);
+    REQUIRE(via_celt == via_lts);
+}
+
+TEST_CASE("CELTSCALE is sparse storage: hot structs are not fattened") {
+    // A double celtscale field on EntityProps/LineData would add 8 bytes; the sparse
+    // side-map keeps them unchanged. (< 16 / < 48 prove no double was inlined.)
+    REQUIRE(sizeof(EntityProps) < 16);
+    REQUIRE(sizeof(LineData) < 48);
+    REQUIRE(sizeof(CircleData) < 48);
+}
+
+TEST_CASE("CELTSCALE per-entity round-trips native + DXF; older files default to 1.0") {
+    using namespace musacad::core::io;
+    Document doc;
+    doc.lines.push_back(DocLine{{0, 0}, {50, 0}, {}, 0.25});
+    doc.circles.push_back(DocCircle{{0, 0}, 10.0, {}, 2.0});
+    DocPolyline pl;
+    pl.points = {{0, 0}, {10, 0}, {10, 10}};
+    pl.celtscale = 0.5;
+    doc.polylines.push_back(pl);
+
+    Document nb;
+    REQUIRE(parse_native(serialize_native(doc), nb).ok);
+    REQUIRE(nb.lines.at(0).celtscale == Approx(0.25));
+    REQUIRE(nb.circles.at(0).celtscale == Approx(2.0));
+    REQUIRE(nb.polylines.at(0).celtscale == Approx(0.5));
+
+    Document db;
+    REQUIRE(parse_dxf(serialize_dxf(doc), db).ok);
+    REQUIRE(db.lines.at(0).celtscale == Approx(0.25));
+    REQUIRE(db.circles.at(0).celtscale == Approx(2.0));
+    REQUIRE(db.polylines.at(0).celtscale == Approx(0.5));
+
+    // A serialized doc with the CELTSCALE records stripped (older file) loads as 1.0.
+    std::string text = serialize_native(doc);
+    for (std::size_t pos = text.find("CELTSCALE"); pos != std::string::npos;
+         pos = text.find("CELTSCALE")) {
+        const std::size_t eol = text.find('\n', pos);
+        text.erase(pos, eol - pos + 1);
+    }
+    Document older;
+    REQUIRE(parse_native(text, older).ok);
+    REQUIRE(older.lines.at(0).celtscale == Approx(1.0));
+    REQUIRE(older.circles.at(0).celtscale == Approx(1.0));
+    REQUIRE(older.polylines.at(0).celtscale == Approx(1.0));
+}

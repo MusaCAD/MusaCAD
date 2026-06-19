@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "musacad/core/entity_handle.hpp"
@@ -354,6 +355,22 @@ public:
     [[nodiscard]] double ltscale() const noexcept { return ltscale_; }
     void set_ltscale(double scale) noexcept { ltscale_ = scale > 0.0 ? scale : ltscale_; }
 
+    /// Per-entity linetype scale (AutoCAD CELTSCALE, DXF code 48); default 1.0. SPARSE:
+    /// only entities with a non-default scale have an entry, so the hot data structs stay
+    /// unfattened. The effective dash scale is LTSCALE * CELTSCALE (applied at snapshot).
+    [[nodiscard]] double celtscale(EntityHandle h) const noexcept {
+        const auto it = celtscale_.find(celtscale_key(h));
+        return it != celtscale_.end() ? it->second : 1.0;
+    }
+    void set_celtscale(EntityHandle h, double scale) noexcept {
+        const std::uint64_t k = celtscale_key(h);
+        if (scale > 0.0 && scale != 1.0) {
+            celtscale_[k] = scale;
+        } else {
+            celtscale_.erase(k); // 1.0 (or invalid) is the default -> no entry
+        }
+    }
+
     /// Saved PLOT page setups (persisted in the native format). Read-only for plotting;
     /// mutated only via add_page_setup / set_page_setups (Open/Import + the Save action).
     [[nodiscard]] const std::vector<PageSetup>& page_setups() const noexcept { return page_setups_; }
@@ -388,6 +405,12 @@ public:
 private:
     void shift_layer_refs_after_removal(std::uint16_t removed) noexcept;
 
+    /// Sparse-map key for CELTSCALE: (kind, slot). Stable while the entity lives; the
+    /// entry is cleared on remove(), so a reused slot starts at the 1.0 default.
+    [[nodiscard]] static std::uint64_t celtscale_key(EntityHandle h) noexcept {
+        return (static_cast<std::uint64_t>(h.kind) << 32) | h.index;
+    }
+
     GenerationalArena<PointData> points_;
     GenerationalArena<LineData> lines_;
     GenerationalArena<CircleData> circles_;
@@ -410,6 +433,7 @@ private:
     std::uint16_t current_layer_ = 0;
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
+    std::unordered_map<std::uint64_t, double> celtscale_;  // sparse per-entity CELTSCALE (def 1.0)
     std::vector<PageSetup> page_setups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

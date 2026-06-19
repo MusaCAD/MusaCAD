@@ -156,6 +156,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // LTSCALE / CELTSCALE capture: MUSACAD_LTSCALE_SHOT="kind|out.png" (kind 0 LTSCALE 1.0,
+    // 1 LTSCALE 0.5, 2 per-entity CELTSCALE, 3 the 22-unit-line case). Saves "<out>.musa".
+    if (qEnvironmentVariableIsSet("MUSACAD_LTSCALE_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a =
+                qEnvironmentVariable("MUSACAD_LTSCALE_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/ltscale_shot.png"));
+            const bool ok = window.ltscale_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {

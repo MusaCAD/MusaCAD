@@ -120,6 +120,7 @@ EntityHandle GeometryStore::add_insert(std::uint16_t block, Vec2 pos, double sca
 }
 
 bool GeometryStore::remove(EntityHandle h) noexcept {
+    celtscale_.erase(celtscale_key(h)); // drop any per-entity scale so a reused slot defaults
     switch (h.kind) {
     case EntityKind::Point:
         return points_.erase(h.index, h.generation);
@@ -203,6 +204,7 @@ void GeometryStore::clear() noexcept {
     bulge_pool_.clear();
     spline_pool_.clear();
     string_pool_.clear();
+    celtscale_.clear();
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
     current_layer_ = 0;
     dimstyles_.assign(1, DimStyle{"Standard"});

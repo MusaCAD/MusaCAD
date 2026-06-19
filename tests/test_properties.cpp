@@ -384,3 +384,52 @@ TEST_CASE("Dimension PR group: arrow-size override set + reset via SetPropertyCo
     }));
     engine.stop();
 }
+
+TEST_CASE("PR edits per-entity CELTSCALE (Celtscale descriptor, dashing kinds)") {
+    GeometryEngine engine;
+    engine.start();
+    EntityProps c;
+    c.set_linetype_by_layer(false);
+    c.linetype = Linetype::Center;
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1, c});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(SetPropertyCommand{PropertyId::Celtscale, numv(0.4), 5});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        const PropertyField* f = field_of(s.selection_summary, PropertyId::Celtscale);
+        return f != nullptr && f->value.num == Approx(0.4);
+    }));
+    engine.stop();
+}
+
+TEST_CASE("MATCHPROP copies CELTSCALE (universal) between dashing entities") {
+    GeometryEngine engine;
+    engine.start();
+    EntityProps c;
+    c.set_linetype_by_layer(false);
+    c.linetype = Linetype::Center;
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1, c}); // source line
+    engine.submit(AddCircleCommand{{200, 0}, 20, 2});      // target circle
+    engine.submit(SelectPickCommand{{50, 0}, 2.0, false}); // select the source line
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.selection.size() == 1 && s.selection[0].kind == EntityKind::Line;
+    }));
+    engine.submit(SetPropertyCommand{PropertyId::Celtscale, numv(0.3), 5}); // source CELTSCALE 0.3
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        const PropertyField* f = field_of(s.selection_summary, PropertyId::Celtscale);
+        return f != nullptr && f->value.num == Approx(0.3);
+    }));
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+    engine.submit(MatchPropPickSourceCommand{{50, 0}, 2.0});
+    engine.submit(MatchPropApplyCommand{{220, 0}, 2.0, MatchPropFilter{}, 9});
+    engine.submit(SelectPickCommand{{220, 0}, 2.0, false}); // re-select the circle to read it
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::Circle) {
+            return false;
+        }
+        const PropertyField* f = field_of(s.selection_summary, PropertyId::Celtscale);
+        return f != nullptr && f->value.num == Approx(0.3); // copied across kinds (universal)
+    }));
+    engine.stop();
+}

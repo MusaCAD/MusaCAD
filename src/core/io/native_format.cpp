@@ -551,6 +551,34 @@ std::string serialize_native(const Document& doc) {
         emit_block_content(b);
         s += "ENDBLOCKDEF\n";
     }
+    // v12: per-entity CELTSCALE (linetype scale) for the dashing kinds. Decoupled trailing
+    // records (only non-default values), keyed by kindcode + ordinal into the doc vectors,
+    // so the entity record formats are unchanged and older readers never see these.
+    // kindcode: 0=line, 1=circle, 2=arc, 3=polyline.
+    const auto emit_celt = [&](int kindcode, std::size_t i, double cs) {
+        if (cs == 1.0) {
+            return;
+        }
+        s += "CELTSCALE ";
+        append_uint(s, static_cast<std::uint64_t>(kindcode));
+        s += ' ';
+        append_uint(s, i);
+        s += ' ';
+        append_double(s, cs);
+        s += '\n';
+    };
+    for (std::size_t i = 0; i < doc.lines.size(); ++i) {
+        emit_celt(0, i, doc.lines[i].celtscale);
+    }
+    for (std::size_t i = 0; i < doc.circles.size(); ++i) {
+        emit_celt(1, i, doc.circles[i].celtscale);
+    }
+    for (std::size_t i = 0; i < doc.arcs.size(); ++i) {
+        emit_celt(2, i, doc.arcs[i].celtscale);
+    }
+    for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
+        emit_celt(3, i, doc.polylines[i].celtscale);
+    }
     s += "END\n";
     return s;
 }
@@ -1113,6 +1141,24 @@ IoResult parse_native(std::string_view text, Document& out) {
                 in_block = false;
             }
             target_model();
+        } else if (key == "CELTSCALE") {
+            // v12: per-entity linetype scale; kindcode + ordinal into the top-level vectors.
+            std::uint64_t kind = 0;
+            std::uint64_t ord = 0;
+            double cs = 1.0;
+            if (tok.size() != 4 || !to_uint(tok[1], kind) || !to_uint(tok[2], ord) ||
+                !to_double(tok[3], cs)) {
+                return fail("malformed CELTSCALE");
+            }
+            if (kind == 0 && ord < doc.lines.size()) {
+                doc.lines[ord].celtscale = cs;
+            } else if (kind == 1 && ord < doc.circles.size()) {
+                doc.circles[ord].celtscale = cs;
+            } else if (kind == 2 && ord < doc.arcs.size()) {
+                doc.arcs[ord].celtscale = cs;
+            } else if (kind == 3 && ord < doc.polylines.size()) {
+                doc.polylines[ord].celtscale = cs;
+            }
         } else {
             return fail("unknown record \"" + std::string(key) + "\"");
         }

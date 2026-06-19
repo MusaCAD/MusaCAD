@@ -1341,6 +1341,7 @@ core::MatchPropFilter MainWindow::read_match_filter() const {
     f.layer = s.value(QStringLiteral("matchprop/layer"), true).toBool();
     f.lineweight = s.value(QStringLiteral("matchprop/lineweight"), true).toBool();
     f.linetype = s.value(QStringLiteral("matchprop/linetype"), true).toBool();
+    f.celtscale = s.value(QStringLiteral("matchprop/celtscale"), true).toBool();
     f.text = s.value(QStringLiteral("matchprop/text"), true).toBool();
     f.dimension = s.value(QStringLiteral("matchprop/dimension"), true).toBool();
     return f;
@@ -1352,15 +1353,16 @@ void MainWindow::write_match_filter(const core::MatchPropFilter& f) {
     s.setValue(QStringLiteral("matchprop/layer"), f.layer);
     s.setValue(QStringLiteral("matchprop/lineweight"), f.lineweight);
     s.setValue(QStringLiteral("matchprop/linetype"), f.linetype);
+    s.setValue(QStringLiteral("matchprop/celtscale"), f.celtscale);
     s.setValue(QStringLiteral("matchprop/text"), f.text);
     s.setValue(QStringLiteral("matchprop/dimension"), f.dimension);
 }
 
 void MainWindow::open_matchprop_dialog() {
     // Modal category dialog (inherits the app-wide dark Fusion palette). Cancel reverts to
-    // the previously-applied state; OK persists. Reserved categories (LTScale/Plotstyle/
-    // Hatch/Polyline) are shown for AutoCAD parity but disabled -- they gate no registry
-    // descriptors yet (LTSCALE is a global; plot style/hatch/polyline-width unmodelled).
+    // the previously-applied state; OK persists. "Linetype Scale" gates the per-entity
+    // CELTSCALE. Reserved categories (Plot Style / Hatch / Polyline) are shown for AutoCAD
+    // parity but disabled -- they gate no registry descriptors yet.
     const core::MatchPropFilter cur = read_match_filter();
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("Property Settings"));
@@ -1384,7 +1386,7 @@ void MainWindow::open_matchprop_dialog() {
     QCheckBox* c_layer = add_check(bl, QStringLiteral("Layer"), cur.layer, true);
     QCheckBox* c_lw = add_check(bl, QStringLiteral("Lineweight"), cur.lineweight, true);
     QCheckBox* c_lt = add_check(bl, QStringLiteral("Linetype"), cur.linetype, true);
-    add_check(bl, QStringLiteral("Linetype Scale"), cur.ltscale, false);
+    QCheckBox* c_cts = add_check(bl, QStringLiteral("Linetype Scale"), cur.celtscale, true);
     add_check(bl, QStringLiteral("Plot Style"), cur.plotstyle, false);
     outer->addWidget(basic);
 
@@ -1409,6 +1411,7 @@ void MainWindow::open_matchprop_dialog() {
     f.layer = c_layer->isChecked();
     f.lineweight = c_lw->isChecked();
     f.linetype = c_lt->isChecked();
+    f.celtscale = c_cts->isChecked();
     f.text = c_text->isChecked();
     f.dimension = c_dim->isChecked();
     write_match_filter(f);
@@ -2986,7 +2989,7 @@ bool MainWindow::matchprop_shot(int kind, const std::string& out_png) {
         add_check(bl, QStringLiteral("Layer"), true, true);
         add_check(bl, QStringLiteral("Lineweight"), true, true);
         add_check(bl, QStringLiteral("Linetype"), true, true);
-        add_check(bl, QStringLiteral("Linetype Scale"), true, false);
+        add_check(bl, QStringLiteral("Linetype Scale"), true, true);
         add_check(bl, QStringLiteral("Plot Style"), true, false);
         outer->addWidget(basic);
         auto* special = new QGroupBox(QStringLiteral("Special Properties"), dlg);
@@ -3034,6 +3037,94 @@ bool MainWindow::matchprop_shot(int kind, const std::string& out_png) {
     }
     if (box != nullptr) {
         box->close();
+    }
+    return true;
+}
+
+bool MainWindow::ltscale_shot(int kind, const std::string& out_png) {
+    using core::Vec2;
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+
+    const std::uint64_t g = 1;
+    const auto cline = [&](double x0, double y0, double x1, double y1, double celt) {
+        core::EntityProps p;
+        p.set_linetype_by_layer(false);
+        p.linetype = core::Linetype::Center;
+        engine_->submit(core::AddLineCommand{{x0, y0}, {x1, y1}, g, p, celt});
+    };
+    const auto ccircle = [&](double cx, double cy, double r) {
+        core::EntityProps p;
+        p.set_linetype_by_layer(false);
+        p.linetype = core::Linetype::Center;
+        engine_->submit(core::AddCircleCommand{{cx, cy}, r, g, p, 1.0});
+    };
+    const auto txt = [&](double x, double y, const std::string& s) {
+        engine_->submit(core::AddTextCommand{Vec2{x, y}, 4.0, 0.0, std::uint8_t{0}, s, g});
+    };
+
+    if (kind == 0 || kind == 1) {
+        // A Center-linetype drawing: changing LTSCALE re-dashes EVERYTHING. kind 0 = 1.0
+        // (before), kind 1 = 0.5 (after, denser dashes across all entities).
+        for (int i = 0; i < 4; ++i) {
+            cline(0, static_cast<double>(i) * 18.0, 120, static_cast<double>(i) * 18.0, 1.0);
+        }
+        ccircle(60, -45, 35);
+        if (kind == 1) {
+            engine_->submit(core::SetLtscaleCommand{0.5});
+        }
+        pump(250);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 2) {
+        // Three identical short Center lines; the MIDDLE one has CELTSCALE 0.3 -> visibly
+        // finer dashes than the others (one-entity override, document LTSCALE unchanged).
+        cline(0, 24, 90, 24, 1.0);
+        cline(0, 12, 90, 12, 0.3); // <- per-entity override
+        cline(0, 0, 90, 0, 1.0);
+        txt(95, 22, "CELTSCALE 1.0");
+        txt(95, 10, "CELTSCALE 0.3");
+        txt(95, -2, "CELTSCALE 1.0");
+        pump(250);
+        viewport_->zoom_extents();
+        pump(300);
+    } else if (kind == 3) {
+        // The user's case: a ~22-unit Center line renders solid (pattern bigger than the
+        // line) at the default scale; CELTSCALE 0.25 makes the same line dash.
+        cline(0, 12, 22, 12, 1.0);  // solid (pattern too large)
+        cline(0, 0, 22, 0, 0.25);   // dashes (per-entity scale)
+        txt(26, 11, "22u Center, CELTSCALE 1.0 (solid)");
+        txt(26, -1, "22u Center, CELTSCALE 0.25 (dashes)");
+        pump(250);
+        viewport_->zoom_extents();
+        pump(300);
+    }
+
+    const std::filesystem::path scene =
+        std::filesystem::path(out_png).replace_extension(".musa");
+    save_to(QString::fromStdString(scene.string()), false);
+    pump(400);
+
+    const QRect mfr = frameGeometry();
+    std::printf("[ltscale_shot] kind=%d line_vertex_count=%d scene=%s main=0x%lx frameG=(%d,%d %dx%d)\n",
+                kind, viewport_->line_vertex_count(), scene.string().c_str(),
+                static_cast<unsigned long>(winId()), mfr.x(), mfr.y(), mfr.width(), mfr.height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[ltscale_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
     }
     return true;
 }

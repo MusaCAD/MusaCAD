@@ -85,6 +85,29 @@ void with_dim_ov(Command& c, const std::function<void(DimOverrides&)>& fn) {
         c);
 }
 
+// CELTSCALE rides as a top-level field on the linetype-dashing Add*Commands (not in
+// props -- the store holds it sparsely). Commands without the field read 1.0 / no-op.
+double get_celtscale(const Command& c) {
+    double v = 1.0;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.celtscale; }) {
+                v = x.celtscale;
+            }
+        },
+        c);
+    return v;
+}
+void set_celtscale(Command& c, double v) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.celtscale; }) {
+                x.celtscale = v;
+            }
+        },
+        c);
+}
+
 double get_height(const Command& c) {
     double v = 0.0;
     std::visit(
@@ -258,6 +281,12 @@ bool is_text(EntityKind k) { return k == EntityKind::Text || k == EntityKind::MT
 bool is_text_only(EntityKind k) { return k == EntityKind::Text; }
 bool is_mtext_only(EntityKind k) { return k == EntityKind::MText; }
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
+// Entities whose linetype actually dashes (so a per-entity linetype scale matters). These
+// are the kinds whose Add*Command carries a celtscale field + go through dash_polyline.
+bool is_linetypeable(EntityKind k) {
+    return k == EntityKind::Line || k == EntityKind::Circle || k == EntityKind::Arc ||
+           k == EntityKind::Polyline;
+}
 
 // Read a dim numeric override field: flag = ByStyle (no override); num = the
 // effective value (override if set, else the resolved style value).
@@ -326,6 +355,13 @@ const Desc kDescs[] = {
              }
          });
      }},
+    {PropertyId::Celtscale, "General", "Linetype scale", PropEditor::Number, is_linetypeable,
+     [](const Command& c) {
+         PropertyValue v;
+         v.num = get_celtscale(c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) { set_celtscale(c, v.num > 0.0 ? v.num : 1.0); }},
     {PropertyId::Lineweight, "General", "Lineweight", PropEditor::LineweightCombo, any_kind,
      [](const Command& c) {
          const EntityProps p = get_props(c);
@@ -728,6 +764,8 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
         return MatchSlot::Lineweight;
     case PropertyId::Linetype:
         return MatchSlot::Linetype;
+    case PropertyId::Celtscale:
+        return MatchSlot::Celtscale;
     case PropertyId::TextHeight:
     case PropertyId::TextJustify:
     case PropertyId::TextFont:

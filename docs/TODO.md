@@ -37,6 +37,25 @@ the improved font. Both presets clean, ctest green.
    A future pass could fold in more of the public-domain Hershey occidental set (accents,
    extended punctuation) behind the same parser.
 
+## Linetype scale — LTSCALE + CELTSCALE (DONE 2026-06-19; PSLTSCALE staged)
+
+**Status:** Done. LTSCALE is the drawing scale (per-document, on `GeometryStore`); CELTSCALE
+is the per-entity multiplier (sparse cold map; PR "Linetype scale" + MATCHPROP; native v12 +
+DXF code 48). Effective dash scale = LTSCALE × CELTSCALE — one multiplication in
+`scene_snapshot.cpp` feeding the Ph23 dash renderer + the Ph30 plot path (no fork). CELTSCALE
+is therefore **off the staged list** (was noted as Planned in the Ph23/MATCHPROP reports).
+**Staged:**
+
+1. **PSLTSCALE** (paper-space linetype scaling) — AutoCAD scales dashes by the viewport zoom
+   in paper space so they read consistently across scaled viewports. **Why parked:** needs
+   paper-space **layouts** (deferred with the Ph30 layout work). **Done looks like:** a
+   PSLTSCALE system var that, in a layout viewport, folds the viewport scale into the
+   effective dash scale.
+2. **Block-internal / dimension dashing** — block-internal (INSERT) and dimension geometry
+   render solid today (they don't route through `dash_polyline`), so CELTSCALE has no effect
+   there. **Done looks like:** route block-member + dim ext/dim lines through the dash walker,
+   with the INSERT's CELTSCALE multiplying its contained entities' scale.
+
 ## Plotting / printing (Phase 30 follow-ups)
 
 Phase 30 added the PLOT pipeline: a shared vector renderer (`paint_plot`) used by both

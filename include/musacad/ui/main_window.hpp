@@ -131,6 +131,11 @@ public:
     /// the Settings dialog (Color unchecked), 4 skips inapplicable (TEXT -> LINE, universal
     /// only). Builds the scene, runs the match, zooms, and grabs the app region.
     bool matchprop_shot(int kind, const std::string& out_png);
+    /// Real-window capture for LTSCALE / CELTSCALE. `kind`: 0 Center geometry at LTSCALE 1.0
+    /// (before), 1 same at LTSCALE 0.5 (after), 2 three short Center lines with the middle
+    /// at CELTSCALE 0.3, 3 the user's ~22-unit Center line solid vs CELTSCALE 0.25. Saves
+    /// the scene to "<out>.musa" for the plot-consistency proof.
+    bool ltscale_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();

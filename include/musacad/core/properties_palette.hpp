@@ -25,6 +25,7 @@ enum class PropertyId : std::uint16_t {
     Layer = 0,
     Color,
     Linetype,
+    Celtscale, ///< per-entity linetype scale (AutoCAD CELTSCALE); shown for dashing kinds
     Lineweight,
     // Geometry (read-only display; editable is staged).
     GeomLength,
@@ -100,6 +101,7 @@ enum class MatchSlot : std::uint8_t {
     Layer,
     Lineweight,
     Linetype,
+    Celtscale,
     Text,
     Dimension,
 };
@@ -107,19 +109,20 @@ enum class MatchSlot : std::uint8_t {
 /// True for the universal MATCHPROP slots (copy regardless of entity family).
 [[nodiscard]] constexpr bool match_slot_universal(MatchSlot s) noexcept {
     return s == MatchSlot::Color || s == MatchSlot::Layer || s == MatchSlot::Lineweight ||
-           s == MatchSlot::Linetype;
+           s == MatchSlot::Linetype || s == MatchSlot::Celtscale;
 }
 
 /// Which MATCHPROP categories a run copies (the Settings dialog state). All on by
-/// default (AutoCAD's default-all-on). `ltscale`/`plotstyle`/`hatch`/`polyline` are
-/// surfaced for AutoCAD parity but gate no registry descriptors yet (LTSCALE is global,
-/// plot style/hatch unmodelled, polyline has no type-specific registry property).
+/// default (AutoCAD's default-all-on). `celtscale` is the per-entity "Linetype scale"
+/// toggle; `plotstyle`/`hatch`/`polyline` are surfaced for AutoCAD parity but gate no
+/// registry descriptors yet (plot style/hatch unmodelled, polyline has no type-specific
+/// registry property).
 struct MatchPropFilter {
     bool color = true;
     bool layer = true;
     bool lineweight = true;
     bool linetype = true;
-    bool ltscale = true;   ///< reserved (LTSCALE is a global, not a per-entity property)
+    bool celtscale = true; ///< per-entity linetype scale (AutoCAD MA "Linetype scale")
     bool plotstyle = true; ///< reserved (plot style not modelled)
     bool text = true;
     bool dimension = true;
@@ -137,6 +140,8 @@ struct MatchPropFilter {
             return lineweight;
         case MatchSlot::Linetype:
             return linetype;
+        case MatchSlot::Celtscale:
+            return celtscale;
         case MatchSlot::Text:
             return text;
         case MatchSlot::Dimension:

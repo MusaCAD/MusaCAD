@@ -153,7 +153,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         const ResolvedProps r = entity_resolved(store, l->props);
         const std::array<Vec2, 2> seg{l->a, l->b};
         dashed.clear();
-        dash_polyline(seg, r.linetype, ltscale, dashed);
+        // Effective linetype scale = document LTSCALE x this entity's CELTSCALE. This is
+        // the ONE multiplication feeding the Ph23 dash renderer; the plot path uses the
+        // same build_render_snapshot, so plot honours it with no fork.
+        dash_polyline(seg, r.linetype, ltscale * store.celtscale(h), dashed);
         add_lines(r.color, r.lineweight, dashed);
     });
 
@@ -167,7 +170,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         // Dash by arc-length along the tessellated curve (phase carries across the
         // tessellation vertices), so the pattern stays even and zoom-consistent.
         dashed.clear();
-        dash_polyline(tess, r.linetype, ltscale, dashed);
+        dash_polyline(tess, r.linetype, ltscale * store.celtscale(h), dashed);
         add_lines(r.color, r.lineweight, dashed);
     };
     for_each_live(store.circles(), EntityKind::Circle,

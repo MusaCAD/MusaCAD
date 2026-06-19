@@ -325,6 +325,9 @@ std::string serialize_dxf(const Document& doc) {
     for (const DocLine& l : doc.lines) {
         code(s, 0, "LINE");
         emit_props(s, doc, l.props);
+        if (l.celtscale != 1.0) {
+            code_d(s, 48, l.celtscale); // per-entity linetype scale (CELTSCALE)
+        }
         code_d(s, 10, l.a.x);
         code_d(s, 20, l.a.y);
         code_d(s, 30, 0.0);
@@ -335,6 +338,9 @@ std::string serialize_dxf(const Document& doc) {
     for (const DocCircle& c : doc.circles) {
         code(s, 0, "CIRCLE");
         emit_props(s, doc, c.props);
+        if (c.celtscale != 1.0) {
+            code_d(s, 48, c.celtscale);
+        }
         code_d(s, 10, c.center.x);
         code_d(s, 20, c.center.y);
         code_d(s, 30, 0.0);
@@ -343,6 +349,9 @@ std::string serialize_dxf(const Document& doc) {
     for (const DocArc& a : doc.arcs) {
         code(s, 0, "ARC");
         emit_props(s, doc, a.props);
+        if (a.celtscale != 1.0) {
+            code_d(s, 48, a.celtscale);
+        }
         code_d(s, 10, a.center.x);
         code_d(s, 20, a.center.y);
         code_d(s, 30, 0.0);
@@ -353,6 +362,9 @@ std::string serialize_dxf(const Document& doc) {
     for (const DocPolyline& p : doc.polylines) {
         code(s, 0, "LWPOLYLINE");
         emit_props(s, doc, p.props);
+        if (p.celtscale != 1.0) {
+            code_d(s, 48, p.celtscale);
+        }
         code_i(s, 90, static_cast<long>(p.points.size()));
         code_i(s, 70, p.closed ? 1 : 0);
         const bool has_bulge = p.bulges.size() == p.points.size();
@@ -1102,14 +1114,18 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (type == "LINE") {
             if (sink.lines != nullptr) {
                 sink.lines->push_back(DocLine{{getd(body, 10), getd(body, 20)},
-                                              {getd(body, 11), getd(body, 21)}, props_of(body)});
+                                              {getd(body, 11), getd(body, 21)},
+                                              props_of(body),
+                                              getd(body, 48, 1.0)}); // code 48 = CELTSCALE
             } else {
                 ++skipped[type];
             }
         } else if (type == "CIRCLE") {
             if (sink.circles != nullptr) {
-                sink.circles->push_back(
-                    DocCircle{{getd(body, 10), getd(body, 20)}, getd(body, 40), props_of(body)});
+                sink.circles->push_back(DocCircle{{getd(body, 10), getd(body, 20)},
+                                                  getd(body, 40),
+                                                  props_of(body),
+                                                  getd(body, 48, 1.0)});
             } else {
                 ++skipped[type];
             }
@@ -1119,7 +1135,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                                             getd(body, 40),
                                             to_radians(getd(body, 50)),
                                             to_radians(getd(body, 51)),
-                                            props_of(body)});
+                                            props_of(body),
+                                            getd(body, 48, 1.0)});
             } else {
                 ++skipped[type];
             }
@@ -1157,6 +1174,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 pl.bulges.clear(); // all straight -> store none
             }
             pl.props = props_of(body);
+            pl.celtscale = getd(body, 48, 1.0); // code 48 = CELTSCALE
             sink.polylines->push_back(std::move(pl));
         } else if (type == "SPLINE") {
             // Evaluate the ACTUAL B-spline (control points 10/20 + degree 71 + knots 40)

@@ -30,11 +30,15 @@ enum class EraseScope : std::uint8_t { Last, All };
 // Add* commands carry an optional EntityProps. Empty => the engine stamps the
 // current layer (a fresh user draw); set => exact props (capture/undo/move,
 // preserving layer + overrides).
+// `celtscale` is the per-entity linetype scale (AutoCAD CELTSCALE, default 1.0); it
+// round-trips capture/undo/clipboard for the linetype-dashing entity kinds. The store
+// holds it sparsely (not in the hot data struct), so it travels on the command, not props.
 struct AddLineCommand {
     Vec2 a;
     Vec2 b;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    double celtscale = 1.0;
 };
 
 struct AddPolylineCommand {
@@ -44,6 +48,7 @@ struct AddPolylineCommand {
     std::optional<EntityProps> props = {};
     /// Per-vertex arc bulges (b = tan(theta/4); 0 = straight). Empty = all straight.
     std::vector<double> bulges = {};
+    double celtscale = 1.0;
 };
 
 struct AddCircleCommand {
@@ -51,6 +56,7 @@ struct AddCircleCommand {
     double radius = 0.0;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    double celtscale = 1.0;
 };
 
 struct AddArcCommand {
@@ -60,6 +66,7 @@ struct AddArcCommand {
     double end_angle = 0.0;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    double celtscale = 1.0;
 };
 
 struct EraseCommand {

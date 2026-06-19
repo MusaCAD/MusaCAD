@@ -28,8 +28,10 @@ namespace musacad::core::io {
 /// v9: block definitions (BLOCKDEF..ENDBLOCKDEF) + block references (INSERT). Older
 /// files have no blocks; the keys simply never appear. v10: a font-name line after the
 /// content of TEXT/MTEXT/LEADER/MLEADER records (older files have none => stroke font).
-/// v11: saved plot page setups (PAGESETUP records; older files have none).
-inline constexpr std::uint32_t kFormatVersion = 11;
+/// v11: saved plot page setups (PAGESETUP records; older files have none). v12: per-entity
+/// CELTSCALE (linetype scale) for line/circle/arc/polyline, written as trailing CELTSCALE
+/// records (older files have none => 1.0); the LTSCALE global is still the LTSCALE record.
+inline constexpr std::uint32_t kFormatVersion = 12;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -42,12 +44,14 @@ struct DocLine {
     Vec2 a;
     Vec2 b;
     EntityProps props{};
+    double celtscale = 1.0; ///< per-entity linetype scale (CELTSCALE; v12+)
     friend bool operator==(const DocLine&, const DocLine&) = default;
 };
 struct DocCircle {
     Vec2 center;
     double radius = 0.0;
     EntityProps props{};
+    double celtscale = 1.0; ///< per-entity linetype scale (CELTSCALE; v12+)
     friend bool operator==(const DocCircle&, const DocCircle&) = default;
 };
 struct DocArc {
@@ -56,6 +60,7 @@ struct DocArc {
     double start_angle = 0.0;
     double end_angle = 0.0;
     EntityProps props{};
+    double celtscale = 1.0; ///< per-entity linetype scale (CELTSCALE; v12+)
     friend bool operator==(const DocArc&, const DocArc&) = default;
 };
 struct DocPolyline {
@@ -63,6 +68,7 @@ struct DocPolyline {
     bool closed = false;
     EntityProps props{};
     std::vector<double> bulges = {}; ///< per-vertex arc bulges (empty = all straight)
+    double celtscale = 1.0;          ///< per-entity linetype scale (CELTSCALE; v12+)
     friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
 };
 struct DocSpline {

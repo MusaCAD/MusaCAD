@@ -81,8 +81,9 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Lineweight display mapping | Fixed-screen, DPI-anchored: `px = mm × DPI/25.4` (DPI from `QScreen::physicalDotsPerInch`; 96 DPI default ⇒ 3.7795 px/mm), zoom-independent, Default = 1px hairline | Implemented (Ph15, AutoCAD-accurate) |
 | Lineweight ladder | Standard set 0.00…2.11 mm; mapping continuous over it | Implemented (Ph15) |
 | Lineweight display *to scale* (world-proportional, thickens with zoom) | Alternative AutoCAD mode | Planned |
-| LTSCALE | Global linetype scale | Implemented (Ph23; native + DXF $LTSCALE round-trip) |
-| CELTSCALE | Per-entity linetype scale | Planned |
+| LTSCALE | Drawing linetype scale (**per document**) | Implemented (Ph23; native + DXF $LTSCALE round-trip) |
+| CELTSCALE | Per-entity linetype scale; effective dash scale = LTSCALE × CELTSCALE | Implemented (sparse cold storage; PR "Linetype scale" + MATCHPROP; native v12 + DXF code 48) |
+| PSLTSCALE | Paper-space linetype scaling | Planned (with paper-space layouts) |
 | Per-layer / per-entity lineweight | ByLayer + override | Implemented (Ph12) |
 | Per-layer / per-entity color, linetype | ByLayer + override | Implemented (Ph12) |
 | LUNITS / LUPREC | Drawing unit format / precision | Planned |
@@ -185,9 +186,9 @@ entities are not joinable and are left untouched.
 | Picking a dimension | A click on the dimension's **measured text** picks the dimension (the text is part of the dim, not a separate entity) — works for both source and destination | Implemented |
 | Destination loop | Prompt **"Select destination object(s) or [Settings]:"** → each pick immediately applies the matched properties; **Enter / right-click** ends; **Esc** cancels | Implemented |
 | Paintbrush cursor | Shown between the source pick and the end of the command (AutoCAD's match-mode signal) | Implemented (a drawn brush cursor) |
-| Universal properties | Color, Layer, Lineweight, Linetype copy across ANY source/target kinds. **ByLayer/ByBlock copies as state**, not as the resolved literal | Implemented |
+| Universal properties | Color, Layer, Lineweight, Linetype, **Linetype scale (CELTSCALE)** copy across ANY source/target kinds. **ByLayer/ByBlock copies as state**, not as the resolved literal | Implemented |
 | Type-specific (Basic Properties group) | **Text** (height/font/justify/width-factor) and **Dimension** (per-dim overrides) copy only within a shared family; non-applicable properties are silently skipped | Implemented |
-| LTScale / Plot Style / Hatch / Polyline | Shown in Settings for AutoCAD parity but disabled — LTSCALE is a global, plot style/hatch are not modelled, and Polyline has no type-specific registry property yet | Stated limitation |
+| Plot Style / Hatch / Polyline | Shown in Settings for AutoCAD parity but disabled — plot style/hatch are not modelled, and Polyline has no type-specific registry property yet | Stated limitation |
 | Per-target undo | Each matched target is its own undo entry (Ctrl+Z undoes matches in reverse) | Implemented |
 | Settings (`S`) | Opens a dark modal listing Basic + Special categories with checkboxes (all on by default). State **persists in QSettings for the session** and the next MA invocation; OK applies, Cancel reverts | Implemented |
 

@@ -36,21 +36,27 @@ Document document_from_store(const GeometryStore& store) {
     for (std::uint32_t i = 0; i < lines.slot_count(); ++i) {
         if (lines.alive(i)) {
             const LineData& l = lines.data()[i];
-            doc.lines.push_back(DocLine{l.a, l.b, l.props});
+            doc.lines.push_back(DocLine{
+                l.a, l.b, l.props,
+                store.celtscale(EntityHandle{i, lines.generations()[i], EntityKind::Line})});
         }
     }
     const auto& circles = store.circles();
     for (std::uint32_t i = 0; i < circles.slot_count(); ++i) {
         if (circles.alive(i)) {
             const CircleData& c = circles.data()[i];
-            doc.circles.push_back(DocCircle{c.center, c.radius, c.props});
+            doc.circles.push_back(DocCircle{
+                c.center, c.radius, c.props,
+                store.celtscale(EntityHandle{i, circles.generations()[i], EntityKind::Circle})});
         }
     }
     const auto& arcs = store.arcs();
     for (std::uint32_t i = 0; i < arcs.slot_count(); ++i) {
         if (arcs.alive(i)) {
             const ArcData& a = arcs.data()[i];
-            doc.arcs.push_back(DocArc{a.center, a.radius, a.start_angle, a.end_angle, a.props});
+            doc.arcs.push_back(
+                DocArc{a.center, a.radius, a.start_angle, a.end_angle, a.props,
+                       store.celtscale(EntityHandle{i, arcs.generations()[i], EntityKind::Arc})});
         }
     }
     const auto& plines = store.polylines();
@@ -59,8 +65,10 @@ Document document_from_store(const GeometryStore& store) {
             const PolylineData& p = plines.data()[i];
             const std::span<const Vec2> v = store.vertices_of(p);
             const std::span<const double> b = store.bulges_of(p);
-            doc.polylines.push_back(DocPolyline{std::vector<Vec2>(v.begin(), v.end()), p.closed,
-                                                p.props, std::vector<double>(b.begin(), b.end())});
+            doc.polylines.push_back(DocPolyline{
+                std::vector<Vec2>(v.begin(), v.end()), p.closed, p.props,
+                std::vector<double>(b.begin(), b.end()),
+                store.celtscale(EntityHandle{i, plines.generations()[i], EntityKind::Polyline})});
         }
     }
     const auto& splines = store.splines();
@@ -239,16 +247,17 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.add_point(p.p, p.props);
     }
     for (const DocLine& l : doc.lines) {
-        store.add_line(l.a, l.b, l.props);
+        store.set_celtscale(store.add_line(l.a, l.b, l.props), l.celtscale);
     }
     for (const DocCircle& c : doc.circles) {
-        store.add_circle(c.center, c.radius, c.props);
+        store.set_celtscale(store.add_circle(c.center, c.radius, c.props), c.celtscale);
     }
     for (const DocArc& a : doc.arcs) {
-        store.add_arc(a.center, a.radius, a.start_angle, a.end_angle, a.props);
+        store.set_celtscale(store.add_arc(a.center, a.radius, a.start_angle, a.end_angle, a.props),
+                            a.celtscale);
     }
     for (const DocPolyline& p : doc.polylines) {
-        store.add_polyline(p.points, p.bulges, p.closed, p.props);
+        store.set_celtscale(store.add_polyline(p.points, p.bulges, p.closed, p.props), p.celtscale);
     }
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props);

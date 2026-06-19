@@ -17,22 +17,27 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     switch (h.kind) {
     case EntityKind::Line: {
         const LineData* l = store.line(h);
-        return AddLineCommand{l->a, l->b, 0, l->props};
+        return AddLineCommand{l->a, l->b, 0, l->props, store.celtscale(h)};
     }
     case EntityKind::Circle: {
         const CircleData* c = store.circle(h);
-        return AddCircleCommand{c->center, c->radius, 0, c->props};
+        return AddCircleCommand{c->center, c->radius, 0, c->props, store.celtscale(h)};
     }
     case EntityKind::Arc: {
         const ArcData* a = store.arc(h);
-        return AddArcCommand{a->center, a->radius, a->start_angle, a->end_angle, 0, a->props};
+        return AddArcCommand{a->center,   a->radius, a->start_angle, a->end_angle, 0,
+                             a->props,    store.celtscale(h)};
     }
     case EntityKind::Polyline: {
         const PolylineData* p = store.polyline(h);
         const auto verts = store.vertices_of(*p);
         const auto bulges = store.bulges_of(*p);
-        return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()), p->closed, 0,
-                                  p->props, std::vector<double>(bulges.begin(), bulges.end())};
+        return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()),
+                                  p->closed,
+                                  0,
+                                  p->props,
+                                  std::vector<double>(bulges.begin(), bulges.end()),
+                                  store.celtscale(h)};
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
@@ -100,13 +105,17 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             using T = std::decay_t<decltype(c)>;
             if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
+                store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 handle = store.add_polyline(c.points, c.bulges, c.closed, props_of(c.props));
+                store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 handle = store.add_circle(c.center, c.radius, props_of(c.props));
+                store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddArcCommand>) {
                 handle =
                     store.add_arc(c.center, c.radius, c.start_angle, c.end_angle, props_of(c.props));
+                store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 handle = store.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
                                         props_of(c.props), store.add_font(c.font));
