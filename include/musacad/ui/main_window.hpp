@@ -136,6 +136,13 @@ public:
     /// at CELTSCALE 0.3, 3 the user's ~22-unit Center line solid vs CELTSCALE 0.25. Saves
     /// the scene to "<out>.musa" for the plot-consistency proof.
     bool ltscale_shot(int kind, const std::string& out_png);
+    /// Real-window capture for DYN COMMAND CONTROL (canvas mode). Sends Esc/Enter/Space
+    /// through the app-wide event filter while a command is active and reports whether they
+    /// reach the command processor. `kind`: 0 Esc cancels a LINE mid-rubber-band (even with a
+    /// pending typed value), 1 Enter ends a LINE at a next-point prompt, 2 Enter two-step
+    /// (commit a typed length, then end), 3 a ribbon click cancels the active command and
+    /// starts the new one. Returns true if the expected dispatch happened.
+    bool cmdctl_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();

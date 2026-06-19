@@ -33,6 +33,11 @@ public:
     /// when idle, or is delivered to the active command (e.g. to end LINE).
     void submit_line(const std::string& text);
 
+    /// Starts a command by alias (ribbon clicks, shortcuts, programmatic invocation).
+    /// An unambiguous command start: any command in progress is cancelled cleanly first
+    /// (its preview dropped, the selection preserved), then the new command begins.
+    void start_command(const std::string& alias);
+
     /// Cancels the active command (ESC).
     void cancel();
 
@@ -121,7 +126,6 @@ public:
     [[nodiscard]] ViewControl* view() override { return view_; }
 
 private:
-    void start_command(const std::string& alias);
     void finalize_if_done();
     void show_ready();
 

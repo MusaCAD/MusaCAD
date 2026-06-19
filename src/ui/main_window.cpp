@@ -432,7 +432,10 @@ void MainWindow::build_ribbon() {
         b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(alias)));
         connect(b, &QToolButton::clicked, this, [this, alias] {
             command_widget_->focus_input();
-            processor_->submit_line(alias);
+            // A ribbon click is an unambiguous command start: go straight to start_command
+            // (which cancels any command in progress) rather than submit_line, whose typed-
+            // text path would feed the alias to the active command as input and never start.
+            processor_->start_command(alias);
         });
         return b;
     };
@@ -783,12 +786,49 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
                 return true;
             }
         }
+        // COMMAND-CONTROL keys (Esc / Enter / Space) while a command is active in canvas
+        // (F12-ON) mode. DYN never swallows these (the recurring keyboard-routing bug): in
+        // canvas mode the command line is hidden, so a key that "falls through" the DYN
+        // routing reaches no focused widget and is lost -- so we dispatch them HERE, once.
+        //   - Esc  -> always cancels the active command (clears rubber-band + DYN).
+        //   - Enter/Space -> AutoCAD two-step: commit a pending typed DYN/sub-prompt value
+        //     if present, else end the current step (which ends LINE at a next-point prompt).
+        // F12-OFF (classic bottom-bar) is unchanged: the gate is off, so the command line
+        // handles Esc/Enter as before. A focused dialog / Properties field keeps its keys.
+        if (viewport_ != nullptr && processor_ != nullptr && processor_->has_active_command() &&
+            dyn_action_ != nullptr && dyn_action_->isChecked()) {
+            const int k = ke->key();
+            if (k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter ||
+                k == Qt::Key_Space) {
+                QWidget* fw = QApplication::focusWidget();
+                const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
+                                      properties_dock_->isAncestorOf(fw);
+                // The command line / DYN widget are QLineEdits but must NOT exempt the
+                // carve-out (they're hidden in canvas mode); a genuine dialog/text editor does.
+                const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
+                                    (fw == static_cast<QWidget*>(command_widget_) ||
+                                     command_widget_->isAncestorOf(fw));
+                const bool in_dyn = dyn_ != nullptr && fw != nullptr &&
+                                    (fw == static_cast<QWidget*>(dyn_) || dyn_->isAncestorOf(fw));
+                const bool in_text_input = !in_cmd && !in_dyn &&
+                                           (qobject_cast<QLineEdit*>(fw) != nullptr ||
+                                            qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+                if (!in_props && !in_text_input) {
+                    if (k == Qt::Key_Escape) {
+                        viewport_->handle_escape(); // grip-cancel or processor->cancel()
+                    } else {
+                        viewport_->dyn_end_step(); // commit pending value, else end the step
+                    }
+                    return true;
+                }
+            }
+        }
         // On-canvas Dynamic Input: during a dimensional rubber-band, route dimension
-        // keystrokes (digits/'.'/'-', Tab, Enter, Backspace, option-keyword letters)
-        // to the viewport's canvas fields BEFORE the command line (which holds keyboard
-        // focus by default) can consume them -- this is what makes type-without-click
-        // and Tab work. Yield to the Properties palette so editing a property field is
-        // never hijacked. Esc / empty-field Enter return false and fall through.
+        // keystrokes (digits/'.'/'-', Tab, Backspace, option-keyword letters) to the
+        // viewport's canvas fields BEFORE the command line (which holds keyboard focus by
+        // default) can consume them -- this is what makes type-without-click and Tab work.
+        // Yield to the Properties palette so editing a property field is never hijacked.
+        // (Esc/Enter/Space are handled by the command-control carve-out above.)
         if (viewport_ != nullptr && viewport_->dyn_capturing()) {
             QWidget* fw = QApplication::focusWidget();
             const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
@@ -2209,6 +2249,181 @@ bool MainWindow::selftest_dyn() {
     QSettings().setValue(QStringLiteral("dyn/enabled"), saved_pref);
     engine_->submit(core::NewDocumentCommand{});
     return all;
+}
+
+bool MainWindow::cmdctl_shot(int kind, const std::string& out_png) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    const auto pump_until = [](auto pred) {
+        for (int i = 0; i < 600; ++i) {
+            if (pred()) {
+                return true;
+            }
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return pred();
+    };
+    // Send a key the same way the real app does: through the app-wide event filter (the
+    // command-control carve-out lives there). sendEvent runs qApp event filters first.
+    const auto send_key = [](int key, const QString& t) {
+        QWidget* target = QApplication::focusWidget();
+        QKeyEvent ke(QEvent::KeyPress, key, Qt::NoModifier, t);
+        QApplication::sendEvent(target != nullptr ? static_cast<QObject*>(target)
+                                                  : static_cast<QObject*>(QApplication::instance()),
+                                &ke);
+    };
+    const auto focus_vp = [this] {
+        activateWindow();
+        if (viewport_container_ != nullptr) {
+            viewport_container_->setFocus(Qt::OtherFocusReason);
+        }
+    };
+    const auto hold = [&](const char* label) {
+        std::printf("[cmdctl_shot] kind=%d %s main=0x%lx frameG=(%d,%d %dx%d)\n", kind, label,
+                    static_cast<unsigned long>(winId()), frameGeometry().x(), frameGeometry().y(),
+                    frameGeometry().width(), frameGeometry().height());
+        std::fflush(stdout);
+        if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+            std::printf("[cmdctl_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                        static_cast<unsigned long>(winId()), out_png.c_str());
+            std::fflush(stdout);
+            pump(12000);
+        }
+    };
+
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    engine_->submit(core::NewDocumentCommand{});
+    pump(200);
+    dyn_action_->setChecked(true); // canvas (F12-ON) mode -- the carve-out's gate
+    pump(150);
+    focus_vp();
+    pump(60);
+
+    bool ok = false;
+
+    if (kind == 0) {
+        // ESC cancels a LINE mid-rubber-band, even with a pending typed DYN value.
+        processor_->start_command("LINE");
+        pump(80);
+        processor_->submit_line("0,0");
+        processor_->submit_line("50,0");
+        processor_->submit_line("50,30"); // two committed segments; rubber-band for the next
+        pump(120);
+        const int verts_before = viewport_->line_vertex_count();
+        const bool active_before = processor_->has_active_command();
+        focus_vp();
+        viewport_->dyn_test_type("20"); // a pending typed value: Esc must STILL cancel
+        pump(60);
+        const bool pending = viewport_->dyn_typing();
+        send_key(Qt::Key_Escape, QString());
+        const bool cancelled = pump_until([this] { return !processor_->has_active_command(); });
+        const int verts_after = viewport_->line_vertex_count();
+        ok = active_before && pending && cancelled && verts_after == verts_before && verts_after > 0;
+        std::printf("[cmdctl_shot] kind=0 ESC: active_before=%d pending_value=%d cancelled=%d "
+                    "committed_verts=%d->%d (kept) => %s\n",
+                    active_before, pending, cancelled, verts_before, verts_after,
+                    ok ? "PASS" : "FAIL");
+        std::fflush(stdout);
+        hold("after-ESC (no active command, committed segments kept)");
+    } else if (kind == 1) {
+        // ENTER with no pending value ends the LINE at a next-point prompt.
+        processor_->start_command("LINE");
+        pump(80);
+        processor_->submit_line("0,0");
+        processor_->submit_line("50,0");
+        processor_->submit_line("50,30"); // two committed segments; rubber-band for the next
+        pump(120);
+        const int verts_before = viewport_->line_vertex_count();
+        const bool active_before = processor_->has_active_command();
+        const bool no_pending = !viewport_->dyn_typing();
+        focus_vp();
+        send_key(Qt::Key_Return, QStringLiteral("\r"));
+        const bool ended = pump_until([this] { return !processor_->has_active_command(); });
+        const int verts_after = viewport_->line_vertex_count();
+        ok = active_before && no_pending && ended && verts_after == verts_before && verts_after > 0;
+        std::printf("[cmdctl_shot] kind=1 ENTER-ends: active_before=%d no_pending=%d ended=%d "
+                    "committed_verts=%d->%d (kept) => %s\n",
+                    active_before, no_pending, ended, verts_before, verts_after,
+                    ok ? "PASS" : "FAIL");
+        std::fflush(stdout);
+        hold("after-ENTER (LINE ended, segments kept)");
+    } else if (kind == 2) {
+        // ENTER two-step: a pending typed value commits (keeps drawing); a second ENTER with
+        // nothing typed ends the command.
+        processor_->start_command("LINE");
+        pump(80);
+        processor_->submit_line("0,0"); // first point -> rubber-band (length/angle fields)
+        pump(120);
+        focus_vp();
+        viewport_->dyn_test_type("50");  // Length = 50
+        viewport_->dyn_test_tab();
+        viewport_->dyn_test_type("0");   // Angle = 0
+        pump(60);
+        const bool pending = viewport_->dyn_typing();
+        const int verts_before = viewport_->line_vertex_count();
+        send_key(Qt::Key_Return, QStringLiteral("\r")); // step 1: commit the typed value
+        const bool committed = pump_until([this, verts_before] {
+            return viewport_->line_vertex_count() > verts_before;
+        });
+        const bool still_active = processor_->has_active_command();
+        std::printf("[cmdctl_shot] kind=2 ENTER step1 (commit typed value): pending=%d "
+                    "committed=%d verts %d->%d still_active=%d\n",
+                    pending, committed, verts_before, viewport_->line_vertex_count(),
+                    still_active);
+        std::fflush(stdout);
+        hold("after-ENTER-step1 (typed 50-unit segment committed, still drawing)");
+        focus_vp();
+        send_key(Qt::Key_Return, QStringLiteral("\r")); // step 2: no pending value -> end
+        const bool ended = pump_until([this] { return !processor_->has_active_command(); });
+        ok = pending && committed && still_active && ended;
+        std::printf("[cmdctl_shot] kind=2 ENTER step2 (end): ended=%d => %s\n", ended,
+                    ok ? "PASS" : "FAIL");
+        std::fflush(stdout);
+    } else if (kind == 3) {
+        // A ribbon click while a command is active cancels it and starts the new one.
+        processor_->start_command("LINE");
+        pump(80);
+        processor_->submit_line("0,0");
+        processor_->submit_line("50,0"); // one committed segment; LINE rubber-band active
+        pump(120);
+        const bool line_active = processor_->has_active_command();
+        const std::string prompt_line = processor_->current_prompt();
+        const int verts_line = viewport_->line_vertex_count();
+        // Click the REAL ribbon Circle button (objectName ribbon.cmd.C) -> add_cmd lambda.
+        auto* circle_btn = findChild<QToolButton*>(QStringLiteral("ribbon.cmd.C"));
+        const bool have_btn = circle_btn != nullptr;
+        if (have_btn) {
+            circle_btn->click();
+        } else {
+            processor_->start_command("C"); // fallback: same dispatch the button uses
+        }
+        pump(150);
+        const bool still_active = processor_->has_active_command();
+        const std::string prompt_circle = processor_->current_prompt();
+        const bool switched = prompt_circle != prompt_line; // LINE next-point -> CIRCLE center
+        const int verts_after = viewport_->line_vertex_count();
+        ok = line_active && still_active && switched && verts_after == verts_line;
+        std::printf("[cmdctl_shot] kind=3 RIBBON cancels-active: line_active=%d clicked_button=%d "
+                    "still_active=%d switched=%d prompt '%s' -> '%s' line_verts=%d->%d => %s\n",
+                    line_active, have_btn, still_active, switched, prompt_line.c_str(),
+                    prompt_circle.c_str(), verts_line, verts_after, ok ? "PASS" : "FAIL");
+        std::fflush(stdout);
+        hold("after-RIBBON-click (LINE cancelled, CIRCLE active, LINE segment kept)");
+    }
+
+    dyn_action_->setChecked(false);
+    engine_->submit(core::NewDocumentCommand{});
+    return ok;
 }
 
 bool MainWindow::dyn_shot(int kind, const std::string& out_png) {

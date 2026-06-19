@@ -1008,6 +1008,29 @@ bool ViewportWindow::dyn_commit() {
     return true;
 }
 
+void ViewportWindow::dyn_end_step() {
+    if (processor_ == nullptr) {
+        return;
+    }
+    if (dyn_capturing()) {
+        // Dimensional rubber-band: a typed value commits (keeps drawing); nothing typed
+        // -> end the step (an empty submit ends LINE at a next-point prompt).
+        if (!dyn_commit()) {
+            processor_->submit_line("");
+        }
+    } else if (sub_prompt_active()) {
+        // Value/keyword sub-prompt: submit the typed text, or the command's default when
+        // empty (accept <0>, end the command, ...). Mirrors sub_prompt_handle_key's Enter.
+        const std::string v = sub_entry_;
+        sub_entry_.clear();
+        processor_->submit_line(v);
+        rebuild_overlay();
+    } else {
+        // Active command with no canvas input field -> end the current step.
+        processor_->submit_line("");
+    }
+}
+
 void ViewportWindow::dyn_test_type(const std::string& chars) {
     if (!dyn_capturing()) {
         return;
@@ -1372,8 +1395,11 @@ void ViewportWindow::handle_escape() {
         rebuild_overlay();
         return;
     }
-    // Cancel the active command, or clear the selection when idle.
+    // Cancel the active command, or clear the selection when idle. Rebuild the overlay so
+    // the rubber-band + on-canvas DYN fields clear at once (in canvas mode no later focus
+    // event would otherwise trigger a redraw).
     processor_->cancel();
+    rebuild_overlay();
 }
 
 void ViewportWindow::wheelEvent(QWheelEvent* event) {

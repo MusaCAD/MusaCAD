@@ -154,6 +154,15 @@ void CommandProcessor::start_command(const std::string& alias) {
         show_ready();
         return;
     }
+    // AutoCAD: starting a new command implicitly cancels the one in progress. Run its
+    // cancel() cleanly FIRST (so its rubber-band/preview is dropped and any pending op-log
+    // group is discarded) rather than letting the move below destroy it mid-flight. The
+    // current selection is left untouched -- cancel() never clears it.
+    if (active_) {
+        active_->cancel(*this);
+        active_.reset();
+        preview_ = PreviewSpec{};
+    }
     current_group_ = ++group_counter_;
     last_command_alias_ = alias;
     active_ = std::move(cmd);

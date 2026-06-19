@@ -263,6 +263,12 @@ public:
     /// (e.g. Enter ends a LINE) still works.
     bool dyn_handle_key(int key, const QString& text);
 
+    /// Command-control Enter/Space while a command is active (AutoCAD two-step): commit a
+    /// pending typed value (dimensional rubber-band or sub-prompt) if there is one, else end
+    /// the current step (which ends LINE at a next-point prompt). Called from the app-wide
+    /// event filter's command-control carve-out so these keys are never swallowed by DYN.
+    void dyn_end_step();
+
     /// The (UI-thread) font engine used to lay out TTF glyphs for the on-canvas
     /// command UI. A DEDICATED instance (not the geometry engine's) so the UI thread
     /// never shares a font face with the geometry thread.

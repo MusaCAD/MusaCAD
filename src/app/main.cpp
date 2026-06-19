@@ -169,6 +169,21 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // DYN COMMAND CONTROL capture: MUSACAD_CMDCTL_SHOT="kind|out.png" (kind 0 Esc cancels a
+    // LINE mid-rubber-band, 1 Enter ends a LINE, 2 Enter two-step commit-then-end, 3 a ribbon
+    // click cancels the active command and starts the new one). Drives the keys through the
+    // app-wide event filter and prints PASS/FAIL plus the winId for an `import` capture.
+    if (qEnvironmentVariableIsSet("MUSACAD_CMDCTL_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a =
+                qEnvironmentVariable("MUSACAD_CMDCTL_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const QString out = a.value(1, QStringLiteral("/tmp/cmdctl_shot.png"));
+            const bool ok = window.cmdctl_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
     // Headless / CI smoke path: launch, render a few frames, quit. Lets the ASan
     // dev build verify a clean, leak-free startup/shutdown.
     if (qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {

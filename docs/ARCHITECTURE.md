@@ -1160,6 +1160,45 @@ and values AT the crosshair. It is a new **input surface**, not new command logi
 * **No data-model change; threading intact.** DYN is pure UI glue over the processor;
   the renderer/snapshot are untouched. Insert/draw-call baselines unchanged.
 
+### Command-control keys (Esc / Enter / Space) — the one carve-out
+
+When DYN is on (canvas mode) the on-canvas fields are GL-rendered in the viewport and
+their keystrokes are routed by the **app-wide event filter** (`MainWindow::eventFilter`,
+the same `qApp` filter as the Delete fix). The dimensional-rubber-band and sub-prompt
+routers (`ViewportWindow::dyn_handle_key` / `sub_prompt_handle_key`) return *false* for
+Esc and empty Enter "so the caller cancels/ends" — but in canvas mode the classic command
+line is hidden, so a fallen-through key reaches no focused widget and is **lost** (the
+recurring keyboard-routing bug). Space was never handled at all.
+
+The fix is a single **command-control carve-out** at that one event filter, ahead of the
+DYN routers, active only when `processor_->has_active_command()` **and** canvas mode
+(`dyn_action_->isChecked()` — so F12-OFF classic is untouched and the command line still
+handles these keys). A focused dialog / Properties field keeps its own keys; the hidden
+command-line / DYN widgets do not exempt it.
+
+* **Esc** → `viewport_->handle_escape()` (grip-drag cancel, else `processor_->cancel()`),
+  then `rebuild_overlay()` clears the rubber-band + fields at once. Esc is **never**
+  swallowed by DYN, even with a pending typed value — it cancels the command outright.
+* **Enter / Space** (Space ≡ Enter for command flow) → `viewport_->dyn_end_step()`, the
+  AutoCAD two-step: a pending typed value commits (`dyn_commit`, or the sub-prompt's
+  `submit_line(sub_entry_)`), keeping the command running; with nothing typed it
+  `submit_line("")` to end the step (which ends LINE at a next-point prompt).
+* **Tab / Shift-Tab** are untouched — they fall through to `dyn_handle_key` and still
+  cycle fields. Digit/`.`/`-`/Backspace field editing is unchanged.
+
+### Starting a command cancels the one in progress (one dispatch site)
+
+`CommandProcessor::start_command(alias)` is the single command-start entry. It now runs a
+held command's `cancel()` cleanly **first** (dropping its preview/rubber-band and any
+pending op-log group) before constructing the new one, instead of letting `active_ =
+std::move(cmd)` destroy it mid-flight. The current **selection is preserved** (`cancel()`
+never clears it). Ribbon command buttons (`add_cmd`) now call `start_command` directly
+rather than `submit_line` — a ribbon click is an unambiguous command start, whereas
+`submit_line`'s typed-text path feeds the active command as input (so a mid-command typed
+keyword like LINE's `C`/`U` still routes to the command, AutoCAD-correct). `start_command`
+is the one place the cancel-current rule lives, so every path that reaches it (ribbon,
+shortcut, programmatic) gets the clean hand-off for free.
+
 ## Dimension properties in PR — per-dimension overrides (Phase 24)
 
 The Properties palette's deep Dimension group edits **per-dimension overrides**
