@@ -294,6 +294,10 @@ bool is_text_family(EntityKind k) {
 // Paragraph-block text: MTEXT and the MLeader label (both own an MTextBlock, so width
 // factor / line spacing / attachment apply). The flat LEADER label has none of these.
 bool is_paragraph(EntityKind k) { return k == EntityKind::MText || k == EntityKind::MLeader; }
+// Both leader kinds carry a per-leader arrow override (the dimstyle-arrow override model).
+bool is_leader_arrow(EntityKind k) {
+    return k == EntityKind::Leader || k == EntityKind::MLeader;
+}
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
 // Entities whose linetype actually dashes (so a per-entity linetype scale matters). These
 // are the kinds whose Add*Command carries a celtscale field + go through dash_polyline.
@@ -565,6 +569,54 @@ const Desc kDescs[] = {
              c);
      }},
 
+    // The leader/MLeader LABEL colour: ByStyle (the leader's entity colour) unless overridden.
+    // Distinct from the General colour, which drives the leader line + arrow.
+    {PropertyId::LeaderTextColor, "Text", "Text color", PropEditor::ColorOverride, is_leader_arrow,
+     [](const Command& c) {
+         return read_dim_color(c, DimOverrides::kTextColor, get_dim_ov(c).text_color,
+                               get_dim_style(c).text_color);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kTextColor, !v.flag);
+             if (!v.flag) {
+                 o.text_color = v.color;
+             }
+         });
+     }},
+
+    // -- Leader / MLeader arrow (per-leader override of the referenced dimstyle's arrow) --
+    {PropertyId::LeaderArrowType, "Leader", "Arrowhead", PropEditor::DimArrowTypeCombo,
+     is_leader_arrow,
+     [](const Command& c) {
+         PropertyValue v;
+         const DimOverrides o = get_dim_ov(c);
+         v.choice = o.has(DimOverrides::kArrowType) ? o.arrow_type + 1 : 0; // 0 = ByStyle
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kArrowType, v.choice > 0);
+             if (v.choice > 0) {
+                 o.arrow_type = static_cast<std::uint8_t>(v.choice - 1);
+             }
+         });
+     }},
+    {PropertyId::LeaderArrowSize, "Leader", "Arrow size", PropEditor::NumberOverride,
+     is_leader_arrow,
+     [](const Command& c) {
+         return read_dim_num(c, DimOverrides::kArrowSize, get_dim_ov(c).arrow_size,
+                             get_dim_style(c).arrow_size);
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kArrowSize, !v.flag);
+             if (!v.flag) {
+                 o.arrow_size = v.num;
+             }
+         });
+     }},
+
     // -- Dimension (per-dimension overrides; ByStyle unless set) --
     {PropertyId::DimArrowType, "Dimension", "Arrowhead", PropEditor::DimArrowTypeCombo, is_dimension,
      [](const Command& c) {
@@ -786,6 +838,9 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::MtWidthFactor:
     case PropertyId::MtLineSpacing:
     case PropertyId::MtAttach:
+    case PropertyId::LeaderArrowType: // leader arrow + label colour ride the text family
+    case PropertyId::LeaderArrowSize:
+    case PropertyId::LeaderTextColor:
         return MatchSlot::Text;
     case PropertyId::DimArrowType:
     case PropertyId::DimArrowSize:

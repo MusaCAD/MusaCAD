@@ -104,7 +104,7 @@ Document document_from_store(const GeometryStore& store) {
             const LeaderData& ld = leaders.data()[i];
             doc.leaders.push_back(DocLeader{ld.tip, ld.knee, ld.text_height, ld.style,
                                             std::string(store.string_of(ld)), ld.props,
-                                            std::string(store.font_name(ld.font))});
+                                            std::string(store.font_name(ld.font)), ld.overrides});
         }
     }
     const auto& mtx = store.mtexts();
@@ -121,8 +121,9 @@ Document document_from_store(const GeometryStore& store) {
             const MLeaderData& m = mld.data()[i];
             const auto v = store.vertices_of(m);
             doc.mleaders.push_back(DocMLeader{std::vector<Vec2>(v.begin(), v.end()), m.style,
-                                              m.text, std::string(store.string_of(m.text)),
-                                              m.props, std::string(store.font_name(m.text.font))});
+                                              m.text, std::string(store.string_of(m.text)), m.props,
+                                              std::string(store.font_name(m.text.font)),
+                                              m.overrides});
         }
     }
     // Block definitions (by name) + their self-contained content.
@@ -231,7 +232,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
-                         store.add_font(l.font));
+                         store.add_font(l.font), l.overrides);
     }
     for (const DocMText& m : doc.mtexts) {
         MTextBlock b = m.block;
@@ -241,7 +242,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     for (const DocMLeader& m : doc.mleaders) {
         MTextBlock b = m.block;
         b.font = store.add_font(m.font);
-        store.add_mleader(m.vertices, m.style, b, m.content, m.props);
+        store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);

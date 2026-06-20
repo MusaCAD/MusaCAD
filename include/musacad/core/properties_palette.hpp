@@ -54,6 +54,11 @@ enum class PropertyId : std::uint16_t {
     DimTextColor,
     DimTextPlacement, ///< Above / Centered
     DimPrecision,
+    // Leader / MLeader per-leader arrow overrides (ByStyle unless overridden) -- the same
+    // override model as dimensions, on the leader's referenced dimstyle.
+    LeaderArrowType,
+    LeaderArrowSize,
+    LeaderTextColor, ///< the label's colour (ByStyle => the leader's entity colour)
 };
 
 /// How the UI renders + edits a field. The UI is generic over these.

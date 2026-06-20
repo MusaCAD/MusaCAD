@@ -410,7 +410,9 @@ struct AddLeaderCommand {
     std::string content;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
-    std::string font{}; ///< font name ("" = stroke "Standard")
+    std::string font{};          ///< font name ("" = stroke "Standard")
+    DimOverrides overrides = {};  ///< per-leader arrow override (ByStyle unless set)
+    DimStyle dim_style = {};      ///< resolved style snapshot for PR display only
 };
 
 /// Multi-line paragraph text (MTEXT). `block.str_offset/str_len` are ignored;
@@ -434,6 +436,8 @@ struct AddMLeaderCommand {
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
     std::string font{}; ///< label font NAME ("" = stroke "Standard"); resolved to block.font
+    DimOverrides overrides = {}; ///< per-leader arrow override (ByStyle unless set)
+    DimStyle dim_style = {};      ///< resolved style snapshot for PR display only
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-

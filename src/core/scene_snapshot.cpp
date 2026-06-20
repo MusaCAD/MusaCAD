@@ -263,7 +263,8 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const ResolvedProps r = entity_resolved(store, l->props);
         const DimStyle* style = store.dimstyle(l->style);
-        const DimStyle s = style != nullptr ? *style : DimStyle{};
+        // Per-leader arrow override wins over the dimstyle (override-first, like dimensions).
+        const DimStyle s = apply_dim_overrides(style != nullptr ? *style : DimStyle{}, l->overrides);
         const Rgb arrow_c = s.arrow_color.resolve(r.color);
         const Rgb text_c = s.text_color.resolve(r.color);
         add_line(r.color, r.lineweight, l->tip, l->knee);
@@ -304,7 +305,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const ResolvedProps r = entity_resolved(store, m->props);
         const DimStyle* style = store.dimstyle(m->style);
-        const DimStyle s = style != nullptr ? *style : DimStyle{};
+        const DimStyle s = apply_dim_overrides(style != nullptr ? *style : DimStyle{}, m->overrides);
         const Rgb arrow_c = s.arrow_color.resolve(r.color);
         const Rgb text_c = s.text_color.resolve(r.color);
         const std::span<const Vec2> v = store.vertices_of(*m);

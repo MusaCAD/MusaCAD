@@ -35,6 +35,31 @@ void append_props(std::string& s, const EntityProps& p) {
     }
 }
 
+// The 15-field DimOverrides block (mask + all values => lossless). Appended to DIM and
+// (v13+) LEADER/MLEADER records; the reader detects its presence by token count.
+void append_overrides(std::string& s, const DimOverrides& o) {
+    s += ' ';
+    append_uint(s, o.mask);
+    s += ' ';
+    append_uint(s, o.arrow_type);
+    s += ' ';
+    append_uint(s, o.precision);
+    s += ' ';
+    append_uint(s, o.text_above ? 1 : 0);
+    s += ' ';
+    append_double(s, o.text_height);
+    s += ' ';
+    append_double(s, o.arrow_size);
+    for (const Rgb& c : {o.dim_color, o.ext_color, o.text_color}) {
+        s += ' ';
+        append_uint(s, c.r);
+        s += ' ';
+        append_uint(s, c.g);
+        s += ' ';
+        append_uint(s, c.b);
+    }
+}
+
 std::vector<std::string_view> tokenize(std::string_view line) {
     std::vector<std::string_view> out;
     std::size_t i = 0;
@@ -118,6 +143,36 @@ bool parse_props(const std::vector<std::string_view>& tok, std::size_t start, En
                  static_cast<std::uint8_t>(v[4])};
     out.linetype = static_cast<Linetype>(v[5]);
     out.lineweight = static_cast<std::uint8_t>(v[6]);
+    return true;
+}
+
+// Parse the 15-field DimOverrides block written by append_overrides, starting at tok[base].
+bool parse_overrides(const std::vector<std::string_view>& tok, std::size_t base, DimOverrides& ov) {
+    if (base + 15 > tok.size()) {
+        return false;
+    }
+    std::uint64_t mask = 0, atype = 0, prec = 0, above = 0;
+    double th = 0.0, as = 0.0;
+    std::array<std::uint64_t, 9> rgb{};
+    bool ok = to_uint(tok[base], mask) && to_uint(tok[base + 1], atype) &&
+              to_uint(tok[base + 2], prec) && to_uint(tok[base + 3], above) &&
+              to_double(tok[base + 4], th) && to_double(tok[base + 5], as);
+    for (int k = 0; ok && k < 9; ++k) {
+        ok = to_uint(tok[base + 6 + static_cast<std::size_t>(k)], rgb[static_cast<std::size_t>(k)]);
+    }
+    if (!ok) {
+        return false;
+    }
+    ov.mask = static_cast<std::uint16_t>(mask);
+    ov.arrow_type = static_cast<std::uint8_t>(atype);
+    ov.precision = static_cast<std::uint8_t>(prec);
+    ov.text_above = above != 0;
+    ov.text_height = th;
+    ov.arrow_size = as;
+    const auto b = [&](int i) { return static_cast<std::uint8_t>(rgb[static_cast<std::size_t>(i)]); };
+    ov.dim_color = {b(0), b(1), b(2)};
+    ov.ext_color = {b(3), b(4), b(5)};
+    ov.text_color = {b(6), b(7), b(8)};
     return true;
 }
 
@@ -345,28 +400,7 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, d.style);
         append_props(s, d.props);
-        // Per-dimension overrides (v8): mask + all values (full block => lossless).
-        const DimOverrides& o = d.overrides;
-        s += ' ';
-        append_uint(s, o.mask);
-        s += ' ';
-        append_uint(s, o.arrow_type);
-        s += ' ';
-        append_uint(s, o.precision);
-        s += ' ';
-        append_uint(s, o.text_above ? 1 : 0);
-        s += ' ';
-        append_double(s, o.text_height);
-        s += ' ';
-        append_double(s, o.arrow_size);
-        for (const Rgb& c : {o.dim_color, o.ext_color, o.text_color}) {
-            s += ' ';
-            append_uint(s, c.r);
-            s += ' ';
-            append_uint(s, c.g);
-            s += ' ';
-            append_uint(s, c.b);
-        }
+        append_overrides(s, d.overrides); // per-dimension overrides (v8): full block => lossless
         s += '\n';
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
@@ -380,6 +414,7 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, l.style);
         append_props(s, l.props);
+        append_overrides(s, l.overrides); // v13: per-leader arrow override block
         s += '\n';
         s += l.content;
         s += '\n';
@@ -440,6 +475,7 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_block(m.block);
         append_props(s, m.props);
+        append_overrides(s, m.overrides); // v13: per-leader arrow override block
         s += '\n';
         s += escape(m.content);
         s += '\n';
@@ -909,13 +945,18 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       props,
                                       ov});
         } else if (key == "LEADER") {
-            // LEADER tipx tipy kneex kneey height style <props7>; content next line.
+            // LEADER tipx tipy kneex kneey height style <props7> [<override15>]; content next line.
             vals.clear();
             EntityProps props;
             std::uint64_t style = 0;
-            if (tok.size() != 14 || !parse_doubles(tok, 1, 5, vals) || !to_uint(tok[6], style) ||
-                !parse_props(tok, 7, props)) {
+            const bool l_has_ov = tok.size() == 29; // v13 appends the 15-field override block
+            if ((tok.size() != 14 && !l_has_ov) || !parse_doubles(tok, 1, 5, vals) ||
+                !to_uint(tok[6], style) || !parse_props(tok, 7, props)) {
                 return fail("LEADER record malformed");
+            }
+            DimOverrides lov{};
+            if (l_has_ov && !parse_overrides(tok, 14, lov)) {
+                return fail("LEADER override block malformed");
             }
             std::string content;
             if (!std::getline(in, content)) {
@@ -935,7 +976,8 @@ IoResult parse_native(std::string_view text, Document& out) {
                                             static_cast<std::uint16_t>(style),
                                             std::move(content),
                                             props,
-                                            std::move(lfont)});
+                                            std::move(lfont),
+                                            lov});
         } else if (key == "MTEXT") {
             // MTEXT px py width height rot wf ls attach <props7>; content next line.
             vals.clear();
@@ -975,14 +1017,20 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             const std::size_t vbase = 3;
             const std::size_t bbase = vbase + nv * 2; // block fields start
+            const std::size_t pbase = bbase + 7 + 1;  // props start (after 7 block + 1 attach)
             std::uint64_t attach = 0;
             vals.clear();
             std::vector<double> bvals;
             EntityProps props;
-            if (tok.size() != bbase + 7 + 8 || !parse_doubles(tok, vbase, nv * 2, vals) ||
+            const bool m_has_ov = tok.size() == pbase + 7 + 15; // v13 appends the override block
+            if ((tok.size() != pbase + 7 && !m_has_ov) || !parse_doubles(tok, vbase, nv * 2, vals) ||
                 !parse_doubles(tok, bbase, 7, bvals) || !to_uint(tok[bbase + 7], attach) ||
-                !parse_props(tok, bbase + 8, props)) {
+                !parse_props(tok, pbase, props)) {
                 return fail("MLEADER record malformed");
+            }
+            DimOverrides mov{};
+            if (m_has_ov && !parse_overrides(tok, pbase + 7, mov)) {
+                return fail("MLEADER override block malformed");
             }
             std::string content;
             if (!std::getline(in, content)) {
@@ -1010,7 +1058,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("MLEADER missing font line");
             }
             doc.mleaders.push_back(DocMLeader{std::move(verts), static_cast<std::uint16_t>(style), b,
-                                              unescape(content), props, std::move(mlfont)});
+                                              unescape(content), props, std::move(mlfont), mov});
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {

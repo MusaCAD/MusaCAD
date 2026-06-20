@@ -59,12 +59,15 @@ struct StubFontEngine final : IFontEngine {
 } // namespace
 
 TEST_CASE("text entity + font field stay compact") {
-    // The font ref is a uint16 index, not an inline string. TextData/LeaderData absorb it
-    // in existing padding; MTextBlock (one per paragraph, not a per-line hot struct) takes
-    // one extra alignment slot (64->72) -- still small.
+    // The font ref is a uint16 index, not an inline string. TextData absorbs it in existing
+    // padding; MTextBlock (one per paragraph, not a per-line hot struct) takes one extra
+    // alignment slot (64->72) -- still small. Leader/MLeader are annotation entities (few per
+    // drawing, NOT hot like Line/Circle), so they carry the per-leader arrow override
+    // (DimOverrides, ~40 B) inline -- the same way DimData carries its overrides.
     REQUIRE(sizeof(TextData) <= 56);
     REQUIRE(sizeof(MTextBlock) <= 72);
-    REQUIRE(sizeof(LeaderData) <= 64);
+    REQUIRE(sizeof(LeaderData) <= 112);
+    REQUIRE(sizeof(MLeaderData) <= 152);
 }
 
 TEST_CASE("stroke text emits lines; outline text emits filled triangles (one path each)") {

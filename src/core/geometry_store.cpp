@@ -80,12 +80,12 @@ EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 lin
 
 EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                                        std::string_view content, EntityProps props,
-                                       std::uint16_t font) {
+                                       std::uint16_t font, DimOverrides overrides) {
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
-    const auto slot =
-        leaders_.insert(LeaderData{tip, knee, text_height, style, font, offset,
-                                   static_cast<std::uint32_t>(content.size()), props});
+    const auto slot = leaders_.insert(LeaderData{tip, knee, text_height, style, font, offset,
+                                                 static_cast<std::uint32_t>(content.size()), props,
+                                                 overrides});
     return EntityHandle{slot.index, slot.generation, EntityKind::Leader};
 }
 
@@ -101,7 +101,7 @@ EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view 
 
 EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
                                         const MTextBlock& text, std::string_view content,
-                                        EntityProps props) {
+                                        EntityProps props, DimOverrides overrides) {
     const auto voff = static_cast<std::uint32_t>(polyline_pool_.size());
     polyline_pool_.insert(polyline_pool_.end(), vertices.begin(), vertices.end());
     MTextBlock b = text;
@@ -109,7 +109,7 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     b.str_len = static_cast<std::uint32_t>(content.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot = mleaders_.insert(MLeaderData{
-        voff, static_cast<std::uint32_t>(vertices.size()), style, b, props});
+        voff, static_cast<std::uint32_t>(vertices.size()), style, b, props, overrides});
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
 }
 

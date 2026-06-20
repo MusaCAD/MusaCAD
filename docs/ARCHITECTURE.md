@@ -293,6 +293,28 @@ captured/applied/clipboard-remapped exactly like MTEXT, so the font descriptor a
 read/write it as a name. A separate `MLeaderFamily` was explicitly **rejected** — it would
 have broken the existing TEXT↔MLeader matching.
 
+The **leader arrow** is governed by the leader's referenced dimstyle, so per-leader
+editability reuses the dimension **override** machinery rather than new storage primitives:
+`LeaderData`/`MLeaderData` gained a `DimOverrides` field (only the arrow bits are meaningful;
+they are annotation entities, not hot like Line/Circle, so the ~40 B is inline like
+`DimData`). The render resolves `apply_dim_overrides(dimstyle, leader.overrides)` at the
+arrowhead (override-first-else-style). The PR descriptors `LeaderArrowType`/`LeaderArrowSize`
+(group "Leader") reuse the *same* read/write lambdas as the dimension arrow descriptors — the
+`requires`-based `get_dim_ov`/`with_dim_ov`/`get_dim_style` accessors work once the leader
+commands carry `overrides` + a resolved `dim_style` snapshot (for the ByStyle display). They
+match `leader↔leader` under `MatchSlot::Text` (leaders are text-family). Native bumps to v13
+(the override block is appended to LEADER/MLEADER records, detected by token count, older
+files ⇒ ByStyle); DXF is effective-value-only for the override, the same documented gap as
+dimension overrides.
+
+The leader **label colour** is a fourth descriptor (`LeaderTextColor`) on the same override
+field — `DimOverrides::kTextColor` already exists and the v13 block already serialises all
+three element colours, and the render already does `text_c = s.text_color.resolve(r.color)`
+after `apply_dim_overrides`. So it needed *only* the descriptor (reusing the `DimTextColor`
+read/write lambdas): no data-model, render, or persistence change. ByStyle ⇒ the leader's
+entity colour; an override colours the label independently of the leader line + arrow (which
+follow the General colour).
+
 ### Stroke-text quality: on-screen weight, real lowercase, edge AA (Phase 31)
 
 Single-stroke text stays the engineering default ("Standard"); three changes make it look

@@ -111,6 +111,7 @@ struct LeaderData {
     std::uint32_t str_offset = 0;
     std::uint32_t str_len = 0;
     EntityProps props{};
+    DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
 };
 
 /// Multi-line paragraph text (MTEXT): a formatting block + layer properties.
@@ -130,6 +131,7 @@ struct MLeaderData {
     std::uint16_t style = 0;      ///< dimstyle (arrow type/size + colours)
     MTextBlock text;              ///< the attached label (computed layout)
     EntityProps props{};
+    DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
 };
 
 // ---------------------------------------------------------------------------
@@ -220,7 +222,7 @@ public:
                                EntityProps props = {}, DimOverrides overrides = {});
     EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                             std::string_view content, EntityProps props = {},
-                            std::uint16_t font = 0);
+                            std::uint16_t font = 0, DimOverrides overrides = {});
     /// Multi-line paragraph text. `block.str_offset/str_len` are ignored; `content`
     /// is copied into the shared string pool and the range is recorded.
     EntityHandle add_mtext(const MTextBlock& block, std::string_view content,
@@ -228,7 +230,7 @@ public:
     /// Editable leader with an owned paragraph label. `vertices[0]` is the arrow tip.
     EntityHandle add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
                              const MTextBlock& text, std::string_view content,
-                             EntityProps props = {});
+                             EntityProps props = {}, DimOverrides overrides = {});
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {});

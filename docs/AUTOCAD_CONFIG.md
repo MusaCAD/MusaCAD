@@ -126,9 +126,11 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Leader–text association (text owned by the leader; moves with it) | Implemented (Ph20) |
 | Leader grips (arrow tip, each vertex, text position) | Implemented (Ph20) |
 | Leader / MLeader label properties in PR + MATCHPROP (font/height/justify; MLeader also width factor/line spacing/attach) | Implemented (text-family registry descriptors; MA copies the label across TEXT↔MTEXT↔Leader↔MLeader) |
+| Leader / MLeader arrow properties in PR + MATCHPROP (arrowhead type + arrow size, ByStyle or per-leader override) | Implemented (override-first-else-dimstyle, like dim overrides; native v13 round-trip; DXF effective-only, native-only override gap) |
+| Leader / MLeader label Text color (per-leader override, independent of the leader line/arrow colour) | Implemented (DimOverrides kTextColor; ByStyle = entity colour; native v13 round-trip; MATCHPROP leader↔leader) |
+| Leader style (own table) | Planned (uses the referenced dimstyle for arrow/colours; per-leader arrow override now editable) |
 | MLEADER content blocks / DXF MLEADER round-trip | Planned (DXF writes LEADER + MTEXT; native v6 is lossless) |
 | Leader landing / dogleg auto-geometry | Planned |
-| Leader style (own table) | Planned (uses dimstyle arrow for now) |
 
 ## RECTANGLE (RECTANG) options
 

@@ -31,7 +31,9 @@ namespace musacad::core::io {
 /// v11: saved plot page setups (PAGESETUP records; older files have none). v12: per-entity
 /// CELTSCALE (linetype scale) for line/circle/arc/polyline, written as trailing CELTSCALE
 /// records (older files have none => 1.0); the LTSCALE global is still the LTSCALE record.
-inline constexpr std::uint32_t kFormatVersion = 12;
+/// v13: per-leader arrow override block appended to LEADER/MLEADER records (the same
+/// override block dimensions use; detected by token count, older files => ByStyle).
+inline constexpr std::uint32_t kFormatVersion = 13;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -105,6 +107,7 @@ struct DocLeader {
     std::string content;
     EntityProps props{};
     std::string font{}; ///< font name ("" = stroke "Standard")
+    DimOverrides overrides{}; ///< per-leader arrow override (v13+; no overrides => ByStyle)
     friend bool operator==(const DocLeader&, const DocLeader&) = default;
 };
 struct DocMText {
@@ -121,6 +124,7 @@ struct DocMLeader {
     std::string content;
     EntityProps props{};
     std::string font{}; ///< font name ("" = stroke "Standard"); maps to block.font index
+    DimOverrides overrides{}; ///< per-leader arrow override (v13+; no overrides => ByStyle)
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 

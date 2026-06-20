@@ -3223,6 +3223,73 @@ bool MainWindow::mleader_text_shot(int kind, const std::string& out_png) {
         pump(200);
         viewport_->zoom_extents();
         pump(300);
+    } else if (kind == 6) {
+        // MLeader with a per-leader ARROW override -> PR shows a Leader section (Arrowhead +
+        // Arrow size) and the arrowhead visibly grows (override 8 vs the dimstyle's 2.5).
+        core::MTextBlock b;
+        b.pos = {22, 10};
+        b.height = 3.0;
+        engine_->submit(core::AddMLeaderCommand{{{0, 0}, {14, 8}, {22, 8}}, 0, b, "DETAIL B", 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(150);
+        engine_->submit(core::SelectPickCommand{{7, 4}, r, false});
+        pump(200);
+        core::PropertyValue av; // override arrow size to 8 (flag=false => overridden)
+        av.flag = false;
+        av.num = 8.0;
+        engine_->submit(core::SetPropertyCommand{core::PropertyId::LeaderArrowSize, av, 2});
+        pump(200);
+        engine_->submit(core::SelectPickCommand{{7, 4}, r, false}); // re-select recreated entity
+        pump(250);
+        if (!properties_dock_->isVisible()) {
+            toggle_properties();
+        }
+        pump(350);
+        const core::SelectionSummary sum = viewport_->selection_summary();
+        bool has_leader_section = false;
+        double arrow = 0.0;
+        bool arrow_overridden = false;
+        for (const core::PropertyField& f : sum.fields) {
+            if (f.id == core::PropertyId::LeaderArrowSize) {
+                has_leader_section = true;
+                arrow = f.value.num;
+                arrow_overridden = !f.value.flag;
+            }
+        }
+        std::printf("[mleader_text_shot] kind=6 PR: leader_section=%d arrow_size=%.3g overridden=%d\n",
+                    has_leader_section ? 1 : 0, arrow, arrow_overridden ? 1 : 0);
+    } else if (kind == 7) {
+        // The LABEL gets its own colour (green) while the leader line + arrow stay the entity
+        // colour (magenta) -- proving the text colour is independent of the General colour.
+        core::MTextBlock b;
+        b.pos = {22, 10};
+        b.height = 4.0;
+        engine_->submit(core::AddMLeaderCommand{{{0, 0}, {14, 8}, {22, 8}}, 0, b, "NOTE", 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(150);
+        engine_->submit(core::SelectPickCommand{{7, 4}, r, false});
+        pump(180);
+        core::PropertyValue ec; // General colour -> magenta (leader line + arrow)
+        ec.flag = false;
+        ec.color = {255, 85, 255};
+        engine_->submit(core::SetPropertyCommand{core::PropertyId::Color, ec, 2});
+        pump(120);
+        engine_->submit(core::SelectPickCommand{{7, 4}, r, false});
+        pump(150);
+        core::PropertyValue tc; // label Text colour -> green (independent)
+        tc.flag = false;
+        tc.color = {60, 220, 90};
+        engine_->submit(core::SetPropertyCommand{core::PropertyId::LeaderTextColor, tc, 3});
+        pump(150);
+        engine_->submit(core::SelectPickCommand{{7, 4}, r, false});
+        pump(220);
+        if (!properties_dock_->isVisible()) {
+            toggle_properties();
+        }
+        pump(300);
+        std::printf("[mleader_text_shot] kind=7: label green, line/arrow magenta (independent)\n");
     }
 
     std::printf("[mleader_text_shot] kind=%d main=0x%lx frameG=(%d,%d %dx%d)\n", kind,

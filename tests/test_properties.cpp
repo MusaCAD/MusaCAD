@@ -314,6 +314,63 @@ TEST_CASE("MATCHPROP text-family closure reaches Leader + MLeader labels (font +
     engine.stop();
 }
 
+TEST_CASE("Leader/MLeader arrow + text-color override: ByStyle, PR edit, MATCHPROP leader->leader") {
+    GeometryEngine engine;
+    engine.start();
+    // A flat LEADER and an MLeader, both on the Standard dimstyle (arrow size 2.5 ByStyle).
+    engine.submit(AddLeaderCommand{{0, 0}, {20, 0}, 2.5, 0, "L", 1});
+    engine.submit(AddMLeaderCommand{{{0, 30}, {20, 30}}, 0, MTextBlock{}, "M", 2});
+    engine.submit(SelectPickCommand{{10, 0}, 2.0, false});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.selection.size() == 1 && s.selection[0].kind == EntityKind::Leader;
+    }));
+    // ByStyle by default: the field shows the dimstyle's arrow size (2.5) with flag set.
+    {
+        const PropertyField* a = field_of(engine.snapshot().selection_summary,
+                                          PropertyId::LeaderArrowSize);
+        REQUIRE(a != nullptr);
+        CHECK(a->value.flag);                  // ByStyle
+        CHECK(a->value.num == Approx(2.5));
+    }
+    // Override the leader's arrow size to 7 (flag=false => overridden).
+    PropertyValue ov;
+    ov.flag = false;
+    ov.num = 7.0;
+    engine.submit(SetPropertyCommand{PropertyId::LeaderArrowSize, ov, 3});
+    engine.submit(SelectPickCommand{{10, 0}, 2.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        const PropertyField* a = field_of(s.selection_summary, PropertyId::LeaderArrowSize);
+        return a != nullptr && !a->value.flag && a->value.num == Approx(7.0);
+    }));
+
+    // The label gets its own colour via the LeaderTextColor override (independent of the
+    // General colour, which drives the leader line + arrow).
+    PropertyValue tc;
+    tc.flag = false;
+    tc.color = {10, 200, 40};
+    engine.submit(SetPropertyCommand{PropertyId::LeaderTextColor, tc, 4});
+    engine.submit(SelectPickCommand{{10, 0}, 2.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        const PropertyField* a = field_of(s.selection_summary, PropertyId::LeaderTextColor);
+        return a != nullptr && !a->value.flag && a->value.color == Rgb{10, 200, 40};
+    }));
+
+    // MATCHPROP the overridden leader -> the MLeader: the arrow override travels (both Text family).
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+    engine.submit(MatchPropPickSourceCommand{{10, 0}, 2.0});                  // leader source
+    engine.submit(MatchPropApplyCommand{{10, 30}, 2.0, MatchPropFilter{}, 9}); // -> MLeader
+    engine.submit(SelectPickCommand{{10, 30}, 2.0, false});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        if (s.selection.size() != 1 || s.selection[0].kind != EntityKind::MLeader) {
+            return false;
+        }
+        const PropertyField* a = field_of(s.selection_summary, PropertyId::LeaderArrowSize);
+        return a != nullptr && !a->value.flag && a->value.num == Approx(7.0);
+    }));
+    engine.stop();
+}
+
 TEST_CASE("MATCHPROP Settings filter gates a category (Color off keeps target colour)") {
     GeometryEngine engine;
     engine.start();
