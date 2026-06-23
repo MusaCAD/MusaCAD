@@ -66,10 +66,15 @@ jobs:
           rem windeployqt pulls in Qt DLLs + plugins (platforms\qwindows, imageformats\qsvg+qico,
           rem styles, iconengines). --compiler-runtime adds the MSVC redistributable DLLs.
 
+      - name: Install NSIS
+        shell: cmd
+        run: choco install nsis -y --no-progress
+
       - name: Package with NSIS
         shell: cmd
         run: >
-          makensis /DVERSION=${{ steps.ver.outputs.version }}
+          "C:\Program Files (x86)\NSIS\makensis.exe"
+          /DVERSION=${{ steps.ver.outputs.version }}
           /DSTAGING=staging
           packaging\windows\musacad.nsi
 
