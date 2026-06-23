@@ -49,7 +49,7 @@ Section "Musa CAD (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
   File /r "${STAGING}\*.*"        ; the whole windeployqt staging tree (backslash: NSIS /r glob)
-  File "assets/branding/musacad.ico"
+  File "assets\branding\musacad.ico"
 
   WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
