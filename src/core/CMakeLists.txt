@@ -14,6 +14,7 @@ add_library(musacad_core STATIC
     text/mtext.cpp
     text/text_codes.cpp
     hatch.cpp
+    hatch_pattern.cpp
     dimension.cpp
     block_resolve.cpp
     grips.cpp

@@ -3198,6 +3198,35 @@ bool MainWindow::hatch_shot(int kind, const std::string& out_png) {
         ok = is_hatch && viewport_->selection_count() == 1;
         std::printf("[hatch_shot] kind=2 partition selected_hatch=%d => %s\n", is_hatch ? 1 : 0,
                     ok ? "PASS" : "FAIL");
+    } else if (kind == 3 || kind == 4) {
+        // Part B: a LINE pattern (ANSI31 single 45 deg family / ANSI37 cross-hatch),
+        // pick-point into a square, then DESELECT so the pattern shows in its own colour.
+        const char* pat = (kind == 3) ? "ANSI31" : "ANSI37";
+        engine_->submit(core::AddPolylineCommand{{{0, 0}, {60, 0}, {60, 45}, {0, 45}}, true, 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(150);
+        processor_->submit_line("HATCH");
+        pump(120);
+        processor_->submit_line("P");   // Pattern option
+        pump(120);
+        processor_->submit_line(pat);   // pattern name
+        pump(120);
+        processor_->submit_line("S");   // Scale option
+        pump(120);
+        processor_->submit_line("3");   // a readable scale for the screenshot
+        pump(120);
+        processor_->submit_line("30,22"); // pick inside
+        pump(300);
+        processor_->submit_line("");      // finish
+        pump(150);
+        engine_->submit(core::ClearSelectionCommand{}); // show the pattern, not the highlight
+        pump(150);
+        viewport_->zoom_extents();
+        pump(250);
+        const bool has_pat_lines = !viewport_->selection_count(); // deselected; pattern drawn
+        ok = has_pat_lines;
+        std::printf("[hatch_shot] kind=%d pattern=%s => %s\n", kind, pat, ok ? "PASS" : "FAIL");
     }
     std::printf("[hatch_shot] kind=%d main=0x%lx frameG=(%d,%d %dx%d)\n", kind,
                 static_cast<unsigned long>(winId()), frameGeometry().x(), frameGeometry().y(),

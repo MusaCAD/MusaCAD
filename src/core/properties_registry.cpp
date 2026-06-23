@@ -731,7 +731,7 @@ const Desc kDescs[] = {
      }},
 
     // -- Hatch (pattern properties, family-scoped) --
-    {PropertyId::HatchPattern, "Hatch", "Pattern", PropEditor::Text, is_hatch,
+    {PropertyId::HatchPattern, "Hatch", "Pattern", PropEditor::PatternCombo, is_hatch,
      [](const Command& c) {
          PropertyValue v;
          std::visit(

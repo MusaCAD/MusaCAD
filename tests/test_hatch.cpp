@@ -1,6 +1,7 @@
 // HATCH (Part A): the core triangulation + point-in-polygon helpers, and the engine
 // path that turns a selected closed polyline into a SOLID-filled, pickable hatch entity.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -14,6 +15,7 @@
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/grips.hpp"
 #include "musacad/core/hatch.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 
 using namespace musacad::core;
 using Catch::Approx;
@@ -199,4 +201,85 @@ TEST_CASE("hatch boundary grip drag moves the picked vertex (reshape)") {
     REQUIRE(c->loops[0].size() == 4);
     CHECK(length(c->loops[0][2] - Vec2{15, 16}) < 1e-9); // moved
     CHECK(length(c->loops[0][0] - Vec2{0, 0}) < 1e-9);    // others unchanged
+}
+
+// ---- Part B: line patterns ---------------------------------------------------------------
+
+TEST_CASE("hatch::parse_pat reads .PAT families (angle/origin/delta + dashes)") {
+    const auto pats = hatch::parse_pat(
+        "*ANSI31, test\n45, 0,0, 0,0.125\n;a comment\n*DASHED, test2\n0, 0,0, 0,0.25, 0.5,-0.25\n");
+    REQUIRE(pats.size() == 2);
+    CHECK(pats[0].name == "ANSI31");
+    REQUIRE(pats[0].lines.size() == 1);
+    CHECK(pats[0].lines[0].angle == Approx(45.0));
+    CHECK(pats[0].lines[0].delta.y == Approx(0.125));
+    CHECK(pats[0].lines[0].dashes.empty()); // solid family
+    REQUIRE(pats[1].lines.size() == 1);
+    REQUIRE(pats[1].lines[0].dashes.size() == 2);
+    CHECK(pats[1].lines[0].dashes[0] == Approx(0.5));
+    CHECK(pats[1].lines[0].dashes[1] == Approx(-0.25));
+}
+
+TEST_CASE("hatch::builtin_pattern resolves stock names (and not SOLID)") {
+    CHECK(hatch::builtin_pattern("ANSI31") != nullptr);
+    CHECK(hatch::builtin_pattern("ansi31") != nullptr);   // case-insensitive
+    CHECK(hatch::builtin_pattern("NET") != nullptr);
+    CHECK(hatch::builtin_pattern("SOLID") == nullptr);    // SOLID is the fill special-case
+    CHECK(hatch::builtin_pattern("NOTAPATTERN") == nullptr);
+    CHECK(hatch::builtin_pattern_names().size() >= 20);   // a real stock library
+
+    // The PR Pattern dropdown offers SOLID first, then every line pattern.
+    const auto& choices = hatch::pattern_choice_list();
+    REQUIRE(!choices.empty());
+    CHECK(choices.front() == "SOLID");
+    CHECK(choices.size() == hatch::builtin_pattern_names().size() + 1);
+    CHECK(std::find(choices.begin(), choices.end(), "ANSI31") != choices.end());
+}
+
+TEST_CASE("hatch::generate_pattern_segments clips ANSI31 to the region (and islands)") {
+    const std::vector<std::vector<Vec2>> square = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+    const hatch::Pattern* ansi31 = hatch::builtin_pattern("ANSI31");
+    REQUIRE(ansi31 != nullptr);
+
+    std::vector<hatch::Segment> segs;
+    hatch::generate_pattern_segments(square, *ansi31, 1.0, 0.0, {0, 0}, segs);
+    REQUIRE(!segs.empty());
+    // Every emitted dash lies inside the region (midpoint test) and runs at 45 degrees.
+    for (const hatch::Segment& s : segs) {
+        const Vec2 mid{(s.a.x + s.b.x) * 0.5, (s.a.y + s.b.y) * 0.5};
+        CHECK(hatch::point_in_loops(square, mid));
+        const Vec2 d = s.b - s.a;
+        CHECK(std::abs(std::abs(d.x) - std::abs(d.y)) < 1e-6); // |dx| == |dy| => 45 degrees
+    }
+
+    // A bigger scale spreads the lines further apart -> strictly fewer segments.
+    std::vector<hatch::Segment> coarse;
+    hatch::generate_pattern_segments(square, *ansi31, 4.0, 0.0, {0, 0}, coarse);
+    CHECK(coarse.size() < segs.size());
+
+    // With a central island hole, no dash falls inside the hole.
+    const std::vector<std::vector<Vec2>> holed = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
+                                                  {{4, 4}, {6, 4}, {6, 6}, {4, 6}}};
+    std::vector<hatch::Segment> ring;
+    hatch::generate_pattern_segments(holed, *ansi31, 1.0, 0.0, {0, 0}, ring);
+    REQUIRE(!ring.empty());
+    for (const hatch::Segment& s : ring) {
+        const Vec2 mid{(s.a.x + s.b.x) * 0.5, (s.a.y + s.b.y) * 0.5};
+        CHECK_FALSE((mid.x > 4 && mid.x < 6 && mid.y > 4 && mid.y < 6)); // never inside the hole
+    }
+}
+
+TEST_CASE("A pattern hatch renders as clipped lines (not a fill) through the snapshot") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPolylineCommand{{{0, 0}, {40, 0}, {40, 40}, {0, 40}}, true, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    // ANSI31 (a line pattern) -> the hatch contributes LINES, not fill triangles.
+    engine.submit(HatchFromSelectionCommand{"ANSI31", 1.0, 0.0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.selection.size() == 1 && s.selection[0].kind == EntityKind::Hatch &&
+               s.fill_batches.empty() && !s.line_batches.empty();
+    }));
+    engine.stop();
 }

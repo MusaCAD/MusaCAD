@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 
 #include "musacad/core/entity_handle.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 
 namespace musacad::ui {
 
@@ -481,6 +482,39 @@ void PropertiesPanel::rebuild() {
                 pv.text = (name == QStringLiteral("Standard") || name == QString::fromLatin1(kVaries))
                               ? std::string()
                               : name.toStdString();
+                emit_edit(id, pv);
+            });
+            current_form->addRow(label, e);
+            break;
+        }
+        case PropEditor::PatternCombo: {
+            // Hatch pattern dropdown: SOLID + the built-in line patterns. value.text is the
+            // pattern name (so MATCHPROP and the registry write are unchanged).
+            auto* e = new QComboBox();
+            for (const std::string& name : core::hatch::pattern_choice_list()) {
+                e->addItem(QString::fromStdString(name));
+            }
+            if (varies) {
+                e->addItem(QString::fromLatin1(kVaries));
+                e->setCurrentIndex(e->count() - 1);
+            } else {
+                const QString cur = f.value.text.empty() ? QStringLiteral("SOLID")
+                                                         : QString::fromStdString(f.value.text);
+                int idx = e->findText(cur, Qt::MatchFixedString); // case-insensitive
+                if (idx < 0) {
+                    // An external/unknown pattern name -> keep it visible rather than snapping.
+                    e->addItem(cur);
+                    idx = e->count() - 1;
+                }
+                e->setCurrentIndex(idx);
+            }
+            connect(e, &QComboBox::activated, this, [this, id, e](int index) {
+                const QString name = e->itemText(index);
+                if (name == QString::fromLatin1(kVaries)) {
+                    return;
+                }
+                PropertyValue pv;
+                pv.text = name.toStdString();
                 emit_edit(id, pv);
             });
             current_form->addRow(label, e);

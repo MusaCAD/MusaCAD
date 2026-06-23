@@ -79,6 +79,7 @@ enum class PropEditor : std::uint8_t {
     JustifyCombo,    ///< value.choice 0..2
     AttachCombo,     ///< value.choice 0..8
     FontCombo,       ///< read-only (single font), value.choice
+    PatternCombo,    ///< value.text = hatch pattern name (SOLID + built-in line patterns)
     // Dimension overrides: value.flag = ByStyle (no override). The combos put
     // "ByStyle" at index 0 (like LinetypeCombo's ByLayer); editing index>0 / a
     // number / a colour sets the override.

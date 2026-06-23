@@ -206,9 +206,9 @@ matched from a line stays a circle.
 |---|---|---|
 | Boundary: **Pick internal point** | Click inside a region; the engine traces the enclosing boundary from surrounding geometry (planar arrangement, so a partitioning line splits the region) and treats closed entities inside as **islands/holes** | Implemented (Part A) |
 | Boundary: **Select objects** (noun-verb) | Pre-select closed polylines, then HATCH; even-odd makes nested loops holes | Implemented (Part A) |
-| Pattern = **SOLID** (HPNAME) | Solid colour fill (a pattern *name*, not a separate entity); the default | Implemented (Part A) |
-| Pattern scale / angle / origin (HPSCALE / HPANG / HPORIGIN) | Stored per hatch; editable in PR (Pattern/Scale/Angle/Origin) and MATCHPROP-matchable | Implemented (stored + editable; scale/angle affect line patterns in Part B) |
-| Line patterns (ANSI31 …, `.PAT`) | Stock pattern library, clipped to the boundary | Planned (Part B) |
+| Pattern (HPNAME) | The PR **Pattern** field is a **dropdown** of `SOLID` + every built-in line pattern (the same list the `HATCH ▸ Pattern` option offers). SOLID is a solid colour fill (a pattern *name*, not a separate entity); the default | Implemented |
+| Pattern scale / angle / origin (HPSCALE / HPANG / HPORIGIN) | Stored per hatch; editable in PR (Scale/Angle; Origin read-only) and MATCHPROP-matchable | Implemented |
+| Line patterns (ANSI31 …, `.PAT`) | Stock pattern library, generated + clipped to the boundary, plotted as vectors | Implemented (Part B) |
 | Gap tolerance (HPGAPTOL) | Bridge small gaps in the boundary when picking a point | Partial (basic endpoint bridging; full HPGAPTOL staged) |
 | Associative hatch (HPASSOC) | Re-fill when the boundary is edited | Planned |
 | GRADIENT | Two-colour / gradient fills | Planned |

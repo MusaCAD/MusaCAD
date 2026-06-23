@@ -25,7 +25,8 @@ suggests both); aliases are case-insensitive.
 | POINT | PO | Planned (Phase 7) |
 | XLINE / RAY | XL | Planned (Phase 7) |
 | HATCH / BHATCH — **SOLID fill** of a region (Part A). Two boundary modes: **pick an internal point** (the engine traces the enclosing boundary from surrounding geometry — lines, arcs, circles, polylines — building a **planar arrangement** so a partitioning line correctly splits the region; closed entities inside become **islands/holes**) or **pre-select** closed polylines (noun-verb). "Valid hatch boundary not found." when no closed boundary encloses the pick. Fill is **derived, not baked** (rendered via the fill pipeline, so it plots as PDF vectors). Pickable (point-in-region, islands respected), PR-editable (Pattern/Scale/Angle/Origin), MATCHPROP-matchable, native + DXF round-trip. Selected hatch shows a **highlight tint over the fill + a grip at every boundary vertex** (drag to reshape) | H / BHATCH | Implemented (Part A: SOLID; line patterns = Part B) |
-| HATCH line patterns (ANSI31 etc., .PAT) / GRADIENT | H | Planned (Part B / later) |
+| HATCH **line patterns** (Part B) — `.PAT` parser + a built-in stock library (ANSI31–ANSI38, NET/NET3/GRID, BRICK, BOX, HEX/HONEY, ANGLE, DOTS, CROSS, SQUARE, TRIANG, GRASS, EARTH, STEEL, CONC, INSUL, …; authored from the public .PAT format, **not** copied from acad.pat — load that file for the vendor set). Line families are **generated + clipped to the boundary at render time** (derived-not-baked, even-odd so islands carve out) and plot as vectors. Choose via the command's `[Pattern/Scale/Angle]` options or the PR. SOLID stays the special fill name — one render path, patterns are not a fork | H ▸ Pattern | Implemented (Part B) |
+| HATCH GRADIENT fills | H | Planned (later) |
 
 ## Modify
 

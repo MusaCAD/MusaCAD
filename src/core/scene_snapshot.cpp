@@ -13,6 +13,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/hatch.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -337,17 +338,30 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     // boundary + pattern name/scale/angle. Part A renders SOLID via the fill pipeline (so it
     // plots as PDF vectors with no special case); line-family patterns are added in Part B.
     std::vector<Vec2> htris;
+    std::vector<hatch::Segment> hpsegs;
     for_each_live(store.hatches(), EntityKind::Hatch, [&](EntityHandle h) {
         const HatchData* hd = store.hatch(h);
         if (!visible(store, hd->props)) {
             return;
         }
         const ResolvedProps r = entity_resolved(store, hd->props);
-        if (store.string_of(*hd) == "SOLID") {
+        const std::string_view pname = store.string_of(*hd);
+        if (pname == "SOLID") {
             htris.clear();
             hatch::triangulate_filled(store.hatch_loops(*hd), htris);
             add_fills(r.color, htris);
+        } else if (const hatch::Pattern* pat = hatch::builtin_pattern(pname)) {
+            // Line patterns (ANSI31 etc.): generate the clipped line families here
+            // (derived-not-baked) and route them into the colour/lineweight line groups, so
+            // they batch like every other line and plot as PDF vectors with no special case.
+            hpsegs.clear();
+            hatch::generate_pattern_segments(store.hatch_loops(*hd), *pat, hd->pattern_scale,
+                                             hd->pattern_angle, hd->pattern_origin, hpsegs);
+            for (const hatch::Segment& sg : hpsegs) {
+                add_line(r.color, r.lineweight, sg.a, sg.b);
+            }
         }
+        // An unknown pattern name renders nothing (the entity stays selectable by region).
     });
 
     // INSERT (block reference): resolve the definition x transform to world segments

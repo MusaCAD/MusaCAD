@@ -3,22 +3,26 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
-## HATCH (Part A DONE 2026-06-23; Parts B/C staged)
+## HATCH (Parts A + B DONE 2026-06-23; refinements staged)
 
 * **Part A — DONE.** `EntityKind::Hatch` + SOLID fill (exact trapezoidal triangulation
   with islands), two boundary modes (**pick internal point** with a planar-arrangement
   tracer that respects partitioning lines + islands, and **pre-selected** closed
   polylines), pickable/PR-editable/MATCHPROP/grips-reshape, native + DXF round-trip,
   derived-not-baked (plots as vectors). See `docs/ARCHITECTURE.md` ▸ "HATCH".
-* **Part B — line patterns (next).** `.PAT` parser + ~30–40 stock patterns (ANSI31
-  non-negotiable), line-family clipping to the boundary loops, derived-not-baked, vector
-  plot. Pattern source must be license-clean (state the origin). SOLID stays the special
-  pattern name — ONE render path, patterns are not a fork. **Done looks like:** ANSI31
-  (and friends) render clipped to the region at the right scale/angle, plot identically,
-  and round-trip; screenshot proof per pattern.
-* **Part C remainder (staged).** Gap tolerance (HPGAPTOL parity) beyond the basic
-  endpoint bridging now in place; loose-segment islands; associative hatches (boundary
-  edits re-fill). GRADIENT fill is a later, separate item.
+* **Part B — line patterns — DONE.** `.PAT` parser + a built-in stock library (ANSI31–38
+  plus NET/GRID/BRICK/BOX/HEX/HONEY/ANGLE/DOTS/CROSS/SQUARE/TRIANG/GRASS/EARTH/STEEL/
+  CONC/INSUL/…), authored from the public .PAT format (license-clean; load acad.pat via
+  `parse_pat` for the vendor set). Line families generated + clipped to the boundary at
+  render time (derived-not-baked, even-odd islands), scaled/rotated by HPSCALE/HPANG/
+  HPORIGIN, routed into line batches so they plot as vectors. Command `[Pattern/Scale/
+  Angle]` options. SOLID stays the special name (one render path). See
+  `docs/ARCHITECTURE.md` ▸ "Line patterns".
+* **Staged refinements.** Gap tolerance (HPGAPTOL parity) beyond the basic endpoint
+  bridging now in place; loose-segment islands; associative hatches (boundary edits
+  re-fill); per-hatch DXF pattern-line export (PAT data — currently the pattern *name*
+  round-trips and re-resolves from the library, which covers the stock set); pattern
+  preview/dialog in the UI; GRADIENT fills.
 
 ## Multi-document — Phase B (DONE 2026-06-18; refinements staged)
 

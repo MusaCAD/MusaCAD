@@ -240,7 +240,12 @@ public:
     bool done() const override { return done_; }
 
 private:
+    enum class Mode { PickPoint, Pattern, Scale, Angle };
     bool done_ = false;
+    Mode mode_ = Mode::PickPoint;
+    std::string pattern_ = "SOLID"; // SOLID or a known line pattern (e.g. ANSI31)
+    double scale_ = 1.0;
+    double angle_ = 0.0; // radians (pattern rotation)
 };
 
 class TrimCommand final : public ICommand {

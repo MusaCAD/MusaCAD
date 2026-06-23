@@ -944,6 +944,20 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   the per-frame `aux_buffer_` — never `fill_buffer_`. Clobbering the scene buffer with
   overlay data makes fills vanish on the next non-geometry frame (selection) and flicker
   during zoom; keeping the two separate is what fixes both.
+* **Line patterns (Part B).** `hatch_pattern.{hpp,cpp}` add a `.PAT` parser (`parse_pat`)
+  and a built-in stock library (`builtin_pattern` / `builtin_pattern_names`) authored from
+  the public .PAT format — ANSI31–ANSI38 plus common geometric fills; **not** copied from
+  Autodesk's acad.pat (load that with `parse_pat` for the vendor set). A pattern is a list
+  of line families `{angle, origin, delta-x (per-row dash stagger), delta-y (perpendicular
+  spacing), dashes}`. `generate_pattern_segments` walks each family's parallel lines over
+  the region's bbox and, per line, finds boundary crossings (half-open signed-distance
+  rule, even-odd so islands carve out), emitting **solid spans or dash sub-segments clipped
+  to the inside intervals** — derived-not-baked, scaled by pattern_scale, rotated by
+  pattern_angle, anchored at pattern_origin. In the snapshot the hatch loop branches:
+  `SOLID` → fill triangles; any known pattern → clipped **lines** routed into the normal
+  (colour, lineweight) line batches (so they batch with all geometry and **plot as
+  vectors**); unknown name → nothing. SOLID stays the special name — one entity, one
+  snapshot path, patterns are not a fork. A per-family line cap guards tiny-scale blowups.
 
 ## Object-aware dimensioning & AutoCAD-accurate lineweight (Phase 15)
 

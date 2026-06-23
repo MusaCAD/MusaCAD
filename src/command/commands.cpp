@@ -10,6 +10,7 @@
 #include <string>
 
 #include "musacad/command/coordinate.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 
 namespace musacad::command {
 
@@ -784,23 +785,77 @@ void HatchCommand::start(CommandContext& ctx) {
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
     if (ctx.has_selection()) {
-        ctx.submit(core::HatchFromSelectionCommand{"SOLID", 1.0, 0.0, ctx.group_id()});
+        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id()});
         done_ = true;
         return;
     }
-    ctx.set_prompt("Pick internal point: ");
+    ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
 }
 
 void HatchCommand::input(CommandContext& ctx, const std::string& text) {
-    if (trimmed(text).empty()) {
+    const std::string t = trimmed(text);
+    // Sub-prompts: a typed value for the pattern name / scale / angle, then back to picking.
+    if (mode_ == Mode::Pattern) {
+        if (!t.empty()) {
+            const std::string up = upper(t);
+            if (up == "SOLID" || core::hatch::builtin_pattern(up) != nullptr) {
+                pattern_ = up;
+                ctx.echo("Pattern: " + pattern_);
+            } else {
+                ctx.echo("Unknown pattern '" + t + "'. Keeping " + pattern_ + ".");
+            }
+        }
+        mode_ = Mode::PickPoint;
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+        return;
+    }
+    if (mode_ == Mode::Scale) {
+        try {
+            const double v = std::stod(t);
+            if (v > 1e-9) {
+                scale_ = v;
+            }
+        } catch (...) {
+        }
+        mode_ = Mode::PickPoint;
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+        return;
+    }
+    if (mode_ == Mode::Angle) {
+        try {
+            angle_ = std::stod(t) * 3.14159265358979323846 / 180.0; // degrees -> radians
+        } catch (...) {
+        }
+        mode_ = Mode::PickPoint;
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+        return;
+    }
+
+    if (t.empty()) {
         done_ = true; // Enter finishes the command
+        return;
+    }
+    const std::string up = upper(t);
+    if (up == "P" || up == "PATTERN") {
+        mode_ = Mode::Pattern;
+        ctx.set_prompt("Pattern name (SOLID, ANSI31, ...) <" + pattern_ + ">: ");
+        return;
+    }
+    if (up == "S" || up == "SCALE") {
+        mode_ = Mode::Scale;
+        ctx.set_prompt("Pattern scale: ");
+        return;
+    }
+    if (up == "A" || up == "ANGLE") {
+        mode_ = Mode::Angle;
+        ctx.set_prompt("Pattern angle (degrees): ");
         return;
     }
     if (const auto p = read_point(ctx, text)) {
         // Click inside a closed region -> trace its boundary (+ islands) and hatch it. Each
         // pick is its own undo group; the command stays active for more picks.
-        ctx.submit(core::HatchPickPointCommand{*p, "SOLID", 1.0, 0.0, ctx.new_group()});
-        ctx.set_prompt("Pick internal point or Enter to finish: ");
+        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group()});
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle] or Enter to finish: ");
     }
 }
 
