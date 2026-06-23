@@ -29,6 +29,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ENABLE_SANITIZERS "Enable ASan+UBSan (Debug builds)" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer (mutually exclusive with ENABLE_SANITIZERS)" OFF)
 option(MUSACAD_BUILD_TESTS "Build unit tests" OFF)
+# GCC/Clang always build -Werror (the project's standing discipline). MSVC /W4 is much stricter
+# and the codebase predates any MSVC build, so promoting MSVC warnings to errors (/WX) is opt-in
+# until the warning audit lands (tracked as a follow-up). See cmake/CompilerWarnings.cmake.
+option(MUSACAD_MSVC_WERROR "Treat warnings as errors on MSVC (/WX)" OFF)
 
 if(ENABLE_SANITIZERS AND ENABLE_TSAN)
     message(FATAL_ERROR "ENABLE_SANITIZERS (ASan+UBSan) and ENABLE_TSAN cannot be combined")

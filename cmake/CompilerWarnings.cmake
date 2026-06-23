@@ -43,7 +43,11 @@ function(musacad_set_warnings target)
         else()
             set(_flags ${_msvc_strict})
         endif()
-        if(ARG_AS_ERRORS)
+        # MSVC /W4 is far stricter than -Wall -Wextra (e.g. C4244 narrowing in <utility>), and the
+        # codebase was developed against GCC/Clang. Keep the high warning level for visibility, but
+        # only promote to errors (/WX) when MUSACAD_MSVC_WERROR is ON -- off by default until the
+        # MSVC warning audit is done, so the Windows release build is not blocked by latent warnings.
+        if(ARG_AS_ERRORS AND MUSACAD_MSVC_WERROR)
             list(APPEND _flags /WX)
         endif()
     else()

@@ -822,7 +822,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     Document doc;
     doc.layers.assign(1, Layer{"0"}); // layer 0 always exists
-    std::map<std::string, std::uint16_t> layer_index{{"0", 0}};
+    std::map<std::string, std::uint16_t> layer_index{{"0", std::uint16_t{0}}};
     const auto ensure_layer = [&](const std::string& name) -> std::uint16_t {
         const auto it = layer_index.find(name);
         if (it != layer_index.end()) {
