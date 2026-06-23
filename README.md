@@ -48,6 +48,26 @@ targeting a smooth 144 Hz+ viewport.
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/overview.png" alt="Musa CAD interface: ribbon, multi-document tabs, command autocomplete, and the Properties palette" width="100%">
+  <br><em>AutoCAD-style ribbon, multi-document tabs, dynamic-input command autocomplete, grips, and the Properties palette.</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/architectural-plan.png" alt="A dense architectural drawing with building elevations and a detailed floor plan" width="49%">
+  <img src="assets/screenshots/mechanical-detail.png" alt="A dimensioned mechanical detail with a bolt-circle and a section view" width="49%">
+  <br><em>Left: a dense architectural drawing (elevations + floor plan). Right: a dimensioned mechanical detail with a bolt-circle and section view.</em>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/hatch-section.png" alt="The Hatch Editor contextual tab over a hatched section detail with a title block" width="100%">
+  <br><em>The Hatch Editor contextual tab (pattern library, solid + line hatches) over a sectioned detail and title block.</em>
+</p>
+
+---
+
 ## Building
 
 Musa CAD is **clone-and-build**:
@@ -84,6 +104,7 @@ include/musacad/   public headers mirroring src/
 shaders/       GLSL (embedded into the build)
 tests/         per-module unit tests + offscreen render & insertion benchmarks
 docs/          BUILD.md, ARCHITECTURE.md
+assets/        branding (logo/icons), ribbon SVG icons, screenshots
 ```
 
 ---
@@ -107,7 +128,7 @@ Musa CAD is licensed under the **GNU Lesser General Public License, version 3 or
 [`COPYING`](COPYING) (GPL-3.0) and [`COPYING.LESSER`](COPYING.LESSER) (LGPL-3.0);
 see [`LICENSE`](LICENSE) for a summary.
 
-In plain terms (not legal advice): you may link Musa CAD into your own software,
+In plain terms: you may link Musa CAD into your own software,
 **including proprietary software**, as long as you preserve the user's ability to
 replace the Musa CAD component with a modified build (the LGPL "relink"
 requirement) and keep the license notices. Modifications to **Musa CAD itself**,
@@ -116,7 +137,3 @@ dynamically (also LGPL-3); DWG import/export runs through an **external converte
 invoked as a separate process** — no DWG library is linked or shipped. Per-file
 notices use SPDX identifiers; third-party licenses and the GPL-boundary evidence
 are in [`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md).
-
-> These are compliance materials to make a human/legal review cheap, not legal
-> certification. A maintainer/legal review is recommended before the first public
-> release.

@@ -7,11 +7,6 @@ Musa CAD is **LGPL-3.0-or-later** (see [`COPYING`](../COPYING) / [`COPYING.LESSE
 This document inventories every dependency, how Musa CAD uses it, and a per-dependency
 compatibility verdict for LGPL-3 distribution.
 
-> **This is compliance _evidence_, not legal certification.** It exists to make a
-> human/legal review cheap. A maintainer/legal review of this file and the GPL-boundary
-> scan (below) is recommended before the first public release. Verdicts are findings, not
-> legal advice.
-
 ## Summary
 
 | Dependency | Version | License | How Musa CAD uses it | Verdict (LGPL-3 distribution) |
@@ -78,7 +73,7 @@ LGPL-3 licensing. Evidence for the v0.1.0 release:
    resolving the executable from `PATH`/a user-configured path at runtime. Musa CAD ships no
    converter binary and contains no converter code.
 
-**Finding (evidence, not certification): PASS — no GPL linkage.** LibreDWG/ODA are used as an
+**Finding: PASS — no GPL linkage.** LibreDWG/ODA are used as an
 external process only; they are not linked, vendored, fetched, or shipped, so Musa CAD's
 LGPL-3 distribution is not affected by their GPL/EULA terms. A user who wants DWG support
 installs the converter separately (see [`BUILD.md`](BUILD.md)).
