@@ -569,6 +569,65 @@ description (a richer autocomplete dropdown is then a near-free follow-up).
   back to the generic placeholder square (`make_icon`), so the ribbon degrades gracefully.
 * **Status bar** — `make_mode_action` gained a description, giving the OSNAP/GRID/ORTHO/
   SNAP/POLAR/DYN toggles the same `<b>NAME (Fn)</b><br>description` tooltips.
+
+### Progressive panel collapse + contextual tabs (Ribbon Phase B)
+
+* **Three panel states.** `RibbonPanel` re-renders itself in `PanelState::{Full, Compact,
+  Collapsed}`. FULL = all buttons large (icon + label); COMPACT = `RibbonTier::Primary`
+  buttons stay large, `Secondary` shrink to icon-only; COLLAPSED = the whole panel folds to
+  one fly-out `QToolButton` (its representative icon + title) whose click pops out the full
+  panel in a child `QFrame` inline below the tab strip (captureable + click-outside dismiss
+  via an event filter; dropdowns inside still work). Each button registers a **tier**, each
+  panel a **priority** (higher = collapses last) + a representative icon -- all passed at
+  registration (`add_panel(page, title, priority)`, `add_button(..., tier)`), so the layout
+  reads from data, no collapse-side table. Priorities: Draw 100, Modify 95, Annotation 60,
+  Layers 55, File 50, Properties 40, other-tab panels 20.
+* **One layout algorithm (synchronous, force-settled).** `RibbonBar::relayout_page` (run from
+  `resizeEvent`/show/tab-change via a coalesced `schedule_relayout`, which defers ONE tick only so
+  the resized scroll-viewport width is valid) does the whole collapse in a single synchronous pass:
+  reset every panel to FULL, then `while (page->sizeHint().width() > viewport)` collapse exactly one
+  panel — lowest priority first, FULL→COMPACT across panels then COMPACT→COLLAPSED — re-measuring
+  after each step. The horizontal **scroll bar** is the final fallback when even all-collapsed
+  overflows. Only the active page lays out (others on show). **Why it must force-settle, and why an
+  earlier *deferred* fitter was wrong:** measuring `sizeHint()` right after `set_state()`
+  under-reports the row by ~170px — a panel returning from COLLAPSED reparents its content back
+  (RibbonPopout→RibbonPanel), and the restyled `QToolButton`s only recompute their sizeHint after a
+  *deferred* `QEvent::Polish`. A fitter that measured on a `singleShot(0)` tick **raced** that
+  Polish: when the timer won, it read the stale width, under-collapsed, and the row overflowed into
+  a scroll bar that stole ~14px of height and **clipped every panel title on the first maximize**
+  (a tab switch papered over it because already-FULL panels don't reparent). The race was
+  machine-dependent (offscreen Xvfb happened to win the other way, hiding it). The fix:
+  `RibbonPanel::force_settle()` (called at the end of every `set_state`) makes the panel's sizeHint
+  accurate **in-line** — `ensurePolished()` (synchronous QSS re-resolution) + per-`QToolButton`
+  `updateGeometry()` (flushes the cached sizeHint the posted StyleChange invalidated — `ensurePolished`
+  alone does NOT) + `content_` layout `activate()`. So the synchronous loop always measures the true
+  width (empirically 1939, never the stale ~1910/1794), independent of event-loop timing. Hardening:
+  an `in_fit_` re-entrancy latch (an `activate()`-induced resize can't re-enter), an RAII guard that
+  re-enables `setUpdatesEnabled` on every exit path, and a one-shot ground-truth re-check
+  (`did_recheck_`, gated by `fit_generation_`, skipped when all-collapsed) as a defensive net that in
+  practice never fires. `RibbonBar::active_page_fits()` is the test hook (harness kinds 16/17 assert
+  it). The tab bar's base line is off (`setDrawBase(false)`). The app launches **maximized**
+  (`main.cpp` `showMaximized()`, gated off for the capture harness which sets its own geometry).
+* **Styling (theme.cpp).** `QToolTip` is themed dark (the default pale-yellow tip was
+  unreadable). Split/dropdown buttons use a small chevron (`:/ribbon/chevron-down.svg`) at
+  the bottom-right via the `::menu-button`/`::menu-arrow`/`::menu-indicator` subcontrols,
+  instead of Qt's default full-height sunken menu-button strip.
+* **Contextual tabs.** `add_contextual_tab(title, accent, predicate)` builds a page that
+  lives permanently in the stack but whose **tab** is shown/hidden by `update_contextual`,
+  called from the 100ms selection poll (`sync_ribbon_context`, reusing the PR's signal --
+  no new selection callback). Predicates take a plain-int `RibbonSel{count, mixed,
+  kind_plus1, family_plus1}` (built in MainWindow with `core::family_of`, keeping RibbonBar
+  core-agnostic). The three editors: **Hatch** (family Hatch), **Text** (family Text, so
+  TEXT+MTEXT both match), **Block** (a single Insert). Multi-selection is **all-or-none**
+  via `family_plus1`/single-kind (`SelectionSummary` gained `family_plus1`); a mixed
+  selection shows none. A newly matched tab **auto-activates**; when the active contextual
+  tab disappears the ribbon returns to the last fixed tab (Home). **Tab↔page indices are
+  decoupled** through `tabData` (the page index), so contextual tabs add/remove without
+  desyncing the stable pages. Accent: a `QTabBar` subclass paints a coloured top stripe per
+  contextual tab (visible even when selected, where QSS `:selected` would override
+  `setTabTextColor`). Order: contextual tabs always append after the fixed tabs; multiple
+  may show at once (one per matched predicate), though the predicates here are mutually
+  exclusive so it's one at a time in practice.
 * **Dropdown grouping + overflow.** `RibbonPanel::add_dropdown(icon, label, menu, split)` adds
   an AutoCAD-style button with a dropdown of related commands -- `split` true = a split
   button (main click runs the primary, the arrow opens the menu), false = the whole button

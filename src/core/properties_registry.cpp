@@ -984,14 +984,24 @@ SelectionSummary summarize_selection(const std::vector<Command>& captured) {
         return s;
     }
     const EntityKind first_kind = kind_of(captured.front());
+    const EntityFamily first_family = family_of(first_kind);
     bool homogeneous = true;
+    bool same_family = true;
     for (const Command& c : captured) {
-        if (kind_of(c) != first_kind) {
+        const EntityKind k = kind_of(c);
+        if (k != first_kind) {
             homogeneous = false;
-            break;
+        }
+        if (family_of(k) != first_family) {
+            same_family = false;
         }
     }
     s.mixed = !homogeneous;
+    // Family homogeneity drives the contextual ribbon tabs (e.g. TEXT + MTEXT are both the
+    // Text family, so a mixed-kind but same-family selection still gets the Text editor).
+    if (same_family) {
+        s.family_plus1 = static_cast<std::uint8_t>(static_cast<int>(first_family) + 1);
+    }
     if (homogeneous) {
         s.kind_plus1 = static_cast<std::uint8_t>(static_cast<int>(first_kind) + 1);
         s.type_label = s.count == 1 ? kind_name(first_kind)

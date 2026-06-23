@@ -194,6 +194,8 @@ private:
     [[nodiscard]] QString active_doc_path() const; ///< the active document's native path ("")
     [[nodiscard]] QString active_doc_name() const; ///< the active document's display name
     void build_ribbon();
+    void build_contextual_tabs();   ///< Hatch/Text/Block editor tabs (shown reactively)
+    void sync_ribbon_context();     ///< re-evaluate contextual-tab predicates on selection change
     QWidget* build_central();
     void build_status_bar();
     QAction* make_mode_action(const QString& text, int func_key, bool initial,
@@ -306,6 +308,11 @@ private:
     QTimer* title_timer_ = nullptr;
     std::vector<QToolButton*> selection_required_buttons_;
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
+    // Last selection signature seen by the contextual-tab poll (count/kind+1/family+1); used
+    // to skip work when the selection hasn't changed.
+    int last_ctx_count_ = -1;
+    int last_ctx_kind1_ = -1;
+    int last_ctx_family1_ = -1;
     QTabBar* file_tabs_ = nullptr;          // multi-document tab strip (mirrors the engine)
     core::Vec2 last_cursor_world_{};        // latest cursor world pos (paste-at-cursor)
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control

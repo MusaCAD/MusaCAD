@@ -300,6 +300,22 @@ button dropdown).
 | Dimension: independent text-reposition grip | Planned (needs a stored text offset) |
 | Add/remove polyline vertex via grips | Planned |
 
+## Ribbon (responsive + contextual)
+
+The ribbon is registry-driven (icons + tooltips from each command's registration) and
+**responsive**: as the window narrows, panels degrade FULL → COMPACT (secondary buttons
+become icon-only) → COLLAPSED (the panel folds to one fly-out button that pops out the full
+panel inline), lowest-priority panels first; a horizontal scroll bar is the final fallback.
+
+**Contextual tabs** appear automatically when the whole selection matches an entity family,
+and disappear (returning to the last fixed tab) when it doesn't. Mixed selections show none.
+
+| Contextual tab | Appears when | Controls | Status |
+|---|---|---|---|
+| **Hatch Editor** (green accent) | all selected objects are hatches | Pattern picker, Solid-fill toggle, Scale, Angle, Re-hatch | Implemented |
+| **Text Editor** (blue accent) | all selected objects are the Text family (TEXT/MTEXT/leaders) | Font, Height, Edit Text | Implemented |
+| **Block Editor** (amber accent) | a single block reference (INSERT) is selected | Edit Block | Present (Edit Block staged — block authoring not yet implemented) |
+
 ## Status-bar modes & keys
 
 | Mode | Key | Status |

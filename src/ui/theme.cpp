@@ -97,11 +97,20 @@ QWidget#QatStrip QToolButton {
 QWidget#QatStrip QToolButton:hover { background: #505050; border-radius: 3px; }
 QWidget#QatStrip QToolButton:disabled { color: #777; }
 
+/* ----- Tooltips (used by ribbon + status bar) ----- */
+QToolTip {
+    background: #20242b;
+    color: #e8eaed;
+    border: 1px solid #5a6270;
+    padding: 5px 8px;
+}
+
 /* ----- Ribbon ----- */
 QWidget#Ribbon { background: #333333; }
+QTabBar#RibbonTabs { background: #333333; border: none; }
 QTabBar#RibbonTabs::tab {
     background: #333333;
-    padding: 5px 16px;
+    padding: 6px 16px;
     border: none;
     color: #c0c0c0;
 }
@@ -110,29 +119,62 @@ QTabBar#RibbonTabs::tab:selected {
     color: #ffffff;
     border-bottom: 2px solid #4a90d9;
 }
-QTabBar#RibbonTabs::tab:hover { color: #ffffff; }
+QTabBar#RibbonTabs::tab:hover:!selected { color: #ffffff; }
 QWidget#RibbonPage { background: #3f3f3f; }
+QScrollArea#RibbonScroll { background: #3f3f3f; border: none; }
 
-QFrame#RibbonPanel {
+QFrame#RibbonPanel, QFrame#RibbonPopout {
     background: #3f3f3f;
-    border-right: 1px solid #2b2b2b;
+    border: none;
+    border-right: 1px solid #4a4a4a;
+}
+QFrame#RibbonPopout {
+    border: 1px solid #5a6270;
+    border-radius: 4px;
 }
 QLabel#RibbonPanelTitle {
-    color: #9a9a9a;
+    color: #8e9298;
     font-size: 10px;
+    padding-top: 1px;
     qproperty-alignment: AlignCenter;
 }
-QFrame#RibbonPanel QToolButton {
+QFrame#RibbonPanel QToolButton, QFrame#RibbonPopout QToolButton {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 3px;
-    padding: 3px;
+    /* NB: no `padding` here -- QStyleSheetStyle omits QToolButton padding from sizeHint()
+       (a Qt quirk with ToolButtonTextUnderIcon), which made the collapse measurement
+       under-count the row width/height (spurious scroll bar + clipped panel titles). Spacing
+       comes from the layout margins/spacing instead (those ARE in sizeHint). */
 }
-QFrame#RibbonPanel QToolButton:hover:enabled {
-    background: #505868;
+QFrame#RibbonPanel QToolButton:hover:enabled, QFrame#RibbonPopout QToolButton:hover:enabled {
+    background: #4d5562;
     border: 1px solid #4a90d9;
 }
-QFrame#RibbonPanel QToolButton:disabled { color: #6f6f6f; }
+QFrame#RibbonPanel QToolButton:pressed:enabled, QFrame#RibbonPopout QToolButton:pressed:enabled {
+    background: #3a6ea5;
+}
+QFrame#RibbonPanel QToolButton:disabled, QFrame#RibbonPopout QToolButton:disabled {
+    color: #6f6f6f;
+}
+/* Dropdown / split buttons: a small chevron at the bottom-right instead of the default
+   full-height sunken menu-button strip (which looked like an odd black bar). */
+QFrame#RibbonPanel QToolButton::menu-button, QFrame#RibbonPopout QToolButton::menu-button {
+    background: transparent;
+    border: none;
+    /* no width override -- the default menu-button width IS counted in the button sizeHint,
+       so the collapse measurement stays accurate. */
+}
+QFrame#RibbonPanel QToolButton::menu-arrow, QFrame#RibbonPopout QToolButton::menu-arrow,
+QFrame#RibbonPanel QToolButton::menu-indicator, QFrame#RibbonPopout QToolButton::menu-indicator {
+    image: url(:/ribbon/chevron-down.svg);
+    width: 9px;
+    height: 9px;
+    subcontrol-origin: padding;
+    subcontrol-position: bottom right;
+    bottom: 2px;
+    right: 2px;
+}
 
 /* ----- File / layout tab rows ----- */
 QTabBar#FileTabs::tab, QTabBar#LayoutTabs::tab {

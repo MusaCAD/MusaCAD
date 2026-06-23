@@ -184,9 +184,10 @@ struct PropertyField {
 /// The whole palette view of the current selection.
 struct SelectionSummary {
     int count = 0;
-    bool mixed = false;          ///< selection spans more than one entity kind
-    std::uint8_t kind_plus1 = 0; ///< EntityKind+1 when homogeneous, else 0
-    std::string type_label;      ///< e.g. "Line", "3 Texts", "Mixed (5)"
+    bool mixed = false;            ///< selection spans more than one entity kind
+    std::uint8_t kind_plus1 = 0;   ///< EntityKind+1 when homogeneous, else 0
+    std::uint8_t family_plus1 = 0; ///< EntityFamily+1 when all share a family, else 0
+    std::string type_label;        ///< e.g. "Line", "3 Texts", "Mixed (5)"
     std::vector<PropertyField> fields;
 
     friend bool operator==(const SelectionSummary&, const SelectionSummary&) = default;

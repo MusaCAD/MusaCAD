@@ -24,6 +24,7 @@
 #include <QCoreApplication>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDoubleValidator>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -65,6 +66,9 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/entity_handle.hpp"
+#include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/properties_palette.hpp"
 #include "musacad/core/snap.hpp"
 #include "musacad/core/version.hpp"
 #include "musacad/ui/command_icons.hpp"
@@ -292,6 +296,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         sync_layer_combo();
         sync_properties_panel();
+        sync_ribbon_context();  // show/hide contextual ribbon tabs per the selection
         sync_document_tabs(); // mirror the engine's open-document list into the tab strip
         // Echo each new engine command-result (honest feedback) once.
         const std::uint64_t sv = viewport_->status_version();
@@ -450,11 +455,11 @@ void MainWindow::build_ribbon() {
 
     // Wires a panel button to an existing command (typed alias). Icon + tooltip come
     // straight from the command registry -- no ribbon-side per-command table.
-    const auto add_cmd = [&](RibbonPanel* panel, const QString& label,
-                             const char* alias) -> QToolButton* {
+    const auto add_cmd = [&](RibbonPanel* panel, const QString& label, const char* alias,
+                             RibbonTier tier = RibbonTier::Primary) -> QToolButton* {
         const command::CommandInfo* info = processor_->registry().find(alias);
         const QString icon_path = info != nullptr ? QString::fromStdString(info->icon) : QString();
-        QToolButton* b = panel->add_button(ribbon_icon(icon_path), label);
+        QToolButton* b = panel->add_button(ribbon_icon(icon_path), label, tier);
         b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(alias)));
         if (info != nullptr) {
             b->setToolTip(cmd_tooltip(*info));
@@ -489,10 +494,11 @@ void MainWindow::build_ribbon() {
     // A split command button: the main area runs `primary`, the arrow opens a dropdown of
     // related commands. Icon + tooltip come from the primary's registry entry.
     const auto add_split = [&](RibbonPanel* panel, const QString& label, const char* primary,
-                               QMenu* menu) -> QToolButton* {
+                               QMenu* menu,
+                               RibbonTier tier = RibbonTier::Secondary) -> QToolButton* {
         const command::CommandInfo* info = processor_->registry().find(primary);
         const QString icon_path = info != nullptr ? QString::fromStdString(info->icon) : QString();
-        QToolButton* b = panel->add_dropdown(ribbon_icon(icon_path), label, menu, /*split=*/true);
+        QToolButton* b = panel->add_dropdown(ribbon_icon(icon_path), label, menu, /*split=*/true, tier);
         b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(primary)));
         if (info != nullptr) {
             b->setToolTip(cmd_tooltip(*info));
@@ -508,10 +514,11 @@ void MainWindow::build_ribbon() {
     const int home = ribbon_->add_tab(QStringLiteral("Home"));
 
     // File panel: native New/Open/Save/Save As + DXF import/export.
-    RibbonPanel* file = ribbon_->add_panel(home, QStringLiteral("File"));
+    RibbonPanel* file = ribbon_->add_panel(home, QStringLiteral("File"), 50);
+    file->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/save.svg")));
     const auto file_btn = [&](const QString& icon, const QString& label, const QString& tip,
-                              void (MainWindow::*slot)()) {
-        QToolButton* b = file->add_button(ribbon_icon(icon), label);
+                              void (MainWindow::*slot)(), RibbonTier tier = RibbonTier::Primary) {
+        QToolButton* b = file->add_button(ribbon_icon(icon), label, tier);
         b->setToolTip(tip);
         connect(b, &QToolButton::clicked, this, slot);
         return b;
@@ -523,7 +530,8 @@ void MainWindow::build_ribbon() {
     file_btn(QStringLiteral("assets/ribbon/save.svg"), QStringLiteral("Save"),
              QStringLiteral("Save the current drawing."), &MainWindow::file_save);
     file_btn(QStringLiteral("assets/ribbon/saveas.svg"), QStringLiteral("Save As"),
-             QStringLiteral("Save the drawing under a new name."), &MainWindow::file_save_as);
+             QStringLiteral("Save the drawing under a new name."), &MainWindow::file_save_as,
+             RibbonTier::Secondary);
     // A menu action bound to a MainWindow slot (icon + tooltip), for the file dropdowns.
     const auto file_action = [&](const QString& icon, const QString& text, const QString& tip,
                                  void (MainWindow::*slot)()) {
@@ -563,7 +571,7 @@ void MainWindow::build_ribbon() {
         ->setToolTip(QStringLiteral("Export the drawing to a DXF or DWG file."));
     file_btn(QStringLiteral("assets/ribbon/plot.svg"), QStringLiteral("Plot"),
              QStringLiteral("Plot or print the drawing to paper or PDF."),
-             &MainWindow::open_plot_dialog);
+             &MainWindow::open_plot_dialog, RibbonTier::Secondary);
 
     // Save As shortcut (Ctrl+Shift+S) -- New/Open/Save shortcuts live on the QAT.
     auto* save_as_act = new QAction(this);
@@ -604,22 +612,24 @@ void MainWindow::build_ribbon() {
         }
     });
 
-    RibbonPanel* draw = ribbon_->add_panel(home, QStringLiteral("Draw"));
-    add_cmd(draw, QStringLiteral("Line"), "L");
-    add_cmd(draw, QStringLiteral("Polyline"), "PL");
-    add_cmd(draw, QStringLiteral("Circle"), "C");
-    add_cmd(draw, QStringLiteral("Arc"), "A");
-    add_cmd(draw, QStringLiteral("Rectangle"), "REC");
-    add_cmd(draw, QStringLiteral("Hatch"), "H");
+    RibbonPanel* draw = ribbon_->add_panel(home, QStringLiteral("Draw"), 100);
+    draw->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/line.svg")));
+    add_cmd(draw, QStringLiteral("Line"), "L", RibbonTier::Primary);
+    add_cmd(draw, QStringLiteral("Polyline"), "PL", RibbonTier::Primary);
+    add_cmd(draw, QStringLiteral("Circle"), "C", RibbonTier::Primary);
+    add_cmd(draw, QStringLiteral("Arc"), "A", RibbonTier::Primary);
+    add_cmd(draw, QStringLiteral("Rectangle"), "REC", RibbonTier::Primary);
+    add_cmd(draw, QStringLiteral("Hatch"), "H", RibbonTier::Secondary);
 
-    RibbonPanel* modify = ribbon_->add_panel(home, QStringLiteral("Modify"));
-    QToolButton* move_btn = add_cmd(modify, QStringLiteral("Move"), "M");
-    QToolButton* copy_btn = add_cmd(modify, QStringLiteral("Copy"), "CO");
-    QToolButton* rotate_btn = add_cmd(modify, QStringLiteral("Rotate"), "RO");
-    QToolButton* mirror_btn = add_cmd(modify, QStringLiteral("Mirror"), "MI");
-    QToolButton* scale_btn = add_cmd(modify, QStringLiteral("Scale"), "SC");
-    add_cmd(modify, QStringLiteral("Offset"), "O"); // pick-based
-    add_cmd(modify, QStringLiteral("Erase"), "ERASE");
+    RibbonPanel* modify = ribbon_->add_panel(home, QStringLiteral("Modify"), 95);
+    modify->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/move.svg")));
+    QToolButton* move_btn = add_cmd(modify, QStringLiteral("Move"), "M", RibbonTier::Primary);
+    QToolButton* copy_btn = add_cmd(modify, QStringLiteral("Copy"), "CO", RibbonTier::Primary);
+    QToolButton* rotate_btn = add_cmd(modify, QStringLiteral("Rotate"), "RO", RibbonTier::Secondary);
+    QToolButton* mirror_btn = add_cmd(modify, QStringLiteral("Mirror"), "MI", RibbonTier::Primary);
+    QToolButton* scale_btn = add_cmd(modify, QStringLiteral("Scale"), "SC", RibbonTier::Secondary);
+    add_cmd(modify, QStringLiteral("Offset"), "O", RibbonTier::Primary); // pick-based
+    add_cmd(modify, QStringLiteral("Erase"), "ERASE", RibbonTier::Primary);
     // Trim ▼ (Trim / Extend) and Fillet ▼ (Fillet / Chamfer / Join) -- AutoCAD-style split
     // buttons: the main area runs the primary, the arrow expands to the related commands.
     auto* trim_menu = new QMenu(this);
@@ -648,7 +658,8 @@ void MainWindow::build_ribbon() {
         b->setEnabled(false);
     }
 
-    RibbonPanel* layers = ribbon_->add_panel(home, QStringLiteral("Layers"));
+    RibbonPanel* layers = ribbon_->add_panel(home, QStringLiteral("Layers"), 55);
+    layers->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/layers.svg")));
     layer_combo_ = new QComboBox(this);
     layer_combo_->setObjectName(QStringLiteral("CurrentLayerCombo"));
     layer_combo_->setMinimumWidth(120);
@@ -666,7 +677,8 @@ void MainWindow::build_ribbon() {
     layer_btn->setToolTip(QStringLiteral("Open the Layer Properties manager."));
     connect(layer_btn, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
 
-    RibbonPanel* props = ribbon_->add_panel(home, QStringLiteral("Properties"));
+    RibbonPanel* props = ribbon_->add_panel(home, QStringLiteral("Properties"), 40);
+    props->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/color-swatch.svg")));
     QToolButton* color_btn = props->add_button(
         ribbon_icon(QStringLiteral("assets/ribbon/color-swatch.svg")), QStringLiteral("Set\nColour"));
     color_btn->setObjectName(QStringLiteral("ribbon.set_color"));
@@ -675,13 +687,14 @@ void MainWindow::build_ribbon() {
     selection_required_buttons_.push_back(color_btn); // colour override needs a selection
     color_btn->setEnabled(false);
 
-    RibbonPanel* annot = ribbon_->add_panel(home, QStringLiteral("Annotation"));
+    RibbonPanel* annot = ribbon_->add_panel(home, QStringLiteral("Annotation"), 60);
+    annot->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/text.svg")));
     // Text ▼ (single-line / multiline / edit).
     auto* text_menu = new QMenu(this);
     text_menu->addAction(cmd_action("DT", QStringLiteral("Single-line Text")));
     text_menu->addAction(cmd_action("MT", QStringLiteral("Multiline Text")));
     text_menu->addAction(cmd_action("ED", QStringLiteral("Edit Text")));
-    add_split(annot, QStringLiteral("Text"), "DT", text_menu);
+    add_split(annot, QStringLiteral("Text"), "DT", text_menu, RibbonTier::Primary);
     // Dimension ▼ -- the family collapses into one split button (main = smart DIM, arrow =
     // the specific types). This is the big de-clutter for the Annotation panel.
     auto* dim_menu = new QMenu(this);
@@ -690,7 +703,7 @@ void MainWindow::build_ribbon() {
     dim_menu->addAction(cmd_action("DRA", QStringLiteral("Radius")));
     dim_menu->addAction(cmd_action("DDI", QStringLiteral("Diameter")));
     dim_menu->addAction(cmd_action("DAN", QStringLiteral("Angular")));
-    add_split(annot, QStringLiteral("Dimension"), "DIM", dim_menu);
+    add_split(annot, QStringLiteral("Dimension"), "DIM", dim_menu, RibbonTier::Primary);
     // Leader ▼ (leader / quick leader).
     auto* leader_menu = new QMenu(this);
     leader_menu->addAction(cmd_action("LE", QStringLiteral("Quick Leader")));
@@ -713,13 +726,15 @@ void MainWindow::build_ribbon() {
 
     // --- Insert tab (placeholder) ---
     const int insert = ribbon_->add_tab(QStringLiteral("Insert"));
-    RibbonPanel* block = ribbon_->add_panel(insert, QStringLiteral("Block"));
+    RibbonPanel* block = ribbon_->add_panel(insert, QStringLiteral("Block"), 20);
+    block->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")));
     block->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")),
                            QStringLiteral("Insert"));
 
     // --- Annotate tab (Dimensions land in Phase 8) ---
     const int annotate = ribbon_->add_tab(QStringLiteral("Annotate"));
-    RibbonPanel* dims = ribbon_->add_panel(annotate, QStringLiteral("Dimensions"));
+    RibbonPanel* dims = ribbon_->add_panel(annotate, QStringLiteral("Dimensions"), 20);
+    dims->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/dim.svg")));
     dims->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/dim-linear.svg")),
                           QStringLiteral("Linear"));
     dims->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/dim-aligned.svg")),
@@ -727,7 +742,8 @@ void MainWindow::build_ribbon() {
 
     // --- View tab (Zoom Extents is real) ---
     const int view = ribbon_->add_tab(QStringLiteral("View"));
-    RibbonPanel* nav = ribbon_->add_panel(view, QStringLiteral("Navigate"));
+    RibbonPanel* nav = ribbon_->add_panel(view, QStringLiteral("Navigate"), 20);
+    nav->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/zoom.svg")));
     QToolButton* zext = nav->add_button(ribbon_icon(QStringLiteral("assets/ribbon/zoom-extents.svg")),
                                         QStringLiteral("Zoom\nExtents"));
     zext->setToolTip(QStringLiteral("Zoom to show the full drawing extents."));
@@ -742,11 +758,173 @@ void MainWindow::build_ribbon() {
 
     // --- Manage tab (placeholder) ---
     const int manage = ribbon_->add_tab(QStringLiteral("Manage"));
-    ribbon_->add_panel(manage, QStringLiteral("Customization"))
-        ->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/settings.svg")),
-                          QStringLiteral("Settings"));
+    RibbonPanel* customize = ribbon_->add_panel(manage, QStringLiteral("Customization"), 20);
+    customize->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/settings.svg")));
+    customize->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/settings.svg")),
+                               QStringLiteral("Settings"));
+
+    // Contextual tabs (Phase B): built once, shown/hidden reactively by the selection poll
+    // (sync_ribbon_context()). Predicates are family-based so e.g. TEXT + MTEXT both match.
+    build_contextual_tabs();
 
     setMenuWidget(ribbon_);
+}
+
+void MainWindow::build_contextual_tabs() {
+    using core::PropertyId;
+    using core::PropertyValue;
+    const auto set_prop = [this](PropertyId id, const PropertyValue& v) {
+        engine_->submit(core::SetPropertyCommand{id, v, processor_->begin_group()});
+    };
+    // A labelled numeric field for a contextual panel: commits a Number property on Enter.
+    const auto num_field = [this, set_prop](RibbonPanel* panel, const QString& label,
+                                            const QString& obj, PropertyId id) {
+        auto* w = new QWidget(this);
+        auto* h = new QHBoxLayout(w);
+        h->setContentsMargins(2, 0, 2, 0);
+        h->setSpacing(4);
+        h->addWidget(new QLabel(label, w));
+        auto* edit = new QLineEdit(w);
+        edit->setObjectName(obj);
+        edit->setValidator(new QDoubleValidator(edit));
+        edit->setMaximumWidth(64);
+        connect(edit, &QLineEdit::editingFinished, this, [edit, id, set_prop] {
+            bool ok = false;
+            const double val = edit->text().toDouble(&ok);
+            if (ok) {
+                PropertyValue v;
+                v.num = val;
+                set_prop(id, v);
+            }
+        });
+        h->addWidget(edit);
+        panel->add_widget(w);
+    };
+
+    // --- Hatch Editor (family Hatch), pale green accent ---
+    const int hatch_page = ribbon_->add_contextual_tab(
+        QStringLiteral("Hatch Editor"), QColor(150, 205, 140), [](const RibbonSel& s) {
+            return s.count > 0 && s.family_plus1 == static_cast<int>(core::EntityFamily::Hatch) + 1;
+        });
+    RibbonPanel* hpat = ribbon_->add_panel(hatch_page, QStringLiteral("Pattern"), 100);
+    hpat->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/hatch.svg")));
+    {
+        auto* combo = new QComboBox(this);
+        combo->setObjectName(QStringLiteral("ctx.hatch.pattern"));
+        combo->setMinimumWidth(120);
+        for (const std::string& name : core::hatch::pattern_choice_list()) {
+            combo->addItem(QString::fromStdString(name));
+        }
+        combo->setToolTip(QStringLiteral("Hatch pattern (applies to the selected hatch)."));
+        connect(combo, &QComboBox::activated, this, [combo, set_prop] {
+            PropertyValue v;
+            v.text = combo->currentText().toStdString();
+            set_prop(PropertyId::HatchPattern, v);
+        });
+        hpat->add_widget(combo);
+        QToolButton* solid = hpat->add_button(ribbon_icon(QStringLiteral("assets/ribbon/hatch.svg")),
+                                              QStringLiteral("Solid\nFill"), RibbonTier::Secondary);
+        solid->setToolTip(QStringLiteral("Switch the selected hatch to a solid fill."));
+        connect(solid, &QToolButton::clicked, this, [set_prop] {
+            PropertyValue v;
+            v.text = "SOLID";
+            set_prop(PropertyId::HatchPattern, v);
+        });
+    }
+    RibbonPanel* hprop = ribbon_->add_panel(hatch_page, QStringLiteral("Properties"), 90);
+    hprop->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/properties.svg")));
+    num_field(hprop, QStringLiteral("Scale"), QStringLiteral("ctx.hatch.scale"),
+              PropertyId::HatchScale);
+    num_field(hprop, QStringLiteral("Angle"), QStringLiteral("ctx.hatch.angle"),
+              PropertyId::HatchAngle);
+    RibbonPanel* hbnd = ribbon_->add_panel(hatch_page, QStringLiteral("Boundary"), 80);
+    hbnd->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/rectangle.svg")));
+    {
+        QToolButton* reh = hbnd->add_button(ribbon_icon(QStringLiteral("assets/ribbon/hatch.svg")),
+                                            QStringLiteral("Re-hatch"), RibbonTier::Primary);
+        reh->setToolTip(QStringLiteral("Pick a new internal point to re-detect the boundary."));
+        connect(reh, &QToolButton::clicked, this, [this] {
+            command_widget_->focus_input();
+            processor_->start_command("H");
+        });
+    }
+
+    // --- Text Editor (family Text: TEXT/MTEXT/Leaders), pale blue accent ---
+    const int text_page = ribbon_->add_contextual_tab(
+        QStringLiteral("Text Editor"), QColor(120, 180, 230), [](const RibbonSel& s) {
+            return s.count > 0 && s.family_plus1 == static_cast<int>(core::EntityFamily::Text) + 1;
+        });
+    RibbonPanel* tfmt = ribbon_->add_panel(text_page, QStringLiteral("Format"), 100);
+    tfmt->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/text.svg")));
+    {
+        auto* font = new QComboBox(this);
+        font->setObjectName(QStringLiteral("ctx.text.font"));
+        font->setMinimumWidth(130);
+        if (font_engine_ != nullptr) {
+            for (const std::string& fam : font_engine_->available()) {
+                font->addItem(QString::fromStdString(fam));
+            }
+        }
+        if (font->count() == 0) {
+            font->addItem(QStringLiteral("Standard"));
+        }
+        font->setToolTip(QStringLiteral("Text font (applies to the selected text)."));
+        connect(font, &QComboBox::activated, this, [font, set_prop] {
+            const QString name = font->currentText();
+            PropertyValue v;
+            v.text = name == QStringLiteral("Standard") ? std::string() : name.toStdString();
+            set_prop(PropertyId::TextFont, v);
+        });
+        tfmt->add_widget(font);
+    }
+    num_field(tfmt, QStringLiteral("Height"), QStringLiteral("ctx.text.height"),
+              PropertyId::TextHeight);
+    RibbonPanel* tedit = ribbon_->add_panel(text_page, QStringLiteral("Edit"), 90);
+    tedit->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/text.svg")));
+    {
+        QToolButton* ed = tedit->add_button(ribbon_icon(QStringLiteral("assets/ribbon/text.svg")),
+                                            QStringLiteral("Edit\nText"), RibbonTier::Primary);
+        ed->setToolTip(QStringLiteral("Edit the contents of the selected text."));
+        connect(ed, &QToolButton::clicked, this, [this] {
+            command_widget_->focus_input();
+            processor_->start_command("ED");
+        });
+    }
+
+    // --- Block Editor (single Insert), pale amber accent. Authoring is staged. ---
+    const int block_page = ribbon_->add_contextual_tab(
+        QStringLiteral("Block Editor"), QColor(225, 180, 110), [](const RibbonSel& s) {
+            return s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
+        });
+    RibbonPanel* bdef = ribbon_->add_panel(block_page, QStringLiteral("Definition"), 100);
+    bdef->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")));
+    {
+        QToolButton* edit = bdef->add_placeholder(
+            ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")), QStringLiteral("Edit\nBlock"),
+            RibbonTier::Primary);
+        edit->setToolTip(QStringLiteral("Open the block definition for in-place editing "
+                                        "(staged -- block authoring is not implemented yet)."));
+    }
+}
+
+void MainWindow::sync_ribbon_context() {
+    if (ribbon_ == nullptr || viewport_ == nullptr) {
+        return;
+    }
+    const core::SelectionSummary s = viewport_->selection_summary();
+    if (s.count == last_ctx_count_ && s.kind_plus1 == last_ctx_kind1_ &&
+        s.family_plus1 == last_ctx_family1_) {
+        return; // selection signature unchanged -- nothing to re-evaluate
+    }
+    last_ctx_count_ = s.count;
+    last_ctx_kind1_ = s.kind_plus1;
+    last_ctx_family1_ = s.family_plus1;
+    RibbonSel rs;
+    rs.count = s.count;
+    rs.mixed = s.mixed;
+    rs.kind_plus1 = s.kind_plus1;
+    rs.family_plus1 = s.family_plus1;
+    ribbon_->update_contextual(rs);
 }
 
 QAction* MainWindow::make_mode_action(const QString& text, int func_key, bool initial,
@@ -3411,14 +3589,107 @@ bool MainWindow::ribbon_shot(int kind, const std::string& out_png) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     };
-    // kind 2 captures a deliberately NARROW window to show the overflow behaviour (a
-    // horizontal scroll bar, panels intact) rather than icons colliding.
-    resize(kind == 2 ? 760 : 1500, 820);
+    // Window width per kind: B1 progressive collapse (10 full .. 13 scroll), B2 contextual.
+    int win_w = 1500;
+    switch (kind) {
+    case 2: win_w = 760; break;
+    case 10: win_w = 1850; break; // full -- all panels FULL
+    case 11: win_w = 1200; break; // medium -- some panels COMPACT
+    case 12: win_w = 880; break;  // narrow -- several panels COLLAPSED
+    case 13: win_w = 340; break;  // very narrow -- even all-collapsed overflows -> scroll
+    case 14: win_w = 900; break;  // collapsed + popout
+    case 17: win_w = 700; break;  // FAITHFUL maximize repro: settle small (panels COLLAPSE into
+                                  // popouts) THEN maximize -- the user's real path, which exercises
+                                  // the COLLAPSED->FULL reparent that leaves sizeHint stale.
+    default: win_w = 1500; break;
+    }
+    resize(win_w, 820);
     move(40, 40);
-    show();
+    if (kind == 16) {
+        showMaximized(); // reproduce the user's true full-screen case
+    } else {
+        show();
+    }
     raise();
     activateWindow();
     pump(800);
+
+    // kind 17: now that the small window has SETTLED (panels collapsed, content reparented into
+    // popouts), maximize -- exactly as the user does -- and capture WITHOUT a tab switch (a tab
+    // switch re-runs the fitter on already-Full panels and masks the bug).
+    if (kind == 17) {
+        showMaximized();
+        pump(800);
+    }
+
+    // B2 contextual-tab captures (20-24): build geometry, set the selection, then let the
+    // 100ms selection poll (sync_ribbon_context) react. NewDocument first for a clean slate.
+    if (kind >= 20 && kind <= 24) {
+        using core::Vec2;
+        engine_->submit(core::NewDocumentCommand{});
+        pump(150);
+        if (kind == 20 || kind == 23 || kind == 24) {
+            engine_->submit(core::AddPolylineCommand{{{0, 0}, {40, 0}, {40, 40}, {0, 40}}, true, 1});
+            engine_->submit(core::SelectAllCommand{});
+            pump(150);
+            engine_->submit(core::HatchFromSelectionCommand{"SOLID", 1.0, 0.0, 2}); // auto-selects the hatch
+            pump(200);
+            if (kind == 23) {
+                engine_->submit(core::AddLineCommand{{60, 0}, {90, 30}, 1});
+                pump(120);
+                engine_->submit(core::SelectAllCommand{}); // polyline + hatch + line => mixed
+            }
+        } else if (kind == 21) {
+            engine_->submit(core::AddTextCommand{{0, 0}, 8.0, 0.0, std::uint8_t{0},
+                                                 std::string("Annotation"), std::uint64_t{1}});
+            pump(150);
+            engine_->submit(core::SelectAllCommand{});
+        } else if (kind == 22) {
+            // No interactive block-create command exists (blocks come from import/load), so
+            // load a tiny DXF carrying a block definition + one INSERT, then select it.
+            const QString path = QStringLiteral("/tmp/musacad_block_demo.dxf");
+            QFile f(path);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                f.write(
+                    "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nSQ\n10\n0.0\n20\n0.0\n"
+                    "0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n20.0\n21\n0.0\n"
+                    "0\nLINE\n8\n0\n10\n20.0\n20\n0.0\n11\n20.0\n21\n20.0\n"
+                    "0\nLINE\n8\n0\n10\n20.0\n20\n20.0\n11\n0.0\n21\n20.0\n"
+                    "0\nLINE\n8\n0\n10\n0.0\n20\n20.0\n11\n0.0\n21\n0.0\n"
+                    "0\nENDBLK\n0\nENDSEC\n"
+                    "0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nSQ\n8\n0\n10\n30.0\n20\n30.0\n"
+                    "0\nENDSEC\n0\nEOF\n");
+                f.close();
+            }
+            open_from(path, /*dxf=*/true); // submits OpenDocumentCommand (new tab)
+            pump(300);
+            engine_->submit(core::SelectAllCommand{});
+        }
+        pump(800); // let title_timer_ fire -> sync_ribbon_context -> contextual tab
+        if (kind == 24) {
+            engine_->submit(core::ClearSelectionCommand{}); // deselect -> Home restored
+            pump(800);
+        }
+    }
+
+    // kind 15: tab-switch regression test -- switch to another tab and back; Home must come
+    // back at full size (the old bug left buttons tiny/label-less due to a stale width read).
+    if (kind == 15) {
+        if (auto* tb = ribbon_->findChild<QTabBar*>(QStringLiteral("RibbonTabs")); tb != nullptr) {
+            tb->setCurrentIndex(3); // View
+            pump(300);
+            tb->setCurrentIndex(0); // back to Home
+            pump(300);
+        }
+    }
+
+    // kind 14: open the first COLLAPSED panel's fly-out popout (a child widget, captured).
+    if (kind == 14) {
+        if (auto* fly = findChild<QToolButton*>(QStringLiteral("RibbonFlyout")); fly != nullptr) {
+            fly->click();
+            pump(300);
+        }
+    }
 
     // kind 3: mirror a split-button's dropdown as a child overlay (the real menu is a
     // separate popup window the per-window grab can't see) -- shows the expand structure.
@@ -3463,7 +3734,15 @@ bool MainWindow::ribbon_shot(int kind, const std::string& out_png) {
         tip_pos = line_btn->mapToGlobal(QPoint(line_btn->width() / 2, line_btn->height()));
         tip_text = line_btn->toolTip();
     }
-    const bool ok = ribbon_ != nullptr && line_btn != nullptr;
+    bool ok = ribbon_ != nullptr && line_btn != nullptr;
+    // Maximize regression guard: after the (synchronous) fitter runs, the active page must FIT its
+    // viewport -- no horizontal scroll bar, so the panel titles are not clipped. This is the exact
+    // first-maximize / launch-maximized failure the user reported.
+    if ((kind == 16 || kind == 17) && ribbon_ != nullptr) {
+        const bool fits = ribbon_->active_page_fits();
+        std::printf("[ribbon_shot] kind=%d active_page_fits=%d\n", kind, fits ? 1 : 0);
+        ok = ok && fits;
+    }
     if (kind == 1 && line_btn != nullptr) {
         QToolTip::showText(tip_pos, tip_text, line_btn); // the real tooltip (live hover)
         // The real tooltip is a separate top-level popup -- an `import -window <main>` grab

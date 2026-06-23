@@ -3,6 +3,23 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Ribbon (Phases A + B DONE 2026-06-23; staged items below)
+
+* **DONE.** Registry-driven SVG icons + tooltips (A); dropdown grouping + scroll overflow
+  (A-intermediate); three-state progressive panel collapse (FULL/COMPACT/COLLAPSED with a
+  fly-out popout) + contextual tabs (Hatch/Text/Block editors, family-predicate driven,
+  accent stripe) (B). See `docs/ARCHITECTURE.md` ▸ "Ribbon Phase B".
+* **Block Editor authoring — staged.** The Block Editor contextual tab appears for a single
+  INSERT but its **Edit Block** button is greyed out: in-place block-definition editing
+  (BEDIT) is not implemented (blocks today come only from DXF/DWG import). **Done looks
+  like:** a block-edit mode that opens the definition's entities for editing and writes them
+  back to all instances. There is also no interactive block-create command (BLOCK/MAKEBLOCK)
+  yet — a prerequisite.
+* **Contextual control depth — staged.** The Hatch/Text editors expose the common controls
+  (pattern/scale/angle; font/height/edit); richer parity with AutoCAD (e.g. MTEXT inline
+  bold/italic, hatch boundary association editing, per-tab gradient controls) is deferred and
+  tracked with the relevant feature backlogs (MTEXT formatting, associative hatch).
+
 ## HATCH (Parts A + B DONE 2026-06-23; refinements staged)
 
 * **Part A — DONE.** `EntityKind::Hatch` + SOLID fill (exact trapezoidal triangulation

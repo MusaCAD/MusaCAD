@@ -50,5 +50,6 @@
     <file>undo.svg</file>
     <file>zoom-extents.svg</file>
     <file>zoom.svg</file>
+    <file>chevron-down.svg</file>
   </qresource>
 </RCC>

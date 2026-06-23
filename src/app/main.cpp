@@ -25,7 +25,27 @@ int main(int argc, char* argv[]) {
     musacad::ui::apply_dark_theme(app);
 
     musacad::ui::MainWindow window;
-    window.show();
+    // Launch maximized (full screen) like every desktop CAD -- EXCEPT under the headless capture/
+    // self-test harnesses, which set their own window geometry (a fixed width per shot kind) and
+    // would be broken by a maximized window swallowing the resize(). Those all set a MUSACAD_* env
+    // var below, so detect any of them and fall back to a plain show().
+    const bool harness =
+        qEnvironmentVariableIsSet("MUSACAD_DUMP_UI") || qEnvironmentVariableIsSet("MUSACAD_SELFTEST") ||
+        qEnvironmentVariableIsSet("MUSACAD_PLOT_TEST") ||
+        qEnvironmentVariableIsSet("MUSACAD_GUI_PLOT_TEST") ||
+        qEnvironmentVariableIsSet("MUSACAD_DYN_SHOT") || qEnvironmentVariableIsSet("MUSACAD_OFFSET_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_MULTIDOC_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_TEXT_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_MATCHPROP_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_LTSCALE_SHOT") || qEnvironmentVariableIsSet("MUSACAD_MLT_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_HATCH_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_RIBBON_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_CMDCTL_SHOT") || qEnvironmentVariableIsSet("MUSACAD_SMOKE");
+    if (harness) {
+        window.show();
+    } else {
+        window.showMaximized();
+    }
 
     // Headless structural check: dump the ribbon/frame widget tree and confirm
     // ribbon buttons fire existing commands, then quit.
