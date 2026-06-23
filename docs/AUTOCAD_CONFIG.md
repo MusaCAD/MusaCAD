@@ -191,11 +191,27 @@ entities are not joinable and are left untouched.
 | Destination loop | Prompt **"Select destination object(s) or [Settings]:"** → each pick immediately applies the matched properties; **Enter / right-click** ends; **Esc** cancels | Implemented |
 | Paintbrush cursor | Shown between the source pick and the end of the command (AutoCAD's match-mode signal) | Implemented (a drawn brush cursor) |
 | Universal properties | Color, Layer, Lineweight, Linetype, **Linetype scale (CELTSCALE)** copy across ANY source/target kinds. **ByLayer/ByBlock copies as state**, not as the resolved literal | Implemented |
-| Type-specific (Basic Properties group) | **Text** (height/font/justify/width-factor) and **Dimension** (per-dim overrides) copy only within a shared family; non-applicable properties are silently skipped | Implemented |
-| Plot Style / Hatch / Polyline | Shown in Settings for AutoCAD parity but disabled — plot style/hatch are not modelled, and Polyline has no type-specific registry property yet | Stated limitation |
+| Type-specific (Basic Properties group) | **Text** (height/font/justify/width-factor), **Dimension** (per-dim overrides) and **Hatch** (pattern/scale/angle) copy only within a shared family; non-applicable properties are silently skipped | Implemented |
+| Plot Style / Polyline | Shown in Settings for AutoCAD parity but disabled — plot style is not modelled, and Polyline has no type-specific registry property yet | Stated limitation |
 | Per-target undo | Each matched target is its own undo entry (Ctrl+Z undoes matches in reverse) | Implemented |
 | Settings (`S`) | Opens a dark modal listing Basic + Special categories with checkboxes (all on by default). State **persists in QSettings for the session** and the next MA invocation; OK applies, Cancel reverts | Implemented |
 
 MATCHPROP reuses the Phase 22 property-descriptor write path; whatever the registry exposes
 as read/write, MA can match. It never changes geometry — only properties — so a circle
 matched from a line stays a circle.
+
+## HATCH (H / BHATCH)
+
+| Setting | Behaviour | Status |
+|---|---|---|
+| Boundary: **Pick internal point** | Click inside a region; the engine traces the enclosing boundary from surrounding geometry (planar arrangement, so a partitioning line splits the region) and treats closed entities inside as **islands/holes** | Implemented (Part A) |
+| Boundary: **Select objects** (noun-verb) | Pre-select closed polylines, then HATCH; even-odd makes nested loops holes | Implemented (Part A) |
+| Pattern = **SOLID** (HPNAME) | Solid colour fill (a pattern *name*, not a separate entity); the default | Implemented (Part A) |
+| Pattern scale / angle / origin (HPSCALE / HPANG / HPORIGIN) | Stored per hatch; editable in PR (Pattern/Scale/Angle/Origin) and MATCHPROP-matchable | Implemented (stored + editable; scale/angle affect line patterns in Part B) |
+| Line patterns (ANSI31 …, `.PAT`) | Stock pattern library, clipped to the boundary | Planned (Part B) |
+| Gap tolerance (HPGAPTOL) | Bridge small gaps in the boundary when picking a point | Partial (basic endpoint bridging; full HPGAPTOL staged) |
+| Associative hatch (HPASSOC) | Re-fill when the boundary is edited | Planned |
+| GRADIENT | Two-colour / gradient fills | Planned |
+
+Hatch colour/layer/linetype/lineweight follow the universal property model (ByLayer default);
+the fill is **derived at render time** so it plots as PDF vectors with no special case.

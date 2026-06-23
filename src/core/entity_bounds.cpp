@@ -193,6 +193,20 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         }
         return true;
     }
+    case EntityKind::Hatch: {
+        const HatchData* hd = store.hatch(h);
+        bool first = true;
+        for (const Vec2& p : store.hatch_verts(*hd)) {
+            if (first) {
+                out_min = out_max = p;
+                first = false;
+            } else {
+                out_min = {std::min(out_min.x, p.x), std::min(out_min.y, p.y)};
+                out_max = {std::max(out_max.x, p.x), std::max(out_max.y, p.y)};
+            }
+        }
+        return !first;
+    }
     }
     return false;
 }

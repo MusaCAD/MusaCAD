@@ -126,6 +126,15 @@ Document document_from_store(const GeometryStore& store) {
                                               m.overrides});
         }
     }
+    const auto& hatch_arena = store.hatches();
+    for (std::uint32_t i = 0; i < hatch_arena.slot_count(); ++i) {
+        if (hatch_arena.alive(i)) {
+            const HatchData& h = hatch_arena.data()[i];
+            doc.hatches.push_back(DocHatch{store.hatch_loops(h), std::string(store.string_of(h)),
+                                           h.pattern_scale, h.pattern_angle, h.pattern_origin,
+                                           h.props});
+        }
+    }
     // Block definitions (by name) + their self-contained content.
     for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store.block_count()); ++bi) {
         const BlockDef* b = store.block(bi);
@@ -243,6 +252,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
         MTextBlock b = m.block;
         b.font = store.add_font(m.font);
         store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
+    }
+    for (const DocHatch& h : doc.hatches) {
+        store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin,
+                        h.props);
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);

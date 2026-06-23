@@ -13,6 +13,7 @@
 
 #include "musacad/core/entity_bounds.hpp"
 #include "musacad/core/grips.hpp"
+#include "musacad/core/hatch.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/properties_registry.hpp"
 #include "musacad/core/io/dxf.hpp"
@@ -377,6 +378,13 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.block.pos += d; // the owned label moves with the leader
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 x.pos += d;
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                for (std::vector<Vec2>& loop : x.loops) {
+                    for (Vec2& p : loop) {
+                        p += d;
+                    }
+                }
+                x.pattern_origin += d;
             }
         },
         c);
@@ -438,6 +446,14 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 x.pos = refl(x.pos);
                 x.rotation = refl_ang(x.rotation);
                 x.scale_y = -x.scale_y;
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                for (std::vector<Vec2>& loop : x.loops) {
+                    for (Vec2& p : loop) {
+                        p = refl(p);
+                    }
+                }
+                x.pattern_origin = refl(x.pattern_origin);
+                x.pattern_angle = refl_ang(x.pattern_angle);
             }
         },
         c);
@@ -488,6 +504,14 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 x.pos = rot(x.pos);
                 x.rotation += ang;
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                for (std::vector<Vec2>& loop : x.loops) {
+                    for (Vec2& p : loop) {
+                        p = rot(p);
+                    }
+                }
+                x.pattern_origin = rot(x.pattern_origin);
+                x.pattern_angle += ang;
             }
         },
         c);
@@ -536,6 +560,9 @@ Vec2 command_anchor(const Command& c) {
                 out = x.vertices.empty() ? x.block.pos : x.vertices.front();
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 out = x.pos;
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                out = (x.loops.empty() || x.loops.front().empty()) ? Vec2{0.0, 0.0}
+                                                                   : x.loops.front().front();
             }
         },
         c);
@@ -586,6 +613,14 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.pos = scl(x.pos);
                 x.scale_x *= f;
                 x.scale_y *= f;
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                for (std::vector<Vec2>& loop : x.loops) {
+                    for (Vec2& p : loop) {
+                        p = scl(p);
+                    }
+                }
+                x.pattern_origin = scl(x.pattern_origin);
+                x.pattern_scale *= f; // the pattern scales with the boundary
             }
         },
         c);
@@ -1951,6 +1986,128 @@ void GeometryEngine::apply_join_selection(double radius, std::uint64_t group) {
     join_entities(sel, radius, group);
 }
 
+void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, double scale,
+                                                double angle, std::uint64_t group) {
+    // Each selected CLOSED polyline contributes a boundary loop. The even-odd fill makes
+    // separate loops fill independently and nested loops (a polyline inside another) read
+    // as holes -- no nesting classification needed here.
+    std::vector<std::vector<Vec2>> loops;
+    for (const EntityHandle h : selection_) {
+        if (h.kind != EntityKind::Polyline) {
+            continue;
+        }
+        const PolylineData* p = store_.polyline(h);
+        if (p == nullptr || !p->closed) {
+            continue;
+        }
+        const std::span<const Vec2> v = store_.vertices_of(*p);
+        if (v.size() >= 3) {
+            loops.emplace_back(v.begin(), v.end());
+        }
+    }
+    if (loops.empty()) {
+        report("Valid hatch boundary not found."); // AutoCAD's message
+        return;
+    }
+    AddHatchCommand cmd;
+    cmd.loops = std::move(loops);
+    cmd.pattern_name = pattern;
+    cmd.pattern_scale = scale;
+    cmd.pattern_angle = angle;
+    cmd.group = group; // props unset -> created on the current layer, ByLayer (AutoCAD default)
+    const EntityHandle nh = create_indexed(cmd);
+    push_create_item(group, nh, cmd);
+    selection_.clear();
+    selection_.push_back(nh); // select the new hatch
+    redo_.clear();
+    geom_dirty_ = true;
+    report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
+}
+
+void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
+                                            double angle, std::uint64_t group) {
+    // Gather candidate boundary edges from every curve-like entity (tessellated, so arcs +
+    // bulged polylines follow their true shape), closing the loop for closed shapes.
+    std::vector<hatch::Segment> segs;
+    std::vector<Vec2> tess;
+    const auto gather = [&](EntityHandle h, bool closed) {
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+        for (std::size_t i = 1; i < tess.size(); ++i) {
+            segs.push_back({tess[i - 1], tess[i]});
+        }
+        if (closed && tess.size() >= 3) {
+            segs.push_back({tess.back(), tess.front()});
+        }
+    };
+    for (const EntityHandle h : all_live()) {
+        switch (h.kind) {
+        case EntityKind::Line:
+        case EntityKind::Arc:
+        case EntityKind::Spline:
+            gather(h, false);
+            break;
+        case EntityKind::Circle:
+            gather(h, true);
+            break;
+        case EntityKind::Polyline: {
+            const PolylineData* pl = store_.polyline(h);
+            gather(h, pl != nullptr && pl->closed);
+            break;
+        }
+        default:
+            break; // text/dim/leader/insert/hatch are not boundaries
+        }
+    }
+    const double tol = 1e-6; // basic endpoint gap bridging; full HPGAPTOL parity staged
+    const std::optional<std::vector<Vec2>> outer = hatch::trace_boundary(segs, p, tol);
+    if (!outer) {
+        report("Valid hatch boundary not found.");
+        return;
+    }
+    std::vector<std::vector<Vec2>> loops;
+    loops.push_back(*outer);
+    // Islands: closed polylines / circles fully inside the outer loop, NOT containing the
+    // pick (a loop containing the pick is the boundary, not a hole), become holes.
+    std::vector<Vec2> verts;
+    for (const EntityHandle h : all_live()) {
+        if (h.kind == EntityKind::Polyline) {
+            const PolylineData* pl = store_.polyline(h);
+            if (pl == nullptr || !pl->closed) {
+                continue;
+            }
+        } else if (h.kind != EntityKind::Circle) {
+            continue;
+        }
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, verts);
+        if (verts.size() < 3 || hatch::point_in_loops({verts}, p)) {
+            continue; // too small, or the pick is inside it (it's a boundary, not a hole)
+        }
+        bool all_in = true;
+        for (const Vec2& v : verts) {
+            if (!hatch::point_in_loops({*outer}, v)) {
+                all_in = false;
+                break;
+            }
+        }
+        if (all_in) {
+            loops.push_back(verts);
+        }
+    }
+    AddHatchCommand cmd;
+    cmd.loops = std::move(loops);
+    cmd.pattern_name = pattern;
+    cmd.pattern_scale = scale;
+    cmd.pattern_angle = angle;
+    cmd.group = group;
+    const EntityHandle nh = create_indexed(cmd);
+    push_create_item(group, nh, cmd);
+    selection_.clear();
+    selection_.push_back(nh);
+    redo_.clear();
+    geom_dirty_ = true;
+    report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
+}
+
 void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double radius,
                                    std::uint64_t group) {
     // Convert every joinable input to a uniform vertex+bulge segment. Closed polylines
@@ -2094,7 +2251,8 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddDimensionCommand> ||
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
                           std::is_same_v<T, AddMLeaderCommand> ||
-                          std::is_same_v<T, AddInsertCommand>) {
+                          std::is_same_v<T, AddInsertCommand> ||
+                          std::is_same_v<T, AddHatchCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();
@@ -2176,6 +2334,12 @@ void GeometryEngine::apply(const Command& command) {
                 apply_join(c.picks, c.radius, c.group);
             } else if constexpr (std::is_same_v<T, JoinSelectionCommand>) {
                 apply_join_selection(c.radius, c.group);
+            } else if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
+                apply_hatch_from_selection(c.pattern_name, c.pattern_scale, c.pattern_angle,
+                                           c.group);
+            } else if constexpr (std::is_same_v<T, HatchPickPointCommand>) {
+                apply_hatch_pick_point(c.point, c.pattern_name, c.pattern_scale, c.pattern_angle,
+                                       c.group);
             } else if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
                 apply_rotate(c.base, c.angle, c.group);
             } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
@@ -2618,8 +2782,10 @@ void GeometryEngine::rebuild_and_publish() {
         buf.selection_summary = summarize_selection(captured);
     }
     buf.selected_line_vertices.clear();
+    buf.selected_fill_vertices.clear();
     {
         std::vector<Vec2> tess;
+        std::vector<Vec2> htris;
         for (const EntityHandle h : selection_) {
             kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
             if (h.kind == EntityKind::Insert) { // disjoint pairs: no phantom connectors
@@ -2631,6 +2797,18 @@ void GeometryEngine::rebuild_and_publish() {
                 for (std::size_t s = 1; s < tess.size(); ++s) {
                     buf.selected_line_vertices.push_back(tess[s - 1]);
                     buf.selected_line_vertices.push_back(tess[s]);
+                }
+            }
+            // A selected SOLID hatch also surfaces its fill triangles so the highlight
+            // tints the whole filled region (the fill stays in the scene fill_* channels;
+            // this is a derived overlay drawn render-side in the selection colour).
+            if (h.kind == EntityKind::Hatch) {
+                const HatchData* hd = store_.hatch(h);
+                if (hd != nullptr && store_.string_of(*hd) == "SOLID") {
+                    htris.clear();
+                    hatch::triangulate_filled(store_.hatch_loops(*hd), htris);
+                    buf.selected_fill_vertices.insert(buf.selected_fill_vertices.end(),
+                                                      htris.begin(), htris.end());
                 }
             }
         }

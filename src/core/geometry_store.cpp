@@ -119,6 +119,29 @@ EntityHandle GeometryStore::add_insert(std::uint16_t block, Vec2 pos, double sca
     return EntityHandle{slot.index, slot.generation, EntityKind::Insert};
 }
 
+EntityHandle GeometryStore::add_hatch(const std::vector<std::vector<Vec2>>& loops,
+                                      std::string_view pattern, double scale, double angle,
+                                      Vec2 origin, EntityProps props) {
+    HatchData d;
+    d.vtx_offset = static_cast<std::uint32_t>(hatch_vtx_pool_.size());
+    d.loop_offset = static_cast<std::uint32_t>(hatch_loop_lens_.size());
+    for (const std::vector<Vec2>& loop : loops) {
+        hatch_loop_lens_.push_back(static_cast<std::uint32_t>(loop.size()));
+        hatch_vtx_pool_.insert(hatch_vtx_pool_.end(), loop.begin(), loop.end());
+        d.vtx_count += static_cast<std::uint32_t>(loop.size());
+    }
+    d.loop_count = static_cast<std::uint32_t>(loops.size());
+    d.str_offset = static_cast<std::uint32_t>(string_pool_.size());
+    d.str_len = static_cast<std::uint32_t>(pattern.size());
+    string_pool_.insert(string_pool_.end(), pattern.begin(), pattern.end());
+    d.pattern_scale = scale;
+    d.pattern_angle = angle;
+    d.pattern_origin = origin;
+    d.props = props;
+    const auto slot = hatches_.insert(d);
+    return EntityHandle{slot.index, slot.generation, EntityKind::Hatch};
+}
+
 bool GeometryStore::remove(EntityHandle h) noexcept {
     celtscale_.erase(celtscale_key(h)); // drop any per-entity scale so a reused slot defaults
     switch (h.kind) {
@@ -146,6 +169,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return mleaders_.erase(h.index, h.generation);
     case EntityKind::Insert:
         return inserts_.erase(h.index, h.generation);
+    case EntityKind::Hatch:
+        return hatches_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -176,6 +201,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return mleaders_.is_valid(h.index, h.generation);
     case EntityKind::Insert:
         return inserts_.is_valid(h.index, h.generation);
+    case EntityKind::Hatch:
+        return hatches_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -184,7 +211,8 @@ std::size_t GeometryStore::live_count() const noexcept {
     return points_.live_count() + lines_.live_count() + polylines_.live_count() +
            circles_.live_count() + arcs_.live_count() + splines_.live_count() +
            texts_.live_count() + dims_.live_count() + leaders_.live_count() +
-           mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count();
+           mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count() +
+           hatches_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -200,10 +228,13 @@ void GeometryStore::clear() noexcept {
     mtexts_.clear();
     mleaders_.clear();
     inserts_.clear();
+    hatches_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
     spline_pool_.clear();
     string_pool_.clear();
+    hatch_vtx_pool_.clear();
+    hatch_loop_lens_.clear();
     celtscale_.clear();
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
     current_layer_ = 0;
@@ -249,6 +280,9 @@ const MLeaderData* GeometryStore::mleader(EntityHandle h) const noexcept {
 const InsertData* GeometryStore::insert(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Insert ? inserts_.get(h.index, h.generation) : nullptr;
 }
+const HatchData* GeometryStore::hatch(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Hatch ? hatches_.get(h.index, h.generation) : nullptr;
+}
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
 }
@@ -260,6 +294,23 @@ std::string_view GeometryStore::string_of(const MTextBlock& b) const noexcept {
 }
 std::span<const Vec2> GeometryStore::vertices_of(const MLeaderData& m) const noexcept {
     return std::span<const Vec2>(polyline_pool_).subspan(m.vtx_offset, m.vtx_count);
+}
+std::string_view GeometryStore::string_of(const HatchData& h) const noexcept {
+    return std::string_view(string_pool_.data() + h.str_offset, h.str_len);
+}
+std::vector<std::vector<Vec2>> GeometryStore::hatch_loops(const HatchData& h) const {
+    std::vector<std::vector<Vec2>> loops;
+    loops.reserve(h.loop_count);
+    std::uint32_t v = h.vtx_offset;
+    for (std::uint32_t i = 0; i < h.loop_count; ++i) {
+        const std::uint32_t n = hatch_loop_lens_[h.loop_offset + i];
+        loops.emplace_back(hatch_vtx_pool_.begin() + v, hatch_vtx_pool_.begin() + v + n);
+        v += n;
+    }
+    return loops;
+}
+std::span<const Vec2> GeometryStore::hatch_verts(const HatchData& h) const noexcept {
+    return std::span<const Vec2>(hatch_vtx_pool_).subspan(h.vtx_offset, h.vtx_count);
 }
 
 const DimStyle* GeometryStore::dimstyle(std::uint16_t index) const noexcept {
@@ -371,6 +422,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Hatch:
+        if (const HatchData* d = hatch(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -445,6 +501,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Insert:
         if (InsertData* d = inserts_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Hatch:
+        if (HatchData* d = hatches_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -571,6 +633,7 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(leaders_, check);
     for_each_live_const(mtexts_, check);
     for_each_live_const(mleaders_, check);
+    for_each_live_const(hatches_, check);
     return used;
 }
 
@@ -591,6 +654,7 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(leaders_, fix);
     for_each_live_mut(mtexts_, fix);
     for_each_live_mut(mleaders_, fix);
+    for_each_live_mut(hatches_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

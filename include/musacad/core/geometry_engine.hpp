@@ -205,6 +205,13 @@ private:
     void apply_trim(Vec2 pick, double radius, std::uint64_t group);
     void apply_join(const std::vector<Vec2>& picks, double radius, std::uint64_t group);
     void apply_join_selection(double radius, std::uint64_t group);
+    /// HATCH "Select objects" mode: build a hatch from the selected closed polylines.
+    void apply_hatch_from_selection(const std::string& pattern, double scale, double angle,
+                                    std::uint64_t group);
+    /// HATCH "Pick internal point" mode: trace the boundary enclosing `p` (+ islands) from
+    /// the surrounding geometry and create the hatch. Shared boundary builder below.
+    void apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale, double angle,
+                                std::uint64_t group);
     /// Shared JOIN core: merge every connected sub-chain among `ents` (lines/arcs/open
     /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
     void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group);

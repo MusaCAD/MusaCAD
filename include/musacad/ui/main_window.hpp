@@ -149,6 +149,9 @@ public:
     /// MLeader (label + leader props copy), 3 TEXT "%%c50 H7 %%p0.02" -> diameter/plus-minus,
     /// 4 MTEXT "\\U+2300 50" -> diameter via the Unicode escape, 5 TEXT "Pipe %%oOD%%o" overline.
     bool mleader_text_shot(int kind, const std::string& out_png);
+    /// Real-window capture for HATCH. `kind` 0: a closed polyline -> SOLID hatch (selected),
+    /// with the Properties palette showing the Hatch section. Prints a PASS/FAIL diagnostic.
+    bool hatch_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();

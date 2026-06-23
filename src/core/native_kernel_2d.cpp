@@ -10,6 +10,7 @@
 
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/hatch.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -375,6 +376,16 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         }
         break;
     }
+    case EntityKind::Hatch: {
+        // The outer boundary as a closed strip -- used for hover/selection highlight.
+        const HatchData* hd = store.hatch(entity);
+        const std::vector<std::vector<Vec2>> loops = store.hatch_loops(*hd);
+        if (!loops.empty() && !loops.front().empty()) {
+            out.assign(loops.front().begin(), loops.front().end());
+            out.push_back(loops.front().front()); // close the loop
+        }
+        break;
+    }
     }
 }
 
@@ -520,6 +531,31 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
                 found = true;
                 best = d2;
                 out_point = cp;
+            }
+        }
+        return found;
+    }
+    case EntityKind::Hatch: {
+        // A click anywhere INSIDE the filled region (outside its islands) picks the hatch
+        // (distance 0); otherwise snap to the nearest boundary edge.
+        const HatchData* hd = store.hatch(entity);
+        const std::vector<std::vector<Vec2>> loops = store.hatch_loops(*hd);
+        if (hatch::point_in_loops(loops, query)) {
+            out_point = query;
+            return true;
+        }
+        bool found = false;
+        double best = 0.0;
+        for (const std::vector<Vec2>& loop : loops) {
+            const std::size_t m = loop.size();
+            for (std::size_t k = 0; k < m; ++k) {
+                const Vec2 cp = closest_on_segment(loop[k], loop[(k + 1) % m], query);
+                const double d2 = length_squared(query - cp);
+                if (!found || d2 < best) {
+                    found = true;
+                    best = d2;
+                    out_point = cp;
+                }
             }
         }
         return found;
@@ -748,6 +784,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::MText:
     case EntityKind::MLeader:
     case EntityKind::Insert: // offsetting a block reference is not defined
+    case EntityKind::Hatch:  // offsetting a hatch is not defined
         break;
     }
     return false;

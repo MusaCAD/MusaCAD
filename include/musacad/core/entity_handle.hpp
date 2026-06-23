@@ -23,6 +23,7 @@ enum class EntityKind : std::uint16_t {
     MText,
     MLeader,
     Insert,
+    Hatch,
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -53,6 +54,8 @@ enum class EntityFamily : std::uint8_t {
         return EntityFamily::Polyline;
     case EntityKind::Insert:
         return EntityFamily::Insert;
+    case EntityKind::Hatch:
+        return EntityFamily::Hatch;
     case EntityKind::Point:
     case EntityKind::Line:
     case EntityKind::Circle:

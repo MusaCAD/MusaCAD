@@ -778,6 +778,38 @@ void JoinCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// HATCH / H (Part A: SOLID fill from the selected closed polyline boundaries)
+// ---------------------------------------------------------------------------
+void HatchCommand::start(CommandContext& ctx) {
+    // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
+    // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
+    if (ctx.has_selection()) {
+        ctx.submit(core::HatchFromSelectionCommand{"SOLID", 1.0, 0.0, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Pick internal point: ");
+}
+
+void HatchCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true; // Enter finishes the command
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        // Click inside a closed region -> trace its boundary (+ islands) and hatch it. Each
+        // pick is its own undo group; the command stays active for more picks.
+        ctx.submit(core::HatchPickPointCommand{*p, "SOLID", 1.0, 0.0, ctx.new_group()});
+        ctx.set_prompt("Pick internal point or Enter to finish: ");
+    }
+}
+
+void HatchCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // MATCHPROP / MA (source -> N targets; paintbrush cursor; per-target undo)
 // ---------------------------------------------------------------------------
 void MatchPropCommand::start(CommandContext& ctx) {

@@ -453,6 +453,39 @@ struct AddInsertCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Create a HATCH from closed boundary loops (loop 0 = outer, the rest islands), a
+/// pattern name ("SOLID" = filled), and pattern scale / angle(radians) / origin. The
+/// fill or pattern geometry is computed at snapshot time (derived-not-baked).
+struct AddHatchCommand {
+    std::vector<std::vector<Vec2>> loops;
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    Vec2 pattern_origin{};
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
+/// HATCH "Select objects" mode: the engine reads the current selection, extracts the
+/// closed boundary of each selected closed polyline (UI never touches the store), and
+/// creates one hatch with the given pattern. Resolved geometry-side, like JOIN.
+struct HatchFromSelectionCommand {
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+};
+
+/// HATCH "Pick internal point" mode: the engine traces the closed boundary enclosing
+/// `point` from the surrounding geometry (+ islands), then creates the hatch.
+struct HatchPickPointCommand {
+    Vec2 point;
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+};
+
 /// Set one property (universal or type-specific) on every selected entity, as
 /// one undo group. The Properties palette's single write path: the descriptor
 /// registry (properties_registry.hpp) maps `id` to the field it mutates on each
@@ -567,6 +600,7 @@ using Command =
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
-                 MatchPropSourceFromSelectionCommand, MatchPropApplyCommand>;
+                 MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
+                 HatchFromSelectionCommand, HatchPickPointCommand>;
 
 } // namespace musacad::core

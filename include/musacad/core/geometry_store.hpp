@@ -134,6 +134,26 @@ struct MLeaderData {
     DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
 };
 
+/// A HATCH: a filled/patterned region bounded by one or more CLOSED loops (the first
+/// loop is the outer boundary; the rest are islands/holes). Loop vertices live in the
+/// shared hatch vertex pool (contiguous, all loops back-to-back); the per-loop vertex
+/// counts live in a parallel pool (so a loop's vertices are a subspan). The pattern
+/// is a NAME (in the string pool; "SOLID" = filled) plus scale/angle/origin. The fill
+/// or pattern geometry is COMPUTED at snapshot time (derived-not-baked) -- the store
+/// keeps only the boundary + pattern parameters.
+struct HatchData {
+    std::uint32_t vtx_offset = 0;   ///< first loop vertex in hatch_vtx_pool_
+    std::uint32_t vtx_count = 0;    ///< total vertices across all loops
+    std::uint32_t loop_offset = 0;  ///< first per-loop length in hatch_loop_lens_
+    std::uint32_t loop_count = 0;   ///< number of loops (>= 1; loop 0 = outer)
+    std::uint32_t str_offset = 0;   ///< pattern name in the string pool
+    std::uint32_t str_len = 0;
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    Vec2 pattern_origin{};
+    EntityProps props{};
+};
+
 // ---------------------------------------------------------------------------
 // Blocks. A block DEFINITION is a named, self-contained collection of geometry
 // (kept in the block-definition table, parallel to the layer table -- NOT in the
@@ -231,6 +251,10 @@ public:
     EntityHandle add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
                              const MTextBlock& text, std::string_view content,
                              EntityProps props = {}, DimOverrides overrides = {});
+    /// Create a HATCH from closed boundary loops (loop 0 = outer, the rest islands),
+    /// a pattern name ("SOLID" = filled), and pattern scale/angle(radians)/origin.
+    EntityHandle add_hatch(const std::vector<std::vector<Vec2>>& loops, std::string_view pattern,
+                           double scale, double angle, Vec2 origin, EntityProps props = {});
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {});
@@ -257,6 +281,7 @@ public:
     [[nodiscard]] const MTextData* mtext(EntityHandle h) const noexcept;
     [[nodiscard]] const MLeaderData* mleader(EntityHandle h) const noexcept;
     [[nodiscard]] const InsertData* insert(EntityHandle h) const noexcept;
+    [[nodiscard]] const HatchData* hatch(EntityHandle h) const noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
@@ -264,6 +289,12 @@ public:
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
     /// Leader-polyline vertices of an MLeader.
     [[nodiscard]] std::span<const Vec2> vertices_of(const MLeaderData& m) const noexcept;
+    /// A hatch's pattern name (in the string pool; "SOLID" = filled).
+    [[nodiscard]] std::string_view string_of(const HatchData& h) const noexcept;
+    /// A hatch's boundary loops, reconstructed (loop 0 = outer, the rest islands).
+    [[nodiscard]] std::vector<std::vector<Vec2>> hatch_loops(const HatchData& h) const;
+    /// All of a hatch's loop vertices, contiguous (all loops back-to-back) -- for bounds.
+    [[nodiscard]] std::span<const Vec2> hatch_verts(const HatchData& h) const noexcept;
 
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
@@ -282,6 +313,7 @@ public:
         return mleaders_;
     }
     [[nodiscard]] const GenerationalArena<InsertData>& inserts() const noexcept { return inserts_; }
+    [[nodiscard]] const GenerationalArena<HatchData>& hatches() const noexcept { return hatches_; }
 
     // --- block-definition table (parallel to the layer table) ---------------
     // Definitions are referenced by INSERTs by index. Few in number; a vector is
@@ -425,11 +457,14 @@ private:
     GenerationalArena<MTextData> mtexts_;
     GenerationalArena<MLeaderData> mleaders_;
     GenerationalArena<InsertData> inserts_;
+    GenerationalArena<HatchData> hatches_;
 
     std::vector<Vec2> polyline_pool_;
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<Vec2> spline_pool_;
     std::vector<char> string_pool_; // text content
+    std::vector<Vec2> hatch_vtx_pool_;            // hatch boundary-loop vertices (all loops)
+    std::vector<std::uint32_t> hatch_loop_lens_;  // per-loop vertex counts
 
     std::vector<Layer> layers_{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer_ = 0;

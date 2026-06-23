@@ -33,7 +33,9 @@ namespace musacad::core::io {
 /// records (older files have none => 1.0); the LTSCALE global is still the LTSCALE record.
 /// v13: per-leader arrow override block appended to LEADER/MLEADER records (the same
 /// override block dimensions use; detected by token count, older files => ByStyle).
-inline constexpr std::uint32_t kFormatVersion = 13;
+/// v14: HATCH entities (boundary loops + pattern name/scale/angle/origin). Older files
+/// simply have no HATCH records.
+inline constexpr std::uint32_t kFormatVersion = 14;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -128,6 +130,18 @@ struct DocMLeader {
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 
+/// A HATCH: closed boundary loops (loop 0 = outer, the rest islands) + a pattern name
+/// ("SOLID" = filled) and pattern scale / angle(radians) / origin.
+struct DocHatch {
+    std::vector<std::vector<Vec2>> loops;
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    Vec2 pattern_origin{};
+    EntityProps props{};
+    friend bool operator==(const DocHatch&, const DocHatch&) = default;
+};
+
 /// A block reference: a transform (insertion point + X/Y scale + rotation) and the
 /// name of the block definition it places. Name-based (DXF/interchange convention);
 /// resolved to a block-table index when loaded into the store.
@@ -179,13 +193,14 @@ struct Document {
     std::vector<DocLeader> leaders;
     std::vector<DocMText> mtexts;
     std::vector<DocMLeader> mleaders;
+    std::vector<DocHatch> hatches;         ///< filled / patterned regions (v14)
     std::vector<DocInsert> inserts;        ///< model-space block references
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
-               mleaders.size() + inserts.size();
+               mleaders.size() + hatches.size() + inserts.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

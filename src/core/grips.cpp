@@ -101,6 +101,16 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         return AddInsertCommand{in->block,    in->pos, in->scale_x, in->scale_y,
                                 in->rotation, 0,       in->props};
     }
+    case EntityKind::Hatch: {
+        const HatchData* hd = store.hatch(h);
+        return AddHatchCommand{store.hatch_loops(*hd),
+                               std::string(store.string_of(*hd)),
+                               hd->pattern_scale,
+                               hd->pattern_angle,
+                               hd->pattern_origin,
+                               0,
+                               hd->props};
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -148,6 +158,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
                                           props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                handle = store.add_hatch(c.loops, c.pattern_name, c.pattern_scale, c.pattern_angle,
+                                         c.pattern_origin, props_of(c.props));
             }
         },
         cmd);
@@ -278,6 +291,18 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         push(out, in->pos, GripKind::Move, 0); // insertion point moves the instance
         break;
     }
+    case EntityKind::Hatch: {
+        // A grip at every boundary-loop vertex (flat index across all loops, in order),
+        // so the user can drag the boundary to reshape the hatch.
+        const HatchData* hd = store.hatch(h);
+        std::uint32_t idx = 0;
+        for (const std::vector<Vec2>& loop : store.hatch_loops(*hd)) {
+            for (const Vec2& v : loop) {
+                push(out, v, GripKind::Vertex, idx++);
+            }
+        }
+        break;
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -363,6 +388,17 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                 }
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 x.pos = newpos; // insertion-point grip moves the whole instance
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                // The grip index is the flat vertex index across all boundary loops.
+                std::uint32_t idx = 0;
+                for (std::vector<Vec2>& loop : x.loops) {
+                    for (Vec2& v : loop) {
+                        if (idx == grip_index) {
+                            v = newpos;
+                        }
+                        ++idx;
+                    }
+                }
             }
         },
         c);

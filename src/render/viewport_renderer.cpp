@@ -380,7 +380,7 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         }
     }
 
-    // Filled arrowheads (and future hatching): one draw per colour batch.
+    // Filled arrowheads + SOLID hatches: one draw per colour batch.
     if (fill_count_ > 0 && !fill_batches_.empty()) {
         cmd_->bind_pipeline(*fill_pipeline_);
         cmd_->set_uniform_mat3("u_transform", view);
@@ -390,6 +390,24 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
                                    static_cast<float>(b.color.b) / 255.0f, 1.0f);
             cmd_->bind_vertex_buffer(0, *fill_buffer_, b.first * sizeof(float) * 2);
             cmd_->draw_instanced(b.count, 1); // b.count vertices, GL_TRIANGLES
+            ++stats_.draw_calls;
+        }
+    }
+
+    // Selected-hatch highlight: tint the picked SOLID fill in the selection colour so a
+    // selected hatch reads as selected (the fill above keeps drawing -- this is a
+    // translucent overlay, computed geometry-side). Uses aux_buffer_ (transient), never
+    // the persistent scene fill_buffer_.
+    if (!snapshot.selected_fill_vertices.empty()) {
+        const std::size_t n = pack_positions(snapshot.selected_fill_vertices, scratch_);
+        if (n > 0) {
+            cmd_->bind_pipeline(*fill_pipeline_);
+            cmd_->set_uniform_mat3("u_transform", view);
+            aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            cmd_->set_uniform_vec4("u_color", kSelectColor[0], kSelectColor[1], kSelectColor[2],
+                                   0.40f);
+            cmd_->bind_vertex_buffer(0, *aux_buffer_, 0);
+            cmd_->draw_instanced(static_cast<std::uint32_t>(n), 1);
             ++stats_.draw_calls;
         }
     }
@@ -677,10 +695,13 @@ void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
         if (n > 0) {
             cmd.bind_pipeline(*fill_pipeline_);
             cmd.set_uniform_mat3("u_transform", view);
-            fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            // Transient overlay -> the per-frame aux buffer, NEVER the persistent scene
+            // fill_buffer_ (clobbering it makes hatch/arrow fills vanish on the next
+            // non-geometry frame -- the select-disappears + zoom-flicker bug).
+            aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
             cmd.set_uniform_vec4("u_color", kHotGripColor[0], kHotGripColor[1], kHotGripColor[2],
                                  kHotGripColor[3]);
-            cmd.bind_vertex_buffer(0, *fill_buffer_, 0);
+            cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
             cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
             ++stats_.draw_calls;
         }
@@ -778,9 +799,10 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
             if (n == 0) {
                 return;
             }
-            fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            // Transient overlay -> aux_buffer_, not the persistent scene fill_buffer_.
+            aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
             cmd.set_uniform_vec4("u_color", col[0], col[1], col[2], col[3]);
-            cmd.bind_vertex_buffer(0, *fill_buffer_, 0);
+            cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
             cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
             ++stats_.draw_calls;
         };

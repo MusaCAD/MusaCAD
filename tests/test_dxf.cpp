@@ -57,11 +57,11 @@ TEST_CASE("DXF import is valid R2000 (has the required sections)") {
 }
 
 TEST_CASE("DXF import skips unsupported entities and reports a summary") {
-    // A minimal DXF with one LINE and two unsupported entities (HATCH, SPLINE).
+    // A minimal DXF with one LINE and two unsupported entities (MLINE, SPLINE).
     const std::string dxf =
         "0\nSECTION\n2\nENTITIES\n"
         "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n5\n21\n5\n"
-        "0\nHATCH\n8\n0\n"
+        "0\nMLINE\n8\n0\n"
         "0\nSPLINE\n8\n0\n"
         "0\nENDSEC\n0\nEOF\n";
     Document out;
@@ -70,7 +70,7 @@ TEST_CASE("DXF import skips unsupported entities and reports a summary") {
     REQUIRE(out.lines.size() == 1);
     REQUIRE(out.entity_count() == 1);
     REQUIRE(r.message.find("skipped 2") != std::string::npos);
-    REQUIRE(r.message.find("HATCH") != std::string::npos);
+    REQUIRE(r.message.find("MLINE") != std::string::npos);
     REQUIRE(r.message.find("SPLINE") != std::string::npos);
 }
 

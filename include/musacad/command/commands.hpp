@@ -228,6 +228,21 @@ private:
     bool done_ = false;
 };
 
+// HATCH / H: fill a closed boundary with a pattern (Part A: SOLID, from selected closed
+// polylines). Noun-verb: with a pre-selection, hatches it immediately; otherwise prompts to
+// pick a closed boundary. The engine extracts the boundary loops (UI never touches the store).
+class HatchCommand final : public ICommand {
+public:
+    std::string name() const override { return "HATCH"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 class TrimCommand final : public ICommand {
 public:
     std::string name() const override { return "TRIM"; }

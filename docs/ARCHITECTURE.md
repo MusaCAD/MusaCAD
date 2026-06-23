@@ -909,6 +909,42 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   the hot `LineData` stays **40 B** and insert holds at ~30 ns/line.
 * See `docs/AUTOCAD_CONFIG.md` for the full configurable-options roadmap.
 
+## HATCH: SOLID fills + boundary tracing (Part A)
+
+* **Entity model.** `EntityKind::Hatch`; `HatchData` keeps only the boundary as
+  **closed loops in world coords** (loop 0 = outer, the rest islands/holes) in a cold
+  arena (`hatch_vtx_pool_` + per-loop lengths) plus pattern name/scale/angle/origin and
+  the universal `EntityProps`. Hot structs stay unfattened (`LineData` still 40 B);
+  `family_of(Hatch) = HatchFamily`. Like every other entity it round-trips the native
+  format (v-bump) and DXF (codes 2/70/91/92/93/72/41/52/10-20), is MATCHPROP-matchable,
+  and is editable through the Phase-22 PR registry (Pattern/Scale/Angle/Origin).
+* **SOLID fill is derived, not baked.** `hatch::triangulate_filled` (an exact
+  **trapezoidal decomposition** with the even-odd rule, so holes drop out with no
+  ear-clipping or stair-stepping) runs at snapshot time and feeds the Phase-14 fill
+  channel — so a hatch **plots as PDF vectors** with no special case, and SOLID is a
+  pattern *name*, not a separate entity. (Line patterns = Part B.)
+* **Two boundary modes (engine-side; the UI never touches the store).**
+  `HatchFromSelectionCommand` turns pre-selected closed polylines into loops (even-odd ⇒
+  nested loops become holes automatically). `HatchPickPointCommand` traces the boundary
+  from an internal point: `hatch::trace_boundary` gathers candidate segments from all
+  curve-like entities (tessellated), builds a **planar arrangement** — `split_at_intersections`
+  cuts every segment at crossings and T-junctions so a *partitioning* chord wires into the
+  edges it touches — then ray-casts from the pick and walks the enclosing face (both
+  handedness, validated by point-in-polygon, smallest enclosing wins). Closed entities
+  fully inside that don't contain the pick become islands. No closed boundary ⇒
+  "Valid hatch boundary not found." (AutoCAD's message).
+* **Selection + reshape.** A picked hatch publishes a grip at every boundary vertex
+  (`grips_of`/`edit_for_grip_drag`, flat index across loops) so it reads as selected and
+  each joint is **draggable to reshape**. Its fill triangles are also surfaced in
+  `selected_fill_vertices` so the renderer **tints the whole fill** in the selection
+  colour (the fill never vanishes on select).
+* **Scene-fill buffer invariant (renderer).** `fill_buffer_` holds **persistent scene
+  fills only** (arrowheads + hatches), re-uploaded just when `geometry_version` changes.
+  Transient overlay fills (grip squares, grip-drag preview, the selection tint) MUST use
+  the per-frame `aux_buffer_` — never `fill_buffer_`. Clobbering the scene buffer with
+  overlay data makes fills vanish on the next non-geometry frame (selection) and flicker
+  during zoom; keeping the two separate is what fixes both.
+
 ## Object-aware dimensioning & AutoCAD-accurate lineweight (Phase 15)
 
 * **AutoCAD-accurate lineweight (corrected).** The Phase-14 mapping

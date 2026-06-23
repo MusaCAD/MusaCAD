@@ -512,6 +512,40 @@ std::string serialize_dxf(const Document& doc) {
             emit_mtext(m.block, m.content, m.props, m.font); // carry the label font (code 7)
         }
     }
+    // HATCH: AutoCAD-standard codes. Each boundary loop is emitted as a polyline path
+    // (code 92 bit 2 = polyline); the outer (loop 0) also sets the external bit (1).
+    for (const DocHatch& h : doc.hatches) {
+        code(s, 0, "HATCH");
+        emit_props(s, doc, h.props);
+        code_d(s, 10, 0.0); // elevation point + normal (planar at z=0)
+        code_d(s, 20, 0.0);
+        code_d(s, 30, 0.0);
+        code_d(s, 210, 0.0);
+        code_d(s, 220, 0.0);
+        code_d(s, 230, 1.0);
+        code(s, 2, h.pattern_name);
+        code_i(s, 70, h.pattern_name == "SOLID" ? 1 : 0); // solid-fill flag
+        code_i(s, 71, 0);                                  // non-associative
+        code_i(s, 91, static_cast<long>(h.loops.size()));  // boundary path count
+        for (std::size_t i = 0; i < h.loops.size(); ++i) {
+            const std::vector<Vec2>& loop = h.loops[i];
+            code_i(s, 92, i == 0 ? 3 : 2); // 2 = polyline; +1 = external (outer loop)
+            code_i(s, 72, 0);              // has-bulge = no
+            code_i(s, 73, 1);              // is-closed = yes
+            code_i(s, 93, static_cast<long>(loop.size()));
+            for (const Vec2& v : loop) {
+                code_d(s, 10, v.x);
+                code_d(s, 20, v.y);
+            }
+        }
+        code_i(s, 75, 0);  // hatch style = normal (odd parity)
+        code_i(s, 76, 1);  // pattern type = predefined
+        code_d(s, 52, to_degrees(h.pattern_angle));
+        code_d(s, 41, h.pattern_scale);
+        code_i(s, 98, 1);  // one seed point = the pattern origin
+        code_d(s, 10, h.pattern_origin.x);
+        code_d(s, 20, h.pattern_origin.y);
+    }
     // Model-space block references.
     const auto emit_insert = [&](const DocInsert& in) {
         code(s, 0, "INSERT");
@@ -941,6 +975,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocLeader>* leaders = nullptr;
         std::vector<DocPoint>* points = nullptr;
         std::vector<DocInsert>* inserts = nullptr;
+        std::vector<DocHatch>* hatches = nullptr;
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1085,6 +1120,49 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 l.style = ensure_dimstyle(*st);
             }
             sink.leaders->push_back(std::move(l));
+            return;
+        }
+        if (type == "HATCH") {
+            if (sink.hatches == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            DocHatch h;
+            h.props = props_of(body);
+            if (const std::string* pn = find(body, 2)) {
+                h.pattern_name = *pn;
+            }
+            h.pattern_scale = getd(body, 41, 1.0);
+            h.pattern_angle = to_radians(getd(body, 52, 0.0));
+            // Walk the body in order: code 93 opens a polyline loop with N vertices; the
+            // 10/20 pairs that follow fill it. A 10/20 pair outside any loop (the seed point
+            // emitted after code 98) is the pattern origin.
+            int remaining = 0;
+            std::vector<Vec2>* cur = nullptr;
+            std::optional<double> px;
+            for (const Pair& pr : body) {
+                if (pr.code == 93) {
+                    h.loops.emplace_back();
+                    cur = &h.loops.back();
+                    remaining = static_cast<int>(to_l(pr.value));
+                    cur->reserve(static_cast<std::size_t>(std::max(0, remaining)));
+                    px.reset();
+                } else if (pr.code == 10) {
+                    px = to_d(pr.value);
+                } else if (pr.code == 20 && px) {
+                    const Vec2 p{*px, to_d(pr.value)};
+                    px.reset();
+                    if (cur != nullptr && remaining > 0) {
+                        cur->push_back(p);
+                        if (--remaining == 0) {
+                            cur = nullptr;
+                        }
+                    } else {
+                        h.pattern_origin = p; // seed / origin (last one wins)
+                    }
+                }
+            }
+            sink.hatches->push_back(std::move(h));
             return;
         }
         if (type == "LINE") {
@@ -1238,16 +1316,18 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     // Model space writes to every doc vector; block content takes the importable subset
     // (dims/leaders/points inside a block route to the skip catalog).
-    Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,   &doc.polylines, &doc.texts,
-                    &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,   &doc.inserts};
+    Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
+                    &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
+                    &doc.hatches};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't
     // hold route to `skipped`. The DocBlockDef is reused across blocks (stable address),
     // so the sink's pointers stay valid as each block is filled then moved into the doc.
     DocBlockDef block;
-    Sink block_sink{&block.lines, &block.circles, &block.arcs,    &block.polylines, &block.texts,
-                    &block.mtexts, nullptr,        nullptr,        nullptr,          &block.inserts};
+    Sink block_sink{&block.lines,  &block.circles, &block.arcs, &block.polylines, &block.texts,
+                    &block.mtexts, nullptr,        nullptr,     nullptr,          &block.inserts,
+                    nullptr}; // hatches not held inside block definitions
     bool in_block = false;
 
     while (i < n) {

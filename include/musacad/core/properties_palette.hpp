@@ -59,6 +59,11 @@ enum class PropertyId : std::uint16_t {
     LeaderArrowType,
     LeaderArrowSize,
     LeaderTextColor, ///< the label's colour (ByStyle => the leader's entity colour)
+    // Hatch pattern properties (HATCH-family).
+    HatchPattern, ///< pattern name ("SOLID" = filled)
+    HatchScale,
+    HatchAngle,  ///< degrees in the PR
+    HatchOrigin, ///< read-only display
 };
 
 /// How the UI renders + edits a field. The UI is generic over these.
@@ -109,6 +114,7 @@ enum class MatchSlot : std::uint8_t {
     Celtscale,
     Text,
     Dimension,
+    Hatch,
 };
 
 /// True for the universal MATCHPROP slots (copy regardless of entity family).
@@ -131,7 +137,7 @@ struct MatchPropFilter {
     bool plotstyle = true; ///< reserved (plot style not modelled)
     bool text = true;
     bool dimension = true;
-    bool hatch = true;     ///< reserved (hatch not implemented)
+    bool hatch = true;     ///< HATCH pattern/scale/angle (family-scoped, hatch<->hatch)
     bool polyline = true;  ///< reserved (no polyline-specific registry descriptor yet)
 
     /// Whether the category gating `slot` is currently enabled.
@@ -151,6 +157,8 @@ struct MatchPropFilter {
             return text;
         case MatchSlot::Dimension:
             return dimension;
+        case MatchSlot::Hatch:
+            return hatch;
         case MatchSlot::None:
             return false;
         }

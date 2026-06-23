@@ -44,6 +44,45 @@ TEST_CASE("Native round-trip: store -> doc -> save -> load -> doc matches exactl
     REQUIRE(doc2 == doc1); // exact equality (to_chars/from_chars is lossless)
 }
 
+TEST_CASE("HATCH round-trips through native + DXF (boundary loops + pattern params)") {
+    Document doc;
+    DocHatch h;
+    h.loops.push_back({{0, 0}, {10, 0}, {10, 10}, {0, 10}}); // outer
+    h.loops.push_back({{3, 3}, {6, 3}, {6, 6}, {3, 6}});     // island
+    h.pattern_name = "ANSI31";
+    h.pattern_scale = 1.5;
+    h.pattern_angle = 0.7853981633974483; // 45 deg
+    h.pattern_origin = {2.0, 1.0};
+    doc.hatches.push_back(h);
+
+    SECTION("native is exact") {
+        Document rt;
+        REQUIRE(parse_native(serialize_native(doc), rt).ok);
+        REQUIRE(rt.hatches.size() == 1);
+        REQUIRE(rt.hatches[0] == h); // loops + name + scale + angle + origin exact
+    }
+    SECTION("DXF preserves the boundary + pattern") {
+        Document rt;
+        REQUIRE(parse_dxf(serialize_dxf(doc), rt).ok);
+        REQUIRE(rt.hatches.size() == 1);
+        REQUIRE(rt.hatches[0].loops.size() == 2);
+        REQUIRE(rt.hatches[0].loops[0].size() == 4);
+        REQUIRE(rt.hatches[0].loops[1].size() == 4);
+        REQUIRE(rt.hatches[0].pattern_name == "ANSI31");
+        REQUIRE(std::abs(rt.hatches[0].pattern_scale - 1.5) < 1e-9);
+        REQUIRE(std::abs(rt.hatches[0].pattern_angle - 0.7853981633974483) < 1e-6);
+        REQUIRE(length(rt.hatches[0].pattern_origin - Vec2{2.0, 1.0}) < 1e-6);
+    }
+    SECTION("through the store: add_hatch -> doc -> native -> store") {
+        GeometryStore s;
+        s.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin);
+        Document rt;
+        REQUIRE(parse_native(serialize_native(document_from_store(s)), rt).ok);
+        REQUIRE(rt.hatches.size() == 1);
+        REQUIRE(rt.hatches[0] == h);
+    }
+}
+
 TEST_CASE("Native round-trip through the store: save -> clear -> load -> store matches") {
     const GeometryStore original = make_full_store();
     const Document doc1 = document_from_store(original);

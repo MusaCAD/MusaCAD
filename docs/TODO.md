@@ -3,6 +3,23 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## HATCH (Part A DONE 2026-06-23; Parts B/C staged)
+
+* **Part A — DONE.** `EntityKind::Hatch` + SOLID fill (exact trapezoidal triangulation
+  with islands), two boundary modes (**pick internal point** with a planar-arrangement
+  tracer that respects partitioning lines + islands, and **pre-selected** closed
+  polylines), pickable/PR-editable/MATCHPROP/grips-reshape, native + DXF round-trip,
+  derived-not-baked (plots as vectors). See `docs/ARCHITECTURE.md` ▸ "HATCH".
+* **Part B — line patterns (next).** `.PAT` parser + ~30–40 stock patterns (ANSI31
+  non-negotiable), line-family clipping to the boundary loops, derived-not-baked, vector
+  plot. Pattern source must be license-clean (state the origin). SOLID stays the special
+  pattern name — ONE render path, patterns are not a fork. **Done looks like:** ANSI31
+  (and friends) render clipped to the region at the right scale/angle, plot identically,
+  and round-trip; screenshot proof per pattern.
+* **Part C remainder (staged).** Gap tolerance (HPGAPTOL parity) beyond the basic
+  endpoint bridging now in place; loose-segment islands; associative hatches (boundary
+  edits re-fill). GRADIENT fill is a later, separate item.
+
 ## Multi-document — Phase B (DONE 2026-06-18; refinements staged)
 
 **Status:** Phases A and B are done. Phase A: N drawings as tabs, switch/close/new/open,

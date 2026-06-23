@@ -130,6 +130,10 @@ struct RenderSnapshot {
     // Interaction state, not part of the checksum.
     std::vector<EntityHandle> selection;
     std::vector<Vec2> selected_line_vertices;
+    // Filled (SOLID hatch) triangles of the selection, overlaid in the highlight
+    // colour so a picked fill reads as selected (the fill itself stays in the scene
+    // `fill_*` channels -- this is a derived highlight, 3 Vec2 per triangle).
+    std::vector<Vec2> selected_fill_vertices;
 
     // Rollover (hover) candidate: the entity under the cursor's pick-box. Visual
     // only -- it does not change `selection` until the user clicks. Interaction
@@ -219,6 +223,7 @@ struct RenderSnapshot {
         snap_type = SnapType::None;
         selection.clear();
         selected_line_vertices.clear();
+        selected_fill_vertices.clear();
         hover = EntityHandle{};
         has_hover = false;
         hover_line_vertices.clear();

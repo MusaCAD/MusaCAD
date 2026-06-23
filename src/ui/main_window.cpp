@@ -3098,6 +3098,120 @@ bool MainWindow::text_shot(int kind, const std::string& out_png) {
     return true;
 }
 
+bool MainWindow::hatch_shot(int kind, const std::string& out_png) {
+    using core::Vec2;
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    engine_->submit(core::NewDocumentCommand{});
+    pump(150);
+
+    bool ok = false;
+    if (kind == 0) {
+        // A closed L-shaped boundary polyline -> select it -> HATCH -> SOLID fill.
+        engine_->submit(core::AddPolylineCommand{
+            {{0, 0}, {60, 0}, {60, 40}, {35, 40}, {35, 22}, {0, 22}}, true, 1});
+        pump(200);
+        viewport_->zoom_extents();
+        pump(150);
+        engine_->submit(core::SelectAllCommand{});
+        pump(150);
+        processor_->submit_line("HATCH"); // noun-verb: fills the selected boundary as SOLID
+        pump(300);
+        viewport_->zoom_extents();
+        pump(200);
+        if (!properties_dock_->isVisible()) {
+            toggle_properties();
+        }
+        pump(350);
+        const core::SelectionSummary sum = viewport_->selection_summary();
+        bool hatch_section = false;
+        std::string pat;
+        for (const core::PropertyField& f : sum.fields) {
+            if (f.id == core::PropertyId::HatchPattern) {
+                hatch_section = true;
+                pat = f.value.text;
+            }
+        }
+        ok = sum.kind_plus1 == static_cast<std::uint8_t>(core::EntityKind::Hatch) + 1 &&
+             hatch_section;
+        std::printf("[hatch_shot] kind=0 selected=%d hatch_section=%d pattern='%s' => %s\n",
+                    viewport_->selection_count(), hatch_section ? 1 : 0, pat.c_str(),
+                    ok ? "PASS" : "FAIL");
+    } else if (kind == 1) {
+        // Pick-point with an island: a rectangle of 4 LINEs + a circle inside. Click between
+        // them -> trace the ring boundary (circle becomes a hole) and SOLID-fill it. The hatch
+        // is left selected so its boundary grips show (selection identification).
+        engine_->submit(core::AddLineCommand{{0, 0}, {90, 0}, 1});
+        engine_->submit(core::AddLineCommand{{90, 0}, {90, 55}, 1});
+        engine_->submit(core::AddLineCommand{{90, 55}, {0, 55}, 1});
+        engine_->submit(core::AddLineCommand{{0, 55}, {0, 0}, 1});
+        engine_->submit(core::AddCircleCommand{{45, 27.5}, 16, 2});
+        pump(250);
+        viewport_->zoom_extents();
+        pump(150);
+        processor_->submit_line("HATCH");
+        pump(150);
+        processor_->submit_line("6,6"); // pick internal point (inside ring, outside circle)
+        pump(300);
+        processor_->submit_line(""); // Enter to finish the command
+        pump(200);
+        viewport_->zoom_extents();
+        pump(200);
+        const bool is_hatch =
+            viewport_->selection_summary().kind_plus1 ==
+            static_cast<std::uint8_t>(core::EntityKind::Hatch) + 1;
+        const int grips = static_cast<int>(viewport_->selection_summary().fields.empty() ? 0 : 1);
+        (void)grips;
+        ok = is_hatch && viewport_->selection_count() == 1;
+        std::printf("[hatch_shot] kind=1 pick-point selected_hatch=%d => %s\n", is_hatch ? 1 : 0,
+                    ok ? "PASS" : "FAIL");
+    } else if (kind == 2) {
+        // PARTITION: a closed square split by a diagonal chord (endpoints mid-edge). A
+        // pick in ONE partition must hatch only that sub-region (not the whole square), and
+        // the resulting hatch is left selected so its fill shows the selection highlight.
+        engine_->submit(core::AddPolylineCommand{{{0, 0}, {60, 0}, {60, 60}, {0, 60}}, true, 1});
+        engine_->submit(core::AddLineCommand{{20, 60}, {40, 0}, 1}); // partitioning chord
+        pump(250);
+        viewport_->zoom_extents();
+        pump(150);
+        processor_->submit_line("HATCH");
+        pump(150);
+        processor_->submit_line("8,30"); // pick inside the LEFT partition only
+        pump(300);
+        processor_->submit_line(""); // Enter to finish
+        pump(200);
+        viewport_->zoom_extents();
+        pump(250);
+        const bool is_hatch =
+            viewport_->selection_summary().kind_plus1 ==
+            static_cast<std::uint8_t>(core::EntityKind::Hatch) + 1;
+        ok = is_hatch && viewport_->selection_count() == 1;
+        std::printf("[hatch_shot] kind=2 partition selected_hatch=%d => %s\n", is_hatch ? 1 : 0,
+                    ok ? "PASS" : "FAIL");
+    }
+    std::printf("[hatch_shot] kind=%d main=0x%lx frameG=(%d,%d %dx%d)\n", kind,
+                static_cast<unsigned long>(winId()), frameGeometry().x(), frameGeometry().y(),
+                frameGeometry().width(), frameGeometry().height());
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[hatch_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        pump(12000);
+    }
+    return ok;
+}
+
 bool MainWindow::mleader_text_shot(int kind, const std::string& out_png) {
     using core::Vec2;
     const auto pump = [](int ms) {

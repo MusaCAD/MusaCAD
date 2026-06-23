@@ -20,6 +20,7 @@ CTestTestfile.cmake
 compile_commands.json
 _deps/
 CMakeUserPresets.json
+Testing/
 
 # ---- Editor / IDE ----
 .cache/

@@ -24,7 +24,8 @@ suggests both); aliases are case-insensitive.
 | POLYGON | POL | Planned (Phase 7) |
 | POINT | PO | Planned (Phase 7) |
 | XLINE / RAY | XL | Planned (Phase 7) |
-| HATCH / GRADIENT | H | Planned (Phase 10) |
+| HATCH / BHATCH — **SOLID fill** of a region (Part A). Two boundary modes: **pick an internal point** (the engine traces the enclosing boundary from surrounding geometry — lines, arcs, circles, polylines — building a **planar arrangement** so a partitioning line correctly splits the region; closed entities inside become **islands/holes**) or **pre-select** closed polylines (noun-verb). "Valid hatch boundary not found." when no closed boundary encloses the pick. Fill is **derived, not baked** (rendered via the fill pipeline, so it plots as PDF vectors). Pickable (point-in-region, islands respected), PR-editable (Pattern/Scale/Angle/Origin), MATCHPROP-matchable, native + DXF round-trip. Selected hatch shows a **highlight tint over the fill + a grip at every boundary vertex** (drag to reshape) | H / BHATCH | Implemented (Part A: SOLID; line patterns = Part B) |
+| HATCH line patterns (ANSI31 etc., .PAT) / GRADIENT | H | Planned (Part B / later) |
 
 ## Modify
 
@@ -240,6 +241,7 @@ button dropdown).
 | Circle (centre-move + 4 quadrant-radius) | Implemented |
 | Arc (centre-move + 2 endpoints + mid-radius) | Implemented |
 | Polyline / Rectangle (per-vertex move) | Implemented |
+| Hatch (per-boundary-vertex move → reshape the filled region) | Implemented |
 | Text (insertion-point move) | Implemented |
 | Dimension: full grip set — both ext-line origins, both dim-line ends, offset midpoint (grab anywhere, place anywhere) | Implemented (Linear/Aligned) |
 | Dimension: **dim-line offset** (move the dim line, value unchanged) | Implemented |

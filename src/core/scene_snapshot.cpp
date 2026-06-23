@@ -12,6 +12,7 @@
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/font_engine.hpp"
+#include "musacad/core/hatch.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -328,6 +329,24 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
                                                            std::string(store.string_of(m->text))});
+        }
+    });
+
+    // HATCH: a filled (SOLID) or patterned region. Geometry is COMPUTED here from the
+    // boundary loops + pattern parameters (derived-not-baked) -- the store keeps only the
+    // boundary + pattern name/scale/angle. Part A renders SOLID via the fill pipeline (so it
+    // plots as PDF vectors with no special case); line-family patterns are added in Part B.
+    std::vector<Vec2> htris;
+    for_each_live(store.hatches(), EntityKind::Hatch, [&](EntityHandle h) {
+        const HatchData* hd = store.hatch(h);
+        if (!visible(store, hd->props)) {
+            return;
+        }
+        const ResolvedProps r = entity_resolved(store, hd->props);
+        if (store.string_of(*hd) == "SOLID") {
+            htris.clear();
+            hatch::triangulate_filled(store.hatch_loops(*hd), htris);
+            add_fills(r.color, htris);
         }
     });
 

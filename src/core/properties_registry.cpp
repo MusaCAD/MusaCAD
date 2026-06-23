@@ -298,6 +298,7 @@ bool is_paragraph(EntityKind k) { return k == EntityKind::MText || k == EntityKi
 bool is_leader_arrow(EntityKind k) {
     return k == EntityKind::Leader || k == EntityKind::MLeader;
 }
+bool is_hatch(EntityKind k) { return k == EntityKind::Hatch; }
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
 // Entities whose linetype actually dashes (so a per-entity linetype scale matters). These
 // are the kinds whose Add*Command carries a celtscale field + go through dash_polyline.
@@ -728,6 +729,84 @@ const Desc kDescs[] = {
              }
          });
      }},
+
+    // -- Hatch (pattern properties, family-scoped) --
+    {PropertyId::HatchPattern, "Hatch", "Pattern", PropEditor::Text, is_hatch,
+     [](const Command& c) {
+         PropertyValue v;
+         std::visit(
+             [&](const auto& x) {
+                 if constexpr (requires { x.pattern_name; }) {
+                     v.text = x.pattern_name;
+                 }
+             },
+             c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         std::visit(
+             [&](auto& x) {
+                 if constexpr (requires { x.pattern_name; }) {
+                     x.pattern_name = v.text;
+                 }
+             },
+             c);
+     }},
+    {PropertyId::HatchScale, "Hatch", "Scale", PropEditor::Number, is_hatch,
+     [](const Command& c) {
+         PropertyValue v;
+         std::visit(
+             [&](const auto& x) {
+                 if constexpr (requires { x.pattern_scale; }) {
+                     v.num = x.pattern_scale;
+                 }
+             },
+             c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         std::visit(
+             [&](auto& x) {
+                 if constexpr (requires { x.pattern_scale; }) {
+                     x.pattern_scale = v.num > 0.0 ? v.num : 1.0;
+                 }
+             },
+             c);
+     }},
+    {PropertyId::HatchAngle, "Hatch", "Angle (deg)", PropEditor::Number, is_hatch,
+     [](const Command& c) {
+         PropertyValue v;
+         std::visit(
+             [&](const auto& x) {
+                 if constexpr (requires { x.pattern_angle; }) {
+                     v.num = x.pattern_angle * kRadToDeg;
+                 }
+             },
+             c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         std::visit(
+             [&](auto& x) {
+                 if constexpr (requires { x.pattern_angle; }) {
+                     x.pattern_angle = v.num * kDegToRad;
+                 }
+             },
+             c);
+     }},
+    {PropertyId::HatchOrigin, "Hatch", "Origin", PropEditor::ReadOnly, is_hatch,
+     [](const Command& c) {
+         PropertyValue v;
+         std::visit(
+             [&](const auto& x) {
+                 if constexpr (requires { x.pattern_origin; }) {
+                     v.text = fmt_pt(x.pattern_origin);
+                 }
+             },
+             c);
+         return v;
+     },
+     nullptr},
 };
 
 const Desc* find_desc(PropertyId id) {
@@ -765,6 +844,8 @@ const char* kind_name(EntityKind k) {
         return "MLeader";
     case EntityKind::Insert:
         return "Block Reference";
+    case EntityKind::Hatch:
+        return "Hatch";
     }
     return "Entity";
 }
@@ -796,6 +877,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::MLeader;
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 k = EntityKind::Insert;
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                k = EntityKind::Hatch;
             }
         },
         c);
@@ -851,6 +934,10 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::DimTextPlacement:
     case PropertyId::DimPrecision:
         return MatchSlot::Dimension;
+    case PropertyId::HatchPattern:
+    case PropertyId::HatchScale:
+    case PropertyId::HatchAngle:
+        return MatchSlot::Hatch;
     default:
         return MatchSlot::None;
     }

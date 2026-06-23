@@ -482,6 +482,30 @@ std::string serialize_native(const Document& doc) {
         s += m.font; // v10
         s += '\n';
     }
+    // v14: HATCH. One line: loop count, then each loop (vertex count + x y pairs), then
+    // scale, angle(radians), origin, props. The pattern name is on the next line.
+    for (const DocHatch& h : doc.hatches) {
+        s += "HATCH ";
+        append_uint(s, h.loops.size());
+        for (const std::vector<Vec2>& loop : h.loops) {
+            s += ' ';
+            append_uint(s, loop.size());
+            for (const Vec2& v : loop) {
+                s += ' ';
+                append_vec(s, v);
+            }
+        }
+        s += ' ';
+        append_double(s, h.pattern_scale);
+        s += ' ';
+        append_double(s, h.pattern_angle);
+        s += ' ';
+        append_vec(s, h.pattern_origin);
+        append_props(s, h.props);
+        s += '\n';
+        s += escape(h.pattern_name);
+        s += '\n';
+    }
     // v9: model-space block references, then the block-definition table. A block's
     // content reuses the same per-entity record formats, bracketed BLOCKDEF..ENDBLOCKDEF.
     const auto emit_insert_rec = [&](const DocInsert& ins) {
@@ -1059,6 +1083,50 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             doc.mleaders.push_back(DocMLeader{std::move(verts), static_cast<std::uint16_t>(style), b,
                                               unescape(content), props, std::move(mlfont), mov});
+        } else if (key == "HATCH") {
+            // HATCH nloops <loopN x y...>... scale angle ox oy <props7>; pattern on next line.
+            std::uint64_t nloops = 0;
+            if (tok.size() < 2 || !to_uint(tok[1], nloops)) {
+                return fail("HATCH header malformed");
+            }
+            DocHatch h;
+            h.loops.reserve(nloops);
+            std::size_t ti = 2;
+            for (std::uint64_t i = 0; i < nloops; ++i) {
+                std::uint64_t nv = 0;
+                if (ti >= tok.size() || !to_uint(tok[ti], nv)) {
+                    return fail("HATCH loop count malformed");
+                }
+                ++ti;
+                std::vector<Vec2> loop;
+                loop.reserve(nv);
+                for (std::uint64_t j = 0; j < nv; ++j) {
+                    double x = 0.0;
+                    double y = 0.0;
+                    if (ti + 1 >= tok.size() || !to_double(tok[ti], x) || !to_double(tok[ti + 1], y)) {
+                        return fail("HATCH vertex malformed");
+                    }
+                    loop.push_back({x, y});
+                    ti += 2;
+                }
+                h.loops.push_back(std::move(loop));
+            }
+            if (ti + 11 > tok.size() || !to_double(tok[ti], h.pattern_scale) ||
+                !to_double(tok[ti + 1], h.pattern_angle) ||
+                !to_double(tok[ti + 2], h.pattern_origin.x) ||
+                !to_double(tok[ti + 3], h.pattern_origin.y) || !parse_props(tok, ti + 4, h.props)) {
+                return fail("HATCH fields malformed");
+            }
+            std::string pat;
+            if (!std::getline(in, pat)) {
+                return fail("HATCH missing pattern line");
+            }
+            ++line_no;
+            if (!pat.empty() && pat.back() == '\r') {
+                pat.pop_back();
+            }
+            h.pattern_name = unescape(pat);
+            doc.hatches.push_back(std::move(h));
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {
