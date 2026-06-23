@@ -20,6 +20,14 @@ parked and *what done looks like*, so it can be picked up cleanly later.
 * **Automated builds on tag push — partial.** The Linux + Windows workflows already trigger on
   `v*` tags; a follow-up could auto-create the GitHub **release** and attach artifacts (today the
   tag + `gh release create` are run manually, by design).
+* **MSVC `/W4` warning audit — staged.** The first Windows build surfaced latent MSVC `/W4`
+  warnings (e.g. C4244 narrowing); the codebase predates any MSVC build. `/WX` on MSVC is gated
+  behind `MUSACAD_MSVC_WERROR` (default **OFF**) so the Windows release isn't blocked, while
+  GCC/Clang `-Werror` stays on. **Done looks like:** clean the MSVC `/W4` warnings and flip
+  `MUSACAD_MSVC_WERROR` ON in CI. See `cmake/CompilerWarnings.cmake`.
+* **Windows installer hardware verification — staged.** v0.1.0's `.exe` is CI-produced and was
+  published without a real-Windows-hardware launch test. **Done looks like:** install on a real
+  Windows box, confirm it launches + draws + plots, and fix anything found.
 
 ## Ribbon (Phases A + B DONE 2026-06-23; staged items below)
 
