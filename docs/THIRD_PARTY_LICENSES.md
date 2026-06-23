@@ -30,10 +30,19 @@ Musa CAD uses the open-source (LGPL-3) edition of Qt 6 and **links it dynamicall
 the system shared libraries (verified by `ldd`, below). LGPL-3 then permits Musa CAD's own
 LGPL-3 licensing and permits closed-source downstream use, provided the user can relink
 against a modified Qt — which dynamic linking satisfies. The Qt SVG **icon/image plugins**
-(used for the branding logo) are loaded at runtime from the system Qt plugin path and are
-likewise LGPL-3. Obligations to honour: keep Qt's copyright/license notices; ship/allow a
-replaceable (dynamically linked) Qt; do not use any Qt module that is GPL-only (none are
-used — the modules above are LGPL-3).
+(used for the branding logo and the ribbon icons) are loaded at runtime from the system Qt
+plugin path and are likewise LGPL-3. Obligations to honour: keep Qt's copyright/license
+notices; ship/allow a replaceable (dynamically linked) Qt; do not use any Qt module that is
+GPL-only (none are used — the modules above are LGPL-3).
+
+### First-party assets — no third-party content
+All shipped image assets are **authored as part of Musa CAD** and carry the project's
+LGPL-3-or-later license: the branding logo (`assets/branding/`) and the **49 ribbon command
+icons** (`assets/ribbon/*.svg`, added in Ribbon Phase A). The ribbon icons are hand-drawn
+SVG primitives — **no third-party icon set is bundled, vendored, or linked**, so this phase
+adds **nothing** to the dependency inventory above. (Icon iconography follows common CAD
+*concepts* — e.g. a paintbrush for MATCHPROP — which are conventions, not protected
+expression; the drawings themselves are original.)
 
 ### Vulkan — permissive, not in the shipped artifact
 `find_package(Vulkan REQUIRED)` validates the GPU-backend seam at configure time, but the

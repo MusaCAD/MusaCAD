@@ -529,8 +529,7 @@ Presentation-only phase; no command logic changed.
   **disabled placeholders**. Status-bar mode toggles are `QToolButton`s bound to
   the F3/F7/F8/F9/F10 actions. All styling lives in one place
   (`theme.cpp::dark_theme_qss()`) plus object names — swappable, nothing
-  hardcoded per widget. Icons are drawn at runtime (`command_icons.cpp`), so no
-  binary assets ship.
+  hardcoded per widget. (Phase A below makes the command buttons registry-driven.)
 * **AutoCAD cursor** — the render-side crosshair gained a center **pick-box**;
   it remains pure render-side (cursor atomics → drawn every frame), zero-lag, and
   folds into the existing single crosshair draw call (viewport stays at 4 scene /
@@ -542,6 +541,46 @@ Presentation-only phase; no command logic changed.
   command if complete else accepts the highlighted suggestion, and empty-line
   Enter still repeats the last command. A `set_enter_picks_first()` flag switches
   to "Enter always picks the highlighted suggestion".
+
+## Registry-driven ribbon icons + tooltips (Ribbon Phase A)
+
+The command **registry is the single source of presentation truth**: each
+`register_command(aliases, factory, icon, description)` row now carries the SVG icon
+path and a one-line description (both **required** parameters, so a new command can't be
+added without them). `CommandRegistry::find(alias)` returns a `CommandInfo
+{name, primary_alias, icon, description}`; `CommandSuggestion` also carries the
+description (a richer autocomplete dropdown is then a near-free follow-up).
+
+* **The ribbon reads the registry** — `add_cmd(panel, label, alias)` pulls the icon +
+  tooltip from `processor_->registry().find(alias)`; there is no ribbon-side per-command
+  table. A command button's tooltip is rich text: `<b>NAME (ALIAS)</b><br>description`
+  (the alias shown only when it differs from the name). Adding a future command's icon +
+  description in its registration row is sufficient — no separate "wire it into the
+  ribbon" step. Non-command buttons (file ops, zoom, layer manager, …) set their icon by
+  asset path directly, since they aren't registry commands.
+* **Icons are Musa-authored SVGs** under `assets/ribbon/*.svg` (49 files), 24×24,
+  `stroke="currentColor"`, ≤2 colours — hand-drawn as part of this LGPL codebase, **not**
+  a third-party icon set (no new dependency / license inventory entry). They are compiled
+  into the binary via `assets/ribbon/ribbon.qrc` (AUTORCC, like `branding.qrc`).
+* **Loading** — `command_icons.cpp::ribbon_icon("assets/ribbon/x.svg")` resolves the asset
+  to the Qt resource `:/ribbon/x.svg`, bakes `currentColor`→the theme grey, and rasterises
+  it crisply via the **qsvg image plugin** (the same plugin the branding logo uses — no
+  `Qt6::Svg` link needed). Results are cached by path; an empty/missing/invalid asset falls
+  back to the generic placeholder square (`make_icon`), so the ribbon degrades gracefully.
+* **Status bar** — `make_mode_action` gained a description, giving the OSNAP/GRID/ORTHO/
+  SNAP/POLAR/DYN toggles the same `<b>NAME (Fn)</b><br>description` tooltips.
+* **Dropdown grouping + overflow.** `RibbonPanel::add_dropdown(icon, label, menu, split)` adds
+  an AutoCAD-style button with a dropdown of related commands -- `split` true = a split
+  button (main click runs the primary, the arrow opens the menu), false = the whole button
+  opens it. The Home tab groups families this way: Annotation collapses to **Text ▼ /
+  Dimension ▼ / Leader ▼**, Modify to **Trim ▼ (Trim/Extend)** and **Fillet ▼
+  (Fillet/Chamfer/Join)**, File to **Import ▼ / Export ▼**. (NB: a dropdown's QMenu must NOT
+  be `setParent()`-ed into the button -- that strips its `Qt::Popup` flag and the menu
+  renders inline; `setMenu()` alone links it while it stays the MainWindow's child.) Each
+  ribbon page is wrapped in a **horizontal `QScrollArea`** and panels carry a `Minimum` size
+  policy, so when the window is too narrow the row scrolls instead of compressing buttons
+  until their labels overlap. (Full AutoCAD-style panel *collapse* -- a panel becoming a
+  single fly-out button when space is tight -- is a further Phase B step.)
 
 The threading invariants are unchanged: the UI thread still never touches the
 store, commands still cross only via the MPSC queue, and the crosshair/pick-box

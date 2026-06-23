@@ -11,6 +11,7 @@
 class QAction;
 class QHBoxLayout;
 class QIcon;
+class QMenu;
 class QPushButton;
 class QStackedWidget;
 class QTabBar;
@@ -31,6 +32,12 @@ public:
 
     /// Adds a disabled icon+label button for a not-yet-implemented feature.
     QToolButton* add_placeholder(const QIcon& icon, const QString& label);
+
+    /// Adds a button with a dropdown `menu` of related commands (AutoCAD-style). When
+    /// `split` is true it's a split button -- a main click runs the primary action (the
+    /// caller wires clicked()) and the arrow opens the menu; otherwise the whole button
+    /// opens the menu. `menu` is reparented to the button.
+    QToolButton* add_dropdown(const QIcon& icon, const QString& label, QMenu* menu, bool split);
 
     /// Adds an arbitrary widget (e.g. the current-layer combo) to the panel.
     void add_widget(QWidget* widget);

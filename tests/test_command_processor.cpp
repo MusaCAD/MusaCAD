@@ -319,7 +319,8 @@ TEST_CASE("Registry is data-driven and trivially extensible") {
     REQUIRE_FALSE(h.proc.registry().contains("WOBBLE"));
     // Adding a command is a single row, no parser changes:
     h.proc.registry().register_command({"WOBBLE"},
-                                       [] { return std::make_unique<LineCommand>(); });
+                                       [] { return std::make_unique<LineCommand>(); }, "",
+                                       "Test command.");
     REQUIRE(h.proc.registry().contains("WOBBLE"));
 }
 

@@ -56,6 +56,7 @@ TEST_CASE("Autocomplete returns nothing for empty or unknown prefixes") {
 TEST_CASE("New registry rows appear in suggestions automatically (single source)") {
     CommandRegistry reg = CommandRegistry::make_default();
     REQUIRE(reg.suggest("WOB").empty());
-    reg.register_command({"WOBBLE"}, [] { return std::unique_ptr<ICommand>(nullptr); });
+    reg.register_command({"WOBBLE"}, [] { return std::unique_ptr<ICommand>(nullptr); }, "",
+                         "Test command.");
     REQUIRE(has_alias(reg.suggest("WOB"), "WOBBLE"));
 }

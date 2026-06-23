@@ -7,7 +7,10 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSizePolicy>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QToolButton>
@@ -20,6 +23,10 @@ namespace musacad::ui {
 // ---------------------------------------------------------------------------
 RibbonPanel::RibbonPanel(const QString& title, QWidget* parent) : QFrame(parent) {
     setObjectName(QStringLiteral("RibbonPanel"));
+    // Never shrink a panel below the natural width of its buttons -- otherwise a narrow
+    // window squeezes the buttons until their labels overlap. When the page row no longer
+    // fits, the page's horizontal scroll bar appears instead (see RibbonBar::add_tab).
+    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
 
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 4, 4, 2);
@@ -58,6 +65,19 @@ QToolButton* RibbonPanel::add_button(const QIcon& icon, const QString& label) {
 
 QToolButton* RibbonPanel::add_placeholder(const QIcon& icon, const QString& label) {
     return make_button(icon, label, false);
+}
+
+QToolButton* RibbonPanel::add_dropdown(const QIcon& icon, const QString& label, QMenu* menu,
+                                       bool split) {
+    QToolButton* btn = make_button(icon, label, true);
+    // NB: do NOT reparent the menu into the button -- setParent(QWidget*) strips the menu's
+    // Qt::Popup flag, which makes it render INLINE in the panel instead of popping up. The
+    // menu keeps the parent it was created with (the MainWindow); setMenu() just links it.
+    btn->setMenu(menu);
+    // Split button: main area runs the primary command, the arrow opens the menu. Otherwise
+    // the whole button opens the menu (a pure group, AutoCAD-style).
+    btn->setPopupMode(split ? QToolButton::MenuButtonPopup : QToolButton::InstantPopup);
+    return btn;
 }
 
 void RibbonPanel::add_widget(QWidget* widget) { content_->addWidget(widget); }
@@ -113,7 +133,7 @@ void RibbonBar::add_qat_action(QAction* action) {
 }
 
 int RibbonBar::add_tab(const QString& title) {
-    auto* page = new QWidget(pages_);
+    auto* page = new QWidget;
     page->setObjectName(QStringLiteral("RibbonPage"));
     page->setAttribute(Qt::WA_StyledBackground, true);
     auto* layout = new QHBoxLayout(page);
@@ -121,7 +141,18 @@ int RibbonBar::add_tab(const QString& title) {
     layout->setSpacing(2);
     layout->addStretch(1); // panels are inserted before this stretch (left-aligned)
     page_layouts_.push_back(layout);
-    pages_->addWidget(page);
+
+    // Wrap the panel row in a horizontal scroll area: when the window is too narrow for all
+    // panels, a scroll bar appears rather than the panels compressing until icons/labels
+    // overlap. The ribbon row is a fixed height, so vertical never scrolls.
+    auto* scroll = new QScrollArea(pages_);
+    scroll->setObjectName(QStringLiteral("RibbonScroll"));
+    scroll->setWidget(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    pages_->addWidget(scroll);
     return tabs_->addTab(title);
 }
 

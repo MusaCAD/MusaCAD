@@ -2,7 +2,9 @@ add_executable(musacad_app
     main.cpp
     # Branding logo embedded as a Qt resource (:/branding/musacad_logo.svg) for the
     # window icon + About dialog. AUTORCC compiles the .qrc.
-    ${CMAKE_SOURCE_DIR}/assets/branding/branding.qrc)
+    ${CMAKE_SOURCE_DIR}/assets/branding/branding.qrc
+    # Ribbon command icons (:/ribbon/*.svg) -- Musa-authored SVGs, registry-driven.
+    ${CMAKE_SOURCE_DIR}/assets/ribbon/ribbon.qrc)
 set_target_properties(musacad_app PROPERTIES AUTORCC ON)
 
 # Windows: carry the multi-resolution icon in the .exe (regen_icons.sh builds the .ico).

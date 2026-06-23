@@ -58,6 +58,7 @@
 #include <QTimer>
 #include <QSettings>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -387,49 +388,77 @@ void MainWindow::build_ribbon() {
         });
     }
 
+    // Assembles a rich (HTML) ribbon tooltip from a registry entry:
+    //   <b>NAME (ALIAS)</b><br>description
+    // The alias is shown only when it differs from the command name. Driven by the
+    // registry so every command's tooltip stays in one place (single source of truth).
+    const auto cmd_tooltip = [](const command::CommandInfo& info) -> QString {
+        QString head = QString::fromStdString(info.name);
+        const QString alias = QString::fromStdString(info.primary_alias);
+        if (!alias.isEmpty() && alias.compare(head, Qt::CaseInsensitive) != 0) {
+            head += QStringLiteral(" (") + alias + QLatin1Char(')');
+        }
+        QString tip = QStringLiteral("<b>") + head.toHtmlEscaped() + QStringLiteral("</b>");
+        if (!info.description.empty()) {
+            tip += QStringLiteral("<br>") + QString::fromStdString(info.description).toHtmlEscaped();
+        }
+        return tip;
+    };
+
     // --- Quick Access Toolbar ---
-    const auto placeholder_qat = [&](const QString& kind, const QString& tip) {
-        auto* a = new QAction(make_icon(kind), tip, this);
+    const auto placeholder_qat = [&](const QString& icon, const QString& tip) {
+        auto* a = new QAction(ribbon_icon(icon), tip, this);
         a->setEnabled(false);
         a->setToolTip(tip + QStringLiteral(" (coming soon)"));
         ribbon_->add_qat_action(a);
     };
-    const auto qat_file = [&](const QString& kind, const QString& tip, QKeySequence shortcut,
+    const auto qat_file = [&](const QString& icon, const QString& tip, QKeySequence shortcut,
                               void (MainWindow::*slot)()) {
-        auto* a = new QAction(make_icon(kind), tip, this);
+        auto* a = new QAction(ribbon_icon(icon), tip, this);
         a->setShortcut(shortcut);
         a->setShortcutContext(Qt::ApplicationShortcut);
         connect(a, &QAction::triggered, this, slot);
         ribbon_->add_qat_action(a);
         addAction(a); // ensure the shortcut is active app-wide
     };
-    qat_file(QStringLiteral("new"), QStringLiteral("New"), QKeySequence::New, &MainWindow::file_new);
-    qat_file(QStringLiteral("open"), QStringLiteral("Open"), QKeySequence::Open,
+    qat_file(QStringLiteral("assets/ribbon/new.svg"), QStringLiteral("New"), QKeySequence::New,
+             &MainWindow::file_new);
+    qat_file(QStringLiteral("assets/ribbon/open.svg"), QStringLiteral("Open"), QKeySequence::Open,
              &MainWindow::file_open);
-    qat_file(QStringLiteral("save"), QStringLiteral("Save"), QKeySequence::Save,
+    qat_file(QStringLiteral("assets/ribbon/save.svg"), QStringLiteral("Save"), QKeySequence::Save,
              &MainWindow::file_save);
-    qat_file(QStringLiteral("print"), QStringLiteral("Plot"), QKeySequence::Print,
+    qat_file(QStringLiteral("assets/ribbon/plot.svg"), QStringLiteral("Plot"), QKeySequence::Print,
              &MainWindow::open_plot_dialog);
 
-    auto* qat_undo = new QAction(make_icon(QStringLiteral("undo")), QStringLiteral("Undo"), this);
+    auto* qat_undo =
+        new QAction(ribbon_icon(QStringLiteral("assets/ribbon/undo.svg")), QStringLiteral("Undo"),
+                    this);
     qat_undo->setShortcut(QKeySequence::Undo);
     qat_undo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_undo, &QAction::triggered, this, [this] { processor_->undo(); });
     ribbon_->add_qat_action(qat_undo);
 
-    auto* qat_redo = new QAction(make_icon(QStringLiteral("redo")), QStringLiteral("Redo"), this);
+    auto* qat_redo =
+        new QAction(ribbon_icon(QStringLiteral("assets/ribbon/redo.svg")), QStringLiteral("Redo"),
+                    this);
     qat_redo->setShortcut(QKeySequence::Redo);
     qat_redo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_redo, &QAction::triggered, this, [this] { processor_->redo(); });
     ribbon_->add_qat_action(qat_redo);
 
-    placeholder_qat(QStringLiteral("print"), QStringLiteral("Print"));
+    placeholder_qat(QStringLiteral("assets/ribbon/plot.svg"), QStringLiteral("Print"));
 
-    // Wires a panel button to an existing command (typed alias).
-    const auto add_cmd = [&](RibbonPanel* panel, const QString& kind, const QString& label,
+    // Wires a panel button to an existing command (typed alias). Icon + tooltip come
+    // straight from the command registry -- no ribbon-side per-command table.
+    const auto add_cmd = [&](RibbonPanel* panel, const QString& label,
                              const char* alias) -> QToolButton* {
-        QToolButton* b = panel->add_button(make_icon(kind), label);
+        const command::CommandInfo* info = processor_->registry().find(alias);
+        const QString icon_path = info != nullptr ? QString::fromStdString(info->icon) : QString();
+        QToolButton* b = panel->add_button(ribbon_icon(icon_path), label);
         b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(alias)));
+        if (info != nullptr) {
+            b->setToolTip(cmd_tooltip(*info));
+        }
         connect(b, &QToolButton::clicked, this, [this, alias] {
             command_widget_->focus_input();
             // A ribbon click is an unambiguous command start: go straight to start_command
@@ -440,27 +469,101 @@ void MainWindow::build_ribbon() {
         return b;
     };
 
+    // A menu entry for a command (icon + registry tooltip + start-on-trigger). Used to build
+    // the AutoCAD-style dropdowns where related commands live under one expandable button.
+    const auto cmd_action = [&](const char* alias, const QString& text) -> QAction* {
+        const command::CommandInfo* info = processor_->registry().find(alias);
+        auto* a = new QAction(
+            ribbon_icon(info != nullptr ? QString::fromStdString(info->icon) : QString()), text,
+            this);
+        if (info != nullptr) {
+            a->setToolTip(cmd_tooltip(*info));
+        }
+        connect(a, &QAction::triggered, this, [this, alias] {
+            command_widget_->focus_input();
+            processor_->start_command(alias);
+        });
+        return a;
+    };
+
+    // A split command button: the main area runs `primary`, the arrow opens a dropdown of
+    // related commands. Icon + tooltip come from the primary's registry entry.
+    const auto add_split = [&](RibbonPanel* panel, const QString& label, const char* primary,
+                               QMenu* menu) -> QToolButton* {
+        const command::CommandInfo* info = processor_->registry().find(primary);
+        const QString icon_path = info != nullptr ? QString::fromStdString(info->icon) : QString();
+        QToolButton* b = panel->add_dropdown(ribbon_icon(icon_path), label, menu, /*split=*/true);
+        b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(primary)));
+        if (info != nullptr) {
+            b->setToolTip(cmd_tooltip(*info));
+        }
+        connect(b, &QToolButton::clicked, this, [this, primary] {
+            command_widget_->focus_input();
+            processor_->start_command(primary);
+        });
+        return b;
+    };
+
     // --- Home tab ---
     const int home = ribbon_->add_tab(QStringLiteral("Home"));
 
     // File panel: native New/Open/Save/Save As + DXF import/export.
     RibbonPanel* file = ribbon_->add_panel(home, QStringLiteral("File"));
-    const auto file_btn = [&](const QString& kind, const QString& label, void (MainWindow::*slot)()) {
-        QToolButton* b = file->add_button(make_icon(kind), label);
+    const auto file_btn = [&](const QString& icon, const QString& label, const QString& tip,
+                              void (MainWindow::*slot)()) {
+        QToolButton* b = file->add_button(ribbon_icon(icon), label);
+        b->setToolTip(tip);
         connect(b, &QToolButton::clicked, this, slot);
         return b;
     };
-    file_btn(QStringLiteral("new"), QStringLiteral("New"), &MainWindow::file_new);
-    file_btn(QStringLiteral("open"), QStringLiteral("Open"), &MainWindow::file_open);
-    file_btn(QStringLiteral("save"), QStringLiteral("Save"), &MainWindow::file_save);
-    file_btn(QStringLiteral("save"), QStringLiteral("Save As"), &MainWindow::file_save_as);
-    file_btn(QStringLiteral("open"), QStringLiteral("Import\nDXF"), &MainWindow::file_import_dxf);
-    file_btn(QStringLiteral("save"), QStringLiteral("Export\nDXF"), &MainWindow::file_export_dxf);
-    file_btn(QStringLiteral("open"), QStringLiteral("Import\nDWG"), &MainWindow::file_import_dwg);
-    file_btn(QStringLiteral("save"), QStringLiteral("Export\nDWG"), &MainWindow::file_export_dwg);
-    file_btn(QStringLiteral("settings"), QStringLiteral("DWG\nSetup"),
-             &MainWindow::configure_dwg_converter);
-    file_btn(QStringLiteral("print"), QStringLiteral("Plot"), &MainWindow::open_plot_dialog);
+    file_btn(QStringLiteral("assets/ribbon/new.svg"), QStringLiteral("New"),
+             QStringLiteral("Create a new drawing."), &MainWindow::file_new);
+    file_btn(QStringLiteral("assets/ribbon/open.svg"), QStringLiteral("Open"),
+             QStringLiteral("Open an existing drawing."), &MainWindow::file_open);
+    file_btn(QStringLiteral("assets/ribbon/save.svg"), QStringLiteral("Save"),
+             QStringLiteral("Save the current drawing."), &MainWindow::file_save);
+    file_btn(QStringLiteral("assets/ribbon/saveas.svg"), QStringLiteral("Save As"),
+             QStringLiteral("Save the drawing under a new name."), &MainWindow::file_save_as);
+    // A menu action bound to a MainWindow slot (icon + tooltip), for the file dropdowns.
+    const auto file_action = [&](const QString& icon, const QString& text, const QString& tip,
+                                 void (MainWindow::*slot)()) {
+        auto* a = new QAction(ribbon_icon(icon), text, this);
+        a->setToolTip(tip);
+        connect(a, &QAction::triggered, this, slot);
+        return a;
+    };
+    // Import ▼ / Export ▼ (DXF + DWG under one expandable button each, AutoCAD-style).
+    auto* import_menu = new QMenu(this);
+    import_menu->addAction(file_action(QStringLiteral("assets/ribbon/import.svg"),
+                                       QStringLiteral("Import DXF"),
+                                       QStringLiteral("Import geometry from a DXF file."),
+                                       &MainWindow::file_import_dxf));
+    import_menu->addAction(file_action(QStringLiteral("assets/ribbon/import.svg"),
+                                       QStringLiteral("Import DWG"),
+                                       QStringLiteral("Import geometry from a DWG file."),
+                                       &MainWindow::file_import_dwg));
+    file->add_dropdown(ribbon_icon(QStringLiteral("assets/ribbon/import.svg")),
+                       QStringLiteral("Import"), import_menu, /*split=*/false)
+        ->setToolTip(QStringLiteral("Import geometry from a DXF or DWG file."));
+    auto* export_menu = new QMenu(this);
+    export_menu->addAction(file_action(QStringLiteral("assets/ribbon/export.svg"),
+                                       QStringLiteral("Export DXF"),
+                                       QStringLiteral("Export the drawing to a DXF file."),
+                                       &MainWindow::file_export_dxf));
+    export_menu->addAction(file_action(QStringLiteral("assets/ribbon/export.svg"),
+                                       QStringLiteral("Export DWG"),
+                                       QStringLiteral("Export the drawing to a DWG file."),
+                                       &MainWindow::file_export_dwg));
+    export_menu->addAction(file_action(QStringLiteral("assets/ribbon/settings.svg"),
+                                       QStringLiteral("DWG Setup"),
+                                       QStringLiteral("Configure the external DWG converter."),
+                                       &MainWindow::configure_dwg_converter));
+    file->add_dropdown(ribbon_icon(QStringLiteral("assets/ribbon/export.svg")),
+                       QStringLiteral("Export"), export_menu, /*split=*/false)
+        ->setToolTip(QStringLiteral("Export the drawing to a DXF or DWG file."));
+    file_btn(QStringLiteral("assets/ribbon/plot.svg"), QStringLiteral("Plot"),
+             QStringLiteral("Plot or print the drawing to paper or PDF."),
+             &MainWindow::open_plot_dialog);
 
     // Save As shortcut (Ctrl+Shift+S) -- New/Open/Save shortcuts live on the QAT.
     auto* save_as_act = new QAction(this);
@@ -502,30 +605,43 @@ void MainWindow::build_ribbon() {
     });
 
     RibbonPanel* draw = ribbon_->add_panel(home, QStringLiteral("Draw"));
-    add_cmd(draw, QStringLiteral("line"), QStringLiteral("Line"), "L");
-    add_cmd(draw, QStringLiteral("polyline"), QStringLiteral("Polyline"), "PL");
-    add_cmd(draw, QStringLiteral("circle"), QStringLiteral("Circle"), "C");
-    add_cmd(draw, QStringLiteral("arc"), QStringLiteral("Arc"), "A");
-    add_cmd(draw, QStringLiteral("rectangle"), QStringLiteral("Rectangle"), "REC");
+    add_cmd(draw, QStringLiteral("Line"), "L");
+    add_cmd(draw, QStringLiteral("Polyline"), "PL");
+    add_cmd(draw, QStringLiteral("Circle"), "C");
+    add_cmd(draw, QStringLiteral("Arc"), "A");
+    add_cmd(draw, QStringLiteral("Rectangle"), "REC");
+    add_cmd(draw, QStringLiteral("Hatch"), "H");
 
     RibbonPanel* modify = ribbon_->add_panel(home, QStringLiteral("Modify"));
-    add_cmd(modify, QStringLiteral("erase"), QStringLiteral("Erase"), "ERASE");
-    QToolButton* move_btn = add_cmd(modify, QStringLiteral("move"), QStringLiteral("Move"), "M");
-    QToolButton* copy_btn = add_cmd(modify, QStringLiteral("copy"), QStringLiteral("Copy"), "CO");
-    QToolButton* mirror_btn = add_cmd(modify, QStringLiteral("mirror"), QStringLiteral("Mirror"), "MI");
-    add_cmd(modify, QStringLiteral("offset"), QStringLiteral("Offset"), "O"); // pick-based
-    add_cmd(modify, QStringLiteral("trim"), QStringLiteral("Trim"), "TR");    // pick-based
-    QToolButton* rotate_btn = add_cmd(modify, QStringLiteral("rotate"), QStringLiteral("Rotate"), "RO");
-    QToolButton* scale_btn = add_cmd(modify, QStringLiteral("scale"), QStringLiteral("Scale"), "SC");
-    // ARRAY opens the parametric dialog (typing "AR" still uses the command line).
-    QToolButton* array_btn = modify->add_button(make_icon(QStringLiteral("array")),
-                                                QStringLiteral("Array"));
+    QToolButton* move_btn = add_cmd(modify, QStringLiteral("Move"), "M");
+    QToolButton* copy_btn = add_cmd(modify, QStringLiteral("Copy"), "CO");
+    QToolButton* rotate_btn = add_cmd(modify, QStringLiteral("Rotate"), "RO");
+    QToolButton* mirror_btn = add_cmd(modify, QStringLiteral("Mirror"), "MI");
+    QToolButton* scale_btn = add_cmd(modify, QStringLiteral("Scale"), "SC");
+    add_cmd(modify, QStringLiteral("Offset"), "O"); // pick-based
+    add_cmd(modify, QStringLiteral("Erase"), "ERASE");
+    // Trim ▼ (Trim / Extend) and Fillet ▼ (Fillet / Chamfer / Join) -- AutoCAD-style split
+    // buttons: the main area runs the primary, the arrow expands to the related commands.
+    auto* trim_menu = new QMenu(this);
+    trim_menu->addAction(cmd_action("TR", QStringLiteral("Trim")));
+    trim_menu->addAction(cmd_action("EX", QStringLiteral("Extend")));
+    add_split(modify, QStringLiteral("Trim"), "TR", trim_menu);
+    auto* fillet_menu = new QMenu(this);
+    fillet_menu->addAction(cmd_action("F", QStringLiteral("Fillet")));
+    fillet_menu->addAction(cmd_action("CHA", QStringLiteral("Chamfer")));
+    fillet_menu->addAction(cmd_action("J", QStringLiteral("Join")));
+    add_split(modify, QStringLiteral("Fillet"), "F", fillet_menu);
+    // ARRAY opens the parametric dialog (typing "AR" still uses the command line); the icon
+    // + tooltip still come from the registry so it matches its typed twin.
+    const command::CommandInfo* array_info = processor_->registry().find("AR");
+    QToolButton* array_btn = modify->add_button(
+        ribbon_icon(array_info != nullptr ? QString::fromStdString(array_info->icon) : QString()),
+        QStringLiteral("Array"));
     array_btn->setObjectName(QStringLiteral("ribbon.cmd.array"));
+    if (array_info != nullptr) {
+        array_btn->setToolTip(cmd_tooltip(*array_info));
+    }
     connect(array_btn, &QToolButton::clicked, this, [this] { open_array_dialog(); });
-    add_cmd(modify, QStringLiteral("extend"), QStringLiteral("Extend"), "EX");   // pick-based
-    add_cmd(modify, QStringLiteral("fillet"), QStringLiteral("Fillet"), "F");    // pick-based
-    add_cmd(modify, QStringLiteral("chamfer"), QStringLiteral("Chamfer"), "CHA"); // pick-based
-    add_cmd(modify, QStringLiteral("join"), QStringLiteral("Join"), "J");        // pick-based
     // Move/Copy/Mirror/Rotate/Scale/Array operate on an existing selection.
     selection_required_buttons_ = {move_btn, copy_btn, mirror_btn, rotate_btn, scale_btn, array_btn};
     for (QToolButton* b : selection_required_buttons_) {
@@ -543,35 +659,53 @@ void MainWindow::build_ribbon() {
         }
     });
     layers->add_widget(layer_combo_);
-    QToolButton* layer_btn = layers->add_button(make_icon(QStringLiteral("layers")),
-                                                QStringLiteral("Layer\nProperties"));
+    QToolButton* layer_btn = layers->add_button(
+        ribbon_icon(QStringLiteral("assets/ribbon/layer-props.svg")),
+        QStringLiteral("Layer\nProperties"));
     layer_btn->setObjectName(QStringLiteral("ribbon.layer_manager"));
+    layer_btn->setToolTip(QStringLiteral("Open the Layer Properties manager."));
     connect(layer_btn, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
 
     RibbonPanel* props = ribbon_->add_panel(home, QStringLiteral("Properties"));
-    QToolButton* color_btn = props->add_button(make_icon(QStringLiteral("properties")),
-                                               QStringLiteral("Set\nColour"));
+    QToolButton* color_btn = props->add_button(
+        ribbon_icon(QStringLiteral("assets/ribbon/color-swatch.svg")), QStringLiteral("Set\nColour"));
     color_btn->setObjectName(QStringLiteral("ribbon.set_color"));
+    color_btn->setToolTip(QStringLiteral("Set the colour of the selected objects."));
     connect(color_btn, &QToolButton::clicked, this, [this] { set_selection_color(); });
     selection_required_buttons_.push_back(color_btn); // colour override needs a selection
     color_btn->setEnabled(false);
 
     RibbonPanel* annot = ribbon_->add_panel(home, QStringLiteral("Annotation"));
-    add_cmd(annot, QStringLiteral("text"), QStringLiteral("Text"), "DT");
-    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Dim"), "DIM");
-    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Linear"), "DLI");
-    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Aligned"), "DAL");
-    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Radius"), "DRA");
-    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Diameter"), "DDI");
-    add_cmd(annot, QStringLiteral("dim"), QStringLiteral("Angular"), "DAN");
-    add_cmd(annot, QStringLiteral("text"), QStringLiteral("Leader"), "LE");
-    QToolButton* dimstyle_btn =
-        annot->add_button(make_icon(QStringLiteral("dim")), QStringLiteral("Dim\nStyle"));
+    // Text ▼ (single-line / multiline / edit).
+    auto* text_menu = new QMenu(this);
+    text_menu->addAction(cmd_action("DT", QStringLiteral("Single-line Text")));
+    text_menu->addAction(cmd_action("MT", QStringLiteral("Multiline Text")));
+    text_menu->addAction(cmd_action("ED", QStringLiteral("Edit Text")));
+    add_split(annot, QStringLiteral("Text"), "DT", text_menu);
+    // Dimension ▼ -- the family collapses into one split button (main = smart DIM, arrow =
+    // the specific types). This is the big de-clutter for the Annotation panel.
+    auto* dim_menu = new QMenu(this);
+    dim_menu->addAction(cmd_action("DLI", QStringLiteral("Linear")));
+    dim_menu->addAction(cmd_action("DAL", QStringLiteral("Aligned")));
+    dim_menu->addAction(cmd_action("DRA", QStringLiteral("Radius")));
+    dim_menu->addAction(cmd_action("DDI", QStringLiteral("Diameter")));
+    dim_menu->addAction(cmd_action("DAN", QStringLiteral("Angular")));
+    add_split(annot, QStringLiteral("Dimension"), "DIM", dim_menu);
+    // Leader ▼ (leader / quick leader).
+    auto* leader_menu = new QMenu(this);
+    leader_menu->addAction(cmd_action("LE", QStringLiteral("Quick Leader")));
+    leader_menu->addAction(cmd_action("LEADER", QStringLiteral("Leader")));
+    add_split(annot, QStringLiteral("Leader"), "LE", leader_menu);
+    QToolButton* dimstyle_btn = annot->add_button(
+        ribbon_icon(QStringLiteral("assets/ribbon/dim-style.svg")), QStringLiteral("Dim\nStyle"));
     dimstyle_btn->setObjectName(QStringLiteral("ribbon.dimstyle"));
+    dimstyle_btn->setToolTip(QStringLiteral("Create and edit dimension styles."));
     connect(dimstyle_btn, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
     QToolButton* lwt_btn =
-        annot->add_button(make_icon(QStringLiteral("dim")), QStringLiteral("LWT"));
+        annot->add_button(ribbon_icon(QStringLiteral("assets/ribbon/lwt.svg")),
+                          QStringLiteral("LWT"));
     lwt_btn->setObjectName(QStringLiteral("ribbon.lwt"));
+    lwt_btn->setToolTip(QStringLiteral("Toggle display of lineweights (LWDISPLAY)."));
     lwt_btn->setCheckable(true);
     lwt_btn->setChecked(true); // LWDISPLAY defaults on
     connect(lwt_btn, &QToolButton::toggled, this,
@@ -580,20 +714,27 @@ void MainWindow::build_ribbon() {
     // --- Insert tab (placeholder) ---
     const int insert = ribbon_->add_tab(QStringLiteral("Insert"));
     RibbonPanel* block = ribbon_->add_panel(insert, QStringLiteral("Block"));
-    block->add_placeholder(make_icon(QStringLiteral("copy")), QStringLiteral("Insert"));
+    block->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")),
+                           QStringLiteral("Insert"));
 
     // --- Annotate tab (Dimensions land in Phase 8) ---
     const int annotate = ribbon_->add_tab(QStringLiteral("Annotate"));
     RibbonPanel* dims = ribbon_->add_panel(annotate, QStringLiteral("Dimensions"));
-    dims->add_placeholder(make_icon(QStringLiteral("dim")), QStringLiteral("Linear"));
-    dims->add_placeholder(make_icon(QStringLiteral("dim")), QStringLiteral("Aligned"));
+    dims->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/dim-linear.svg")),
+                          QStringLiteral("Linear"));
+    dims->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/dim-aligned.svg")),
+                          QStringLiteral("Aligned"));
 
     // --- View tab (Zoom Extents is real) ---
     const int view = ribbon_->add_tab(QStringLiteral("View"));
     RibbonPanel* nav = ribbon_->add_panel(view, QStringLiteral("Navigate"));
-    QToolButton* zext = nav->add_button(make_icon(QStringLiteral("zoom")), QStringLiteral("Zoom\nExtents"));
+    QToolButton* zext = nav->add_button(ribbon_icon(QStringLiteral("assets/ribbon/zoom-extents.svg")),
+                                        QStringLiteral("Zoom\nExtents"));
+    zext->setToolTip(QStringLiteral("Zoom to show the full drawing extents."));
     connect(zext, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
-    QToolButton* zoom = nav->add_button(make_icon(QStringLiteral("zoom")), QStringLiteral("Zoom"));
+    QToolButton* zoom =
+        nav->add_button(ribbon_icon(QStringLiteral("assets/ribbon/zoom.svg")), QStringLiteral("Zoom"));
+    zoom->setToolTip(QStringLiteral("Zoom in or out to change the view magnification."));
     connect(zoom, &QToolButton::clicked, this, [this] {
         command_widget_->focus_input();
         processor_->submit_line("ZOOM");
@@ -602,33 +743,55 @@ void MainWindow::build_ribbon() {
     // --- Manage tab (placeholder) ---
     const int manage = ribbon_->add_tab(QStringLiteral("Manage"));
     ribbon_->add_panel(manage, QStringLiteral("Customization"))
-        ->add_placeholder(make_icon(QStringLiteral("properties")), QStringLiteral("Settings"));
+        ->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/settings.svg")),
+                          QStringLiteral("Settings"));
 
     setMenuWidget(ribbon_);
 }
 
-QAction* MainWindow::make_mode_action(const QString& text, int func_key, bool initial) {
+QAction* MainWindow::make_mode_action(const QString& text, int func_key, bool initial,
+                                      const QString& description) {
     auto* a = new QAction(text, this);
     a->setCheckable(true);
     a->setChecked(initial);
     a->setShortcut(QKeySequence(func_key));
     a->setShortcutContext(Qt::ApplicationShortcut);
+    // Rich tooltip: <b>NAME (Fn)</b><br>what the mode does -- mirrors the ribbon's tooltips.
+    const QString key = QKeySequence(func_key).toString(QKeySequence::NativeText);
+    QString tip = QStringLiteral("<b>") + text.toHtmlEscaped();
+    if (!key.isEmpty()) {
+        tip += QStringLiteral(" (") + key.toHtmlEscaped() + QLatin1Char(')');
+    }
+    tip += QStringLiteral("</b>");
+    if (!description.isEmpty()) {
+        tip += QStringLiteral("<br>") + description.toHtmlEscaped();
+    }
+    a->setToolTip(tip);
     addAction(a); // register so the function-key shortcut works app-wide
     return a;
 }
 
 void MainWindow::build_status_bar() {
-    osnap_action_ = make_mode_action(QStringLiteral("OSNAP"), Qt::Key_F3, modes_.osnap);
-    grid_action_ = make_mode_action(QStringLiteral("GRID"), Qt::Key_F7, modes_.grid);
-    ortho_action_ = make_mode_action(QStringLiteral("ORTHO"), Qt::Key_F8, modes_.ortho);
-    snap_action_ = make_mode_action(QStringLiteral("SNAP"), Qt::Key_F9, modes_.snap);
-    polar_action_ = make_mode_action(QStringLiteral("POLAR"), Qt::Key_F10, modes_.polar);
+    osnap_action_ = make_mode_action(QStringLiteral("OSNAP"), Qt::Key_F3, modes_.osnap,
+                                     QStringLiteral("Snap the cursor to precise points on existing "
+                                                    "objects (endpoint, midpoint, center, ...)."));
+    grid_action_ = make_mode_action(QStringLiteral("GRID"), Qt::Key_F7, modes_.grid,
+                                    QStringLiteral("Display the reference grid."));
+    ortho_action_ = make_mode_action(QStringLiteral("ORTHO"), Qt::Key_F8, modes_.ortho,
+                                     QStringLiteral("Constrain cursor movement to horizontal and "
+                                                    "vertical."));
+    snap_action_ = make_mode_action(QStringLiteral("SNAP"), Qt::Key_F9, modes_.snap,
+                                    QStringLiteral("Snap the cursor to grid increments."));
+    polar_action_ = make_mode_action(QStringLiteral("POLAR"), Qt::Key_F10, modes_.polar,
+                                     QStringLiteral("Snap the cursor to preset polar angles."));
     // Dynamic Input (F12). Persisted across runs (the only persisted UI toggle).
     // Default ON: the app is canvas-only out of the box (on-canvas command entry,
     // sub-prompts and dimension fields). F12 OFF reverts to the classic bottom
     // command-line bar -- the toggleable fallback.
     const bool dyn_initial = QSettings().value(QStringLiteral("dyn/enabled"), true).toBool();
-    dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial);
+    dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial,
+                                   QStringLiteral("Show command input and prompts at the cursor "
+                                                  "(Dynamic Input)."));
     connect(dyn_action_, &QAction::toggled, this, [this](bool on) { set_dyn_enabled(on); });
 
     connect(osnap_action_, &QAction::toggled, this, [this](bool on) { modes_.osnap = on; });
@@ -3237,6 +3400,105 @@ bool MainWindow::hatch_shot(int kind, const std::string& out_png) {
                     static_cast<unsigned long>(winId()), out_png.c_str());
         std::fflush(stdout);
         pump(12000);
+    }
+    return ok;
+}
+
+bool MainWindow::ribbon_shot(int kind, const std::string& out_png) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    // kind 2 captures a deliberately NARROW window to show the overflow behaviour (a
+    // horizontal scroll bar, panels intact) rather than icons colliding.
+    resize(kind == 2 ? 760 : 1500, 820);
+    move(40, 40);
+    show();
+    raise();
+    activateWindow();
+    pump(800);
+
+    // kind 3: mirror a split-button's dropdown as a child overlay (the real menu is a
+    // separate popup window the per-window grab can't see) -- shows the expand structure.
+    // Anchored on Fillet (Fillet/Chamfer/Join), which is on screen at the normal width.
+    if (kind == 3) {
+        if (auto* dim = findChild<QToolButton*>(QStringLiteral("ribbon.cmd.F"));
+            dim != nullptr && dim->menu() != nullptr) {
+            auto* panel = new QWidget(this);
+            panel->setObjectName(QStringLiteral("ribbon.dropdown.preview"));
+            panel->setStyleSheet(QStringLiteral(
+                "QWidget#ribbon.dropdown.preview{background:#23272e;border:1px solid #5a6270;}"
+                "QLabel{color:#e6e6e6;padding:4px 14px 4px 6px;}"));
+            auto* col = new QVBoxLayout(panel);
+            col->setContentsMargins(2, 2, 2, 2);
+            col->setSpacing(0);
+            for (QAction* a : dim->menu()->actions()) {
+                auto* row = new QWidget(panel);
+                auto* rl = new QHBoxLayout(row);
+                rl->setContentsMargins(4, 2, 14, 2);
+                rl->setSpacing(8);
+                auto* ic = new QLabel(row);
+                ic->setPixmap(a->icon().pixmap(16, 16));
+                auto* tx = new QLabel(a->text(), row);
+                rl->addWidget(ic);
+                rl->addWidget(tx);
+                rl->addStretch(1);
+                col->addWidget(row);
+            }
+            panel->adjustSize();
+            panel->move(dim->mapTo(this, QPoint(0, dim->height() + 1)));
+            panel->show();
+            panel->raise();
+            pump(300);
+        }
+    }
+
+    // The LINE ribbon button -- used for the forced-tooltip capture (kind 1).
+    auto* line_btn = findChild<QToolButton*>(QStringLiteral("ribbon.cmd.L"));
+    QPoint tip_pos;
+    QString tip_text;
+    if (line_btn != nullptr) {
+        tip_pos = line_btn->mapToGlobal(QPoint(line_btn->width() / 2, line_btn->height()));
+        tip_text = line_btn->toolTip();
+    }
+    const bool ok = ribbon_ != nullptr && line_btn != nullptr;
+    if (kind == 1 && line_btn != nullptr) {
+        QToolTip::showText(tip_pos, tip_text, line_btn); // the real tooltip (live hover)
+        // The real tooltip is a separate top-level popup -- an `import -window <main>` grab
+        // can't see it. Mirror it as a child overlay (same registry text + tooltip styling)
+        // so the per-window capture shows exactly what hovering produces.
+        auto* tip = new QLabel(this);
+        tip->setObjectName(QStringLiteral("ribbon.tooltip.preview"));
+        tip->setTextFormat(Qt::RichText);
+        tip->setText(tip_text);
+        tip->setStyleSheet(QStringLiteral(
+            "QLabel{background:#2b2f37;color:#e6e6e6;border:1px solid #5a6270;"
+            "padding:5px 9px;border-radius:3px;}"));
+        tip->adjustSize();
+        tip->move(line_btn->mapTo(this, QPoint(2, line_btn->height() + 3)));
+        tip->show();
+        tip->raise();
+        pump(400);
+    }
+    std::printf("[ribbon_shot] kind=%d ribbon=%d line_btn=%d tip='%s' main=0x%lx => %s\n", kind,
+                ribbon_ != nullptr ? 1 : 0, line_btn != nullptr ? 1 : 0,
+                tip_text.toStdString().c_str(), static_cast<unsigned long>(winId()),
+                ok ? "PASS" : "FAIL");
+    std::fflush(stdout);
+    if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+        std::printf("[ribbon_shot] HOLD: capture with `import -window 0x%lx %s`\n",
+                    static_cast<unsigned long>(winId()), out_png.c_str());
+        std::fflush(stdout);
+        // Keep the tooltip alive across the hold (it has an auto-hide timer) by re-showing it.
+        for (int i = 0; i < 6000; ++i) {
+            if (kind == 1 && line_btn != nullptr) {
+                QToolTip::showText(tip_pos, tip_text, line_btn);
+            }
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
     }
     return ok;
 }

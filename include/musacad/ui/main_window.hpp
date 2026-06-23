@@ -152,6 +152,9 @@ public:
     /// Real-window capture for HATCH. `kind` 0: a closed polyline -> SOLID hatch (selected),
     /// with the Properties palette showing the Hatch section. Prints a PASS/FAIL diagnostic.
     bool hatch_shot(int kind, const std::string& out_png);
+    /// Real-window capture for the Ribbon (Phase A). `kind` 0: the ribbon with real SVG
+    /// icons; 1: a forced hover tooltip on the LINE button (name + alias + description).
+    bool ribbon_shot(int kind, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
@@ -193,7 +196,8 @@ private:
     void build_ribbon();
     QWidget* build_central();
     void build_status_bar();
-    QAction* make_mode_action(const QString& text, int func_key, bool initial);
+    QAction* make_mode_action(const QString& text, int func_key, bool initial,
+                              const QString& description);
 
     // ARRAY command dialog (AutoCAD-style parametric input). Draw/transform commands
     // are interactive (ribbon starts the command, pick on screen); the cursor value

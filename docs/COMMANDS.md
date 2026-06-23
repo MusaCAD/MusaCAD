@@ -8,6 +8,55 @@ current one are a tentative roadmap and may shift.
 Conventions: type the **Alias** or full name at the command line (autocomplete
 suggests both); aliases are case-insensitive.
 
+## Command descriptions (ribbon tooltips)
+
+Every command carries a one-line **description** and an **icon** in its registry row
+(`CommandRegistry::make_default`, the single source of truth). The ribbon reads these to
+build each button's icon and its hover tooltip (`NAME (ALIAS) — description`); the same
+descriptions are available for future help / command-search. Catalog of the 38 registered
+commands (Ribbon Phase A):
+
+| Command (alias) | Description |
+|---|---|
+| LINE (L) | Create a series of straight-line segments. |
+| CIRCLE (C) | Draw a circle from a center point and a radius or diameter. |
+| PLINE (PL) | Draw a connected sequence of line and arc segments as one object. |
+| ARC (A) | Draw a circular arc through three points. |
+| RECTANGLE (REC) | Draw a rectangle from two opposite corners. |
+| ERASE (E) | Delete selected objects from the drawing. |
+| UNDO (U) | Reverse the most recent action. |
+| ZOOM (Z) | Zoom in or out to change the view magnification. |
+| MOVE (M) | Move selected objects a specified distance and direction. |
+| COPY (CO) | Duplicate selected objects at a specified offset. |
+| MIRROR (MI) | Create a mirror-image copy of objects across an axis. |
+| OFFSET (O) | Create a parallel copy of a curve at a specified distance. |
+| TRIM (TR) | Trim objects to meet the edges of other objects. |
+| JOIN (J) | Join collinear or connected objects into a single object. |
+| ROTATE (RO) | Rotate selected objects around a base point. |
+| SCALE (SC) | Resize selected objects uniformly about a base point. |
+| ARRAY (AR) | Create a rectangular or polar pattern of copies. |
+| EXTEND (EX) | Extend objects to meet the edges of other objects. |
+| FILLET (F) | Round corners between two intersecting lines, arcs, or polylines. |
+| CHAMFER (CHA) | Bevel corners between two intersecting lines. |
+| MATCHPROP (MA) | Copy properties from a source object to one or more target objects. |
+| HATCH (H) | Fill an enclosed area with a pattern or solid color. |
+| TEXT (DT) | Create a single-line text object. |
+| DIMLINEAR (DLI) | Create a horizontal or vertical linear dimension. |
+| DIMALIGNED (DAL) | Create a dimension aligned with two points. |
+| DIMRADIUS (DRA) | Create a radius dimension for a circle or arc. |
+| DIMDIAMETER (DDI) | Create a diameter dimension for a circle or arc. |
+| DIMANGULAR (DAN) | Create an angular dimension between two lines. |
+| DIM | Create a dimension suited to the selected object. |
+| LEADER | Draw a leader line with an arrowhead and annotation. |
+| MTEXT (MT) | Create a multiline (paragraph) text object. |
+| QLEADER (LE) | Draw a quick leader with an arrowhead and annotation. |
+| TEXTEDIT (ED) | Edit the contents of an existing text object. |
+| PROPERTIES (PR) | Open the Properties palette to view and edit object properties. |
+| DWGIN | Import geometry from a DWG file. |
+| DWGOUT | Export the drawing to a DWG file. |
+| PLOT | Plot or print the drawing to paper or PDF. |
+| LTSCALE (LTS) | Set the global linetype scale factor. |
+
 ## Draw
 
 | Command | Alias | Status |

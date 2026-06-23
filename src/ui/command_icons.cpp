@@ -3,7 +3,13 @@
 
 #include "musacad/ui/command_icons.hpp"
 
+#include <QBuffer>
+#include <QByteArray>
 #include <QColor>
+#include <QFile>
+#include <QHash>
+#include <QImage>
+#include <QImageReader>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
@@ -111,6 +117,47 @@ QIcon make_icon(const QString& kind) {
     draw_glyph(p, kind);
     p.end();
     return QIcon(pix);
+}
+
+QIcon ribbon_icon(const QString& asset_path) {
+    if (asset_path.isEmpty()) {
+        return make_icon(QString()); // generic placeholder square
+    }
+    // Cache by asset path -- avoids re-reading + re-rasterising the SVG per button/frame.
+    static QHash<QString, QIcon> cache;
+    const auto hit = cache.constFind(asset_path);
+    if (hit != cache.constEnd()) {
+        return hit.value();
+    }
+    // "assets/ribbon/line.svg" -> the compiled Qt resource ":/ribbon/line.svg".
+    QString res = asset_path;
+    const int slash = res.indexOf(QLatin1Char('/'));
+    if (slash >= 0) {
+        res = QStringLiteral(":/") + res.mid(slash + 1);
+    }
+    QIcon icon;
+    QFile f(res);
+    if (f.open(QIODevice::ReadOnly)) {
+        QByteArray bytes = f.readAll();
+        // The SVGs are authored with stroke="currentColor"; QIcon has no colour context,
+        // so bake the theme's icon grey in here (one theme today; future themes re-bake).
+        bytes.replace("currentColor", "#d0d0d0");
+        QBuffer buf(&bytes);
+        buf.open(QIODevice::ReadOnly);
+        QImageReader reader(&buf, "svg"); // the qsvg image plugin (same as the branding logo)
+        // Rasterise generously (64px) so QIcon stays crisp when scaled to 24px (1x) or
+        // 48px (2x HiDPI). The source is vector, so this is a clean downscale either way.
+        reader.setScaledSize(QSize(64, 64));
+        const QImage img = reader.read();
+        if (!img.isNull()) {
+            icon = QIcon(QPixmap::fromImage(img));
+        }
+    }
+    if (icon.isNull()) {
+        icon = make_icon(QString()); // missing/invalid asset -> graceful placeholder
+    }
+    cache.insert(asset_path, icon);
+    return icon;
 }
 
 } // namespace musacad::ui
