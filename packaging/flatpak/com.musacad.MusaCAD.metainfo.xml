@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later -->
+<component type="desktop-application">
+  <id>com.musacad.MusaCAD</id>
+
+  <name>Musa CAD</name>
+  <summary>High-performance multi-threaded 2D CAD</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LGPL-3.0-or-later</project_license>
+
+  <developer id="com.musacad">
+    <name>Musa CAD contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      Musa CAD is a fast, modern 2D CAD application. It mirrors AutoCAD's UI layout,
+      command line, and classic shortcuts, on a multi-threaded, GPU-accelerated,
+      data-oriented core targeting a smooth 144 Hz+ viewport.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>2D drafting: lines, polylines, circles, arcs, rectangles, hatches</li>
+      <li>Full Modify suite: move, copy, rotate, mirror, scale, offset, trim, fillet, array</li>
+      <li>Dimensions, leaders, and text (TrueType and stroke fonts)</li>
+      <li>Blocks, layers, linetypes, and a Properties palette with MATCHPROP</li>
+      <li>Dynamic input on the canvas and multi-document tabs</li>
+      <li>DXF read/write built in; DWG via an external converter</li>
+      <li>PDF / print plotting with true vector output</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.musacad.MusaCAD.desktop</launchable>
+
+  <url type="homepage">https://github.com/MusaCAD/MusaCAD</url>
+  <url type="bugtracker">https://github.com/MusaCAD/MusaCAD/issues</url>
+  <url type="vcs-browser">https://github.com/MusaCAD/MusaCAD</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>The Musa CAD interface: ribbon, multi-document tabs, and the Properties palette</caption>
+      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/overview.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A dense architectural drawing with elevations and a floor plan</caption>
+      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/architectural-plan.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A dimensioned mechanical detail with a bolt-circle and section view</caption>
+      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/mechanical-detail.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The Hatch Editor over a sectioned detail and title block</caption>
+      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/hatch-section.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-06-23">
+      <description>
+        <p>First public release. Capable but early: 2D drafting, modify, dimensions,
+        text, blocks, hatches, layers, DXF I/O, and vector PDF plotting.</p>
+      </description>
+    </release>
+  </releases>
+</component>

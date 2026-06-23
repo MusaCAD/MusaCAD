@@ -50,6 +50,27 @@ Catch2 is fetched (`FetchContent`, pinned `v3.5.4`) only to build the `musacad_t
 It is **not** part of the distributable application. BSL-1.0 is permissive and would be
 compatible even if shipped.
 
+### Distribution bundles (AppImage / Flatpak / Windows installer)
+The v0.1.0 release artifacts bundle a Qt runtime so users need not install Qt. Each is
+LGPL-clean — Qt 6 stays **dynamically linked LGPL-3.0**, and no GPL/DWG library is ever pulled in:
+
+- **AppImage** (`linuxdeploy` + `linuxdeploy-plugin-qt`): bundles the Qt 6 LGPL-3 libraries
+  (Core, Gui, Widgets, OpenGL, PrintSupport, Svg, DBus, XcbQpa) + the `qsvg`/`qsvgicon`/`qxcb`
+  plugins, plus their transitive system dependencies (glib, ICU, libpng, freetype, harfbuzz,
+  gnutls/gcrypt/nettle, cups, xcb-*, zstd, etc.). All of these are **LGPL or permissive**
+  (MIT/BSD/Apache/zlib) and LGPL-3-compatible; **none are GPL and none are DWG-related** (verified
+  by `ls AppDir/usr/lib` + the scan below).
+- **Flatpak**: Qt 6 comes from the **`org.kde.Platform//6.10`** runtime (LGPL-3); nothing extra
+  is vendored into the app.
+- **Windows installer** (`windeployqt` + NSIS): bundles the Qt 6 LGPL-3 DLLs + plugins and the
+  Microsoft Visual C++ runtime redistributable (redistributable under Microsoft's terms).
+- **Deploy tools** (`linuxdeploy`, `appimagetool`, `flatpak-builder`, `windeployqt`, NSIS) are
+  **build-time only** — they assemble the bundle and are not shipped inside it.
+
+LibreDWG / ODA remain **external-process-only** in every bundle (not present in `AppDir/usr/lib`,
+absent from the sandbox, never in the Windows staging tree). DWG support stays opt-in via a
+user-installed converter on `PATH`.
+
 ---
 
 ## LibreDWG / GPL boundary scan (load-bearing compliance check)

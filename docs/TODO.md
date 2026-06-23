@@ -3,6 +3,24 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Release / packaging (v0.1.0 infra DONE 2026-06-23; items staged)
+
+* **DONE.** Linux **AppImage** (`packaging/linux/`, bundles Qt6 + qsvg, verified locally),
+  Linux **Flatpak** (`packaging/flatpak/`, KDE 6.10 runtime, builds + installs + runs locally),
+  **Windows installer** via GitHub Actions (`.github/workflows/build-windows.yml` + NSIS), Linux
+  AppImage CI (`build-linux.yml`), and `scripts/release.sh`. Playbook in `docs/RELEASING.md`.
+* **Flathub submission — STAGED.** The manifest + AppStream metainfo are ready
+  (`packaging/flatpak/com.musacad.MusaCAD.{yml,metainfo.xml}`); submission to Flathub is deferred
+  until **after** the GitHub release. **Done looks like:** swap the manifest source to the tagged
+  `type: git` release and open a PR on `github.com/flathub/flathub`. See
+  `packaging/flatpak/BUILD_FLATPAK.md` ▸ "Flathub — STAGED".
+* **macOS support — planned.** No `.app`/`.dmg` packaging yet (dev machine is Linux; no runtime
+  verification possible here). **Done looks like:** a `macos-latest` workflow that builds, runs
+  `macdeployqt`, and produces a signed/notarized `.dmg`.
+* **Automated builds on tag push — partial.** The Linux + Windows workflows already trigger on
+  `v*` tags; a follow-up could auto-create the GitHub **release** and attach artifacts (today the
+  tag + `gh release create` are run manually, by design).
+
 ## Ribbon (Phases A + B DONE 2026-06-23; staged items below)
 
 * **DONE.** Registry-driven SVG icons + tooltips (A); dropdown grouping + scroll overflow

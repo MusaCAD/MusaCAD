@@ -43,3 +43,12 @@ Thumbs.db
 dwg_samples/
 *.dwg.import.log
 plot_out/
+
+# Release packaging artifacts + downloaded deploy tools (never committed; attached to releases)
+packaging/linux/.tools/
+packaging/flatpak/.flatpak-builder/
+packaging/flatpak/.src/
+packaging/flatpak/.repo/
+packaging/flatpak/build/
+*.AppImage
+*.flatpak

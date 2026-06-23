@@ -1,0 +1,81 @@
+name: Build Windows installer
+
+# Triggers: manual run, OR a pushed release tag (v*). Every `vX.Y.Z` tag therefore
+# produces a Windows installer artifact automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for the installer filename (e.g. 0.1.0)"
+        required: false
+        default: "0.1.0"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.1"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          # Svg ships in qtbase for Qt6; qtimageformats adds the rest. Keeps windeployqt
+          # able to bundle the qsvg image plugin + qico.
+          modules: "qtimageformats"
+          cache: true
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure (Release, Ninja)
+        shell: cmd
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
+
+      - name: Build
+        shell: cmd
+        run: cmake --build build --target musacad_app
+
+      - name: Assemble + windeployqt
+        shell: cmd
+        run: |
+          mkdir staging
+          copy build\bin\musacad_app.exe staging\
+          windeployqt.exe --release --no-translations --compiler-runtime staging\musacad_app.exe
+          rem windeployqt pulls in Qt DLLs + plugins (platforms\qwindows, imageformats\qsvg+qico,
+          rem styles, iconengines). --compiler-runtime adds the MSVC redistributable DLLs.
+
+      - name: Package with NSIS
+        shell: cmd
+        run: >
+          makensis /DVERSION=${{ steps.ver.outputs.version }}
+          /DSTAGING=staging
+          packaging\windows\musacad.nsi
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusaCAD-${{ steps.ver.outputs.version }}-x86_64-setup
+          path: packaging/windows/MusaCAD-*-x86_64-setup.exe
+          if-no-files-found: error

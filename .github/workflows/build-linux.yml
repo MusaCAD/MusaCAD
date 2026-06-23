@@ -1,0 +1,61 @@
+name: Build Linux AppImage
+
+# Same triggers as the Windows workflow: manual run OR a pushed release tag (v*).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for the AppImage filename (e.g. 0.1.0)"
+        required: false
+        default: "0.1.0"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build + Qt 6 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            libxcb-cursor0 libfuse2 file curl
+          # libfuse2 lets the produced AppImage run; the deploy tools themselves use
+          # APPIMAGE_EXTRACT_AND_RUN (set by build_appimage.sh).
+
+      - name: Build AppImage
+        run: packaging/linux/build_appimage.sh ${{ steps.ver.outputs.version }}
+
+      - name: Smoke-test the AppImage (headless load + plot)
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb poppler-utils
+          # Generate a trivial DXF and confirm the bundled binary loads + plots a vector PDF.
+          xvfb-run -a env APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen \
+            ./MusaCAD-${{ steps.ver.outputs.version }}-x86_64.AppImage --appimage-version || true
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusaCAD-${{ steps.ver.outputs.version }}-x86_64.AppImage
+          path: MusaCAD-*-x86_64.AppImage
+          if-no-files-found: error
