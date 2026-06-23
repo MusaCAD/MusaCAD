@@ -40,10 +40,11 @@ adds **nothing** to the dependency inventory above. (Icon iconography follows co
 expression; the drawings themselves are original.)
 
 ### Vulkan — permissive, not in the shipped artifact
-`find_package(Vulkan REQUIRED)` validates the GPU-backend seam at configure time, but the
-shipped viewport renders through **Qt's OpenGL** path; `libvulkan` does **not** appear in the
-binary's dynamic dependencies (see scan). The Vulkan loader is Apache-2.0 and the headers are
-MIT/Apache-2.0 — permissive and LGPL-compatible regardless.
+`find_package(Vulkan)` (optional) validates the GPU-backend seam at configure time when an SDK is
+present, but the shipped viewport renders through **Qt's OpenGL** path; nothing links the `Vulkan::`
+targets and `libvulkan` does **not** appear in the binary's dynamic dependencies (see scan). Builds
+on hosts without a Vulkan SDK (e.g. the Windows installer CI) are byte-identical. The Vulkan loader
+is Apache-2.0 and the headers are MIT/Apache-2.0 — permissive and LGPL-compatible regardless.
 
 ### Catch2 — test-only
 Catch2 is fetched (`FetchContent`, pinned `v3.5.4`) only to build the `musacad_tests` target.

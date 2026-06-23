@@ -51,9 +51,11 @@ include(EmbedShaders)
 # FetchContent and wired starting in Phase 2 when the first tests exist.
 # ---------------------------------------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets PrintSupport)
-# Vulkan headers/loader are located so the GPU-backend seam is validated, but the
-# active backend is OpenGL 4.6 Core (see docs/ARCHITECTURE.md for the rationale).
-find_package(Vulkan REQUIRED)
+# Vulkan headers/loader are located so the GPU-backend seam can be validated WHEN PRESENT, but
+# the active backend is OpenGL 4.6 Core and Vulkan is NOT linked into the binary (see
+# docs/ARCHITECTURE.md). It is therefore optional -- nothing depends on the Vulkan:: targets, so
+# CI runners / platforms without a Vulkan SDK (e.g. the Windows installer build) build identically.
+find_package(Vulkan)
 
 # Qt: automatic moc/uic/rcc handling for QObject-derived types.
 qt_standard_project_setup()
@@ -86,5 +88,9 @@ message(STATUS "  Sanitizers (A+UB) : ${ENABLE_SANITIZERS}")
 message(STATUS "  ThreadSanitizer   : ${ENABLE_TSAN}")
 message(STATUS "  Build tests       : ${MUSACAD_BUILD_TESTS}")
 message(STATUS "  Qt6 version       : ${Qt6_VERSION}")
-message(STATUS "  Vulkan version    : ${Vulkan_VERSION}")
+if(Vulkan_FOUND)
+    message(STATUS "  Vulkan (seam)     : ${Vulkan_VERSION}")
+else()
+    message(STATUS "  Vulkan (seam)     : not found (optional; OpenGL backend in use)")
+endif()
 message(STATUS "------------------------------------------------------------")
