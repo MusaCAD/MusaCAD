@@ -73,7 +73,7 @@ jobs:
       - name: Package with NSIS
         shell: cmd
         run: >
-          "C:\Program Files (x86)\NSIS\makensis.exe"
+          "C:\Program Files (x86)\NSIS\makensis.exe" /NOCD
           /DVERSION=${{ steps.ver.outputs.version }}
           /DSTAGING=staging
           packaging\windows\musacad.nsi

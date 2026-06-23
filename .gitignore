@@ -52,3 +52,7 @@ packaging/flatpak/.repo/
 packaging/flatpak/build/
 *.AppImage
 *.flatpak
+
+# Local NSIS test output
+*-setup.exe
+staging_test/

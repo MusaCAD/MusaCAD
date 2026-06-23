@@ -19,13 +19,16 @@ Unicode true
 !define PROGID  "MusaCAD.Drawing"
 
 Name "${APPNAME} ${VERSION}"
-OutFile "packaging\windows\MusaCAD-${VERSION}-x86_64-setup.exe"
+; Compile-time source paths use forward slashes (portable across makensis on Windows + Linux).
+; Runtime install paths ($INSTDIR etc.) keep Windows backslashes. makensis must be invoked with
+; /NOCD so these resolve against the repo root, not the script's directory.
+OutFile "packaging/windows/MusaCAD-${VERSION}-x86_64-setup.exe"
 InstallDir "$PROGRAMFILES64\${APPNAME}"
 InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
 RequestExecutionLevel admin          ; Program Files + HKLM uninstall entry
 SetCompressor /SOLID lzma
 
-!define MUI_ICON "assets\branding\musacad.ico"
+!define MUI_ICON "assets/branding/musacad.ico"
 !define MUI_ABORTWARNING
 
 !insertmacro MUI_PAGE_WELCOME
@@ -45,8 +48,8 @@ SetCompressor /SOLID lzma
 Section "Musa CAD (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
-  File /r "${STAGING}\*.*"        ; the whole windeployqt staging tree
-  File "assets\branding\musacad.ico"
+  File /r "${STAGING}/*.*"        ; the whole windeployqt staging tree
+  File "assets/branding/musacad.ico"
 
   WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
