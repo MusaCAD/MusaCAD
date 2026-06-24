@@ -109,6 +109,17 @@ assets/        branding (logo/icons), ribbon SVG icons, screenshots
 
 ---
 
+## Support the project
+
+Musa CAD is free and open source (LGPL-3.0). If it's useful to you, a donation helps
+keep it actively developed and maintained — thank you!
+
+- **Ko-fi:** [ko-fi.com/pranaykiran](https://ko-fi.com/pranaykiran)
+- **PayPal:** [paypal.me/pranaykiran](https://paypal.me/pranaykiran)
+- **UPI** (India): `kiranpranay12@okicici` &nbsp;·&nbsp; [tap to pay](upi://pay?pa=kiranpranay12@okicici&pn=Pranay%20Kiran&cu=INR)
+
+---
+
 ## Acknowledgements
 
 Musa CAD is authored and maintained by its [contributors](CONTRIBUTORS.md).
