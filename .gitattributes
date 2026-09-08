@@ -1,0 +1,13 @@
+# Keep line endings the way the repository stores them (LF), whatever the
+# checkout platform: the readers/writers, shaders and fixtures all assume LF, and
+# core.autocrlf=true (Git for Windows default) would otherwise give a Windows
+# clone CRLF sources and CRLF fixtures.
+* text=auto eol=lf
+
+# Binary assets: never normalised.
+*.png binary
+*.ico binary
+*.dwg binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
