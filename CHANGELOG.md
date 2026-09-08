@@ -49,6 +49,22 @@ Everything below is on `main` and in the per-command table in
   undo history after a re-creation).
 - Opening a drawing into a new tab lost the Standard text style and could crash text
   layout.
+- **Windows** (#6, verified on real hardware):
+  - The MSVC build compiles again (`localtime_r`, a missing `<algorithm>`, `M_PI`), and
+    the `dev` preset (Debug + AddressSanitizer + tests) builds and runs with MSVC
+    (`/bigobj`; the Qt DLLs are put on PATH for test discovery, CTest and `cli_check`).
+  - No console window behind the application any more: `musacad_app.exe` is a windowed
+    program. `musacad.exe` is a new console front-end for scripts that waits and returns
+    the documented exit codes, and both are in the installer (see docs/CLI.md).
+  - Drawings under a folder with a non-ASCII name (accented or Indic characters) open,
+    save and plot; the executable now runs with a UTF-8 code page.
+  - `FIELD` `%<Login>%` is filled from `USERNAME`; the developer hooks write to the temp
+    directory instead of `/tmp`; the self-test's DWG round trip runs on Windows.
+  - ODA File Converter is auto-detected in its `Program Files\ODA` folder, where its
+    installer puts it without touching PATH.
+  - The Qt-free libraries are compiled with `/utf-8`, so their non-ASCII literals no
+    longer depend on the build machine's code page.
+  - `.gitattributes` keeps a Windows checkout at LF like the repository.
 
 ### Compatibility
 Native format **v28**. Files from v0.3.0 (v20) open unchanged; files saved by this build
