@@ -20,9 +20,14 @@ add_executable(musacad_app
     ${CMAKE_SOURCE_DIR}/assets/ribbon/ribbon.qrc)
 set_target_properties(musacad_app PROPERTIES AUTORCC ON)
 
-# Windows: carry the multi-resolution icon in the .exe (regen_icons.sh builds the .ico).
+# Windows.
 if(WIN32)
-    target_sources(musacad_app PRIVATE ${CMAKE_SOURCE_DIR}/assets/branding/musacad.rc)
+    target_sources(musacad_app PRIVATE
+        # The multi-resolution icon carried in the .exe (regen_icons.sh builds the .ico).
+        ${CMAKE_SOURCE_DIR}/assets/branding/musacad.rc
+        # UTF-8 process code page (non-ASCII drawing paths) + long-path awareness. MSVC's
+        # linker merges a .manifest source into the executable's manifest.
+        musacad.manifest)
 endif()
 
 target_link_libraries(musacad_app
