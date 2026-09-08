@@ -3,6 +3,7 @@
 
 #include "musacad/ui/dwg_converter.hpp"
 
+#include <QCollator>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,6 +12,8 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTemporaryDir>
+
+#include <algorithm>
 
 namespace musacad::ui {
 
@@ -61,6 +64,31 @@ DwgConverter DwgConverter::discover_on_path() {
             return DwgConverter{Kind::Oda, found};
         }
     }
+#ifdef Q_OS_WIN
+    // The Windows ODA installer puts the program under "Program Files\ODA\ODAFileConverter
+    // <version>\" and adds nothing to PATH, so auto-detect would never find it there.
+    // Newest version first (numeric-aware, so 26.12 outranks 26.5), so an upgrade wins
+    // over a stale side-by-side install.
+    QCollator by_version;
+    by_version.setNumericMode(true);
+    for (const char* root : {"ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"}) {
+        const QString base = qEnvironmentVariable(root);
+        if (base.isEmpty()) {
+            continue;
+        }
+        const QDir oda(base + QStringLiteral("/ODA"));
+        QStringList versions = oda.entryList({QStringLiteral("ODAFileConverter*")},
+                                             QDir::Dirs | QDir::NoDotAndDotDot);
+        std::sort(versions.begin(), versions.end(),
+                  [&](const QString& a, const QString& b) { return by_version.compare(a, b) > 0; });
+        for (const QString& v : versions) {
+            const QString exe = oda.filePath(v + QStringLiteral("/ODAFileConverter.exe"));
+            if (QFileInfo::exists(exe)) {
+                return DwgConverter{Kind::Oda, exe};
+            }
+        }
+    }
+#endif
     // LibreDWG dwg2dxf on PATH.
     const QString libredwg = QStandardPaths::findExecutable(QStringLiteral("dwg2dxf"));
     if (!libredwg.isEmpty()) {
