@@ -3,6 +3,7 @@
 
 #include "musacad/core/properties_registry.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
