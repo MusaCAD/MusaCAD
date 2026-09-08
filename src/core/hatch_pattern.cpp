@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
@@ -419,15 +420,18 @@ void generate_pattern_segments(const std::vector<std::vector<Vec2>>& loops, cons
         // Robust to the sign of dy: the covering line indices span min..max of pmin/dy,pmax/dy.
         const double a0 = pmin / dy;
         const double a1 = pmax / dy;
-        const long n_lo = static_cast<long>(std::floor(std::min(a0, a1))) - 1;
-        const long n_hi = static_cast<long>(std::ceil(std::max(a0, a1))) + 1;
+        // 64-bit on purpose: `long` is 32 bits on Windows, and a tiny pattern scale over
+        // a large region puts these indices past 2^31, where the conversion is undefined
+        // and the count guard below could no longer be trusted.
+        const std::int64_t n_lo = static_cast<std::int64_t>(std::floor(std::min(a0, a1))) - 1;
+        const std::int64_t n_hi = static_cast<std::int64_t>(std::ceil(std::max(a0, a1))) + 1;
         if (n_hi < n_lo) {
             continue;
         }
-        if (static_cast<unsigned long>(n_hi - n_lo) > kMaxLinesPerFamily) {
+        if (static_cast<std::uint64_t>(n_hi - n_lo) > kMaxLinesPerFamily) {
             continue; // scale too small for this region -- skip rather than hang
         }
-        for (long n = n_lo; n <= n_hi; ++n) {
+        for (std::int64_t n = n_lo; n <= n_hi; ++n) {
             if (emitted_lines++ > kMaxLinesPerFamily) {
                 return;
             }
