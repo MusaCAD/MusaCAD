@@ -88,7 +88,12 @@ FieldContext make_field_context(std::string_view document_path) {
     fc.filename = document_path.empty()
                       ? std::string("Drawing1")
                       : std::string(document_path.substr(slash == std::string_view::npos ? 0 : slash + 1));
+    // %<Login>%: the account name. POSIX shells export USER; Windows exports USERNAME
+    // (and no USER), so without the fallback the field is always empty there.
     const char* user = std::getenv("USER");
+    if (user == nullptr || *user == '\0') {
+        user = std::getenv("USERNAME");
+    }
     fc.login = user != nullptr ? user : "";
     return fc;
 }
