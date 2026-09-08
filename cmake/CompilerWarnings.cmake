@@ -31,7 +31,10 @@ function(musacad_set_warnings target)
         -Wdouble-promotion
         -Wformat=2)
 
-    set(_msvc_baseline /W4 /permissive-)
+    # _CRT_SECURE_NO_WARNINGS: the MSVC CRT flags every standard std::getenv / fopen /
+    # strftime call as "unsafe" (C4996) in favour of its own _s variants; the code is
+    # portable C++ and stays so, so that family of warnings is switched off.
+    set(_msvc_baseline /W4 /permissive- /D_CRT_SECURE_NO_WARNINGS)
     set(_msvc_strict
         ${_msvc_baseline}
         /w14640   # thread-unsafe static member initialization
