@@ -3996,7 +3996,7 @@ bool MainWindow::ribbon_shot(int kind, const std::string& out_png) {
         } else if (kind == 22) {
             // No interactive block-create command exists (blocks come from import/load), so
             // load a tiny DXF carrying a block definition + one INSERT, then select it.
-            const QString path = QStringLiteral("/tmp/musacad_block_demo.dxf");
+            const QString path = QDir::temp().filePath(QStringLiteral("musacad_block_demo.dxf"));
             QFile f(path);
             if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
                 f.write(
@@ -4866,6 +4866,19 @@ bool MainWindow::selftest_dwg() {
     // .dwg whose bytes are valid DXF round-trips through the real pipeline. (No real
     // DWG converter exists in the build env; real-converter verification is the
     // user's to run -- this proves the discovery/invoke/import/catalog wiring.)
+    // A shell script on POSIX; on Windows a batch file, which CreateProcess (and so
+    // QProcess) runs through cmd.exe. %~f1 / %~f2 make the arguments fully qualified,
+    // which also turns the forward slashes Qt hands over into the backslashes `copy`
+    // insists on.
+#ifdef Q_OS_WIN
+    const QString mock = dir + QStringLiteral("/musacad_mock_conv.cmd");
+    {
+        QFile f(mock);
+        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        f.write("@copy /y \"%~f1\" \"%~f2\" >nul\r\n");
+        f.close();
+    }
+#else
     const QString mock = dir + QStringLiteral("/musacad_mock_conv.sh");
     {
         QFile f(mock);
@@ -4874,6 +4887,7 @@ bool MainWindow::selftest_dwg() {
         f.close();
         f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     }
+#endif
     // (1) graceful degradation: a None converter never crashes, returns the hint.
     {
         DwgConverter none;
