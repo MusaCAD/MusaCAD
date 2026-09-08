@@ -151,6 +151,10 @@ Two programs because Windows shells do not wait for a windowed program: run dire
 restores the documented behaviour; redirection (`> out.txt`) and pipes pass through it
 unchanged.
 
+`--plot` on Windows asks Qt for `offscreen;windows`: the offscreen platform the
+installer ships, with the desktop platform as the fallback, so a deployment that lost
+`platforms\qoffscreen.dll` still plots instead of stopping on Qt's error box.
+
 ## How it is wired
 
 `main()` parses the command line **before** constructing `QApplication`

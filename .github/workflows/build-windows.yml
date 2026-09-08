@@ -65,10 +65,12 @@ jobs:
           rem musacad.exe: the console front-end (waits for the app + returns its exit code,
           rem so --check / --plot work from cmd, PowerShell and scripts).
           copy build\bin\musacad.exe staging\
-          windeployqt.exe --release --no-translations --compiler-runtime staging\musacad_app.exe
-          rem windeployqt pulls in Qt DLLs + plugins (platforms\qwindows + qoffscreen for --plot,
-          rem imageformats\qsvg+qico, styles, iconengines). --compiler-runtime adds the MSVC
-          rem redistributable DLLs.
+          windeployqt.exe --release --no-translations --compiler-runtime --include-plugins qoffscreen staging\musacad_app.exe
+          rem windeployqt pulls in Qt DLLs + plugins (platforms\qwindows, imageformats\qsvg+qico,
+          rem styles, iconengines). --compiler-runtime adds the MSVC redistributable DLLs.
+          rem --include-plugins qoffscreen: `--plot` forces Qt's offscreen platform (docs/CLI.md)
+          rem and windeployqt bundles only qwindows by itself -- without it the installed
+          rem `musacad --plot` cannot start.
 
       - name: Install NSIS
         shell: cmd

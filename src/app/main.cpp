@@ -74,7 +74,16 @@ int main(int argc, char* argv[]) {
         const bool explicit_platform =
             std::find(opts.qt_args.begin(), opts.qt_args.end(), "-platform") != opts.qt_args.end();
         if (!explicit_platform) {
+#ifdef Q_OS_WIN
+            // Windows: offscreen first, the desktop platform as the fallback. The installer
+            // ships both plugins; should qoffscreen ever be missing from a deployment, a
+            // windowed program with no console reports "no Qt platform plugin" as a modal
+            // message box, and a script running --plot would hang on it. The fallback plots
+            // through the windows platform instead.
+            qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+#else
             qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
         }
         std::vector<char*> pargv = qt_argv(opts.qt_args);
         int pargc = static_cast<int>(pargv.size());
