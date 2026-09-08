@@ -55,16 +55,20 @@ jobs:
 
       - name: Build
         shell: cmd
-        run: cmake --build build --target musacad_app
+        run: cmake --build build --target musacad_app musacad_launcher
 
       - name: Assemble + windeployqt
         shell: cmd
         run: |
           mkdir staging
           copy build\bin\musacad_app.exe staging\
+          rem musacad.exe: the console front-end (waits for the app + returns its exit code,
+          rem so --check / --plot work from cmd, PowerShell and scripts).
+          copy build\bin\musacad.exe staging\
           windeployqt.exe --release --no-translations --compiler-runtime staging\musacad_app.exe
-          rem windeployqt pulls in Qt DLLs + plugins (platforms\qwindows, imageformats\qsvg+qico,
-          rem styles, iconengines). --compiler-runtime adds the MSVC redistributable DLLs.
+          rem windeployqt pulls in Qt DLLs + plugins (platforms\qwindows + qoffscreen for --plot,
+          rem imageformats\qsvg+qico, styles, iconengines). --compiler-runtime adds the MSVC
+          rem redistributable DLLs.
 
       - name: Install NSIS
         shell: cmd

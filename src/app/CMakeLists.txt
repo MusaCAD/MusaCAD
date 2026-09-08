@@ -27,7 +27,23 @@ if(WIN32)
         ${CMAKE_SOURCE_DIR}/assets/branding/musacad.rc
         # UTF-8 process code page (non-ASCII drawing paths) + long-path awareness. MSVC's
         # linker merges a .manifest source into the executable's manifest.
-        musacad.manifest)
+        musacad.manifest
+        # Console attachment for the CLI modes of a windowed program (see below).
+        win_console.cpp)
+    # A windowed program (GUI subsystem): launching it from the Start menu or Explorer must
+    # not open a console window behind the CAD window. main() stays main(): Qt's entry-point
+    # library supplies the WinMain shim.
+    set_target_properties(musacad_app PROPERTIES WIN32_EXECUTABLE ON)
+
+    # musacad.exe -- the console front-end. cmd.exe and PowerShell do not wait for a windowed
+    # program, so `musacad_app --check x.musa` returns before the check has run and a script
+    # never sees the exit code. The front-end runs musacad_app.exe with the same command
+    # line, hands it the console, waits, and exits with its exit code. Win32 only, Qt-free.
+    add_executable(musacad_launcher win_launcher.cpp)
+    set_target_properties(musacad_launcher PROPERTIES
+        OUTPUT_NAME musacad
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    musacad_set_warnings(musacad_launcher)
 endif()
 
 target_link_libraries(musacad_app

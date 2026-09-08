@@ -15,6 +15,7 @@
 
 #include "musacad/app/cli.hpp"
 #include "musacad/app/plot_cli.hpp"
+#include "musacad/app/win_console.hpp"
 #include "musacad/ui/main_window.hpp"
 #include "musacad/ui/theme.hpp"
 
@@ -31,9 +32,12 @@ std::vector<char*> qt_argv(const std::vector<std::string>& args) {
 } // namespace
 
 int main(int argc, char* argv[]) {
+    using namespace musacad::app;
+    // Windows: a windowed program started from a console has no stdout/stderr; attach to
+    // the parent's console first so the CLI modes below can print. No-op elsewhere.
+    attach_parent_console();
     // The command line is parsed BEFORE any Qt object exists, so --help/--version/
     // --check need no display, no windowing system and no GL context.
-    using namespace musacad::app;
     const CliOptions opts = parse_cli(argc, argv);
     if (!opts.error.empty()) {
         std::fprintf(stderr, "musacad: %s\n", opts.error.c_str());
