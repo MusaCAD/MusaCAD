@@ -26,7 +26,10 @@ function(musacad_enable_sanitizers target)
 
     if(MSVC)
         target_compile_options(${target} PRIVATE /fsanitize=address)
-        # MSVC links the ASan runtime automatically; no extra link flags.
+        # MSVC links the ASan runtime automatically. Incremental linking is not available
+        # with ASan metadata (the linker warns LNK4300 and ignores it), so ask for a full
+        # link outright.
+        target_link_options(${target} PRIVATE /INCREMENTAL:NO)
         message(STATUS "Sanitizers (ASan) enabled for ${target}")
         return()
     endif()
