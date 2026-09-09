@@ -65,6 +65,11 @@ Everything below is on `main` and in the per-command table in
   - The Qt-free libraries are compiled with `/utf-8`, so their non-ASCII literals no
     longer depend on the build machine's code page.
   - `.gitattributes` keeps a Windows checkout at LF like the repository.
+  - Installer: `--plot` works from the installed copy (the offscreen Qt plugin is
+    bundled; a missing plugin can no longer hang a script on a message box), the
+    Start-menu entry is created for all users, "Run Musa CAD" on the finish page starts
+    the program as the normal user, and the Visual C++ redistributable it ships is
+    actually installed.
 
 ### Compatibility
 Native format **v28**. Files from v0.3.0 (v20) open unchanged; files saved by this build
