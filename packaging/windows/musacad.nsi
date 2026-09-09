@@ -73,6 +73,16 @@ Section "Musa CAD (required)" SecCore
   File /r "${STAGING}\*.*"        ; the whole windeployqt staging tree (backslash: NSIS /r glob)
   File "assets\branding\musacad.ico"
 
+  ; windeployqt --compiler-runtime puts the Visual C++ redistributable INSTALLER into the
+  ; staging tree (not the runtime DLLs); copying it along is not enough -- it has to run, or
+  ; a machine without the 2015-2022 runtime fails to start musacad_app.exe with
+  ; "VCRUNTIME140.dll was not found". Quiet install; exit 1638 means a newer runtime is
+  ; already there and 3010 that a reboot is pending -- both fine. The 19 MB installer is
+  ; not kept in the install folder afterwards.
+  IfFileExists "$INSTDIR\vc_redist.x64.exe" 0 +3
+    ExecWait '"$INSTDIR\vc_redist.x64.exe" /install /quiet /norestart'
+    Delete "$INSTDIR\vc_redist.x64.exe"
+
   WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
   ; Earlier installers (v0.1.0) put the shortcut in the installing user's own menu; take
   ; that one away so an upgrade does not leave two entries.
