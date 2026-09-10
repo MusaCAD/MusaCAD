@@ -107,9 +107,9 @@ parked and *what done looks like*, so it can be picked up cleanly later.
 * **macOS support — planned.** No `.app`/`.dmg` packaging yet (dev machine is Linux; no runtime
   verification possible here). **Done looks like:** a `macos-latest` workflow that builds, runs
   `macdeployqt`, and produces a signed/notarized `.dmg`.
-* **Automated builds on tag push — partial.** The Linux + Windows workflows already trigger on
-  `v*` tags; a follow-up could auto-create the GitHub **release** and attach artifacts (today the
-  tag + `gh release create` are run manually, by design).
+* **Automated builds on tag push — done.** The Linux + Windows workflows trigger on `v*` tags
+  and their `publish` jobs create the GitHub release and attach the AppImage and installer;
+  the release notes and the Flatpak are still set by hand (`docs/RELEASING.md`).
 * **MSVC `/W4` warning audit — staged.** The first Windows build surfaced latent MSVC `/W4`
   warnings (e.g. C4244 narrowing); the codebase predates any MSVC build. `/WX` on MSVC is gated
   behind `MUSACAD_MSVC_WERROR` (default **OFF**) so the Windows release isn't blocked, while

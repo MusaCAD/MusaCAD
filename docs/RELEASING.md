@@ -60,22 +60,30 @@ Verify locally (the discipline that catches breakage):
   window), and `musacad.exe --check <drawing>` / `--plot` from cmd or PowerShell (waits and
   returns the exit code). Open a drawing from a folder with a non-ASCII name too.
 
-## Tag + publish (manual — never automated)
+## Tag + publish
+
+Pushing the tag is the release action. The Linux and Windows workflows build on the tag
+and their `publish` jobs create the GitHub release for it (whichever finishes first) and
+attach the AppImage and the Windows installer.
 
 ```sh
 git tag -a v<version> -m "Musa CAD v<version>"
 git push origin v<version>
-
-gh release create v<version> \
-  --title "Musa CAD v<version>" \
-  --notes-file docs/release-notes/v<version>.md \
-  MusaCAD-<version>-x86_64.AppImage \
-  packaging/flatpak/MusaCAD-<version>.flatpak \
-  MusaCAD-<version>-x86_64-setup.exe
 ```
 
-Then confirm on GitHub: the release page shows all three artifacts, notes render correctly,
-and the `v<version>` tag is visible.
+Then, once both workflows are green, set the notes and attach the Flatpak (built locally):
+
+```sh
+gh release edit v<version> \
+  --title "Musa CAD v<version>" \
+  --notes-file docs/release-notes/v<version>.md
+gh release upload v<version> packaging/flatpak/MusaCAD-<version>.flatpak
+```
+
+Confirm on GitHub: the release page shows all three artifacts, the notes render correctly,
+and the `v<version>` tag is visible. A tag pushed before the Windows build has been verified
+on real hardware still publishes both installers, so verify first (see above) or delete the
+Windows asset from the release afterwards.
 
 ## Post-release
 
