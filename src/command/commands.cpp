@@ -3473,6 +3473,103 @@ void ModelSpaceCommand::start(CommandContext& ctx) {
     done_ = true;
 }
 
+void MviewCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::First;
+    if (ctx.active_space() == 0) {
+        ctx.echo("MVIEW works on a layout: pick a layout tab (or LAYOUT Set) first.");
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Specify corner of viewport or [ON/OFF/Fit/Scale/Center] <Fit>: ");
+}
+
+void MviewCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void MviewCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (t.empty() || u == "F" || u == "FIT") {
+            ctx.submit(core::CreateViewportCommand{{}, {}, true, ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        if (u == "ON" || u == "OFF") {
+            on_ = u == "ON" ? 1 : 0;
+            state_ = State::PickOnOff;
+            ctx.set_prompt("Select viewport: ");
+            return;
+        }
+        if (u == "S" || u == "SCALE") {
+            state_ = State::PickScale;
+            ctx.set_prompt("Select viewport: ");
+            return;
+        }
+        if (u == "C" || u == "CENTER") {
+            state_ = State::PickCenter;
+            ctx.set_prompt("Select viewport: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Second;
+            ctx.set_preview({PreviewKind::Rectangle, {first_}});
+            ctx.set_prompt("Specify opposite corner: ");
+        }
+        return;
+    case State::Second:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.set_preview({});
+            ctx.submit(core::CreateViewportCommand{first_, *p, false, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    case State::PickOnOff:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SetViewportViewCommand{*p, ctx.pick_radius(), on_, 0.0, std::nullopt, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    case State::PickScale:
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            state_ = State::Scale;
+            ctx.set_prompt("Enter viewport scale (paper mm per model unit, e.g. 0.5 for 1:2): ");
+        }
+        return;
+    case State::Scale: {
+        double v = 0.0;
+        if (!parse_number(t, v) || v <= 0.0) {
+            ctx.echo("Enter a scale greater than 0.");
+            return;
+        }
+        ctx.submit(core::SetViewportViewCommand{pick_, ctx.pick_radius(), -1, v, std::nullopt, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    case State::PickCenter:
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            state_ = State::Center;
+            ctx.set_prompt("Specify the model point to show at the viewport's centre: ");
+        }
+        return;
+    case State::Center:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SetViewportViewCommand{pick_, ctx.pick_radius(), -1, 0.0, *p, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
 void AttdispCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter attribute visibility setting [Normal/ON/OFF] <Normal>: ");
 }

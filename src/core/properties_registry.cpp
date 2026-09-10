@@ -1209,6 +1209,8 @@ const char* kind_name(EntityKind k) noexcept {
         return "Table";
     case EntityKind::Image:
         return "Image";
+    case EntityKind::Viewport:
+        return "Viewport";
     case EntityKind::Fcf:
         return "Feature control frame";
     case EntityKind::Datum:
@@ -1272,6 +1274,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Ellipse;
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
                 k = EntityKind::Spline;
+            } else if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                k = EntityKind::Viewport;
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 k = EntityKind::Image;
             } else if constexpr (std::is_same_v<T, AddTableCommand>) {

@@ -62,7 +62,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 30;
+inline constexpr std::uint32_t kFormatVersion = 31;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -326,6 +326,18 @@ struct DocImage {
     friend bool operator==(const DocImage&, const DocImage&) = default;
 };
 
+/// A paper-space viewport (v31; see ViewportData).
+struct DocViewport {
+    Vec2 center;
+    double width = 100.0;
+    double height = 60.0;
+    Vec2 view_center;
+    double scale = 1.0;
+    bool on = true;
+    EntityProps props{};
+    friend bool operator==(const DocViewport&, const DocViewport&) = default;
+};
+
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
 struct Document {
@@ -366,6 +378,7 @@ struct Document {
     std::vector<DocFcf> fcfs;             ///< GD&T feature control frames (v17)
     std::vector<DocDatum> datums;         ///< GD&T datum feature symbols (v17)
     std::vector<DocImage> images;         ///< placed raster images (v18)
+    std::vector<DocViewport> viewports;   ///< paper-space viewports (v31)
     std::vector<DocTable> tables;         ///< tables (v20)
     std::vector<TableStyle> table_styles; ///< table-style table (not in entity_count)
     std::vector<DocImageDef> image_defs;  ///< image-definition table (not in entity_count)
@@ -378,7 +391,7 @@ struct Document {
                polylines.size() +
                splines.size() + texts.size() + attdefs.size() + dims.size() + leaders.size() + mtexts.size() +
                mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +
-               images.size() + tables.size();
+               images.size() + viewports.size() + tables.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

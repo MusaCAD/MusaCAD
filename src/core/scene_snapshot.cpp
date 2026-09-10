@@ -64,15 +64,100 @@ std::uint64_t height_bucket(double h) {
 }
 
 /// Off/frozen layers contribute no geometry, so the renderer never sees them.
+/// The space the builder is emitting: the active one, or model space while a layout's
+/// viewports are being filled (see build_render_snapshot_in).
+thread_local std::uint8_t t_build_space = 0;
+
 bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && p.space() == store.active_space();
+    return l != nullptr && l->on && !l->frozen && p.space() == t_build_space;
 }
 /// Editable = visible and not on a locked layer (locked text can't be edited).
 bool editable(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && !l->locked && p.space() == store.active_space();
+    return l != nullptr && l->on && !l->frozen && !l->locked && p.space() == t_build_space;
 }
+
+// Liang-Barsky: clip the segment a-b to the rectangle; false when nothing remains.
+bool clip_segment(Vec2& a, Vec2& b, double x0, double y0, double x1, double y1) {
+    double t0 = 0.0;
+    double t1 = 1.0;
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double p[4] = {-dx, dx, -dy, dy};
+    const double q[4] = {a.x - x0, x1 - a.x, a.y - y0, y1 - a.y};
+    for (int i = 0; i < 4; ++i) {
+        if (p[i] == 0.0) {
+            if (q[i] < 0.0) {
+                return false;
+            }
+        } else {
+            const double t = q[i] / p[i];
+            if (p[i] < 0.0) {
+                if (t > t1) {
+                    return false;
+                }
+                t0 = std::max(t0, t);
+            } else {
+                if (t < t0) {
+                    return false;
+                }
+                t1 = std::min(t1, t);
+            }
+        }
+    }
+    const Vec2 na{a.x + dx * t0, a.y + dy * t0};
+    const Vec2 nb{a.x + dx * t1, a.y + dy * t1};
+    a = na;
+    b = nb;
+    return true;
+}
+
+// Sutherland-Hodgman: the polygon clipped to the rectangle (empty when outside).
+std::vector<Vec2> clip_polygon(std::vector<Vec2> poly, double x0, double y0, double x1, double y1) {
+    const auto pass = [&](const std::vector<Vec2>& in, auto inside, auto intersect) {
+        std::vector<Vec2> out;
+        const std::size_t n = in.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const Vec2 cur = in[i];
+            const Vec2 prev = in[(i + n - 1) % n];
+            const bool ci = inside(cur);
+            const bool pi = inside(prev);
+            if (ci) {
+                if (!pi) {
+                    out.push_back(intersect(prev, cur));
+                }
+                out.push_back(cur);
+            } else if (pi) {
+                out.push_back(intersect(prev, cur));
+            }
+        }
+        return out;
+    };
+    const auto at_x = [](Vec2 p, Vec2 q, double x) {
+        const double t = (x - p.x) / (q.x - p.x);
+        return Vec2{x, p.y + (q.y - p.y) * t};
+    };
+    const auto at_y = [](Vec2 p, Vec2 q, double y) {
+        const double t = (y - p.y) / (q.y - p.y);
+        return Vec2{p.x + (q.x - p.x) * t, y};
+    };
+    poly = pass(poly, [&](Vec2 p) { return p.x >= x0; }, [&](Vec2 p, Vec2 q) { return at_x(p, q, x0); });
+    if (poly.empty()) {
+        return poly;
+    }
+    poly = pass(poly, [&](Vec2 p) { return p.x <= x1; }, [&](Vec2 p, Vec2 q) { return at_x(p, q, x1); });
+    if (poly.empty()) {
+        return poly;
+    }
+    poly = pass(poly, [&](Vec2 p) { return p.y >= y0; }, [&](Vec2 p, Vec2 q) { return at_y(p, q, y0); });
+    if (poly.empty()) {
+        return poly;
+    }
+    poly = pass(poly, [&](Vec2 p) { return p.y <= y1; }, [&](Vec2 p, Vec2 q) { return at_y(p, q, y1); });
+    return poly;
+}
+
 ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
     return l != nullptr ? resolve(p, *l) : ResolvedProps{};
@@ -80,8 +165,21 @@ ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) 
 
 } // namespace
 
+/// The builder proper: `space` is what it emits; `with_viewports` lets a layout build
+/// fill its viewports with a nested model-space build.
+void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel& kernel,
+                              RenderSnapshot& out, double tolerance, double ltscale,
+                              std::uint8_t space, bool with_viewports);
+
 void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& kernel,
                            RenderSnapshot& out, double tolerance, double ltscale) {
+    build_render_snapshot_in(store, kernel, out, tolerance, ltscale, store.active_space(), true);
+}
+
+void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel& kernel,
+                              RenderSnapshot& out, double tolerance, double ltscale,
+                              std::uint8_t space, bool with_viewports) {
+    t_build_space = space;
     const IFontEngine* fonts = store.font_engine();
     out.points.clear();
     out.line_vertices.clear();
@@ -647,6 +745,110 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             add_line(s.color, s.lineweight, s.a, s.b);
         }
     });
+
+    // Paper-space viewports: the frame in the entity's colour, then model space seen
+    // through it -- built once as its own snapshot, then mapped into the sheet and
+    // clipped to the frame. Nothing is copied into the layout: it is derived here, so
+    // a model edit shows in every viewport on the next rebuild.
+    if (with_viewports && space != 0) {
+        std::vector<EntityHandle> vps;
+        for_each_live(store.viewports(), EntityKind::Viewport, [&](EntityHandle h) {
+            if (visible(store, store.viewport(h)->props)) {
+                vps.push_back(h);
+            }
+        });
+        if (!vps.empty()) {
+            RenderSnapshot model;
+            build_render_snapshot_in(store, kernel, model, tolerance, ltscale, 0, false);
+            t_build_space = space; // the model build switched it
+            std::vector<Vec2> segs;
+            std::vector<Vec2> tris;
+            std::vector<Vec2> poly;
+            for (const EntityHandle h : vps) {
+                const ViewportData* v = store.viewport(h);
+                const ResolvedProps rp = entity_resolved(store, v->props);
+                const double x0 = v->center.x - v->width * 0.5;
+                const double x1 = v->center.x + v->width * 0.5;
+                const double y0 = v->center.y - v->height * 0.5;
+                const double y1 = v->center.y + v->height * 0.5;
+                add_line(rp.color, rp.lineweight, {x0, y0}, {x1, y0});
+                add_line(rp.color, rp.lineweight, {x1, y0}, {x1, y1});
+                add_line(rp.color, rp.lineweight, {x1, y1}, {x0, y1});
+                add_line(rp.color, rp.lineweight, {x0, y1}, {x0, y0});
+                if (!v->on || !(v->scale > 0.0)) {
+                    continue;
+                }
+                const double sc = v->scale;
+                const auto to_paper = [&](Vec2 m) {
+                    return Vec2{v->center.x + (m.x - v->view_center.x) * sc,
+                                v->center.y + (m.y - v->view_center.y) * sc};
+                };
+                for (const ColorBatch& b : model.line_batches) {
+                    segs.clear();
+                    for_each_line_segment(model, b, [&](const Vec2& ma, const Vec2& mb) {
+                        Vec2 a = to_paper(ma);
+                        Vec2 c = to_paper(mb);
+                        if (clip_segment(a, c, x0, y0, x1, y1)) {
+                            segs.push_back(a);
+                            segs.push_back(c);
+                        }
+                    });
+                    if (!segs.empty()) {
+                        add_lines(b.color, b.lineweight, segs, b.is_text,
+                                  static_cast<double>(b.text_height) * sc);
+                    }
+                }
+                for (const ColorBatch& b : model.point_batches) {
+                    for (std::uint32_t i = b.first; i < b.first + b.count; ++i) {
+                        const Vec2 p = to_paper(model.points[i]);
+                        if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
+                            point_groups[pack_rgb(b.color)].push_back(p);
+                        }
+                    }
+                }
+                const auto clipped_tris = [&](const std::vector<Vec2>& src, std::uint32_t first,
+                                              std::uint32_t count, std::vector<Vec2>& dst) {
+                    dst.clear();
+                    for (std::uint32_t i = first; i + 2 < first + count; i += 3) {
+                        poly = {to_paper(src[i]), to_paper(src[i + 1]), to_paper(src[i + 2])};
+                        poly = clip_polygon(poly, x0, y0, x1, y1);
+                        for (std::size_t j = 1; j + 1 < poly.size(); ++j) {
+                            dst.push_back(poly[0]);
+                            dst.push_back(poly[j]);
+                            dst.push_back(poly[j + 1]);
+                        }
+                    }
+                };
+                for (const ColorBatch& b : model.fill_batches) {
+                    clipped_tris(model.fill_vertices, b.first, b.count, tris);
+                    if (tris.empty()) {
+                        continue;
+                    }
+                    if (b.computed_color) {
+                        add_gradient_fills(b.color, tris);
+                    } else {
+                        add_fills(b.color, tris);
+                    }
+                }
+                if (!model.wipeout_vertices.empty()) {
+                    clipped_tris(model.wipeout_vertices, 0,
+                                 static_cast<std::uint32_t>(model.wipeout_vertices.size()), tris);
+                    out.wipeout_vertices.insert(out.wipeout_vertices.end(), tris.begin(), tris.end());
+                }
+                for (const ImageInstance& im : model.images) {
+                    ImageInstance inst = im;
+                    bool inside = true;
+                    for (Vec2& q : inst.quad) {
+                        q = to_paper(q);
+                        inside = inside && q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1;
+                    }
+                    if (inside) { // a raster is shown whole or not at all (no quad clipping yet)
+                        out.images.push_back(inst);
+                    }
+                }
+            }
+        }
+    }
 
     // Flatten groups into contiguous batches over the payload arrays.
     for (auto& [key, verts] : line_groups) {

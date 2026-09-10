@@ -866,6 +866,35 @@ struct LayoutCommand {
     std::string new_name;
     std::uint64_t group = 0;
 };
+/// A paper-space viewport (the record form; see ViewportData).
+struct AddViewportCommand {
+    Vec2 center;
+    double width = 100.0;
+    double height = 60.0;
+    Vec2 view_center;
+    double scale = 1.0; ///< paper millimetres per model unit
+    bool on = true;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+/// MVIEW: a viewport from two sheet corners (or, with `fit_sheet`, filling the sheet
+/// inside a 10 mm margin) that shows the whole model, fitted.
+struct CreateViewportCommand {
+    Vec2 a{};
+    Vec2 b{};
+    bool fit_sheet = false;
+    std::uint64_t group = 0;
+};
+/// MVIEW ON / OFF / Scale / Center on the viewport under `pick`: fields left at their
+/// "keep" values (on = -1, scale = 0, no centre) are unchanged.
+struct SetViewportViewCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    int on = -1;
+    double scale = 0.0;
+    std::optional<Vec2> view_center;
+    std::uint64_t group = 0;
+};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1096,7 +1125,8 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
-                 SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand,
+                 SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,
+                 CreateViewportCommand, SetViewportViewCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

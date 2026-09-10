@@ -277,6 +277,15 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
             store.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, Rgb{});
         return bounds_of_points(g.lines, out_min, out_max);
     }
+    case EntityKind::Viewport: {
+        const ViewportData* v = store.viewport(h);
+        if (v == nullptr) {
+            return false;
+        }
+        out_min = {v->center.x - v->width * 0.5, v->center.y - v->height * 0.5};
+        out_max = {v->center.x + v->width * 0.5, v->center.y + v->height * 0.5};
+        return true;
+    }
     case EntityKind::Image: {
         const ImageData* im = store.image(h);
         if (im == nullptr) {

@@ -370,6 +370,15 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
                   .lines;
         break;
     }
+    case EntityKind::Viewport: {
+        const ViewportData* v = store.viewport(entity);
+        const double hw = v->width * 0.5;
+        const double hh = v->height * 0.5;
+        out = {{v->center.x - hw, v->center.y - hh}, {v->center.x + hw, v->center.y - hh},
+               {v->center.x + hw, v->center.y + hh}, {v->center.x - hw, v->center.y + hh},
+               {v->center.x - hw, v->center.y - hh}};
+        break;
+    }
     case EntityKind::Image: {
         // The placed quad as a closed strip -- hover/selection highlight outlines
         // exactly the region that is drawn.
@@ -603,6 +612,18 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
             return true;
         }
         return nearest_on_segments(g.lines, query, out_point);
+    }
+    case EntityKind::Viewport: {
+        // Picked by its frame (a click inside is meant for the model seen through it).
+        const ViewportData* v = store.viewport(entity);
+        const double hw = v->width * 0.5;
+        const double hh = v->height * 0.5;
+        const Vec2 c0{v->center.x - hw, v->center.y - hh};
+        const Vec2 c1{v->center.x + hw, v->center.y - hh};
+        const Vec2 c2{v->center.x + hw, v->center.y + hh};
+        const Vec2 c3{v->center.x - hw, v->center.y + hh};
+        const std::vector<Vec2> edges{c0, c1, c1, c2, c2, c3, c3, c0};
+        return nearest_on_segments(edges, query, out_point);
     }
     case EntityKind::Image: {
         // A click anywhere on the (clipped) image picks it, like a filled hatch region;
@@ -878,6 +899,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Fcf:    // ... nor GD&T annotation
     case EntityKind::Datum:
     case EntityKind::Image:  // ... nor a raster image
+    case EntityKind::Viewport:
     case EntityKind::Table:  // ... nor a table
         break;
     }

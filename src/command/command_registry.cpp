@@ -186,6 +186,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
     reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
         "Image frames: hidden, shown and plotted, or shown on screen only.");
+    reg({"MVIEW", "MV"}, [] { return std::make_unique<MviewCommand>(); }, "",
+        "A viewport on the layout showing model space: two corners or Fit; ON, OFF, Scale, Center.");
+    reg({"MSPACE", "MS"}, [] { return std::make_unique<MspaceCommand>(); }, "",
+        "Edit model space through a viewport (not available yet).");
     reg({"LAYOUT", "LO"}, [] { return std::make_unique<LayoutCommand>(); }, "",
         "Layouts (paper space sheets): Copy, Delete, New, Rename, Set, ?.");
     reg({"MODEL"}, [] { return std::make_unique<ModelSpaceCommand>(false); }, "",

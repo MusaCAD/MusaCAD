@@ -910,6 +910,40 @@ private:
     bool done_ = false;
 };
 
+/// MVIEW: a viewport on the layout from two corners (or Fit: the sheet inside a margin),
+/// showing the whole model; ON / OFF / Scale / Center adjust a picked viewport.
+class MviewCommand final : public ICommand {
+public:
+    std::string name() const override { return "MVIEW"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, Second, PickOnOff, PickScale, Scale, PickCenter, Center } state_ = State::First;
+    core::Vec2 first_{};
+    core::Vec2 pick_{};
+    int on_ = 1;
+    bool done_ = false;
+};
+
+/// MSPACE: editing model space through a viewport is not available yet; says so.
+class MspaceCommand final : public ICommand {
+public:
+    std::string name() const override { return "MSPACE"; }
+    void start(CommandContext& ctx) override {
+        ctx.echo("Editing model space through a viewport (MSPACE) is not available yet; use MODEL.");
+        done_ = true;
+    }
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// ATTDISP: show every attribute, hide every attribute, or let each keep its own mode.
 class AttdispCommand final : public ICommand {
 public:

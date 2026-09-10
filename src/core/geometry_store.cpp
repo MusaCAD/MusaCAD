@@ -154,6 +154,21 @@ EntityHandle GeometryStore::add_datum(std::string_view letter, Vec2 tip, Vec2 po
     return EntityHandle{slot.index, slot.generation, EntityKind::Datum};
 }
 
+EntityHandle GeometryStore::add_viewport(Vec2 center, double width, double height,
+                                        Vec2 view_center, double scale, bool on,
+                                        EntityProps props) {
+    ViewportData d;
+    d.center = center;
+    d.width = width;
+    d.height = height;
+    d.view_center = view_center;
+    d.scale = scale;
+    d.on = on;
+    d.props = props;
+    const auto slot = viewports_.insert(d);
+    return EntityHandle{slot.index, slot.generation, EntityKind::Viewport};
+}
+
 EntityHandle GeometryStore::add_image(std::uint16_t def, Vec2 pos, double width, double height,
                                      double rotation, EntityProps props) {
     ImageData d;
@@ -430,6 +445,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return datums_.erase(h.index, h.generation);
     case EntityKind::Image:
         return images_.erase(h.index, h.generation);
+    case EntityKind::Viewport:
+        return viewports_.erase(h.index, h.generation);
     case EntityKind::Table:
         return tables_.erase(h.index, h.generation);
     }
@@ -476,6 +493,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return datums_.is_valid(h.index, h.generation);
     case EntityKind::Image:
         return images_.is_valid(h.index, h.generation);
+    case EntityKind::Viewport:
+        return viewports_.is_valid(h.index, h.generation);
     case EntityKind::Table:
         return tables_.is_valid(h.index, h.generation);
     }
@@ -500,6 +519,7 @@ void GeometryStore::clear() noexcept {
     splines_.clear();
     texts_.clear();
     attdefs_.clear();
+    viewports_.clear();
     dims_.clear();
     leaders_.clear();
     mtexts_.clear();
@@ -605,6 +625,9 @@ ImageData* GeometryStore::mutable_image(EntityHandle h) noexcept {
     return h.kind == EntityKind::Image ? images_.get(h.index, h.generation) : nullptr;
 }
 
+const ViewportData* GeometryStore::viewport(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Viewport ? viewports_.get(h.index, h.generation) : nullptr;
+}
 const ImageData* GeometryStore::image(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Image ? images_.get(h.index, h.generation) : nullptr;
 }
@@ -819,6 +842,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Viewport:
+        if (const ViewportData* d = viewport(h)) {
+            return &d->props;
+        }
+        break;
     case EntityKind::Table:
         if (const TableData* d = table(h)) {
             return &d->props;
@@ -934,6 +962,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Datum:
         if (DatumData* d = datums_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Viewport:
+        if (ViewportData* d = viewports_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
