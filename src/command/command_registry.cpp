@@ -186,6 +186,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
     reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
         "Image frames: hidden, shown and plotted, or shown on screen only.");
+    reg({"LAYOUT", "LO"}, [] { return std::make_unique<LayoutCommand>(); }, "",
+        "Layouts (paper space sheets): Copy, Delete, New, Rename, Set, ?.");
+    reg({"MODEL"}, [] { return std::make_unique<ModelSpaceCommand>(false); }, "",
+        "Switch to model space.");
+    reg({"PSPACE", "PS"}, [] { return std::make_unique<ModelSpaceCommand>(true); }, "",
+        "Switch to paper space (the first layout).");
     reg({"I", "INSERT", "-INSERT"}, [] { return std::make_unique<InsertCommand>(); },
         "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
     reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",

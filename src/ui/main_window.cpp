@@ -344,6 +344,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
+        {
+            std::vector<std::string> lnames;
+            for (const core::LayoutInfo& l : viewport_->layouts()) {
+                lnames.push_back(l.name);
+            }
+            processor_->set_layouts(std::move(lnames), viewport_->active_space());
+        }
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
@@ -352,6 +359,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         sync_properties_panel();
         sync_ribbon_context();  // show/hide contextual ribbon tabs per the selection
         sync_document_tabs(); // mirror the engine's open-document list into the tab strip
+        sync_layout_tabs();
         // Echo each new engine command-result (honest feedback) once.
         const std::uint64_t sv = viewport_->status_version();
         if (sv != last_status_version_) {
@@ -442,10 +450,24 @@ QWidget* MainWindow::build_central() {
     layout_tabs->setFocusPolicy(Qt::NoFocus); // a mouse surface, like the file tabs
     layout_tabs->setObjectName(QStringLiteral("LayoutTabs"));
     layout_tabs->addTab(QStringLiteral("Model"));
-    layout_tabs->addTab(QStringLiteral("Layout1"));
-    layout_tabs->addTab(QStringLiteral("Layout2"));
     layout_tabs->setExpanding(false);
+    layout_tabs->setContextMenuPolicy(Qt::CustomContextMenu);
     col->addWidget(layout_tabs);
+    layout_tabs_ = layout_tabs;
+    // Click a tab -> that space becomes the one drawn and edited (programmatic syncs
+    // are signal-blocked, as for the file tabs). Right-click -> the layout menu.
+    connect(layout_tabs, &QTabBar::currentChanged, this, [this](int idx) {
+        if (idx < 0 || layout_tabs_ == nullptr) {
+            return;
+        }
+        const auto space = static_cast<std::uint8_t>(layout_tabs_->tabData(idx).toUInt());
+        if (space != viewport_->active_space()) {
+            engine_->submit(core::SetActiveSpaceCommand{space, std::string()});
+        }
+    });
+    connect(layout_tabs, &QTabBar::customContextMenuRequested, this, [this](const QPoint& p) {
+        layout_tab_menu(layout_tabs_->tabAt(p), layout_tabs_->mapToGlobal(p));
+    });
 
     return central;
 }
@@ -5367,6 +5389,84 @@ void MainWindow::file_save_as() {
 
 // --- multi-document tab strip ---------------------------------------------
 
+void MainWindow::sync_layout_tabs() {
+    if (layout_tabs_ == nullptr || viewport_ == nullptr) {
+        return;
+    }
+    const std::vector<core::LayoutInfo> layouts = viewport_->layouts();
+    const std::uint8_t active = viewport_->active_space();
+    bool changed = layout_tabs_->count() != static_cast<int>(layouts.size()) + 1;
+    for (int i = 1; !changed && i < layout_tabs_->count(); ++i) {
+        const core::LayoutInfo& l = layouts[static_cast<std::size_t>(i - 1)];
+        changed = layout_tabs_->tabData(i).toUInt() != l.id ||
+                  layout_tabs_->tabText(i) != QString::fromStdString(l.name);
+    }
+    const QSignalBlocker block(layout_tabs_);
+    if (changed) {
+        while (layout_tabs_->count() > static_cast<int>(layouts.size()) + 1) {
+            layout_tabs_->removeTab(layout_tabs_->count() - 1);
+        }
+        layout_tabs_->setTabData(0, QVariant::fromValue<uint>(0));
+        for (int i = 1; i <= static_cast<int>(layouts.size()); ++i) {
+            const core::LayoutInfo& l = layouts[static_cast<std::size_t>(i - 1)];
+            const QString name = QString::fromStdString(l.name);
+            if (i < layout_tabs_->count()) {
+                layout_tabs_->setTabText(i, name);
+            } else {
+                layout_tabs_->addTab(name);
+            }
+            layout_tabs_->setTabData(i, QVariant::fromValue<uint>(l.id));
+        }
+    }
+    for (int i = 0; i < layout_tabs_->count(); ++i) {
+        if (layout_tabs_->tabData(i).toUInt() == active) {
+            if (layout_tabs_->currentIndex() != i) {
+                layout_tabs_->setCurrentIndex(i);
+            }
+            break;
+        }
+    }
+}
+
+void MainWindow::layout_tab_menu(int index, QPoint global) {
+    using Op = core::LayoutCommand::Op;
+    QMenu menu(this);
+    QAction* add = menu.addAction(QStringLiteral("New layout"));
+    QAction* rename = nullptr;
+    QAction* remove = nullptr;
+    QString current;
+    if (index > 0 && layout_tabs_ != nullptr) {
+        current = layout_tabs_->tabText(index);
+        rename = menu.addAction(QStringLiteral("Rename \"%1\"\u2026").arg(current));
+        remove = menu.addAction(QStringLiteral("Delete \"%1\"").arg(current));
+    }
+    QAction* chosen = menu.exec(global);
+    if (chosen == nullptr) {
+        return;
+    }
+    if (chosen == add) {
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, QStringLiteral("New layout"),
+                                                   QStringLiteral("Layout name:"), QLineEdit::Normal,
+                                                   QStringLiteral("Layout%1").arg(layout_tabs_->count()), &ok);
+        if (ok && !name.trimmed().isEmpty()) {
+            engine_->submit(core::LayoutCommand{Op::New, name.trimmed().toStdString(), std::string(),
+                                                processor_->begin_group()});
+        }
+    } else if (chosen == rename) {
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, QStringLiteral("Rename layout"),
+                                                   QStringLiteral("New name:"), QLineEdit::Normal, current, &ok);
+        if (ok && !name.trimmed().isEmpty() && name.trimmed() != current) {
+            engine_->submit(core::LayoutCommand{Op::Rename, current.toStdString(),
+                                                name.trimmed().toStdString(), processor_->begin_group()});
+        }
+    } else if (chosen == remove) {
+        engine_->submit(core::LayoutCommand{Op::Delete, current.toStdString(), std::string(),
+                                            processor_->begin_group()});
+    }
+}
+
 void MainWindow::sync_document_tabs() {
     if (file_tabs_ == nullptr || viewport_ == nullptr) {
         return;
@@ -5918,6 +6018,26 @@ void MainWindow::open_plot_dialog() {
                 last_plot_spec_.landscape = want_landscape;
                 std::swap(last_plot_spec_.paper_w_mm, last_plot_spec_.paper_h_mm);
             }
+        }
+    }
+    // A layout plots its sheet: the paper it was set up with, 1:1, the whole sheet.
+    if (live.active_space != 0) {
+        for (const core::LayoutInfo& l : live.layouts) {
+            if (l.id != live.active_space) {
+                continue;
+            }
+            PlotSpec sheet = last_plot_spec_;
+            sheet.landscape = l.landscape;
+            sheet.paper_w_mm = l.sheet_w();
+            sheet.paper_h_mm = l.sheet_h();
+            sheet.area = PlotSpec::Area::Window;
+            sheet.win_min = {0.0, 0.0};
+            sheet.win_max = {l.sheet_w(), l.sheet_h()};
+            sheet.fit = false;
+            sheet.scale_num = 1.0;
+            sheet.scale_den = 1.0;
+            open_plot_dialog_seeded(sheet);
+            return;
         }
     }
     open_plot_dialog_seeded(last_plot_spec_);

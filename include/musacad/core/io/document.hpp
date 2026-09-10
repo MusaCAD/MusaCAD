@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "musacad/core/layout.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/named_view.hpp"
@@ -61,7 +62,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 29;
+inline constexpr std::uint32_t kFormatVersion = 30;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -336,6 +337,8 @@ struct Document {
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
     std::uint8_t image_frame = 1; ///< IMAGEFRAME (v29): 0 hidden, 1 shown and plotted, 2 shown only
+    std::vector<Layout> layouts;  ///< the layout tabs (v30); entities refer to them by EntityProps::space
+    std::uint8_t active_space = 0; ///< 0 model, else a layout id (v30)
 
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;

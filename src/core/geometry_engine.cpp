@@ -116,7 +116,9 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
     // A fresh draw (props unset) lands on the current layer, fully ByLayer; a
     // captured/restored/transformed entity carries its exact props. The apply logic
     // is shared with the grip-preview path via core::add_command_to_store.
-    return add_command_to_store(store_, add_command, EntityProps{store_.current_layer()});
+    EntityProps fresh{store_.current_layer()};
+    fresh.set_space(store_.active_space()); // a new object belongs to the space being edited
+    return add_command_to_store(store_, add_command, fresh);
 }
 
 EntityHandle GeometryEngine::create_indexed(const Command& add_command) {
@@ -195,7 +197,7 @@ bool GeometryEngine::selectable(EntityHandle h) const {
         return false;
     }
     const Layer* l = store_.layer(p->layer);
-    return l != nullptr && l->on && !l->frozen && !l->locked;
+    return l != nullptr && l->on && !l->frozen && !l->locked && p->space() == store_.active_space();
 }
 
 std::vector<EntityHandle> GeometryEngine::all_live() const {
@@ -3556,6 +3558,136 @@ void GeometryEngine::apply_image_clip(const SetImageClipCommand& c) {
     report(what);
 }
 
+namespace {
+// Defined further down in this file (the props visitor shared with the property edits).
+void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn);
+
+std::string upper_ascii(std::string_view v) {
+    std::string u(v);
+    for (char& ch : u) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return u;
+}
+} // namespace
+
+void GeometryEngine::apply_layout(const LayoutCommand& c) {
+    using Op = LayoutCommand::Op;
+    const auto find_layout = [&](const std::string& name) -> const Layout* {
+        for (const Layout& l : store_.layouts()) {
+            if (l.name == name) {
+                return &l;
+            }
+        }
+        return nullptr;
+    };
+    const auto name_ok = [&](const std::string& n) {
+        return !n.empty() && n != "Model" && find_layout(n) == nullptr;
+    };
+    switch (c.op) {
+    case Op::New: {
+        if (!name_ok(c.name)) {
+            report("LAYOUT: a new layout needs a name no other layout (or Model) has.");
+            return;
+        }
+        const std::uint8_t id = store_.add_layout(c.name);
+        if (id == 0) {
+            report("LAYOUT: a drawing holds at most 15 layouts.");
+            return;
+        }
+        dirty_ = true;
+        geom_dirty_ = true;
+        report("Layout \"" + c.name + "\" created.");
+        return;
+    }
+    case Op::Copy: {
+        const Layout* src = find_layout(c.name);
+        if (src == nullptr) {
+            report("LAYOUT: no layout named \"" + c.name + "\".");
+            return;
+        }
+        if (!name_ok(c.new_name)) {
+            report("LAYOUT: the copy needs a name no other layout (or Model) has.");
+            return;
+        }
+        const std::uint8_t from = src->id;
+        const PageSetup page = src->page;
+        const std::uint8_t id = store_.add_layout(c.new_name, page);
+        if (id == 0) {
+            report("LAYOUT: a drawing holds at most 15 layouts.");
+            return;
+        }
+        // The sheet's objects come along, as one undo group.
+        std::size_t copied = 0;
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            if (p == nullptr || p->space() != from) {
+                continue;
+            }
+            Command dup = capture_entity(h);
+            modify_cmd_props(dup, [id](EntityProps& ep) { ep.set_space(id); });
+            push_create_item(c.group, create_indexed(dup), dup);
+            ++copied;
+        }
+        if (copied > 0) {
+            redo_.clear();
+        }
+        dirty_ = true;
+        geom_dirty_ = true;
+        report("Layout \"" + c.new_name + "\" copied from \"" + c.name + "\" (" +
+               std::to_string(copied) + " object(s)).");
+        return;
+    }
+    case Op::Delete: {
+        const Layout* l = find_layout(c.name);
+        if (l == nullptr) {
+            report("LAYOUT: no layout named \"" + c.name + "\".");
+            return;
+        }
+        std::size_t objects = 0;
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            objects += (p != nullptr && p->space() == l->id) ? std::size_t{1} : std::size_t{0};
+        }
+        if (objects > 0) {
+            report("LAYOUT: \"" + c.name + "\" holds " + std::to_string(objects) +
+                   " object(s); erase them first.");
+            return;
+        }
+        if (store_.layouts().size() <= 1) {
+            report("LAYOUT: a drawing keeps at least one layout.");
+            return;
+        }
+        const bool was_active = store_.active_space() == l->id;
+        store_.remove_layout(l->id);
+        if (was_active) {
+            selection_.clear();
+        }
+        dirty_ = true;
+        geom_dirty_ = true;
+        report("Layout \"" + c.name + "\" deleted.");
+        return;
+    }
+    case Op::Rename: {
+        const Layout* l = find_layout(c.name);
+        if (l == nullptr) {
+            report("LAYOUT: no layout named \"" + c.name + "\".");
+            return;
+        }
+        if (!name_ok(c.new_name)) {
+            report("LAYOUT: that name is taken (or empty).");
+            return;
+        }
+        Layout* m = store_.mutable_layout(l->id);
+        m->name = c.new_name;
+        dirty_ = true;
+        geom_dirty_ = true;
+        report("Layout \"" + c.name + "\" renamed to \"" + c.new_name + "\".");
+        return;
+    }
+    }
+}
+
 void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     io::Document doc;
     std::size_t count = 0;
@@ -6273,6 +6405,31 @@ void GeometryEngine::apply(const Command& command) {
                 apply_attach_image(c);
             } else if constexpr (std::is_same_v<T, SetImageClipCommand>) {
                 apply_image_clip(c);
+            } else if constexpr (std::is_same_v<T, SetActiveSpaceCommand>) {
+                std::uint8_t target = c.space;
+                if (!c.name.empty()) {
+                    target = upper_ascii(c.name) == "MODEL" ? std::uint8_t{0} : std::uint8_t{0xFF};
+                    for (const Layout& l : store_.layouts()) {
+                        if (upper_ascii(l.name) == upper_ascii(c.name)) {
+                            target = l.id;
+                        }
+                    }
+                } else if (c.space == 0xFF) {
+                    target = store_.layouts().empty() ? 0xFF : store_.layouts().front().id;
+                }
+                if (target != 0 && store_.layout_by_id(target) == nullptr) {
+                    report("No such layout.");
+                } else {
+                    store_.set_active_space(target);
+                    prune_selection();
+                    selection_.clear();
+                    geom_dirty_ = true;
+                    const Layout* l = store_.layout_by_id(target);
+                    report(target == 0 ? std::string("Model space.")
+                                       : "Layout \"" + (l != nullptr ? l->name : std::string()) + "\".");
+                }
+            } else if constexpr (std::is_same_v<T, LayoutCommand>) {
+                apply_layout(c);
             } else if constexpr (std::is_same_v<T, SetImageFrameCommand>) {
                 store_.set_image_frame(c.mode);
                 geom_dirty_ = true;
@@ -6670,6 +6827,8 @@ void GeometryEngine::rebuild_and_publish() {
         buf.construction_lines = geom_cache_.construction_lines;
         buf.wipeout_vertices = geom_cache_.wipeout_vertices;
         buf.images = geom_cache_.images; // placed rasters (transform + def; the renderer caches textures)
+        buf.active_space = geom_cache_.active_space;
+        buf.layouts = geom_cache_.layouts;
         buf.wipeout_frames = geom_cache_.wipeout_frames;
         buf.line_batches = geom_cache_.line_batches;
         buf.point_batches = geom_cache_.point_batches;

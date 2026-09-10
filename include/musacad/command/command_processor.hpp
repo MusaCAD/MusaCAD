@@ -99,6 +99,12 @@ public:
     [[nodiscard]] std::uint16_t current_text_style() const override { return current_text_style_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
     [[nodiscard]] std::vector<std::string> block_names() const override { return block_names_; }
+    void set_layouts(std::vector<std::string> names, std::uint8_t active) {
+        layout_names_ = std::move(names);
+        active_space_ = active;
+    }
+    [[nodiscard]] std::vector<std::string> layout_names() const override { return layout_names_; }
+    [[nodiscard]] std::uint8_t active_space() const override { return active_space_; }
     /// Per block (parallel to the names): its attributes, for INSERT's value prompts.
     void set_block_attdefs(std::vector<std::vector<core::BlockAttDefInfo>> v) {
         block_attdefs_ = std::move(v);
@@ -168,6 +174,8 @@ private:
     std::uint16_t current_text_style_ = 0;
     std::vector<std::string> block_names_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
+    std::vector<std::string> layout_names_;
+    std::uint8_t active_space_ = 0;
     CommandOutput& output_;
     CommandRegistry registry_;
 

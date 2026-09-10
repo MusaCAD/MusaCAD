@@ -398,6 +398,9 @@ void emit_props(std::string& s, const Document& doc, const EntityProps& p) {
     if (!p.lineweight_by_layer()) {
         code_i(s, 370, p.lineweight);
     }
+    if (p.space() != 0) {
+        code_i(s, 67, 1); // paper space (the layouts are written as one paper space)
+    }
 }
 
 } // namespace
@@ -1276,6 +1279,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         EntityProps p;
         const std::string* layer = find(body, 8);
         p.layer = ensure_layer(layer != nullptr ? *layer : std::string("0"));
+        if (const std::string* sp = find(body, 67); sp != nullptr && to_l(*sp) == 1) {
+            p.set_space(1); // paper space -> the first layout
+        }
         if (const std::string* tc = find(body, 420)) {
             p.set_color_by_layer(false);
             p.color = from_true_color(to_l(*tc));

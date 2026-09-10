@@ -338,6 +338,54 @@ std::string serialize_native(const Document& doc) {
         }
         return out;
     };
+    // v30: layouts -- id, then the same fields a PAGESETUP record carries.
+    for (const Layout& l : doc.layouts) {
+        const PageSetup& ps = l.page;
+        s += "LAYOUT ";
+        append_uint(s, l.id);
+        s += ' ';
+        s += enc(l.name);
+        s += ' ';
+        s += enc(ps.paper);
+        s += ' ';
+        s += enc(ps.target);
+        s += ' ';
+        append_double(s, ps.paper_w_mm);
+        s += ' ';
+        append_double(s, ps.paper_h_mm);
+        s += ' ';
+        append_uint(s, ps.landscape ? 1 : 0);
+        s += ' ';
+        append_uint(s, ps.area);
+        s += ' ';
+        append_double(s, ps.win_min.x);
+        s += ' ';
+        append_double(s, ps.win_min.y);
+        s += ' ';
+        append_double(s, ps.win_max.x);
+        s += ' ';
+        append_double(s, ps.win_max.y);
+        s += ' ';
+        append_uint(s, ps.fit ? 1 : 0);
+        s += ' ';
+        append_double(s, ps.scale_num);
+        s += ' ';
+        append_double(s, ps.scale_den);
+        s += ' ';
+        append_uint(s, ps.center ? 1 : 0);
+        s += ' ';
+        append_double(s, ps.off_x_mm);
+        s += ' ';
+        append_double(s, ps.off_y_mm);
+        s += ' ';
+        append_uint(s, ps.plot_lineweights ? 1 : 0);
+        s += ' ';
+        append_uint(s, ps.style);
+        s += '\n';
+    }
+    s += "ACTIVESPACE ";
+    append_uint(s, doc.active_space);
+    s += '\n';
     for (const PageSetup& ps : doc.page_setups) {
         s += "PAGESETUP ";
         s += enc(ps.name);
@@ -1291,6 +1339,60 @@ IoResult parse_native(std::string_view text, Document& out) {
             g.name = dec(tok[3 + 2 * n]);
             g.description = dec(tok[4 + 2 * n]);
             doc.groups.push_back(std::move(g));
+        } else if (key == "LAYOUT") {
+            // LAYOUT id name paper target pw ph land area wminx wminy wmaxx wmaxy fit snum sden
+            //        center offx offy plw style   (the PAGESETUP fields after the id)
+            if (tok.size() != 21) {
+                return fail("malformed LAYOUT");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            Layout l;
+            std::uint64_t id = 0;
+            double d[8];
+            std::uint64_t u[6];
+            const bool ok = to_uint(tok[1], id) && to_double(tok[5], l.page.paper_w_mm) &&
+                            to_double(tok[6], l.page.paper_h_mm) && to_uint(tok[7], u[0]) &&
+                            to_uint(tok[8], u[1]) && to_double(tok[9], d[0]) &&
+                            to_double(tok[10], d[1]) && to_double(tok[11], d[2]) &&
+                            to_double(tok[12], d[3]) && to_uint(tok[13], u[2]) &&
+                            to_double(tok[14], d[4]) && to_double(tok[15], d[5]) &&
+                            to_uint(tok[16], u[3]) && to_double(tok[17], d[6]) &&
+                            to_double(tok[18], d[7]) && to_uint(tok[19], u[4]) &&
+                            to_uint(tok[20], u[5]);
+            if (!ok || id == 0 || id > 15) {
+                return fail("malformed LAYOUT");
+            }
+            l.page.center = u[3] != 0;
+            l.page.off_x_mm = d[6];
+            l.page.off_y_mm = d[7];
+            l.page.plot_lineweights = u[4] != 0;
+            l.page.style = static_cast<std::uint8_t>(u[5]);
+            l.id = static_cast<std::uint8_t>(id);
+            l.name = dec(tok[2]);
+            l.page.paper = dec(tok[3]);
+            l.page.target = dec(tok[4]);
+            l.page.landscape = u[0] != 0;
+            l.page.area = static_cast<std::uint8_t>(u[1]);
+            l.page.win_min = {d[0], d[1]};
+            l.page.win_max = {d[2], d[3]};
+            l.page.fit = u[2] != 0;
+            l.page.scale_num = d[4];
+            l.page.scale_den = d[5];
+            doc.layouts.push_back(std::move(l));
+        } else if (key == "ACTIVESPACE") {
+            std::uint64_t sp = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], sp) || sp > 15) {
+                return fail("malformed ACTIVESPACE");
+            }
+            doc.active_space = static_cast<std::uint8_t>(sp);
         } else if (key == "PAGESETUP") {
             // PAGESETUP name paper target pw ph land area wminx wminy wmaxx wmaxy fit
             //           snum sden center offx offy plw style  (3 strings space-escaped)

@@ -64,6 +64,8 @@ public:
     std::uint16_t current_text_style();
     std::vector<std::string> block_names();
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
+    std::vector<core::LayoutInfo> layouts();
+    std::uint8_t active_space();
     void zoom_scale(double factor) override;
     void open_properties() override;
     void import_dwg() override;
@@ -528,6 +530,8 @@ private:
     std::uint16_t current_text_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
+    std::vector<core::LayoutInfo> layouts_;   ///< under layers_mutex_
+    std::uint8_t active_space_ = 0;           ///< under layers_mutex_
     std::function<void()> osnap_settings_callback_;
     std::function<std::string()> image_file_dialog_;
     QtImageDecoder image_decoder_; ///< raster decoding for the renderer's texture cache

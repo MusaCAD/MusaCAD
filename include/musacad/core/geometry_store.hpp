@@ -18,6 +18,7 @@
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_group.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/layout.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
@@ -480,6 +481,59 @@ public:
     [[nodiscard]] bool wipeout_frames() const noexcept { return wipeout_frames_; }
     [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
     [[nodiscard]] std::uint8_t image_frame() const noexcept { return image_frame_; }
+
+    // --- layouts / paper space ---------------------------------------------------
+    [[nodiscard]] const std::vector<Layout>& layouts() const noexcept { return layouts_; }
+    void set_layouts(std::vector<Layout> v) {
+        layouts_ = std::move(v);
+        if (active_space_ != 0 && layout_by_id(active_space_) == nullptr) {
+            active_space_ = 0;
+        }
+    }
+    [[nodiscard]] const Layout* layout_by_id(std::uint8_t id) const noexcept {
+        for (const Layout& l : layouts_) {
+            if (l.id == id) {
+                return &l;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] Layout* mutable_layout(std::uint8_t id) noexcept {
+        for (Layout& l : layouts_) {
+            if (l.id == id) {
+                return &l;
+            }
+        }
+        return nullptr;
+    }
+    /// Adds a layout with the lowest free id (1..15); 0 when all ids are taken.
+    std::uint8_t add_layout(const std::string& name, const PageSetup& page = {}) {
+        for (std::uint8_t id = 1; id <= 15; ++id) {
+            if (layout_by_id(id) == nullptr) {
+                layouts_.push_back(Layout{id, name, page});
+                return id;
+            }
+        }
+        return 0;
+    }
+    bool remove_layout(std::uint8_t id) {
+        for (auto it = layouts_.begin(); it != layouts_.end(); ++it) {
+            if (it->id == id) {
+                layouts_.erase(it);
+                if (active_space_ == id) {
+                    active_space_ = 0;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+    /// 0 = model space; otherwise the active layout's id. Only that space is drawn,
+    /// picked and edited.
+    [[nodiscard]] std::uint8_t active_space() const noexcept { return active_space_; }
+    void set_active_space(std::uint8_t s) noexcept {
+        active_space_ = (s == 0 || layout_by_id(s) != nullptr) ? s : 0;
+    }
     void set_image_frame(std::uint8_t mode) noexcept { image_frame_ = mode <= 2 ? mode : 1; }
     void set_attdisp(std::uint8_t mode) noexcept { attdisp_ = mode <= 2 ? mode : 0; }
     void set_wipeout_frames(bool on) noexcept { wipeout_frames_ = on; }
@@ -966,6 +1020,8 @@ private:
     bool wipeout_frames_ = true;
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
     std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
+    std::vector<Layout> layouts_{Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};
+    std::uint8_t active_space_ = 0;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

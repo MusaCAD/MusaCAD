@@ -851,6 +851,21 @@ struct SetImageClipCommand {
 struct SetImageFrameCommand {
     std::uint8_t mode = 1;
 };
+/// MODEL / LAYOUT Set / the layout tabs: make model space (0) or a layout (its id) the
+/// space that is drawn, picked and edited.
+struct SetActiveSpaceCommand {
+    std::uint8_t space = 0;  ///< 0 model, a layout id, or 0xFF for "the first layout"
+    std::string name;        ///< when set, the layout is found by this name instead
+};
+/// LAYOUT: New (a fresh sheet named `name`), Copy (a copy of the layout `name` as
+/// `new_name`, objects included), Delete (an empty layout), Rename (`name` -> `new_name`).
+struct LayoutCommand {
+    enum class Op : std::uint8_t { New, Copy, Delete, Rename };
+    Op op = Op::New;
+    std::string name;
+    std::string new_name;
+    std::uint64_t group = 0;
+};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1081,7 +1096,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
-                 SetImageFrameCommand,
+                 SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
