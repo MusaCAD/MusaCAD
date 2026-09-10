@@ -313,6 +313,10 @@ struct TableData {
 ///
 /// `version` bumps whenever the payload changes, so a renderer-side texture cache keyed
 /// by definition index knows when to re-upload. Decoded pixels are NOT stored here.
+/// The largest raster payload IMAGEATTACH will embed in a drawing (bigger images are
+/// attached by path so a .musa never balloons past what a text file should be).
+inline constexpr std::size_t kMaxEmbeddedImageBytes = 8u << 20;
+
 struct ImageDef {
     std::string source;              ///< external path (relative to the drawing) or ""
     std::vector<std::uint8_t> bytes; ///< embedded ENCODED bytes (PNG/JPEG), or empty
@@ -475,6 +479,8 @@ public:
     /// WIPEOUTFRAME: whether wipeout boundaries are drawn (AutoCAD's default: shown).
     [[nodiscard]] bool wipeout_frames() const noexcept { return wipeout_frames_; }
     [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
+    [[nodiscard]] std::uint8_t image_frame() const noexcept { return image_frame_; }
+    void set_image_frame(std::uint8_t mode) noexcept { image_frame_ = mode <= 2 ? mode : 1; }
     void set_attdisp(std::uint8_t mode) noexcept { attdisp_ = mode <= 2 ? mode : 0; }
     void set_wipeout_frames(bool on) noexcept { wipeout_frames_ = on; }
     /// A feature control frame. `cells` are the raw cell strings in order (cell 0 is the
@@ -959,6 +965,7 @@ private:
     std::uint16_t current_text_style_ = 0;
     bool wipeout_frames_ = true;
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
+    std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

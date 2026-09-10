@@ -6,6 +6,7 @@
 #include <bit>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,13 @@ namespace musacad::core {
 /// A contiguous range of segments (or points) sharing one resolved colour, so the
 /// renderer can colour the scene with one small draw per distinct colour. Off and
 /// frozen layers contribute no batches (they are skipped before batching).
+/// An image definition as published to the renderer (see RenderSnapshot::image_defs).
+struct ImageDefView {
+    std::shared_ptr<const std::vector<std::uint8_t>> bytes; ///< embedded payload, or null
+    std::string source;                                      ///< relative path when not embedded
+    std::uint32_t version = 0;
+};
+
 struct ColorBatch {
     Rgb color;
     /// UNITS DIFFER BY ARRAY. line_batches: first/count are in SEGMENTS (segment s spans
@@ -214,6 +222,12 @@ struct RenderSnapshot {
     // Interaction state, not part of the checksum.
     /// Placed raster images (transform + def reference only -- never pixels).
     std::vector<ImageInstance> images;
+    /// The image definitions those refer to, as the renderer's texture cache needs them:
+    /// the embedded payload (shared by pointer: never copied per publish) or the path
+    /// relative to `image_dir`, and the version that invalidates a cached texture.
+    std::vector<ImageDefView> image_defs;
+    std::string image_dir;   ///< the drawing's directory; "" for an unsaved drawing
+    std::uint8_t image_frame = 1; ///< IMAGEFRAME: 0 hidden, 1 shown (and plotted), 2 shown
     std::vector<GripInfo> grips;
     int hot_grip = -1;
     std::vector<Vec2> grip_preview_segments;
@@ -273,6 +287,8 @@ struct RenderSnapshot {
         has_pending_dim = false;
         pending_dim_version = 0;
         images.clear();
+        image_defs.clear();
+        image_dir.clear();
         grips.clear();
         hot_grip = -1;
         grip_preview_segments.clear();

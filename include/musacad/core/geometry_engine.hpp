@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "musacad/core/command.hpp"
+#include "musacad/core/image_decoder.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/native_kernel_2d.hpp"
 #include "musacad/core/render_snapshot.hpp"
@@ -47,6 +48,12 @@ public:
     /// before start() (read on the geometry thread; not changed afterwards). Null = stroke
     /// font only. The engine is owned by the caller (the UI layer). Stored on the
     /// GeometryStore so render/bounds/pick/grips all reach the same metrics (no fork).
+    /// The raster decoder (owned above core; the UI's QtImageDecoder). IMAGEATTACH needs
+    /// it for the pixel size; every document's store gets it, like the font engine.
+    void set_image_decoder(const IImageDecoder* decoder) noexcept {
+        image_decoder_ = decoder;
+        store_.set_image_decoder(decoder);
+    }
     void set_font_engine(const IFontEngine* engine) noexcept {
         font_engine_ = engine;       // remembered so every NEW document's store gets it too
         store_.set_font_engine(engine);
@@ -166,6 +173,14 @@ private:
     std::uint64_t next_doc_id_ = 1;                        // monotonic document id
     std::uint64_t doc_name_counter_ = 0;                   // monotonic "DrawingN" sequence
     const IFontEngine* font_engine_ = nullptr;            // applied to every new doc's store
+    const IImageDecoder* image_decoder_ = nullptr;        // likewise
+    /// Embedded image payloads shared with the renderer by pointer (RenderSnapshot::
+    /// image_defs), re-made only when a definition's version changes.
+    struct ImageBytesSlot {
+        std::shared_ptr<const std::vector<std::uint8_t>> ptr;
+        std::uint32_t version = 0;
+    };
+    std::vector<ImageBytesSlot> image_bytes_cache_;
 
     void run(std::stop_token token);
     void apply(const Command& command);
@@ -284,6 +299,8 @@ private:
     void apply_refset(const RefSetCommand& c);
     void apply_refclose(const RefCloseCommand& c);
     void apply_polyline_vertex(const PolylineVertexCommand& c);
+    void apply_attach_image(const AttachImageCommand& c);
+    void apply_image_clip(const SetImageClipCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);

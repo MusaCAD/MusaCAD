@@ -12,6 +12,7 @@ namespace musacad::render {
 class GpuBuffer;
 class GpuPipeline;
 class GpuCommandBuffer;
+class GpuTexture;
 
 /// Backend entry point: creates GPU resources and submits command buffers. The
 /// GL backend implements this over a current OpenGL context; a Vulkan backend
@@ -29,6 +30,10 @@ public:
     [[nodiscard]] virtual std::unique_ptr<GpuBuffer> create_buffer(BufferUsage usage) = 0;
     [[nodiscard]] virtual std::unique_ptr<GpuPipeline> create_pipeline(const PipelineDesc& desc) = 0;
     [[nodiscard]] virtual std::unique_ptr<GpuCommandBuffer> create_command_buffer() = 0;
+    /// An RGBA8 texture from `width * height * 4` bytes, top row first, with mipmaps.
+    [[nodiscard]] virtual std::unique_ptr<GpuTexture> create_texture(std::uint32_t width,
+                                                                     std::uint32_t height,
+                                                                     const std::uint8_t* rgba) = 0;
 
     virtual void submit(GpuCommandBuffer& commands) = 0;
 

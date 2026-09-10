@@ -13,6 +13,7 @@
 #include <QString>
 
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/ui/qt_image_decoder.hpp"
 #include "musacad/ui/plot.hpp"
 #include "musacad/ui/viewport_modes.hpp"
 
@@ -321,6 +322,7 @@ private:
     void update_title();
 
     std::unique_ptr<QtFontEngine> font_engine_; // before engine_: outlives the geometry thread
+    std::unique_ptr<QtImageDecoder> image_decoder_; ///< injected into the engine
     std::unique_ptr<QtFontEngine> ui_font_engine_; // UI-thread font for the on-canvas command UI
     std::unique_ptr<core::GeometryEngine> engine_;
     std::unique_ptr<FanoutOutput> fanout_; // fans prompt/echo to the command line + DYN

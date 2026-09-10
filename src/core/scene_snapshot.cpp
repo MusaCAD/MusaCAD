@@ -91,6 +91,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     out.fill_vertices.clear();
     out.fill_batches.clear();
     out.wipeout_vertices.clear();
+    out.images.clear();
     out.text_edit_targets.clear();
     out.layers.assign(store.layers().begin(), store.layers().end());
     out.current_layer = store.current_layer();
@@ -369,6 +370,13 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         inst.def_version = def != nullptr ? def->version : 0;
         inst.handle = h;
         out.images.push_back(inst);
+        if (store.image_frame() != 0) {
+            // IMAGEFRAME: the clipped quad's outline in the entity's colour.
+            const ResolvedProps r = entity_resolved(store, im->props);
+            for (std::size_t i = 0; i < 4; ++i) {
+                add_line(r.color, r.lineweight, q[i], q[(i + 1) % 4]);
+            }
+        }
     });
 
     // GD&T: borders/dividers into the line batches, cell text through the SAME

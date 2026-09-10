@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "musacad/render/gpu/texture.hpp"
 #include "musacad/render/gpu/buffer.hpp"
 #include "musacad/render/gpu/command_buffer.hpp"
 #include "musacad/render/gpu/device.hpp"
@@ -56,6 +57,23 @@ private:
     mutable std::unordered_map<std::string, GLint> uniforms_;
 };
 
+/// An immutable RGBA8 texture with a full mipmap chain (images are mostly viewed
+/// smaller than their pixel size, so a plain LINEAR sample would alias).
+class GlTexture final : public GpuTexture {
+public:
+    GlTexture(GlFns* gl, std::uint32_t width, std::uint32_t height, const std::uint8_t* rgba);
+    ~GlTexture() override;
+    [[nodiscard]] std::uint32_t width() const noexcept override { return w_; }
+    [[nodiscard]] std::uint32_t height() const noexcept override { return h_; }
+    [[nodiscard]] GLuint id() const noexcept { return id_; }
+
+private:
+    GlFns* gl_;
+    GLuint id_ = 0;
+    std::uint32_t w_ = 0;
+    std::uint32_t h_ = 0;
+};
+
 class GlCommandBuffer final : public GpuCommandBuffer {
 public:
     explicit GlCommandBuffer(GlFns* gl) : gl_(gl) {}
@@ -71,6 +89,8 @@ public:
     void set_uniform_float(const char* name, float value) override;
     void set_uniform_vec2(const char* name, float x, float y) override;
     void set_uniform_vec4(const char* name, float r, float g, float b, float a) override;
+    void set_uniform_int(const char* name, int value) override;
+    void bind_texture(std::uint32_t unit, const GpuTexture& texture) override;
     void draw_instanced(std::uint32_t vertex_count, std::uint32_t instance_count) override;
 
 private:
@@ -85,6 +105,8 @@ public:
     std::unique_ptr<GpuBuffer> create_buffer(BufferUsage usage) override;
     std::unique_ptr<GpuPipeline> create_pipeline(const PipelineDesc& desc) override;
     std::unique_ptr<GpuCommandBuffer> create_command_buffer() override;
+    std::unique_ptr<GpuTexture> create_texture(std::uint32_t width, std::uint32_t height,
+                                               const std::uint8_t* rgba) override;
     void submit(GpuCommandBuffer& commands) override;
     [[nodiscard]] const char* backend_name() const noexcept override {
         return "OpenGL 4.5 Core (DSA)";

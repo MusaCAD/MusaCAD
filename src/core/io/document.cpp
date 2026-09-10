@@ -176,6 +176,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.current_text_style = store.current_text_style();
     doc.wipeout_frames = store.wipeout_frames();
     doc.attdisp = store.attdisp();
+    doc.image_frame = store.image_frame();
     for (const EntityGroup& g : store.groups()) {
         DocGroup dg;
         dg.name = g.name;
@@ -440,6 +441,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_current_text_style(doc.current_text_style);
     store.set_wipeout_frames(doc.wipeout_frames);
     store.set_attdisp(doc.attdisp);
+    store.set_image_frame(doc.image_frame);
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
     store.set_ltscale(doc.ltscale);

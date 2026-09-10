@@ -70,9 +70,10 @@ Blocks can be imported and placed; they cannot be *created* in-app.
 
 ## F. Raster images — [#10](https://github.com/MusaCAD/MusaCAD/issues/10) (remainder)
 
-Model, decoder seam, persistence and plot are done. Remaining: **viewport display**
-(`GpuTexture` + shaders + texture cache), **IMAGEATTACH / IMAGECLIP** commands, **DXF
-`IMAGE`/`IMAGEDEF`**, and an embedded-payload size cap.
+Model, decoder seam, persistence, plot, **viewport display** (a textured-quad pipeline with a
+per-definition texture cache), **IMAGEATTACH / IMAGECLIP / IMAGEFRAME** and the 8 MB embed
+limit are done. Remaining: **DXF `IMAGE`/`IMAGEDEF`** (needs object handles and an OBJECTS
+section in the writer) and polygonal clip boundaries.
 
 ## G. Paper space, layouts and views — [#26](https://github.com/MusaCAD/MusaCAD/issues/26), [#33](https://github.com/MusaCAD/MusaCAD/issues/33)
 

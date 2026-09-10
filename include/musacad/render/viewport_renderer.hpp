@@ -6,8 +6,11 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "musacad/render/gpu/texture.hpp"
+#include "musacad/core/image_decoder.hpp"
 #include "musacad/core/render_snapshot.hpp"
 #include "musacad/render/camera.hpp"
 #include "musacad/render/overlay.hpp"
@@ -46,6 +49,9 @@ public:
 
     /// Overlay text (e.g. "FPS 144") drawn in screen space; set per frame.
     void set_overlay_text(std::string text) { overlay_text_ = std::move(text); }
+    /// The raster decoder used on a texture-cache miss (the UI's QtImageDecoder; may be
+    /// null, in which case images draw as their frame only).
+    void set_image_decoder(const core::IImageDecoder* decoder) noexcept { image_decoder_ = decoder; }
 
     /// Crosshair state (render-side; from the raw cursor, every frame).
     void set_cursor(bool visible, float screen_x, float screen_y) {
@@ -107,6 +113,8 @@ private:
     std::unique_ptr<GpuPipeline> point_pipeline_;
     std::unique_ptr<GpuPipeline> thick_pipeline_; // scene lines (screen-space width)
     std::unique_ptr<GpuPipeline> fill_pipeline_;  // filled triangles (arrowheads)
+    std::unique_ptr<GpuPipeline> image_pipeline_; // textured quads (IMAGE entities)
+    std::unique_ptr<GpuBuffer> image_buffer_;     // the image quads' vertices (stream)
     std::unique_ptr<GpuBuffer> line_instances_;
     std::unique_ptr<GpuBuffer> point_instances_;
     std::unique_ptr<GpuBuffer> fill_buffer_;
@@ -137,6 +145,17 @@ private:
     std::size_t point_count_ = 0; ///< scene point instances currently on GPU
     std::size_t fill_count_ = 0;  ///< scene fill vertices currently on GPU
     std::size_t wipeout_count_ = 0; ///< WIPEOUT mask vertices currently on GPU
+    // Texture cache for IMAGE entities, keyed by definition index; a definition's
+    // version change (re-pointed or re-embedded) re-decodes. Decoding happens here, on
+    // the render thread, on a miss only.
+    struct CachedTexture {
+        std::uint32_t version = 0;
+        std::unique_ptr<GpuTexture> texture; ///< null when the image could not be decoded
+    };
+    std::unordered_map<std::uint16_t, CachedTexture> textures_;
+    const core::IImageDecoder* image_decoder_ = nullptr;
+    void draw_images(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,
+                     const core::Mat3& view);
     // Per-colour(+weight) batches over the uploaded scene buffers (cached at upload
     // time; one small draw per batch resolves per-entity colour/lineweight).
     std::vector<core::ColorBatch> line_batches_;

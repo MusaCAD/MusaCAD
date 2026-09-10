@@ -18,6 +18,7 @@
 #include "musacad/command/command_context.hpp"
 #include "musacad/command/command_registry.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/ui/qt_image_decoder.hpp"
 #include "musacad/render/camera.hpp"
 #include "musacad/render/overlay.hpp"
 #include "musacad/ui/viewport_modes.hpp"
@@ -73,6 +74,8 @@ public:
     [[nodiscard]] std::uint32_t snap_mask() const override;
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
+    [[nodiscard]] std::string image_file_dialog() override;
+    void set_image_file_dialog(std::function<std::string()> cb) { image_file_dialog_ = std::move(cb); }
     void set_osnap_settings_callback(std::function<void()> cb) { osnap_settings_callback_ = std::move(cb); }
     /// A dialog-driven ghost of the selection (Rotate/Scale dialogs): mode 3 rotates
     /// about `a` by `param` radians, 4 scales about `a` by `param`; 0 clears.
@@ -526,6 +529,8 @@ private:
     std::vector<std::string> block_names_;      ///< under layers_mutex_
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
     std::function<void()> osnap_settings_callback_;
+    std::function<std::string()> image_file_dialog_;
+    QtImageDecoder image_decoder_; ///< raster decoding for the renderer's texture cache
     int dialog_ghost_mode_ = 0;
     core::Vec2 dialog_ghost_a_{};
     double dialog_ghost_param_ = 0.0;
