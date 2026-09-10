@@ -22,7 +22,18 @@ enum class GripKind : std::uint8_t {
     Vertex,   ///< drags one polyline vertex
     DimDef,   ///< drags a dimension definition point (re-measures)
     DimLine,  ///< drags the dimension line offset (value unchanged)
+    Segment,  ///< a polyline segment's midpoint: drag moves a straight segment or reshapes an arc
 };
+
+/// Polyline segment grips carry `kSegmentGripBase + segment` as their index, so they
+/// never collide with the vertex grips (index = vertex). Segment s runs from vertex s
+/// to vertex s + 1 (wrapping on a closed polyline).
+inline constexpr std::uint32_t kSegmentGripBase = 0x40000000u;
+
+/// The bulge of the arc from `a` to `b` that passes through `p` (AutoCAD's bulge:
+/// tan(included angle / 4), positive when the arc runs counter-clockwise from a to b).
+/// A `p` on the chord gives 0 (a straight segment).
+[[nodiscard]] double bulge_through(Vec2 a, Vec2 p, Vec2 b);
 
 /// A single grip handle: a world position, its role, and the per-entity index that
 /// identifies it to edit_for_grip_drag.

@@ -434,7 +434,7 @@ button dropdown).
 | Dimension: def-point drag (re-measures, live value) | Implemented (Linear/Aligned/Radius/Diameter/Angular) |
 | HiDPI: lineweights + grip/snap/crosshair sizes are the same physical size on 1×/2× displays (DPR-corrected) | Implemented |
 | Dimension: independent text-reposition grip (all five types) + connector leader + PR "home text" | Implemented (issue #21) |
-| Add/remove polyline vertex via grips | Planned |
+| Add/remove polyline vertex via grips | Implemented (issue #32): a midpoint grip per segment (drag moves a straight segment, reshapes an arc); right-click a grip for Add Vertex / Remove Vertex / Convert to Arc / Convert to Line |
 
 ## Ribbon (responsive + contextual)
 

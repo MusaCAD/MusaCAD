@@ -814,6 +814,16 @@ struct RefCloseCommand {
     bool save = true;
     std::uint64_t group = 0;
 };
+/// A polyline grip's menu (AutoCAD's multi-functional grips): at grip `index` of the
+/// polyline `handle`, add a vertex, remove the vertex, or turn the segment into an arc
+/// or a line. `pos` is where the new vertex goes for AddVertex (the grip when unset).
+struct PolylineVertexCommand {
+    enum class Op : std::uint8_t { AddVertex, RemoveVertex, ToArc, ToLine };
+    EntityHandle handle;
+    std::uint32_t index = 0; ///< a vertex index, or kSegmentGripBase + segment
+    Op op = Op::AddVertex;
+    std::uint64_t group = 0;
+};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1043,7 +1053,7 @@ using Command =
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
-                 RefCloseCommand,
+                 RefCloseCommand, PolylineVertexCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

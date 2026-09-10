@@ -3294,6 +3294,98 @@ void GeometryEngine::apply_refclose(const RefCloseCommand& c) {
     }
 }
 
+void GeometryEngine::apply_polyline_vertex(const PolylineVertexCommand& c) {
+    using Op = PolylineVertexCommand::Op;
+    if (!store_.is_valid(c.handle) || c.handle.kind != EntityKind::Polyline) {
+        report("Not a polyline.");
+        return;
+    }
+    const Command original = capture_entity(c.handle);
+    AddPolylineCommand pl = std::get<AddPolylineCommand>(original);
+    const std::size_t n = pl.points.size();
+    const std::size_t nseg = n < 2 ? 0 : (pl.closed ? n : n - 1);
+    if (pl.bulges.size() != n) {
+        pl.bulges.assign(n, 0.0);
+    }
+    const bool is_seg = c.index >= kSegmentGripBase;
+    const std::size_t seg = is_seg ? c.index - kSegmentGripBase : c.index; // vertex i starts segment i
+    if ((is_seg && seg >= nseg) || (!is_seg && seg >= n)) {
+        report("No such grip.");
+        return;
+    }
+    std::string what;
+    switch (c.op) {
+    case Op::AddVertex: {
+        // Insert after vertex `seg`, on the segment (its midpoint, on the arc if curved).
+        if (seg >= nseg) {
+            report("Add vertex: pick a segment or an inner vertex.");
+            return;
+        }
+        const std::size_t j = (seg + 1) % n;
+        const Vec2 a = pl.points[seg];
+        const Vec2 b = pl.points[j];
+        const double bulge = pl.bulges[seg];
+        Vec2 mid{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5};
+        double half = 0.0;
+        if (bulge != 0.0) {
+            const Vec2 d = b - a;
+            const double len = length(d);
+            if (len > 1e-12) {
+                mid = mid + Vec2{d.y / len, -d.x / len} * (bulge * len * 0.5);
+            }
+            half = std::tan(std::atan(bulge) / 2.0); // each half keeps the arc's curvature
+        }
+        pl.points.insert(pl.points.begin() + static_cast<std::ptrdiff_t>(seg) + 1, mid);
+        pl.bulges[seg] = half;
+        pl.bulges.insert(pl.bulges.begin() + static_cast<std::ptrdiff_t>(seg) + 1, half);
+        what = "Vertex added.";
+        break;
+    }
+    case Op::RemoveVertex: {
+        if (is_seg) {
+            report("Remove vertex: pick a vertex grip.");
+            return;
+        }
+        if (n <= 2) {
+            report("A polyline keeps at least two vertices.");
+            return;
+        }
+        pl.points.erase(pl.points.begin() + static_cast<std::ptrdiff_t>(seg));
+        pl.bulges.erase(pl.bulges.begin() + static_cast<std::ptrdiff_t>(seg));
+        what = "Vertex removed.";
+        break;
+    }
+    case Op::ToArc:
+    case Op::ToLine: {
+        if (seg >= nseg) {
+            report("Pick a segment.");
+            return;
+        }
+        // A new arc bows by a quarter circle; its midpoint grip then reshapes it.
+        pl.bulges[seg] = c.op == Op::ToArc ? std::tan(kPi / 8.0) : 0.0;
+        what = c.op == Op::ToArc ? "Segment converted to an arc." : "Segment converted to a line.";
+        break;
+    }
+    }
+    bool all_straight = true;
+    for (const double b : pl.bulges) {
+        all_straight = all_straight && b == 0.0;
+    }
+    if (all_straight) {
+        pl.bulges.clear();
+    }
+    remove_indexed(c.handle);
+    push_erase_item(c.group, c.handle, original);
+    const Command add = pl;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(what);
+}
+
 void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     io::Document doc;
     std::size_t count = 0;
@@ -6005,6 +6097,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_refset(c);
             } else if constexpr (std::is_same_v<T, RefCloseCommand>) {
                 apply_refclose(c);
+            } else if constexpr (std::is_same_v<T, PolylineVertexCommand>) {
+                apply_polyline_vertex(c);
             } else if constexpr (std::is_same_v<T, SetAttDispCommand>) {
                 store_.set_attdisp(c.mode);
                 geom_dirty_ = true;
