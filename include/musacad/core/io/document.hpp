@@ -61,7 +61,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 28;
+inline constexpr std::uint32_t kFormatVersion = 29;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -335,6 +335,7 @@ struct Document {
     std::uint16_t current_text_style = 0;
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
+    std::uint8_t image_frame = 1; ///< IMAGEFRAME (v29): 0 hidden, 1 shown and plotted, 2 shown only
 
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;

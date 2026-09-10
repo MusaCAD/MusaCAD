@@ -180,6 +180,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Add objects to, or remove them from, the working set of the reference being edited.");
     reg({"REFCLOSE"}, [] { return std::make_unique<RefcloseCommand>(); }, "",
         "Save the working set back into the block definition, or discard the changes.");
+    reg({"IAT", "IMAGEATTACH", "-IMAGEATTACH"}, [] { return std::make_unique<ImageAttachCommand>(); }, "",
+        "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
+    reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
+        "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+    reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
+        "Image frames: hidden, shown and plotted, or shown on screen only.");
     reg({"I", "INSERT", "-INSERT"}, [] { return std::make_unique<InsertCommand>(); },
         "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
     reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",

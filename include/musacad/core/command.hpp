@@ -824,6 +824,33 @@ struct PolylineVertexCommand {
     Op op = Op::AddVertex;
     std::uint64_t group = 0;
 };
+/// IMAGEATTACH: place the raster file at `path`. `embed` keeps the encoded bytes in the
+/// drawing (up to kMaxEmbeddedImageBytes); otherwise the path is stored relative to the
+/// drawing's folder (an image outside it, or an unsaved drawing, is embedded instead).
+/// At `scale` 1 one pixel is one drawing unit, as AutoCAD does without resolution data.
+struct AttachImageCommand {
+    std::string path;
+    bool embed = false;
+    Vec2 pos{};
+    double scale = 1.0;
+    double rotation = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+};
+/// IMAGECLIP on the image under `pick`: a new rectangular boundary from `a` to `b`
+/// (world corners), or Delete (unclipped), ON / OFF (keep the boundary, apply it or not).
+struct SetImageClipCommand {
+    enum class Mode : std::uint8_t { NewRect, Delete, On, Off };
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    Mode mode = Mode::NewRect;
+    Vec2 a{};
+    Vec2 b{};
+    std::uint64_t group = 0;
+};
+/// IMAGEFRAME: 0 frames hidden, 1 shown and plotted, 2 shown on screen only.
+struct SetImageFrameCommand {
+    std::uint8_t mode = 1;
+};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1053,7 +1080,8 @@ using Command =
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
-                 RefCloseCommand, PolylineVertexCommand,
+                 RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
+                 SetImageFrameCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

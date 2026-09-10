@@ -853,6 +853,9 @@ std::string serialize_native(const Document& doc) {
     s += "ATTDISP ";
     append_uint(s, doc.attdisp);
     s += '\n';
+    s += "IMAGEFRAME ";
+    append_uint(s, doc.image_frame);
+    s += '\n';
     // v25: UNITSFMT linear precision angular aprecision clockwise base_angle
     s += "UNITSFMT ";
     append_uint(s, static_cast<std::uint64_t>(doc.display_units.linear));
@@ -1203,6 +1206,12 @@ IoResult parse_native(std::string_view text, Document& out) {
             ts.name = dec(tok[4]);
             ts.font = dec(tok[5]);
             doc.text_styles.push_back(std::move(ts));
+        } else if (key == "IMAGEFRAME") {
+            std::uint64_t mode = 1;
+            if (tok.size() != 2 || !to_uint(tok[1], mode) || mode > 2) {
+                return fail("malformed IMAGEFRAME");
+            }
+            doc.image_frame = static_cast<std::uint8_t>(mode);
         } else if (key == "ATTDISP") {
             std::uint64_t mode = 0;
             if (tok.size() != 2 || !to_uint(tok[1], mode) || mode > 2) {

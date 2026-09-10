@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <span>
 #include <optional>
@@ -38,6 +40,15 @@ namespace musacad::core {
 
 namespace {
 /// Filename portion of a path (after the last '/' or '\\'), for a document tab name.
+/// The directory a drawing lives in ("" for an unsaved one): relative image paths
+/// resolve against it.
+std::string doc_dir_of(const std::string& path) {
+    if (path.empty()) {
+        return std::string();
+    }
+    return std::filesystem::path(path).parent_path().string();
+}
+
 std::string doc_basename(const std::string& path) {
     const std::size_t slash = path.find_last_of("/\\");
     return slash == std::string::npos ? path : path.substr(slash + 1);
@@ -3386,6 +3397,165 @@ void GeometryEngine::apply_polyline_vertex(const PolylineVertexCommand& c) {
     report(what);
 }
 
+void GeometryEngine::apply_attach_image(const AttachImageCommand& c) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (c.path.empty() || !fs::is_regular_file(fs::path(c.path), ec)) {
+        report("IMAGEATTACH: cannot read \"" + c.path + "\".");
+        return;
+    }
+    const IImageDecoder* dec = store_.image_decoder();
+    if (dec == nullptr) {
+        report("IMAGEATTACH: no image decoder is available in this build.");
+        return;
+    }
+    // By path only when the file sits inside the drawing's folder (the reference is
+    // stored relative to it, so the pair moves together); otherwise the bytes travel
+    // in the drawing.
+    bool embed = c.embed;
+    std::string rel;
+    if (!embed) {
+        const std::string dir =
+            active_idx_ < doc_metas_.size() ? doc_dir_of(doc_metas_[active_idx_].path) : std::string();
+        if (dir.empty()) {
+            embed = true;
+            report("The drawing is unsaved: the image is embedded so it stays with the drawing.");
+        } else {
+            const fs::path full = fs::weakly_canonical(fs::path(c.path), ec);
+            const fs::path base = fs::weakly_canonical(fs::path(dir), ec);
+            const fs::path r = ec ? fs::path() : full.lexically_relative(base);
+            const std::string rs = r.generic_string();
+            if (rs.empty() || rs == "." || rs.rfind("..", 0) == 0) {
+                embed = true;
+                report("The image is outside the drawing's folder: embedding it instead.");
+            } else {
+                rel = rs;
+            }
+        }
+    }
+    ImageDef def;
+    DecodedImage img;
+    if (embed) {
+        const auto size = fs::file_size(fs::path(c.path), ec);
+        if (ec || size > kMaxEmbeddedImageBytes) {
+            report("IMAGEATTACH: \"" + c.path + "\" is too large to embed (the limit is " +
+                   std::to_string(kMaxEmbeddedImageBytes >> 20) +
+                   " MB); save the drawing and attach it from the drawing's folder instead.");
+            return;
+        }
+        std::ifstream in(c.path, std::ios::binary);
+        def.bytes.resize(static_cast<std::size_t>(size));
+        if (!in.read(reinterpret_cast<char*>(def.bytes.data()), static_cast<std::streamsize>(size))) {
+            report("IMAGEATTACH: cannot read \"" + c.path + "\".");
+            return;
+        }
+        img = dec->decode_bytes(def.bytes);
+    } else {
+        def.source = rel;
+        img = dec->decode_file(c.path);
+    }
+    if (!img.valid()) {
+        report("IMAGEATTACH: \"" + c.path + "\" is not a readable image.");
+        return;
+    }
+    def.pixel_w = img.width;
+    def.pixel_h = img.height;
+    const std::uint16_t di = store_.add_image_def(def);
+    const double scale = c.scale > 0.0 ? c.scale : 1.0;
+    AddImageCommand add;
+    add.def = di;
+    add.pos = c.pos;
+    add.width = static_cast<double>(img.width) * scale;
+    add.height = static_cast<double>(img.height) * scale;
+    add.rotation = c.rotation;
+    const Command cmd = add;
+    const EntityHandle nh = create_indexed(cmd);
+    push_create_item(c.group, nh, cmd);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Image attached: " + std::to_string(img.width) + " x " + std::to_string(img.height) +
+           " pixels" + (embed ? ", embedded in the drawing." : ", referenced as \"" + rel + "\"."));
+}
+
+void GeometryEngine::apply_image_clip(const SetImageClipCommand& c) {
+    using Mode = SetImageClipCommand::Mode;
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    const ImageData* im = store_.image(h);
+    if (im == nullptr) {
+        report("IMAGECLIP: select an image.");
+        return;
+    }
+    const Command original = capture_entity(h);
+    AddImageCommand edited = std::get<AddImageCommand>(original);
+    std::string what;
+    switch (c.mode) {
+    case Mode::NewRect: {
+        // World corners -> image fractions (u right, v down from the top-left), through
+        // the inverse of the placement (un-rotate about the insertion point).
+        const double cs = std::cos(im->rotation);
+        const double sn = std::sin(im->rotation);
+        const auto to_uv = [&](Vec2 p, double& u, double& v) {
+            const Vec2 d = p - im->pos;
+            const double lx = d.x * cs + d.y * sn;
+            const double ly = -d.x * sn + d.y * cs;
+            u = std::clamp(im->width > 0.0 ? lx / im->width : 0.0, 0.0, 1.0);
+            v = std::clamp(im->height > 0.0 ? 1.0 - ly / im->height : 0.0, 0.0, 1.0);
+        };
+        double u0 = 0.0;
+        double v0 = 0.0;
+        double u1 = 1.0;
+        double v1 = 1.0;
+        to_uv(c.a, u0, v0);
+        to_uv(c.b, u1, v1);
+        if (u1 < u0) {
+            std::swap(u0, u1);
+        }
+        if (v1 < v0) {
+            std::swap(v0, v1);
+        }
+        if (u1 - u0 < 1e-9 || v1 - v0 < 1e-9) {
+            report("IMAGECLIP: the boundary must lie on the image with a real width and height.");
+            return;
+        }
+        edited.clipped = true;
+        edited.clip_u0 = u0;
+        edited.clip_v0 = v0;
+        edited.clip_u1 = u1;
+        edited.clip_v1 = v1;
+        what = "Image clipped.";
+        break;
+    }
+    case Mode::Delete:
+        edited.clipped = false;
+        edited.clip_u0 = 0.0;
+        edited.clip_v0 = 0.0;
+        edited.clip_u1 = 1.0;
+        edited.clip_v1 = 1.0;
+        what = "Clipping boundary deleted.";
+        break;
+    case Mode::On:
+        edited.clipped = true;
+        what = "Clipping on.";
+        break;
+    case Mode::Off:
+        edited.clipped = false;
+        what = "Clipping off (the boundary is kept).";
+        break;
+    }
+    remove_indexed(h);
+    push_erase_item(c.group, h, original);
+    const Command add = edited;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(what);
+}
+
 void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     io::Document doc;
     std::size_t count = 0;
@@ -6099,6 +6269,17 @@ void GeometryEngine::apply(const Command& command) {
                 apply_refclose(c);
             } else if constexpr (std::is_same_v<T, PolylineVertexCommand>) {
                 apply_polyline_vertex(c);
+            } else if constexpr (std::is_same_v<T, AttachImageCommand>) {
+                apply_attach_image(c);
+            } else if constexpr (std::is_same_v<T, SetImageClipCommand>) {
+                apply_image_clip(c);
+            } else if constexpr (std::is_same_v<T, SetImageFrameCommand>) {
+                store_.set_image_frame(c.mode);
+                geom_dirty_ = true;
+                dirty_ = true;
+                report(c.mode == 0 ? "Image frames hidden."
+                       : c.mode == 1 ? "Image frames shown and plotted."
+                                     : "Image frames shown on screen only.");
             } else if constexpr (std::is_same_v<T, SetAttDispCommand>) {
                 store_.set_attdisp(c.mode);
                 geom_dirty_ = true;
@@ -6269,6 +6450,8 @@ void GeometryEngine::reset_active_state() {
     // Reset the live (active-document) heavy state to a fresh empty drawing.
     store_.clear();
     store_.set_font_engine(font_engine_); // re-bind metrics (clear may drop the engine)
+    store_.set_image_decoder(image_decoder_);
+    image_bytes_cache_.clear();
     grid_.clear();
     undo_.clear();
     redo_.clear();
@@ -6328,6 +6511,8 @@ void GeometryEngine::load_active(DocState& d) {
     undo_ = std::move(d.undo);
     redo_ = std::move(d.redo);
     selection_ = std::move(d.selection);
+    image_bytes_cache_.clear(); // per-document payload pointers
+    store_.set_image_decoder(image_decoder_);
     refedit_ = std::move(d.refedit);
     geom_cache_ = std::move(d.geom_cache);
     geom_dirty_ = true; // force a rebuild at the current zoom for the new active document
@@ -6484,6 +6669,7 @@ void GeometryEngine::rebuild_and_publish() {
         buf.line_vertices = geom_cache_.line_vertices;
         buf.construction_lines = geom_cache_.construction_lines;
         buf.wipeout_vertices = geom_cache_.wipeout_vertices;
+        buf.images = geom_cache_.images; // placed rasters (transform + def; the renderer caches textures)
         buf.wipeout_frames = geom_cache_.wipeout_frames;
         buf.line_batches = geom_cache_.line_batches;
         buf.point_batches = geom_cache_.point_batches;
@@ -6521,6 +6707,31 @@ void GeometryEngine::rebuild_and_publish() {
         }
         buf.block_attdefs.push_back(std::move(infos)); // INSERT's attribute prompts
     }
+    // Image definitions for the renderer's texture cache: embedded payloads by shared
+    // pointer (re-made when the version changes), external ones by relative path.
+    buf.image_defs.clear();
+    const std::vector<ImageDef>& idefs = store_.image_defs();
+    if (image_bytes_cache_.size() < idefs.size()) {
+        image_bytes_cache_.resize(idefs.size());
+    }
+    for (std::size_t i = 0; i < idefs.size(); ++i) {
+        const ImageDef& d = idefs[i];
+        ImageDefView v;
+        v.source = d.source;
+        v.version = d.version;
+        if (!d.bytes.empty()) {
+            ImageBytesSlot& slot = image_bytes_cache_[i];
+            if (!slot.ptr || slot.version != d.version) {
+                slot.ptr = std::make_shared<const std::vector<std::uint8_t>>(d.bytes);
+                slot.version = d.version;
+            }
+            v.bytes = slot.ptr;
+        }
+        buf.image_defs.push_back(std::move(v));
+    }
+    buf.image_dir = active_idx_ < doc_metas_.size() ? doc_dir_of(doc_metas_[active_idx_].path)
+                                                    : std::string();
+    buf.image_frame = store_.image_frame();
 
     // Pending object-dimension def points for the placement preview (Part C).
     buf.has_pending_dim = has_pending_dim_;

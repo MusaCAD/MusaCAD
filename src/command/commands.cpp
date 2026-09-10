@@ -3180,6 +3180,190 @@ void RefcloseCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void ImageAttachCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::File;
+    ctx.set_prompt("Enter image file name (~ for the file dialog): ");
+}
+
+void ImageAttachCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ImageAttachCommand::ask_embed(CommandContext& ctx) {
+    state_ = State::Embed;
+    ctx.set_prompt("Keep a copy of the image inside the drawing? [Yes/No] <No>: ");
+}
+
+void ImageAttachCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::File:
+        if (t == "~" || t.empty()) {
+            path_ = ctx.view() != nullptr ? ctx.view()->image_file_dialog() : std::string();
+            if (path_.empty()) {
+                if (t.empty()) {
+                    ctx.echo("A file name is required (~ opens the file dialog).");
+                    return;
+                }
+                ctx.echo("*Cancel*");
+                done_ = true;
+                return;
+            }
+        } else {
+            path_ = t;
+        }
+        ask_embed(ctx);
+        return;
+    case State::Embed:
+        if (u == "Y" || u == "YES") {
+            embed_ = true;
+        } else if (!(t.empty() || u == "N" || u == "NO")) {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        state_ = State::Point;
+        ctx.set_prompt("Specify insertion point <0,0>: ");
+        return;
+    case State::Point:
+        if (t.empty()) {
+            pos_ = {0.0, 0.0};
+        } else if (const auto p = read_point(ctx, text)) {
+            pos_ = *p;
+        } else {
+            return;
+        }
+        ctx.set_last_point(pos_);
+        state_ = State::Scale;
+        ctx.set_prompt("Specify scale factor <1>: ");
+        return;
+    case State::Scale: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || v <= 0.0) {
+                ctx.echo("Enter a scale factor greater than 0.");
+                return;
+            }
+            scale_ = v;
+        }
+        state_ = State::Rotation;
+        ctx.set_prompt("Specify rotation <0>: ");
+        return;
+    }
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        ctx.submit(core::AttachImageCommand{path_, embed_, pos_, scale_, core::to_radians(deg),
+                                            ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void ImageClipCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Pick;
+    ctx.set_prompt("Select image to clip: ");
+}
+
+void ImageClipCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
+    using Mode = core::SetImageClipCommand::Mode;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Pick:
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            state_ = State::Option;
+            ctx.set_prompt("Enter image clipping option [ON/OFF/Delete/New boundary] <New>: ");
+        }
+        return;
+    case State::Option: {
+        std::optional<Mode> mode;
+        if (u == "ON") {
+            mode = Mode::On;
+        } else if (u == "OFF") {
+            mode = Mode::Off;
+        } else if (u == "D" || u == "DELETE") {
+            mode = Mode::Delete;
+        } else if (t.empty() || u == "N" || u == "NEW" || u == "NEW BOUNDARY") {
+            state_ = State::Shape;
+            ctx.set_prompt("Enter clipping type [Polygonal/Rectangular] <Rectangular>: ");
+            return;
+        } else {
+            ctx.echo("Enter ON, OFF, Delete or New.");
+            return;
+        }
+        ctx.submit(core::SetImageClipCommand{pick_, ctx.pick_radius(), *mode, {}, {}, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    case State::Shape:
+        if (u == "P" || u == "POLYGONAL") {
+            ctx.echo("Polygonal boundaries are not available yet; a rectangular one is.");
+            return;
+        }
+        if (!(t.empty() || u == "R" || u == "RECTANGULAR")) {
+            ctx.echo("Enter Polygonal or Rectangular.");
+            return;
+        }
+        state_ = State::First;
+        ctx.set_prompt("Specify first corner point: ");
+        return;
+    case State::First:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Second;
+            ctx.set_preview({PreviewKind::Rectangle, {first_}});
+            ctx.set_prompt("Specify opposite corner point: ");
+        }
+        return;
+    case State::Second:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.set_preview({});
+            ctx.submit(core::SetImageClipCommand{pick_, ctx.pick_radius(), Mode::NewRect, first_, *p,
+                                                 ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void ImageFrameCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for IMAGEFRAME [0 hidden/1 shown and plotted/2 shown only] <1>: ");
+}
+
+void ImageFrameCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ImageFrameCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    std::uint8_t mode = 1;
+    if (!t.empty()) {
+        if (t != "0" && t != "1" && t != "2") {
+            ctx.echo("Enter 0, 1 or 2.");
+            return;
+        }
+        mode = static_cast<std::uint8_t>(t[0] - '0');
+    }
+    ctx.submit(core::SetImageFrameCommand{mode});
+    done_ = true;
+}
+
 void AttdispCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter attribute visibility setting [Normal/ON/OFF] <Normal>: ");
 }

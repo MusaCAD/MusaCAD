@@ -3,6 +3,7 @@
 
 #include "gl/gl_objects.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 
@@ -170,6 +171,43 @@ void GlCommandBuffer::set_uniform_vec4(const char* name, float r, float g, float
     gl_->glProgramUniform4f(pipeline_->program(), pipeline_->uniform(name), r, g, b, a);
 }
 
+void GlCommandBuffer::set_uniform_int(const char* name, int value) {
+    gl_->glProgramUniform1i(pipeline_->program(), pipeline_->uniform(name), value);
+}
+
+void GlCommandBuffer::bind_texture(std::uint32_t unit, const GpuTexture& texture) {
+    gl_->glBindTextureUnit(unit, static_cast<const GlTexture&>(texture).id());
+}
+
+// ----------------------------------------------------------------------------
+// GlTexture
+// ----------------------------------------------------------------------------
+
+GlTexture::GlTexture(GlFns* gl, std::uint32_t width, std::uint32_t height, const std::uint8_t* rgba)
+    : gl_(gl), w_(width), h_(height) {
+    GLsizei levels = 1;
+    for (std::uint32_t m = std::max(width, height); m > 1; m >>= 1) {
+        ++levels;
+    }
+    gl_->glCreateTextures(GL_TEXTURE_2D, 1, &id_);
+    gl_->glTextureStorage2D(id_, levels, GL_RGBA8, static_cast<GLsizei>(width),
+                            static_cast<GLsizei>(height));
+    gl_->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    gl_->glTextureSubImage2D(id_, 0, 0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
+                             GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    gl_->glGenerateTextureMipmap(id_);
+    gl_->glTextureParameteri(id_, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    gl_->glTextureParameteri(id_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    gl_->glTextureParameteri(id_, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    gl_->glTextureParameteri(id_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+GlTexture::~GlTexture() {
+    if (id_ != 0) {
+        gl_->glDeleteTextures(1, &id_);
+    }
+}
+
 void GlCommandBuffer::draw_instanced(std::uint32_t vertex_count, std::uint32_t instance_count) {
     if (instance_count == 0) {
         return;
@@ -192,6 +230,11 @@ std::unique_ptr<GpuPipeline> GlDevice::create_pipeline(const PipelineDesc& desc)
 
 std::unique_ptr<GpuCommandBuffer> GlDevice::create_command_buffer() {
     return std::make_unique<GlCommandBuffer>(gl_);
+}
+
+std::unique_ptr<GpuTexture> GlDevice::create_texture(std::uint32_t width, std::uint32_t height,
+                                                     const std::uint8_t* rgba) {
+    return std::make_unique<GlTexture>(gl_, width, height, rgba);
 }
 
 void GlDevice::submit(GpuCommandBuffer& /*commands*/) {

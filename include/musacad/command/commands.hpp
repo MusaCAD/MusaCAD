@@ -829,6 +829,55 @@ private:
     bool done_ = false;
 };
 
+/// IMAGEATTACH (IAT): a raster file (typed path, or ~ for the file dialog), whether to
+/// embed it, then insertion point, scale and rotation.
+class ImageAttachCommand final : public ICommand {
+public:
+    std::string name() const override { return "IMAGEATTACH"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { File, Embed, Point, Scale, Rotation } state_ = State::File;
+    void ask_embed(CommandContext& ctx);
+    std::string path_;
+    bool embed_ = false;
+    core::Vec2 pos_{};
+    double scale_ = 1.0;
+    bool done_ = false;
+};
+
+/// IMAGECLIP (ICL): a rectangular clipping boundary on an image, or Delete / ON / OFF.
+class ImageClipCommand final : public ICommand {
+public:
+    std::string name() const override { return "IMAGECLIP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Pick, Option, Shape, First, Second } state_ = State::Pick;
+    core::Vec2 pick_{};
+    core::Vec2 first_{};
+    bool done_ = false;
+};
+
+/// IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown on screen only.
+class ImageFrameCommand final : public ICommand {
+public:
+    std::string name() const override { return "IMAGEFRAME"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// ATTDISP: show every attribute, hide every attribute, or let each keep its own mode.
 class AttdispCommand final : public ICommand {
 public:

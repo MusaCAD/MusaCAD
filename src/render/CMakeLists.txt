@@ -8,7 +8,9 @@ musacad_embed_shaders("${_shader_header}"
     "${CMAKE_SOURCE_DIR}/shaders/thickline.vert"
     "${CMAKE_SOURCE_DIR}/shaders/thickline.frag"
     "${CMAKE_SOURCE_DIR}/shaders/fill.vert"
-    "${CMAKE_SOURCE_DIR}/shaders/fill.frag")
+    "${CMAKE_SOURCE_DIR}/shaders/fill.frag"
+    "${CMAKE_SOURCE_DIR}/shaders/image.vert"
+    "${CMAKE_SOURCE_DIR}/shaders/image.frag")
 
 add_library(musacad_render STATIC
     render_module.cpp

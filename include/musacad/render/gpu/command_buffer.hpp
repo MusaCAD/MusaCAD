@@ -17,6 +17,8 @@ class GpuPipeline;
 /// Records (or, for the immediate-mode GL backend, issues) draw work for one
 /// frame. The record/begin/submit shape matches a deferred backend (Vulkan)
 /// while the GL backend executes calls immediately with the context current.
+class GpuTexture;
+
 class GpuCommandBuffer {
 public:
     virtual ~GpuCommandBuffer() = default;
@@ -41,6 +43,9 @@ public:
     virtual void set_uniform_float(const char* name, float value) = 0;
     virtual void set_uniform_vec2(const char* name, float x, float y) = 0;
     virtual void set_uniform_vec4(const char* name, float r, float g, float b, float a) = 0;
+    virtual void set_uniform_int(const char* name, int value) = 0;
+    /// Bind `texture` to sampler unit `unit` for the bound pipeline.
+    virtual void bind_texture(std::uint32_t unit, const GpuTexture& texture) = 0;
 
     /// Instanced draw: `vertex_count` base vertices, `instance_count` instances.
     virtual void draw_instanced(std::uint32_t vertex_count, std::uint32_t instance_count) = 0;

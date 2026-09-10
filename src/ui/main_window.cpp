@@ -201,6 +201,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // it. Null would mean stroke-font only.
     font_engine_ = std::make_unique<QtFontEngine>();
     engine_->set_font_engine(font_engine_.get());
+    image_decoder_ = std::make_unique<QtImageDecoder>();
+    engine_->set_image_decoder(image_decoder_.get()); // IMAGEATTACH reads pixel sizes
     // A SEPARATE font engine for the UI thread's on-canvas command text (the geometry
     // engine's instance is used on the geometry thread; a font face is not shared across
     // threads).
@@ -1128,6 +1130,12 @@ void MainWindow::build_status_bar() {
     osnap_menu->addSeparator();
     osnap_menu->addAction(QStringLiteral("Settings\u2026"), this, [this] { open_osnap_settings_dialog(); });
     viewport_->set_osnap_settings_callback([this] { open_osnap_settings_dialog(); });
+    viewport_->set_image_file_dialog([this] {
+        return QFileDialog::getOpenFileName(
+                   this, QStringLiteral("Attach image"), QString(),
+                   QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff);;All files (*)"))
+            .toStdString();
+    });
     osnap_btn->setMenu(osnap_menu);
     osnap_btn->setPopupMode(QToolButton::MenuButtonPopup);
 

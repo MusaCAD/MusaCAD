@@ -239,6 +239,10 @@ void ViewportWindow::set_snap_mask(std::uint32_t mask) {
     }
 }
 
+std::string ViewportWindow::image_file_dialog() {
+    return image_file_dialog_ ? image_file_dialog_() : std::string();
+}
+
 void ViewportWindow::osnap_settings_dialog() {
     if (osnap_settings_callback_) {
         osnap_settings_callback_(); // MainWindow owns the dialog (GUI thread)
@@ -336,6 +340,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
         return;
     }
     render::ViewportRenderer renderer(*device);
+    renderer.set_image_decoder(&image_decoder_); // textures decode on this thread, on a miss
     render::FrameStats stats;
 
     // Say once what is actually drawing: the answer to "is the GPU being used?".
