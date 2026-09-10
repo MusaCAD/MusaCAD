@@ -878,6 +878,38 @@ private:
     bool done_ = false;
 };
 
+/// LAYOUT: Copy / Delete / New / Rename / Set / ? over the drawing's layouts.
+class LayoutCommand final : public ICommand {
+public:
+    std::string name() const override { return "LAYOUT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Option, Name, NewName } state_ = State::Option;
+    core::LayoutCommand::Op op_ = core::LayoutCommand::Op::New;
+    bool set_ = false; ///< the Set option (switch), which is not a LayoutCommand op
+    std::string name_;
+    bool done_ = false;
+};
+
+/// MODEL: back to model space. PSPACE: to the last layout used (viewports: MSPACE).
+class ModelSpaceCommand final : public ICommand {
+public:
+    explicit ModelSpaceCommand(bool to_paper) : to_paper_(to_paper) {}
+    std::string name() const override { return to_paper_ ? "PSPACE" : "MODEL"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool to_paper_;
+    bool done_ = false;
+};
+
 /// ATTDISP: show every attribute, hide every attribute, or let each keep its own mode.
 class AttdispCommand final : public ICommand {
 public:

@@ -3364,6 +3364,115 @@ void ImageFrameCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+namespace {
+std::string layout_list(CommandContext& ctx) {
+    std::string out = "Model";
+    for (const std::string& n : ctx.layout_names()) {
+        out += ", " + n;
+    }
+    return out;
+}
+} // namespace
+
+void LayoutCommand::start(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.set_prompt("Enter layout option [Copy/Delete/New/Rename/Set/?] <Set>: ");
+}
+
+void LayoutCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void LayoutCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::LayoutCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option:
+        set_ = false;
+        if (u == "?") {
+            ctx.echo("Layouts: " + layout_list(ctx));
+            ctx.set_prompt("Enter layout option [Copy/Delete/New/Rename/Set/?] <Set>: ");
+            return;
+        }
+        if (u == "C" || u == "COPY") {
+            op_ = Op::Copy;
+            ctx.set_prompt("Enter name of layout to copy: ");
+        } else if (u == "D" || u == "DELETE") {
+            op_ = Op::Delete;
+            ctx.set_prompt("Enter name of layout to delete: ");
+        } else if (u == "N" || u == "NEW") {
+            op_ = Op::New;
+            ctx.set_prompt("Enter new layout name: ");
+        } else if (u == "R" || u == "RENAME") {
+            op_ = Op::Rename;
+            ctx.set_prompt("Enter name of layout to rename: ");
+        } else if (t.empty() || u == "S" || u == "SET") {
+            set_ = true;
+            ctx.set_prompt("Enter layout to make current (or Model) <" +
+                           (ctx.layout_names().empty() ? std::string("Model") : ctx.layout_names().front()) +
+                           ">: ");
+        } else {
+            ctx.echo("Enter Copy, Delete, New, Rename, Set or ?.");
+            return;
+        }
+        state_ = State::Name;
+        return;
+    case State::Name:
+        if (set_) {
+            std::string want = t.empty() ? (ctx.layout_names().empty() ? std::string("Model")
+                                                                       : ctx.layout_names().front())
+                                         : t;
+            if (upper(want) == "MODEL") {
+                ctx.submit(core::SetActiveSpaceCommand{0});
+                done_ = true;
+                return;
+            }
+            ctx.submit(core::SetActiveSpaceCommand{0, want}); // the engine resolves the name
+            done_ = true;
+            return;
+        }
+        if (t.empty()) {
+            ctx.echo("A layout name is required.");
+            return;
+        }
+        name_ = t;
+        if (op_ == Op::New) {
+            ctx.submit(core::LayoutCommand{Op::New, name_, std::string(), ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        if (op_ == Op::Delete) {
+            ctx.submit(core::LayoutCommand{Op::Delete, name_, std::string(), ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        state_ = State::NewName;
+        ctx.set_prompt(op_ == Op::Copy ? "Enter layout name for copy: " : "Enter new layout name: ");
+        return;
+    case State::NewName:
+        if (t.empty()) {
+            ctx.echo("A name is required.");
+            return;
+        }
+        ctx.submit(core::LayoutCommand{op_, name_, t, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+}
+
+void ModelSpaceCommand::start(CommandContext& ctx) {
+    if (!to_paper_) {
+        ctx.submit(core::SetActiveSpaceCommand{0});
+    } else if (ctx.active_space() != 0) {
+        ctx.echo("Already in paper space.");
+    } else {
+        ctx.submit(core::SetActiveSpaceCommand{0xFF}); // the engine picks the first layout
+    }
+    done_ = true;
+}
+
 void AttdispCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter attribute visibility setting [Normal/ON/OFF] <Normal>: ");
 }

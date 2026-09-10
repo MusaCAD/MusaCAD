@@ -193,6 +193,9 @@ public:
     [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
+    /// The layout names (LAYOUT ?, Set) and the active space (0 = model).
+    [[nodiscard]] virtual std::vector<std::string> layout_names() const { return {}; }
+    [[nodiscard]] virtual std::uint8_t active_space() const { return 0; }
     /// A block's attributes (ATTDEFs), in prompt order; INSERT asks for their values.
     [[nodiscard]] virtual std::vector<core::BlockAttDefInfo> block_attdefs(const std::string& /*block*/) const {
         return {};

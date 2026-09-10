@@ -187,6 +187,16 @@ std::vector<std::vector<core::BlockAttDefInfo>> ViewportWindow::block_attdefs() 
     return block_attdefs_;
 }
 
+std::vector<core::LayoutInfo> ViewportWindow::layouts() {
+    std::scoped_lock lock(layers_mutex_);
+    return layouts_;
+}
+
+std::uint8_t ViewportWindow::active_space() {
+    std::scoped_lock lock(layers_mutex_);
+    return active_space_;
+}
+
 void ViewportWindow::zoom_scale(double factor) {
     std::scoped_lock lock(camera_mutex_);
     const double cx = static_cast<double>(camera_.viewport_width()) * 0.5;
@@ -525,6 +535,8 @@ void ViewportWindow::render_loop(std::stop_token token) {
             current_text_style_ = snap.current_text_style;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
+            layouts_ = snap.layouts;
+            active_space_ = snap.active_space;
         }
 
         // Surface the engine's command-result message (honest feedback) once.

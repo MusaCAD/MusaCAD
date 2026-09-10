@@ -6,6 +6,7 @@
 #include <bit>
 #include <array>
 #include <cstdint>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,18 @@ struct ImageDefView {
     std::shared_ptr<const std::vector<std::uint8_t>> bytes; ///< embedded payload, or null
     std::string source;                                      ///< relative path when not embedded
     std::uint32_t version = 0;
+};
+
+/// A layout as the tab strip, the sheet drawing and PLOT need it.
+struct LayoutInfo {
+    std::uint8_t id = 1;
+    std::string name;
+    double paper_w_mm = 297.0;
+    double paper_h_mm = 210.0;
+    bool landscape = true;
+    /// The sheet in paper-space units (millimetres): its corner is the origin.
+    [[nodiscard]] double sheet_w() const noexcept { return landscape ? std::max(paper_w_mm, paper_h_mm) : std::min(paper_w_mm, paper_h_mm); }
+    [[nodiscard]] double sheet_h() const noexcept { return landscape ? std::min(paper_w_mm, paper_h_mm) : std::max(paper_w_mm, paper_h_mm); }
 };
 
 struct ColorBatch {
@@ -145,6 +158,8 @@ struct RenderSnapshot {
     std::vector<Vec2> line_vertices; // 2 entries per segment, ordered by colour batch
     std::vector<ConstructionLineView> construction_lines; // XLINE/RAY: clipped per-frame
     std::vector<Vec2> wipeout_vertices; // WIPEOUT masks: triangles drawn in the background colour
+    std::uint8_t active_space = 0;      // 0 model space, else the active layout's id
+    std::vector<LayoutInfo> layouts;    // the layout tabs (name, sheet size)
     bool wipeout_frames = true;         // WIPEOUTFRAME
     std::uint64_t checksum = 0;
 
@@ -271,6 +286,8 @@ struct RenderSnapshot {
         line_vertices.clear();
         construction_lines.clear();
         wipeout_vertices.clear();
+        active_space = 0;
+        layouts.clear();
         line_batches.clear();
         point_batches.clear();
         fill_vertices.clear();

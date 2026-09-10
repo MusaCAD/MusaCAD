@@ -414,6 +414,33 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
 
     // Grid is screen-space-adaptive: regenerated each frame (cheap -- hundreds
     // of lines). This is independent of scene size.
+    // A layout shows its sheet: the paper as a lighter panel with a white edge, under
+    // the grid and everything drawn on it (paper-space units are millimetres).
+    if (snapshot.active_space != 0) {
+        for (const core::LayoutInfo& l : snapshot.layouts) {
+            if (l.id != snapshot.active_space) {
+                continue;
+            }
+            const float w = static_cast<float>(l.sheet_w());
+            const float h = static_cast<float>(l.sheet_h());
+            const float tris[12] = {0.0f, 0.0f, w, 0.0f, w, h, 0.0f, 0.0f, w, h, 0.0f, h};
+            aux_buffer_->upload(tris, sizeof(tris));
+            cmd_->bind_pipeline(*fill_pipeline_);
+            cmd_->set_uniform_mat3("u_transform", view);
+            cmd_->set_uniform_vec4("u_color", 0.16f, 0.17f, 0.20f, 1.0f);
+            cmd_->bind_vertex_buffer(0, *aux_buffer_, 0);
+            cmd_->draw_instanced(6, 1);
+            const float edge[16] = {0.0f, 0.0f, w, 0.0f, w, 0.0f, w, h, w, h, 0.0f, h, 0.0f, h, 0.0f, 0.0f};
+            aux_buffer_->upload(edge, sizeof(edge));
+            cmd_->bind_pipeline(*line_pipeline_);
+            cmd_->set_uniform_mat3("u_transform", view);
+            cmd_->set_uniform_vec4("u_color", 0.85f, 0.85f, 0.85f, 1.0f);
+            cmd_->bind_vertex_buffer(0, *aux_buffer_, 0);
+            cmd_->draw_instanced(8, 1);
+            stats_.draw_calls += 2;
+            break;
+        }
+    }
     const GridResult g = build_grid(camera);
     const std::size_t minor_count = pack_segments(g.minor, scratch_);
     grid_minor_->upload(scratch_.data(), scratch_.size() * sizeof(float));

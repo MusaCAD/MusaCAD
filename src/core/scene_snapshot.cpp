@@ -66,12 +66,12 @@ std::uint64_t height_bucket(double h) {
 /// Off/frozen layers contribute no geometry, so the renderer never sees them.
 bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen;
+    return l != nullptr && l->on && !l->frozen && p.space() == store.active_space();
 }
 /// Editable = visible and not on a locked layer (locked text can't be edited).
 bool editable(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && !l->locked;
+    return l != nullptr && l->on && !l->frozen && !l->locked && p.space() == store.active_space();
 }
 ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
@@ -97,6 +97,12 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     out.current_layer = store.current_layer();
     out.page_setups = store.page_setups();
     out.wipeout_frames = store.wipeout_frames();
+    out.active_space = store.active_space();
+    out.layouts.clear();
+    for (const Layout& l : store.layouts()) {
+        out.layouts.push_back(LayoutInfo{l.id, l.name, l.page.paper_w_mm, l.page.paper_h_mm,
+                                         l.page.landscape});
+    }
 
     // Lines group by (colour, lineweight); points and fills by colour.
     std::map<std::uint64_t, std::vector<Vec2>> line_groups;

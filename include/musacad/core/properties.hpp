@@ -236,6 +236,17 @@ struct EntityProps {
     void set_linetype_by_layer(bool v) noexcept { set_flag(kLinetypeByLayer, v); }
     void set_lineweight_by_layer(bool v) noexcept { set_flag(kLineweightByLayer, v); }
 
+    /// The space the entity lives in: 0 = model space, otherwise a layout's id (paper
+    /// space). Carried in the upper bits of `flags`, so every record, command, capture
+    /// and file form already moves it around unchanged.
+    static constexpr std::uint8_t kSpaceShift = 4;
+    [[nodiscard]] std::uint8_t space() const noexcept {
+        return static_cast<std::uint8_t>(flags >> kSpaceShift);
+    }
+    void set_space(std::uint8_t s) noexcept {
+        flags = static_cast<std::uint8_t>((flags & 0x0Fu) | ((s & 0x0Fu) << kSpaceShift));
+    }
+
     friend bool operator==(const EntityProps&, const EntityProps&) = default;
 
 private:

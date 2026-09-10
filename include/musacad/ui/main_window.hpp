@@ -202,6 +202,8 @@ private:
 
     // --- multi-document tab strip (Phase A) --------------------------------
     void sync_document_tabs();                  ///< mirror the engine's doc list into FileTabs
+    void sync_layout_tabs();                    ///< mirror the layout table + active space into LayoutTabs
+    void layout_tab_menu(int index, QPoint global); ///< right-click: New / Rename / Delete
     void create_new_tab();                      ///< File->New / "+" : a new untitled tab
     void switch_to_document(std::uint64_t id);  ///< click/Ctrl+Tab: cancel-on-switch + Switch cmd
     void close_document_tab(std::uint64_t id);  ///< ×/Ctrl+W: dirty prompt, then Close cmd
@@ -349,6 +351,7 @@ private:
     int last_ctx_kind1_ = -1;
     int last_ctx_family1_ = -1;
     QTabBar* file_tabs_ = nullptr;          // multi-document tab strip (mirrors the engine)
+    QTabBar* layout_tabs_ = nullptr;        // Model + layouts (mirrors the engine's layout table)
     core::Vec2 last_cursor_world_{};        // latest cursor world pos (paste-at-cursor)
     QTimer* cursor_tick_ = nullptr;
     core::Vec2 tick_world_{};
