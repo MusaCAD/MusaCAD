@@ -43,6 +43,7 @@
 #include <QMessageBox>
 #include <QHBoxLayout>
 #include <QElapsedTimer>
+#include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QKeySequence>
@@ -104,6 +105,23 @@ namespace {
 /// save/restore can never drift -- they had: startup defaulted ON while the self-test
 /// restored OFF, so running the harness on a fresh profile silently persisted DYN off.
 constexpr bool kDynDefaultEnabled = true;
+
+/// True when one of the developer hooks (self-test, UI dump, smoke run, plot tests, the
+/// screenshot captures) is driving this process through its MUSACAD_* variable.
+bool developer_hook_active() {
+    const QStringList keys = QProcessEnvironment::systemEnvironment().keys();
+    for (const QString& k : keys) {
+        if (!k.startsWith(QLatin1String("MUSACAD_"))) {
+            continue;
+        }
+        if (k == QLatin1String("MUSACAD_SELFTEST") || k == QLatin1String("MUSACAD_DUMP_UI") ||
+            k == QLatin1String("MUSACAD_SMOKE") || k == QLatin1String("MUSACAD_PLOT_TEST") ||
+            k == QLatin1String("MUSACAD_GUI_PLOT_TEST") || k.endsWith(QLatin1String("_SHOT"))) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /// The declarative spec for the ARRAY dialog: a Type selector that gates the
 /// Rectangular vs Polar parameter sets.
@@ -349,6 +367,16 @@ MainWindow::~MainWindow() {
     delete takeCentralWidget(); // stops the viewport render thread before the engine
     if (engine_) {
         engine_->stop();
+    }
+    if (restore_dyn_pref_) {
+        // A harness run leaves the saved Dynamic Input preference exactly as it found it
+        // (absent stays absent, so a fresh profile still starts with the default).
+        QSettings settings;
+        if (harness_dyn_pref_.isValid()) {
+            settings.setValue(QStringLiteral("dyn/enabled"), harness_dyn_pref_);
+        } else {
+            settings.remove(QStringLiteral("dyn/enabled"));
+        }
     }
 }
 
@@ -1060,6 +1088,13 @@ void MainWindow::build_status_bar() {
     // Apply the persisted state at startup -- but NOT under the self-test/dump
     // harness, which must run in the canonical default runtime state (DYN off, the
     // command line focused) regardless of a developer's saved preference (Ph9).
+    // Whatever a developer hook does to the toggle is transient: it must not overwrite
+    // the preference the developer -- or a user who ran a hook -- had saved. Remember
+    // what was stored and put it back when the window goes away (see ~MainWindow).
+    if (developer_hook_active()) {
+        harness_dyn_pref_ = QSettings().value(QStringLiteral("dyn/enabled"));
+        restore_dyn_pref_ = true;
+    }
     if (!qEnvironmentVariableIsSet("MUSACAD_SELFTEST") &&
         !qEnvironmentVariableIsSet("MUSACAD_DUMP_UI") &&
         !qEnvironmentVariableIsSet("MUSACAD_SMOKE")) {
