@@ -422,8 +422,29 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     case EntityKind::Polyline: {
         const PolylineData* p = store.polyline(h);
         const auto verts = store.vertices_of(*p);
+        const auto bulges = store.bulges_of(*p);
         for (std::uint32_t i = 0; i < verts.size(); ++i) {
             push(out, verts[i], GripKind::Vertex, i);
+        }
+        // AutoCAD's segment midpoint grips: on the arc itself for an arc segment.
+        const std::uint32_t n = static_cast<std::uint32_t>(verts.size());
+        const std::uint32_t nseg = n < 2 ? 0 : (p->closed ? n : n - 1);
+        for (std::uint32_t s = 0; s < nseg; ++s) {
+            const Vec2 a = verts[s];
+            const Vec2 b = verts[(s + 1) % n];
+            const double bulge = s < bulges.size() ? bulges[s] : 0.0;
+            Vec2 mid{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5};
+            if (bulge != 0.0) {
+                // Sagitta = bulge * half-chord, to the right of the chord for a positive
+                // (counter-clockwise) bulge.
+                const Vec2 d = b - a;
+                const double len = length(d);
+                if (len > 1e-12) {
+                    const Vec2 right{d.y / len, -d.x / len};
+                    mid = mid + right * (bulge * len * 0.5);
+                }
+            }
+            push(out, mid, GripKind::Segment, kSegmentGripBase + s);
         }
         break;
     }
@@ -664,7 +685,28 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.radius = distance(x.center, newpos); // mid -> radius
                 }
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
-                if (grip_index < x.points.size()) {
+                if (grip_index >= kSegmentGripBase) {
+                    // A segment grip: a straight segment moves parallel to itself (both
+                    // ends by the drag); an arc segment is reshaped to pass through the
+                    // dragged point (its bulge follows), as in AutoCAD.
+                    const std::size_t n = x.points.size();
+                    const std::size_t seg = grip_index - kSegmentGripBase;
+                    const std::size_t nseg = n < 2 ? 0 : (x.closed ? n : n - 1);
+                    if (seg < nseg) {
+                        const std::size_t j = (seg + 1) % n;
+                        const double bulge = seg < x.bulges.size() ? x.bulges[seg] : 0.0;
+                        const Vec2 a = x.points[seg];
+                        const Vec2 b = x.points[j];
+                        if (bulge == 0.0) {
+                            const Vec2 mid{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5};
+                            const Vec2 d = newpos - mid;
+                            x.points[seg] = a + d;
+                            x.points[j] = b + d;
+                        } else {
+                            x.bulges[seg] = bulge_through(a, newpos, b);
+                        }
+                    }
+                } else if (grip_index < x.points.size()) {
                     x.points[grip_index] = newpos;
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
@@ -812,6 +854,34 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
         },
         c);
     return c;
+}
+
+double bulge_through(Vec2 a, Vec2 p, Vec2 b) {
+    const Vec2 chord = b - a;
+    const double len = length(chord);
+    if (len < 1e-12) {
+        return 0.0;
+    }
+    // Signed distance of p from the chord: positive to the right of a->b (the side a
+    // positive, counter-clockwise bulge bows towards).
+    const Vec2 right{chord.y / len, -chord.x / len};
+    const double d = dot(p - a, right);
+    if (std::abs(d) < 1e-12) {
+        return 0.0;
+    }
+    // Circle through a, p, b: its centre lies on the chord's perpendicular bisector at a
+    // distance found from |c - p| = |c - a|.
+    const Vec2 mid{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5};
+    const double h = len * 0.5;
+    const double t = dot(p - mid, chord) / len; // p's offset along the chord
+    // With the centre at mid - right * k:  (t)^2 + (d + k)^2 = h^2 + k^2  ->  k.
+    const double k = (h * h - t * t - d * d) / (2.0 * d);
+    const double r = std::sqrt(h * h + k * k);
+    // Included angle of the arc through p: the arc's midpoint sagitta is r - |k| when p's
+    // side is the "short" side (|k| measured towards p), else r + |k|.
+    const double sagitta = (d * k < 0.0) ? r + std::abs(k) : r - std::abs(k);
+    const double bulge = sagitta / h;
+    return d > 0.0 ? bulge : -bulge;
 }
 
 } // namespace musacad::core

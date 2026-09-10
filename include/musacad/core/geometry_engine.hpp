@@ -283,6 +283,7 @@ private:
     void apply_refedit(const RefEditCommand& c);
     void apply_refset(const RefSetCommand& c);
     void apply_refclose(const RefCloseCommand& c);
+    void apply_polyline_vertex(const PolylineVertexCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);

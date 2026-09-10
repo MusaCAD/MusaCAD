@@ -36,7 +36,7 @@ TEST_CASE("grips_of exposes the expected grips per entity") {
     g.clear();
     const std::array<Vec2, 3> pts{{{0, 0}, {1, 1}, {2, 0}}};
     grips_of(s, s.add_polyline(pts, false), g);
-    REQUIRE(g.size() == 3); // one per vertex
+    REQUIRE(g.size() == 5); // one per vertex + one per segment (midpoints)
 
     g.clear();
     grips_of(s, s.add_dimension(DimType::Linear, {0, 0}, {10, 0}, {5, 3}, 0), g);

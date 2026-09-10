@@ -12,6 +12,7 @@
 #include <thread>
 #include <unordered_map>
 
+#include <QPoint>
 #include <QWindow>
 
 #include "musacad/command/command_context.hpp"
@@ -103,6 +104,9 @@ public:
     /// itself, not a window grab, which comes back black for a GL surface under some
     /// compositors -- to `png_path`. Thread-safe. (MUSACAD_SCREENSHOT uses it.)
     void request_frame_capture(std::string png_path);
+
+    /// AutoCAD's multi-functional polyline grip menu (right-click on a grip while idle).
+    void show_polyline_grip_menu(const core::GripInfo& grip, QPoint global);
 
     /// Number of currently-selected entities (for enabling Modify buttons).
     [[nodiscard]] int selection_count() const noexcept {

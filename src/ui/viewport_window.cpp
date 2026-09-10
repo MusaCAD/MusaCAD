@@ -3,6 +3,8 @@
 
 #include "musacad/ui/viewport_window.hpp"
 
+#include "musacad/core/grips.hpp"
+
 #include <vector>
 #include <cstring>
 #include <algorithm>
@@ -31,6 +33,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPolygon>
+#include <QMenu>
 #include <QOpenGLContext>
 #include <QResizeEvent>
 #include <QScreen>
@@ -642,11 +645,33 @@ void ViewportWindow::render_loop(std::stop_token token) {
 void ViewportWindow::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::RightButton) {
         // AutoCAD: right-click is Enter while a command is running -- it ends "Select
-        // objects:" and accepts a prompt's default. Idle right-click is left alone.
+        // objects:" and accepts a prompt's default. Idle right-click on a polyline grip
+        // opens the grip's menu (AutoCAD's multi-functional grips); elsewhere it is
+        // left alone.
         if (processor_ != nullptr && processor_->has_active_command()) {
             sync_selection_to_processor();
             processor_->submit_line("");
             rebuild_overlay();
+        } else if (processor_ != nullptr) {
+            const double dpr = devicePixelRatio();
+            const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
+            core::Vec2 world;
+            double scale = 1.0;
+            {
+                std::scoped_lock lock(camera_mutex_);
+                world = camera_.screen_to_world(screen_px);
+                scale = camera_.scale();
+            }
+            if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
+                core::GripInfo ginfo;
+                {
+                    std::scoped_lock lock(grips_mutex_);
+                    ginfo = grips_cache_[static_cast<std::size_t>(gi)];
+                }
+                if (ginfo.handle.kind == core::EntityKind::Polyline) {
+                    show_polyline_grip_menu(ginfo, event->globalPosition().toPoint());
+                }
+            }
         }
         return;
     }
@@ -963,6 +988,33 @@ void dim_preview_segments(const core::DimData& d, const core::DimStyle& style,
                                      g.text_justify, seg);
 }
 } // namespace
+
+void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint global) {
+    using Op = core::PolylineVertexCommand::Op;
+    const bool segment = grip.index >= core::kSegmentGripBase;
+    QMenu menu;
+    QAction* add = menu.addAction(QStringLiteral("Add Vertex"));
+    QAction* remove = segment ? nullptr : menu.addAction(QStringLiteral("Remove Vertex"));
+    QAction* to_arc = segment ? menu.addAction(QStringLiteral("Convert to Arc")) : nullptr;
+    QAction* to_line = segment ? menu.addAction(QStringLiteral("Convert to Line")) : nullptr;
+    QAction* chosen = menu.exec(global);
+    if (chosen == nullptr) {
+        return;
+    }
+    Op op = Op::AddVertex;
+    if (chosen == remove) {
+        op = Op::RemoveVertex;
+    } else if (chosen == to_arc) {
+        op = Op::ToArc;
+    } else if (chosen == to_line) {
+        op = Op::ToLine;
+    } else if (chosen != add) {
+        return;
+    }
+    const std::uint64_t group = processor_->begin_group();
+    engine_.submit(core::PolylineVertexCommand{grip.handle, grip.index, op, group});
+    rebuild_overlay();
+}
 
 int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
     std::scoped_lock lock(grips_mutex_);
