@@ -26,6 +26,7 @@
 
 #include <QCursor>
 #include <QExposeEvent>
+#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -1469,8 +1470,27 @@ std::string ViewportWindow::cmd_font() {
     if (!cmd_font_name_.empty() || font_engine_ == nullptr) {
         return cmd_font_name_;
     }
+    // A face is usable only if it really yields outlines: the font database lists faces
+    // whose glyphs have none (on Windows the alphabetical list starts with "8514oem", a
+    // raster font), and such a pick drew the command entry as an empty box.
+    const auto usable = [this](const std::string& n) {
+        if (n.empty() || !font_engine_->is_outline_font(n)) {
+            return false;
+        }
+        std::vector<core::Vec2> tris;
+        font_engine_->glyph_fills(n, "A", {0.0, 0.0}, 1.0, 0.0, tris);
+        return !tris.empty();
+    };
+    // The platform's own UI font first (Segoe UI on Windows, the desktop sans on Linux),
+    // so the on-canvas entry looks like the rest of the interface; the first usable face
+    // in the database only as the fallback.
+    const std::string ui_font = QGuiApplication::font().family().toStdString();
+    if (usable(ui_font)) {
+        cmd_font_name_ = ui_font;
+        return cmd_font_name_;
+    }
     for (const std::string& n : font_engine_->available()) {
-        if (font_engine_->is_outline_font(n)) {
+        if (usable(n)) {
             cmd_font_name_ = n;
             break;
         }

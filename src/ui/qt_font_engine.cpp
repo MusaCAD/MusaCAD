@@ -155,6 +155,17 @@ QtFontEngine::Face* QtFontEngine::face_for(std::string_view name) const {
     if (!(cap > 0.0)) {
         cap = kPixelSize * 0.7;
     }
+    // The database also lists faces whose glyphs carry no outlines at all (Windows keeps
+    // raster fonts such as "8514oem" and symbol-only faces in it). They would resolve,
+    // measure, and then draw nothing; treat them as unresolved so callers fall back.
+    {
+        const QRawFont raw = QRawFont::fromFont(f);
+        const QList<quint32> idx = raw.glyphIndexesForString(QStringLiteral("H"));
+        if (idx.isEmpty() || raw.pathForGlyph(idx.front()).isEmpty()) {
+            faces_[std::string(name)] = Face{QFont{}, -1.0, {}};
+            return nullptr;
+        }
+    }
     Face& face = faces_[std::string(name)];
     face.font = f;
     face.cap = cap;
