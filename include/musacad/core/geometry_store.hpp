@@ -327,6 +327,20 @@ struct ImageDef {
     friend bool operator==(const ImageDef&, const ImageDef&) = default;
 };
 
+/// A paper-space viewport (MVIEW): a rectangle on the sheet, in paper millimetres,
+/// showing model space around `view_center` at `scale` (paper millimetres per model
+/// unit). What it shows is DERIVED at snapshot time from the model entities -- nothing
+/// is copied into the layout. `on` = false keeps the frame and hides the view.
+struct ViewportData {
+    Vec2 center;
+    double width = 100.0;
+    double height = 60.0;
+    Vec2 view_center;
+    double scale = 1.0;
+    bool on = true;
+    EntityProps props{};
+};
+
 /// A placed raster image: a definition index plus a transform and an optional clip.
 /// Its quad is DERIVED from these by resolve_image_quad -- never baked -- so the same
 /// rule the rest of the model follows applies here too.
@@ -548,6 +562,9 @@ public:
     /// A placed raster image referencing `def` in the image-definition table.
     EntityHandle add_image(std::uint16_t def, Vec2 pos, double width, double height,
                            double rotation, EntityProps props = {});
+    /// A paper-space viewport onto model space (see ViewportData).
+    EntityHandle add_viewport(Vec2 center, double width, double height, Vec2 view_center,
+                              double scale, bool on, EntityProps props = {});
     /// A table. `cells` are the raw cell strings in ROW-MAJOR order (`rows * cols` of
     /// them); `col_widths` and `row_heights` size the grid.
     EntityHandle add_table(std::uint16_t rows, std::uint16_t cols,
@@ -601,6 +618,7 @@ public:
     [[nodiscard]] const FcfData* fcf(EntityHandle h) const noexcept;
     [[nodiscard]] const DatumData* datum(EntityHandle h) const noexcept;
     [[nodiscard]] const ImageData* image(EntityHandle h) const noexcept;
+    [[nodiscard]] const ViewportData* viewport(EntityHandle h) const noexcept;
     [[nodiscard]] const TableData* table(EntityHandle h) const noexcept;
     /// Mutable access for the create path only (the clip fields are set right after
     /// insertion); everything else reads through the const accessor.
@@ -677,6 +695,7 @@ public:
     [[nodiscard]] const GenerationalArena<FcfData>& fcfs() const noexcept { return fcfs_; }
     [[nodiscard]] const GenerationalArena<DatumData>& datums() const noexcept { return datums_; }
     [[nodiscard]] const GenerationalArena<ImageData>& images() const noexcept { return images_; }
+    [[nodiscard]] const GenerationalArena<ViewportData>& viewports() const noexcept { return viewports_; }
     [[nodiscard]] const GenerationalArena<TableData>& tables() const noexcept { return tables_; }
 
     // --- block-definition table (parallel to the layer table) ---------------
@@ -992,6 +1011,7 @@ private:
     GenerationalArena<FcfData> fcfs_;
     GenerationalArena<DatumData> datums_;
     GenerationalArena<ImageData> images_;
+    GenerationalArena<ViewportData> viewports_;
     GenerationalArena<TableData> tables_;
     std::vector<TableCell> table_cell_pool_;  ///< shared, like the polyline vertex pool
     std::vector<double> table_size_pool_;     ///< column widths then row heights

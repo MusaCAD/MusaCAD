@@ -710,6 +710,23 @@ std::string serialize_native(const Document& doc) {
         s += escape(h.pattern_name);
         s += '\n';
     }
+    // v31: paper-space viewports.
+    for (const DocViewport& v : doc.viewports) {
+        s += "VIEWPORT ";
+        append_vec(s, v.center);
+        s += ' ';
+        append_double(s, v.width);
+        s += ' ';
+        append_double(s, v.height);
+        s += ' ';
+        append_vec(s, v.view_center);
+        s += ' ';
+        append_double(s, v.scale);
+        s += ' ';
+        append_uint(s, v.on ? 1 : 0);
+        append_props(s, v.props);
+        s += '\n';
+    }
     // v9: model-space block references, then the block-definition table. A block's
     // content reuses the same per-entity record formats, bracketed BLOCKDEF..ENDBLOCKDEF.
     const auto emit_insert_rec = [&](const DocInsert& ins) {
@@ -1793,6 +1810,17 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("IMAGEDEF payload is not valid base64");
             }
             doc.image_defs.push_back(std::move(d));
+        } else if (key == "VIEWPORT") {
+            // VIEWPORT cx cy w h vx vy scale on <props7>
+            std::uint64_t on = 1;
+            vals.clear();
+            EntityProps props;
+            if (tok.size() != 9 + 7 || !parse_doubles(tok, 1, 7, vals) || !to_uint(tok[8], on) ||
+                !parse_props(tok, 9, props)) {
+                return fail("VIEWPORT record malformed");
+            }
+            doc.viewports.push_back(DocViewport{{vals[0], vals[1]}, vals[2], vals[3], {vals[4], vals[5]},
+                                                vals[6], on != 0, props});
         } else if (key == "IMAGE") {
             // IMAGE def px py w h rot clipped u0 v0 u1 v1 <props7>
             std::uint64_t def = 0;

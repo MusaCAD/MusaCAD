@@ -233,6 +233,7 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.fcfs(), EntityKind::Fcf);
     collect(store_.datums(), EntityKind::Datum);
     collect(store_.images(), EntityKind::Image);
+    collect(store_.viewports(), EntityKind::Viewport);
     collect(store_.tables(), EntityKind::Table);
     return live;
 }
@@ -652,7 +653,11 @@ void translate_cmd(Command& c, Vec2 d) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddPointCommand>) {
+            if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                x.center += d;
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                x.pos += d;
+            } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p += d;
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base += d;
@@ -718,7 +723,12 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddPointCommand>) {
+            if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                x.center = refl(x.center); // a viewport stays axis-aligned
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                x.pos = refl(x.pos);
+                x.rotation = refl_ang(x.rotation);
+            } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = refl(x.p);
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 const Vec2 tip = refl(x.base + x.dir);
@@ -814,7 +824,12 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddPointCommand>) {
+            if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                x.center = rot(x.center); // a viewport stays axis-aligned
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                x.pos = rot(x.pos);
+                x.rotation += ang;
+            } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = rot(x.p);
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 const Vec2 tip = rot(x.base + x.dir);
@@ -902,7 +917,11 @@ Vec2 command_anchor(const Command& c) {
     std::visit(
         [&](const auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddPointCommand>) {
+            if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                out = x.center;
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                out = x.pos;
+            } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 out = x.p;
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 out = x.base;
@@ -946,7 +965,15 @@ void scale_cmd(Command& c, Vec2 base, double f) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddPointCommand>) {
+            if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                x.center = scl(x.center);
+                x.width *= f;
+                x.height *= f;
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                x.pos = scl(x.pos);
+                x.width *= f;
+                x.height *= f;
+            } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = scl(x.p);
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base = scl(x.base);
@@ -1270,6 +1297,14 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
         const TableData* t = store_.table(h);
         out += ",  " + std::to_string(t->rows) + " rows x " + std::to_string(t->cols) +
                " columns";
+        break;
+    }
+    case EntityKind::Viewport: {
+        const ViewportData* v = store_.viewport(h);
+        out += ",  " + fmt_len(v->width) + " x " + fmt_len(v->height) + " mm at (" +
+               fmt_len(v->center.x) + ", " + fmt_len(v->center.y) + "),  view centre (" +
+               fmt_len(v->view_center.x) + ", " + fmt_len(v->view_center.y) + "),  scale " +
+               fmt_len(v->scale) + " mm/unit" + (v->on ? "" : ",  off");
         break;
     }
     default:
@@ -2868,6 +2903,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
+        case EntityKind::Viewport:
         case EntityKind::Xline:
         case EntityKind::Ellipse:
         case EntityKind::AttDef:
@@ -3075,6 +3111,7 @@ void GeometryEngine::collect_block_content(const std::vector<EntityHandle>& hand
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
+        case EntityKind::Viewport:
         case EntityKind::Table:
         case EntityKind::Xline:
         case EntityKind::Ellipse:
@@ -3688,6 +3725,105 @@ void GeometryEngine::apply_layout(const LayoutCommand& c) {
     }
 }
 
+void GeometryEngine::apply_create_viewport(const CreateViewportCommand& c) {
+    if (store_.active_space() == 0) {
+        report("MVIEW: viewports are made on a layout (switch with a layout tab or LAYOUT).");
+        return;
+    }
+    const Layout* lay = store_.layout_by_id(store_.active_space());
+    Vec2 lo = c.a;
+    Vec2 hi = c.b;
+    if (c.fit_sheet && lay != nullptr) {
+        const bool land = lay->page.landscape;
+        const double w = land ? std::max(lay->page.paper_w_mm, lay->page.paper_h_mm)
+                              : std::min(lay->page.paper_w_mm, lay->page.paper_h_mm);
+        const double h = land ? std::min(lay->page.paper_w_mm, lay->page.paper_h_mm)
+                              : std::max(lay->page.paper_w_mm, lay->page.paper_h_mm);
+        lo = {10.0, 10.0};
+        hi = {w - 10.0, h - 10.0};
+    }
+    const double width = std::abs(hi.x - lo.x);
+    const double height = std::abs(hi.y - lo.y);
+    if (width < 1e-6 || height < 1e-6) {
+        report("MVIEW: the viewport needs a real width and height.");
+        return;
+    }
+    // Fit the whole model: its extents centred, the larger reduction winning.
+    Vec2 mmin;
+    Vec2 mmax;
+    bool any = false;
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* p = store_.props(h);
+        if (p == nullptr || p->space() != 0 || h.kind == EntityKind::Xline) {
+            continue;
+        }
+        Vec2 a;
+        Vec2 b;
+        if (!entity_aabb(store_, h, a, b)) {
+            continue;
+        }
+        if (!any) {
+            mmin = a;
+            mmax = b;
+            any = true;
+        } else {
+            mmin = {std::min(mmin.x, a.x), std::min(mmin.y, a.y)};
+            mmax = {std::max(mmax.x, b.x), std::max(mmax.y, b.y)};
+        }
+    }
+    AddViewportCommand vp;
+    vp.center = {(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5};
+    vp.width = width;
+    vp.height = height;
+    if (any) {
+        const double mw = std::max(mmax.x - mmin.x, 1e-9);
+        const double mh = std::max(mmax.y - mmin.y, 1e-9);
+        vp.view_center = {(mmin.x + mmax.x) * 0.5, (mmin.y + mmax.y) * 0.5};
+        vp.scale = std::min(width / mw, height / mh) * 0.95;
+    } else {
+        vp.view_center = {0.0, 0.0};
+        vp.scale = 1.0;
+    }
+    const Command add = vp;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Viewport created" + std::string(any ? " showing the whole model at " + fmt_len(vp.scale) + " mm/unit."
+                                                : " (the model is empty)."));
+}
+
+void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (store_.viewport(h) == nullptr) {
+        report("Select a viewport.");
+        return;
+    }
+    const Command original = capture_entity(h);
+    AddViewportCommand edited = std::get<AddViewportCommand>(original);
+    if (c.on >= 0) {
+        edited.on = c.on != 0;
+    }
+    if (c.scale > 0.0) {
+        edited.scale = c.scale;
+    }
+    if (c.view_center) {
+        edited.view_center = *c.view_center;
+    }
+    remove_indexed(h);
+    push_erase_item(c.group, h, original);
+    const Command add = edited;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(c.on == 0 ? "Viewport off." : c.on == 1 ? "Viewport on." : "Viewport updated.");
+}
+
 void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     io::Document doc;
     std::size_t count = 0;
@@ -3812,6 +3948,8 @@ void GeometryEngine::apply_audit(bool fix) {
         case EntityKind::Image:
             erase = store_.image(h)->def >= nimages;
             break;
+        case EntityKind::Viewport:
+            break; // nothing to reference
         case EntityKind::Polyline:
             erase = store_.polyline(h)->count < 2;
             break;
@@ -4976,7 +5114,7 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
                           std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddDimensionCommand> ||
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
-                          std::is_same_v<T, AddMLeaderCommand> ||
+                          std::is_same_v<T, AddMLeaderCommand> || std::is_same_v<T, AddViewportCommand> ||
                           std::is_same_v<T, AddInsertCommand>) {
                 if (!x.props) {
                     x.props = EntityProps{};
@@ -6002,7 +6140,7 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddInsertCommand> ||
                           std::is_same_v<T, AddHatchCommand> || std::is_same_v<T, AddFcfCommand> ||
                           std::is_same_v<T, AddDatumCommand> ||
-                          std::is_same_v<T, AddImageCommand> ||
+                          std::is_same_v<T, AddImageCommand> || std::is_same_v<T, AddViewportCommand> ||
                           std::is_same_v<T, AddTableCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
@@ -6405,6 +6543,10 @@ void GeometryEngine::apply(const Command& command) {
                 apply_attach_image(c);
             } else if constexpr (std::is_same_v<T, SetImageClipCommand>) {
                 apply_image_clip(c);
+            } else if constexpr (std::is_same_v<T, CreateViewportCommand>) {
+                apply_create_viewport(c);
+            } else if constexpr (std::is_same_v<T, SetViewportViewCommand>) {
+                apply_viewport_view(c);
             } else if constexpr (std::is_same_v<T, SetActiveSpaceCommand>) {
                 std::uint8_t target = c.space;
                 if (!c.name.empty()) {

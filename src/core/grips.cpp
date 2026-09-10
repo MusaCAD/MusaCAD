@@ -190,6 +190,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         c.props = td->props;
         return c;
     }
+    case EntityKind::Viewport: {
+        const ViewportData* v = store.viewport(h);
+        return AddViewportCommand{v->center, v->width, v->height, v->view_center, v->scale, v->on, 0, v->props};
+    }
     case EntityKind::Image: {
         const ImageData* im = store.image(h);
         return AddImageCommand{im->def,     im->pos,     im->width,   im->height,
@@ -331,6 +335,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_table(c.rows, c.cols, cells, c.col_widths, c.row_heights,
                                          c.pos, c.rotation, c.style, c.has_title, c.has_header,
                                          props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                handle = store.add_viewport(c.center, c.width, c.height, c.view_center, c.scale, c.on,
+                                            props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 handle = store.add_image(c.def, c.pos, c.width, c.height, c.rotation,
                                          props_of(c.props));
@@ -535,6 +542,18 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
         push(out, in->pos, GripKind::Move, 0); // insertion point moves the instance
+        break;
+    }
+    case EntityKind::Viewport: {
+        // Centre moves; a corner resizes against the opposite corner.
+        const ViewportData* v = store.viewport(h);
+        const double hw = v->width * 0.5;
+        const double hh = v->height * 0.5;
+        push(out, v->center, GripKind::Move, 0);
+        push(out, {v->center.x - hw, v->center.y - hh}, GripKind::Vertex, 1);
+        push(out, {v->center.x + hw, v->center.y - hh}, GripKind::Vertex, 2);
+        push(out, {v->center.x + hw, v->center.y + hh}, GripKind::Vertex, 3);
+        push(out, {v->center.x - hw, v->center.y + hh}, GripKind::Vertex, 4);
         break;
     }
     case EntityKind::Image: {
@@ -784,6 +803,24 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     const double w = along - before;
                     if (w > 1e-6) {
                         x.col_widths[grip_index - 1] = w;
+                    }
+                }
+            } else if constexpr (std::is_same_v<T, AddViewportCommand>) {
+                if (grip_index == 0) {
+                    x.center = newpos;
+                } else if (grip_index <= 4) {
+                    // The dragged corner moves; the opposite one stays.
+                    const double hw = x.width * 0.5;
+                    const double hh = x.height * 0.5;
+                    const double sx = (grip_index == 2 || grip_index == 3) ? 1.0 : -1.0;
+                    const double sy = (grip_index >= 3) ? 1.0 : -1.0;
+                    const Vec2 fixed{x.center.x - sx * hw, x.center.y - sy * hh};
+                    const double w = std::abs(newpos.x - fixed.x);
+                    const double hgt = std::abs(newpos.y - fixed.y);
+                    if (w > 1e-6 && hgt > 1e-6) {
+                        x.width = w;
+                        x.height = hgt;
+                        x.center = {(newpos.x + fixed.x) * 0.5, (newpos.y + fixed.y) * 0.5};
                     }
                 }
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {

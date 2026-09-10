@@ -302,6 +302,8 @@ private:
     void apply_attach_image(const AttachImageCommand& c);
     void apply_image_clip(const SetImageClipCommand& c);
     void apply_layout(const LayoutCommand& c);
+    void apply_create_viewport(const CreateViewportCommand& c);
+    void apply_viewport_view(const SetViewportViewCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);

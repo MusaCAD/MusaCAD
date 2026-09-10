@@ -56,6 +56,8 @@ commands (Ribbon Phase A):
 | IMAGEFRAME | Image frames: 0 hidden, 1 shown and plotted, 2 shown on screen only. |
 | LAYOUT (LO) | Paper-space sheets: New, Copy (objects included), Delete (an empty one), Rename, Set, ?. The tab strip does the same by click and right-click. |
 | MODEL / PSPACE (PS) | Switch to model space / to paper space (the first layout). |
+| MVIEW (MV) | A viewport on the layout showing model space: two corners, or Fit (the sheet inside a 10 mm margin), fitted to the whole model; ON / OFF, Scale (paper mm per model unit), Center (the model point at the viewport's centre). Corner grips resize, the centre grip moves. |
+| MSPACE (MS) | Not available yet: editing model space through a viewport. |
 | REFEDIT | Edit a block definition in place: the picked reference's members become ordinary objects (the working set) to edit with any command. |
 | REFSET | Add objects to, or remove them from, the working set of the reference being edited. |
 | REFCLOSE | Save the working set back into the block definition (every reference updates) or discard the changes. |
@@ -168,7 +170,8 @@ commands (Ribbon Phase A):
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented |
 | Block attributes: ATTDEF entities become attributes on BLOCK; INSERT prompts for each value (Constant/Preset skipped); ATTDISP; ATTEDIT; EXPLODE gives the definitions back; native v28 and DXF ATTDEF / INSERT+ATTRIB+SEQEND both ways | ATT / ATTDISP / ATTEDIT | Implemented (the dialog forms EATTEDIT/BATTMAN and multi-line attributes are not) |
 | REFEDIT / REFSET / REFCLOSE: in-place block editing through a working set, mapped back into the definition's frame on save (needs a positive, uniform scale); Discard restores the reference; undo takes back the save as one step | REFEDIT | Implemented (no fading of the rest of the drawing during the edit) |
-| Layouts / paper space: a layout table with page setups, per-entity space (model or a layout), only the active space drawn / picked / edited, the sheet drawn under a layout, layout tabs (click, right-click New/Rename/Delete), PLOT of a layout = its sheet at 1:1, native v30, DXF paper-space flag (67) both ways | LAYOUT / MODEL / PSPACE | Implemented (viewports into model space -- MVIEW / MSPACE -- are not) |
+| Layouts / paper space: a layout table with page setups, per-entity space (model or a layout), only the active space drawn / picked / edited, the sheet drawn under a layout, layout tabs (click, right-click New/Rename/Delete), PLOT of a layout = its sheet at 1:1, native v30, DXF paper-space flag (67) both ways | LAYOUT / MODEL / PSPACE | Implemented |
+| Viewports (MVIEW): a paper-space entity showing model space at a scale, derived at snapshot time (model geometry mapped into the sheet and clipped to the frame; text, hatches, wipeouts and whole images included), plotted with the sheet, grips, native v31 and DXF VIEWPORT both ways | MVIEW | Implemented (MSPACE editing through a viewport and per-viewport layer freezing are not) |
 | PEDIT (Close/Open/Join/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Width, Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
 | Object snaps: Insertion, Apparent intersection, Parallel; OSNAP settings dialog; -OSNAP | OS | Implemented (Apparent intersection and Parallel are opt-in, as in AutoCAD) |
 | ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |

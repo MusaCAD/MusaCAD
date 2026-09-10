@@ -884,6 +884,25 @@ std::string serialize_dxf(const Document& doc) {
     for (const DocInsert& in : doc.inserts) {
         emit_insert(in);
     }
+    // Paper-space viewports (AutoCAD's VIEWPORT entity): the frame in paper units and
+    // the model view it shows (view centre, view height = frame height / scale).
+    for (const DocViewport& v : doc.viewports) {
+        code(s, 0, "VIEWPORT");
+        emit_props(s, doc, v.props);
+        if (v.props.space() == 0) {
+            code_i(s, 67, 1);
+        }
+        code_d(s, 10, v.center.x);
+        code_d(s, 20, v.center.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 40, v.width);
+        code_d(s, 41, v.height);
+        code_i(s, 68, v.on ? 1 : 0);
+        code_i(s, 69, 2);
+        code_d(s, 12, v.view_center.x);
+        code_d(s, 22, v.view_center.y);
+        code_d(s, 45, v.scale > 0.0 ? v.height / v.scale : v.height);
+    }
     code(s, 0, "ENDSEC");
 
     // BLOCKS section: each definition's geometry between BLOCK/ENDBLK. (Emitted after
@@ -1423,6 +1442,27 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 }
             }
             sink.texts->push_back(std::move(t));
+            return;
+        }
+        if (type == "VIEWPORT") {
+            // The paper-space (id 1 is the layout's own overall viewport: skipped).
+            const std::string* id = find(body, 69);
+            if (id != nullptr && to_l(*id) == 1) {
+                return;
+            }
+            DocViewport v;
+            v.props = props_of(body);
+            v.props.set_space(1);
+            v.center = {getd(body, 10), getd(body, 20)};
+            v.width = getd(body, 40, 100.0);
+            v.height = getd(body, 41, 60.0);
+            v.view_center = {getd(body, 12), getd(body, 22)};
+            const double view_h = getd(body, 45, v.height);
+            v.scale = view_h > 0.0 ? v.height / view_h : 1.0;
+            if (const std::string* st = find(body, 68)) {
+                v.on = to_l(*st) > 0;
+            }
+            doc.viewports.push_back(std::move(v));
             return;
         }
         if (type == "ATTDEF") {

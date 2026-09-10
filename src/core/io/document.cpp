@@ -83,6 +83,8 @@ std::uint32_t doc_index_of(const GeometryStore& store, EntityHandle h) {
         return alive_before(store.datums(), h.index);
     case EntityKind::Image:
         return alive_before(store.images(), h.index);
+    case EntityKind::Viewport:
+        return alive_before(store.viewports(), h.index);
     case EntityKind::Table:
         return alive_before(store.tables(), h.index);
     }
@@ -155,6 +157,9 @@ std::vector<EntityHandle> handles_of_kind(const GeometryStore& store, EntityKind
         break;
     case EntityKind::Image:
         collect(store.images(), EntityKind::Image);
+        break;
+    case EntityKind::Viewport:
+        collect(store.viewports(), EntityKind::Viewport);
         break;
     case EntityKind::Table:
         collect(store.tables(), EntityKind::Table);
@@ -427,6 +432,13 @@ Document document_from_store(const GeometryStore& store) {
         }
         doc.block_defs.push_back(std::move(bd));
     }
+    const auto& vports = store.viewports();
+    for (std::uint32_t i = 0; i < vports.slot_count(); ++i) {
+        if (vports.alive(i)) {
+            const ViewportData& v = vports.data()[i];
+            doc.viewports.push_back(DocViewport{v.center, v.width, v.height, v.view_center, v.scale, v.on, v.props});
+        }
+    }
     const auto& ins = store.inserts();
     for (std::uint32_t i = 0; i < ins.slot_count(); ++i) {
         if (ins.alive(i)) {
@@ -506,6 +518,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
             blocks.push_back(std::move(cb));
         }
         store.set_block_table(std::move(blocks));
+    }
+    for (const DocViewport& v : doc.viewports) {
+        store.add_viewport(v.center, v.width, v.height, v.view_center, v.scale, v.on, v.props);
     }
     for (const DocInsert& di : doc.inserts) {
         const std::uint16_t bi = resolve_block(di.block_name);

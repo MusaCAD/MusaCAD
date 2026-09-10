@@ -232,6 +232,19 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
         case EntityKind::Datum:
         case EntityKind::Image:
             break; // no object-snap points (nearest, if any, handled below)
+        case EntityKind::Viewport: {
+            const ViewportData* v = store.viewport(h);
+            const double hw = v->width * 0.5;
+            const double hh = v->height * 0.5;
+            const Vec2 c[4] = {{v->center.x - hw, v->center.y - hh}, {v->center.x + hw, v->center.y - hh},
+                               {v->center.x + hw, v->center.y + hh}, {v->center.x - hw, v->center.y + hh}};
+            for (int i = 0; i < 4; ++i) {
+                consider(SnapType::Endpoint, c[i]);
+                const Vec2& n = c[(i + 1) % 4];
+                consider(SnapType::Midpoint, {(c[i].x + n.x) * 0.5, (c[i].y + n.y) * 0.5});
+            }
+            break;
+        }
         case EntityKind::Ellipse: {
             const EllipseData* e = store.ellipse(h);
             consider(SnapType::Center, e->center);
