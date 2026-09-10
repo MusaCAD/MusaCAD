@@ -49,6 +49,34 @@ Everything below is on `main` and in the per-command table in
   undo history after a re-creation).
 - Opening a drawing into a new tab lost the Standard text style and could crash text
   layout.
+- **Windows** (#6, verified on real hardware):
+  - The MSVC build compiles again (`localtime_r`, a missing `<algorithm>`, `M_PI`), and
+    the `dev` preset (Debug + AddressSanitizer + tests) builds and runs with MSVC
+    (`/bigobj`; the Qt DLLs are put on PATH for test discovery, CTest and `cli_check`).
+  - No console window behind the application any more: `musacad_app.exe` is a windowed
+    program. `musacad.exe` is a new console front-end for scripts that waits and returns
+    the documented exit codes, and both are in the installer (see docs/CLI.md).
+  - Drawings under a folder with a non-ASCII name (accented or Indic characters) open,
+    save and plot; the executable now runs with a UTF-8 code page.
+  - `FIELD` `%<Login>%` is filled from `USERNAME`; the developer hooks write to the temp
+    directory instead of `/tmp`; the self-test's DWG round trip runs on Windows.
+  - ODA File Converter is auto-detected in its `Program Files\ODA` folder, where its
+    installer puts it without touching PATH.
+  - The Qt-free libraries are compiled with `/utf-8`, so their non-ASCII literals no
+    longer depend on the build machine's code page.
+  - `.gitattributes` keeps a Windows checkout at LF like the repository.
+  - Installer: `--plot` works from the installed copy (the offscreen Qt plugin is
+    bundled; a missing plugin can no longer hang a script on a message box), the
+    Start-menu entry is created for all users, "Run Musa CAD" on the finish page starts
+    the program as the normal user, and the Visual C++ redistributable it ships is
+    actually installed.
+  - The on-canvas command entry and its suggestion list drew an empty box: the face
+    for them was the first font in the system list, which on Windows is a raster font
+    without outlines. The platform's UI font is used now, and a face without outlines
+    is never picked.
+- Running a developer hook (self-test, UI dump, smoke run, screenshot captures) no
+  longer overwrites the saved Dynamic Input preference, so a first real launch after
+  one comes up with DYN on as intended.
 
 ### Compatibility
 Native format **v28**. Files from v0.3.0 (v20) open unchanged; files saved by this build

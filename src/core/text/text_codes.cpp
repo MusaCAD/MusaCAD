@@ -71,7 +71,14 @@ FieldContext make_field_context(std::string_view document_path) {
     FieldContext fc;
     const std::time_t now = std::time(nullptr);
     std::tm tmv{};
+    // The thread-safe local-time conversion is spelled differently per C library:
+    // POSIX has localtime_r(time, tm); the MSVC CRT has localtime_s(tm, time) and no
+    // localtime_r at all.
+#ifdef _WIN32
+    localtime_s(&tmv, &now);
+#else
     localtime_r(&now, &tmv);
+#endif
     char buf[64];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tmv);
     fc.date = buf;
@@ -81,7 +88,12 @@ FieldContext make_field_context(std::string_view document_path) {
     fc.filename = document_path.empty()
                       ? std::string("Drawing1")
                       : std::string(document_path.substr(slash == std::string_view::npos ? 0 : slash + 1));
+    // %<Login>%: the account name. POSIX shells export USER; Windows exports USERNAME
+    // (and no USER), so without the fallback the field is always empty there.
     const char* user = std::getenv("USER");
+    if (user == nullptr || *user == '\0') {
+        user = std::getenv("USERNAME");
+    }
     fc.login = user != nullptr ? user : "";
     return fc;
 }

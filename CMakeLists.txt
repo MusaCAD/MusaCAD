@@ -12,6 +12,14 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    # /utf-8: the sources are UTF-8 without a BOM; MSVC otherwise reads them in the
+    # system code page and the non-ASCII characters in string literals come out garbled.
+    # /bigobj: the largest translation units (geometry_engine.cpp, properties_registry.cpp)
+    # exceed the default object-file section limit in Debug/ASan builds (C1128).
+    add_compile_options(/utf-8 /bigobj)
+endif()
+
 # Only the top-level project drives these global conveniences.
 if(PROJECT_IS_TOP_LEVEL)
     set_property(GLOBAL PROPERTY USE_FOLDERS ON)

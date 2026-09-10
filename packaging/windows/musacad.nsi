@@ -36,13 +36,35 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${EXENAME}"
+; "Run Musa CAD" on the finish page. MUI_FINISHPAGE_RUN would start the program with the
+; installer's administrator token (drag-and-drop from Explorer stops working, every file it
+; writes is owned by an elevated process). Starting it through Explorer -- the user's own,
+; un-elevated shell -- launches it as the normal user, which is how the shortcut runs it.
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_TEXT "Run ${APPNAME}"
+!define MUI_FINISHPAGE_RUN_FUNCTION LaunchAsUser
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
+
+; The install is machine-wide (Program Files, HKLM, admin), so the Start-menu entry must be
+; too. Without this $SMPROGRAMS is the INSTALLING user's menu: other accounts never see the
+; program, and a standard user who elevated with an administrator's credentials finds the
+; shortcut in the administrator's menu. Set in both halves, so the uninstaller removes what
+; the installer created.
+Function .onInit
+  SetShellVarContext all
+FunctionEnd
+Function un.onInit
+  SetShellVarContext all
+FunctionEnd
+
+Function LaunchAsUser
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\${EXENAME}"'
+FunctionEnd
 
 ; ---------------------------------------------------------------------------
 Section "Musa CAD (required)" SecCore
@@ -51,7 +73,23 @@ Section "Musa CAD (required)" SecCore
   File /r "${STAGING}\*.*"        ; the whole windeployqt staging tree (backslash: NSIS /r glob)
   File "assets\branding\musacad.ico"
 
+  ; windeployqt --compiler-runtime puts the Visual C++ redistributable INSTALLER into the
+  ; staging tree (not the runtime DLLs); copying it along is not enough -- it has to run, or
+  ; a machine without the 2015-2022 runtime fails to start musacad_app.exe with
+  ; "VCRUNTIME140.dll was not found". Quiet install; exit 1638 means a newer runtime is
+  ; already there and 3010 that a reboot is pending -- both fine. The 19 MB installer is
+  ; not kept in the install folder afterwards.
+  IfFileExists "$INSTDIR\vc_redist.x64.exe" 0 +3
+    ExecWait '"$INSTDIR\vc_redist.x64.exe" /install /quiet /norestart'
+    Delete "$INSTDIR\vc_redist.x64.exe"
+
   WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
+  ; Earlier installers (v0.1.0) put the shortcut in the installing user's own menu; take
+  ; that one away so an upgrade does not leave two entries.
+  SetShellVarContext current
+  Delete "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"
+  RMDir "$SMPROGRAMS\${APPNAME}"
+  SetShellVarContext all
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\musacad.ico"
 

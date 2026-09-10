@@ -56,6 +56,9 @@ Verify locally (the discipline that catches breakage):
 - Install + launch the Flatpak (`flatpak install --user ...flatpak`; `flatpak run com.musacad.MusaCAD`).
 - **Windows: a human installs the `.exe` on a real Windows box** and confirms it launches + draws.
   Claude Code / Linux CI cannot verify the Windows binary at runtime — this step is manual.
+  Check both programs the installer ships: `musacad_app.exe` from the Start menu (no console
+  window), and `musacad.exe --check <drawing>` / `--plot` from cmd or PowerShell (waits and
+  returns the exit code). Open a drawing from a folder with a non-ASCII name too.
 
 ## Tag + publish (manual — never automated)
 

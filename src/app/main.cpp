@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QStringList>
@@ -14,6 +15,7 @@
 
 #include "musacad/app/cli.hpp"
 #include "musacad/app/plot_cli.hpp"
+#include "musacad/app/win_console.hpp"
 #include "musacad/ui/main_window.hpp"
 #include "musacad/ui/theme.hpp"
 
@@ -30,9 +32,12 @@ std::vector<char*> qt_argv(const std::vector<std::string>& args) {
 } // namespace
 
 int main(int argc, char* argv[]) {
+    using namespace musacad::app;
+    // Windows: a windowed program started from a console has no stdout/stderr; attach to
+    // the parent's console first so the CLI modes below can print. No-op elsewhere.
+    attach_parent_console();
     // The command line is parsed BEFORE any Qt object exists, so --help/--version/
     // --check need no display, no windowing system and no GL context.
-    using namespace musacad::app;
     const CliOptions opts = parse_cli(argc, argv);
     if (!opts.error.empty()) {
         std::fprintf(stderr, "musacad: %s\n", opts.error.c_str());
@@ -69,7 +74,16 @@ int main(int argc, char* argv[]) {
         const bool explicit_platform =
             std::find(opts.qt_args.begin(), opts.qt_args.end(), "-platform") != opts.qt_args.end();
         if (!explicit_platform) {
+#ifdef Q_OS_WIN
+            // Windows: offscreen first, the desktop platform as the fallback. The installer
+            // ships both plugins; should qoffscreen ever be missing from a deployment, a
+            // windowed program with no console reports "no Qt platform plugin" as a modal
+            // message box, and a script running --plot would hang on it. The fallback plots
+            // through the windows platform instead.
+            qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+#else
             qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
         }
         std::vector<char*> pargv = qt_argv(opts.qt_args);
         int pargc = static_cast<int>(pargv.size());
@@ -186,7 +200,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_PLOT_TEST").split(QLatin1Char('|'));
             const QString in = a.value(0);
-            const QString out = a.value(1, QStringLiteral("/tmp/plot_test.pdf"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("plot_test.pdf")));
             const int area = a.value(2, QStringLiteral("1")).toInt();
             const bool ok = window.selftest_plot_file(in, out, area);
             app.exit(ok ? 0 : 1);
@@ -200,7 +214,7 @@ int main(int argc, char* argv[]) {
             const QStringList a =
                 qEnvironmentVariable("MUSACAD_GUI_PLOT_TEST").split(QLatin1Char('|'));
             const bool ok = window.selftest_gui_plot_file(
-                a.value(0), a.value(1, QStringLiteral("/tmp/gui_plot.pdf")));
+                a.value(0), a.value(1, QDir::temp().filePath(QStringLiteral("gui_plot.pdf"))));
             app.exit(ok ? 0 : 1);
         });
     }
@@ -223,7 +237,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_DYN_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/dyn_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("dyn_shot.png")));
             const bool ok = window.dyn_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -236,7 +250,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_OFFSET_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/offset_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("offset_shot.png")));
             const bool ok = window.offset_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -249,7 +263,7 @@ int main(int argc, char* argv[]) {
             const QStringList a =
                 qEnvironmentVariable("MUSACAD_MULTIDOC_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/multidoc_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("multidoc_shot.png")));
             const bool ok = window.multidoc_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -262,7 +276,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_TEXT_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/text_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("text_shot.png")));
             const bool ok = window.text_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -275,7 +289,7 @@ int main(int argc, char* argv[]) {
             const QStringList a =
                 qEnvironmentVariable("MUSACAD_MATCHPROP_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/matchprop_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("matchprop_shot.png")));
             const bool ok = window.matchprop_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -288,7 +302,7 @@ int main(int argc, char* argv[]) {
             const QStringList a =
                 qEnvironmentVariable("MUSACAD_LTSCALE_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/ltscale_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("ltscale_shot.png")));
             const bool ok = window.ltscale_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -301,7 +315,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_MLT_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/mlt_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("mlt_shot.png")));
             const bool ok = window.mleader_text_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -312,7 +326,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_HATCH_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/hatch_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("hatch_shot.png")));
             const bool ok = window.hatch_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -324,7 +338,7 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(900, &window, [&window, &app] {
             const QStringList a = qEnvironmentVariable("MUSACAD_RIBBON_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/ribbon_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("ribbon_shot.png")));
             const bool ok = window.ribbon_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });
@@ -339,7 +353,7 @@ int main(int argc, char* argv[]) {
             const QStringList a =
                 qEnvironmentVariable("MUSACAD_CMDCTL_SHOT").split(QLatin1Char('|'));
             const int kind = a.value(0, QStringLiteral("0")).toInt();
-            const QString out = a.value(1, QStringLiteral("/tmp/cmdctl_shot.png"));
+            const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("cmdctl_shot.png")));
             const bool ok = window.cmdctl_shot(kind, out.toStdString());
             app.exit(ok ? 0 : 1);
         });

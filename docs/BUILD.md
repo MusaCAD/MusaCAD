@@ -40,12 +40,32 @@ For GPU rendering at runtime you also need working Vulkan drivers
 
 ### Windows
 
-* Visual Studio 2022 (17.8+) with the "Desktop development with C++" workload.
+* Visual Studio 2022 (17.8+) with the "Desktop development with C++" workload
+  (the Build Tools edition is enough; add the "C++ AddressSanitizer" component for
+  the `dev` preset).
 * CMake and Ninja (bundled with VS, or install standalone).
-* Qt6 — install via the [Qt online installer](https://www.qt.io/download) and
-  point CMake at it with `-DCMAKE_PREFIX_PATH=C:/Qt/6.x.x/msvc2022_64`, or use a
+* Qt6 — install via the [Qt online installer](https://www.qt.io/download), or
+  with [aqtinstall](https://github.com/miurahr/aqtinstall) exactly as CI does
+  (`aqt install-qt windows desktop 6.8.1 win64_msvc2022_64 -m qtimageformats`),
+  and point CMake at it with `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.1/msvc2022_64`; or use a
   vcpkg manifest.
-* Vulkan SDK from [LunarG](https://vulkan.lunarg.com/).
+* Vulkan SDK from [LunarG](https://vulkan.lunarg.com/) — optional; see the note in
+  the top-level `CMakeLists.txt` (the OpenGL backend is what gets built).
+
+Build from an **x64 Native Tools Command Prompt** (or after `vcvars64.bat`), so the
+Ninja presets find `cl`:
+
+```bat
+cmake --preset release -DCMAKE_PREFIX_PATH=C:/Qt/6.8.1/msvc2022_64
+cmake --build --preset release
+```
+
+The build tree has no Qt DLLs next to the executables: to run anything from it, put
+`C:\Qt\6.8.1\msvc2022_64\bin` on `PATH` (CTest gets it from the configured Qt by
+itself). The Windows build produces two programs in `build\<preset>\bin`:
+`musacad_app.exe`, the windowed application, and `musacad.exe`, the console front-end
+for scripts — see [docs/CLI.md](CLI.md). The shipped installer is assembled by
+`.github/workflows/build-windows.yml` (`windeployqt` + NSIS).
 
 ## Dependency strategy
 

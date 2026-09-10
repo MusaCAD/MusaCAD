@@ -129,6 +129,32 @@ musacad -platform offscreen part.musa
 An unknown double-dash option is a usage error. Qt's double-dash spellings are not
 supported — use the single-dash form.
 
+## Windows
+
+The Windows build (and the installer) ships two programs side by side:
+
+| Program | What it is |
+|---|---|
+| `musacad_app.exe` | The windowed application — what the Start menu shortcut and the file associations open. No console window. |
+| `musacad.exe` | The console front-end for everything on this page. It runs `musacad_app.exe` with the same arguments, hands it the console, waits, and exits with its exit code. |
+
+Use `musacad.exe` from `cmd`, PowerShell and scripts:
+
+```bat
+"C:\Program Files\Musa CAD\musacad.exe" --check part.musa && echo ok
+```
+
+Two programs because Windows shells do not wait for a windowed program: run directly,
+`musacad_app.exe --check part.musa` returns to the prompt at once. It still prints
+(the application attaches to the console it was started from), but `%ERRORLEVEL%` /
+`$LASTEXITCODE` never sees the result and a `&&` chain runs regardless. The front-end
+restores the documented behaviour; redirection (`> out.txt`) and pipes pass through it
+unchanged.
+
+`--plot` on Windows asks Qt for `offscreen;windows`: the offscreen platform the
+installer ships, with the desktop platform as the fallback, so a deployment that lost
+`platforms\qoffscreen.dll` still plots instead of stopping on Qt's error box.
+
 ## How it is wired
 
 `main()` parses the command line **before** constructing `QApplication`

@@ -59,6 +59,14 @@ FetchContent_Declare(
     GIT_TAG        v3.5.4
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(Catch2)
+if(MSVC)
+    # MSVC's STL records per object whether its container annotations were compiled in
+    # (/fsanitize=address) and refuses to link objects that disagree (LNK2038
+    # annotate_string / annotate_vector). Catch2 is built from source here, so under the
+    # sanitizer presets it simply gets the same flags as the test binary that links it.
+    musacad_enable_sanitizers(Catch2)
+    musacad_enable_sanitizers(Catch2WithMain)
+endif()
 
 add_executable(musacad_tests
     test_math.cpp
@@ -167,7 +175,33 @@ musacad_enable_sanitizers(musacad_tests)
 
 list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
 include(Catch)
-catch_discover_tests(musacad_tests)
+if(WIN32)
+    # The test binary links Qt (through musacad_render) and, under the dev preset, the
+    # AddressSanitizer runtime and the debug CRT. None of those is on PATH by itself, and
+    # Catch2 3.5's DL_PATHS REPLACES PATH while it lists the test cases right after the link
+    # (it prepends at test time), so the list has to be complete: the Qt this build was
+    # configured with, the compiler's own directory (clang_rt.asan_dynamic, msvcp140d and
+    # friends live next to cl.exe), and the SDK's ucrt folder (ucrtbased.dll; a full Visual
+    # Studio install also copies it to System32, a bare toolset does not).
+    set(_musacad_dl_paths "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
+    get_filename_component(_musacad_cxx_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    list(APPEND _musacad_dl_paths "${_musacad_cxx_dir}")
+    if(CMAKE_MT)
+        get_filename_component(_musacad_sdk_bin "${CMAKE_MT}" DIRECTORY)
+        if(EXISTS "${_musacad_sdk_bin}/ucrt")
+            list(APPEND _musacad_dl_paths "${_musacad_sdk_bin}/ucrt")
+        endif()
+    endif()
+    catch_discover_tests(musacad_tests DL_PATHS ${_musacad_dl_paths})
+    # The same directories, as CTest environment edits, for the tests below that run the
+    # application binary.
+    set(_musacad_path_mods "")
+    foreach(_dir IN LISTS _musacad_dl_paths)
+        list(APPEND _musacad_path_mods "PATH=path_list_prepend:${_dir}")
+    endforeach()
+else()
+    catch_discover_tests(musacad_tests)
+endif()
 
 # ---------------------------------------------------------------------------
 # Header-hygiene scan: no external / non-native geometry types may leak through
@@ -199,4 +233,9 @@ add_test(
 if(ENABLE_TSAN)
     set_tests_properties(cli_check PROPERTIES
         ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan.supp")
+endif()
+# Windows: the application binary needs the Qt DLLs (and, under the dev preset, the ASan
+# runtime) on PATH to start -- the same directories as for the unit-test binary above.
+if(WIN32)
+    set_tests_properties(cli_check PROPERTIES ENVIRONMENT_MODIFICATION "${_musacad_path_mods}")
 endif()

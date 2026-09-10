@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Application manifest for musacad_app.exe (merged into the executable by the MSVC
+  linker; see src/app/CMakeLists.txt).
+
+  activeCodePage UTF-8: drawing paths travel through the engine as UTF-8 std::string
+  (QString::toStdString, argv). Without this, the narrow-string file APIs interpret
+  them in the legacy ANSI code page, so a drawing under a folder with a non-ASCII name
+  (an accented or Indic user name, for instance) cannot be opened or saved. With it the
+  process code page is UTF-8 on Windows 10 1903 and later; older systems ignore the
+  entry and behave as before.
+
+  longPathAware: lets paths longer than MAX_PATH work when the system policy allows
+  them (harmless otherwise).
+
+  DPI awareness is deliberately NOT declared here: Qt sets Per-Monitor V2 itself at
+  startup, and a manifest entry would override that.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

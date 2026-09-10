@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include <QVariant>
 #include <QMainWindow>
 #include <QString>
 
@@ -331,6 +332,8 @@ private:
     QDockWidget* command_dock_ = nullptr;         // bottom command-line dock (hidden in canvas-only DYN)
     DynInput* dyn_ = nullptr;                     // cursor-anchored Dynamic Input (F12)
     QAction* dyn_action_ = nullptr;
+    QVariant harness_dyn_pref_;      ///< the saved dyn/enabled to put back after a harness run
+    bool restore_dyn_pref_ = false;  ///< set when a developer hook drives this window
     PropertiesPanel* properties_panel_ = nullptr; // owned by its dock
     QDockWidget* properties_dock_ = nullptr;
     QLabel* coord_label_ = nullptr;

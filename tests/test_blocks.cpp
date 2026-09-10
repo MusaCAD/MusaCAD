@@ -99,7 +99,7 @@ TEST_CASE("resolve_insert applies the instance transform to the definition") {
     }
 
     SECTION("90-degree rotation") {
-        const EntityHandle h = store.add_insert(b, {0, 0}, 1.0, 1.0, M_PI / 2.0);
+        const EntityHandle h = store.add_insert(b, {0, 0}, 1.0, 1.0, kHalfPi);
         std::vector<InsertSeg> segs;
         resolve_insert(store, *store.insert(h), 0.01, segs);
         // (1,0) rotates to (0,1); the base edge (0,0)->(1,0) becomes (0,0)->(0,1).
