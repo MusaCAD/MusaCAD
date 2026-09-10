@@ -70,6 +70,13 @@ Everything below is on `main` and in the per-command table in
     Start-menu entry is created for all users, "Run Musa CAD" on the finish page starts
     the program as the normal user, and the Visual C++ redistributable it ships is
     actually installed.
+  - The on-canvas command entry and its suggestion list drew an empty box: the face
+    for them was the first font in the system list, which on Windows is a raster font
+    without outlines. The platform's UI font is used now, and a face without outlines
+    is never picked.
+- Running a developer hook (self-test, UI dump, smoke run, screenshot captures) no
+  longer overwrites the saved Dynamic Input preference, so a first real launch after
+  one comes up with DYN on as intended.
 
 ### Compatibility
 Native format **v28**. Files from v0.3.0 (v20) open unchanged; files saved by this build
