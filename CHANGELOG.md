@@ -13,6 +13,20 @@ Everything below is on `main` and in the per-command table in
 [`docs/ROADMAP.md`](docs/ROADMAP.md) shows what is still open.
 
 ### Added
+- **Layouts, paper space and viewports** (#26) — a layout table with page setups, paper-space
+  entities per layout (only the active space is drawn, picked and edited), the sheet drawn
+  under a layout, layout tabs (click to switch, right-click for New / Rename / Delete),
+  `LAYOUT` / `MODEL` / `PSPACE`, `PLOT` of a layout at 1:1, and `MVIEW` viewports that show
+  model space at a scale (two corners or Fit; ON / OFF / Scale / Center; corner grips).
+  `MSPACE` (editing model space through a viewport) is not there yet.
+- **Raster images on screen** (#10) — placed images draw in the viewport (a textured-quad
+  pipeline with a per-definition texture cache); `IMAGEATTACH` (embedded or referenced from
+  the drawing's folder, 8 MB embed limit), `IMAGECLIP` (rectangular), `IMAGEFRAME`.
+- **Polyline grips** (#32) — a midpoint grip per segment (drag moves a straight segment or
+  reshapes an arc), and a right-click grip menu: Add Vertex, Remove Vertex, Convert to Arc,
+  Convert to Line.
+- **Release publishing** (#3) — pushing a `v*` tag now creates the GitHub release and attaches
+  the AppImage and the Windows installer from the tag builds.
 - **Draw primitives** (#23) — `SPLINE` (fit and control-vertex methods), `ELLIPSE` (centre,
   axis-end, rotation, elliptical arcs), `POLYGON`, `POINT`, `XLINE` / `RAY` construction
   lines, `DONUT`, `REVCLOUD`, and the `RECTANGLE` first-corner options (Chamfer / Fillet /
@@ -79,7 +93,7 @@ Everything below is on `main` and in the per-command table in
   one comes up with DYN on as intended.
 
 ### Compatibility
-Native format **v28**. Files from v0.3.0 (v20) open unchanged; files saved by this build
+Native format **v31**. Files from v0.3.0 (v20) open unchanged; files saved by this build
 carry the new tables and entities and need this build or newer.
 
 ---
