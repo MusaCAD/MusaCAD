@@ -11,6 +11,8 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <filesystem>
+#include <optional>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -287,13 +289,61 @@ Rgb aci_to_rgb(long aci) {
     return {c[0], c[1], c[2]};
 }
 
-void emit_header(std::string& s, const Document& doc) {
+// Every table record, block, entity and object gets a handle (group 5), counted up as
+// the file is written; $HANDSEED is the next free one. The two dictionaries the
+// OBJECTS section needs have fixed handles below the counter's start.
+thread_local std::uint64_t g_handle = 0x20;
+constexpr std::uint64_t kRootDictHandle = 0x10;
+constexpr std::uint64_t kImageDictHandle = 0x11;
+
+std::string handle_hex(std::uint64_t h) {
+    char buf[20];
+    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), h, 16);
+    std::string out(buf, static_cast<std::size_t>(ptr - buf));
+    for (char& c : out) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+std::uint64_t emit_handle(std::string& s) {
+    const std::uint64_t h = g_handle++;
+    code(s, 5, handle_hex(h));
+    return h;
+}
+
+void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code(s, 0, "SECTION");
     code(s, 2, "HEADER");
     code(s, 9, "$ACADVER");
     code(s, 1, "AC1015"); // AutoCAD R2000 -- widely compatible
+    code(s, 9, "$HANDSEED");
+    code(s, 5, handle_hex(handseed));
     code(s, 9, "$LTSCALE");
     code_d(s, 40, doc.ltscale); // global linetype scale
+    code(s, 0, "ENDSEC");
+}
+
+// The classes the raster IMAGE objects belong to (AutoCAD reads IMAGE, IMAGEDEF and
+// IMAGEDEF_REACTOR only when the CLASSES section declares them).
+void emit_classes(std::string& s, const Document& doc) {
+    if (doc.images.empty()) {
+        return;
+    }
+    code(s, 0, "SECTION");
+    code(s, 2, "CLASSES");
+    const auto cls = [&](const char* name, const char* cpp, long flags, long is_entity) {
+        code(s, 0, "CLASS");
+        code(s, 1, name);
+        code(s, 2, cpp);
+        code(s, 3, "ISM");
+        code_i(s, 90, flags);
+        code_i(s, 280, 0);
+        code_i(s, 281, is_entity);
+    };
+    cls("IMAGE", "AcDbRasterImage", 127, 1);
+    cls("IMAGEDEF", "AcDbRasterImageDef", 0, 0);
+    cls("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, 0);
     code(s, 0, "ENDSEC");
 }
 
@@ -302,6 +352,7 @@ void emit_header(std::string& s, const Document& doc) {
 // in other CAD apps. `elems` empty => Continuous (solid).
 void emit_ltype(std::string& s, const char* name, std::initializer_list<double> elems) {
     code(s, 0, "LTYPE");
+    emit_handle(s);
     code(s, 2, name);
     code_i(s, 70, 0);
     code(s, 3, name); // description
@@ -335,6 +386,7 @@ void emit_layer_table(std::string& s, const Document& doc) {
     code_i(s, 70, static_cast<long>(doc.layers.size()));
     for (const Layer& l : doc.layers) {
         code(s, 0, "LAYER");
+        emit_handle(s);
         code(s, 2, l.name);
         code_i(s, 70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0)); // 1=frozen, 4=locked
         code_i(s, 62, l.on ? 7 : -7); // ACI; negative = layer off
@@ -350,6 +402,7 @@ void emit_layer_table(std::string& s, const Document& doc) {
     code_i(s, 70, static_cast<long>(std::max<std::size_t>(doc.text_styles.size(), 1)));
     if (doc.text_styles.empty()) {
         code(s, 0, "STYLE");
+        emit_handle(s);
         code(s, 2, "Standard");
         code_i(s, 70, 0);
         code_d(s, 40, 0.0);
@@ -359,6 +412,7 @@ void emit_layer_table(std::string& s, const Document& doc) {
     }
     for (const TextStyle& ts : doc.text_styles) {
         code(s, 0, "STYLE");
+        emit_handle(s);
         code(s, 2, ts.name);
         code_i(s, 70, 0);
         code_d(s, 40, ts.height);
@@ -373,17 +427,42 @@ void emit_layer_table(std::string& s, const Document& doc) {
     code_i(s, 70, static_cast<long>(doc.dimstyles.size()));
     for (const DimStyle& ds : doc.dimstyles) {
         code(s, 0, "DIMSTYLE");
+        emit_handle(s);
         code(s, 2, ds.name);
         code_d(s, 140, ds.text_height); // DIMTXT
         code_d(s, 41, ds.arrow_size);   // DIMASZ
         code_i(s, 271, ds.precision);   // DIMDEC
     }
     code(s, 0, "ENDTAB");
+    // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
+    code(s, 0, "TABLE");
+    code(s, 2, "BLOCK_RECORD");
+    code_i(s, 70, static_cast<long>(doc.block_defs.size() + 2));
+    const auto block_record = [&](const std::string& name) {
+        code(s, 0, "BLOCK_RECORD");
+        emit_handle(s);
+        code(s, 100, "AcDbSymbolTableRecord");
+        code(s, 100, "AcDbBlockTableRecord");
+        code(s, 2, name);
+    };
+    block_record("*Model_Space");
+    block_record("*Paper_Space");
+    for (const DocBlockDef& b : doc.block_defs) {
+        block_record(b.name);
+    }
+    code(s, 0, "ENDTAB");
     code(s, 0, "ENDSEC");
 }
 
 // Per-entity layer/colour/linetype/lineweight (after geometry codes).
+void emit_props_body(std::string& s, const Document& doc, const EntityProps& p);
+
 void emit_props(std::string& s, const Document& doc, const EntityProps& p) {
+    emit_handle(s);
+    emit_props_body(s, doc, p);
+}
+
+void emit_props_body(std::string& s, const Document& doc, const EntityProps& p) {
     const std::string layer =
         p.layer < doc.layers.size() ? doc.layers[p.layer].name : std::string("0");
     code(s, 8, layer);
@@ -405,11 +484,28 @@ void emit_props(std::string& s, const Document& doc, const EntityProps& p) {
 
 } // namespace
 
-std::string serialize_dxf(const Document& doc) {
-    std::string s;
-    emit_header(s, doc);
-    emit_layer_table(s, doc);
+/// What the OBJECTS section needs from the entities pass: the IMAGEDEF handle of every
+/// image definition (assigned before the entities) and, per IMAGE entity, the reactor
+/// handle it referenced. Plus the section boundaries, so the file can be assembled in
+/// the order other readers expect (BLOCKS before ENTITIES).
+struct WriterRefs {
+    std::vector<std::uint64_t> def_handles;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> reactors; ///< (image, reactor)
+    std::size_t entities_begin = 0;
+    std::size_t blocks_begin = 0;
+    std::size_t blocks_end = 0;
+};
 
+void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs);
+
+void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
+    emit_layer_table(s, doc);
+    refs.def_handles.clear();
+    for (std::size_t i = 0; i < doc.image_defs.size(); ++i) {
+        refs.def_handles.push_back(g_handle++);
+    }
+
+    refs.entities_begin = s.size();
     code(s, 0, "SECTION");
     code(s, 2, "ENTITIES");
 
@@ -769,6 +865,7 @@ std::string serialize_dxf(const Document& doc) {
             // A wipeout has no hatch form: written as a solid in colour 7, which every
             // AutoCAD background renders in its own contrast (white on black, black on
             // white) -- the closest a plain HATCH gets to a mask.
+            emit_handle(s);
             code(s, 8, h.props.layer < doc.layers.size() ? doc.layers[h.props.layer].name : std::string("0"));
             code_i(s, 62, 7);
         } else {
@@ -884,6 +981,61 @@ std::string serialize_dxf(const Document& doc) {
     for (const DocInsert& in : doc.inserts) {
         emit_insert(in);
     }
+    // Raster images: AutoCAD's IMAGE entity -- insertion point, the U and V vectors
+    // (one pixel each, in drawing units), the size in pixels, the IMAGEDEF it shows, and
+    // the clip boundary in pixel coordinates (v down from the top, as the image is stored).
+    for (const DocImage& im : doc.images) {
+        if (im.def >= doc.image_defs.size()) {
+            continue;
+        }
+        const DocImageDef& d = doc.image_defs[im.def];
+        const double pw = d.pixel_w > 0 ? static_cast<double>(d.pixel_w) : 1.0;
+        const double ph = d.pixel_h > 0 ? static_cast<double>(d.pixel_h) : 1.0;
+        const double cs = std::cos(im.rotation);
+        const double sn = std::sin(im.rotation);
+        code(s, 0, "IMAGE");
+        const std::uint64_t self = emit_handle(s);
+        code(s, 100, "AcDbEntity");
+        emit_props_body(s, doc, im.props);
+        code(s, 100, "AcDbRasterImage");
+        code_i(s, 90, 0);
+        code_d(s, 10, im.pos.x);
+        code_d(s, 20, im.pos.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 11, im.width / pw * cs);
+        code_d(s, 21, im.width / pw * sn);
+        code_d(s, 31, 0.0);
+        code_d(s, 12, -im.height / ph * sn);
+        code_d(s, 22, im.height / ph * cs);
+        code_d(s, 32, 0.0);
+        code_d(s, 13, pw);
+        code_d(s, 23, ph);
+        code(s, 340, handle_hex(refs.def_handles[im.def]));
+        code_i(s, 70, im.clipped ? 5 : 1); // 1 show, 4 use the clip boundary
+        code_i(s, 280, im.clipped ? 1 : 0);
+        code_i(s, 281, 50);
+        code_i(s, 282, 50);
+        code_i(s, 283, 0);
+        const std::uint64_t reactor = g_handle++;
+        code(s, 360, handle_hex(reactor));
+        refs.reactors.emplace_back(self, reactor);
+        if (!im.clip_polygon.empty()) {
+            code_i(s, 71, 2);
+            code_i(s, 91, static_cast<long>(im.clip_polygon.size() + 1));
+            for (std::size_t i = 0; i <= im.clip_polygon.size(); ++i) {
+                const Vec2& v = im.clip_polygon[i % im.clip_polygon.size()];
+                code_d(s, 14, v.x * pw);
+                code_d(s, 24, v.y * ph);
+            }
+        } else {
+            code_i(s, 71, 1);
+            code_i(s, 91, 2);
+            code_d(s, 14, im.clip_u0 * pw);
+            code_d(s, 24, im.clip_v0 * ph);
+            code_d(s, 14, im.clip_u1 * pw);
+            code_d(s, 24, im.clip_v1 * ph);
+        }
+    }
     // Paper-space viewports (AutoCAD's VIEWPORT entity): the frame in paper units and
     // the model view it shows (view centre, view height = frame height / scale).
     for (const DocViewport& v : doc.viewports) {
@@ -905,14 +1057,16 @@ std::string serialize_dxf(const Document& doc) {
     }
     code(s, 0, "ENDSEC");
 
-    // BLOCKS section: each definition's geometry between BLOCK/ENDBLK. (Emitted after
-    // ENTITIES; Musa's importer is section-order-agnostic. Strict BLOCKS-before-ENTITIES
-    // ordering for other readers is a noted minor fidelity item.)
+    // BLOCKS section: each definition's geometry between BLOCK/ENDBLK. Written here,
+    // after the entities (the emitters above are what it uses), and moved before
+    // ENTITIES when the file is assembled.
+    refs.blocks_begin = s.size();
     if (!doc.block_defs.empty()) {
         code(s, 0, "SECTION");
         code(s, 2, "BLOCKS");
         for (const DocBlockDef& b : doc.block_defs) {
             code(s, 0, "BLOCK");
+            emit_handle(s);
             code(s, 8, "0");
             code(s, 2, b.name);
             code_i(s, 70, b.xref_path.empty() ? 0 : 4); // 4 = an external reference
@@ -997,12 +1151,84 @@ std::string serialize_dxf(const Document& doc) {
                 emit_insert(in); // nested block reference
             }
             code(s, 0, "ENDBLK");
+            emit_handle(s);
             code(s, 8, "0");
         }
         code(s, 0, "ENDSEC");
     }
+    refs.blocks_end = s.size();
+    emit_objects(s, doc, refs);
     code(s, 0, "EOF");
-    return s;
+}
+
+void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
+    if (doc.images.empty() && doc.image_defs.empty()) {
+        return;
+    }
+    // The named object dictionary, its ACAD_IMAGE_DICT, one IMAGEDEF per definition
+    // and one IMAGEDEF_REACTOR per placed image -- the object web AutoCAD expects
+    // around a raster.
+    code(s, 0, "SECTION");
+    code(s, 2, "OBJECTS");
+    code(s, 0, "DICTIONARY");
+    code(s, 5, handle_hex(kRootDictHandle));
+    code(s, 330, "0");
+    code(s, 100, "AcDbDictionary");
+    code_i(s, 281, 1);
+    code(s, 3, "ACAD_IMAGE_DICT");
+    code(s, 350, handle_hex(kImageDictHandle));
+    code(s, 0, "DICTIONARY");
+    code(s, 5, handle_hex(kImageDictHandle));
+    code(s, 330, handle_hex(kRootDictHandle));
+    code(s, 100, "AcDbDictionary");
+    code_i(s, 281, 1);
+    for (std::size_t i = 0; i < doc.image_defs.size() && i < refs.def_handles.size(); ++i) {
+        const DocImageDef& d = doc.image_defs[i];
+        const std::string name = d.source.empty() ? "embedded-image-" + std::to_string(i + 1)
+                                                  : d.source;
+        code(s, 3, name);
+        code(s, 350, handle_hex(refs.def_handles[i]));
+    }
+    for (std::size_t i = 0; i < doc.image_defs.size() && i < refs.def_handles.size(); ++i) {
+        const DocImageDef& d = doc.image_defs[i];
+        code(s, 0, "IMAGEDEF");
+        code(s, 5, handle_hex(refs.def_handles[i]));
+        code(s, 330, handle_hex(kImageDictHandle));
+        code(s, 100, "AcDbRasterImageDef");
+        code_i(s, 90, 0);
+        code(s, 1, d.source.empty() ? "embedded-image-" + std::to_string(i + 1) + ".png" : d.source);
+        code_d(s, 10, d.pixel_w > 0 ? static_cast<double>(d.pixel_w) : 1.0);
+        code_d(s, 20, d.pixel_h > 0 ? static_cast<double>(d.pixel_h) : 1.0);
+        code_d(s, 11, 1.0); // default pixel size (drawing units): the entity's U/V rule
+        code_d(s, 21, 1.0);
+        code_i(s, 280, 1); // loaded
+        code_i(s, 281, 0); // resolution units: none
+    }
+    for (const auto& [image, reactor] : refs.reactors) {
+        code(s, 0, "IMAGEDEF_REACTOR");
+        code(s, 5, handle_hex(reactor));
+        code(s, 330, handle_hex(image));
+        code(s, 100, "AcDbRasterImageDefReactor");
+        code_i(s, 90, 2);
+        code(s, 330, handle_hex(image));
+    }
+    code(s, 0, "ENDSEC");
+}
+
+std::string serialize_dxf(const Document& doc) {
+    g_handle = 0x20;
+    WriterRefs refs;
+    std::string body;
+    serialize_body(body, doc, refs);
+    std::string out;
+    emit_header(out, doc, g_handle + 1);
+    emit_classes(out, doc);
+    // Tables, then BLOCKS, then ENTITIES, then OBJECTS + EOF.
+    out += body.substr(0, refs.entities_begin);
+    out += body.substr(refs.blocks_begin, refs.blocks_end - refs.blocks_begin);
+    out += body.substr(refs.entities_begin, refs.blocks_begin - refs.entities_begin);
+    out += body.substr(refs.blocks_end);
+    return out;
 }
 
 namespace {
@@ -1366,6 +1592,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocSpline>* splines = nullptr;
         std::vector<DocFcf>* fcfs = nullptr;
         std::vector<DocAttDef>* attdefs = nullptr;
+        std::vector<std::vector<Pair>>* images = nullptr; ///< IMAGE bodies, resolved at the end
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1445,6 +1672,16 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 }
             }
             sink.texts->push_back(std::move(t));
+            return;
+        }
+        if (type == "IMAGE") {
+            // Resolved after the whole file is read: the IMAGEDEF it points to (340)
+            // lives in the OBJECTS section, which follows the entities.
+            if (sink.images != nullptr) {
+                sink.images->push_back(body);
+            } else {
+                ++skipped[type];
+            }
             return;
         }
         if (type == "VIEWPORT") {
@@ -1955,10 +2192,17 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     // Model space writes to every doc vector; block content takes the importable subset
     // (dims/leaders/points inside a block route to the skip catalog).
+    std::vector<std::vector<Pair>> image_bodies;
+    struct ImageDefRecord {
+        std::string path;
+        double pixel_w = 0.0;
+        double pixel_h = 0.0;
+    };
+    std::map<std::string, ImageDefRecord> imagedefs; // by handle
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
                     &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines, &doc.fcfs,
-                    &doc.attdefs};
+                    &doc.attdefs, &image_bodies};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't
@@ -1968,7 +2212,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     Sink block_sink{&block.lines,  &block.circles, &block.arcs, &block.polylines, &block.texts,
                     &block.mtexts, nullptr,        nullptr,     nullptr,          &block.inserts,
                     nullptr,       nullptr,        nullptr,     nullptr,          nullptr,
-                    &block.attdefs}; // hatches not held inside block definitions
+                    &block.attdefs, nullptr}; // hatches / images not held inside block definitions
     bool in_block = false;
 
     while (i < n) {
@@ -2015,6 +2259,27 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 add_style_record(body);
             } else {
                 add_dimstyle_record(body);
+            }
+            continue;
+        }
+        if (section == "OBJECTS") {
+            const std::string type = p.value;
+            std::vector<Pair> body;
+            ++i;
+            while (i < n && pairs[i].code != 0) {
+                body.push_back(pairs[i]);
+                ++i;
+            }
+            if (type == "IMAGEDEF") {
+                if (const std::string* h = find(body, 5)) {
+                    ImageDefRecord rec;
+                    if (const std::string* p1 = find(body, 1)) {
+                        rec.path = *p1;
+                    }
+                    rec.pixel_w = getd(body, 10, 0.0);
+                    rec.pixel_h = getd(body, 20, 0.0);
+                    imagedefs[*h] = rec;
+                }
             }
             continue;
         }
@@ -2071,6 +2336,94 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         return IoResult::failure("Not a DXF file (no SECTION found).");
     }
 
+    // IMAGE entities: one definition per distinct IMAGEDEF (by handle); the placement
+    // from the U/V vectors (a pixel each) and the pixel size; the clip boundary back
+    // from pixel coordinates to image fractions.
+    std::map<std::string, std::uint16_t> def_index;
+    for (const std::vector<Pair>& body : image_bodies) {
+        const std::string* ref = find(body, 340);
+        if (ref == nullptr) {
+            ++skipped["IMAGE"];
+            continue;
+        }
+        const auto it = imagedefs.find(*ref);
+        if (it == imagedefs.end()) {
+            ++skipped["IMAGE"];
+            continue;
+        }
+        std::uint16_t di = 0;
+        if (const auto known = def_index.find(*ref); known != def_index.end()) {
+            di = known->second;
+        } else {
+            DocImageDef d;
+            d.source = it->second.path;
+            d.pixel_w = static_cast<std::uint32_t>(std::max(0.0, it->second.pixel_w));
+            d.pixel_h = static_cast<std::uint32_t>(std::max(0.0, it->second.pixel_h));
+            doc.image_defs.push_back(d);
+            di = static_cast<std::uint16_t>(doc.image_defs.size() - 1);
+            def_index[*ref] = di;
+        }
+        const double pw = getd(body, 13, it->second.pixel_w > 0.0 ? it->second.pixel_w : 1.0);
+        const double ph = getd(body, 23, it->second.pixel_h > 0.0 ? it->second.pixel_h : 1.0);
+        const Vec2 u{getd(body, 11, 1.0), getd(body, 21, 0.0)};
+        const Vec2 v{getd(body, 12, 0.0), getd(body, 22, 1.0)};
+        DocImage im;
+        im.def = di;
+        im.props = props_of(body);
+        im.pos = {getd(body, 10), getd(body, 20)};
+        im.width = std::hypot(u.x, u.y) * pw;
+        im.height = std::hypot(v.x, v.y) * ph;
+        im.rotation = std::atan2(u.y, u.x);
+        long flags = 1;
+        if (const std::string* f = find(body, 70)) {
+            flags = to_l(*f);
+        }
+        long clipping = 0;
+        if (const std::string* c = find(body, 280)) {
+            clipping = to_l(*c);
+        }
+        std::vector<Vec2> verts;
+        std::optional<double> vx;
+        for (const Pair& pr : body) {
+            if (pr.code == 14) {
+                vx = to_d(pr.value);
+            } else if (pr.code == 24 && vx) {
+                verts.push_back({*vx / (pw > 0.0 ? pw : 1.0), to_d(pr.value) / (ph > 0.0 ? ph : 1.0)});
+                vx.reset();
+            }
+        }
+        long clip_type = 1;
+        if (const std::string* ct = find(body, 71)) {
+            clip_type = to_l(*ct);
+        }
+        if ((flags & 4) != 0 && clipping != 0 && !verts.empty()) {
+            im.clipped = true;
+            if (clip_type == 2 && verts.size() >= 3) {
+                if (verts.size() > 3 && std::abs(verts.front().x - verts.back().x) < 1e-9 &&
+                    std::abs(verts.front().y - verts.back().y) < 1e-9) {
+                    verts.pop_back(); // the closing repeat
+                }
+                im.clip_polygon = verts;
+                double u0 = 1.0, v0 = 1.0, u1 = 0.0, v1 = 0.0;
+                for (const Vec2& q : verts) {
+                    u0 = std::min(u0, q.x);
+                    v0 = std::min(v0, q.y);
+                    u1 = std::max(u1, q.x);
+                    v1 = std::max(v1, q.y);
+                }
+                im.clip_u0 = u0;
+                im.clip_v0 = v0;
+                im.clip_u1 = u1;
+                im.clip_v1 = v1;
+            } else if (verts.size() >= 2) {
+                im.clip_u0 = std::min(verts[0].x, verts[1].x);
+                im.clip_v0 = std::min(verts[0].y, verts[1].y);
+                im.clip_u1 = std::max(verts[0].x, verts[1].x);
+                im.clip_v1 = std::max(verts[0].y, verts[1].y);
+            }
+        }
+        doc.images.push_back(std::move(im));
+    }
     std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities on " +
                       std::to_string(doc.layers.size()) + " layers";
     if (!doc.block_defs.empty()) {
@@ -2099,7 +2452,28 @@ IoResult save_dxf(const Document& doc, const std::string& path) {
     if (!f) {
         return IoResult::failure("Cannot write file: " + path);
     }
-    const std::string text = serialize_dxf(doc);
+    // DXF has no embedded rasters: an embedded image is written next to the file as
+    // <stem>-imageN.<png|jpg> and referenced by that name.
+    Document copy = doc;
+    namespace fs = std::filesystem;
+    const fs::path out_path(path);
+    for (std::size_t i = 0; i < copy.image_defs.size(); ++i) {
+        DocImageDef& d = copy.image_defs[i];
+        if (d.bytes.empty()) {
+            continue;
+        }
+        const bool jpeg = d.bytes.size() > 2 && d.bytes[0] == 0xFF && d.bytes[1] == 0xD8;
+        const std::string name = out_path.stem().string() + "-image" + std::to_string(i + 1) +
+                                 (jpeg ? ".jpg" : ".png");
+        std::ofstream side(out_path.parent_path() / name, std::ios::binary | std::ios::trunc);
+        if (side) {
+            side.write(reinterpret_cast<const char*>(d.bytes.data()),
+                       static_cast<std::streamsize>(d.bytes.size()));
+            d.source = name;
+            d.bytes.clear();
+        }
+    }
+    const std::string text = serialize_dxf(copy);
     f.write(text.data(), static_cast<std::streamsize>(text.size()));
     if (!f) {
         return IoResult::failure("Write failed: " + path);
@@ -2114,7 +2488,36 @@ IoResult load_dxf(const std::string& path, Document& out) {
     }
     std::ostringstream ss;
     ss << f.rdbuf();
-    return parse_dxf(ss.str(), out);
+    const IoResult r = parse_dxf(ss.str(), out);
+    // An image referenced by an absolute path, or by one outside the drawing's folder,
+    // cannot be a relative reference: read it in as an embedded payload instead.
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::path(path).parent_path();
+    for (DocImageDef& d : out.image_defs) {
+        if (d.source.empty() || !d.bytes.empty()) {
+            continue;
+        }
+        const fs::path src(d.source);
+        const fs::path full = src.is_absolute() ? src : dir / src;
+        const fs::path rel = fs::weakly_canonical(full, ec).lexically_relative(fs::weakly_canonical(dir, ec));
+        const std::string rs = rel.generic_string();
+        if (!rs.empty() && rs != "." && rs.rfind("..", 0) != 0) {
+            d.source = rs;
+            continue;
+        }
+        const auto size = fs::file_size(full, ec);
+        std::ifstream img(full, std::ios::binary);
+        if (!ec && size > 0 && img) {
+            d.bytes.resize(static_cast<std::size_t>(size));
+            if (img.read(reinterpret_cast<char*>(d.bytes.data()), static_cast<std::streamsize>(size))) {
+                d.source.clear();
+            } else {
+                d.bytes.clear();
+            }
+        }
+    }
+    return r;
 }
 
 } // namespace musacad::core::io

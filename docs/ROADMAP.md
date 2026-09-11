@@ -70,10 +70,10 @@ Blocks can be imported and placed; they cannot be *created* in-app.
 
 ## F. Raster images — [#10](https://github.com/MusaCAD/MusaCAD/issues/10) (remainder)
 
-Model, decoder seam, persistence, plot, **viewport display** (a textured-quad pipeline with a
-per-definition texture cache), **IMAGEATTACH / IMAGECLIP** (rectangular and polygonal) /
-**IMAGEFRAME** and the 8 MB embed limit are done. Remaining: **DXF `IMAGE`/`IMAGEDEF`** (needs
-object handles and an OBJECTS section in the writer).
+Done: model, decoder seam, persistence, plot, viewport display (a textured-quad pipeline with a
+per-definition texture cache), IMAGEATTACH / IMAGECLIP (rectangular and polygonal) / IMAGEFRAME,
+the 8 MB embed limit, and DXF `IMAGE`/`IMAGEDEF` both ways (the writer now gives every record a
+handle and carries CLASSES and the image dictionary).
 
 ## G. Paper space, layouts and views — [#26](https://github.com/MusaCAD/MusaCAD/issues/26), [#33](https://github.com/MusaCAD/MusaCAD/issues/33)
 
@@ -99,7 +99,7 @@ object handles and an OBJECTS section in the writer).
 |---|---|
 | ~~DXF **SPLINE** / legacy **POLYLINE** import~~ | **Done** (#31) ✅ |
 | ~~DXF **TOLERANCE** (GD&T) export/import~~ | **Done** (#31) ✅ |
-| DXF **IMAGE / IMAGEDEF** | **P2** |
+| ~~DXF **IMAGE / IMAGEDEF**~~ | **Done** (#31) — with object handles, CLASSES and the image dictionary. ✅ |
 | True **SHX** shape-file parsing (today: faithful substitution) | **P2** |
 
 ## J. Properties, snapping and input — [#32](https://github.com/MusaCAD/MusaCAD/issues/32)
