@@ -197,6 +197,11 @@ std::uint8_t ViewportWindow::active_space() {
     return active_space_;
 }
 
+bool ViewportWindow::mspace_active() {
+    std::scoped_lock lock(layers_mutex_);
+    return mspace_.active;
+}
+
 void ViewportWindow::zoom_scale(double factor) {
     std::scoped_lock lock(camera_mutex_);
     const double cx = static_cast<double>(camera_.viewport_width()) * 0.5;
@@ -537,7 +542,23 @@ void ViewportWindow::render_loop(std::stop_token token) {
             block_attdefs_ = snap.block_attdefs;
             layouts_ = snap.layouts;
             active_space_ = snap.active_space;
+            mspace_ = snap.mspace;
+            viewport_rects_ = snap.viewport_rects;
         }
+        // MSPACE hand-off: entering shows the viewport's model view at the same on-screen
+        // size (the sheet camera is kept); leaving restores the sheet camera.
+        if (snap.mspace.active && !mspace_seen_) {
+            std::scoped_lock cl(camera_mutex_);
+            paper_cam_center_ = camera_.center();
+            paper_cam_scale_ = camera_.scale();
+            camera_.set_center(snap.mspace.view_center);
+            camera_.set_scale(snap.mspace.paper_px_per_mm * snap.mspace.scale);
+        } else if (!snap.mspace.active && mspace_seen_ && paper_cam_scale_ > 0.0) {
+            std::scoped_lock cl(camera_mutex_);
+            camera_.set_center(paper_cam_center_);
+            camera_.set_scale(paper_cam_scale_);
+        }
+        mspace_seen_ = snap.mspace.active;
 
         // Surface the engine's command-result message (honest feedback) once.
         if (snap.status_version != status_version_.load(std::memory_order_relaxed)) {
@@ -769,6 +790,35 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
     // Double-click a text-bearing entity -> request the in-window editor. Idle only
     // (an active command keeps its own click semantics). Hit-test the cached text
     // targets (already gated to editable/unlocked layers geometry-side).
+    if (event->button() == Qt::LeftButton && processor_ != nullptr && !processor_->has_active_command()) {
+        // On a layout, a double-click inside a viewport starts editing the model through
+        // it (AutoCAD's MSPACE gesture).
+        const double dpr0 = devicePixelRatio();
+        core::Vec2 w0;
+        double sc0 = 1.0;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            w0 = camera_.screen_to_world({event->position().x() * dpr0, event->position().y() * dpr0});
+            sc0 = camera_.scale();
+        }
+        bool in_layout = false;
+        bool in_mspace = false;
+        core::EntityHandle hit = core::EntityHandle::null();
+        {
+            std::scoped_lock lock(layers_mutex_);
+            in_layout = active_space_ != 0;
+            in_mspace = mspace_.active;
+            for (const core::ViewportRect& r : viewport_rects_) {
+                if (std::abs(w0.x - r.center.x) <= r.width * 0.5 && std::abs(w0.y - r.center.y) <= r.height * 0.5) {
+                    hit = r.handle;
+                }
+            }
+        }
+        if (in_layout && !in_mspace && !hit.is_null()) {
+            engine_.submit(core::EnterMspaceCommand{w0, 10.0 * dpr0 / sc0, sc0});
+            return;
+        }
+    }
     if (event->button() != Qt::LeftButton || processor_ == nullptr ||
         processor_->has_active_command() || !text_edit_callback_) {
         return;
@@ -807,6 +857,24 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
     // Open the editor OUTSIDE the lock (it runs a modal dialog).
     if (found) {
         text_edit_callback_(TextEditRequest{world, pad, content, multiline});
+        return;
+    }
+    // A double-click on nothing while editing through a viewport returns to the sheet
+    // (AutoCAD's double-click outside the viewport), the view left becoming its view.
+    bool in_mspace = false;
+    {
+        std::scoped_lock lock(layers_mutex_);
+        in_mspace = mspace_.active;
+    }
+    if (in_mspace) {
+        core::Vec2 c;
+        double s = 0.0;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            c = camera_.center();
+            s = camera_.scale();
+        }
+        engine_.submit(core::LeaveMspaceCommand{c, s});
     }
 }
 

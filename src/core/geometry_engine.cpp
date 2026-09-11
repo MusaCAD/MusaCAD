@@ -6547,6 +6547,59 @@ void GeometryEngine::apply(const Command& command) {
                 apply_create_viewport(c);
             } else if constexpr (std::is_same_v<T, SetViewportViewCommand>) {
                 apply_viewport_view(c);
+            } else if constexpr (std::is_same_v<T, EnterMspaceCommand>) {
+                if (store_.active_space() == 0) {
+                    report("MSPACE works on a layout with a viewport (double-click inside one).");
+                } else if (!store_.mspace_viewport().is_null()) {
+                    report("Already editing model space through a viewport; PSPACE returns to the sheet.");
+                } else {
+                    // The viewport under the point (inside it, else its frame within the aperture).
+                    EntityHandle target = EntityHandle::null();
+                    const auto& vps = store_.viewports();
+                    for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+                        if (!vps.alive(i)) {
+                            continue;
+                        }
+                        const ViewportData& v = vps.data()[i];
+                        if (v.props.space() == store_.active_space() &&
+                            std::abs(c.pick.x - v.center.x) <= v.width * 0.5 &&
+                            std::abs(c.pick.y - v.center.y) <= v.height * 0.5) {
+                            target = EntityHandle{i, vps.generations()[i], EntityKind::Viewport};
+                        }
+                    }
+                    if (target.is_null()) {
+                        const EntityHandle near = pick_nearest(c.pick, c.pick_radius);
+                        if (near.kind == EntityKind::Viewport) {
+                            target = near;
+                        }
+                    }
+                    if (target.is_null()) {
+                        report("MSPACE: no viewport there.");
+                    } else {
+                        store_.set_mspace(target, store_.active_space(),
+                                          c.paper_px_per_mm > 0.0 ? c.paper_px_per_mm : 1.0);
+                        store_.set_active_space(0);
+                        selection_.clear();
+                        geom_dirty_ = true;
+                        report("Model space through the viewport: what you draw and edit is the model; PSPACE "
+                               "returns to the sheet with the view you leave.");
+                    }
+                }
+            } else if constexpr (std::is_same_v<T, LeaveMspaceCommand>) {
+                if (store_.mspace_viewport().is_null()) {
+                    report("Not editing through a viewport.");
+                } else {
+                    const double ppm = store_.mspace_paper_px_per_mm();
+                    const double scale_mm = (ppm > 0.0 && c.px_per_unit > 0.0) ? c.px_per_unit / ppm : 0.0;
+                    if (store_.set_viewport_view(store_.mspace_viewport(), c.view_center, scale_mm)) {
+                        dirty_ = true;
+                    }
+                    store_.set_active_space(store_.mspace_layout());
+                    store_.clear_mspace();
+                    selection_.clear();
+                    geom_dirty_ = true;
+                    report("Paper space.");
+                }
             } else if constexpr (std::is_same_v<T, SetActiveSpaceCommand>) {
                 std::uint8_t target = c.space;
                 if (!c.name.empty()) {
@@ -6562,6 +6615,7 @@ void GeometryEngine::apply(const Command& command) {
                 if (target != 0 && store_.layout_by_id(target) == nullptr) {
                     report("No such layout.");
                 } else {
+                    store_.clear_mspace(); // a tab switch leaves the viewport edit without a write-back
                     store_.set_active_space(target);
                     prune_selection();
                     selection_.clear();
@@ -7033,6 +7087,29 @@ void GeometryEngine::rebuild_and_publish() {
     buf.image_dir = active_idx_ < doc_metas_.size() ? doc_dir_of(doc_metas_[active_idx_].path)
                                                     : std::string();
     buf.image_frame = store_.image_frame();
+    buf.mspace = MspaceInfo{};
+    if (const ViewportData* mv = store_.viewport(store_.mspace_viewport())) {
+        buf.mspace.active = true;
+        buf.mspace.layout = store_.mspace_layout();
+        buf.mspace.viewport = store_.mspace_viewport();
+        buf.mspace.view_center = mv->view_center;
+        buf.mspace.scale = mv->scale;
+        buf.mspace.paper_px_per_mm = store_.mspace_paper_px_per_mm();
+    }
+    buf.viewport_rects.clear();
+    if (store_.active_space() != 0) {
+        const auto& vps = store_.viewports();
+        for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+            if (!vps.alive(i)) {
+                continue;
+            }
+            const ViewportData& v = vps.data()[i];
+            if (v.props.space() == store_.active_space()) {
+                buf.viewport_rects.push_back(ViewportRect{
+                    EntityHandle{i, vps.generations()[i], EntityKind::Viewport}, v.center, v.width, v.height});
+            }
+        }
+    }
 
     // Pending object-dimension def points for the placement preview (Part C).
     buf.has_pending_dim = has_pending_dim_;

@@ -186,7 +186,7 @@ TEST_CASE("#26 native v31 and DXF VIEWPORT carry a viewport both ways") {
     CHECK(from_dxf.viewports[0].props.space() == 1);
 }
 
-TEST_CASE("#26 commands: MVIEW corners / Fit / ON / Scale / Center; MSPACE says what it cannot do") {
+TEST_CASE("#26 commands: MVIEW corners / Fit / ON / Scale / Center; MSPACE asks for a viewport") {
     ProcHarness h;
     h.proc.set_layouts({"Layout1"}, 0);
     h.proc.submit_line("MVIEW"); // model space: refused
@@ -221,5 +221,5 @@ TEST_CASE("#26 commands: MVIEW corners / Fit / ON / Scale / Center; MSPACE says 
     REQUIRE(h.last<SetViewportViewCommand>()->view_center.has_value());
     CHECK(*h.last<SetViewportViewCommand>()->view_center == Vec2{300, 200});
     h.proc.submit_line("MSPACE");
-    CHECK(h.out.lines.back().find("not available") != std::string::npos);
+    CHECK(h.out.prompts.back().find("Select viewport") != std::string::npos);
 }

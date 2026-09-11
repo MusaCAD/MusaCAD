@@ -895,6 +895,20 @@ struct SetViewportViewCommand {
     std::optional<Vec2> view_center;
     std::uint64_t group = 0;
 };
+/// MSPACE: edit model space through the viewport under `pick` (a point inside it, or on
+/// its frame). `paper_px_per_mm` is the sheet's on-screen scale at that moment, kept so
+/// the model view left on PSPACE maps back into the viewport's scale.
+struct EnterMspaceCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    double paper_px_per_mm = 1.0;
+};
+/// PSPACE from MSPACE: the model view being left (its centre and screen pixels per model
+/// unit) becomes the viewport's view, and the sheet comes back.
+struct LeaveMspaceCommand {
+    Vec2 view_center{};
+    double px_per_unit = 0.0;
+};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1126,7 +1140,7 @@ using Command =
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,
-                 CreateViewportCommand, SetViewportViewCommand,
+                 CreateViewportCommand, SetViewportViewCommand, EnterMspaceCommand, LeaveMspaceCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

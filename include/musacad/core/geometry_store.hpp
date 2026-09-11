@@ -542,6 +542,32 @@ public:
         }
         return false;
     }
+    // --- MSPACE: model space edited through a layout's viewport -----------------
+    [[nodiscard]] EntityHandle mspace_viewport() const noexcept { return mspace_viewport_; }
+    [[nodiscard]] std::uint8_t mspace_layout() const noexcept { return mspace_layout_; }
+    [[nodiscard]] double mspace_paper_px_per_mm() const noexcept { return mspace_paper_px_per_mm_; }
+    void set_mspace(EntityHandle viewport, std::uint8_t layout, double paper_px_per_mm) noexcept {
+        mspace_viewport_ = viewport;
+        mspace_layout_ = layout;
+        mspace_paper_px_per_mm_ = paper_px_per_mm;
+    }
+    void clear_mspace() noexcept {
+        mspace_viewport_ = EntityHandle::null();
+        mspace_layout_ = 0;
+        mspace_paper_px_per_mm_ = 1.0;
+    }
+    /// The view a viewport shows (what PSPACE writes back). Not an undo item: a view.
+    bool set_viewport_view(EntityHandle h, Vec2 view_center, double scale) noexcept {
+        ViewportData* v = h.kind == EntityKind::Viewport ? viewports_.get(h.index, h.generation) : nullptr;
+        if (v == nullptr) {
+            return false;
+        }
+        v->view_center = view_center;
+        if (scale > 0.0) {
+            v->scale = scale;
+        }
+        return true;
+    }
     /// 0 = model space; otherwise the active layout's id. Only that space is drawn,
     /// picked and edited.
     [[nodiscard]] std::uint8_t active_space() const noexcept { return active_space_; }
@@ -1042,6 +1068,9 @@ private:
     std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts_{Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};
     std::uint8_t active_space_ = 0;
+    EntityHandle mspace_viewport_{}; ///< MSPACE: the viewport being edited through (null = none)
+    std::uint8_t mspace_layout_ = 0;  ///< ... and the layout to return to
+    double mspace_paper_px_per_mm_ = 1.0;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
