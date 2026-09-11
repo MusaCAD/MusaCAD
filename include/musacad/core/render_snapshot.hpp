@@ -46,6 +46,24 @@ struct LayoutInfo {
     [[nodiscard]] double sheet_h() const noexcept { return landscape ? std::min(paper_w_mm, paper_h_mm) : std::max(paper_w_mm, paper_h_mm); }
 };
 
+/// MSPACE state for the UI: model space is being edited through `viewport`; the camera
+/// hand-off uses the viewport's view and the sheet scale recorded on entry.
+struct MspaceInfo {
+    bool active = false;
+    std::uint8_t layout = 0;
+    EntityHandle viewport;
+    Vec2 view_center;
+    double scale = 1.0;           ///< paper mm per model unit
+    double paper_px_per_mm = 1.0; ///< the sheet's on-screen scale when MSPACE began
+};
+/// A viewport's frame on the active layout (for the double-click hit test).
+struct ViewportRect {
+    EntityHandle handle;
+    Vec2 center;
+    double width = 0.0;
+    double height = 0.0;
+};
+
 struct ColorBatch {
     Rgb color;
     /// UNITS DIFFER BY ARRAY. line_batches: first/count are in SEGMENTS (segment s spans
@@ -160,6 +178,8 @@ struct RenderSnapshot {
     std::vector<Vec2> wipeout_vertices; // WIPEOUT masks: triangles drawn in the background colour
     std::uint8_t active_space = 0;      // 0 model space, else the active layout's id
     std::vector<LayoutInfo> layouts;    // the layout tabs (name, sheet size)
+    MspaceInfo mspace;                  // MSPACE: editing model space through a viewport
+    std::vector<ViewportRect> viewport_rects; // the active layout's viewports
     bool wipeout_frames = true;         // WIPEOUTFRAME
     std::uint64_t checksum = 0;
 
@@ -288,6 +308,8 @@ struct RenderSnapshot {
         wipeout_vertices.clear();
         active_space = 0;
         layouts.clear();
+        mspace = MspaceInfo{};
+        viewport_rects.clear();
         line_batches.clear();
         point_batches.clear();
         fill_vertices.clear();

@@ -557,6 +557,7 @@ void GeometryStore::clear() noexcept {
     image_frame_ = 1;
     layouts_ = {Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};
     active_space_ = 0;
+    clear_mspace();
     ltscale_ = 1.0;
     blocks_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font

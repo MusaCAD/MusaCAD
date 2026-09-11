@@ -196,6 +196,8 @@ public:
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).
     [[nodiscard]] virtual std::vector<std::string> layout_names() const { return {}; }
     [[nodiscard]] virtual std::uint8_t active_space() const { return 0; }
+    /// True while model space is being edited through a viewport (MSPACE).
+    [[nodiscard]] virtual bool mspace_active() const { return false; }
     /// A block's attributes (ATTDEFs), in prompt order; INSERT asks for their values.
     [[nodiscard]] virtual std::vector<core::BlockAttDefInfo> block_attdefs(const std::string& /*block*/) const {
         return {};

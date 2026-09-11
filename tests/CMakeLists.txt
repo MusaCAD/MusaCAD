@@ -159,6 +159,7 @@ add_executable(musacad_tests
     test_image_commands.cpp
     test_layouts.cpp
     test_viewports.cpp
+    test_mspace.cpp
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp

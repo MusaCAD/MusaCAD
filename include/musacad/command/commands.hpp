@@ -928,16 +928,13 @@ private:
     bool done_ = false;
 };
 
-/// MSPACE: editing model space through a viewport is not available yet; says so.
+/// MSPACE: edit model space through a viewport (pick one, or double-click inside one).
 class MspaceCommand final : public ICommand {
 public:
     std::string name() const override { return "MSPACE"; }
-    void start(CommandContext& ctx) override {
-        ctx.echo("Editing model space through a viewport (MSPACE) is not available yet; use MODEL.");
-        done_ = true;
-    }
-    void input(CommandContext&, const std::string&) override {}
-    void cancel(CommandContext&) override { done_ = true; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
 private:

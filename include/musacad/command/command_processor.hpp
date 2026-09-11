@@ -105,6 +105,8 @@ public:
     }
     [[nodiscard]] std::vector<std::string> layout_names() const override { return layout_names_; }
     [[nodiscard]] std::uint8_t active_space() const override { return active_space_; }
+    void set_mspace_active(bool on) noexcept { mspace_active_ = on; }
+    [[nodiscard]] bool mspace_active() const override { return mspace_active_; }
     /// Per block (parallel to the names): its attributes, for INSERT's value prompts.
     void set_block_attdefs(std::vector<std::vector<core::BlockAttDefInfo>> v) {
         block_attdefs_ = std::move(v);
@@ -176,6 +178,7 @@ private:
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;
     std::uint8_t active_space_ = 0;
+    bool mspace_active_ = false;
     CommandOutput& output_;
     CommandRegistry registry_;
 

@@ -3462,8 +3462,25 @@ void LayoutCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+namespace {
+/// PSPACE from a viewport edit: the model view on screen becomes the viewport's view.
+void leave_mspace(CommandContext& ctx) {
+    core::Vec2 center{};
+    double scale = 0.0;
+    if (ctx.view() == nullptr || !ctx.view()->current_view(center, scale)) {
+        scale = 0.0; // keep the viewport's scale when there is no camera (headless)
+    }
+    ctx.submit(core::LeaveMspaceCommand{center, scale});
+}
+} // namespace
+
 void ModelSpaceCommand::start(CommandContext& ctx) {
-    if (!to_paper_) {
+    if (ctx.mspace_active()) {
+        leave_mspace(ctx);
+        if (!to_paper_) {
+            ctx.submit(core::SetActiveSpaceCommand{0});
+        }
+    } else if (!to_paper_) {
         ctx.submit(core::SetActiveSpaceCommand{0});
     } else if (ctx.active_space() != 0) {
         ctx.echo("Already in paper space.");
@@ -3471,6 +3488,38 @@ void ModelSpaceCommand::start(CommandContext& ctx) {
         ctx.submit(core::SetActiveSpaceCommand{0xFF}); // the engine picks the first layout
     }
     done_ = true;
+}
+
+void MspaceCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.mspace_active()) {
+        ctx.echo("Already editing model space through a viewport; PSPACE returns to the sheet.");
+        done_ = true;
+        return;
+    }
+    if (ctx.active_space() == 0) {
+        ctx.echo("MSPACE works on a layout with a viewport (double-click inside one).");
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Select viewport (or double-click inside one): ");
+}
+
+void MspaceCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void MspaceCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        core::Vec2 center{};
+        double ppm = 1.0;
+        if (ctx.view() == nullptr || !ctx.view()->current_view(center, ppm) || ppm <= 0.0) {
+            ppm = 1.0;
+        }
+        ctx.submit(core::EnterMspaceCommand{*p, ctx.pick_radius(), ppm});
+        done_ = true;
+    }
 }
 
 void MviewCommand::start(CommandContext& ctx) {

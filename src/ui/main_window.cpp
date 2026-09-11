@@ -350,6 +350,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 lnames.push_back(l.name);
             }
             processor_->set_layouts(std::move(lnames), viewport_->active_space());
+            processor_->set_mspace_active(viewport_->mspace_active());
         }
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {

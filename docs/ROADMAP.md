@@ -79,7 +79,7 @@ section in the writer) and polygonal clip boundaries.
 
 | Item | Priority |
 |---|---|
-| ~~**Layouts / paper space + viewports**~~ | **Done** (#26) — layouts, paper-space entities, tabs, sheet plot, MVIEW viewports. MSPACE (editing through a viewport) still open. ✅ |
+| ~~**Layouts / paper space + viewports**~~ | **Done** (#26) — layouts, paper-space entities, tabs, sheet plot, MVIEW viewports, MSPACE / PSPACE through a viewport. ✅ |
 | ~~**Named views (VIEW)**, **REGEN**~~ **Done** (#33); **VPORTS** | **P2** |
 
 ## H. Inquiry and drawing housekeeping — [#30](https://github.com/MusaCAD/MusaCAD/issues/30)
