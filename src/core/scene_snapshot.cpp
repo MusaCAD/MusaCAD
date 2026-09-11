@@ -473,12 +473,29 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         inst.def = im->def;
         inst.def_version = def != nullptr ? def->version : 0;
         inst.handle = h;
+        const std::span<const Vec2> poly = store.image_clip_polygon(*im);
+        if (!poly.empty()) {
+            // A polygonal clip: the region as textured triangles (triangulated in image
+            // fractions, then placed), plus its outline for the frame and the plot's clip.
+            inst.clip_world = image_uv_to_world(*im, poly);
+            std::vector<Vec2> uv_tris;
+            hatch::triangulate_filled({std::vector<Vec2>(poly.begin(), poly.end())}, uv_tris);
+            inst.tri_uv = uv_tris;
+            inst.tri_world = image_uv_to_world(*im, uv_tris);
+        }
         out.images.push_back(inst);
         if (store.image_frame() != 0) {
-            // IMAGEFRAME: the clipped quad's outline in the entity's colour.
+            // IMAGEFRAME: the clip boundary's outline in the entity's colour.
             const ResolvedProps r = entity_resolved(store, im->props);
-            for (std::size_t i = 0; i < 4; ++i) {
-                add_line(r.color, r.lineweight, q[i], q[(i + 1) % 4]);
+            if (!poly.empty()) {
+                const std::vector<Vec2>& cw = out.images.back().clip_world;
+                for (std::size_t i = 0; i < cw.size(); ++i) {
+                    add_line(r.color, r.lineweight, cw[i], cw[(i + 1) % cw.size()]);
+                }
+            } else {
+                for (std::size_t i = 0; i < 4; ++i) {
+                    add_line(r.color, r.lineweight, q[i], q[(i + 1) % 4]);
+                }
             }
         }
     });

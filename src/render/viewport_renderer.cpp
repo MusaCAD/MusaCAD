@@ -369,6 +369,23 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
         if (!ct.texture) {
             continue; // undecodable: the IMAGEFRAME outline (if on) marks the place
         }
+        if (!im.tri_world.empty() && im.tri_world.size() == im.tri_uv.size()) {
+            // A polygonal clip: the pre-triangulated region, uv per vertex.
+            std::vector<float> tv;
+            tv.reserve(im.tri_world.size() * 4);
+            for (std::size_t i = 0; i < im.tri_world.size(); ++i) {
+                tv.push_back(static_cast<float>(im.tri_world[i].x));
+                tv.push_back(static_cast<float>(im.tri_world[i].y));
+                tv.push_back(static_cast<float>(im.tri_uv[i].x));
+                tv.push_back(static_cast<float>(im.tri_uv[i].y));
+            }
+            image_buffer_->upload(tv.data(), tv.size() * sizeof(float));
+            cmd.bind_texture(0, *ct.texture);
+            cmd.bind_vertex_buffer(0, *image_buffer_, 0);
+            cmd.draw_instanced(static_cast<std::uint32_t>(im.tri_world.size()), 1);
+            ++stats_.draw_calls;
+            continue;
+        }
         // Two triangles over the (clipped) quad; the quad's corners run CCW from the
         // bottom-left, and image v runs down from the top, so the bottom edge samples v1.
         const auto& q = im.quad;

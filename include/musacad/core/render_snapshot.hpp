@@ -114,6 +114,11 @@ struct ImageInstance {
     std::uint16_t def = 0;
     std::uint32_t def_version = 0;
     EntityHandle handle;         ///< so pick/highlight can map back
+    /// A polygonal clip: the boundary in world space, and the same region as textured
+    /// triangles (3 vertices each; `tri_uv` in image fractions). Empty = the quad.
+    std::vector<Vec2> clip_world;
+    std::vector<Vec2> tri_world;
+    std::vector<Vec2> tri_uv;
 };
 
 /// A grip handle published for the selected set: its world position plus the

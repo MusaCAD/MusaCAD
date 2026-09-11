@@ -217,8 +217,7 @@ TEST_CASE("#10 commands: IMAGEATTACH (typed path and the dialog), IMAGECLIP opti
     h.proc.submit_line("IMAGECLIP");
     h.proc.submit_line("3,3");
     h.proc.submit_line("");  // New boundary
-    h.proc.submit_line("P"); // polygonal: not available, asks again
-    h.proc.submit_line("R");
+    h.proc.submit_line("R"); // rectangular (the polygonal flow has its own test)
     h.proc.submit_line("1,1");
     h.proc.submit_line("4,2");
     const auto* c = h.last<SetImageClipCommand>();

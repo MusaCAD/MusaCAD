@@ -3311,7 +3311,9 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
     }
     case State::Shape:
         if (u == "P" || u == "POLYGONAL") {
-            ctx.echo("Polygonal boundaries are not available yet; a rectangular one is.");
+            poly_.clear();
+            state_ = State::PolyFirst;
+            ctx.set_prompt("Specify first point: ");
             return;
         }
         if (!(t.empty() || u == "R" || u == "RECTANGULAR")) {
@@ -3336,6 +3338,48 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.submit(core::SetImageClipCommand{pick_, ctx.pick_radius(), Mode::NewRect, first_, *p,
                                                  ctx.group_id()});
             done_ = true;
+        }
+        return;
+    case State::PolyFirst:
+        if (const auto p = read_point(ctx, text)) {
+            poly_ = {*p};
+            ctx.set_last_point(*p);
+            state_ = State::PolyNext;
+            ctx.set_preview({PreviewKind::Polyline, poly_});
+            ctx.set_prompt("Specify next point: ");
+        }
+        return;
+    case State::PolyNext:
+        if (t.empty() || u == "C" || u == "CLOSE") {
+            if (poly_.size() < 3) {
+                ctx.echo("A polygonal boundary needs at least three points.");
+                return;
+            }
+            ctx.set_preview({});
+            ctx.submit(core::SetImagePolyClipCommand{pick_, ctx.pick_radius(), poly_, ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!poly_.empty()) {
+                poly_.pop_back();
+            }
+            if (poly_.empty()) {
+                state_ = State::PolyFirst;
+                ctx.set_preview({});
+                ctx.set_prompt("Specify first point: ");
+            } else {
+                ctx.set_last_point(poly_.back());
+                ctx.set_preview({PreviewKind::Polyline, poly_});
+            }
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            poly_.push_back(*p);
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Polyline, poly_});
+            ctx.set_prompt(poly_.size() >= 3 ? "Specify next point or [Undo/Close] <Close>: "
+                                             : "Specify next point or [Undo]: ");
         }
         return;
     }

@@ -988,6 +988,14 @@ struct AddImageCommand {
     double clip_v1 = 1.0;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::vector<Vec2> clip_polygon; ///< a polygonal clip (image fractions), or empty
+};
+/// IMAGECLIP New boundary > Polygonal: the boundary as world points on the image.
+struct SetImagePolyClipCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    std::vector<Vec2> points;
+    std::uint64_t group = 0;
 };
 
 /// Create a TABLE. `cells` are the raw cell strings in ROW-MAJOR order (rows*cols of
@@ -1163,6 +1171,7 @@ using Command =
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,
                  CreateViewportCommand, SetViewportViewCommand, EnterMspaceCommand, LeaveMspaceCommand,
                  XrefAttachCommand, XrefReloadCommand, XrefDetachCommand, XrefListCommand,
+                 SetImagePolyClipCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

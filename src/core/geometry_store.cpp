@@ -626,6 +626,44 @@ ImageData* GeometryStore::mutable_image(EntityHandle h) noexcept {
     return h.kind == EntityKind::Image ? images_.get(h.index, h.generation) : nullptr;
 }
 
+std::span<const Vec2> GeometryStore::image_clip_polygon(const ImageData& im) const noexcept {
+    if (im.clip_count < 3 || im.clip_offset + im.clip_count > polyline_pool_.size()) {
+        return {};
+    }
+    return std::span<const Vec2>(polyline_pool_.data() + im.clip_offset, im.clip_count);
+}
+
+bool GeometryStore::set_image_clip_polygon(EntityHandle h, const std::vector<Vec2>& uv) {
+    ImageData* d = mutable_image(h);
+    if (d == nullptr) {
+        return false;
+    }
+    if (uv.size() < 3) {
+        d->clip_offset = 0;
+        d->clip_count = 0;
+        return true;
+    }
+    d->clip_offset = static_cast<std::uint32_t>(polyline_pool_.size());
+    d->clip_count = static_cast<std::uint32_t>(uv.size());
+    polyline_pool_.insert(polyline_pool_.end(), uv.begin(), uv.end());
+    double u0 = 1.0;
+    double v0 = 1.0;
+    double u1 = 0.0;
+    double v1 = 0.0;
+    for (const Vec2& p : uv) {
+        u0 = std::min(u0, p.x);
+        v0 = std::min(v0, p.y);
+        u1 = std::max(u1, p.x);
+        v1 = std::max(v1, p.y);
+    }
+    d->clipped = true;
+    d->clip_u0 = u0;
+    d->clip_v0 = v0;
+    d->clip_u1 = u1;
+    d->clip_v1 = v1;
+    return true;
+}
+
 const ViewportData* GeometryStore::viewport(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Viewport ? viewports_.get(h.index, h.generation) : nullptr;
 }

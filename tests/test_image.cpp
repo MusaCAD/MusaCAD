@@ -152,9 +152,11 @@ TEST_CASE("The snapshot carries transforms, NEVER pixels") {
     // This is the architectural constraint: the snapshot is copied through the triple
     // buffer on every publish, so megabytes of decoded raster here would wreck the
     // geometry->render handoff. ImageInstance must stay small and pixel-free.
-    // 104 B: a quad (4 Vec2 = 64), UVs (16), def + version + handle. The number itself
-    // matters less than the ceiling -- what must never happen is pixels appearing here.
-    static_assert(sizeof(ImageInstance) <= 128,
+    // 176 B: a quad (4 Vec2 = 64), UVs (16), def + version + handle, and three vector
+    // headers for a polygonal clip (its boundary and pre-triangulated region -- a few
+    // points, on the heap). The number itself matters less than the ceiling -- what must
+    // never happen is pixels appearing here.
+    static_assert(sizeof(ImageInstance) <= 192,
                   "ImageInstance must stay small -- it is copied through the triple buffer "
                   "on every publish, so pixels must never live here");
     GeometryStore store;
@@ -326,6 +328,6 @@ TEST_CASE("Struct sizes: images live in a cold arena, hot structs untouched") {
     static_assert(sizeof(LineData) == 40, "hot struct: LineData must stay 40 B");
     static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
     static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
-    static_assert(sizeof(ImageData) == 96, "ImageData size changed -- update the docs too");
+    static_assert(sizeof(ImageData) == 104, "ImageData size changed -- update the docs too");
     SUCCEED();
 }

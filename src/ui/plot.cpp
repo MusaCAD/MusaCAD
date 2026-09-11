@@ -284,6 +284,17 @@ void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const Pl
                          ( p0.x() - p3.x()) / src.height(), (p0.y() - p3.y()) / src.height(),
                          p3.x(), p3.y());
             p.save();
+            if (!inst.clip_world.empty()) {
+                // A polygonal clip: the boundary as a device-space clip path.
+                QPolygonF poly;
+                for (const core::Vec2& w : inst.clip_world) {
+                    poly << to_dev(w);
+                }
+                QPainterPath clip;
+                clip.addPolygon(poly);
+                clip.closeSubpath();
+                p.setClipPath(clip);
+            }
             p.setTransform(t, true);
             p.setRenderHint(QPainter::SmoothPixmapTransform, true);
             p.drawImage(QRectF(0, 0, src.width(), src.height()), img, src);

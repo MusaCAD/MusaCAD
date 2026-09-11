@@ -4,6 +4,8 @@
 #pragma once
 
 #include <array>
+#include <span>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -35,6 +37,11 @@ using ImageQuad = std::array<Vec2, 4>;
 
 /// True when `p` is inside the placed (clipped) quad -- the pick test.
 [[nodiscard]] bool point_in_image(const ImageData& img, Vec2 p);
+/// A polygon in image fractions (u right, v down from the top-left) placed in the world
+/// through the image's transform.
+[[nodiscard]] std::vector<Vec2> image_uv_to_world(const ImageData& img, std::span<const Vec2> uv);
+/// Point-in-polygon (even-odd) for a world polygon.
+[[nodiscard]] bool point_in_polygon(std::span<const Vec2> poly, Vec2 p);
 
 /// Resolve an image definition's external `source` against the directory of the drawing
 /// that referenced it, refusing anything that escapes that directory.
