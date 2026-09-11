@@ -196,9 +196,13 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Image: {
         const ImageData* im = store.image(h);
-        return AddImageCommand{im->def,     im->pos,     im->width,   im->height,
-                               im->rotation, im->clipped, im->clip_u0, im->clip_v0,
-                               im->clip_u1,  im->clip_v1, 0,           im->props};
+        AddImageCommand c{im->def,      im->pos,     im->width,   im->height,
+                          im->rotation, im->clipped, im->clip_u0, im->clip_v0,
+                          im->clip_u1,  im->clip_v1, 0,           im->props,
+                          {}};
+        const std::span<const Vec2> poly = store.image_clip_polygon(*im);
+        c.clip_polygon.assign(poly.begin(), poly.end());
+        return c;
     }
     case EntityKind::Point:
         return AddPointCommand{store.point(h)->p, 0, store.point(h)->props};
@@ -347,6 +351,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                     d->clip_v0 = c.clip_v0;
                     d->clip_u1 = c.clip_u1;
                     d->clip_v1 = c.clip_v1;
+                }
+                if (!c.clip_polygon.empty()) {
+                    store.set_image_clip_polygon(handle, c.clip_polygon);
                 }
             }
         },

@@ -395,7 +395,9 @@ Document document_from_store(const GeometryStore& store) {
             const ImageData& im = image_arena.data()[i];
             doc.images.push_back(DocImage{im.def, im.pos, im.width, im.height, im.rotation,
                                           im.clipped, im.clip_u0, im.clip_v0, im.clip_u1,
-                                          im.clip_v1, im.props});
+                                          im.clip_v1, im.props, {}});
+            const std::span<const Vec2> poly = store.image_clip_polygon(im);
+            doc.images.back().clip_polygon.assign(poly.begin(), poly.end());
         }
     }
     // Block definitions (by name) + their self-contained content.
@@ -595,6 +597,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
             d->clip_v0 = im.clip_v0;
             d->clip_u1 = im.clip_u1;
             d->clip_v1 = im.clip_v1;
+        }
+        if (!im.clip_polygon.empty()) {
+            store.set_image_clip_polygon(h, im.clip_polygon);
         }
     }
     if (!doc.table_styles.empty()) {

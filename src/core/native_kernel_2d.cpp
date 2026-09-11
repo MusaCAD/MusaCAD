@@ -383,6 +383,11 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         // The placed quad as a closed strip -- hover/selection highlight outlines
         // exactly the region that is drawn.
         const ImageData* im = store.image(entity);
+        if (const std::span<const Vec2> poly = store.image_clip_polygon(*im); !poly.empty()) {
+            out = image_uv_to_world(*im, poly);
+            out.push_back(out.front());
+            break;
+        }
         const ImageQuad q = resolve_image_quad(*im);
         out.assign(q.begin(), q.end());
         out.push_back(q[0]);
@@ -629,6 +634,19 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         // A click anywhere on the (clipped) image picks it, like a filled hatch region;
         // otherwise snap to the nearest edge of the quad.
         const ImageData* im = store.image(entity);
+        if (const std::span<const Vec2> poly = store.image_clip_polygon(*im); !poly.empty()) {
+            const std::vector<Vec2> world = image_uv_to_world(*im, poly);
+            if (point_in_polygon(world, query)) {
+                out_point = query;
+                return true;
+            }
+            std::vector<Vec2> edges;
+            for (std::size_t i = 0; i < world.size(); ++i) {
+                edges.push_back(world[i]);
+                edges.push_back(world[(i + 1) % world.size()]);
+            }
+            return nearest_on_segments(edges, query, out_point);
+        }
         if (point_in_image(*im, query)) {
             out_point = query;
             return true;

@@ -3605,6 +3605,7 @@ void GeometryEngine::apply_image_clip(const SetImageClipCommand& c) {
             return;
         }
         edited.clipped = true;
+        edited.clip_polygon.clear();
         edited.clip_u0 = u0;
         edited.clip_v0 = v0;
         edited.clip_u1 = u1;
@@ -3614,6 +3615,7 @@ void GeometryEngine::apply_image_clip(const SetImageClipCommand& c) {
     }
     case Mode::Delete:
         edited.clipped = false;
+        edited.clip_polygon.clear();
         edited.clip_u0 = 0.0;
         edited.clip_v0 = 0.0;
         edited.clip_u1 = 1.0;
@@ -6775,6 +6777,39 @@ void GeometryEngine::apply(const Command& command) {
                 apply_attach_image(c);
             } else if constexpr (std::is_same_v<T, SetImageClipCommand>) {
                 apply_image_clip(c);
+            } else if constexpr (std::is_same_v<T, SetImagePolyClipCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+                const ImageData* im = store_.image(h);
+                if (im == nullptr) {
+                    report("IMAGECLIP: select an image.");
+                } else if (c.points.size() < 3) {
+                    report("IMAGECLIP: a polygonal boundary needs at least three points.");
+                } else {
+                    const double cs = std::cos(im->rotation);
+                    const double sn = std::sin(im->rotation);
+                    std::vector<Vec2> uv;
+                    for (const Vec2& p : c.points) {
+                        const Vec2 d = p - im->pos;
+                        const double lx = d.x * cs + d.y * sn;
+                        const double ly = -d.x * sn + d.y * cs;
+                        uv.push_back({std::clamp(im->width > 0.0 ? lx / im->width : 0.0, 0.0, 1.0),
+                                      std::clamp(im->height > 0.0 ? 1.0 - ly / im->height : 0.0, 0.0, 1.0)});
+                    }
+                    const Command original = capture_entity(h);
+                    AddImageCommand edited = std::get<AddImageCommand>(original);
+                    edited.clipped = true;
+                    edited.clip_polygon = std::move(uv);
+                    remove_indexed(h);
+                    push_erase_item(c.group, h, original);
+                    const Command add = edited;
+                    const EntityHandle nh = create_indexed(add);
+                    push_create_item(c.group, nh, add);
+                    selection_ = {nh};
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    report("Image clipped to the polygon.");
+                }
             } else if constexpr (std::is_same_v<T, CreateViewportCommand>) {
                 apply_create_viewport(c);
             } else if constexpr (std::is_same_v<T, SetViewportViewCommand>) {

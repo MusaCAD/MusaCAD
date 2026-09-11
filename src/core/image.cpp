@@ -68,6 +68,35 @@ bool point_in_image(const ImageData& img, Vec2 p) {
     return !(pos && neg);
 }
 
+std::vector<Vec2> image_uv_to_world(const ImageData& img, std::span<const Vec2> uv) {
+    std::vector<Vec2> out;
+    out.reserve(uv.size());
+    const double cs = std::cos(img.rotation);
+    const double sn = std::sin(img.rotation);
+    for (const Vec2& p : uv) {
+        const double x = p.x * img.width;
+        const double y = (1.0 - p.y) * img.height;
+        out.push_back({img.pos.x + x * cs - y * sn, img.pos.y + x * sn + y * cs});
+    }
+    return out;
+}
+
+bool point_in_polygon(std::span<const Vec2> poly, Vec2 p) {
+    bool inside = false;
+    const std::size_t n = poly.size();
+    for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+        const Vec2& a = poly[i];
+        const Vec2& b = poly[j];
+        if ((a.y > p.y) != (b.y > p.y)) {
+            const double x = a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y);
+            if (p.x < x) {
+                inside = !inside;
+            }
+        }
+    }
+    return inside;
+}
+
 bool resolve_image_path(std::string_view drawing_dir, std::string_view source, std::string& out) {
     if (source.empty()) {
         return false;

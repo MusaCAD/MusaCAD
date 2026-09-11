@@ -859,9 +859,10 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Pick, Option, Shape, First, Second } state_ = State::Pick;
+    enum class State { Pick, Option, Shape, First, Second, PolyFirst, PolyNext } state_ = State::Pick;
     core::Vec2 pick_{};
     core::Vec2 first_{};
+    std::vector<core::Vec2> poly_;
     bool done_ = false;
 };
 

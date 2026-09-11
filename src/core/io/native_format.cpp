@@ -1077,6 +1077,16 @@ std::string serialize_native(const Document& doc) {
         append_double(s, im.clip_v1);
         append_props(s, im.props);
         s += '\n';
+        if (!im.clip_polygon.empty()) {
+            // v33: the polygonal clip boundary, in image fractions, on the next line.
+            s += "IMAGECLIP ";
+            append_uint(s, im.clip_polygon.size());
+            for (const Vec2& p : im.clip_polygon) {
+                s += ' ';
+                append_vec(s, p);
+            }
+            s += '\n';
+        }
     }
     // v17: GD&T. FCF <cellcount> px py rot style <props7> <override16>; then one RAW cell
     // string per following line (cells may contain spaces, so they cannot be tokens --
@@ -1850,6 +1860,17 @@ IoResult parse_native(std::string_view text, Document& out) {
             im.clip_v1 = vals[8];
             im.props = props;
             doc.images.push_back(im);
+        } else if (key == "IMAGECLIP") {
+            // IMAGECLIP n u v ... (v33): belongs to the IMAGE record just before it.
+            std::uint64_t n = 0;
+            vals.clear();
+            if (doc.images.empty() || tok.size() < 2 || !to_uint(tok[1], n) || n < 3 ||
+                tok.size() != 2 + 2 * n || !parse_doubles(tok, 2, 2 * n, vals)) {
+                return fail("IMAGECLIP record malformed");
+            }
+            for (std::size_t i = 0; i < n; ++i) {
+                doc.images.back().clip_polygon.push_back({vals[2 * i], vals[2 * i + 1]});
+            }
         } else if (key == "FCF") {
             // FCF <cellcount> px py rot style <props7> <override16>; cells on the
             // following lines (raw, may contain spaces).

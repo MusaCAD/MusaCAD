@@ -360,6 +360,11 @@ struct ImageData {
     double clip_u1 = 1.0;
     double clip_v1 = 1.0;
     EntityProps props{};
+    /// A polygonal clip boundary (image fractions, 3+ points) in the shared vertex
+    /// pool; count 0 = the rectangle above. The rectangle is kept as the polygon's
+    /// bounding box, so bounds, the placed quad and the UV rectangle stay valid.
+    std::uint32_t clip_offset = 0;
+    std::uint32_t clip_count = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -653,6 +658,10 @@ public:
     /// Mutable access for the create path only (the clip fields are set right after
     /// insertion); everything else reads through the const accessor.
     [[nodiscard]] ImageData* mutable_image(EntityHandle h) noexcept;
+    /// The polygonal clip boundary (image fractions), empty for a rectangular clip.
+    [[nodiscard]] std::span<const Vec2> image_clip_polygon(const ImageData& im) const noexcept;
+    /// Set (3+ points) or clear (empty) the polygonal clip; the rectangle becomes its box.
+    bool set_image_clip_polygon(EntityHandle h, const std::vector<Vec2>& uv);
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view attdef_prompt(const AttDefData& a) const noexcept;

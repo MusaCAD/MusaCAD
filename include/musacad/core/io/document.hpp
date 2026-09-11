@@ -62,7 +62,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 32;
+inline constexpr std::uint32_t kFormatVersion = 33;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -324,6 +324,7 @@ struct DocImage {
     double clip_u1 = 1.0;
     double clip_v1 = 1.0;
     EntityProps props{};
+    std::vector<Vec2> clip_polygon; ///< polygonal clip in image fractions (v33), or empty
     friend bool operator==(const DocImage&, const DocImage&) = default;
 };
 
