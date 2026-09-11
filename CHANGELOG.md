@@ -6,13 +6,24 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## Unreleased (planned as v0.4.0)
 
+Full notes are drafted in [`docs/release-notes/v0.4.0.md`](docs/release-notes/v0.4.0.md).
 Everything below is on `main` and in the per-command table in
 [`docs/COMMANDS.md`](docs/COMMANDS.md); the roadmap in
 [`docs/ROADMAP.md`](docs/ROADMAP.md) shows what is still open.
 
 ### Added
+- **Editing through viewports** (#26) — `MSPACE` (or a double-click inside a viewport) edits
+  the model at the viewport's scale; `PSPACE` returns to the sheet and the view you left
+  becomes the viewport's view.
+- **External references** (#25) — `XREF` attaches a `.musa` or `.dxf` as a block that follows
+  its file (Detach, Reload, `?`); xrefs are re-read whenever the drawing opens.
+- **Polygonal image clips** (#10) — `IMAGECLIP` New boundary > Polygonal.
+- **DXF fidelity** (#31, #10) — every record carries a handle, with `$HANDSEED`, the
+  `BLOCK_RECORD` table and BLOCKS before ENTITIES; raster images travel as `IMAGE` /
+  `IMAGEDEF` with the classes and dictionary AutoCAD expects (an embedded image is written
+  beside the DXF).
 - **Layouts, paper space and viewports** (#26) — a layout table with page setups, paper-space
   entities per layout (only the active space is drawn, picked and edited), the sheet drawn
   under a layout, layout tabs (click to switch, right-click for New / Rename / Delete),
@@ -93,7 +104,7 @@ Everything below is on `main` and in the per-command table in
   one comes up with DYN on as intended.
 
 ### Compatibility
-Native format **v31**. Files from v0.3.0 (v20) open unchanged; files saved by this build
+Native format **v33**. Files from v0.3.0 (v20) open unchanged; files saved by this build
 carry the new tables and entities and need this build or newer.
 
 ---
