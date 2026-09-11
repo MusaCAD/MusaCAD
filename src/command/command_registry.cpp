@@ -186,6 +186,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
     reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
         "Image frames: hidden, shown and plotted, or shown on screen only.");
+    reg({"XR", "XREF", "-XREF"}, [] { return std::make_unique<XrefCommand>(); }, "",
+        "External references: attach a drawing as a block that follows its file; detach, reload, ?.");
     reg({"MVIEW", "MV"}, [] { return std::make_unique<MviewCommand>(); }, "",
         "A viewport on the layout showing model space: two corners or Fit; ON, OFF, Scale, Center.");
     reg({"MSPACE", "MS"}, [] { return std::make_unique<MspaceCommand>(); }, "",

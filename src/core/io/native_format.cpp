@@ -863,6 +863,11 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += escape(b.name);
         s += '\n';
+        if (!b.xref_path.empty()) {
+            s += "XREFPATH ";
+            s += enc(b.xref_path); // spaces travel as 0x1F, like PAGESETUP strings
+            s += '\n';
+        }
         emit_block_content(b);
         s += "ENDBLOCKDEF\n";
     }
@@ -2223,6 +2228,17 @@ IoResult parse_native(std::string_view text, Document& out) {
             cur_block.base = {vals[0], vals[1]};
             in_block = true;
             target_block();
+        } else if (key == "XREFPATH") {
+            if (!in_block || tok.size() != 2) {
+                return fail("XREFPATH outside a block");
+            }
+            std::string path(tok[1]);
+            for (char& ch : path) {
+                if (ch == '\x1f') {
+                    ch = ' ';
+                }
+            }
+            cur_block.xref_path = path;
         } else if (key == "ENDBLOCKDEF") {
             if (in_block) {
                 doc.block_defs.push_back(std::move(cur_block));

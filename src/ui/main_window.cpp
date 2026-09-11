@@ -1153,6 +1153,11 @@ void MainWindow::build_status_bar() {
     osnap_menu->addSeparator();
     osnap_menu->addAction(QStringLiteral("Settings\u2026"), this, [this] { open_osnap_settings_dialog(); });
     viewport_->set_osnap_settings_callback([this] { open_osnap_settings_dialog(); });
+    viewport_->set_open_file_dialog([this](const std::string& filter) {
+        return QFileDialog::getOpenFileName(this, QStringLiteral("Open"), QString(),
+                                            QString::fromStdString(filter))
+            .toStdString();
+    });
     viewport_->set_image_file_dialog([this] {
         return QFileDialog::getOpenFileName(
                    this, QStringLiteral("Attach image"), QString(),

@@ -258,6 +258,10 @@ std::string ViewportWindow::image_file_dialog() {
     return image_file_dialog_ ? image_file_dialog_() : std::string();
 }
 
+std::string ViewportWindow::open_file_dialog(const std::string& filter) {
+    return open_file_dialog_ ? open_file_dialog_(filter) : std::string();
+}
+
 void ViewportWindow::osnap_settings_dialog() {
     if (osnap_settings_callback_) {
         osnap_settings_callback_(); // MainWindow owns the dialog (GUI thread)

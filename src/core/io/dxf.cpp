@@ -915,7 +915,10 @@ std::string serialize_dxf(const Document& doc) {
             code(s, 0, "BLOCK");
             code(s, 8, "0");
             code(s, 2, b.name);
-            code_i(s, 70, 0);
+            code_i(s, 70, b.xref_path.empty() ? 0 : 4); // 4 = an external reference
+            if (!b.xref_path.empty()) {
+                code(s, 1, b.xref_path);
+            }
             code_d(s, 10, b.base.x);
             code_d(s, 20, b.base.y);
             code_d(s, 30, 0.0);
@@ -2042,6 +2045,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     block.name = *nm;
                 }
                 block.base = {getd(body, 10), getd(body, 20)};
+                if (const std::string* f = find(body, 70); f != nullptr && (to_l(*f) & 4) != 0) {
+                    if (const std::string* p1 = find(body, 1)) {
+                        block.xref_path = *p1;
+                    }
+                }
                 in_block = true;
             } else if (type == "ENDBLK") {
                 if (in_block) {

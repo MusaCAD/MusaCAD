@@ -3053,54 +3053,55 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
 // coordinates with the picked base point as the definition's base, so replacing the
 // originals with one insert AT that base (scale 1, rotation 0) leaves every stroke where
 // it was -- the insert transform is world = pos + R(S(local - base)). One undo group.
-void GeometryEngine::collect_block_content(const std::vector<EntityHandle>& handles,
-                                           BlockContent& content, std::vector<EntityHandle>& taken,
-                                           int& skipped) const {
+namespace {
+void collect_block_content_from(const GeometryStore& st, const std::vector<EntityHandle>& handles,
+                                BlockContent& content, std::vector<EntityHandle>& taken,
+                                int& skipped) {
     for (const EntityHandle h : handles) {
         switch (h.kind) {
         case EntityKind::Line:
-            content.lines.push_back(*store_.line(h));
+            content.lines.push_back(*st.line(h));
             break;
         case EntityKind::Circle:
-            content.circles.push_back(*store_.circle(h));
+            content.circles.push_back(*st.circle(h));
             break;
         case EntityKind::Arc:
-            content.arcs.push_back(*store_.arc(h));
+            content.arcs.push_back(*st.arc(h));
             break;
         case EntityKind::Polyline: {
-            const PolylineData* pl = store_.polyline(h);
-            const auto v = store_.vertices_of(*pl);
-            const auto b = store_.bulges_of(*pl);
+            const PolylineData* pl = st.polyline(h);
+            const auto v = st.vertices_of(*pl);
+            const auto b = st.bulges_of(*pl);
             content.polylines.push_back(BlockPolyline{std::vector<Vec2>(v.begin(), v.end()),
                                                           std::vector<double>(b.begin(), b.end()),
                                                           pl->closed, pl->props});
             break;
         }
         case EntityKind::Text: {
-            const TextData* t = store_.text(h);
+            const TextData* t = st.text(h);
             content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
-                                                  std::string(store_.string_of(*t)), t->props});
+                                                  std::string(st.string_of(*t)), t->props});
             break;
         }
         case EntityKind::AttDef: {
             // The definition joins the block as an attribute: INSERT will ask its prompt.
-            const AttDefData* a = store_.attdef(h);
+            const AttDefData* a = st.attdef(h);
             content.attdefs.push_back(
                 BlockAttDef{BlockText{a->text.pos, a->text.height, a->text.rotation, a->text.justify,
                                       std::string(), a->text.props},
-                            std::string(store_.string_of(a->text)),
-                            std::string(store_.attdef_prompt(*a)),
-                            std::string(store_.attdef_default(*a)), a->flags});
+                            std::string(st.string_of(a->text)),
+                            std::string(st.attdef_prompt(*a)),
+                            std::string(st.attdef_default(*a)), a->flags});
             break;
         }
         case EntityKind::MText: {
-            const MTextData* m = store_.mtext(h);
+            const MTextData* m = st.mtext(h);
             content.mtexts.push_back(
-                BlockMText{m->text, std::string(store_.string_of(m->text)), m->props});
+                BlockMText{m->text, std::string(st.string_of(m->text)), m->props});
             break;
         }
         case EntityKind::Insert:
-            content.inserts.push_back(*store_.insert(h)); // nests
+            content.inserts.push_back(*st.insert(h)); // nests
             break;
         case EntityKind::Point:
         case EntityKind::Spline:
@@ -3120,6 +3121,51 @@ void GeometryEngine::collect_block_content(const std::vector<EntityHandle>& hand
         }
         taken.push_back(h);
     }
+}
+
+/// Every live model-space entity of the kinds a block can hold, in arena order.
+std::vector<EntityHandle> block_material(const GeometryStore& st) {
+    std::vector<EntityHandle> out;
+    const auto collect = [&](const auto& arena, EntityKind kind) {
+        for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+            if (arena.alive(i) && arena.data()[i].props.space() == 0) {
+                out.push_back(EntityHandle{i, arena.generations()[i], kind});
+            }
+        }
+    };
+    collect(st.lines(), EntityKind::Line);
+    collect(st.circles(), EntityKind::Circle);
+    collect(st.arcs(), EntityKind::Arc);
+    collect(st.polylines(), EntityKind::Polyline);
+    collect(st.mtexts(), EntityKind::MText);
+    collect(st.inserts(), EntityKind::Insert);
+    for (std::uint32_t i = 0; i < st.texts().slot_count(); ++i) {
+        if (st.texts().alive(i) && st.texts().data()[i].props.space() == 0) {
+            out.push_back(EntityHandle{i, st.texts().generations()[i], EntityKind::Text});
+        }
+    }
+    for (std::uint32_t i = 0; i < st.attdefs().slot_count(); ++i) {
+        if (st.attdefs().alive(i) && st.attdefs().data()[i].text.props.space() == 0) {
+            out.push_back(EntityHandle{i, st.attdefs().generations()[i], EntityKind::AttDef});
+        }
+    }
+    return out;
+}
+
+std::string lower_ext(const std::string& path) {
+    const std::size_t dot = path.find_last_of('.');
+    std::string e = dot == std::string::npos ? std::string() : path.substr(dot);
+    for (char& ch : e) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return e;
+}
+} // namespace
+
+void GeometryEngine::collect_block_content(const std::vector<EntityHandle>& handles,
+                                           BlockContent& content, std::vector<EntityHandle>& taken,
+                                           int& skipped) const {
+    collect_block_content_from(store_, handles, content, taken, skipped);
 }
 
 void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
@@ -3822,6 +3868,192 @@ void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
     geom_dirty_ = true;
     dirty_ = true;
     report(c.on == 0 ? "Viewport off." : c.on == 1 ? "Viewport on." : "Viewport updated.");
+}
+
+std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
+                                                   const std::string& name,
+                                                   const std::string& xref_path, std::string& err) {
+    io::Document doc;
+    const io::IoResult r = lower_ext(full_path) == ".dxf" ? io::load_dxf(full_path, doc)
+                                                          : io::load_native(full_path, doc);
+    if (!r.ok) {
+        err = r.message;
+        return 0xFFFF;
+    }
+    GeometryStore tmp;
+    tmp.set_font_engine(store_.font_engine());
+    io::populate_store(tmp, doc);
+    // The source's own blocks come along as "name|block" so its references keep
+    // working; their indices are remapped from the source table to ours.
+    std::vector<std::uint16_t> remap(tmp.block_count(), 0xFFFF);
+    const auto find_block = [&](const std::string& n) -> std::uint16_t {
+        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+            if (store_.block(i)->name == n) {
+                return i;
+            }
+        }
+        return 0xFFFF;
+    };
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(tmp.block_count()); ++i) {
+        BlockDef nested = *tmp.block(i);
+        nested.name = name + "|" + nested.name;
+        nested.xref_path.clear();
+        const std::uint16_t existing = find_block(nested.name);
+        if (existing != 0xFFFF) {
+            store_.redefine_block(existing, nested);
+            remap[i] = existing;
+        } else {
+            remap[i] = store_.add_block(nested);
+        }
+    }
+    const auto remap_inserts = [&](BlockContent& bc) {
+        for (InsertData& in : bc.inserts) {
+            in.block = in.block < remap.size() ? remap[in.block] : 0;
+        }
+    };
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(tmp.block_count()); ++i) {
+        BlockDef fixed = *store_.block(remap[i]);
+        remap_inserts(fixed.content);
+        store_.redefine_block(remap[i], fixed);
+    }
+    BlockDef def;
+    def.name = name;
+    def.base = {0.0, 0.0};
+    def.xref_path = xref_path;
+    std::vector<EntityHandle> taken;
+    int skipped = 0;
+    collect_block_content_from(tmp, block_material(tmp), def.content, taken, skipped);
+    remap_inserts(def.content);
+    const std::uint16_t existing = find_block(name);
+    if (existing != 0xFFFF) {
+        store_.redefine_block(existing, def);
+        return existing;
+    }
+    return store_.add_block(def);
+}
+
+void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (c.path.empty() || !fs::is_regular_file(fs::path(c.path), ec)) {
+        report("XREF: cannot read \"" + c.path + "\".");
+        return;
+    }
+    const std::string name = fs::path(c.path).stem().string();
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        if (store_.block(i)->name == name && store_.block(i)->xref_path.empty()) {
+            report("XREF: a block named \"" + name + "\" already exists in this drawing.");
+            return;
+        }
+    }
+    // Stored relative to the drawing's folder when the file lies inside it.
+    std::string stored = fs::weakly_canonical(fs::path(c.path), ec).string();
+    const std::string dir =
+        active_idx_ < doc_metas_.size() ? doc_dir_of(doc_metas_[active_idx_].path) : std::string();
+    if (!dir.empty()) {
+        const fs::path rel = fs::path(stored).lexically_relative(fs::weakly_canonical(fs::path(dir), ec));
+        const std::string rs = rel.generic_string();
+        if (!rs.empty() && rs != "." && rs.rfind("..", 0) != 0) {
+            stored = rs;
+        }
+    }
+    std::string err;
+    const std::uint16_t bi = load_xref_definition(c.path, name, stored, err);
+    if (bi == 0xFFFF) {
+        report("XREF: " + err);
+        return;
+    }
+    AddInsertCommand ins{bi, c.pos, c.scale > 0.0 ? c.scale : 1.0, c.scale > 0.0 ? c.scale : 1.0,
+                         c.rotation, 0, {}, {}};
+    const Command add = ins;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Xref \"" + name + "\" attached from \"" + stored + "\".");
+}
+
+void GeometryEngine::apply_xref_reload(const XrefReloadCommand& c) {
+    namespace fs = std::filesystem;
+    const std::string dir =
+        active_idx_ < doc_metas_.size() ? doc_dir_of(doc_metas_[active_idx_].path) : std::string();
+    std::size_t done = 0;
+    std::string failed;
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        const BlockDef* b = store_.block(i);
+        if (b->xref_path.empty() || (!c.name.empty() && b->name != c.name)) {
+            continue;
+        }
+        const fs::path p(b->xref_path);
+        const std::string full = p.is_absolute() || dir.empty() ? b->xref_path
+                                                                  : (fs::path(dir) / p).string();
+        std::string err;
+        const std::string name = b->name;
+        const std::string path = b->xref_path;
+        if (load_xref_definition(full, name, path, err) == 0xFFFF) {
+            failed += (failed.empty() ? "" : ", ") + name + " (" + err + ")";
+        } else {
+            ++done;
+        }
+    }
+    geom_dirty_ = true;
+    if (done == 0 && failed.empty()) {
+        report(c.name.empty() ? "No xrefs to reload." : "No xref named \"" + c.name + "\".");
+    } else {
+        report(std::to_string(done) + " xref(s) reloaded" +
+               (failed.empty() ? "." : "; could not read: " + failed + " (last read copy kept)."));
+    }
+}
+
+void GeometryEngine::reload_all_xrefs() {
+    bool any = false;
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        any = any || !store_.block(i)->xref_path.empty();
+    }
+    if (any) {
+        apply_xref_reload(XrefReloadCommand{});
+    }
+}
+
+void GeometryEngine::apply_xref_detach(const XrefDetachCommand& c) {
+    std::uint16_t bi = 0xFFFF;
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        if (store_.block(i)->name == c.name && !store_.block(i)->xref_path.empty()) {
+            bi = i;
+        }
+    }
+    if (bi == 0xFFFF) {
+        report("XREF: no xref named \"" + c.name + "\".");
+        return;
+    }
+    std::size_t erased = 0;
+    for (const EntityHandle h : all_live()) {
+        const InsertData* in = store_.insert(h);
+        if (in != nullptr && in->block == bi) {
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(c.group, h, original);
+            ++erased;
+        }
+    }
+    if (erased > 0) {
+        redo_.clear();
+    }
+    // Drop the definition and the nested ones nothing else uses (highest index first,
+    // since removing renumbers those above it).
+    const std::string prefix = c.name + "|";
+    for (int i = static_cast<int>(store_.block_count()) - 1; i >= 0; --i) {
+        const auto idx = static_cast<std::uint16_t>(i);
+        const std::string& n = store_.block(idx)->name;
+        if (n == c.name || n.rfind(prefix, 0) == 0) {
+            store_.remove_block(idx); // refuses (keeps) a definition still in use
+        }
+    }
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Xref \"" + c.name + "\" detached (" + std::to_string(erased) + " reference(s) erased).");
 }
 
 void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
@@ -6547,6 +6779,21 @@ void GeometryEngine::apply(const Command& command) {
                 apply_create_viewport(c);
             } else if constexpr (std::is_same_v<T, SetViewportViewCommand>) {
                 apply_viewport_view(c);
+            } else if constexpr (std::is_same_v<T, XrefAttachCommand>) {
+                apply_xref_attach(c);
+            } else if constexpr (std::is_same_v<T, XrefReloadCommand>) {
+                apply_xref_reload(c);
+            } else if constexpr (std::is_same_v<T, XrefDetachCommand>) {
+                apply_xref_detach(c);
+            } else if constexpr (std::is_same_v<T, XrefListCommand>) {
+                std::string msg;
+                for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+                    const BlockDef* b = store_.block(i);
+                    if (!b->xref_path.empty()) {
+                        msg += (msg.empty() ? "" : ", ") + b->name + " <- " + b->xref_path;
+                    }
+                }
+                report(msg.empty() ? "No xrefs attached." : "Xrefs: " + msg);
             } else if constexpr (std::is_same_v<T, EnterMspaceCommand>) {
                 if (store_.active_space() == 0) {
                     report("MSPACE works on a layout with a viewport (double-click inside one).");
@@ -6783,6 +7030,7 @@ void GeometryEngine::load_document_replace(const Command& command) {
     store_.clear();
     grid_.clear();
     io::populate_store(store_, doc);
+    reload_all_xrefs(); // an XREF shows what its file holds now
     for (const EntityHandle h : all_live()) {
         Vec2 lo;
         Vec2 hi;
@@ -6944,6 +7192,7 @@ void GeometryEngine::open_into_new_tab(const Command& command) {
     parked_[doc_metas_[active_idx_].id] = std::move(parked);
     reset_active_state();
     io::populate_store(store_, doc);
+    reload_all_xrefs(); // an XREF shows what its file holds now
     for (const EntityHandle h : all_live()) {
         Vec2 lo;
         Vec2 hi;

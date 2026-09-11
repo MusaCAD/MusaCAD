@@ -303,6 +303,15 @@ private:
     void apply_image_clip(const SetImageClipCommand& c);
     void apply_layout(const LayoutCommand& c);
     void apply_create_viewport(const CreateViewportCommand& c);
+    void apply_xref_attach(const XrefAttachCommand& c);
+    void apply_xref_reload(const XrefReloadCommand& c);
+    void apply_xref_detach(const XrefDetachCommand& c);
+    /// Re-read every XREF definition from its file (after a document is loaded).
+    void reload_all_xrefs();
+    /// Read `full_path` as block content named `name` into the block table (its own
+    /// blocks as "name|block"); returns the index, or 0xFFFF with `err` set.
+    std::uint16_t load_xref_definition(const std::string& full_path, const std::string& name,
+                                       const std::string& xref_path, std::string& err);
     void apply_viewport_view(const SetViewportViewCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
