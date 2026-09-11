@@ -3619,6 +3619,110 @@ void MviewCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void XrefCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Option;
+    ctx.set_prompt("Enter an option [?/Attach/Detach/Reload] <Attach>: ");
+}
+
+void XrefCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void XrefCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option:
+        if (u == "?") {
+            ctx.submit(core::XrefListCommand{});
+            done_ = true;
+            return;
+        }
+        if (u == "D" || u == "DETACH" || u == "R" || u == "RELOAD") {
+            detach_ = u == "D" || u == "DETACH";
+            state_ = State::Name;
+            ctx.set_prompt(detach_ ? "Enter xref name to detach: " : "Enter xref name to reload <all>: ");
+            return;
+        }
+        if (!(t.empty() || u == "A" || u == "ATTACH")) {
+            ctx.echo("Enter ?, Attach, Detach or Reload.");
+            return;
+        }
+        state_ = State::File;
+        ctx.set_prompt("Enter drawing file name (~ for the file dialog): ");
+        return;
+    case State::File:
+        if (t == "~" || t.empty()) {
+            path_ = ctx.view() != nullptr
+                        ? ctx.view()->open_file_dialog("Drawings (*.musa *.dxf);;All files (*)")
+                        : std::string();
+            if (path_.empty()) {
+                if (t.empty()) {
+                    ctx.echo("A file name is required (~ opens the file dialog).");
+                    return;
+                }
+                ctx.echo("*Cancel*");
+                done_ = true;
+                return;
+            }
+        } else {
+            path_ = t;
+        }
+        state_ = State::Point;
+        ctx.set_prompt("Specify insertion point <0,0>: ");
+        return;
+    case State::Point:
+        if (t.empty()) {
+            pos_ = {0.0, 0.0};
+        } else if (const auto p = read_point(ctx, text)) {
+            pos_ = *p;
+        } else {
+            return;
+        }
+        ctx.set_last_point(pos_);
+        state_ = State::Scale;
+        ctx.set_prompt("Specify scale factor <1>: ");
+        return;
+    case State::Scale: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || v <= 0.0) {
+                ctx.echo("Enter a scale factor greater than 0.");
+                return;
+            }
+            scale_ = v;
+        }
+        state_ = State::Rotation;
+        ctx.set_prompt("Specify rotation angle <0>: ");
+        return;
+    }
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        ctx.submit(core::XrefAttachCommand{path_, pos_, scale_, core::to_radians(deg), ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    case State::Name:
+        if (detach_) {
+            if (t.empty()) {
+                ctx.echo("An xref name is required.");
+                return;
+            }
+            ctx.submit(core::XrefDetachCommand{t, ctx.group_id()});
+        } else {
+            ctx.submit(core::XrefReloadCommand{t});
+        }
+        done_ = true;
+        return;
+    }
+}
+
 void AttdispCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter attribute visibility setting [Normal/ON/OFF] <Normal>: ");
 }

@@ -62,7 +62,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 31;
+inline constexpr std::uint32_t kFormatVersion = 32;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -250,6 +250,7 @@ struct DocBlockDef {
     std::vector<DocMText> mtexts;
     std::vector<DocAttDef> attdefs; ///< attribute definitions (v28)
     std::vector<DocInsert> inserts; ///< nested block references
+    std::string xref_path;          ///< XREF source drawing (v32); "" for an ordinary block
     friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
 };
 

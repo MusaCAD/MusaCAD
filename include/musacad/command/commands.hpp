@@ -941,6 +941,25 @@ private:
     bool done_ = false;
 };
 
+/// XREF (XR): ? / Attach (a drawing file, insertion point, scale, rotation) / Detach /
+/// Reload. An xref is a block that follows its file.
+class XrefCommand final : public ICommand {
+public:
+    std::string name() const override { return "XREF"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Option, File, Point, Scale, Rotation, Name } state_ = State::Option;
+    bool detach_ = false;
+    std::string path_;
+    core::Vec2 pos_{};
+    double scale_ = 1.0;
+    bool done_ = false;
+};
+
 /// ATTDISP: show every attribute, hide every attribute, or let each keep its own mode.
 class AttdispCommand final : public ICommand {
 public:

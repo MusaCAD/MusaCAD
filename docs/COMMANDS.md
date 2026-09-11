@@ -51,6 +51,7 @@ commands (Ribbon Phase A):
 | ATTDEF (ATT, -ATTDEF) | Define a block attribute: modes (Invisible/Constant/Verify/Preset), tag, prompt, default value, then the text placement. Shows its tag until BLOCK folds it into a definition. |
 | ATTDISP | Attribute visibility: Normal (each attribute's own Invisible mode), ON or OFF for all. |
 | ATTEDIT (-ATTEDIT) | Change one attribute value (by tag, or all) on a block reference. |
+| XREF (XR, -XREF) | External references: Attach a .musa or .dxf as a block named after the file (its own blocks come along as name\|block), placed at a point, scale and rotation; Detach erases its references and definition; Reload re-reads the file; ? lists them. Xrefs are re-read whenever the drawing opens. |
 | IMAGEATTACH (IAT) | Attach a raster image: file (or the file dialog), keep a copy inside the drawing or reference it from the drawing's folder, insertion point, scale (1 pixel = 1 unit at 1), rotation. |
 | IMAGECLIP (ICL) | Clip an image to a rectangular boundary; Delete, ON, OFF keep or drop the boundary. |
 | IMAGEFRAME | Image frames: 0 hidden, 1 shown and plotted, 2 shown on screen only. |
@@ -359,7 +360,7 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | REFEDIT — edit a definition; all instances update | — | Staged |
 | EXPLODE — instance → its geometry | X | Staged |
 | ATTDEF / ATTRIB — block attribute text | ATT | Implemented (issue #25: ATTDEF, INSERT value prompts, ATTDISP, ATTEDIT; DXF ATTDEF and INSERT+ATTRIB) |
-| XREF | XR | Planned |
+| XREF | XR | Implemented (issue #25): attach / detach / reload / ?, re-read on open, native v32, DXF block flag 4 with the path |
 
 ## File / Plot
 

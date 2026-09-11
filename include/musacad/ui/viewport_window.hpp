@@ -78,6 +78,8 @@ public:
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
     [[nodiscard]] std::string image_file_dialog() override;
+    [[nodiscard]] std::string open_file_dialog(const std::string& filter) override;
+    void set_open_file_dialog(std::function<std::string(const std::string&)> cb) { open_file_dialog_ = std::move(cb); }
     void set_image_file_dialog(std::function<std::string()> cb) { image_file_dialog_ = std::move(cb); }
     void set_osnap_settings_callback(std::function<void()> cb) { osnap_settings_callback_ = std::move(cb); }
     /// A dialog-driven ghost of the selection (Rotate/Scale dialogs): mode 3 rotates
@@ -540,6 +542,7 @@ private:
     double paper_cam_scale_ = 0.0;
     std::function<void()> osnap_settings_callback_;
     std::function<std::string()> image_file_dialog_;
+    std::function<std::string(const std::string&)> open_file_dialog_;
     QtImageDecoder image_decoder_; ///< raster decoding for the renderer's texture cache
     int dialog_ghost_mode_ = 0;
     core::Vec2 dialog_ghost_a_{};

@@ -909,6 +909,27 @@ struct LeaveMspaceCommand {
     Vec2 view_center{};
     double px_per_unit = 0.0;
 };
+/// XREF Attach: the drawing at `path` becomes a block named after the file (its own
+/// blocks come along as "name|block") and one reference is placed.
+struct XrefAttachCommand {
+    std::string path;
+    Vec2 pos{};
+    double scale = 1.0;
+    double rotation = 0.0;
+    std::uint64_t group = 0;
+};
+/// XREF Reload: re-read `name` ("" = every xref) from its file.
+struct XrefReloadCommand {
+    std::string name;
+};
+/// XREF Detach: erase every reference to `name` and drop its definition (and the
+/// nested "name|..." definitions nothing else uses).
+struct XrefDetachCommand {
+    std::string name;
+    std::uint64_t group = 0;
+};
+/// XREF ?: report the attached drawings and where they come from.
+struct XrefListCommand {};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1141,6 +1162,7 @@ using Command =
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,
                  CreateViewportCommand, SetViewportViewCommand, EnterMspaceCommand, LeaveMspaceCommand,
+                 XrefAttachCommand, XrefReloadCommand, XrefDetachCommand, XrefListCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

@@ -434,6 +434,10 @@ struct BlockDef {
     std::string name;
     Vec2 base{0.0, 0.0};
     BlockContent content;
+    /// XREF: the drawing this definition is read from (relative to the host drawing's
+    /// folder when inside it, else absolute); "" for an ordinary block. The content is
+    /// the last read copy, re-read on open and on XREF Reload.
+    std::string xref_path;
 };
 
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own

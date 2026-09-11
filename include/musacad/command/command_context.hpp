@@ -131,6 +131,8 @@ public:
     virtual void osnap_settings_dialog() {}
     /// IMAGEATTACH's file picker; returns the chosen path, or "" (none / headless).
     [[nodiscard]] virtual std::string image_file_dialog() { return {}; }
+    /// A generic open-file picker (XREF Attach); `filter` is a Qt-style filter string.
+    [[nodiscard]] virtual std::string open_file_dialog(const std::string& /*filter*/) { return {}; }
     /// Toggle the Properties palette (PR). Default no-op (headless/tests).
     virtual void open_properties() {}
     /// DWG import/export via the external converter. Default no-op (headless/tests).
