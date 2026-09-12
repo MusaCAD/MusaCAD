@@ -1812,7 +1812,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* st = find(body, 3)) {
                 f.style = ensure_dimstyle(*st);
             }
-            const std::string tol_text = find(body, 1) != nullptr ? *find(body, 1) : std::string{};
+            const std::string* tol_ptr = find(body, 1);
+            const std::string tol_text = tol_ptr != nullptr ? *tol_ptr : std::string{};
             // Cells are separated by %%v; symbols come back as \U+ escapes.
             std::size_t start = 0;
             for (;;) {

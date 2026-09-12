@@ -2431,13 +2431,12 @@ bool MainWindow::selftest_properties() {
         // Settle focus on the field before the key (else the app filter reads a stale
         // focusWidget and the guard is evaluated wrong -- a real-window timing race).
         // The PR field lives in the main window, so make that the active window first.
-        QApplication::setActiveWindow(this);
         activateWindow();
         raise();
         he->setFocus(Qt::OtherFocusReason);
         for (int i = 0; i < 200 && QApplication::focusWidget() != he; ++i) {
             QCoreApplication::processEvents();
-            QApplication::setActiveWindow(this);
+            activateWindow();
             he->setFocus(Qt::OtherFocusReason);
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -4945,7 +4944,10 @@ bool MainWindow::selftest_dwg() {
     const QString mock = dir + QStringLiteral("/musacad_mock_conv.cmd");
     {
         QFile f(mock);
-        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::printf("[selftest] FAIL: cannot write %s\n", qPrintable(mock));
+            all = false;
+        }
         f.write("@copy /y \"%~f1\" \"%~f2\" >nul\r\n");
         f.close();
     }
@@ -4953,7 +4955,10 @@ bool MainWindow::selftest_dwg() {
     const QString mock = dir + QStringLiteral("/musacad_mock_conv.sh");
     {
         QFile f(mock);
-        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::printf("[selftest] FAIL: cannot write %s\n", qPrintable(mock));
+            all = false;
+        }
         f.write("#!/bin/sh\ncp \"$1\" \"$2\"\n");
         f.close();
         f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
@@ -4998,7 +5003,10 @@ bool MainWindow::selftest_dwg() {
             "0\n3DFACE\n8\n0\n"
             "0\nENDSEC\n0\nEOF\n";
         QFile f(fake_dwg);
-        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::printf("[selftest] FAIL: cannot write %s\n", qPrintable(fake_dwg));
+            all = false;
+        }
         f.write(dxf);
         f.close();
     }

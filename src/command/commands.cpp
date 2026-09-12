@@ -3469,7 +3469,7 @@ void LayoutCommand::input(CommandContext& ctx, const std::string& text) {
                                                                        : ctx.layout_names().front())
                                          : t;
             if (upper(want) == "MODEL") {
-                ctx.submit(core::SetActiveSpaceCommand{0});
+                ctx.submit(core::SetActiveSpaceCommand{0, std::string()});
                 done_ = true;
                 return;
             }
@@ -3522,14 +3522,14 @@ void ModelSpaceCommand::start(CommandContext& ctx) {
     if (ctx.mspace_active()) {
         leave_mspace(ctx);
         if (!to_paper_) {
-            ctx.submit(core::SetActiveSpaceCommand{0});
+            ctx.submit(core::SetActiveSpaceCommand{0, std::string()});
         }
     } else if (!to_paper_) {
-        ctx.submit(core::SetActiveSpaceCommand{0});
+        ctx.submit(core::SetActiveSpaceCommand{0, std::string()});
     } else if (ctx.active_space() != 0) {
         ctx.echo("Already in paper space.");
     } else {
-        ctx.submit(core::SetActiveSpaceCommand{0xFF}); // the engine picks the first layout
+        ctx.submit(core::SetActiveSpaceCommand{0xFF, std::string()}); // the engine picks the first layout
     }
     done_ = true;
 }
@@ -5572,15 +5572,6 @@ void ChainDimCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // Inquiry: DIST / ID / AREA / LIST (issue #30)
 // ---------------------------------------------------------------------------
-namespace {
-/// Compact number formatting shared by the inquiry echoes.
-std::string inum(double v) {
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%.4g", v);
-    return std::string(buf);
-}
-} // namespace
-
 void DistCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     have_first_ = false;
