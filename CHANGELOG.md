@@ -8,8 +8,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 ## v0.4.0 — sheets and symbols
 
-Full notes: [`docs/release-notes/v0.4.0.md`](docs/release-notes/v0.4.0.md). **Linux first**; the
-Windows installer is added to the release after verification on real hardware (#6).
+Full notes: [`docs/release-notes/v0.4.0.md`](docs/release-notes/v0.4.0.md). Linux AppImage,
+Flatpak and, after verification on real hardware (#6), the Windows installer.
 
 Everything below is in the per-command table in
 [`docs/COMMANDS.md`](docs/COMMANDS.md); the roadmap in
@@ -101,6 +101,11 @@ Everything below is in the per-command table in
     for them was the first font in the system list, which on Windows is a raster font
     without outlines. The platform's UI font is used now, and a face without outlines
     is never picked.
+  - Raster images: on Intel graphics only the first image of a frame drew (the driver
+    renames a vertex buffer that is refilled while a draw is pending). The images of a
+    frame are now uploaded once and drawn from their offsets.
+  - The `dev` preset's test build compiles with MSVC's debug STL (the `ImageInstance`
+    size ceiling is written in terms of the vector header size).
 - Running a developer hook (self-test, UI dump, smoke run, screenshot captures) no
   longer overwrites the saved Dynamic Input preference, so a first real launch after
   one comes up with DYN on as intended.
