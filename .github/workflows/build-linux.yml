@@ -39,9 +39,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build g++ \
-            qt6-base-dev qt6-base-dev-tools qt6-svg-dev \
+            qt6-base-dev qt6-base-dev-tools qt6-svg-dev qt6-wayland \
             libgl1-mesa-dev libegl1-mesa-dev \
             libxcb-cursor0 libfuse2 file curl
+          # qt6-wayland provides the wayland-generic / wayland-egl platform plugins and
+          # the client buffer integration that build_appimage.sh bundles for native
+          # Wayland sessions; without it linuxdeploy-plugin-qt aborts.
           # libfuse2 lets the produced AppImage run; the deploy tools themselves use
           # APPIMAGE_EXTRACT_AND_RUN (set by build_appimage.sh).
 
