@@ -30,7 +30,8 @@ echo "==> Staging a clean source tree into $SRC"
 rm -rf "$SRC"; mkdir -p "$SRC"
 # Copy only what the build needs; exclude build outputs, VCS, caches, large samples.
 rsync -a --delete \
-  --exclude '.git/' --exclude 'build/' --exclude 'plot_out/' --exclude 'dwg_samples/' \
+  --exclude '.git/' --exclude '.flatpak-builder/' --exclude 'build/' --exclude 'plot_out/' \
+  --exclude 'dwg_samples/' \
   --exclude 'packaging/linux/.tools/' --exclude 'packaging/flatpak/.src/' \
   --exclude 'packaging/flatpak/build/' --exclude 'packaging/flatpak/.repo/' \
   --exclude '*.AppImage' --exclude '*.flatpak' \

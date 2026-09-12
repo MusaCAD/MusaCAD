@@ -27,6 +27,17 @@ Packaging detail lives in `packaging/linux/BUILD_APPIMAGE.md` and `packaging/fla
    release notes at `docs/release-notes/v<ver>.md`.
 4. Re-run the license scan (`docs/THIRD_PARTY_LICENSES.md` → "Reproducing the scan"): no GPL/DWG
    library in the build graph, the binary, or the bundles; the DWG converter stays external.
+5. Build once inside the Flatpak SDK before tagging. The KDE runtime ships a newer GCC than the
+   desktop distributions, and flatpak-builder adds `_GLIBCXX_ASSERTIONS` / `_FORTIFY_SOURCE`, so
+   `-Werror` can fire there on code the host compiler accepts (v0.4.0: two null-dereference
+   warnings). Quick loop without a full bundle:
+
+   ```bash
+   flatpak run --command=bash --filesystem="$PWD" org.kde.Sdk//6.10 -c \
+     'cmake -S . -B build/sdk -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF \
+        -DCMAKE_CXX_FLAGS="-O2 -g -Wp,-D_FORTIFY_SOURCE=3 -Wp,-D_GLIBCXX_ASSERTIONS" && \
+      ninja -C build/sdk -k 0'
+   ```
 
 ## Cut the release
 
