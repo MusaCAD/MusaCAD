@@ -4,6 +4,8 @@
 #include "musacad/render/viewport_renderer.hpp"
 
 #include <algorithm>
+#include <iterator>
+#include <vector>
 
 #include "musacad/core/math/math.hpp"
 #include "musacad/render/gpu/buffer.hpp"
@@ -344,9 +346,21 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
             ++it;
         }
     }
-    cmd.bind_pipeline(*image_pipeline_);
-    cmd.set_uniform_mat3("u_transform", view);
-    cmd.set_uniform_int("u_image", 0);
+    // Every image's vertices go into ONE upload for the frame, and each image is then
+    // drawn from its own offset. Re-filling the buffer between the draws of a single
+    // frame -- the obvious per-image upload -- is legal GL, but the Intel Windows driver
+    // (UHD 620, 26.20.100.x) renames a buffer that a queued draw still reads and leaves
+    // the vertex array on the old storage, so every image after the first drew the
+    // first one's quad again. One upload before any of the draws needs no such rename.
+    struct Draw {
+        const GpuTexture* texture;
+        std::size_t first_byte;
+        std::uint32_t vertex_count;
+    };
+    std::vector<float> verts;
+    std::vector<Draw> draws;
+    verts.reserve(snapshot.images.size() * 24);
+    draws.reserve(snapshot.images.size());
     for (const core::ImageInstance& im : snapshot.images) {
         CachedTexture& ct = textures_[im.def];
         if (ct.version != im.def_version || (!ct.texture && ct.version == 0)) {
@@ -369,21 +383,17 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
         if (!ct.texture) {
             continue; // undecodable: the IMAGEFRAME outline (if on) marks the place
         }
+        const std::size_t first_byte = verts.size() * sizeof(float);
         if (!im.tri_world.empty() && im.tri_world.size() == im.tri_uv.size()) {
             // A polygonal clip: the pre-triangulated region, uv per vertex.
-            std::vector<float> tv;
-            tv.reserve(im.tri_world.size() * 4);
             for (std::size_t i = 0; i < im.tri_world.size(); ++i) {
-                tv.push_back(static_cast<float>(im.tri_world[i].x));
-                tv.push_back(static_cast<float>(im.tri_world[i].y));
-                tv.push_back(static_cast<float>(im.tri_uv[i].x));
-                tv.push_back(static_cast<float>(im.tri_uv[i].y));
+                verts.push_back(static_cast<float>(im.tri_world[i].x));
+                verts.push_back(static_cast<float>(im.tri_world[i].y));
+                verts.push_back(static_cast<float>(im.tri_uv[i].x));
+                verts.push_back(static_cast<float>(im.tri_uv[i].y));
             }
-            image_buffer_->upload(tv.data(), tv.size() * sizeof(float));
-            cmd.bind_texture(0, *ct.texture);
-            cmd.bind_vertex_buffer(0, *image_buffer_, 0);
-            cmd.draw_instanced(static_cast<std::uint32_t>(im.tri_world.size()), 1);
-            ++stats_.draw_calls;
+            draws.push_back({ct.texture.get(), first_byte,
+                             static_cast<std::uint32_t>(im.tri_world.size())});
             continue;
         }
         // Two triangles over the (clipped) quad; the quad's corners run CCW from the
@@ -393,7 +403,7 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
         const float v0 = im.uv[1];
         const float u1 = im.uv[2];
         const float v1 = im.uv[3];
-        const float verts[24] = {
+        const float quad[24] = {
             static_cast<float>(q[0].x), static_cast<float>(q[0].y), u0, v1,
             static_cast<float>(q[1].x), static_cast<float>(q[1].y), u1, v1,
             static_cast<float>(q[2].x), static_cast<float>(q[2].y), u1, v0,
@@ -401,10 +411,20 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
             static_cast<float>(q[2].x), static_cast<float>(q[2].y), u1, v0,
             static_cast<float>(q[3].x), static_cast<float>(q[3].y), u0, v0,
         };
-        image_buffer_->upload(verts, sizeof(verts));
-        cmd.bind_texture(0, *ct.texture);
-        cmd.bind_vertex_buffer(0, *image_buffer_, 0);
-        cmd.draw_instanced(6, 1);
+        verts.insert(verts.end(), std::begin(quad), std::end(quad));
+        draws.push_back({ct.texture.get(), first_byte, 6});
+    }
+    if (draws.empty()) {
+        return;
+    }
+    image_buffer_->upload(verts.data(), verts.size() * sizeof(float));
+    cmd.bind_pipeline(*image_pipeline_);
+    cmd.set_uniform_mat3("u_transform", view);
+    cmd.set_uniform_int("u_image", 0);
+    for (const Draw& d : draws) {
+        cmd.bind_texture(0, *d.texture);
+        cmd.bind_vertex_buffer(0, *image_buffer_, d.first_byte);
+        cmd.draw_instanced(d.vertex_count, 1);
         ++stats_.draw_calls;
     }
 }
