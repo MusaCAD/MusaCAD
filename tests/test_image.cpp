@@ -152,11 +152,13 @@ TEST_CASE("The snapshot carries transforms, NEVER pixels") {
     // This is the architectural constraint: the snapshot is copied through the triple
     // buffer on every publish, so megabytes of decoded raster here would wreck the
     // geometry->render handoff. ImageInstance must stay small and pixel-free.
-    // 176 B: a quad (4 Vec2 = 64), UVs (16), def + version + handle, and three vector
-    // headers for a polygonal clip (its boundary and pre-triangulated region -- a few
-    // points, on the heap). The number itself matters less than the ceiling -- what must
-    // never happen is pixels appearing here.
-    static_assert(sizeof(ImageInstance) <= 192,
+    // 176 B with libstdc++: a quad (4 Vec2 = 64), UVs (16), def + version + handle, and
+    // three vector headers for a polygonal clip (its boundary and pre-triangulated region
+    // -- a few points, on the heap). The number itself matters less than the ceiling --
+    // what must never happen is pixels appearing here. The vector header is what varies
+    // between standard libraries (MSVC's debug STL carries an iterator-debugging proxy in
+    // each one), so the ceiling is written in terms of it rather than as one literal.
+    static_assert(sizeof(ImageInstance) <= 112 + 3 * sizeof(std::vector<Vec2>),
                   "ImageInstance must stay small -- it is copied through the triple buffer "
                   "on every publish, so pixels must never live here");
     GeometryStore store;
