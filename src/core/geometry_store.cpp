@@ -1120,7 +1120,9 @@ template <class Arena, class Fn>
 void for_each_live_mut(Arena& arena, Fn&& fn) {
     for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
         if (arena.alive(i)) {
-            fn(*arena.get(i, arena.generations()[i]));
+            if (auto* item = arena.get(i, arena.generations()[i]); item != nullptr) {
+                fn(*item);
+            }
         }
     }
 }
