@@ -6,10 +6,12 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased (planned as v0.4.0)
+## v0.4.0 — sheets and symbols
 
-Full notes are drafted in [`docs/release-notes/v0.4.0.md`](docs/release-notes/v0.4.0.md).
-Everything below is on `main` and in the per-command table in
+Full notes: [`docs/release-notes/v0.4.0.md`](docs/release-notes/v0.4.0.md). **Linux first**; the
+Windows installer is added to the release after verification on real hardware (#6).
+
+Everything below is in the per-command table in
 [`docs/COMMANDS.md`](docs/COMMANDS.md); the roadmap in
 [`docs/ROADMAP.md`](docs/ROADMAP.md) shows what is still open.
 
