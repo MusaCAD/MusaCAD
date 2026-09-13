@@ -1048,20 +1048,32 @@ void MainWindow::build_contextual_tabs() {
         });
     }
 
-    // --- Block Editor (single Insert), pale amber accent. Authoring is staged. ---
+    // --- Block Editor (single Insert), pale amber accent: the reference's own commands. ---
     const int block_page = ribbon_->add_contextual_tab(
         QStringLiteral("Block Editor"), QColor(225, 180, 110), [](const RibbonSel& s) {
             return s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
         });
     RibbonPanel* bdef = ribbon_->add_panel(block_page, QStringLiteral("Definition"), 100);
-    bdef->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")));
-    {
-        QToolButton* edit = bdef->add_placeholder(
-            ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")), QStringLiteral("Edit\nBlock"),
-            RibbonTier::Primary);
-        edit->setToolTip(QStringLiteral("Open the block definition for in-place editing "
-                                        "(staged -- block authoring is not implemented yet)."));
-    }
+    bdef->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
+    // Each button starts its typed command (icon + tooltip from the registry), the way the
+    // Home panels do; REFEDIT and EATTEDIT then ask for the reference to pick.
+    const auto block_cmd = [&](const QString& label, const char* alias, RibbonTier tier) {
+        const command::CommandInfo* info = processor_->registry().find(alias);
+        QToolButton* b = bdef->add_button(
+            ribbon_icon(info != nullptr ? QString::fromStdString(info->icon) : QString()), label, tier);
+        b->setObjectName(QStringLiteral("ribbon.block.%1").arg(QString::fromUtf8(alias)));
+        if (info != nullptr) {
+            b->setToolTip(QString::fromStdString(info->description));
+        }
+        connect(b, &QToolButton::clicked, this, [this, alias] {
+            command_widget_->focus_input();
+            processor_->start_command(alias);
+        });
+    };
+    block_cmd(QStringLiteral("Edit\nReference"), "REFEDIT", RibbonTier::Primary);
+    block_cmd(QStringLiteral("Edit\nAttributes"), "EATTEDIT", RibbonTier::Primary);
+    block_cmd(QStringLiteral("Manage\nAttributes"), "BATTMAN", RibbonTier::Secondary);
+    block_cmd(QStringLiteral("Explode"), "X", RibbonTier::Secondary);
 }
 
 void MainWindow::sync_ribbon_context() {
