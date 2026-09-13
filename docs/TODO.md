@@ -3,29 +3,13 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
-## Raster images (issue #10 — model/seam/persistence/plot DONE; viewport + DXF staged)
+## Raster images (issue #10 — DONE)
 
-* **Viewport rendering — staged.** An image currently **plots** but does not **display in
-  the viewport**: the GPU abstraction has no texture type. **Done looks like:** `GpuTexture`
-  in the public `render/gpu/` headers with a GL 4.6 DSA implementation
-  (`glCreateTextures`/`glTextureStorage2D`/`glTextureSubImage2D`), an image shader pair, and
-  a renderer-side texture cache keyed by definition index, invalidated when
-  `ImageInstance::def_version` changes. Images are few, so a draw call per image is fine —
-  but the **documented draw-call bound must be raised and re-proven** in
-  `render_offscreen`, along with the "pan/zoom uploads 0 scene bytes" constraint. The
-  snapshot side is already done and deliberately carries no pixels.
-* **DXF `IMAGE` / `IMAGEDEF` — staged.** Nothing is written today. It needs the OBJECTS
-  section plus an IMAGEDEF dictionary, which is more DXF structure than any existing
-  entity uses. **Done looks like:** `IMAGE` entities referencing `IMAGEDEF` objects, with
-  the fidelity loss counted in the import result string like every other gap.
-* **IMAGEATTACH / IMAGECLIP commands + ribbon — staged.** The entity, its persistence and
-  its plot path exist; there is no interactive command to place or clip one yet (fixtures
-  and the format are the current route in). **Done looks like:** `IMAGEATTACH` picking a
-  file and two corners, `IMAGECLIP` picking a rectangle, both submitting the existing
-  `AddImageCommand`, with ribbon icons in the established style.
-* **Embedded-payload size cap — staged.** Base64 embedding has no size limit or warning
-  today. **Done looks like:** a cap (a few MB) above which the writer warns and suggests
-  the external-path form.
+Model, decoder seam, persistence, plot, viewport display (`GpuTexture` + the image
+pipeline + a per-definition texture cache), `IMAGEATTACH` / `IMAGECLIP` (rectangular and
+polygonal) / `IMAGEFRAME`, the 8 MB embed limit and DXF `IMAGE` / `IMAGEDEF` both ways are
+all in. **Staged:** clipping a rotated image's quad against a viewport frame (a raster inside
+a paper-space viewport is shown whole or not at all today).
 
 ## Dimensions — chaining (issue #28 partial)
 
@@ -33,9 +17,6 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   its offset as 1.5 x the effective text height, which reproduces AutoCAD's ISO default
   (3.75 mm at 2.5 mm text) without a format bump. **Done looks like:** a `baseline_spacing`
   field on `DimStyle` with the usual override bit, and a version bump.
-* **DIMORDINATE / DIMJOGGED / DIMARC — staged.** The cheap half of #28 (the two chaining
-  helpers) is done; these three each need a new `DimType` and a branch in
-  `compute_dim_geometry`, plus native/DXF round-trip.
 
 ## Tables (issue #22 DONE; refinements staged)
 
@@ -55,14 +36,6 @@ parked and *what done looks like*, so it can be picked up cleanly later.
 
 ## GD&T (issue #8 DONE; interop + input surface staged)
 
-* **DXF `TOLERANCE` export/import — staged.** GD&T is currently **native-only**: nothing is
-  written to DXF and nothing is read back. AutoCAD's `TOLERANCE` entity carries the frame as
-  a string with `%%v` field separators plus a dimstyle reference, which is a real interop
-  path. Writing a half-valid entity would be worse than writing none, so the gap is stated
-  rather than faked. **Done looks like:** `TOLERANCE` written with the composed cell string
-  + dimstyle ref, read back into cells by splitting on `%%v`; datum symbols exported as
-  leader + text + triangle geometry with the fidelity loss counted in the import result
-  string, the way every other gap is.
 * **ParameterDialog input surface for a feature control frame — staged.** A frame is
   genuinely multi-parameter, which is the case the "dialogs when a dialog genuinely fits"
   rule contemplates. The command-line Q&A (`TOLERANCE`/`TOL`) is implemented — the
@@ -70,11 +43,6 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   **Done looks like:** a `DialogSpec` with a characteristic combo (the symbol set), tolerance
   value + ⌀/material-modifier toggles, and three datum + modifier rows, submitting the same
   `AddFcfCommand`.
-* **Editing an existing frame's cells — staged.** The PR exposes a frame's *styling* (text
-  height, colours) but not its variable-length cell list, so changing a tolerance value means
-  re-running `TOLERANCE`. **Done looks like:** a content editor for the cell list, most likely
-  the double-click gesture Ph21 gave text, reusing `EditTextContentCommand`'s
-  capture→change→recommit shape.
 
 ## Dimensions
 
@@ -99,31 +67,24 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   Linux **Flatpak** (`packaging/flatpak/`, KDE 6.10 runtime, builds + installs + runs locally),
   **Windows installer** via GitHub Actions (`.github/workflows/build-windows.yml` + NSIS), Linux
   AppImage CI (`build-linux.yml`), and `scripts/release.sh`. Playbook in `docs/RELEASING.md`.
-* **Flathub submission — STAGED.** The manifest + AppStream metainfo are ready
-  (`packaging/flatpak/com.musacad.MusaCAD.{yml,metainfo.xml}`); submission to Flathub is deferred
-  until **after** the GitHub release. **Done looks like:** swap the manifest source to the tagged
-  `type: git` release and open a PR on `github.com/flathub/flathub`. See
-  `packaging/flatpak/BUILD_FLATPAK.md` ▸ "Flathub — STAGED".
-* **macOS support — planned.** No `.app`/`.dmg` packaging yet (dev machine is Linux; no runtime
-  verification possible here). **Done looks like:** a `macos-latest` workflow that builds, runs
-  `macdeployqt`, and produces a signed/notarized `.dmg`.
+* **Flathub submission — PREPARED.** `packaging/flatpak/flathub/com.musacad.MusaCAD.yml` pins
+  the tagged release; the metainfo validates. Two decisions block the PR (the home-filesystem
+  exception, the app-id's domain); see `packaging/flatpak/BUILD_FLATPAK.md`.
+* **macOS — build workflow done, desktop support blocked.** `.github/workflows/build-macos.yml`
+  builds `MusaCAD.app` and a `.dmg` and smoke-tests the command line; the viewport needs
+  OpenGL 4.5 Core, which macOS does not provide. **Done looks like:** a Metal (Qt RHI) or GL 4.1
+  render backend behind the `GpuDevice` / `GpuCommandBuffer` seam, then hardware verification.
 * **Automated builds on tag push — done.** The Linux + Windows workflows trigger on `v*` tags
   and their `publish` jobs create the GitHub release and attach the AppImage and installer;
   the release notes and the Flatpak are still set by hand (`docs/RELEASING.md`).
-* **MSVC `/W4` warning audit — staged.** The first Windows build surfaced latent MSVC `/W4`
-  warnings (e.g. C4244 narrowing); the codebase predates any MSVC build. `/WX` on MSVC is gated
-  behind `MUSACAD_MSVC_WERROR` (default **OFF**) so the Windows release isn't blocked, while
-  GCC/Clang `-Werror` stays on. **Done looks like:** clean the MSVC `/W4` warnings and flip
-  `MUSACAD_MSVC_WERROR` ON in CI. See `cmake/CompilerWarnings.cmake`.
-* **Wayland platform plugin in the AppImage — deliberately absent.** The AppImage bundles
-  `xcb`, `offscreen` and `minimal`. On a Wayland session it prints "Could not find the Qt
-  platform plugin \"wayland\"" and falls back to XWayland, which works. Bundling Qt's wayland
-  plugin needs matching `libwayland-*` client libraries inside the AppImage and is a common
-  source of breakage, so the fallback is preferred. **Done looks like:** bundling it *and*
-  verifying on both a Wayland and an X11 session before removing this note.
-* **Windows installer hardware verification — staged.** v0.1.0's `.exe` is CI-produced and was
-  published without a real-Windows-hardware launch test. **Done looks like:** install on a real
-  Windows box, confirm it launches + draws + plots, and fix anything found.
+* **MSVC `/W4` — DONE (#5).** The warnings are gone and `MUSACAD_MSVC_WERROR=ON` in the Windows
+  workflow.
+* **Wayland in the AppImage — DONE.** The AppImage runs natively on Wayland (the platform plugin
+  and the client buffer integration are bundled; verified on Wayland and X11 sessions).
+* **Windows installer hardware verification — DONE (#6).** Verified on real Windows hardware
+  for v0.4.0.
+* **DWG in the Flatpak — DONE (#4).** An opt-in runs a host-installed converter through
+  `flatpak-spawn --host`.
 
 ## Ribbon (Phases A + B DONE 2026-06-23; staged items below)
 
@@ -131,12 +92,10 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   (A-intermediate); three-state progressive panel collapse (FULL/COMPACT/COLLAPSED with a
   fly-out popout) + contextual tabs (Hatch/Text/Block editors, family-predicate driven,
   accent stripe) (B). See `docs/ARCHITECTURE.md` ▸ "Ribbon Phase B".
-* **Block Editor authoring — staged.** The Block Editor contextual tab appears for a single
-  INSERT but its **Edit Block** button is greyed out: in-place block-definition editing
-  (BEDIT) is not implemented (blocks today come only from DXF/DWG import). **Done looks
-  like:** a block-edit mode that opens the definition's entities for editing and writes them
-  back to all instances. There is also no interactive block-create command (BLOCK/MAKEBLOCK)
-  yet — a prerequisite.
+* **Block authoring — DONE (#25).** BLOCK / WBLOCK / EXPLODE / REFEDIT / ATTDEF / EATTEDIT /
+  BATTMAN / XREF; the Block Editor contextual tab starts REFEDIT and the attribute dialogs.
+  **Staged:** a Block Editor *mode* of its own (BEDIT, editing the definition at the origin
+  rather than in place) and multi-line attributes.
 * **Contextual control depth — staged.** The Hatch/Text editors expose the common controls
   (pattern/scale/angle; font/height/edit); richer parity with AutoCAD (e.g. MTEXT inline
   bold/italic, hatch boundary association editing, per-tab gradient controls) is deferred and
@@ -161,7 +120,7 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   bridging now in place; loose-segment islands; associative hatches (boundary edits
   re-fill); per-hatch DXF pattern-line export (PAT data — currently the pattern *name*
   round-trips and re-resolves from the library, which covers the stock set); pattern
-  preview/dialog in the UI; GRADIENT fills.
+  preview/dialog in the UI. (GRADIENT fills: done, #33.)
 
 ## Multi-document — Phase B (DONE 2026-06-18; refinements staged)
 
@@ -207,10 +166,9 @@ is therefore **off the staged list** (was noted as Planned in the Ph23/MATCHPROP
 **Staged:**
 
 1. **PSLTSCALE** (paper-space linetype scaling) — AutoCAD scales dashes by the viewport zoom
-   in paper space so they read consistently across scaled viewports. **Why parked:** needs
-   paper-space **layouts** (deferred with the Ph30 layout work). **Done looks like:** a
-   PSLTSCALE system var that, in a layout viewport, folds the viewport scale into the
-   effective dash scale.
+   in paper space so they read consistently across scaled viewports. Layouts and viewports
+   exist now (#26); the nested model build a viewport gets is the place to fold its scale
+   into the effective dash scale. **Done looks like:** a PSLTSCALE system var doing that.
 2. **Block-internal / dimension dashing** — block-internal (INSERT) and dimension geometry
    render solid today (they don't route through `dash_polyline`), so CELTSCALE has no effect
    there. **Done looks like:** route block-member + dim ext/dim lines through the dash walker,
@@ -232,10 +190,8 @@ failed target degrades gracefully. Deferred:
   plot time. **Why parked:** the built-ins cover the common "print it black" / grayscale
   needs without a per-colour pen-mapping editor. **Done looks like:** import/edit `.ctb`
   pen tables (per-ACI colour → plotted colour / lineweight / screening) selectable per plot.
-- **Layouts / paper space** — Phase 30 plots model space (Display / Extents / Window).
-  **Why parked:** model-space plotting is the 80% path; layout tabs are a larger feature
-  (viewports, per-layout page setup, title-block blocks). **Done looks like:** named
-  layout tabs each with their own page setup + one or more scaled model-space viewports.
+- ~~**Layouts / paper space**~~ — done (#26): layouts with page setups, MVIEW viewports,
+  MSPACE / PSPACE, VPLAYER, and PLOT of a layout at 1:1.
 - **Plot stamp, batch/publish, raster/shaded output** — no plot-stamp footer, no
   multi-sheet publish, vector-only (no rendered/raster mode). Parked as out-of-scope niceties.
 
@@ -249,9 +205,7 @@ SHX-name → TTF **substitution** table for imports. Deferred:
   imports faithfully (single-stroke CAD fonts have clean TTF equivalents). **Done looks
   like:** an SHX shape-file reader producing stroke geometry, selected when the real `.shx`
   is available, else substitute.
-- **Text-style table as a first-class entity** (STYLE command; named styles bundling font +
-  width factor + oblique). Font is **per-entity** today (a font-table index). **Done:** a
-  style table the entity references, with the font as a style default.
+- ~~**Text-style table**~~ — done (#29): STYLE with width factor and obliquing angle.
 - **Per-glyph kerning / inline rich runs** beyond the face's default advances and
   width_factor (width_factor is not applied to TTF glyph geometry today — a noted minor gap).
 
@@ -390,8 +344,7 @@ only).
 1. **More command options as keywords** (work in command line + DYN): CIRCLE 2P/3P/TTR;
    RECTANGLE area/rotation; ARC/ELLIPSE option sets. Each is a command state-machine
    keyword, surfaced via the mirrored prompt.
-2. **POLYGON** — no POLYGON command exists yet (build the command + its sides/
-   inscribed-circumscribed/radius options).
+2. ~~**POLYGON**~~ — done (#23).
 3. **Context-aware Dynamic Input — full canvas surfaces (DONE 2026-06-17)** —
    AutoCAD's DYN is not one cursor box but input drawn ON the canvas at the cursor.
    - **Done (all three surfaces, one primitive):** (a) **command entry + autocomplete**

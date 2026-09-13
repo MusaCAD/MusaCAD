@@ -122,12 +122,12 @@ commands (Ribbon Phase A):
 | ARC (3-point) | A | Implemented |
 | RECTANGLE | REC | Implemented |
 | RECTANGLE options: **Dimensions** (`D` → length → width → quadrant-flip placement click), **Area** (`A` → area → `[Length/Width]` → side → placement), **Rotation** (`R` → angle) | typed mid-command | Implemented (option keywords, same state machine as CIRCLE `[Diameter]`) |
-| RECTANGLE first-corner options: Chamfer / Elevation / Fillet / Thickness / Width | C/E/F/T/W | Planned |
-| SPLINE | SPL | Planned (Phase 7) |
-| ELLIPSE | EL | Planned (Phase 7) |
-| POLYGON | POL | Planned (Phase 7) |
-| POINT | PO | Planned (Phase 7) |
-| XLINE / RAY | XL | Planned (Phase 7) |
+| RECTANGLE first-corner options: Chamfer / Fillet | C / F | Implemented (Elevation / Thickness / Width are not offered: 2D only, no polyline width) |
+| SPLINE | SPL | Implemented (#23) -- Fit and CV methods |
+| ELLIPSE | EL | Implemented (#23) -- axis-end, Center, Rotation, Arc |
+| POLYGON | POL | Implemented (#23) -- inscribed / circumscribed / Edge |
+| POINT | PO | Implemented (#23) |
+| XLINE / RAY | XL | Implemented (#23) -- Hor / Ver / Ang / Bisect / two-point |
 | HATCH / BHATCH — **SOLID fill** of a region (Part A). Two boundary modes: **pick an internal point** (the engine traces the enclosing boundary from surrounding geometry — lines, arcs, circles, polylines — building a **planar arrangement** so a partitioning line correctly splits the region; closed entities inside become **islands/holes**) or **pre-select** closed polylines (noun-verb). "Valid hatch boundary not found." when no closed boundary encloses the pick. Fill is **derived, not baked** (rendered via the fill pipeline, so it plots as PDF vectors). Pickable (point-in-region, islands respected), PR-editable (Pattern/Scale/Angle/Origin), MATCHPROP-matchable, native + DXF round-trip. Selected hatch shows a **highlight tint over the fill + a grip at every boundary vertex** (drag to reshape) | H / BHATCH | Implemented (Part A: SOLID; line patterns = Part B) |
 | HATCH **line patterns** (Part B) — `.PAT` parser + a built-in stock library (ANSI31–ANSI38, NET/NET3/GRID, BRICK, BOX, HEX/HONEY, ANGLE, DOTS, CROSS, SQUARE, TRIANG, GRASS, EARTH, STEEL, CONC, INSUL, …; authored from the public .PAT format, **not** copied from acad.pat — load that file for the vendor set). Line families are **generated + clipped to the boundary at render time** (derived-not-baked, even-odd so islands carve out) and plot as vectors. Choose via the command's `[Pattern/Scale/Angle]` options or the PR. SOLID stays the special fill name — one render path, patterns are not a fork | H ▸ Pattern | Implemented (Part B) |
 | HATCH GRADIENT fills (entity colour to a second colour along an angle; 24 flat bands, so it plots as vectors; DXF gradient block both ways) | H ▸ Gradient | Implemented |
@@ -159,7 +159,7 @@ commands (Ribbon Phase A):
 | REVCLOUD (Arc length, Object + Reverse direction, Rectangular, Polygonal, Freehand as a clicked path) | REVCLOUD | Implemented (Normal style; Modify not offered) |
 | EXPLODE (polyline -> lines/arcs; block one level; dimension/leader -> lines, solids, text; hatch -> lines or boundary; MTEXT -> TEXT per line; table -> lines + text) | X | Implemented |
 | PURGE (unused layers) | PU | Implemented |
-| PURGE (dimstyles, text styles, block definitions) | PU | Planned |
+| PURGE (every table: layers, dimstyles, text styles, blocks, fonts, table styles, images) | PU | Implemented (#30) |
 | ALIGN (2 point pairs, optional uniform scale) | AL | Implemented |
 | LENGTHEN (DElta / Percent / Total; lines + arcs) | LEN | Implemented |
 | BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |
@@ -206,14 +206,14 @@ commands (Ribbon Phase A):
 | CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
 | CHAMFER (polyline corner) | CHA | Implemented |
 | JOIN — **select** lines/arcs/open polylines (any way), then JOIN merges every connected chain among them into ONE polyline each (arcs become bulged segments), inheriting the source's layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). The merged polyline is a single entity — moving it or a grip keeps it connected. With nothing pre-selected, JOIN falls back to picking a source + targets. One undo group | J | Implemented |
-| ARRAY dialog (interactive grid/preview) | AR | Planned (Phase 13) |
+| ARRAY dialog (parametric grid / polar / path with a live preview) | AR | Implemented (Ph11 ParameterDialog) |
 | **STRETCH** — AutoCAD's flow, prompt for prompt: `Select objects:` (pick, window or crossing drags accumulate with "N found"; **Enter or right-click** ends it; a pre-selected set skips it) → `Specify base point or [Displacement] <Displacement>:` → `Specify second point or <use first point as displacement>:`, with the selection **stretched live under the cursor** (ortho-aware). AutoCAD's rule decides what moves: an object *crossed* by a crossing window has only the vertices inside it moved; one fully enclosed, or selected by a pick or an ordinary window, moves whole; a line that merely passes through the window is left alone. An arc endpoint moves with the arc's height above its chord preserved; circles and single-point kinds (text, insert, image, table, GD&T) move if their centre/anchor is caught and are never deformed; a dimension whose def points move **re-measures**. One undo group; reports what it did or why nothing moved | S | Implemented (issue #24) |
 | **DIST (DI)** — distance, angle and delta X/Y between two points. Answered from the picked points alone, so it never reaches the store | DI | Implemented (issue #30) |
 | **ID** — the coordinates of a point | ID | Implemented (issue #30) |
 | **AREA (AA)** — area and perimeter of a closed object (exact for circles, shoelace over the SAME tessellation the renderer draws for everything else). An OPEN object reports its length and says it has no area, rather than the area of the polygon you would get by closing it | AA | Implemented (issue #30) |
 | **LIST (LI)** — an object's type, layer and defining parameters. A dimension reports its MEASURED value, which by construction cannot have been authored | LI | Implemented (issue #30) |
-| EXPLODE | X | Planned (Phase 13) |
-| JOIN | J | Planned (Phase 13) |
+| EXPLODE | X | Implemented (#25) -- a block reference one level, a polyline into segments |
+| JOIN | J | Implemented (see the row above) |
 
 ### The ARRAY family, and why ARRAYEDIT is absent
 
@@ -269,7 +269,7 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | **Properties palette (PR): dockable, context-sensitive panel for the selection** | PR / PROPERTIES / PROPS / CH | Implemented (Ph22) |
 | PR multiplicity: nothing / one / many-same / many-mixed, with **\*VARIES\*** where values differ; edits set all | — | Implemented (Ph22) |
 | PR universal props: **Layer / Color / Linetype / Lineweight** (ByLayer or override) editable single + multi + mixed | — | Implemented (Ph22) |
-| PR Geometry group (editable since issue #32): line length/ends, circle/arc center+radius, text position | — | Implemented (Ph22; numeric geometry editing Planned) |
+| PR Geometry group (editable since issue #32): line length/ends, circle/arc center+radius, text position | — | Implemented (#32) |
 | PR full **Text / MTEXT** group: contents, height, rotation, justify, width factor, line spacing, defined width, attachment, **font** | — | Implemented (Ph22; font dropdown real in Ph29) |
 | **Font** dropdown (Standard stroke font + system TrueType/OpenType faces); switching re-renders the selected text as one undo group (varies/set-all) | PR Font | Implemented (Ph29) |
 | Imported text fonts: TTF-by-name resolves to the installed face (filled glyphs); single-stroke SHX fonts (romans/simplex/isocp/txt…) render with the built-in single-stroke font (faithful match); missing → stroke fallback (true SHX binary parsing staged) | — | Implemented (Ph29) |
@@ -300,9 +300,9 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | Placement preview: the full dimension (with live value) rubber-bands to the cursor, commits on click | — | Implemented (all dim types + DIM; angular arc is fixed by its two lines) |
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
 | **DIMCONTINUE (DCO)** — chain the next dimension from the previous one's SECOND extension line, on the same dimension line. **DIMBASELINE (DBA)** — stack from the previous FIRST extension line, offset perpendicular by the baseline spacing. Both are placement helpers over the existing Linear/Aligned types (no new DimType, no format change) and inherit the previous dimension's style + overrides. Each pick is its own undo group, and the chain follows undo -- it continues from whatever is now last | DCO / DBA | Implemented (issue #28) |
-| MTEXT (multi-line) | MT | Planned |
+| MTEXT (multi-line) | MT | Implemented (Ph20; inline per-character formatting is not) |
 | MLEADER (multi-segment) | MLD | Planned |
-| STYLE (text style) | ST | Planned |
+| STYLE (text style) | ST | Implemented (#29) |
 
 ## View / Navigate
 
@@ -313,8 +313,8 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | PAN (middle-drag) | P | Implemented (mouse) |
 | Zoom about cursor (wheel) | — | Implemented (mouse) |
 | Smooth curves at any zoom (adaptive tessellation; re-tessellate on zoom, not pan) | — | Implemented |
-| REGEN | RE | Planned (Phase 9) |
-| Named views (VIEW) | V | Planned (Phase 9) |
+| REGEN | RE | Implemented (#33) |
+| Named views (VIEW) | V | Implemented (#33) -- Save / Restore / Delete / Window / ? |
 
 ## Layers / Properties
 
@@ -344,28 +344,28 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | **Starting a new command cancels the one in progress** — clicking a ribbon command (or otherwise dispatching a new command) while one is active cleanly cancels the current command first (its rubber-band/preview is dropped) and starts the new one; the **selection is preserved**. One dispatch site (`CommandProcessor::start_command`) | ribbon / dispatch | Implemented |
 | **CIRCLE radius/[Diameter] option** — type `D` at the radius prompt (command line or DYN) to enter a diameter instead | C → D | Implemented (Ph26) |
 | Parametric **multi-parameter dialog** (collect values → submit existing Command): ARRAY | ribbon | Implemented (Ph11) |
-| POLYGON command + dialog | — | Planned (no POLYGON command yet) |
+| POLYGON command | POL | Implemented (#23; the prompts, no dialog) |
 | **Import DWG** — runs an external converter (DWG→DXF) off-thread, then the existing DXF importer (fail-safe); writes a `<file>.dwg.import.log` gap catalog | ribbon / DWGIN | Implemented (Ph27; needs an installed converter — ODA File Converter or LibreDWG) |
 | **Export DWG** — existing DXF export, then the external converter (DXF→DWG, default ACAD2018) | ribbon / DWGOUT | Implemented (Ph27; two-stage lossy, see ARCHITECTURE) |
 | **DWG Setup** dialog — detect/Browse/auto-detect the converter, links to downloads; saves the path setting (offered via "Configure…" when none is found) | ribbon "DWG Setup" | Implemented (Ph27) |
 | DWG converter path (configurable) | `io/dwg_converter_path` setting / DWG Setup dialog | Implemented (Ph27; auto-detects ODA/LibreDWG on PATH otherwise) |
-| Per-entity linetype scale (CELTSCALE) | — | Planned |
-| Lineweight property (hundredths-mm) | — | Implemented (model + round-trip; visible weight Planned) |
-| LAYER command-line alias / PROPERTIES palette / MATCHPROP | LA / PR / MA | Planned (Phase 13) |
+| Per-entity linetype scale (CELTSCALE) | PR "Linetype scale" | Implemented (native v12, DXF 48) |
+| Lineweight property (hundredths-mm) | LWT toggle | Implemented (model, round-trip, on-screen weight with LWDISPLAY) |
+| LAYER command-line alias / PROPERTIES palette / MATCHPROP | LA / PR / MA | Implemented |
 
 ## Blocks / Reference
 
 Block **definitions** + **INSERT** references (transform-at-snapshot, not exploded). This
-phase covers **import, display, and selection**; in-app authoring is staged.
+phase covered **import, display, and selection**; authoring followed under issue #25.
 
 | Command | Alias | Status |
 |---|---|---|
 | Block import (BLOCKS + INSERT, nested, scale/rotation) from DWG/DXF | File ▸ Import | Implemented (Ph28) |
 | Display block instances (definition × transform, resolved at snapshot; per-instance colour/layer; batched — N instances add no draw calls) | — | Implemented (Ph28) |
 | Select / hover / window-crossing a block as one object; move / erase / copy the instance (not the definition); insertion-point grip; INS osnap | click / grips / Modify | Implemented (Ph28) |
-| BLOCK / WBLOCK — define a block from selected geometry | B | Staged (authoring half) |
-| REFEDIT — edit a definition; all instances update | — | Staged |
-| EXPLODE — instance → its geometry | X | Staged |
+| BLOCK / WBLOCK — define a block from selected geometry | B / W | Implemented (#25) |
+| REFEDIT — edit a definition; all instances update | REFEDIT / REFSET / REFCLOSE | Implemented (#25) |
+| EXPLODE — instance → its geometry | X | Implemented (#25) |
 | ATTDEF / ATTRIB — block attribute text | ATT | Implemented (issue #25: ATTDEF, INSERT value prompts, ATTDISP, ATTEDIT; DXF ATTDEF and INSERT+ATTRIB) |
 | XREF | XR | Implemented (issue #25): attach / detach / reload / ?, re-read on open, native v32, DXF block flag 4 with the path |
 
@@ -468,7 +468,7 @@ and disappear (returning to the last fixed tab) when it doesn't. Mixed selection
 |---|---|---|---|
 | **Hatch Editor** (green accent) | all selected objects are hatches | Pattern picker, Solid-fill toggle, Scale, Angle, Re-hatch | Implemented |
 | **Text Editor** (blue accent) | all selected objects are the Text family (TEXT/MTEXT/leaders) | Font, Height, Edit Text | Implemented |
-| **Block Editor** (amber accent) | a single block reference (INSERT) is selected | Edit Block | Present (Edit Block staged — block authoring not yet implemented) |
+| **Block Editor** (amber accent) | a single block reference (INSERT) is selected | Edit Reference (REFEDIT), Edit Attributes (EATTEDIT), Manage Attributes (BATTMAN) | Present |
 
 ## Status-bar modes & keys
 
@@ -500,5 +500,5 @@ and disappear (returning to the last fixed tab) when it doesn't. Mixed selection
 | Up/Down history, ENTER repeats last | Implemented |
 | Honest command results (engine echoes what actually happened) | Implemented |
 | Parametric input dialog (ARRAY: rectangular + polar) | Implemented |
-| Input dialogs for Rotate/Scale + live ghost preview | Planned (Phase 11.2) |
+| Input dialogs for Rotate/Scale + live ghost preview | Implemented (#32) |
 | Dynamic input tooltips at cursor | Implemented (full canvas DYN: command entry + autocomplete, mid-command sub-prompts, on-geometry dimension fields for RECTANGLE/LINE/CIRCLE; F12 toggles canvas-only ⇄ classic bottom bar) |

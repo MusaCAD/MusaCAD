@@ -67,6 +67,8 @@ Blocks can be imported and placed; they cannot be *created* in-app.
 | ~~**REFEDIT**~~ — edit a definition in place | **Done** (#25) — REFEDIT / REFSET / REFCLOSE. ✅ |
 | ~~**ATTDEF / ATTRIB**~~ — block attribute text | **Done** (#25) — ATTDEF, INSERT prompts, ATTDISP, ATTEDIT, DXF ATTRIB. ✅ |
 | ~~**XREF**~~ — external references | **Done** (#25) — attach, detach, reload, re-read on open. ✅ |
+| ~~**EATTEDIT / BATTMAN**~~ — attribute dialogs | **Done** (#25) — the Enhanced Attribute Editor (also on double-click) and the Block Attribute Manager with sync by tag. ✅ |
+| Multi-line attributes; a Block Editor mode of its own (BEDIT) | REFEDIT edits in place today. | **P2** |
 
 ## F. Raster images — [#10](https://github.com/MusaCAD/MusaCAD/issues/10) (remainder)
 
@@ -80,7 +82,9 @@ handle and carries CLASSES and the image dictionary).
 | Item | Priority |
 |---|---|
 | ~~**Layouts / paper space + viewports**~~ | **Done** (#26) — layouts, paper-space entities, tabs, sheet plot, MVIEW viewports, MSPACE / PSPACE through a viewport. ✅ |
-| ~~**Named views (VIEW)**, **REGEN**, **VPORTS**~~ **Done** (#33) | **P2** |
+| ~~**Named views (VIEW)**, **REGEN**, **VPORTS**~~ | **Done** (#33) — VPORTS: tiled model-space viewports with named configurations. ✅ |
+| ~~**Per-viewport layer freezing (VPLAYER)**~~ | **Done** (#26) — Freeze / Thaw / Reset / Newfrz / Vpvisdflt, the layer manager's VP Freeze columns, native and DXF. ✅ |
+| **PSLTSCALE** (dash scale by viewport zoom) | Dashes read the same across scaled viewports. | **P2** |
 
 ## H. Inquiry and drawing housekeeping — [#30](https://github.com/MusaCAD/MusaCAD/issues/30)
 
@@ -109,6 +113,15 @@ handle and carries CLASSES and the image dictionary).
 | ~~PR **numeric geometry editing**~~ | **Done** (#32) — Start/End, Center/Radius and Position fields edit the entity. ✅ |
 | ~~OSNAP settings dialog; **apparent intersection / insertion / parallel** snaps~~ | **Done** (#32) ✅ |
 | ~~Input dialogs for Rotate/Scale + live ghost preview~~ | **Done** (#32) ✅ |
+
+## K. Platforms — [#1](https://github.com/MusaCAD/MusaCAD/issues/1), [#2](https://github.com/MusaCAD/MusaCAD/issues/2), [#4](https://github.com/MusaCAD/MusaCAD/issues/4), [#5](https://github.com/MusaCAD/MusaCAD/issues/5)
+
+| Item | Status |
+|---|---|
+| ~~MSVC `/W4` clean, warnings as errors on Windows~~ | **Done** (#5) ✅ |
+| ~~DWG inside the Flatpak~~ | **Done** (#4) — an opt-in to a converter installed on the host. ✅ |
+| Flathub submission | Manifest, metainfo and linter run prepared (`packaging/flatpak/BUILD_FLATPAK.md`); two decisions remain (the home filesystem exception, the app-id's domain). **P2** |
+| macOS | The build workflow, bundle and command line work; the viewport needs an OpenGL 4.5 backend macOS does not have — a Metal or GL 4.1 render path is the prerequisite (`packaging/macos/BUILD_MACOS.md`). **P2** |
 
 ---
 
