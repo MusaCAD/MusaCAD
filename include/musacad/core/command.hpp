@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
@@ -962,6 +963,26 @@ struct SetInsertAttribCommand {
     std::uint64_t group = 0;
 };
 
+/// EATTEDIT: every attribute value of the block reference `handle`, in attdef order
+/// (shorter lists keep the remaining defaults). An edit is an erase + create of the
+/// reference, so it undoes as one step.
+struct SetInsertAttribsCommand {
+    EntityHandle handle;
+    std::vector<std::string> values;
+    std::uint64_t group = 0;
+};
+/// BATTMAN: replace the attribute definitions of block `name` -- tag, prompt, default,
+/// modes and text height, in this order. An entry whose tag matches an existing
+/// definition keeps that definition's position and styling; a new tag is placed below
+/// the last one. With `sync`, every reference's values are carried over by tag (a new
+/// attribute takes its default, a removed one drops); without it the references keep
+/// their values positionally, as AutoCAD does until ATTSYNC.
+struct SetBlockAttDefsCommand {
+    std::string name;
+    std::vector<BlockAttDefInfo> attdefs;
+    bool sync = true;
+    std::uint64_t group = 0;
+};
 /// Create a GD&T feature control frame. `cells` are the ordered cell strings (cell 0 is
 /// the characteristic symbol); they are RAW, so `\U+2316` and `%%c` expand at layout
 /// time like any other text. `overrides`/`dim_style` mirror AddDimensionCommand exactly:
@@ -1190,6 +1211,7 @@ using Command =
                  CreateViewportCommand, SetViewportViewCommand, EnterMspaceCommand, LeaveMspaceCommand,
                  XrefAttachCommand, XrefReloadCommand, XrefDetachCommand, XrefListCommand,
                  SetImagePolyClipCommand, SetViewportLayerFreezeCommand,
+                 SetInsertAttribsCommand, SetBlockAttDefsCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

@@ -237,6 +237,12 @@ private:
     void open_text_editor(double wx, double wy, double pick_radius, const std::string& content,
                           bool multiline);
 
+    // Block attributes: the Enhanced Attribute Editor (EATTEDIT / double-click) for one
+    // reference, and the Block Attribute Manager (BATTMAN) for a definition.
+    void open_attribute_editor(core::EntityHandle handle, std::uint16_t block,
+                               const std::vector<std::string>& values);
+    void open_block_attribute_manager();
+
     // Annotation (UI side: dimension-style dialog).
     void open_dimstyle_dialog();
     void submit_dimstyle_from_dialog(const ParameterDialog& dlg);

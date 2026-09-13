@@ -209,6 +209,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     out.wipeout_vertices.clear();
     out.images.clear();
     out.text_edit_targets.clear();
+    out.attrib_edit_targets.clear();
     out.layers.assign(store.layers().begin(), store.layers().end());
     out.current_layer = store.current_layer();
     out.page_setups = store.page_setups();
@@ -778,6 +779,26 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         resolve_insert(store, *in, tolerance, isegs);
         for (const InsertSeg& s : isegs) {
             add_line(s.color, s.lineweight, s.a, s.b);
+        }
+        // A reference with attributes is an editor target (EATTEDIT / double-click): its
+        // extent for the hit-test and its values, defaults filled in.
+        const BlockDef* bd = store.block(in->block);
+        if (bd != nullptr && !bd->content.attdefs.empty() && editable(store, in->props)) {
+            AttribEditTarget t;
+            t.handle = h;
+            t.block = in->block;
+            t.min = in->pos;
+            t.max = in->pos;
+            for (const InsertSeg& s : isegs) {
+                t.min = {std::min({t.min.x, s.a.x, s.b.x}), std::min({t.min.y, s.a.y, s.b.y})};
+                t.max = {std::max({t.max.x, s.a.x, s.b.x}), std::max({t.max.y, s.a.y, s.b.y})};
+            }
+            t.values = store.insert_attribs(*in);
+            for (std::size_t i = t.values.size(); i < bd->content.attdefs.size(); ++i) {
+                t.values.push_back(bd->content.attdefs[i].def);
+            }
+            t.values.resize(bd->content.attdefs.size());
+            out.attrib_edit_targets.push_back(std::move(t));
         }
     });
 

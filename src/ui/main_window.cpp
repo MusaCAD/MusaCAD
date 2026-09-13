@@ -41,6 +41,8 @@
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QElapsedTimer>
 #include <QProcessEnvironment>
@@ -244,6 +246,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
         open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
     });
+    viewport_->set_attribute_edit_callback(
+        [this](const ViewportWindow::AttribEditRequest& req) {
+            open_attribute_editor(req.handle, req.block, req.values);
+        });
+    viewport_->set_battman_callback([this] { open_block_attribute_manager(); });
     // Tab-to-tab drag: dropping a selection-drag on another document's tab transfers it.
     viewport_->set_selection_drop_callback([this](QPoint global) { return drop_selection_on_tab(global); });
 
@@ -828,12 +835,28 @@ void MainWindow::build_ribbon() {
     connect(lwt_btn, &QToolButton::toggled, this,
             [this](bool on) { engine_->submit(core::SetLineweightDisplayCommand{on}); });
 
-    // --- Insert tab (placeholder) ---
+    // --- Insert tab: Block (insert / author) and Block Definition (attributes) panels, the
+    // way AutoCAD's Insert tab groups them; every button is its typed command.
     const int insert = ribbon_->add_tab(QStringLiteral("Insert"));
     RibbonPanel* block = ribbon_->add_panel(insert, QStringLiteral("Block"), 20);
     block->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")));
-    block->add_placeholder(ribbon_icon(QStringLiteral("assets/ribbon/insert.svg")),
-                           QStringLiteral("Insert"));
+    add_cmd(block, QStringLiteral("Insert"), "I", RibbonTier::Primary);
+    auto* create_menu = new QMenu(this);
+    create_menu->addAction(cmd_action("B", QStringLiteral("Create Block")));
+    create_menu->addAction(cmd_action("W", QStringLiteral("Write Block")));
+    add_split(block, QStringLiteral("Create\nBlock"), "B", create_menu, RibbonTier::Primary);
+    add_cmd(block, QStringLiteral("Edit\nReference"), "REFEDIT", RibbonTier::Secondary);
+    add_cmd(block, QStringLiteral("Explode"), "X", RibbonTier::Secondary);
+    add_cmd(block, QStringLiteral("Attach\nXref"), "XR", RibbonTier::Secondary);
+    RibbonPanel* blockdef = ribbon_->add_panel(insert, QStringLiteral("Block Definition"), 20);
+    blockdef->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/attdef.svg")));
+    add_cmd(blockdef, QStringLiteral("Define\nAttributes"), "ATT", RibbonTier::Primary);
+    auto* attedit_menu = new QMenu(this);
+    attedit_menu->addAction(cmd_action("EATTEDIT", QStringLiteral("Edit Attribute (dialog)")));
+    attedit_menu->addAction(cmd_action("ATTEDIT", QStringLiteral("Edit Attribute (command line)")));
+    attedit_menu->addAction(cmd_action("ATTDISP", QStringLiteral("Attribute Display")));
+    add_split(blockdef, QStringLiteral("Edit\nAttribute"), "EATTEDIT", attedit_menu, RibbonTier::Primary);
+    add_cmd(blockdef, QStringLiteral("Manage\nAttributes"), "BATTMAN", RibbonTier::Primary);
 
     // --- Annotate tab (Dimensions land in Phase 8) ---
     const int annotate = ribbon_->add_tab(QStringLiteral("Annotate"));
@@ -5105,6 +5128,301 @@ void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
     // One undo group; the engine changes only the content (layer/props/pos kept).
     engine_->submit(core::EditTextContentCommand{
         {wx, wy}, pick_radius, updated, processor_->begin_group()});
+}
+
+namespace {
+QString modes_of(std::uint8_t flags) {
+    QString m;
+    if ((flags & core::kAttInvisible) != 0) {
+        m += QLatin1Char('I');
+    }
+    if ((flags & core::kAttConstant) != 0) {
+        m += QLatin1Char('C');
+    }
+    if ((flags & core::kAttVerify) != 0) {
+        m += QLatin1Char('V');
+    }
+    if ((flags & core::kAttPreset) != 0) {
+        m += QLatin1Char('P');
+    }
+    return m;
+}
+std::uint8_t flags_of(const QString& modes) {
+    std::uint8_t f = 0;
+    for (const QChar ch : modes.toUpper()) {
+        if (ch == QLatin1Char('I')) {
+            f |= core::kAttInvisible;
+        } else if (ch == QLatin1Char('C')) {
+            f |= core::kAttConstant;
+        } else if (ch == QLatin1Char('V')) {
+            f |= core::kAttVerify;
+        } else if (ch == QLatin1Char('P')) {
+            f |= core::kAttPreset;
+        }
+    }
+    return f;
+}
+} // namespace
+
+void MainWindow::open_attribute_editor(core::EntityHandle handle, std::uint16_t block,
+                                       const std::vector<std::string>& values) {
+    // AutoCAD's Enhanced Attribute Editor, Attribute tab: the block and the picked tag in
+    // the header, a Tag / Prompt / Value table, and a Value field bound to the selected
+    // row. OK / Apply submit one SetInsertAttribsCommand (one undo step).
+    const std::vector<std::string> names = viewport_->block_names();
+    const std::vector<std::vector<core::BlockAttDefInfo>> all = viewport_->block_attdefs();
+    if (block >= all.size()) {
+        return;
+    }
+    const std::vector<core::BlockAttDefInfo>& defs = all[block];
+    const QString block_name =
+        block < names.size() ? QString::fromStdString(names[block]) : QStringLiteral("?");
+
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("AttributeEditor"));
+    dlg.setWindowTitle(QStringLiteral("Enhanced Attribute Editor"));
+    auto* v = new QVBoxLayout(&dlg);
+    auto* head = new QLabel(&dlg);
+    head->setObjectName(QStringLiteral("AttributeEditorHeader"));
+    v->addWidget(head);
+
+    auto* table = new QTableWidget(static_cast<int>(defs.size()), 3, &dlg);
+    table->setObjectName(QStringLiteral("AttributeEditorTable"));
+    table->setHorizontalHeaderLabels({QStringLiteral("Tag"), QStringLiteral("Prompt"),
+                                      QStringLiteral("Value")});
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    table->verticalHeader()->setVisible(false);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    for (int r = 0; r < static_cast<int>(defs.size()); ++r) {
+        const core::BlockAttDefInfo& a = defs[static_cast<std::size_t>(r)];
+        auto* tag = new QTableWidgetItem(QString::fromStdString(a.tag));
+        tag->setFlags(tag->flags() & ~Qt::ItemIsEditable);
+        auto* prompt = new QTableWidgetItem(QString::fromStdString(a.prompt));
+        prompt->setFlags(prompt->flags() & ~Qt::ItemIsEditable);
+        const std::string value =
+            static_cast<std::size_t>(r) < values.size() ? values[static_cast<std::size_t>(r)] : a.def;
+        auto* val = new QTableWidgetItem(QString::fromStdString(value));
+        if ((a.flags & core::kAttConstant) != 0) {
+            val->setFlags(val->flags() & ~Qt::ItemIsEditable); // Constant: always the default
+            val->setToolTip(QStringLiteral("Constant attribute (BATTMAN changes its value)."));
+        }
+        table->setItem(r, 0, tag);
+        table->setItem(r, 1, prompt);
+        table->setItem(r, 2, val);
+    }
+    v->addWidget(table, 1);
+
+    auto* row = new QWidget(&dlg);
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->addWidget(new QLabel(QStringLiteral("Value:"), row));
+    auto* value_edit = new QLineEdit(row);
+    value_edit->setObjectName(QStringLiteral("AttributeEditorValue"));
+    h->addWidget(value_edit, 1);
+    v->addWidget(row);
+
+    bool syncing = false;
+    const auto show_row = [&](int r) {
+        if (r < 0 || r >= table->rowCount()) {
+            head->setText(QStringLiteral("Block: %1").arg(block_name));
+            return;
+        }
+        syncing = true;
+        head->setText(QStringLiteral("Block: %1    Tag: %2").arg(block_name, table->item(r, 0)->text()));
+        value_edit->setText(table->item(r, 2)->text());
+        value_edit->setEnabled((table->item(r, 2)->flags() & Qt::ItemIsEditable) != 0);
+        syncing = false;
+    };
+    connect(table, &QTableWidget::currentCellChanged, &dlg,
+            [&](int r, int, int, int) { show_row(r); });
+    connect(value_edit, &QLineEdit::textEdited, &dlg, [&](const QString& t) {
+        const int r = table->currentRow();
+        if (!syncing && r >= 0 && r < table->rowCount()) {
+            table->item(r, 2)->setText(t);
+        }
+    });
+    connect(table, &QTableWidget::itemChanged, &dlg, [&](QTableWidgetItem* it) {
+        if (!syncing && it != nullptr && it->column() == 2 && it->row() == table->currentRow()) {
+            syncing = true;
+            value_edit->setText(it->text());
+            syncing = false;
+        }
+    });
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Apply |
+                                        QDialogButtonBox::Cancel,
+                                    &dlg);
+    v->addWidget(bb);
+    const auto submit = [&] {
+        std::vector<std::string> edited;
+        for (int r = 0; r < table->rowCount(); ++r) {
+            edited.push_back(table->item(r, 2)->text().toStdString());
+        }
+        engine_->submit(core::SetInsertAttribsCommand{handle, edited, processor_->begin_group()});
+    };
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(bb->button(QDialogButtonBox::Apply), &QPushButton::clicked, &dlg, [&] { submit(); });
+    connect(value_edit, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+
+    if (table->rowCount() > 0) {
+        table->setCurrentCell(0, 2);
+    }
+    show_row(table->currentRow());
+    value_edit->setFocus();
+    dlg.resize(460, 300);
+    if (dlg.exec() == QDialog::Accepted) {
+        submit();
+    }
+}
+
+void MainWindow::open_block_attribute_manager() {
+    // AutoCAD's Block Attribute Manager: a block chosen from the list, its attribute
+    // definitions in a Tag / Prompt / Default / Modes / Height table (cells edit in
+    // place), Move Up / Move Down / Remove, how many references exist, and a Sync toggle
+    // that carries the references' values over by tag. OK / Apply submit one
+    // SetBlockAttDefsCommand.
+    const std::vector<std::string> names = viewport_->block_names();
+    const std::vector<std::vector<core::BlockAttDefInfo>> all = viewport_->block_attdefs();
+    const std::vector<core::AttribEditTarget> refs = viewport_->attrib_targets();
+    std::vector<std::uint16_t> with_attribs;
+    for (std::uint16_t i = 0; i < all.size() && i < names.size(); ++i) {
+        if (!all[i].empty()) {
+            with_attribs.push_back(i);
+        }
+    }
+    if (with_attribs.empty()) {
+        QMessageBox::information(this, QStringLiteral("Block Attribute Manager"),
+                                 QStringLiteral("This drawing has no blocks with attributes."));
+        return;
+    }
+
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("BlockAttributeManager"));
+    dlg.setWindowTitle(QStringLiteral("Block Attribute Manager"));
+    auto* v = new QVBoxLayout(&dlg);
+    auto* top = new QWidget(&dlg);
+    auto* th = new QHBoxLayout(top);
+    th->setContentsMargins(0, 0, 0, 0);
+    th->addWidget(new QLabel(QStringLiteral("Block:"), top));
+    auto* combo = new QComboBox(top);
+    combo->setObjectName(QStringLiteral("BattmanBlock"));
+    for (const std::uint16_t bi : with_attribs) {
+        combo->addItem(QString::fromStdString(names[bi]), static_cast<int>(bi));
+    }
+    th->addWidget(combo, 1);
+    v->addWidget(top);
+
+    auto* mid = new QWidget(&dlg);
+    auto* mh = new QHBoxLayout(mid);
+    mh->setContentsMargins(0, 0, 0, 0);
+    auto* table = new QTableWidget(0, 5, mid);
+    table->setObjectName(QStringLiteral("BattmanTable"));
+    table->setHorizontalHeaderLabels({QStringLiteral("Tag"), QStringLiteral("Prompt"),
+                                      QStringLiteral("Default"), QStringLiteral("Modes"),
+                                      QStringLiteral("Height")});
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    table->verticalHeader()->setVisible(false);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setToolTip(QStringLiteral("Modes: I invisible, C constant, V verify, P preset. Cells edit in place."));
+    mh->addWidget(table, 1);
+    auto* side = new QWidget(mid);
+    auto* sv = new QVBoxLayout(side);
+    sv->setContentsMargins(0, 0, 0, 0);
+    auto* up = new QPushButton(QStringLiteral("Move Up"), side);
+    auto* down = new QPushButton(QStringLiteral("Move Down"), side);
+    auto* remove = new QPushButton(QStringLiteral("Remove"), side);
+    up->setObjectName(QStringLiteral("BattmanUp"));
+    down->setObjectName(QStringLiteral("BattmanDown"));
+    remove->setObjectName(QStringLiteral("BattmanRemove"));
+    sv->addWidget(up);
+    sv->addWidget(down);
+    sv->addWidget(remove);
+    sv->addStretch(1);
+    mh->addWidget(side);
+    v->addWidget(mid, 1);
+
+    auto* foot = new QLabel(&dlg);
+    foot->setObjectName(QStringLiteral("BattmanFound"));
+    v->addWidget(foot);
+    auto* sync = new QCheckBox(QStringLiteral("Apply changes to existing references (sync values by tag)"), &dlg);
+    sync->setObjectName(QStringLiteral("BattmanSync"));
+    sync->setChecked(true);
+    v->addWidget(sync);
+
+    const auto load_block = [&] {
+        const int bi = combo->currentData().toInt();
+        const std::vector<core::BlockAttDefInfo>& defs = all[static_cast<std::size_t>(bi)];
+        table->setRowCount(0);
+        table->setRowCount(static_cast<int>(defs.size()));
+        for (int r = 0; r < static_cast<int>(defs.size()); ++r) {
+            const core::BlockAttDefInfo& a = defs[static_cast<std::size_t>(r)];
+            table->setItem(r, 0, new QTableWidgetItem(QString::fromStdString(a.tag)));
+            table->setItem(r, 1, new QTableWidgetItem(QString::fromStdString(a.prompt)));
+            table->setItem(r, 2, new QTableWidgetItem(QString::fromStdString(a.def)));
+            table->setItem(r, 3, new QTableWidgetItem(modes_of(a.flags)));
+            table->setItem(r, 4, new QTableWidgetItem(QString::number(a.height, 'g', 6)));
+        }
+        int found = 0;
+        for (const core::AttribEditTarget& t : refs) {
+            found += t.block == bi ? 1 : 0;
+        }
+        foot->setText(QStringLiteral("References in the active space: %1").arg(found));
+        if (table->rowCount() > 0) {
+            table->setCurrentCell(0, 0);
+        }
+    };
+    connect(combo, &QComboBox::currentIndexChanged, &dlg, [&](int) { load_block(); });
+    const auto swap_rows = [&](int a, int b) {
+        if (a < 0 || b < 0 || a >= table->rowCount() || b >= table->rowCount()) {
+            return;
+        }
+        for (int c = 0; c < table->columnCount(); ++c) {
+            const QString ta = table->item(a, c)->text();
+            table->item(a, c)->setText(table->item(b, c)->text());
+            table->item(b, c)->setText(ta);
+        }
+        table->setCurrentCell(b, table->currentColumn() < 0 ? 0 : table->currentColumn());
+    };
+    connect(up, &QPushButton::clicked, &dlg, [&] { swap_rows(table->currentRow(), table->currentRow() - 1); });
+    connect(down, &QPushButton::clicked, &dlg, [&] { swap_rows(table->currentRow(), table->currentRow() + 1); });
+    connect(remove, &QPushButton::clicked, &dlg, [&] {
+        if (table->currentRow() >= 0) {
+            table->removeRow(table->currentRow());
+        }
+    });
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Apply |
+                                        QDialogButtonBox::Cancel,
+                                    &dlg);
+    v->addWidget(bb);
+    const auto submit = [&] {
+        core::SetBlockAttDefsCommand c;
+        c.name = combo->currentText().toStdString();
+        for (int r = 0; r < table->rowCount(); ++r) {
+            core::BlockAttDefInfo a;
+            a.tag = table->item(r, 0)->text().trimmed().toStdString();
+            a.prompt = table->item(r, 1)->text().toStdString();
+            a.def = table->item(r, 2)->text().toStdString();
+            a.flags = flags_of(table->item(r, 3)->text());
+            a.height = table->item(r, 4)->text().toDouble();
+            c.attdefs.push_back(std::move(a));
+        }
+        c.sync = sync->isChecked();
+        c.group = processor_->begin_group();
+        engine_->submit(c);
+    };
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(bb->button(QDialogButtonBox::Apply), &QPushButton::clicked, &dlg, [&] { submit(); });
+
+    load_block();
+    dlg.resize(620, 340);
+    if (dlg.exec() == QDialog::Accepted) {
+        submit();
+    }
 }
 
 void MainWindow::open_osnap_settings_dialog() {

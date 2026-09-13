@@ -9,6 +9,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Attribute dialogs** (#25) — `EATTEDIT` (or a double-click on a block reference) edits a
+  reference's attribute values in the Enhanced Attribute Editor; `BATTMAN` edits, reorders
+  and removes a block's attribute definitions and syncs every reference by tag. The Insert
+  tab gains real Block and Block Definition panels.
 - **Per-viewport layer freezing** (#26) — `VPLAYER` freezes and thaws layers in the current,
   all or a picked viewport (Reset, Newfrz, Vpvisdflt, `?`); the Layer Properties Manager
   gains "New VP Freeze" and, while you are in a viewport, "VP Freeze" columns. The lists

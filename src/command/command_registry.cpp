@@ -168,13 +168,18 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit a polyline: close/open, join, vertices, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
-    reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); }, "",
+    reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); },
+        "assets/ribbon/attdef.svg",
         "Define a block attribute: modes, tag, prompt, default value and text placement.");
     reg({"ATTDISP"}, [] { return std::make_unique<AttdispCommand>(); }, "",
         "Attribute visibility: Normal (each attribute's own mode), ON or OFF for all.");
+    reg({"EATTEDIT"}, [] { return std::make_unique<EatteditCommand>(); }, "assets/ribbon/attedit.svg",
+        "Enhanced Attribute Editor: pick a block reference and edit its attribute values in a dialog.");
+    reg({"BATTMAN"}, [] { return std::make_unique<BattmanCommand>(); }, "assets/ribbon/battman.svg",
+        "Block Attribute Manager: edit, reorder, remove a block's attribute definitions and sync its references.");
     reg({"ATTEDIT", "-ATTEDIT"}, [] { return std::make_unique<AtteditCommand>(); }, "",
         "Change an attribute value on a block reference (one tag, or all).");
-    reg({"REFEDIT"}, [] { return std::make_unique<RefeditCommand>(); }, "",
+    reg({"REFEDIT"}, [] { return std::make_unique<RefeditCommand>(); }, "assets/ribbon/refedit.svg",
         "Edit a block definition in place: its members become a working set until REFCLOSE.");
     reg({"REFSET"}, [] { return std::make_unique<RefsetCommand>(); }, "",
         "Add objects to, or remove them from, the working set of the reference being edited.");
@@ -186,7 +191,7 @@ CommandRegistry CommandRegistry::make_default() {
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
     reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
         "Image frames: hidden, shown and plotted, or shown on screen only.");
-    reg({"XR", "XREF", "-XREF"}, [] { return std::make_unique<XrefCommand>(); }, "",
+    reg({"XR", "XREF", "-XREF"}, [] { return std::make_unique<XrefCommand>(); }, "assets/ribbon/xref.svg",
         "External references: attach a drawing as a block that follows its file; detach, reload, ?.");
     reg({"MVIEW", "MV"}, [] { return std::make_unique<MviewCommand>(); }, "",
         "A viewport on the layout showing model space: two corners or Fit; ON, OFF, Scale, Center.");

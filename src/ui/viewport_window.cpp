@@ -268,6 +268,45 @@ void ViewportWindow::osnap_settings_dialog() {
     }
 }
 
+void ViewportWindow::attribute_editor_at(core::Vec2 pick, double pick_radius) {
+    // The reference whose extent (plus the aperture) contains the point; nearest centre
+    // wins when references overlap.
+    bool found = false;
+    AttribEditRequest req;
+    {
+        std::scoped_lock lock(grips_mutex_);
+        double best = 0.0;
+        for (const core::AttribEditTarget& t : attrib_targets_) {
+            if (pick.x < t.min.x - pick_radius || pick.x > t.max.x + pick_radius ||
+                pick.y < t.min.y - pick_radius || pick.y > t.max.y + pick_radius) {
+                continue;
+            }
+            const core::Vec2 c{(t.min.x + t.max.x) * 0.5, (t.min.y + t.max.y) * 0.5};
+            const double d2 = core::length_squared(pick - c);
+            if (!found || d2 < best) {
+                found = true;
+                best = d2;
+                req = AttribEditRequest{t.handle, t.block, t.values};
+            }
+        }
+    }
+    if (!found) {
+        if (processor_ != nullptr) {
+            processor_->echo("No block reference with attributes there.");
+        }
+        return;
+    }
+    if (attribute_edit_callback_) {
+        attribute_edit_callback_(req); // MainWindow owns the dialog (GUI thread)
+    }
+}
+
+void ViewportWindow::block_attribute_manager() {
+    if (battman_callback_) {
+        battman_callback_();
+    }
+}
+
 void ViewportWindow::set_dialog_ghost(int mode, core::Vec2 a, double param) {
     dialog_ghost_mode_ = mode;
     dialog_ghost_a_ = a;
@@ -522,6 +561,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
             std::scoped_lock lock(grips_mutex_);
             grips_cache_ = snap.grips;
             text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
+            attrib_targets_ = snap.attrib_edit_targets; // EATTEDIT / double-click
             selection_summary_ = snap.selection_summary; // PR palette
             has_sel_bounds_ = !snap.selected_line_vertices.empty();
             if (has_sel_bounds_) {
@@ -862,6 +902,21 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
     if (found) {
         text_edit_callback_(TextEditRequest{world, pad, content, multiline});
         return;
+    }
+    // A block reference with attributes: the attribute editor (AutoCAD's double-click).
+    if (attribute_edit_callback_) {
+        bool hit = false;
+        {
+            std::scoped_lock lock(grips_mutex_);
+            for (const core::AttribEditTarget& t : attrib_targets_) {
+                hit = hit || (world.x >= t.min.x - pad && world.x <= t.max.x + pad &&
+                              world.y >= t.min.y - pad && world.y <= t.max.y + pad);
+            }
+        }
+        if (hit) {
+            attribute_editor_at(world, pad);
+            return;
+        }
     }
     // A double-click on nothing while editing through a viewport returns to the sheet
     // (AutoCAD's double-click outside the viewport), the view left becoming its view.

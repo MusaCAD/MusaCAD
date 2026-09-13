@@ -314,6 +314,8 @@ private:
                                        const std::string& xref_path, std::string& err);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
+    void apply_insert_attribs(const SetInsertAttribsCommand& c);
+    void apply_block_attdefs(const SetBlockAttDefsCommand& c);
     /// The viewport under `pick` on the active layout (or the MSPACE layout), else the
     /// one whose frame is within `pick_radius`; null when none.
     [[nodiscard]] EntityHandle viewport_at(Vec2 pick, double pick_radius) const;
