@@ -3,6 +3,8 @@
 
 #include "musacad/command/coordinate.hpp"
 
+#include "musacad/core/text/parse_double.hpp"
+
 #include <charconv>
 #include <cstdio>
 
@@ -26,10 +28,7 @@ bool to_double(std::string_view s, double& out) {
     if (s.empty()) {
         return false;
     }
-    const char* begin = s.data();
-    const char* end = s.data() + s.size();
-    auto [ptr, ec] = std::from_chars(begin, end, out);
-    return ec == std::errc{} && ptr == end;
+    return core::parse_double_all(s, out);
 }
 
 std::string fmt_point(core::Vec2 p) {

@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "musacad/core/threading/jthread.hpp"
+
 #include "musacad/core/command.hpp"
 #include "musacad/core/geometry_engine.hpp"
 
@@ -41,7 +43,7 @@ TEST_CASE("GeometryEngine: concurrent submit + snapshot round-trip") {
     std::atomic<bool> reader_ok{true};
     std::atomic<std::size_t> max_verts{0};
 
-    std::jthread reader([&] {
+    musacad::core::threading::jthread reader([&] {
         std::uint64_t prev = 0;
         while (!stop_reader.load(std::memory_order_acquire)) {
             if (engine.consume_snapshot()) {
@@ -60,7 +62,7 @@ TEST_CASE("GeometryEngine: concurrent submit + snapshot round-trip") {
 
     // Multiple concurrent producers (MPSC queue).
     {
-        std::vector<std::jthread> producers;
+        std::vector<musacad::core::threading::jthread> producers;
         for (int t = 0; t < kProducers; ++t) {
             producers.emplace_back([&engine] {
                 for (int i = 0; i < kPerProducer; ++i) {

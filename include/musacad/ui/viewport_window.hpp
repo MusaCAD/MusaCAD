@@ -19,6 +19,7 @@
 #include "musacad/command/command_context.hpp"
 #include "musacad/command/command_registry.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/threading/jthread.hpp"
 #include "musacad/ui/qt_image_decoder.hpp"
 #include "musacad/render/camera.hpp"
 #include "musacad/render/overlay.hpp"
@@ -409,7 +410,7 @@ protected:
 private:
     void start_render_thread();
     void stop_render_thread() noexcept;
-    void render_loop(std::stop_token token);
+    void render_loop(core::threading::stop_token token);
     void update_viewport_size() noexcept;
     void rebuild_overlay();
     /// Index of the cached grip within `radius_world` of `world`, or -1 (hit-test).
@@ -606,7 +607,7 @@ private:
     render::Vec2 init_min_{};
     render::Vec2 init_max_{};
 
-    std::jthread render_thread_;
+    core::threading::jthread render_thread_;
 };
 
 } // namespace musacad::ui

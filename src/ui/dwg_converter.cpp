@@ -33,9 +33,15 @@ DwgConverter::Kind kind_from_basename(const QString& path) {
 }
 
 // Run a process synchronously; true iff it started, finished normally, exit code 0.
-bool run_sync(const QString& program, const QStringList& args, QString& err) {
+// On the host (Flatpak opt-in) the process is flatpak-spawn --host program args...
+bool run_sync(const QString& program, const QStringList& args, QString& err, bool host = false) {
     QProcess proc;
-    proc.start(program, args);
+    if (host) {
+        const auto [prog, argv] = DwgConverter::host_command(program, args);
+        proc.start(prog, argv);
+    } else {
+        proc.start(program, args);
+    }
     if (!proc.waitForStarted(kStartTimeoutMs)) {
         err = QStringLiteral("Could not start converter '%1': %2").arg(program, proc.errorString());
         return false;
@@ -53,9 +59,69 @@ bool run_sync(const QString& program, const QStringList& args, QString& err) {
     }
     return true;
 }
+// The host's answer to `command -v name` (empty when not found or not allowed).
+QString host_which(const QString& name) {
+    QProcess proc;
+    const auto [prog, argv] = DwgConverter::host_command(
+        QStringLiteral("sh"), {QStringLiteral("-c"), QStringLiteral("command -v %1").arg(name)});
+    proc.start(prog, argv);
+    if (!proc.waitForStarted(kStartTimeoutMs) || !proc.waitForFinished(kStartTimeoutMs) ||
+        proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+        return {};
+    }
+    return QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+}
+
+bool host_exists(const QString& path) {
+    QProcess proc;
+    const auto [prog, argv] = DwgConverter::host_command(QStringLiteral("test"), {QStringLiteral("-e"), path});
+    proc.start(prog, argv);
+    return proc.waitForStarted(kStartTimeoutMs) && proc.waitForFinished(kStartTimeoutMs) &&
+           proc.exitStatus() == QProcess::NormalExit && proc.exitCode() == 0;
+}
+
+// A scratch directory the converter can reach: inside the sandbox /tmp is private, so
+// host mode works under the app's cache directory (a real path on the host too).
+QString scratch_base(bool host) {
+    if (!host) {
+        return QDir::tempPath();
+    }
+    const QString cache = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QDir().mkpath(cache);
+    return cache;
+}
 } // namespace
 
+bool DwgConverter::in_flatpak() {
+    return QFileInfo::exists(QStringLiteral("/.flatpak-info")) ||
+           !qEnvironmentVariable("FLATPAK_ID").isEmpty();
+}
+
+bool DwgConverter::host_mode() {
+    return in_flatpak() && QSettings().value(QStringLiteral("io/dwg_host_converter"), false).toBool();
+}
+
+void DwgConverter::set_host_mode(bool on) {
+    QSettings().setValue(QStringLiteral("io/dwg_host_converter"), on);
+}
+
+std::pair<QString, QStringList> DwgConverter::host_command(const QString& program,
+                                                           const QStringList& args) {
+    QStringList argv{QStringLiteral("--host"), program};
+    argv += args;
+    return {QStringLiteral("flatpak-spawn"), argv};
+}
+
 DwgConverter DwgConverter::discover_on_path() {
+    if (host_mode()) {
+        for (const QString& name : {QStringLiteral("ODAFileConverter"), QStringLiteral("dwg2dxf")}) {
+            const QString found = host_which(name);
+            if (!found.isEmpty()) {
+                return DwgConverter{kind_from_basename(found), found, true};
+            }
+        }
+        return DwgConverter{}; // None
+    }
     // ODA File Converter on PATH (a few known executable names).
     for (const QString& name : {QStringLiteral("ODAFileConverter"),
                                 QStringLiteral("ODAFileConverter.exe")}) {
@@ -98,7 +164,13 @@ DwgConverter DwgConverter::discover_on_path() {
 }
 
 DwgConverter DwgConverter::from_program(const QString& path) {
-    if (path.isEmpty() || !QFileInfo::exists(path)) {
+    if (path.isEmpty()) {
+        return DwgConverter{}; // None
+    }
+    if (host_mode()) {
+        return host_exists(path) ? DwgConverter{kind_from_basename(path), path, true} : DwgConverter{};
+    }
+    if (!QFileInfo::exists(path)) {
         return DwgConverter{}; // None
     }
     return DwgConverter{kind_from_basename(path), path};
@@ -108,8 +180,11 @@ DwgConverter DwgConverter::discover() {
     // The explicitly configured path wins; otherwise search PATH.
     const QString configured =
         QSettings().value(QStringLiteral("io/dwg_converter_path")).toString();
-    if (!configured.isEmpty() && QFileInfo::exists(configured)) {
-        return DwgConverter{kind_from_basename(configured), configured};
+    if (!configured.isEmpty()) {
+        const DwgConverter c = from_program(configured);
+        if (c.available()) {
+            return c;
+        }
     }
     return discover_on_path();
 }
@@ -129,11 +204,20 @@ QString DwgConverter::kind_name(Kind k) {
 }
 
 QString DwgConverter::install_hint() {
-    return QStringLiteral(
+    QString hint = QStringLiteral(
         "No DWG converter found. DWG support needs an external converter (Musa CAD never "
         "bundles one -- it stays LGPL-clean). Install the free ODA File Converter "
         "(opendesign.com) or LibreDWG (dwg2dxf), then use the \"DWG Setup\" button to "
         "Browse to it or auto-detect it on your PATH.");
+    if (in_flatpak()) {
+        hint += QStringLiteral(
+            "\n\nThis is the Flatpak: the sandbox cannot see programs installed on your "
+            "system. To use one, allow Musa CAD to run it on the host once --\n"
+            "    flatpak override --user --talk-name=org.freedesktop.Flatpak com.musacad.MusaCAD\n"
+            "-- then turn on \"Use a converter installed on the host\" in DWG Setup. "
+            "(Built-in DXF import and export work without any of this.)");
+    }
+    return hint;
 }
 
 bool DwgConverter::to_dxf(const QString& dwg_in, const QString& dxf_out, QString& err) const {
@@ -147,20 +231,20 @@ bool DwgConverter::to_dxf(const QString& dwg_in, const QString& dxf_out, QString
     }
     switch (kind_) {
     case Kind::Generic:
-        if (!run_sync(program_, {dwg_in, dxf_out}, err)) {
+        if (!run_sync(program_, {dwg_in, dxf_out}, err, host_)) {
             return false;
         }
         break;
     case Kind::LibreDwg:
         if (!run_sync(program_, {QStringLiteral("-y"), QStringLiteral("-o"), dxf_out, dwg_in},
-                      err)) {
+                      err, host_)) {
             return false;
         }
         break;
     case Kind::Oda: {
         // ODA converts every matching file in an input DIR to an output DIR.
-        QTemporaryDir in_dir;
-        QTemporaryDir out_dir;
+        QTemporaryDir in_dir(scratch_base(host_) + QStringLiteral("/dwg-in-XXXXXX"));
+        QTemporaryDir out_dir(scratch_base(host_) + QStringLiteral("/dwg-out-XXXXXX"));
         if (!in_dir.isValid() || !out_dir.isValid()) {
             err = QStringLiteral("Could not create a temporary workspace.");
             return false;
@@ -175,7 +259,7 @@ bool DwgConverter::to_dxf(const QString& dwg_in, const QString& dxf_out, QString
                       {in_dir.path(), out_dir.path(), QStringLiteral("ACAD2018"),
                        QStringLiteral("DXF"), QStringLiteral("0"), QStringLiteral("1"),
                        QStringLiteral("*.DWG")},
-                      err)) {
+                      err, host_)) {
             return false;
         }
         const QString produced = out_dir.filePath(QStringLiteral("input.dxf"));
@@ -212,7 +296,7 @@ bool DwgConverter::to_dwg(const QString& dxf_in, const QString& dwg_out, const Q
     }
     switch (kind_) {
     case Kind::Generic:
-        if (!run_sync(program_, {dxf_in, dwg_out}, err)) {
+        if (!run_sync(program_, {dxf_in, dwg_out}, err, host_)) {
             return false;
         }
         break;
@@ -220,14 +304,14 @@ bool DwgConverter::to_dwg(const QString& dxf_in, const QString& dwg_out, const Q
         // LibreDWG writes DWG from DXF via dxf2dwg (a sibling of dwg2dxf).
         QString prog = program_;
         prog.replace(QStringLiteral("dwg2dxf"), QStringLiteral("dxf2dwg"));
-        if (!run_sync(prog, {QStringLiteral("-y"), QStringLiteral("-o"), dwg_out, dxf_in}, err)) {
+        if (!run_sync(prog, {QStringLiteral("-y"), QStringLiteral("-o"), dwg_out, dxf_in}, err, host_)) {
             return false;
         }
         break;
     }
     case Kind::Oda: {
-        QTemporaryDir in_dir;
-        QTemporaryDir out_dir;
+        QTemporaryDir in_dir(scratch_base(host_) + QStringLiteral("/dwg-in-XXXXXX"));
+        QTemporaryDir out_dir(scratch_base(host_) + QStringLiteral("/dwg-out-XXXXXX"));
         if (!in_dir.isValid() || !out_dir.isValid()) {
             err = QStringLiteral("Could not create a temporary workspace.");
             return false;
@@ -240,7 +324,7 @@ bool DwgConverter::to_dwg(const QString& dxf_in, const QString& dwg_out, const Q
         if (!run_sync(program_,
                       {in_dir.path(), out_dir.path(), version, QStringLiteral("DWG"),
                        QStringLiteral("0"), QStringLiteral("1"), QStringLiteral("*.DXF")},
-                      err)) {
+                      err, host_)) {
             return false;
         }
         const QString produced = out_dir.filePath(QStringLiteral("input.dwg"));

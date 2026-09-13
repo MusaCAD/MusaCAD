@@ -8,6 +8,8 @@
 
 #include "musacad/core/hatch_pattern.hpp"
 
+#include "musacad/core/text/parse_double.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -45,16 +47,8 @@ bool parse_double(std::string_view s, double& out) {
     if (s.empty()) {
         return false;
     }
-    // std::from_chars for double is not universal across libstdc++ versions in this tree;
-    // strtod is reliable and the inputs are short, trusted pattern numbers.
-    std::string buf(s);
-    char* end = nullptr;
-    const double v = std::strtod(buf.c_str(), &end);
-    if (end == buf.c_str()) {
-        return false;
-    }
-    out = v;
-    return true;
+    // Locale-safe on every toolchain (a .PAT file means the same under de_DE).
+    return parse_double_all(s, out);
 }
 
 // Split a family line on commas into doubles. Returns false if fewer than 5 fields (angle,

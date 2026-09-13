@@ -21,6 +21,7 @@
 #include "musacad/core/render_snapshot.hpp"
 #include "musacad/core/spatial_grid.hpp"
 #include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/threading/jthread.hpp"
 #include "musacad/core/threading/mpsc_queue.hpp"
 #include "musacad/core/threading/triple_buffer.hpp"
 
@@ -182,7 +183,7 @@ private:
     };
     std::vector<ImageBytesSlot> image_bytes_cache_;
 
-    void run(std::stop_token token);
+    void run(threading::stop_token token);
     void apply(const Command& command);
     void rebuild_and_publish();
 
@@ -464,7 +465,7 @@ private:
     mutable std::vector<bool> stretch_class_crossed_;
 
     std::atomic<std::uint64_t> version_{0};
-    std::jthread worker_;
+    threading::jthread worker_;
 };
 
 } // namespace musacad::core

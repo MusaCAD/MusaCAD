@@ -213,6 +213,19 @@ else()
     catch_discover_tests(musacad_tests)
 endif()
 
+# The portable fallbacks (parse_double without floating-point from_chars, the jthread /
+# stop_token shim) are what Apple's libc++ builds. On Linux they are otherwise never
+# compiled, so this second binary forces them on and runs them under the same sanitizers.
+add_executable(musacad_shim_tests test_portable_shims.cpp)
+target_compile_definitions(musacad_shim_tests PRIVATE MUSACAD_FORCE_PORTABLE_SHIMS)
+target_link_libraries(musacad_shim_tests PRIVATE musacad::core Catch2::Catch2WithMain)
+musacad_enable_sanitizers(musacad_shim_tests)
+if(WIN32)
+    catch_discover_tests(musacad_shim_tests DL_PATHS ${_musacad_dl_paths})
+else()
+    catch_discover_tests(musacad_shim_tests)
+endif()
+
 # ---------------------------------------------------------------------------
 # Header-hygiene scan: no external / non-native geometry types may leak through
 # the public core headers. Cross-platform via `cmake -P`.

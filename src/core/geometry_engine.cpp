@@ -86,7 +86,7 @@ void GeometryEngine::start() {
         doc_metas_.push_back(std::move(m));
         active_idx_ = 0;
     }
-    worker_ = std::jthread([this](std::stop_token token) { run(std::move(token)); });
+    worker_ = threading::jthread([this](threading::stop_token token) { run(std::move(token)); });
 }
 
 void GeometryEngine::stop() noexcept {
@@ -96,7 +96,7 @@ void GeometryEngine::stop() noexcept {
     }
 }
 
-void GeometryEngine::run(std::stop_token token) {
+void GeometryEngine::run(threading::stop_token token) {
     while (!token.stop_requested()) {
         std::optional<Command> cmd = queue_.wait_pop(token);
         if (!cmd) {

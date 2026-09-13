@@ -3,6 +3,8 @@
 
 #include "musacad/core/io/native_format.hpp"
 
+#include "musacad/core/text/parse_double.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <fstream>
@@ -137,8 +139,7 @@ std::vector<std::string_view> tokenize(std::string_view line) {
 }
 
 bool to_double(std::string_view t, double& out) {
-    const auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), out);
-    return ec == std::errc{} && ptr == t.data() + t.size();
+    return parse_double_all(t, out);
 }
 bool to_uint(std::string_view t, std::uint64_t& out) {
     const auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), out);

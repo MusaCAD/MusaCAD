@@ -50,7 +50,13 @@ flatpak run --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/out.pdf|1" com.mus
 - **DWG import/export** shells out to an external converter (ODA File Converter / LibreDWG
   `dwg2dxf`) found on `PATH`. That converter is **not** present in the sandbox, so DWG is
   unavailable in the Flatpak by default; built-in **DXF** read/write works. This keeps the
-  Flatpak LGPL-clean (no GPL/DWG library linked or shipped).
+  Flatpak LGPL-clean (no GPL/DWG library linked or shipped). To use a converter installed on
+  your system anyway (issue #4): grant the app the Flatpak portal once,
+  `flatpak override --user --talk-name=org.freedesktop.Flatpak com.musacad.MusaCAD`, then turn
+  on **"Use a converter installed on the host"** in the DWG Setup dialog. Discovery, the
+  existence check and the conversion then run on the host through `flatpak-spawn --host`,
+  with the converter's scratch files under the app's cache directory (a path the host sees).
+  The manifest asks for nothing extra, so the default stays sandboxed.
 - File access is limited to `--filesystem=home`; the OpenGL viewport uses `--device=dri`;
   X11 (`fallback-x11`) and Wayland sockets are granted.
 

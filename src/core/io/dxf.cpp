@@ -3,6 +3,8 @@
 
 #include "musacad/core/io/dxf.hpp"
 
+#include "musacad/core/text/parse_double.hpp"
+
 #include "musacad/core/spline_eval.hpp"
 
 #include "musacad/core/dimension.hpp"
@@ -1264,7 +1266,7 @@ double to_d(const std::string& t) {
     while (a < t.size() && std::isspace(static_cast<unsigned char>(t[a]))) {
         ++a;
     }
-    std::from_chars(t.data() + a, t.data() + t.size(), v);
+    parse_double(t.data() + a, t.data() + t.size(), v);
     return v;
 }
 long to_l(const std::string& t) {

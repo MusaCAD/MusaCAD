@@ -18,6 +18,20 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   gains "New VP Freeze" and, while you are in a viewport, "VP Freeze" columns. The lists
   are saved in the drawing (format v34) and travel through DXF (`VIEWPORT` 331, `LAYER` flag 2).
 
+- **DWG inside the Flatpak** (#4) -- DWG Setup gains "Use a converter installed on the host":
+  after a one-time `flatpak override --user --talk-name=org.freedesktop.Flatpak
+  com.musacad.MusaCAD`, the sandboxed app finds and runs the ODA File Converter or
+  LibreDWG installed on your system. The default stays sandboxed, and the app now explains
+  the situation instead of only reporting "no converter".
+- **macOS build workflow** (#2) -- a manual workflow builds `MusaCAD.app` and a `.dmg` on an
+  Apple Silicon runner and smoke-tests the command line; the viewport still needs an
+  OpenGL 4.5 backend macOS does not provide, so it is not a release artifact yet.
+
+### Changed
+- The tree builds with Apple's libc++: number parsing no longer depends on floating-point
+  `std::from_chars` (and is locale-safe everywhere), and the engine's threads use a small
+  `jthread` shim where the standard library has none.
+
 ### Fixed
 - MSVC builds warnings-as-errors again (#5); the Flatpak builds with the KDE 6.10 SDK's GCC 15.
 

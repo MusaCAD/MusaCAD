@@ -4,6 +4,9 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
+
+#include <utility>
 
 namespace musacad::ui {
 
@@ -24,10 +27,28 @@ public:
         Oda,       ///< ODA File Converter (directory-batch protocol)
     };
 
+    /// True inside a Flatpak sandbox (`/.flatpak-info` exists, or FLATPAK_ID is set).
+    /// There the converter is not on the sandbox's PATH: DWG stays off unless the
+    /// user opts in to a converter installed on the HOST (see host_mode()).
+    [[nodiscard]] static bool in_flatpak();
+    /// The opt-in (QSettings `io/dwg_host_converter`): inside the sandbox, look the
+    /// converter up and run it on the host through `flatpak-spawn --host`. Needs the
+    /// one-time `flatpak override --user --talk-name=org.freedesktop.Flatpak
+    /// com.musacad.MusaCAD` the DWG Setup dialog spells out; the default stays sandboxed.
+    [[nodiscard]] static bool host_mode();
+    static void set_host_mode(bool on);
+    /// The command line that runs `program args...` on the host: flatpak-spawn --host
+    /// program args... (pure; what run_sync uses in host mode).
+    [[nodiscard]] static std::pair<QString, QStringList> host_command(const QString& program,
+                                                                     const QStringList& args);
+    /// True when this converter runs on the host (found or configured in host mode).
+    [[nodiscard]] bool on_host() const noexcept { return host_; }
+
     /// Detects a converter. Order: (1) the configured path in QSettings
     /// `io/dwg_converter_path` (kind inferred from its basename), (2) ODA File
     /// Converter on PATH, (3) LibreDWG `dwg2dxf` on PATH. Returns a None converter
-    /// if nothing is found (callers degrade gracefully -- see install_hint()).
+    /// if nothing is found (callers degrade gracefully -- see install_hint()). In host
+    /// mode the lookups and the existence checks happen on the host.
     [[nodiscard]] static DwgConverter discover();
 
     /// PATH-only discovery (ignores the configured setting): ODA then LibreDWG.
@@ -61,10 +82,12 @@ public:
     // Construction is via discover(); this overload is for tests (inject a kind+prog).
     DwgConverter() = default;
     DwgConverter(Kind kind, QString program) : kind_(kind), program_(std::move(program)) {}
+    DwgConverter(Kind kind, QString program, bool host) : kind_(kind), program_(std::move(program)), host_(host) {}
 
 private:
     Kind kind_ = Kind::None;
     QString program_;
+    bool host_ = false; ///< runs on the host through flatpak-spawn (Flatpak opt-in)
 };
 
 } // namespace musacad::ui
