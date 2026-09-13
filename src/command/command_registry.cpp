@@ -197,6 +197,9 @@ CommandRegistry CommandRegistry::make_default() {
         "A viewport on the layout showing model space: two corners or Fit; ON, OFF, Scale, Center.");
     reg({"MSPACE", "MS"}, [] { return std::make_unique<MspaceCommand>(); }, "",
         "Edit model space through a viewport; PSPACE returns to the sheet with the view you leave.");
+    reg({"VPORTS", "-VPORTS", "VIEWPORTS"}, [] { return std::make_unique<VportsCommand>(); }, "",
+        "Tiled model-space viewports: split the current one in 2, 3 or 4; SIngle; Join; Save, "
+        "Restore, Delete and ? for named configurations.");
     reg({"VPLAYER"}, [] { return std::make_unique<VplayerCommand>(); }, "",
         "Layer visibility per viewport: Freeze / Thaw layers in the current, all or a picked "
         "viewport; Reset, Newfrz, Vpvisdflt, ?.");

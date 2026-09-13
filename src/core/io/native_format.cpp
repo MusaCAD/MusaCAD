@@ -969,6 +969,41 @@ std::string serialize_native(const Document& doc) {
         s += enc(v.name);
         s += '\n';
     }
+    // v35: VPORTS -- the model window's tiles, then the saved configurations.
+    const auto append_tile = [&](const char* key, const TiledViewport& t) {
+        s += key;
+        s += ' ';
+        append_double(s, t.x0);
+        s += ' ';
+        append_double(s, t.y0);
+        s += ' ';
+        append_double(s, t.x1);
+        s += ' ';
+        append_double(s, t.y1);
+        s += ' ';
+        append_vec(s, t.center);
+        s += ' ';
+        append_double(s, t.height);
+        s += '\n';
+    };
+    for (const TiledViewport& t : doc.vports) {
+        append_tile("VPORT", t);
+    }
+    if (!doc.vports.empty()) {
+        s += "VPORTACTIVE ";
+        append_uint(s, static_cast<std::uint64_t>(std::max(0, doc.vports_active)));
+        s += '\n';
+    }
+    for (const VportConfig& cfg : doc.saved_vports) {
+        s += "VPORTSAVE ";
+        append_uint(s, cfg.tiles.size());
+        s += ' ';
+        s += enc(cfg.name);
+        s += '\n';
+        for (const TiledViewport& t : cfg.tiles) {
+            append_tile("VPORTCFG", t);
+        }
+    }
     for (const DocGroup& g : doc.groups) {
         s += "GROUP ";
         append_uint(s, g.selectable ? 1 : 0);
@@ -1340,6 +1375,49 @@ IoResult parse_native(std::string_view text, Document& out) {
             doc.display_units.angular = static_cast<AngleFormat>(std::min<std::uint64_t>(v[2], 4));
             doc.display_units.angular_precision = static_cast<std::uint8_t>(std::min<std::uint64_t>(v[3], 8));
             doc.display_units.clockwise = v[4] != 0;
+        } else if (key == "VPORT" || key == "VPORTCFG") {
+            // VPORT x0 y0 x1 y1 cx cy height (v35); VPORTCFG belongs to the VPORTSAVE above.
+            vals.clear();
+            if (tok.size() != 8 || !parse_doubles(tok, 1, 7, vals)) {
+                return fail("malformed " + std::string(key));
+            }
+            TiledViewport t;
+            t.x0 = vals[0];
+            t.y0 = vals[1];
+            t.x1 = vals[2];
+            t.y1 = vals[3];
+            t.center = {vals[4], vals[5]};
+            t.height = vals[6];
+            if (key == "VPORT") {
+                doc.vports.push_back(t);
+            } else if (doc.saved_vports.empty()) {
+                return fail("VPORTCFG without VPORTSAVE");
+            } else {
+                doc.saved_vports.back().tiles.push_back(t);
+            }
+        } else if (key == "VPORTACTIVE") {
+            std::uint64_t a = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], a)) {
+                return fail("malformed VPORTACTIVE");
+            }
+            doc.vports_active = static_cast<int>(a);
+        } else if (key == "VPORTSAVE") {
+            // VPORTSAVE n name... (spaces in the name are \x1f-escaped like VIEW's).
+            std::uint64_t n = 0;
+            if (tok.size() < 3 || !to_uint(tok[1], n)) {
+                return fail("malformed VPORTSAVE");
+            }
+            std::string name(tok[2]);
+            for (std::size_t i = 3; i < tok.size(); ++i) {
+                name += ' ';
+                name += std::string(tok[i]);
+            }
+            for (char& ch : name) {
+                if (ch == '\x1f') {
+                    ch = ' ';
+                }
+            }
+            doc.saved_vports.push_back(VportConfig{name == "-" ? std::string() : name, {}});
         } else if (key == "VIEW") {
             if (tok.size() != 5) {
                 return fail("malformed VIEW");

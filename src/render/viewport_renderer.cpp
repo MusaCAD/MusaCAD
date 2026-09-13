@@ -432,11 +432,92 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
 void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapshot& snapshot,
                               const Camera2D& camera) {
     stats_ = RenderStats{};
-
     target.bind();
     cmd_->begin();
     cmd_->set_viewport(0, 0, target.width(), target.height());
     cmd_->clear(kBackground);
+    render_view(snapshot, camera, target.width(), target.height(), true);
+    draw_overlay(*cmd_, target.width(), target.height());
+    cmd_->end();
+    device_.submit(*cmd_);
+}
+
+void ViewportRenderer::render_tiles(GpuRenderTarget& target, const core::RenderSnapshot& snapshot,
+                                    const std::vector<TileView>& tiles) {
+    stats_ = RenderStats{};
+    target.bind();
+    cmd_->begin();
+    cmd_->set_viewport(0, 0, target.width(), target.height());
+    cmd_->clear(kBackground);
+    for (const TileView& t : tiles) {
+        cmd_->set_viewport(t.x, t.y, t.w, t.h);
+        cmd_->set_scissor(t.x, t.y, t.w, t.h);
+        render_view(snapshot, t.camera, t.w, t.h, t.active);
+    }
+    cmd_->clear_scissor();
+    cmd_->set_viewport(0, 0, target.width(), target.height());
+    draw_tile_borders(*cmd_, target.width(), target.height(), tiles);
+    draw_overlay(*cmd_, target.width(), target.height());
+    cmd_->end();
+    device_.submit(*cmd_);
+}
+
+void ViewportRenderer::draw_tile_borders(GpuCommandBuffer& cmd, int width, int height,
+                                         const std::vector<TileView>& tiles) {
+    // Window-pixel space (y down, as the crosshair): every tile's edge in a mid grey, the
+    // active tile's on top in the grip blue so the current viewport reads at a glance.
+    const core::Mat3 screen = screen_to_ndc(width, height);
+    cmd.bind_pipeline(*line_pipeline_);
+    cmd.set_uniform_mat3("u_transform", screen);
+    const auto rect_edges = [&](const TileView& t, std::vector<core::Vec2>& seg) {
+        const double x0 = static_cast<double>(t.x);
+        const double x1 = static_cast<double>(t.x + t.w);
+        const double top = static_cast<double>(height - (t.y + t.h));
+        const double bottom = static_cast<double>(height - t.y);
+        edge(seg, {x0, top}, {x1, top});
+        edge(seg, {x1, top}, {x1, bottom});
+        edge(seg, {x1, bottom}, {x0, bottom});
+        edge(seg, {x0, bottom}, {x0, top});
+    };
+    std::vector<core::Vec2> seg;
+    for (const TileView& t : tiles) {
+        if (!t.active) {
+            rect_edges(t, seg);
+        }
+    }
+    if (!seg.empty()) {
+        const std::size_t n = pack_segments(seg, scratch_);
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", 0.42f, 0.44f, 0.48f, 1.0f);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
+    seg.clear();
+    for (const TileView& t : tiles) {
+        if (t.active) {
+            rect_edges(t, seg);
+            // A second ring one pixel inside makes the active border read as 2 px.
+            TileView inner = t;
+            inner.x += 1;
+            inner.y += 1;
+            inner.w -= 2;
+            inner.h -= 2;
+            rect_edges(inner, seg);
+        }
+    }
+    if (!seg.empty()) {
+        const std::size_t n = pack_segments(seg, scratch_);
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", kGripColor[0], kGripColor[1], kGripColor[2], kGripColor[3]);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
+}
+
+void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const Camera2D& camera,
+                                   int vw, int vh, bool overlays) {
 
     // Scene geometry: re-upload only when the scene geometry changed (not on
     // cursor/selection/snap-only publishes).
@@ -520,8 +601,8 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         if (line_count_ > 0) {
             cmd_->bind_pipeline(*thick_pipeline_);
             cmd_->set_uniform_mat3("u_transform", view);
-            cmd_->set_uniform_vec2("u_viewport", static_cast<float>(target.width()),
-                                   static_cast<float>(target.height()));
+            cmd_->set_uniform_vec2("u_viewport", static_cast<float>(vw),
+                                   static_cast<float>(vh));
             // HiDPI fix: the framebuffer is in physical pixels, so the effective
             // density is the logical px/mm times the device-pixel-ratio -- without this
             // every line is dpr x too thin on a HiDPI display.
@@ -641,13 +722,11 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
 
     draw_construction_lines(*cmd_, snapshot, camera);
     draw_selection_and_interaction(*cmd_, snapshot, view);
-    draw_crosshair_and_snap(*cmd_, target.width(), target.height(), snapshot, camera);
-    draw_overlay(*cmd_, target.width(), target.height());
-    draw_dyn_labels(*cmd_, target.width(), target.height(), camera);
-    draw_canvas_command(*cmd_, target.width(), target.height());
-
-    cmd_->end();
-    device_.submit(*cmd_);
+    if (overlays) {
+        draw_crosshair_and_snap(*cmd_, vw, vh, snapshot, camera);
+        draw_dyn_labels(*cmd_, vw, vh, camera);
+        draw_canvas_command(*cmd_, vw, vh);
+    }
 }
 
 void ViewportRenderer::draw_overlay(GpuCommandBuffer& cmd, int width, int height) {

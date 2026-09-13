@@ -942,6 +942,27 @@ private:
     bool done_ = false;
 };
 
+/// VPORTS (-VPORTS, VIEWPORTS): tiled model-space viewports. 2 / 3 / 4 split the current
+/// viewport (Horizontal / Vertical, and for three the side the large one takes); SIngle
+/// keeps the current view in one viewport; Join merges two that share an edge; Save /
+/// Restore / Delete / ? manage named configurations.
+class VportsCommand final : public ICommand {
+public:
+    std::string name() const override { return "VPORTS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Option, Two, Three, SaveName, RestoreName, DeleteName, JoinDominant, JoinOther } state_ =
+        State::Option;
+    void prompt_option(CommandContext& ctx);
+    void apply_split(CommandContext& ctx, const char* kind);
+    std::size_t dominant_ = 0;
+    bool done_ = false;
+};
+
 /// EATTEDIT: pick a block reference; its attribute values open in the Enhanced Attribute
 /// Editor (a dialog, through the view). -ATTEDIT stays the command-line form.
 class EatteditCommand final : public ICommand {

@@ -3567,6 +3567,231 @@ void MspaceCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 // ---------------------------------------------------------------------------
+// VPORTS
+// ---------------------------------------------------------------------------
+namespace {
+/// The live tiles, or one whole-window tile when the view cannot say.
+std::vector<core::TiledViewport> live_tiles(CommandContext& ctx, int& active) {
+    std::vector<core::TiledViewport> tiles = ctx.view() != nullptr ? ctx.view()->tiled_viewports()
+                                                                   : std::vector<core::TiledViewport>{};
+    active = ctx.view() != nullptr ? ctx.view()->active_tile() : 0;
+    if (tiles.empty()) {
+        tiles.push_back(core::TiledViewport{});
+        active = 0;
+    }
+    if (active < 0 || static_cast<std::size_t>(active) >= tiles.size()) {
+        active = 0;
+    }
+    return tiles;
+}
+/// The tile containing the point (window fractions), or none.
+std::optional<std::size_t> tile_at(const std::vector<core::TiledViewport>& tiles, core::Vec2 p) {
+    for (std::size_t i = 0; i < tiles.size(); ++i) {
+        const core::TiledViewport& t = tiles[i];
+        if (p.x >= t.x0 && p.x <= t.x1 && p.y >= t.y0 && p.y <= t.y1) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+} // namespace
+
+void VportsCommand::prompt_option(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.set_prompt("Enter an option [Save/Restore/Delete/Join/SIngle/?/2/3/4] <3>: ");
+}
+
+void VportsCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.active_space() != 0 && !ctx.mspace_active()) {
+        ctx.echo("VPORTS tiles the model-space window; a layout has MVIEW viewports instead.");
+        done_ = true;
+        return;
+    }
+    prompt_option(ctx);
+}
+
+void VportsCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void VportsCommand::apply_split(CommandContext& ctx, const char* kind) {
+    int active = 0;
+    std::vector<core::TiledViewport> tiles = live_tiles(ctx, active);
+    const std::vector<core::TiledViewport> parts =
+        core::split_vport(tiles[static_cast<std::size_t>(active)], kind);
+    tiles.erase(tiles.begin() + active);
+    tiles.insert(tiles.begin() + active, parts.begin(), parts.end());
+    core::VportsCommand c;
+    c.op = core::VportsCommand::Op::Set;
+    c.tiles = std::move(tiles);
+    c.active = active;
+    ctx.submit(c);
+    done_ = true;
+}
+
+void VportsCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::VportsCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option: {
+        if (t.empty() || u == "3") {
+            state_ = State::Three;
+            ctx.set_prompt("Enter a configuration option [Horizontal/Vertical/Above/Below/Left/Right] <Right>: ");
+            return;
+        }
+        if (u == "2") {
+            state_ = State::Two;
+            ctx.set_prompt("Enter a configuration option [Horizontal/Vertical] <Vertical>: ");
+            return;
+        }
+        if (u == "4") {
+            apply_split(ctx, "4");
+            return;
+        }
+        if (u == "SI" || u == "SINGLE") {
+            int active = 0;
+            const std::vector<core::TiledViewport> tiles = live_tiles(ctx, active);
+            core::TiledViewport one = tiles[static_cast<std::size_t>(active)];
+            one.x0 = 0.0;
+            one.y0 = 0.0;
+            one.x1 = 1.0;
+            one.y1 = 1.0;
+            core::VportsCommand c;
+            c.op = Op::Set;
+            c.tiles = {one};
+            ctx.submit(c);
+            done_ = true;
+            return;
+        }
+        if (u == "S" || u == "SAVE") {
+            state_ = State::SaveName;
+            ctx.set_prompt("Enter name for new viewport configuration: ");
+            return;
+        }
+        if (u == "R" || u == "RESTORE") {
+            state_ = State::RestoreName;
+            ctx.set_prompt("Enter name of viewport configuration to restore: ");
+            return;
+        }
+        if (u == "D" || u == "DELETE") {
+            state_ = State::DeleteName;
+            ctx.set_prompt("Enter name of viewport configuration to delete: ");
+            return;
+        }
+        if (u == "J" || u == "JOIN") {
+            int active = 0;
+            if (live_tiles(ctx, active).size() < 2) {
+                ctx.echo("Only one viewport: nothing to join.");
+                return;
+            }
+            state_ = State::JoinDominant;
+            ctx.set_prompt("Select dominant viewport <current>: ");
+            return;
+        }
+        if (u == "?") {
+            core::VportsCommand c;
+            c.op = Op::List;
+            ctx.submit(c);
+            return;
+        }
+        ctx.echo("Enter S, R, D, J, SI, ?, 2, 3 or 4.");
+        return;
+    }
+    case State::Two: {
+        if (t.empty() || u == "V" || u == "VERTICAL") {
+            apply_split(ctx, "2v");
+        } else if (u == "H" || u == "HORIZONTAL") {
+            apply_split(ctx, "2h");
+        } else {
+            ctx.echo("Enter H (horizontal) or V (vertical).");
+        }
+        return;
+    }
+    case State::Three: {
+        if (t.empty() || u == "R" || u == "RIGHT") {
+            apply_split(ctx, "3r");
+        } else if (u == "L" || u == "LEFT") {
+            apply_split(ctx, "3l");
+        } else if (u == "A" || u == "ABOVE") {
+            apply_split(ctx, "3a");
+        } else if (u == "B" || u == "BELOW") {
+            apply_split(ctx, "3b");
+        } else if (u == "V" || u == "VERTICAL") {
+            apply_split(ctx, "3v");
+        } else if (u == "H" || u == "HORIZONTAL") {
+            apply_split(ctx, "3h");
+        } else {
+            ctx.echo("Enter H, V, A, B, L or R.");
+        }
+        return;
+    }
+    case State::SaveName:
+    case State::RestoreName:
+    case State::DeleteName: {
+        if (t.empty()) {
+            prompt_option(ctx);
+            return;
+        }
+        core::VportsCommand c;
+        c.name = t;
+        if (state_ == State::SaveName) {
+            int active = 0;
+            c.op = Op::Save;
+            c.tiles = live_tiles(ctx, active);
+        } else {
+            c.op = state_ == State::RestoreName ? Op::Restore : Op::Delete;
+        }
+        ctx.submit(c);
+        done_ = true;
+        return;
+    }
+    case State::JoinDominant: {
+        int active = 0;
+        const std::vector<core::TiledViewport> tiles = live_tiles(ctx, active);
+        dominant_ = static_cast<std::size_t>(active);
+        if (!t.empty()) {
+            // A point in window fractions (0..1) names a viewport, as the dialog would.
+            const auto p = read_point(ctx, text);
+            const auto hit = p ? tile_at(tiles, *p) : std::nullopt;
+            if (!hit) {
+                ctx.echo("Enter a point inside a viewport (window fractions, 0..1) or press Enter.");
+                return;
+            }
+            dominant_ = *hit;
+        }
+        state_ = State::JoinOther;
+        ctx.set_prompt("Select viewport to join: ");
+        return;
+    }
+    case State::JoinOther: {
+        int active = 0;
+        std::vector<core::TiledViewport> tiles = live_tiles(ctx, active);
+        const auto p = read_point(ctx, text);
+        const auto hit = p ? tile_at(tiles, *p) : std::nullopt;
+        if (!hit) {
+            ctx.echo("Enter a point inside the viewport to join (window fractions, 0..1).");
+            return;
+        }
+        if (!core::join_vports(tiles, dominant_, *hit)) {
+            ctx.echo("The selected viewports do not form a rectangle.");
+            done_ = true;
+            return;
+        }
+        core::VportsCommand c;
+        c.op = Op::Set;
+        c.tiles = std::move(tiles);
+        c.active = static_cast<int>(dominant_ < *hit ? dominant_ : dominant_ - 1);
+        ctx.submit(c);
+        done_ = true;
+        return;
+    }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // EATTEDIT / BATTMAN (dialogs through the view)
 // ---------------------------------------------------------------------------
 void EatteditCommand::start(CommandContext& ctx) {

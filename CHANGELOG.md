@@ -9,6 +9,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Tiled model-space viewports** (#33) -- `VPORTS` splits the window into viewports that
+  each pan and zoom on their own (2, 3, 4, SIngle, Join, and Save / Restore / Delete / `?`
+  for named configurations); the View tab's Viewport Configuration list applies a standard
+  layout. Click a viewport to make it current. Saved in the drawing (format v35) and as the
+  DXF `VPORT` table.
 - **Attribute dialogs** (#25) — `EATTEDIT` (or a double-click on a block reference) edits a
   reference's attribute values in the Enhanced Attribute Editor; `BATTMAN` edits, reorders
   and removes a block's attribute definitions and syncs every reference by tag. The Insert

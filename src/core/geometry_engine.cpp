@@ -7047,6 +7047,51 @@ void GeometryEngine::apply(const Command& command) {
                 dirty_ = true;      // an unsaved document change
                 geom_dirty_ = true; // republish so the snapshot carries the new setup
                 report("Page setup \"" + c.setup.name + "\" saved.");
+            } else if constexpr (std::is_same_v<T, VportsCommand>) {
+                using Op = VportsCommand::Op;
+                if (c.op == Op::Set) {
+                    store_.set_vports(c.tiles, c.active);
+                    dirty_ = true;
+                    geom_dirty_ = true; // republish the configuration
+                    report(c.tiles.size() <= 1 ? "Single viewport."
+                                               : std::to_string(c.tiles.size()) + " tiled viewports.");
+                } else if (c.op == Op::Sync) {
+                    store_.sync_vports(c.tiles, c.active);
+                } else if (c.op == Op::Save) {
+                    if (c.name.empty()) {
+                        report("VPORTS: a configuration needs a name.");
+                    } else {
+                        store_.save_vports(c.name, c.tiles.empty() ? store_.vports() : c.tiles);
+                        dirty_ = true;
+                        geom_dirty_ = true;
+                        report("Viewport configuration \"" + c.name + "\" saved.");
+                    }
+                } else if (c.op == Op::Restore) {
+                    if (const VportConfig* cfg = store_.saved_vport(c.name)) {
+                        store_.set_vports(cfg->tiles, 0);
+                        dirty_ = true;
+                        geom_dirty_ = true;
+                        report("Viewport configuration \"" + c.name + "\" restored.");
+                    } else {
+                        report("No viewport configuration named \"" + c.name + "\".");
+                    }
+                } else if (c.op == Op::Delete) {
+                    if (store_.remove_saved_vports(c.name)) {
+                        dirty_ = true;
+                        geom_dirty_ = true;
+                        report("Viewport configuration \"" + c.name + "\" deleted.");
+                    } else {
+                        report("No viewport configuration named \"" + c.name + "\".");
+                    }
+                } else {
+                    std::string names;
+                    for (const VportConfig& cfg : store_.saved_vports()) {
+                        names += (names.empty() ? "" : ", ") + cfg.name + " (" +
+                                 std::to_string(cfg.tiles.size()) + ")";
+                    }
+                    report(names.empty() ? "No saved viewport configurations."
+                                         : "Saved viewport configurations: " + names + ".");
+                }
             } else if constexpr (std::is_same_v<T, SaveNamedViewCommand>) {
                 store_.add_named_view(c.view);
                 dirty_ = true;
@@ -7718,6 +7763,13 @@ void GeometryEngine::rebuild_and_publish() {
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
+    buf.vports = store_.vports();           // VPORTS: the UI follows vports_version
+    buf.vports_active = store_.vports_active();
+    buf.vports_version = store_.vports_version();
+    buf.vport_config_names.clear();
+    for (const VportConfig& cfg : store_.saved_vports()) {
+        buf.vport_config_names.push_back(cfg.name);
+    }
     buf.units = store_.units();
     buf.text_styles = store_.text_styles();
     buf.current_text_style = store_.current_text_style();

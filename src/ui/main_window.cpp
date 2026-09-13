@@ -884,6 +884,34 @@ void MainWindow::build_ribbon() {
         command_widget_->focus_input();
         processor_->submit_line("ZOOM");
     });
+    // Model Viewports (VPORTS): the standard tiled configurations applied to the whole
+    // window, as AutoCAD's Viewport Configuration list; the command line splits the
+    // current viewport instead.
+    RibbonPanel* mvp = ribbon_->add_panel(view, QStringLiteral("Model Viewports"), 20);
+    mvp->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/vports.svg")));
+    auto* vp_menu = new QMenu(this);
+    const auto vp_action = [&](const char* kind, const QString& text) {
+        QAction* a = vp_menu->addAction(text);
+        a->setObjectName(QStringLiteral("vports.%1").arg(QString::fromUtf8(kind)));
+        connect(a, &QAction::triggered, this, [this, kind] { apply_vport_configuration(kind); });
+    };
+    vp_action("single", QStringLiteral("Single"));
+    vp_action("2v", QStringLiteral("Two: Vertical"));
+    vp_action("2h", QStringLiteral("Two: Horizontal"));
+    vp_action("3r", QStringLiteral("Three: Right"));
+    vp_action("3l", QStringLiteral("Three: Left"));
+    vp_action("3a", QStringLiteral("Three: Above"));
+    vp_action("3b", QStringLiteral("Three: Below"));
+    vp_action("3v", QStringLiteral("Three: Vertical"));
+    vp_action("3h", QStringLiteral("Three: Horizontal"));
+    vp_action("4", QStringLiteral("Four: Equal"));
+    QToolButton* vp_btn = mvp->add_dropdown(ribbon_icon(QStringLiteral("assets/ribbon/vports.svg")),
+                                            QStringLiteral("Viewport\nConfiguration"), vp_menu,
+                                            /*split=*/false, RibbonTier::Primary);
+    vp_btn->setObjectName(QStringLiteral("ribbon.vports"));
+    vp_btn->setToolTip(QStringLiteral("Split the model window into tiled viewports, each with its own "
+                                      "view (VPORTS). Click a viewport to make it current."));
+    add_cmd(mvp, QStringLiteral("Named"), "VPORTS", RibbonTier::Secondary);
 
     // --- Manage tab (placeholder) ---
     const int manage = ribbon_->add_tab(QStringLiteral("Manage"));
@@ -5676,8 +5704,108 @@ void MainWindow::save_to(const QString& path, bool dxf) {
     if (path.isEmpty()) {
         return;
     }
+    // VPORTS: the tiles' live views go into the store first, so the file carries them.
+    core::VportsCommand sync;
+    sync.op = core::VportsCommand::Op::Sync;
+    sync.tiles = viewport_->tiled_viewports();
+    sync.active = viewport_->active_tile();
+    engine_->submit(sync);
     // The engine binds the active document's path/tab-name on a successful native save.
     engine_->submit(core::SaveDocumentCommand{path.toStdString(), dxf});
+}
+
+void MainWindow::apply_vport_configuration(const char* kind) {
+    const std::vector<core::TiledViewport> live = viewport_->tiled_viewports();
+    const int active = viewport_->active_tile();
+    core::TiledViewport whole;
+    if (!live.empty()) {
+        const core::TiledViewport& cur =
+            live[static_cast<std::size_t>(std::clamp(active, 0, static_cast<int>(live.size()) - 1))];
+        whole.center = cur.center;
+        whole.height = cur.height;
+    }
+    core::VportsCommand c;
+    c.op = core::VportsCommand::Op::Set;
+    c.tiles = core::split_vport(whole, kind);
+    c.active = 0;
+    engine_->submit(c);
+    command_widget_->append_line(std::string("VPORTS ") + kind);
+}
+
+bool MainWindow::selftest_vports() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1500; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    processor_->cancel();
+    pump([this] { return !processor_->has_active_command(); });
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(core::AddLineCommand{{0, 0}, {100, 0}, 1});
+    pump([this] { return viewport_->line_vertex_count() == 2; });
+
+    // Two: Vertical through the ribbon list -> two tiles, the left one current.
+    if (auto* a = findChild<QAction*>(QStringLiteral("vports.2v")); a != nullptr) {
+        a->trigger();
+    }
+    const bool split_ok = pump([this] { return viewport_->tile_count() == 2; }) &&
+                          viewport_->active_tile() == 0;
+    std::printf("[selftest] VPORTS Two: Vertical splits into two tiles, the left current: %s\n",
+                split_ok ? "PASS" : "FAIL");
+    all = all && split_ok;
+
+    // A click in the right tile makes it current and is not a pick (nothing selected).
+    const auto mouse = [this](QEvent::Type type, QPointF lp, Qt::MouseButton btn, Qt::MouseButtons held) {
+        const QPoint gp = viewport_->mapToGlobal(lp.toPoint());
+        QMouseEvent ev(type, lp, QPointF(gp), btn, held, Qt::NoModifier);
+        QCoreApplication::sendEvent(viewport_, &ev);
+    };
+    const QPointF right(viewport_->width() * 0.75, viewport_->height() * 0.5);
+    mouse(QEvent::MouseMove, right, Qt::NoButton, Qt::NoButton);
+    mouse(QEvent::MouseButtonPress, right, Qt::LeftButton, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, right, Qt::LeftButton, Qt::NoButton);
+    const bool click_ok = pump([this] { return viewport_->active_tile() == 1; }) &&
+                          viewport_->selection_count() == 0;
+    std::printf("[selftest] VPORTS click in the right tile makes it current (not a pick): %s\n",
+                click_ok ? "PASS" : "FAIL");
+    all = all && click_ok;
+
+    // Zoom the current (right) tile: only its view changes.
+    const std::vector<core::TiledViewport> before = viewport_->tiled_viewports();
+    viewport_->zoom_scale(2.0);
+    const std::vector<core::TiledViewport> after = viewport_->tiled_viewports();
+    const bool zoom_ok = before.size() == 2 && after.size() == 2 &&
+                         std::abs(after[0].height - before[0].height) < 1e-9 &&
+                         std::abs(after[1].height * 2.0 - before[1].height) < 1e-6 * before[1].height;
+    std::printf("[selftest] VPORTS zoom in the current tile leaves the other tile's view alone: %s\n",
+                zoom_ok ? "PASS" : "FAIL");
+    all = all && zoom_ok;
+    // MUSACAD_VPORTS_SHOT=<png>: a frame of the split window (borders, the active tile in
+    // blue, the two views) for looking at, the way MUSACAD_SCREENSHOT does for the window.
+    if (const char* shot = std::getenv("MUSACAD_VPORTS_SHOT"); shot != nullptr && *shot != '\0') {
+        viewport_->request_frame_capture(shot);
+        for (int i = 0; i < 40; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+    }
+
+    // Single, from the command line, keeps the current tile's view.
+    processor_->submit_line("-VPORTS");
+    processor_->submit_line("SI");
+    const bool single_ok = pump([this] { return viewport_->tile_count() == 1; }) &&
+                           std::abs(viewport_->tiled_viewports()[0].center.x - after[1].center.x) < 1e-6;
+    std::printf("[selftest] VPORTS SIngle keeps the current view in one viewport: %s\n",
+                single_ok ? "PASS" : "FAIL");
+    all = all && single_ok;
+    return all;
 }
 
 void MainWindow::open_from(const QString& path, bool dxf) {

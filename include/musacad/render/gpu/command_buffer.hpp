@@ -33,6 +33,10 @@ public:
     virtual void end() = 0;
 
     virtual void set_viewport(int x, int y, int width, int height) = 0;
+    /// Restrict every following draw and clear to this rectangle (framebuffer pixels,
+    /// origin bottom-left) until clear_scissor(). Tiled viewports draw one tile each.
+    virtual void set_scissor(int x, int y, int width, int height) = 0;
+    virtual void clear_scissor() = 0;
     virtual void clear(ClearColor color) = 0;
 
     virtual void bind_pipeline(const GpuPipeline& pipeline) = 0;

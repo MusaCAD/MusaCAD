@@ -307,6 +307,163 @@ void ViewportWindow::block_attribute_manager() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VPORTS: tiled model-space viewports
+// ---------------------------------------------------------------------------
+void ViewportWindow::active_tile_rect(int w, int h, double& x, double& top, double& tw,
+                                      double& th) const {
+    // Caller holds camera_mutex_. Tiles apply in model space only (tiles_split_).
+    if (tiles_.size() < 2 || active_tile_ >= tiles_.size() ||
+        !tiles_split_.load(std::memory_order_relaxed)) {
+        x = 0.0;
+        top = 0.0;
+        tw = static_cast<double>(w);
+        th = static_cast<double>(h);
+        return;
+    }
+    const Tile& t = tiles_[active_tile_];
+    x = std::floor(t.x0 * w);
+    top = std::floor((1.0 - t.y1) * h);
+    tw = std::max(1.0, std::floor(t.x1 * w) - x);
+    th = std::max(1.0, std::floor((1.0 - t.y0) * h) - top);
+}
+
+core::Vec2 ViewportWindow::local_px(QPointF pos, double dpr) const {
+    core::Vec2 p{pos.x() * dpr, pos.y() * dpr};
+    if (!tiles_split_.load(std::memory_order_relaxed)) {
+        return p;
+    }
+    std::scoped_lock lock(camera_mutex_);
+    double x = 0.0;
+    double top = 0.0;
+    double tw = 0.0;
+    double th = 0.0;
+    active_tile_rect(fb_width_.load(std::memory_order_relaxed), fb_height_.load(std::memory_order_relaxed), x,
+                     top, tw, th);
+    return {p.x - x, p.y - top};
+}
+
+std::size_t ViewportWindow::tile_at(QPointF pos, double dpr) const {
+    if (!tiles_split_.load(std::memory_order_relaxed)) {
+        return 0;
+    }
+    std::scoped_lock lock(camera_mutex_);
+    const double fx = pos.x() * dpr / std::max(1, fb_width_.load(std::memory_order_relaxed));
+    const double fy = 1.0 - pos.y() * dpr / std::max(1, fb_height_.load(std::memory_order_relaxed));
+    for (std::size_t i = 0; i < tiles_.size(); ++i) {
+        const Tile& t = tiles_[i];
+        if (fx >= t.x0 && fx <= t.x1 && fy >= t.y0 && fy <= t.y1) {
+            return i;
+        }
+    }
+    return active_tile_;
+}
+
+void ViewportWindow::activate_tile(std::size_t index) {
+    std::scoped_lock lock(camera_mutex_);
+    if (tiles_.size() < 2 || index >= tiles_.size() || index == active_tile_) {
+        return;
+    }
+    tiles_[active_tile_].camera = camera_; // park the outgoing tile's view
+    active_tile_ = index;
+    camera_ = tiles_[index].camera;
+    double x = 0.0;
+    double top = 0.0;
+    double tw = 0.0;
+    double th = 0.0;
+    active_tile_rect(fb_width_.load(std::memory_order_relaxed), fb_height_.load(std::memory_order_relaxed), x,
+                     top, tw, th);
+    camera_.set_viewport(static_cast<int>(tw), static_cast<int>(th));
+}
+
+std::vector<core::TiledViewport> ViewportWindow::tiled_viewports() const {
+    std::scoped_lock lock(camera_mutex_);
+    const auto view_of = [](const render::Camera2D& c) {
+        core::TiledViewport t;
+        t.center = c.center();
+        t.height = c.scale() > 0.0 ? static_cast<double>(c.viewport_height()) / c.scale() : 0.0;
+        return t;
+    };
+    std::vector<core::TiledViewport> out;
+    if (tiles_.size() < 2) {
+        out.push_back(view_of(camera_)); // the whole window
+        return out;
+    }
+    for (std::size_t i = 0; i < tiles_.size(); ++i) {
+        core::TiledViewport t = view_of(i == active_tile_ ? camera_ : tiles_[i].camera);
+        t.x0 = tiles_[i].x0;
+        t.y0 = tiles_[i].y0;
+        t.x1 = tiles_[i].x1;
+        t.y1 = tiles_[i].y1;
+        out.push_back(t);
+    }
+    return out;
+}
+
+int ViewportWindow::active_tile() const {
+    std::scoped_lock lock(camera_mutex_);
+    return tiles_.size() < 2 ? 0 : static_cast<int>(active_tile_);
+}
+
+void ViewportWindow::apply_tiles_from_snapshot(const core::RenderSnapshot& snap, int w, int h) {
+    // Render thread. A tab switch first: park this document's tiles and take the new
+    // document's (or rebuild them from its store below).
+    if (snap.active_document_id != 0 && snap.active_document_id != tiles_doc_id_) {
+        std::scoped_lock lock(camera_mutex_);
+        if (tiles_doc_id_ != 0) {
+            doc_tiles_[tiles_doc_id_] = TileState{tiles_, active_tile_, tiles_version_seen_};
+        }
+        tiles_doc_id_ = snap.active_document_id;
+        const auto it = doc_tiles_.find(tiles_doc_id_);
+        if (it != doc_tiles_.end() && it->second.version == snap.vports_version) {
+            tiles_ = it->second.tiles;
+            active_tile_ = it->second.active;
+            tiles_version_seen_ = it->second.version;
+            tiles_split_.store(tiles_.size() > 1 && snap.active_space == 0, std::memory_order_relaxed);
+            return; // camera_ is the tab's active-tile view, restored by the per-document camera
+        }
+        tiles_version_seen_ = snap.vports_version + 1; // force the rebuild below
+    }
+    if (snap.vports_version == tiles_version_seen_) {
+        tiles_split_.store(tiles_.size() > 1 && snap.active_space == 0, std::memory_order_relaxed);
+        return;
+    }
+    std::scoped_lock lock(camera_mutex_);
+    tiles_version_seen_ = snap.vports_version;
+    tiles_.clear();
+    active_tile_ = 0;
+    if (snap.vports.size() < 2) {
+        // Single: keep the view (a SIngle from the command carries the current one).
+        camera_.set_viewport(w, h);
+        if (!snap.vports.empty() && snap.vports[0].height > 0.0) {
+            camera_.set_center(snap.vports[0].center);
+            camera_.set_scale(static_cast<double>(h) / snap.vports[0].height);
+        }
+        tiles_split_.store(false, std::memory_order_relaxed);
+        return;
+    }
+    for (const core::TiledViewport& v : snap.vports) {
+        Tile t;
+        t.x0 = std::clamp(v.x0, 0.0, 1.0);
+        t.y0 = std::clamp(v.y0, 0.0, 1.0);
+        t.x1 = std::clamp(v.x1, t.x0, 1.0);
+        t.y1 = std::clamp(v.y1, t.y0, 1.0);
+        const int tw = std::max(1, static_cast<int>((t.x1 - t.x0) * w));
+        const int th = std::max(1, static_cast<int>((t.y1 - t.y0) * h));
+        t.camera = camera_;
+        t.camera.set_viewport(tw, th);
+        if (v.height > 0.0) {
+            t.camera.set_center(v.center);
+            t.camera.set_scale(static_cast<double>(th) / v.height);
+            t.framed = true;
+        }
+        tiles_.push_back(t);
+    }
+    active_tile_ = std::min(static_cast<std::size_t>(std::max(0, snap.vports_active)), tiles_.size() - 1);
+    camera_ = tiles_[active_tile_].camera;
+    tiles_split_.store(snap.active_space == 0, std::memory_order_relaxed);
+}
+
 void ViewportWindow::set_dialog_ghost(int mode, core::Vec2 a, double param) {
     dialog_ghost_mode_ = mode;
     dialog_ghost_a_ = a;
@@ -462,6 +619,9 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             slept_ms = 0.0;
         }
         const auto t_sample = clock::now();
+        // A frame capture records the frame rendered AFTER the request (a long iteration
+        // under software GL can otherwise hand back a frame built before it).
+        const bool capturing = capture_requested_.exchange(false, std::memory_order_acq_rel);
         const std::int64_t stamp = cursor_stamp_ns_.load(std::memory_order_relaxed);
         const int w = fb_width_.load(std::memory_order_relaxed);
         const int h = fb_height_.load(std::memory_order_relaxed);
@@ -470,7 +630,12 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         render::Camera2D cam;
         {
             std::scoped_lock lock(camera_mutex_);
-            camera_.set_viewport(w, h);
+            double ax = 0.0;
+            double atop = 0.0;
+            double aw = w;
+            double ah = h;
+            active_tile_rect(w, h, ax, atop, aw, ah);
+            camera_.set_viewport(static_cast<int>(aw), static_cast<int>(ah));
             if (!camera_initialized_ && has_initial_view_) {
                 camera_.frame_bounds(init_min_, init_max_, 0.1);
                 camera_initialized_ = true;
@@ -501,6 +666,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             cam = camera_;
             cam_doc_id_ = snap.active_document_id;
         }
+        apply_tiles_from_snapshot(snap, w, h); // VPORTS: follow the store's configuration
         if (zoom_extents_requested_.exchange(false, std::memory_order_relaxed) && snap.has_bounds) {
             std::scoped_lock lock(camera_mutex_);
             camera_.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
@@ -638,8 +804,45 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 static_cast<float>(scr->physicalDotsPerInch() / 25.4));
         }
         renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
-        renderer.render(*target, snap, cam);
-        if (capture_requested_.exchange(false, std::memory_order_acq_rel)) {
+        // VPORTS: in model space with more than one tile, every tile draws through its own
+        // camera (a tile never framed yet is fitted to the drawing first).
+        std::vector<render::ViewportRenderer::TileView> tile_views;
+        if (snap.active_space == 0) {
+            std::scoped_lock lock(camera_mutex_);
+            if (tiles_.size() > 1) {
+                for (std::size_t i = 0; i < tiles_.size(); ++i) {
+                    Tile& t = tiles_[i];
+                    render::ViewportRenderer::TileView tv;
+                    tv.x = static_cast<int>(std::floor(t.x0 * w));
+                    tv.y = static_cast<int>(std::floor(t.y0 * h));
+                    tv.w = std::max(1, static_cast<int>(std::floor(t.x1 * w)) - tv.x);
+                    tv.h = std::max(1, static_cast<int>(std::floor(t.y1 * h)) - tv.y);
+                    tv.active = i == active_tile_;
+                    render::Camera2D& c = tv.active ? camera_ : t.camera;
+                    c.set_viewport(tv.w, tv.h);
+                    if (!t.framed && snap.has_bounds) {
+                        c.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
+                        t.framed = true;
+                    }
+                    tv.camera = c;
+                    tile_views.push_back(tv);
+                }
+                cam = camera_;
+            }
+        }
+        if (tile_views.empty()) {
+            std::scoped_lock lock(camera_mutex_);
+            if (camera_.viewport_width() != w || camera_.viewport_height() != h) {
+                camera_.set_viewport(w, h); // a layout, or the frame the split was undone
+                cam = camera_;
+            }
+        }
+        if (tile_views.empty()) {
+            renderer.render(*target, snap, cam);
+        } else {
+            renderer.render_tiles(*target, snap, tile_views);
+        }
+        if (capturing) {
             std::string path;
             {
                 std::scoped_lock lock(capture_mutex_);
@@ -726,6 +929,19 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
 }
 
 void ViewportWindow::mousePressEvent(QMouseEvent* event) {
+    // VPORTS: a press in another tile makes it the current viewport (AutoCAD: the click
+    // that activates a viewport is not a pick; a running command simply continues there).
+    if (tiles_split_.load(std::memory_order_relaxed)) {
+        const std::size_t t = tile_at(event->position(), devicePixelRatio());
+        if (t != static_cast<std::size_t>(active_tile())) {
+            activate_tile(t);
+            if (event->button() == Qt::LeftButton) {
+                rebuild_overlay();
+                Q_EMIT pickerInteracted();
+                return;
+            }
+        }
+    }
     if (event->button() == Qt::RightButton) {
         // AutoCAD: right-click is Enter while a command is running -- it ends "Select
         // objects:" and accepts a prompt's default. Idle right-click on a polyline grip
@@ -737,7 +953,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             rebuild_overlay();
         } else if (processor_ != nullptr) {
             const double dpr = devicePixelRatio();
-            const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
+            const core::Vec2 screen_px = local_px(event->position(), dpr);
             core::Vec2 world;
             double scale = 1.0;
             {
@@ -766,7 +982,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
     }
     if (event->button() == Qt::LeftButton && processor_ != nullptr) {
         const double dpr = devicePixelRatio();
-        const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
+        const core::Vec2 screen_px = local_px(event->position(), dpr);
         core::Vec2 world;
         double scale = 1.0;
         {
@@ -839,11 +1055,12 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
         // On a layout, a double-click inside a viewport starts editing the model through
         // it (AutoCAD's MSPACE gesture).
         const double dpr0 = devicePixelRatio();
+        const core::Vec2 lp0 = local_px(event->position(), dpr0);
         core::Vec2 w0;
         double sc0 = 1.0;
         {
             std::scoped_lock lock(camera_mutex_);
-            w0 = camera_.screen_to_world({event->position().x() * dpr0, event->position().y() * dpr0});
+            w0 = camera_.screen_to_world(lp0);
             sc0 = camera_.scale();
         }
         bool in_layout = false;
@@ -869,7 +1086,7 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
         return;
     }
     const double dpr = devicePixelRatio();
-    const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
+    const core::Vec2 screen_px = local_px(event->position(), dpr);
     core::Vec2 world;
     double scale = 1.0;
     {
@@ -940,7 +1157,7 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
 
 void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     const double dpr = devicePixelRatio();
-    const core::Vec2 screen_px{event->position().x() * dpr, event->position().y() * dpr};
+    const core::Vec2 screen_px = local_px(event->position(), dpr);
 
     cursor_inside_.store(true, std::memory_order_relaxed);
     cursor_px_x_.store(screen_px.x, std::memory_order_relaxed);
@@ -1012,7 +1229,7 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && dragging_grip_ && processor_ != nullptr) {
         dragging_grip_ = false;
         const double dpr = devicePixelRatio();
-        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
+        const core::Vec2 rel_screen = local_px(event->position(), dpr);
         core::Vec2 world;
         {
             std::scoped_lock lock(camera_mutex_);
@@ -1034,7 +1251,7 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && selecting_) {
         selecting_ = false;
         const double dpr = devicePixelRatio();
-        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
+        const core::Vec2 rel_screen = local_px(event->position(), dpr);
         double scale = 1.0;
         core::Vec2 world;
         {
@@ -2030,6 +2247,14 @@ core::Vec2 ViewportWindow::world_to_widget(core::Vec2 world) {
     {
         std::scoped_lock lock(camera_mutex_);
         px = camera_.world_to_screen(world);
+        double ax = 0.0;
+        double atop = 0.0;
+        double aw = 0.0;
+        double ah = 0.0;
+        active_tile_rect(fb_width_.load(std::memory_order_relaxed), fb_height_.load(std::memory_order_relaxed),
+                         ax, atop, aw, ah);
+        px.x += ax; // VPORTS: the active tile's origin
+        px.y += atop;
     }
     const double dpr = devicePixelRatio();
     return {px.x / dpr, px.y / dpr};
@@ -2071,7 +2296,21 @@ void ViewportWindow::wheelEvent(QWheelEvent* event) {
     }
     const double factor = std::pow(1.2, steps);
     const double dpr = devicePixelRatio();
-    const musacad::core::Vec2 anchor{event->position().x() * dpr, event->position().y() * dpr};
+    // VPORTS: the wheel zooms the tile under the cursor without making it current.
+    if (tiles_split_.load(std::memory_order_relaxed)) {
+        const std::size_t t = tile_at(event->position(), dpr);
+        std::scoped_lock lock(camera_mutex_);
+        if (t < tiles_.size() && t != active_tile_) {
+            const Tile& tile = tiles_[t];
+            const double w = fb_width_.load(std::memory_order_relaxed);
+            const double h = fb_height_.load(std::memory_order_relaxed);
+            const musacad::core::Vec2 anchor{event->position().x() * dpr - std::floor(tile.x0 * w),
+                                             event->position().y() * dpr - std::floor((1.0 - tile.y1) * h)};
+            tiles_[t].camera.zoom_about(anchor, factor);
+            return;
+        }
+    }
+    const musacad::core::Vec2 anchor = local_px(event->position(), dpr);
     std::scoped_lock lock(camera_mutex_);
     camera_.zoom_about(anchor, factor);
 }

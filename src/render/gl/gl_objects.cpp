@@ -132,6 +132,13 @@ void GlCommandBuffer::set_viewport(int x, int y, int width, int height) {
     gl_->glViewport(x, y, width, height);
 }
 
+void GlCommandBuffer::set_scissor(int x, int y, int width, int height) {
+    gl_->glEnable(GL_SCISSOR_TEST);
+    gl_->glScissor(x, y, width, height);
+}
+
+void GlCommandBuffer::clear_scissor() { gl_->glDisable(GL_SCISSOR_TEST); }
+
 void GlCommandBuffer::clear(ClearColor color) {
     gl_->glClearColor(color.r, color.g, color.b, color.a);
     gl_->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
