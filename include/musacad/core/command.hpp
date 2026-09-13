@@ -15,6 +15,7 @@
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
@@ -211,6 +212,16 @@ struct AddSplineCommand {
 /// VIEW Save: store (or replace) a named view. VIEW Delete: remove one by name.
 struct SaveNamedViewCommand {
     NamedView view;
+};
+/// VPORTS (tiled model-space viewports). Set replaces the configuration (the UI follows
+/// the snapshot's vports_version); Sync records the live views without a bump (before a
+/// save); Save / Restore / Delete / List manage named configurations.
+struct VportsCommand {
+    enum class Op : std::uint8_t { Set, Sync, Save, Restore, Delete, List };
+    Op op = Op::Set;
+    std::string name;
+    std::vector<TiledViewport> tiles;
+    int active = 0;
 };
 struct DeleteNamedViewCommand {
     std::string name;
@@ -1211,7 +1222,7 @@ using Command =
                  CreateViewportCommand, SetViewportViewCommand, EnterMspaceCommand, LeaveMspaceCommand,
                  XrefAttachCommand, XrefReloadCommand, XrefDetachCommand, XrefListCommand,
                  SetImagePolyClipCommand, SetViewportLayerFreezeCommand,
-                 SetInsertAttribsCommand, SetBlockAttDefsCommand,
+                 SetInsertAttribsCommand, SetBlockAttDefsCommand, VportsCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

@@ -161,6 +161,7 @@ add_executable(musacad_tests
     test_viewports.cpp
     test_vplayer.cpp
     test_eattedit.cpp
+    test_vports.cpp
     test_mspace.cpp
     test_xref.cpp
     test_image_polyclip.cpp

@@ -11,6 +11,7 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
@@ -62,9 +63,11 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
+/// v35: VPORTS -- VPORT records (the model window's tiles) with VPORTACTIVE, and saved
+/// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 34;
+inline constexpr std::uint32_t kFormatVersion = 35;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -362,7 +365,10 @@ struct Document {
     std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
     double ltscale = 1.0;                                  // global linetype scale (LTSCALE)
     std::vector<PageSetup> page_setups;                    // saved PLOT configurations (v11)
-    std::vector<NamedView> views;         ///< named views (v24; not in entity_count)
+    std::vector<NamedView> views;
+    std::vector<TiledViewport> vports;     ///< VPORTS: the model window's tiles (fewer than two = one)
+    int vports_active = 0;
+    std::vector<VportConfig> saved_vports; ///< VPORTS Save         ///< named views (v24; not in entity_count)
     std::vector<DocGroup> groups;         ///< groups (v24; members by kind + order; not in entity_count)
 
     std::vector<DocPoint> points;

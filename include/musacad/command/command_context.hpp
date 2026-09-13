@@ -11,6 +11,7 @@
 #include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/snap.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
@@ -137,6 +138,10 @@ public:
     }
     /// BATTMAN: open the Block Attribute Manager.
     virtual void block_attribute_manager() {}
+    /// VPORTS: the model window's tiles with their LIVE views (one whole-window tile when
+    /// not split), and which one is current.
+    [[nodiscard]] virtual std::vector<core::TiledViewport> tiled_viewports() const { return {}; }
+    [[nodiscard]] virtual int active_tile() const { return 0; }
     /// IMAGEATTACH's file picker; returns the chosen path, or "" (none / headless).
     [[nodiscard]] virtual std::string image_file_dialog() { return {}; }
     /// A generic open-file picker (XREF Attach); `filter` is a Qt-style filter string.

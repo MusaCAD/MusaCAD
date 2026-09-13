@@ -18,6 +18,7 @@
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_group.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/text_style.hpp"
@@ -947,6 +948,51 @@ public:
     bool remove_image_def(std::uint16_t index);
 
     // --- named views (VIEW) -------------------------------------------------
+    // --- VPORTS: the model-space window's tiled viewports (fewer than two = one) -----
+    // The UI follows `vports_version` (a change means "apply this configuration"); Sync
+    // records the live views without a bump so a save carries them.
+    [[nodiscard]] const std::vector<TiledViewport>& vports() const noexcept { return vports_; }
+    [[nodiscard]] int vports_active() const noexcept { return vports_active_; }
+    [[nodiscard]] std::uint32_t vports_version() const noexcept { return vports_version_; }
+    void set_vports(std::vector<TiledViewport> tiles, int active) {
+        vports_ = std::move(tiles);
+        vports_active_ = active;
+        ++vports_version_;
+    }
+    void sync_vports(std::vector<TiledViewport> tiles, int active) {
+        vports_ = std::move(tiles);
+        vports_active_ = active;
+    }
+    [[nodiscard]] const std::vector<VportConfig>& saved_vports() const noexcept { return saved_vports_; }
+    void set_saved_vports(std::vector<VportConfig> configs) { saved_vports_ = std::move(configs); }
+    /// Saves (or replaces) the configuration `name`.
+    void save_vports(const std::string& name, std::vector<TiledViewport> tiles) {
+        for (VportConfig& c : saved_vports_) {
+            if (c.name == name) {
+                c.tiles = std::move(tiles);
+                return;
+            }
+        }
+        saved_vports_.push_back(VportConfig{name, std::move(tiles)});
+    }
+    [[nodiscard]] const VportConfig* saved_vport(const std::string& name) const noexcept {
+        for (const VportConfig& c : saved_vports_) {
+            if (c.name == name) {
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+    bool remove_saved_vports(const std::string& name) {
+        for (auto it = saved_vports_.begin(); it != saved_vports_.end(); ++it) {
+            if (it->name == name) {
+                saved_vports_.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] const std::vector<NamedView>& named_views() const noexcept { return named_views_; }
     void set_named_views(std::vector<NamedView> views) { named_views_ = std::move(views); }
     /// Adds or replaces (by name).
@@ -1086,6 +1132,10 @@ private:
     std::unordered_map<std::uint64_t, double> celtscale_;  // sparse per-entity CELTSCALE (def 1.0)
     std::vector<PageSetup> page_setups_;
     std::vector<NamedView> named_views_;
+    std::vector<TiledViewport> vports_; // VPORTS: the model window's tiles (fewer than two = one)
+    int vports_active_ = 0;
+    std::uint32_t vports_version_ = 0;
+    std::vector<VportConfig> saved_vports_;
     DrawingUnits units_;
     std::vector<TextStyle> text_styles_{TextStyle{}}; // [0] = Standard
     std::uint16_t current_text_style_ = 0;

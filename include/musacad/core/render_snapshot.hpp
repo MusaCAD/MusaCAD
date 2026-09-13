@@ -15,6 +15,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
@@ -211,6 +212,10 @@ struct RenderSnapshot {
     std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
+    std::vector<TiledViewport> vports;  // VPORTS: the model window's tiles (fewer than two = one)
+    int vports_active = 0;
+    std::uint32_t vports_version = 0;   // a change = the UI applies `vports`
+    std::vector<std::string> vport_config_names; // saved configurations (VPORTS ? / Restore)
     std::vector<std::string> group_names; // GROUP table names (for GROUP ?)
     std::vector<std::string> block_names; // block-definition names (INSERT ?)
     std::vector<std::vector<BlockAttDefInfo>> block_attdefs; // per block: its attributes (INSERT prompts)
@@ -338,6 +343,10 @@ struct RenderSnapshot {
         dimstyles.clear();
         page_setups.clear();
         named_views.clear();
+        vports.clear();
+        vports_active = 0;
+        vports_version = 0;
+        vport_config_names.clear();
         group_names.clear();
         block_names.clear();
         block_attdefs.clear();

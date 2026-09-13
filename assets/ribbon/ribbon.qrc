@@ -85,5 +85,6 @@
     <file>battman.svg</file>
     <file>refedit.svg</file>
     <file>xref.svg</file>
+    <file>vports.svg</file>
   </qresource>
 </RCC>

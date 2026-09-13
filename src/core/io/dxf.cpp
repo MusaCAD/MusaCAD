@@ -383,6 +383,31 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     emit_ltype(s, "HIDDEN", {2.5, -1.25});
     emit_ltype(s, "CENTER", {12.5, -2.5, 2.5, -2.5});
     code(s, 0, "ENDTAB");
+    // VPORT table: the model window's tiled viewports, each an *Active entry with its
+    // corners in window fractions, its centre and its view height (AutoCAD's form).
+    {
+        std::vector<TiledViewport> tiles = doc.vports;
+        if (tiles.empty()) {
+            tiles.push_back(TiledViewport{});
+        }
+        code(s, 0, "TABLE");
+        code(s, 2, "VPORT");
+        code_i(s, 70, static_cast<long>(tiles.size()));
+        for (const TiledViewport& t : tiles) {
+            code(s, 0, "VPORT");
+            emit_handle(s);
+            code(s, 2, "*Active");
+            code_i(s, 70, 0);
+            code_d(s, 10, t.x0);
+            code_d(s, 20, t.y0);
+            code_d(s, 11, t.x1);
+            code_d(s, 21, t.y1);
+            code_d(s, 12, t.center.x);
+            code_d(s, 22, t.center.y);
+            code_d(s, 40, t.height);
+        }
+        code(s, 0, "ENDTAB");
+    }
     code(s, 0, "TABLE");
     code(s, 2, "LAYER");
     code_i(s, 70, static_cast<long>(doc.layers.size()));
@@ -2274,6 +2299,27 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         if (p.value == "EOF") {
             break;
+        }
+        if (section == "TABLES" && p.value == "VPORT") {
+            // *Active entries are the model window's tiles (the whole window when one).
+            std::vector<Pair> body;
+            ++i;
+            while (i < n && pairs[i].code != 0) {
+                body.push_back(pairs[i]);
+                ++i;
+            }
+            const std::string* name = find(body, 2);
+            if (name != nullptr && upper_hex(*name) == "*ACTIVE") {
+                TiledViewport t;
+                t.x0 = getd(body, 10, 0.0);
+                t.y0 = getd(body, 20, 0.0);
+                t.x1 = getd(body, 11, 1.0);
+                t.y1 = getd(body, 21, 1.0);
+                t.center = {getd(body, 12), getd(body, 22)};
+                t.height = getd(body, 40, 0.0);
+                doc.vports.push_back(t);
+            }
+            continue;
         }
         if (section == "TABLES" &&
             (p.value == "LAYER" || p.value == "DIMSTYLE" || p.value == "STYLE")) {

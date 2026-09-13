@@ -47,6 +47,22 @@ public:
     void render(GpuRenderTarget& target, const core::RenderSnapshot& snapshot,
                 const Camera2D& camera);
 
+    /// One tile of a VPORTS layout: a framebuffer rectangle (origin bottom-left) and the
+    /// camera whose viewport is that size. Only the active tile draws the crosshair, the
+    /// command surface and the dynamic-input labels.
+    struct TileView {
+        int x = 0;
+        int y = 0;
+        int w = 1;
+        int h = 1;
+        Camera2D camera;
+        bool active = false;
+    };
+    /// Renders every tile (each clipped to its rectangle) and the borders between them,
+    /// the active one outlined in the grip blue.
+    void render_tiles(GpuRenderTarget& target, const core::RenderSnapshot& snapshot,
+                      const std::vector<TileView>& tiles);
+
     /// Overlay text (e.g. "FPS 144") drawn in screen space; set per frame.
     void set_overlay_text(std::string text) { overlay_text_ = std::move(text); }
     /// The raster decoder used on a texture-cache miss (the UI's QtImageDecoder; may be
@@ -94,6 +110,12 @@ public:
 
 private:
     void upload_scene(const core::RenderSnapshot& snapshot);
+    /// The scene (sheet, grid, geometry, selection) into the current viewport of `vw` x
+    /// `vh` pixels through `camera`; the cursor-bound surfaces only when `overlays`.
+    void render_view(const core::RenderSnapshot& snapshot, const Camera2D& camera, int vw, int vh,
+                     bool overlays);
+    void draw_tile_borders(GpuCommandBuffer& cmd, int width, int height,
+                           const std::vector<TileView>& tiles);
     void draw_overlay(GpuCommandBuffer& cmd, int width, int height);
     /// On-canvas Dynamic Input value fields: a boxed number at each label's
     /// world anchor (projected with the scene camera, so always glued to geometry).

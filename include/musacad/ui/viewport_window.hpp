@@ -81,6 +81,13 @@ public:
     void osnap_settings_dialog() override;
     void attribute_editor_at(core::Vec2 pick, double pick_radius) override;
     void block_attribute_manager() override;
+    [[nodiscard]] std::vector<core::TiledViewport> tiled_viewports() const override;
+    [[nodiscard]] int active_tile() const override;
+    /// VPORTS: how many tiles the model window is split into (1 = not split).
+    [[nodiscard]] int tile_count() const {
+        std::scoped_lock lock(camera_mutex_);
+        return tiles_.size() > 1 ? static_cast<int>(tiles_.size()) : 1;
+    }
     [[nodiscard]] std::string image_file_dialog() override;
     [[nodiscard]] std::string open_file_dialog(const std::string& filter) override;
     void set_open_file_dialog(std::function<std::string(const std::string&)> cb) { open_file_dialog_ = std::move(cb); }
@@ -418,8 +425,40 @@ private:
 
     core::GeometryEngine& engine_;
 
-    std::mutex camera_mutex_;
-    render::Camera2D camera_; // guarded by camera_mutex_
+    mutable std::mutex camera_mutex_;
+    render::Camera2D camera_; // guarded by camera_mutex_ -- the ACTIVE tile's camera when split
+    // VPORTS: the model window's tiles (fewer than two = one whole-window view, and
+    // `tiles_` is empty). The active tile's camera is `camera_`; the others keep theirs
+    // here. `framed` says the tile has been fitted to the drawing once (a tile restored
+    // with no view). All under camera_mutex_.
+    struct Tile {
+        double x0 = 0.0;
+        double y0 = 0.0;
+        double x1 = 1.0;
+        double y1 = 1.0;
+        render::Camera2D camera;
+        bool framed = false;
+    };
+    std::vector<Tile> tiles_;
+    std::size_t active_tile_ = 0;
+    std::uint32_t tiles_version_seen_ = 0; // the snapshot's vports_version last applied
+    std::uint64_t tiles_doc_id_ = 0;       // the document `tiles_` belongs to
+    struct TileState {
+        std::vector<Tile> tiles;
+        std::size_t active = 0;
+        std::uint32_t version = 0;
+    };
+    std::unordered_map<std::uint64_t, TileState> doc_tiles_; // per-document tiles (tab switch)
+    std::atomic<bool> tiles_split_{false}; // GUI-thread fast check: more than one tile in model space
+    /// The active tile's framebuffer rectangle: origin (x, top) in window pixels (y down) and size.
+    void active_tile_rect(int w, int h, double& x, double& top, double& tw, double& th) const;
+    /// A window position in device pixels relative to the active tile (identity when not split).
+    [[nodiscard]] core::Vec2 local_px(QPointF pos, double dpr) const;
+    /// The tile under a window position, or the active one when not split.
+    [[nodiscard]] std::size_t tile_at(QPointF pos, double dpr) const;
+    void activate_tile(std::size_t index);
+    /// Render thread: follow the store's tiled configuration (vports_version / a tab switch).
+    void apply_tiles_from_snapshot(const core::RenderSnapshot& snap, int w, int h);
     // Per-document camera: each tab's view (zoom/pan) is remembered and restored on
     // switch. Render-thread-only (touched solely in the render loop), under camera_mutex_.
     std::unordered_map<std::uint64_t, render::Camera2D> doc_cameras_;

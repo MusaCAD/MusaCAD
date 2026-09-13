@@ -6,6 +6,7 @@ add_library(musacad_core STATIC
     entity_bounds.cpp
     osnap.cpp
     scene_snapshot.cpp
+    tiled_viewport.cpp
     geometry_engine.cpp
     io/document.cpp
     io/native_format.cpp

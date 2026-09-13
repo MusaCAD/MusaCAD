@@ -173,6 +173,9 @@ public:
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
+    /// Real-window self-test: split into two tiles, click the right one (it becomes
+    /// current), zoom it (the left keeps its view), then back to a single viewport.
+    bool selftest_vports();
     /// Real-window self-test: DWG import/export via a MOCK external converter --
     /// discovery, off-thread convert, fail-safe load, gap catalog, export round-trip.
     bool selftest_dwg();
@@ -237,6 +240,10 @@ private:
     void open_text_editor(double wx, double wy, double pick_radius, const std::string& content,
                           bool multiline);
 
+    // VPORTS: apply one of the standard tiled-viewport configurations to the whole model
+    // window (the View tab's Viewport Configuration list); the current view is kept in
+    // every tile.
+    void apply_vport_configuration(const char* kind);
     // Block attributes: the Enhanced Attribute Editor (EATTEDIT / double-click) for one
     // reference, and the Block Attribute Manager (BATTMAN) for a definition.
     void open_attribute_editor(core::EntityHandle handle, std::uint16_t block,
