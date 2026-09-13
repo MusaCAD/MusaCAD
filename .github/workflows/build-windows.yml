@@ -53,7 +53,7 @@ jobs:
 
       - name: Configure (Release, Ninja)
         shell: cmd
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF -DMUSACAD_MSVC_WERROR=ON
 
       - name: Build
         shell: cmd

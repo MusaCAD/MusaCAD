@@ -1424,7 +1424,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         layer_index[name] = idx;
         return idx;
     };
-    std::map<std::string, std::uint16_t> style_index{{"Standard", 0}};
+    std::map<std::string, std::uint16_t> style_index{{std::string("Standard"), std::uint16_t{0}}};
     const auto ensure_dimstyle = [&](const std::string& name) -> std::uint16_t {
         const auto it = style_index.find(name);
         if (it != style_index.end()) {
