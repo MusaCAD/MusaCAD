@@ -370,7 +370,8 @@ void ViewportWindow::start_render_thread() {
     if (render_thread_.joinable()) {
         return;
     }
-    render_thread_ = std::jthread([this](std::stop_token token) { render_loop(std::move(token)); });
+    render_thread_ =
+        core::threading::jthread([this](core::threading::stop_token token) { render_loop(std::move(token)); });
 }
 
 void ViewportWindow::stop_render_thread() noexcept {
@@ -380,7 +381,7 @@ void ViewportWindow::stop_render_thread() noexcept {
     }
 }
 
-void ViewportWindow::render_loop(std::stop_token token) {
+void ViewportWindow::render_loop(core::threading::stop_token token) {
     // The render thread exclusively owns the GL context.
     QOpenGLContext context;
     context.setFormat(format());

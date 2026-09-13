@@ -4,6 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "musacad/core/threading/jthread.hpp"
+
 #include "musacad/core/render_snapshot.hpp"
 #include "musacad/core/threading/triple_buffer.hpp"
 
@@ -24,7 +26,7 @@ TEST_CASE("TripleBuffer SPSC: reader always sees a consistent snapshot") {
     std::atomic<std::uint64_t> reads_observed{0};
     std::atomic<std::uint64_t> max_version_seen{0};
 
-    std::jthread writer([&] {
+    musacad::core::threading::jthread writer([&] {
         for (std::uint64_t v = 1; v <= kIterations; ++v) {
             RenderSnapshot& b = tb.write_buffer();
             // Rebuild the payload from scratch each publish (as the real engine

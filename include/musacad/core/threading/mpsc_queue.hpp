@@ -7,7 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <queue>
-#include <stop_token>
+#include "musacad/core/threading/jthread.hpp"
 #include <utility>
 
 namespace musacad::core {
@@ -42,9 +42,9 @@ public:
     /// Blocks until an item is available or `token` is stopped. Returns nullopt
     /// only when the queue is empty and a stop has been requested, which the
     /// consumer uses to exit its loop cleanly.
-    std::optional<T> wait_pop(std::stop_token token) {
+    std::optional<T> wait_pop(threading::stop_token token) {
         std::unique_lock lock(mutex_);
-        const bool have = cv_.wait(lock, token, [this] { return !queue_.empty(); });
+        const bool have = threading::wait_or_stop(cv_, lock, token, [this] { return !queue_.empty(); });
         if (!have) {
             return std::nullopt; // stop requested, queue empty
         }

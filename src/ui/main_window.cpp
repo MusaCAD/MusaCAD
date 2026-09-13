@@ -3,6 +3,8 @@
 
 #include "musacad/ui/main_window.hpp"
 
+#include "musacad/core/threading/jthread.hpp"
+
 #include <cmath>
 #include <numbers>
 #include <cstdint>
@@ -6188,7 +6190,7 @@ bool MainWindow::run_with_progress(const QString& label,
     std::atomic<bool> done{false};
     bool ok = false;
     QString local_err;
-    std::jthread worker([&] {
+    core::threading::jthread worker([&] {
         ok = work(local_err);
         done.store(true, std::memory_order_release);
     });
