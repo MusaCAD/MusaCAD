@@ -129,6 +129,14 @@ public:
     [[nodiscard]] virtual std::uint32_t snap_mask() const { return 0; }
     virtual void set_snap_mask(std::uint32_t mask) { (void)mask; }
     virtual void osnap_settings_dialog() {}
+    /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
+    /// hit-tests the published attribute targets; nothing there = a message).
+    virtual void attribute_editor_at(core::Vec2 pick, double pick_radius) {
+        (void)pick;
+        (void)pick_radius;
+    }
+    /// BATTMAN: open the Block Attribute Manager.
+    virtual void block_attribute_manager() {}
     /// IMAGEATTACH's file picker; returns the chosen path, or "" (none / headless).
     [[nodiscard]] virtual std::string image_file_dialog() { return {}; }
     /// A generic open-file picker (XREF Attach); `filter` is a Qt-style filter string.

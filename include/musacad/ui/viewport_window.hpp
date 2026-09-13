@@ -78,6 +78,8 @@ public:
     [[nodiscard]] std::uint32_t snap_mask() const override;
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
+    void attribute_editor_at(core::Vec2 pick, double pick_radius) override;
+    void block_attribute_manager() override;
     [[nodiscard]] std::string image_file_dialog() override;
     [[nodiscard]] std::string open_file_dialog(const std::string& filter) override;
     void set_open_file_dialog(std::function<std::string(const std::string&)> cb) { open_file_dialog_ = std::move(cb); }
@@ -232,6 +234,22 @@ public:
     };
     void set_text_edit_callback(std::function<void(const TextEditRequest&)> cb) {
         text_edit_callback_ = std::move(cb);
+    }
+    /// EATTEDIT / a double-click on a block reference with attributes: the host opens
+    /// the attribute editor for `handle` with the live `values` (attdef order).
+    struct AttribEditRequest {
+        core::EntityHandle handle;
+        std::uint16_t block = 0;
+        std::vector<std::string> values;
+    };
+    void set_attribute_edit_callback(std::function<void(const AttribEditRequest&)> cb) {
+        attribute_edit_callback_ = std::move(cb);
+    }
+    void set_battman_callback(std::function<void()> cb) { battman_callback_ = std::move(cb); }
+    /// The published block references with attributes (BATTMAN's reference counts).
+    [[nodiscard]] std::vector<core::AttribEditTarget> attrib_targets() const {
+        std::scoped_lock lock(grips_mutex_);
+        return attrib_targets_;
     }
 
     /// Tab-to-tab drag: invoked on release of a selection-drag at the global drop point.
@@ -494,7 +512,10 @@ private:
     mutable std::mutex grips_mutex_;
     std::vector<core::GripInfo> grips_cache_;
     std::vector<core::TextEditTarget> text_targets_; // for double-click-to-edit (same mutex)
+    std::vector<core::AttribEditTarget> attrib_targets_; // EATTEDIT / double-click (same mutex)
     std::function<void(const TextEditRequest&)> text_edit_callback_;
+    std::function<void(const AttribEditRequest&)> attribute_edit_callback_;
+    std::function<void()> battman_callback_;
     std::function<bool(QPoint)> selection_drop_cb_; // tab-to-tab drag (host maps to a tab)
     bool had_selection_at_press_ = false;           // a selection existed when a drag began
     core::SelectionSummary selection_summary_; // PR palette (same mutex)

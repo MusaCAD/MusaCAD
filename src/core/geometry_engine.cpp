@@ -3884,6 +3884,148 @@ void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
     report(c.on == 0 ? "Viewport off." : c.on == 1 ? "Viewport on." : "Viewport updated.");
 }
 
+void GeometryEngine::apply_insert_attribs(const SetInsertAttribsCommand& c) {
+    const InsertData* in = store_.insert(c.handle);
+    const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+    if (bd == nullptr) {
+        report("EATTEDIT: select a block reference.");
+        return;
+    }
+    if (bd->content.attdefs.empty()) {
+        report("That block has no attributes.");
+        return;
+    }
+    std::vector<std::string> values = store_.insert_attribs(*in);
+    for (std::size_t i = values.size(); i < bd->content.attdefs.size(); ++i) {
+        values.push_back(bd->content.attdefs[i].def);
+    }
+    values.resize(bd->content.attdefs.size());
+    bool changed = false;
+    for (std::size_t i = 0; i < c.values.size() && i < values.size(); ++i) {
+        if (values[i] != c.values[i]) {
+            values[i] = c.values[i];
+            changed = true;
+        }
+    }
+    if (!changed) {
+        report("Attributes unchanged.");
+        return;
+    }
+    const Command original = capture_entity(c.handle);
+    remove_indexed(c.handle);
+    push_erase_item(c.group, c.handle, original);
+    AddInsertCommand nc = std::get<AddInsertCommand>(original);
+    nc.attribs = values;
+    const Command add = nc;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Attributes updated.");
+}
+
+void GeometryEngine::apply_block_attdefs(const SetBlockAttDefsCommand& c) {
+    std::uint16_t bi = 0;
+    bool found = false;
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        if (upper_ascii(store_.block(i)->name) == upper_ascii(c.name)) {
+            bi = i;
+            found = true;
+        }
+    }
+    if (!found) {
+        report("No block named \"" + c.name + "\".");
+        return;
+    }
+    const BlockDef* old = store_.block(bi);
+    for (const BlockAttDefInfo& a : c.attdefs) {
+        if (a.tag.empty()) {
+            report("BATTMAN: every attribute needs a tag.");
+            return;
+        }
+    }
+    // The new definitions: a matching tag keeps its old text placement and styling; a new
+    // tag goes one line below the last definition (or at the base point).
+    std::vector<BlockAttDef> defs;
+    std::vector<int> from_old; // index into the old list, or -1 for a new attribute
+    Vec2 next = old->base;
+    double step = 2.5;
+    if (!old->content.attdefs.empty()) {
+        const BlockAttDef& last = old->content.attdefs.back();
+        next = {last.text.pos.x, last.text.pos.y - last.text.height * 1.6};
+        step = last.text.height * 1.6;
+    }
+    for (const BlockAttDefInfo& a : c.attdefs) {
+        int oi = -1;
+        for (std::size_t j = 0; j < old->content.attdefs.size(); ++j) {
+            if (upper_ascii(old->content.attdefs[j].tag) == upper_ascii(a.tag)) {
+                oi = static_cast<int>(j);
+            }
+        }
+        BlockAttDef d;
+        if (oi >= 0) {
+            d = old->content.attdefs[static_cast<std::size_t>(oi)];
+        } else {
+            d.text.pos = next;
+            next.y -= step;
+        }
+        d.tag = a.tag;
+        d.prompt = a.prompt;
+        d.def = a.def;
+        d.flags = a.flags;
+        if (a.height > 0.0) {
+            d.text.height = a.height;
+        }
+        defs.push_back(std::move(d));
+        from_old.push_back(oi);
+    }
+    // References first (their values are read against the OLD definitions), then the
+    // definition itself. Each synced reference is an erase + create, so undo works.
+    int synced = 0;
+    if (c.sync) {
+        std::vector<EntityHandle> refs;
+        const auto& arena = store_.inserts();
+        for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+            if (arena.alive(i) && arena.data()[i].block == bi) {
+                refs.push_back(EntityHandle{i, arena.generations()[i], EntityKind::Insert});
+            }
+        }
+        for (const EntityHandle h : refs) {
+            const InsertData* in = store_.insert(h);
+            std::vector<std::string> before = store_.insert_attribs(*in);
+            for (std::size_t i = before.size(); i < old->content.attdefs.size(); ++i) {
+                before.push_back(old->content.attdefs[i].def);
+            }
+            std::vector<std::string> after;
+            for (std::size_t i = 0; i < defs.size(); ++i) {
+                const int oi = from_old[i];
+                after.push_back(oi >= 0 && static_cast<std::size_t>(oi) < before.size()
+                                    ? before[static_cast<std::size_t>(oi)]
+                                    : defs[i].def);
+            }
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(c.group, h, original);
+            AddInsertCommand nc = std::get<AddInsertCommand>(original);
+            nc.attribs = after;
+            const Command add = nc;
+            push_create_item(c.group, create_indexed(add), add);
+            ++synced;
+        }
+    }
+    BlockDef def = *old;
+    def.content.attdefs = std::move(defs);
+    store_.redefine_block(bi, def);
+    selection_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Block \"" + def.name + "\": " + std::to_string(def.content.attdefs.size()) +
+           " attribute(s)" + (c.sync ? ", " + std::to_string(synced) + " reference(s) synced." : "."));
+}
+
 EntityHandle GeometryEngine::viewport_at(Vec2 pick, double pick_radius) const {
     // The viewport under the point on the active layout (inside it), else the one whose
     // frame is within the aperture.
@@ -7058,6 +7200,10 @@ void GeometryEngine::apply(const Command& command) {
                 apply_viewport_view(c);
             } else if constexpr (std::is_same_v<T, SetViewportLayerFreezeCommand>) {
                 apply_vplayer(c);
+            } else if constexpr (std::is_same_v<T, SetInsertAttribsCommand>) {
+                apply_insert_attribs(c);
+            } else if constexpr (std::is_same_v<T, SetBlockAttDefsCommand>) {
+                apply_block_attdefs(c);
             } else if constexpr (std::is_same_v<T, XrefAttachCommand>) {
                 apply_xref_attach(c);
             } else if constexpr (std::is_same_v<T, XrefReloadCommand>) {
@@ -7559,6 +7705,7 @@ void GeometryEngine::rebuild_and_publish() {
         buf.fill_vertices = geom_cache_.fill_vertices;
         buf.fill_batches = geom_cache_.fill_batches;
         buf.text_edit_targets = geom_cache_.text_edit_targets; // double-click-to-edit
+        buf.attrib_edit_targets = geom_cache_.attrib_edit_targets; // EATTEDIT / BATTMAN
         buf.bounds_min = geom_cache_.bounds_min;
         buf.bounds_max = geom_cache_.bounds_max;
         buf.has_bounds = geom_cache_.has_bounds;
@@ -7586,7 +7733,7 @@ void GeometryEngine::rebuild_and_publish() {
     for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
         std::vector<BlockAttDefInfo> infos;
         for (const BlockAttDef& a : store_.block(bi)->content.attdefs) {
-            infos.push_back(BlockAttDefInfo{a.tag, a.prompt, a.def, a.flags});
+            infos.push_back(BlockAttDefInfo{a.tag, a.prompt, a.def, a.flags, a.text.height});
         }
         buf.block_attdefs.push_back(std::move(infos)); // INSERT's attribute prompts
     }

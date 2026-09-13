@@ -3567,6 +3567,45 @@ void MspaceCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 // ---------------------------------------------------------------------------
+// EATTEDIT / BATTMAN (dialogs through the view)
+// ---------------------------------------------------------------------------
+void EatteditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select a block reference: ");
+}
+
+void EatteditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void EatteditCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        if (ctx.view() != nullptr) {
+            ctx.view()->attribute_editor_at(*p, ctx.pick_radius());
+        }
+        done_ = true;
+        return;
+    }
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    ctx.echo("Pick a block reference that has attributes.");
+}
+
+void BattmanCommand::start(CommandContext& ctx) {
+    if (ctx.view() != nullptr) {
+        ctx.view()->block_attribute_manager();
+    }
+    done_ = true;
+}
+
+void BattmanCommand::input(CommandContext&, const std::string&) {}
+
+void BattmanCommand::cancel(CommandContext&) { done_ = true; }
+
+// ---------------------------------------------------------------------------
 // VPLAYER
 // ---------------------------------------------------------------------------
 namespace {

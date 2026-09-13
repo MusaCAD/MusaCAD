@@ -16,6 +16,7 @@ struct BlockAttDefInfo {
     std::string prompt;
     std::string def;
     std::uint8_t flags = 0; ///< kAttInvisible | kAttConstant | kAttVerify | kAttPreset
+    double height = 2.5;    ///< text height of the value (BATTMAN's text option)
 };
 
 } // namespace musacad::core

@@ -80,5 +80,10 @@
     <file>stretch.svg</file>
     <file>table.svg</file>
     <file>tolerance.svg</file>
+    <file>attdef.svg</file>
+    <file>attedit.svg</file>
+    <file>battman.svg</file>
+    <file>refedit.svg</file>
+    <file>xref.svg</file>
   </qresource>
 </RCC>

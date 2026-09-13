@@ -942,6 +942,34 @@ private:
     bool done_ = false;
 };
 
+/// EATTEDIT: pick a block reference; its attribute values open in the Enhanced Attribute
+/// Editor (a dialog, through the view). -ATTEDIT stays the command-line form.
+class EatteditCommand final : public ICommand {
+public:
+    std::string name() const override { return "EATTEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// BATTMAN: the Block Attribute Manager (a dialog, through the view): a block's
+/// attribute definitions -- edit, reorder, remove -- and sync its references.
+class BattmanCommand final : public ICommand {
+public:
+    std::string name() const override { return "BATTMAN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// VPLAYER: layer visibility per viewport. Freeze / Thaw layers (named, or those of picked
 /// objects) in the current viewport, all viewports or a selected one; Reset restores a
 /// viewport's defaults; Newfrz creates layers frozen in every viewport; Vpvisdflt sets a

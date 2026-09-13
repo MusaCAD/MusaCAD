@@ -146,6 +146,18 @@ struct TextEditTarget {
     std::string content;
 };
 
+/// A block reference that carries attributes, surfaced so the UI can open the attribute
+/// editor (EATTEDIT, or a double-click) with the live values and count references per
+/// block -- without touching the store. `min/max` is the world AABB for hit-testing;
+/// `values` has one entry per attdef, defaults filled in.
+struct AttribEditTarget {
+    EntityHandle handle;
+    std::uint16_t block = 0;
+    Vec2 min;
+    Vec2 max;
+    std::vector<std::string> values;
+};
+
 /// One open document, surfaced for the multi-document tab strip. `name` is the display
 /// name (a filename or "DrawingN"); `dirty` drives the per-tab "*" marker. The list is
 /// the single source of truth for the tabs (the UI is a pure view). Not checksummed.
@@ -277,6 +289,7 @@ struct RenderSnapshot {
     // Editable text entities (for double-click-to-edit hit-testing + pre-fill).
     // Interaction state, not part of the checksum.
     std::vector<TextEditTarget> text_edit_targets;
+    std::vector<AttribEditTarget> attrib_edit_targets; ///< EATTEDIT / BATTMAN (see struct)
 
     // Aggregated property view of the current selection (for the PR palette):
     // values + per-field "varies" flags. Computed on the geometry thread so the
@@ -339,6 +352,7 @@ struct RenderSnapshot {
         grip_preview_segments.clear();
         grip_preview_fills.clear();
         text_edit_targets.clear();
+        attrib_edit_targets.clear();
         selection_summary = SelectionSummary{};
         checksum = 0;
         bounds_min = {};
