@@ -59,6 +59,25 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.4.0" date="2026-09-12">
+      <description>
+        <p>Sheets and symbols: layouts with viewports and paper space, block authoring,
+        attributes, external references, raster images on screen, and the remaining draw
+        and modify commands (SPLINE, ELLIPSE, POLYGON, BREAK, LENGTHEN, ALIGN and more).</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-09-05">
+      <description>
+        <p>Editing and inquiry: STRETCH, the measurement commands (DIST, ID, AREA, LIST)
+        and dimension chaining (DIMCONTINUE, DIMBASELINE).</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-09-05">
+      <description>
+        <p>Annotation: dimension tolerances and fits, geometric tolerancing (feature control
+        frames and datums), tables, dimension text control, and a documented command line.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-06-23">
       <description>
         <p>First public release. Capable but early: 2D drafting, modify, dimensions,
