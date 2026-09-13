@@ -103,6 +103,12 @@ found, Import/Export DWG shows that dialog via a "Configure…" button — nothi
 crashes. (Musa CAD does not download/install the converter for you: licensing, the
 ODA EULA, and per-platform installers make that the user's step.)
 
+**Flatpak:** the sandbox cannot see programs installed on your system, so DWG is off by
+default there. Install the converter on the host, allow the app to run it once with
+`flatpak override --user --talk-name=org.freedesktop.Flatpak com.musacad.MusaCAD`, and
+turn on **"Use a converter installed on the host"** in DWG Setup; the dialog says the same
+when it finds nothing. See `packaging/flatpak/BUILD_FLATPAK.md`.
+
 ## Sanitizers
 
 The `dev` preset sets `ENABLE_SANITIZERS=ON`, enabling AddressSanitizer and

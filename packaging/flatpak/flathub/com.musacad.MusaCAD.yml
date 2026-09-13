@@ -18,8 +18,10 @@ finish-args:
   - --filesystem=home           # open / save the user's drawings
 # DWG import/export shells out to an EXTERNAL converter (ODA File Converter / LibreDWG's
 # dwg2dxf). Inside the sandbox it is not present, so DWG is unavailable by default;
-# built-in DXF read/write works everywhere. This keeps the Flatpak LGPL-clean (no
-# GPL/DWG library linked or shipped).
+# built-in DXF read/write works everywhere. A user can opt in to a converter installed
+# on the host (a one-time `flatpak override --talk-name=org.freedesktop.Flatpak` plus a
+# toggle in the DWG Setup dialog; the manifest asks for nothing extra). This keeps the
+# Flatpak LGPL-clean (no GPL/DWG library linked or shipped).
 
 modules:
   - name: musa-cad

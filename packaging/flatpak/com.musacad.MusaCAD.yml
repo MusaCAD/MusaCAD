@@ -27,7 +27,11 @@ finish-args:
 # NOTE: DWG import/export shells out to an EXTERNAL converter (ODA File Converter /
 # LibreDWG's dwg2dxf) found on PATH. Inside the sandbox that converter is not present,
 # so DWG is unavailable in the Flatpak by default; built-in DXF read/write works. A
-# user who needs DWG can install the converter and grant access. This keeps the
+# user who needs DWG installs the converter on the host, grants the app the Flatpak
+# portal once (`flatpak override --user --talk-name=org.freedesktop.Flatpak
+# com.musacad.MusaCAD`) and turns on "Use a converter installed on the host" in the
+# DWG Setup dialog; the converter then runs through `flatpak-spawn --host`. The
+# manifest itself asks for nothing extra, so the default stays sandboxed and the
 # Flatpak LGPL-clean (no GPL/DWG library linked or shipped).
 
 modules:

@@ -5005,6 +5005,18 @@ bool MainWindow::selftest_dwg() {
     std::printf("[selftest] DWG converter discovery (configured path): %s\n",
                 disc_ok ? "PASS" : "FAIL");
 
+    // Flatpak host mode (#4): the command line that reaches a host program is
+    // flatpak-spawn --host <program> <args>; outside a sandbox host mode stays off.
+    const auto [hprog, hargs] = DwgConverter::host_command(
+        QStringLiteral("/usr/bin/dwg2dxf"), {QStringLiteral("-y"), QStringLiteral("in.dwg")});
+    const bool host_ok = hprog == QStringLiteral("flatpak-spawn") && hargs.size() == 4 &&
+                         hargs[0] == QStringLiteral("--host") && hargs[1] == QStringLiteral("/usr/bin/dwg2dxf") &&
+                         hargs[3] == QStringLiteral("in.dwg") &&
+                         (DwgConverter::in_flatpak() || !DwgConverter::host_mode());
+    std::printf("[selftest] DWG Flatpak host command line (flatpak-spawn --host ...): %s\n",
+                host_ok ? "PASS" : "FAIL");
+    all = all && host_ok;
+
     // Setup-dialog helpers: Browse (from_program) validates an explicit path; PATH
     // detection + a bogus path behave sanely; kind names are non-empty.
     const DwgConverter on_path = DwgConverter::discover_on_path(); // must not crash
@@ -6052,6 +6064,26 @@ void MainWindow::configure_dwg_converter() {
     status->setObjectName(QStringLiteral("DwgStatus"));
     v->addWidget(status);
 
+    // Flatpak: the sandbox cannot see host programs; the opt-in runs the converter on the
+    // host through flatpak-spawn once the user has granted that portal access.
+    QCheckBox* host_box = nullptr;
+    if (DwgConverter::in_flatpak()) {
+        host_box = new QCheckBox(QStringLiteral("Use a converter installed on the host (Flatpak)"), &dlg);
+        host_box->setObjectName(QStringLiteral("DwgHostMode"));
+        host_box->setChecked(DwgConverter::host_mode());
+        host_box->setToolTip(QStringLiteral(
+            "Looks the converter up and runs it outside the sandbox. Allow it once with:\n"
+            "flatpak override --user --talk-name=org.freedesktop.Flatpak com.musacad.MusaCAD"));
+        v->addWidget(host_box);
+        auto* how = new QLabel(QStringLiteral(
+            "Inside the Flatpak the converter must be installed on your system and Musa CAD "
+            "allowed to run it there:\n    flatpak override --user --talk-name=org.freedesktop.Flatpak "
+            "com.musacad.MusaCAD"), &dlg);
+        how->setWordWrap(true);
+        how->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        v->addWidget(how);
+    }
+
     auto* row = new QWidget(&dlg);
     auto* h = new QHBoxLayout(row);
     h->setContentsMargins(0, 0, 0, 0);
@@ -6063,19 +6095,31 @@ void MainWindow::configure_dwg_converter() {
     h->addWidget(browse);
     v->addWidget(row);
 
-    const auto refresh = [status, path_edit] {
+    const auto refresh = [status, path_edit, host_box] {
+        if (host_box != nullptr) {
+            DwgConverter::set_host_mode(host_box->isChecked()); // discovery follows the toggle
+        }
         const QString p = path_edit->text().trimmed();
         const DwgConverter c =
             p.isEmpty() ? DwgConverter::discover_on_path() : DwgConverter::from_program(p);
         if (c.available()) {
-            status->setText(QStringLiteral("✔ Detected: %1 — %2")
-                                .arg(DwgConverter::kind_name(c.kind()), c.program()));
+            status->setText(QStringLiteral("✔ Detected: %1 — %2%3")
+                                .arg(DwgConverter::kind_name(c.kind()), c.program(),
+                                     c.on_host() ? QStringLiteral(" (on the host)") : QString()));
+        } else if (DwgConverter::host_mode()) {
+            status->setText(p.isEmpty()
+                                ? QStringLiteral("✗ No converter found on the host's PATH (is the "
+                                                 "flatpak override in place?).")
+                                : QStringLiteral("✗ No converter at that path on the host."));
         } else {
             status->setText(p.isEmpty() ? QStringLiteral("✗ No converter found on PATH.")
                                         : QStringLiteral("✗ No converter at that path."));
         }
     };
     connect(path_edit, &QLineEdit::textChanged, &dlg, [refresh] { refresh(); });
+    if (host_box != nullptr) {
+        connect(host_box, &QCheckBox::toggled, &dlg, [refresh](bool) { refresh(); });
+    }
     connect(browse, &QPushButton::clicked, &dlg, [&dlg, path_edit] {
         const QString f = QFileDialog::getOpenFileName(&dlg, QStringLiteral("Select DWG converter"),
                                                        QString(), QString(), nullptr,
@@ -6112,6 +6156,7 @@ void MainWindow::configure_dwg_converter() {
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     v->addWidget(bb);
 
+    const bool host_before = DwgConverter::host_mode();
     refresh();
     if (dlg.exec() == QDialog::Accepted) {
         const QString p = path_edit->text().trimmed();
@@ -6120,6 +6165,11 @@ void MainWindow::configure_dwg_converter() {
         } else {
             QSettings().setValue(QStringLiteral("io/dwg_converter_path"), p);
         }
+        if (host_box != nullptr) {
+            DwgConverter::set_host_mode(host_box->isChecked());
+        }
+    } else if (host_box != nullptr) {
+        DwgConverter::set_host_mode(host_before); // Cancel: the toggle's previews are dropped
     }
 }
 
