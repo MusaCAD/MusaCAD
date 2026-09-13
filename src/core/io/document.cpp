@@ -439,7 +439,8 @@ Document document_from_store(const GeometryStore& store) {
     for (std::uint32_t i = 0; i < vports.slot_count(); ++i) {
         if (vports.alive(i)) {
             const ViewportData& v = vports.data()[i];
-            doc.viewports.push_back(DocViewport{v.center, v.width, v.height, v.view_center, v.scale, v.on, v.props});
+            doc.viewports.push_back(DocViewport{v.center, v.width, v.height, v.view_center, v.scale,
+                                                v.on, v.props, v.frozen_layers});
         }
     }
     const auto& ins = store.inserts();
@@ -524,7 +525,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_block_table(std::move(blocks));
     }
     for (const DocViewport& v : doc.viewports) {
-        store.add_viewport(v.center, v.width, v.height, v.view_center, v.scale, v.on, v.props);
+        store.add_viewport(v.center, v.width, v.height, v.view_center, v.scale, v.on, v.props,
+                           v.frozen_layers);
     }
     for (const DocInsert& di : doc.inserts) {
         const std::uint16_t bi = resolve_block(di.block_name);

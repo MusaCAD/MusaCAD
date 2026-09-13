@@ -3566,6 +3566,202 @@ void MspaceCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VPLAYER
+// ---------------------------------------------------------------------------
+namespace {
+/// "walls, doors  TEXT" -> {"walls", "doors", "TEXT"}: layer lists are comma or space
+/// separated, as at AutoCAD's layer-name prompts.
+std::vector<std::string> split_layer_names(const std::string& text) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (const char ch : text) {
+        if (ch == ',' || ch == ' ' || ch == '\t') {
+            if (!cur.empty()) {
+                out.push_back(cur);
+                cur.clear();
+            }
+        } else {
+            cur += ch;
+        }
+    }
+    if (!cur.empty()) {
+        out.push_back(cur);
+    }
+    return out;
+}
+} // namespace
+
+void VplayerCommand::prompt_option(CommandContext& ctx) {
+    state_ = State::Option;
+    names_.clear();
+    from_selection_ = false;
+    default_mode_ = false;
+    ctx.set_prompt("Enter an option [?/Freeze/Thaw/Reset/Newfrz/Vpvisdflt]: ");
+}
+
+void VplayerCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    prompt_option(ctx);
+}
+
+void VplayerCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void VplayerCommand::ask_target(CommandContext& ctx) {
+    state_ = State::Target;
+    ctx.set_prompt("Enter an option [All/Select/Current] <Current>: ");
+}
+
+void VplayerCommand::finish(CommandContext& ctx, core::SetViewportLayerFreezeCommand::Target target,
+                            core::Vec2 pick) {
+    core::SetViewportLayerFreezeCommand c;
+    c.op = op_;
+    c.target = target;
+    c.pick = pick;
+    c.pick_radius = ctx.pick_radius();
+    c.layer_names = names_;
+    c.from_selection = from_selection_;
+    ctx.submit(c);
+    prompt_option(ctx); // AutoCAD: VPLAYER returns to its option prompt until Enter
+}
+
+void VplayerCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::SetViewportLayerFreezeCommand::Op;
+    using Target = core::SetViewportLayerFreezeCommand::Target;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            core::SetViewportLayerFreezeCommand c;
+            c.op = Op::List;
+            ctx.submit(c);
+            return;
+        }
+        if (u == "F" || u == "FREEZE" || u == "T" || u == "THAW") {
+            op_ = (u[0] == 'F') ? Op::Freeze : Op::Thaw;
+            state_ = State::Layers;
+            ctx.set_prompt(std::string("Enter layer name(s) to ") + (op_ == Op::Freeze ? "freeze" : "thaw") +
+                           " or <select objects>: ");
+            return;
+        }
+        if (u == "R" || u == "RESET") {
+            op_ = Op::Reset;
+            ask_target(ctx);
+            return;
+        }
+        if (u == "N" || u == "NEWFRZ") {
+            state_ = State::NewNames;
+            ctx.set_prompt("Enter name(s) of new layers frozen in all viewports: ");
+            return;
+        }
+        if (u == "V" || u == "VPVISDFLT") {
+            state_ = State::DefaultLayers;
+            ctx.set_prompt("Enter layer name(s) to change viewport visibility or <select objects>: ");
+            return;
+        }
+        ctx.echo("Enter ?, F (freeze), T (thaw), R (reset), N (newfrz) or V (vpvisdflt).");
+        return;
+    }
+    case State::Layers:
+    case State::DefaultLayers: {
+        default_mode_ = state_ == State::DefaultLayers;
+        if (t.empty()) {
+            state_ = State::SelectObjects;
+            ctx.set_prompt("Select objects: ");
+            return;
+        }
+        names_ = split_layer_names(t);
+        if (default_mode_) {
+            state_ = State::DefaultValue;
+            ctx.set_prompt("Enter a viewport visibility [Frozen/Thawed] <Thawed>: ");
+        } else {
+            ask_target(ctx);
+        }
+        return;
+    }
+    case State::SelectObjects: {
+        if (t.empty()) {
+            if (!ctx.has_selection()) {
+                ctx.echo("Nothing selected.");
+                prompt_option(ctx);
+                return;
+            }
+            from_selection_ = true;
+            if (default_mode_) {
+                state_ = State::DefaultValue;
+                ctx.set_prompt("Enter a viewport visibility [Frozen/Thawed] <Thawed>: ");
+            } else {
+                ask_target(ctx);
+            }
+            return;
+        }
+        if (u == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+            return;
+        }
+        ctx.echo("Pick objects, type ALL, or press Enter to finish.");
+        return;
+    }
+    case State::Target: {
+        if (t.empty() || u == "C" || u == "CURRENT") {
+            finish(ctx, Target::Current, {});
+        } else if (u == "A" || u == "ALL") {
+            finish(ctx, Target::All, {});
+        } else if (u == "S" || u == "SELECT") {
+            state_ = State::PickViewport;
+            ctx.set_prompt("Select viewport: ");
+        } else {
+            ctx.echo("Enter A (all), S (select) or C (current).");
+        }
+        return;
+    }
+    case State::PickViewport: {
+        if (const auto p = read_point(ctx, text)) {
+            finish(ctx, Target::Pick, *p);
+            return;
+        }
+        ctx.echo("Pick a point inside the viewport (or on its frame).");
+        return;
+    }
+    case State::NewNames: {
+        if (!t.empty()) {
+            core::SetViewportLayerFreezeCommand c;
+            c.op = Op::Newfrz;
+            c.layer_names = split_layer_names(t);
+            ctx.submit(c);
+        }
+        prompt_option(ctx);
+        return;
+    }
+    case State::DefaultValue: {
+        core::SetViewportLayerFreezeCommand c;
+        c.op = Op::VisDefault;
+        c.layer_names = names_;
+        c.from_selection = from_selection_;
+        c.value = (u == "F" || u == "FROZEN");
+        if (!t.empty() && !c.value && u != "T" && u != "THAWED") {
+            ctx.echo("Enter F (frozen) or T (thawed).");
+            return;
+        }
+        ctx.submit(c);
+        prompt_option(ctx);
+        return;
+    }
+    }
+}
+
 void MviewCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::First;

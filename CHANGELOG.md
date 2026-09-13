@@ -6,6 +6,17 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **Per-viewport layer freezing** (#26) — `VPLAYER` freezes and thaws layers in the current,
+  all or a picked viewport (Reset, Newfrz, Vpvisdflt, `?`); the Layer Properties Manager
+  gains "New VP Freeze" and, while you are in a viewport, "VP Freeze" columns. The lists
+  are saved in the drawing (format v34) and travel through DXF (`VIEWPORT` 331, `LAYER` flag 2).
+
+### Fixed
+- MSVC builds warnings-as-errors again (#5); the Flatpak builds with the KDE 6.10 SDK's GCC 15.
+
 ## v0.4.0 — sheets and symbols
 
 Full notes: [`docs/release-notes/v0.4.0.md`](docs/release-notes/v0.4.0.md). Linux AppImage,

@@ -368,7 +368,7 @@ void emit_ltype(std::string& s, const char* name, std::initializer_list<double> 
     }
 }
 
-void emit_layer_table(std::string& s, const Document& doc) {
+void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint64_t>& layer_handles) {
     code(s, 0, "SECTION");
     code(s, 2, "TABLES");
     // LTYPE table first -- layers/entities reference these patterns by name. The
@@ -386,9 +386,10 @@ void emit_layer_table(std::string& s, const Document& doc) {
     code_i(s, 70, static_cast<long>(doc.layers.size()));
     for (const Layer& l : doc.layers) {
         code(s, 0, "LAYER");
-        emit_handle(s);
+        layer_handles.push_back(emit_handle(s)); // VIEWPORT 331 points back here
         code(s, 2, l.name);
-        code_i(s, 70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0)); // 1=frozen, 4=locked
+        // 1 = frozen, 2 = frozen in new viewports (VPLAYER Vpvisdflt), 4 = locked.
+        code_i(s, 70, (l.frozen ? 1 : 0) | (l.vp_freeze_new ? 2 : 0) | (l.locked ? 4 : 0));
         code_i(s, 62, l.on ? 7 : -7); // ACI; negative = layer off
         code_i(s, 420, true_color(l.color)); // exact RGB
         code(s, 6, linetype_name(l.linetype));
@@ -489,6 +490,7 @@ void emit_props_body(std::string& s, const Document& doc, const EntityProps& p) 
 /// handle it referenced. Plus the section boundaries, so the file can be assembled in
 /// the order other readers expect (BLOCKS before ENTITIES).
 struct WriterRefs {
+    std::vector<std::uint64_t> layer_handles; ///< LAYER table handles by index (VIEWPORT 331)
     std::vector<std::uint64_t> def_handles;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> reactors; ///< (image, reactor)
     std::size_t entities_begin = 0;
@@ -499,7 +501,8 @@ struct WriterRefs {
 void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs);
 
 void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
-    emit_layer_table(s, doc);
+    refs.layer_handles.clear();
+    emit_layer_table(s, doc, refs.layer_handles);
     refs.def_handles.clear();
     for (std::size_t i = 0; i < doc.image_defs.size(); ++i) {
         refs.def_handles.push_back(g_handle++);
@@ -1054,6 +1057,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 12, v.view_center.x);
         code_d(s, 22, v.view_center.y);
         code_d(s, 45, v.scale > 0.0 ? v.height / v.scale : v.height);
+        for (const std::uint16_t li : v.frozen_layers) {
+            if (li < refs.layer_handles.size()) {
+                code(s, 331, handle_hex(refs.layer_handles[li])); // frozen in this viewport
+            }
+        }
     }
     code(s, 0, "ENDSEC");
 
@@ -1487,6 +1495,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         return *style; // unknown style: treat its name as the font reference
     };
 
+    // LAYER handle -> index, for VIEWPORT 331 (layers frozen in that viewport).
+    std::map<std::string, std::uint16_t> layer_by_handle;
+    const auto upper_hex = [](std::string h) {
+        for (char& ch : h) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+        return h;
+    };
     const auto add_layer_record = [&](const std::vector<Pair>& body) {
         const std::string* name = find(body, 2);
         if (name == nullptr) {
@@ -1494,9 +1510,13 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         const std::uint16_t idx = ensure_layer(*name);
         Layer& l = doc.layers[idx];
+        if (const std::string* h = find(body, 5)) {
+            layer_by_handle[upper_hex(*h)] = idx;
+        }
         if (const std::string* flag = find(body, 70)) {
             const long f = to_l(*flag);
             l.frozen = (f & 1) != 0;
+            l.vp_freeze_new = (f & 2) != 0;
             l.locked = (f & 4) != 0;
         }
         if (const std::string* col = find(body, 62)) {
@@ -1701,6 +1721,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             v.scale = view_h > 0.0 ? v.height / view_h : 1.0;
             if (const std::string* st = find(body, 68)) {
                 v.on = to_l(*st) > 0;
+            }
+            for (const Pair& q : body) { // 331: a layer frozen in this viewport
+                if (q.code == 331) {
+                    const auto it = layer_by_handle.find(upper_hex(q.value));
+                    if (it != layer_by_handle.end()) {
+                        v.frozen_layers.push_back(it->second);
+                    }
+                }
             }
             doc.viewports.push_back(std::move(v));
             return;

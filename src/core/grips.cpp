@@ -192,7 +192,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Viewport: {
         const ViewportData* v = store.viewport(h);
-        return AddViewportCommand{v->center, v->width, v->height, v->view_center, v->scale, v->on, 0, v->props};
+        return AddViewportCommand{v->center, v->width,  v->height, v->view_center, v->scale,
+                                  v->on,     0,         v->props,  v->frozen_layers};
     }
     case EntityKind::Image: {
         const ImageData* im = store.image(h);
@@ -341,7 +342,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                          props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddViewportCommand>) {
                 handle = store.add_viewport(c.center, c.width, c.height, c.view_center, c.scale, c.on,
-                                            props_of(c.props));
+                                            props_of(c.props), c.frozen_layers);
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 handle = store.add_image(c.def, c.pos, c.width, c.height, c.rotation,
                                          props_of(c.props));

@@ -62,7 +62,9 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 33;
+/// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
+/// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
+inline constexpr std::uint32_t kFormatVersion = 34;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -337,6 +339,7 @@ struct DocViewport {
     double scale = 1.0;
     bool on = true;
     EntityProps props{};
+    std::vector<std::uint16_t> frozen_layers{}; ///< VPLAYER: layers frozen in this viewport
     friend bool operator==(const DocViewport&, const DocViewport&) = default;
 };
 

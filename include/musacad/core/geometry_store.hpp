@@ -339,6 +339,9 @@ struct ViewportData {
     double scale = 1.0;
     bool on = true;
     EntityProps props{};
+    /// Layers frozen in THIS viewport only (VPLAYER): the model seen through it hides
+    /// them; other viewports and model space itself are unaffected.
+    std::vector<std::uint16_t> frozen_layers{};
 };
 
 /// A placed raster image: a definition index plus a transform and an optional clip.
@@ -577,6 +580,15 @@ public:
         }
         return true;
     }
+    /// VPLAYER: replace the layers frozen in viewport `h` (in place; the handle stays).
+    bool set_viewport_frozen_layers(EntityHandle h, std::vector<std::uint16_t> layers) noexcept {
+        ViewportData* v = h.kind == EntityKind::Viewport ? viewports_.get(h.index, h.generation) : nullptr;
+        if (v == nullptr) {
+            return false;
+        }
+        v->frozen_layers = std::move(layers);
+        return true;
+    }
     /// 0 = model space; otherwise the active layout's id. Only that space is drawn,
     /// picked and edited.
     [[nodiscard]] std::uint8_t active_space() const noexcept { return active_space_; }
@@ -599,7 +611,8 @@ public:
                            double rotation, EntityProps props = {});
     /// A paper-space viewport onto model space (see ViewportData).
     EntityHandle add_viewport(Vec2 center, double width, double height, Vec2 view_center,
-                              double scale, bool on, EntityProps props = {});
+                              double scale, bool on, EntityProps props = {},
+                              std::vector<std::uint16_t> frozen_layers = {});
     /// A table. `cells` are the raw cell strings in ROW-MAJOR order (`rows * cols` of
     /// them); `col_widths` and `row_heights` size the grid.
     EntityHandle add_table(std::uint16_t rows, std::uint16_t cols,
