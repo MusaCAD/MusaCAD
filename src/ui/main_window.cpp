@@ -1983,7 +1983,8 @@ void MainWindow::open_matchprop_dialog() {
 void MainWindow::open_layer_dialog() {
     auto* dlg = new LayerDialog([this] { return viewport_->layers(); },
                                 [this] { return viewport_->current_layer(); },
-                                [this](core::Command c) { engine_->submit(std::move(c)); }, this);
+                                [this](core::Command c) { engine_->submit(std::move(c)); }, this,
+                                [this] { return viewport_->mspace_frozen_layers(); });
     dlg->setObjectName(QStringLiteral("LayerManager"));
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
     dlg->show();

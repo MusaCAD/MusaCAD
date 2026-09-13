@@ -284,6 +284,14 @@ std::string serialize_native(const Document& doc) {
         s += l.name;
         s += '\n';
     }
+    // v34: VPFRZNEW idx -- the layer is frozen in every viewport created afterwards.
+    for (std::size_t i = 0; i < doc.layers.size(); ++i) {
+        if (doc.layers[i].vp_freeze_new) {
+            s += "VPFRZNEW ";
+            append_uint(s, i);
+            s += '\n';
+        }
+    }
     // DIMSTYLE th as at eo ee pr ta dlw  <4 element colours: by_layer r g b>  name...
     const auto append_ecolor = [](std::string& out, const ElementColor& ec) {
         append_uint(out, ec.by_layer ? 1 : 0);
@@ -726,6 +734,15 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, v.on ? 1 : 0);
         append_props(s, v.props);
         s += '\n';
+        if (!v.frozen_layers.empty()) { // v34: VPFREEZE n idx... belongs to the record above
+            s += "VPFREEZE ";
+            append_uint(s, v.frozen_layers.size());
+            for (const std::uint16_t li : v.frozen_layers) {
+                s += ' ';
+                append_uint(s, li);
+            }
+            s += '\n';
+        }
     }
     // v9: model-space block references, then the block-definition table. A block's
     // content reuses the same per-entity record formats, bracketed BLOCKDEF..ENDBLOCKDEF.
@@ -1835,7 +1852,27 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("VIEWPORT record malformed");
             }
             doc.viewports.push_back(DocViewport{{vals[0], vals[1]}, vals[2], vals[3], {vals[4], vals[5]},
-                                                vals[6], on != 0, props});
+                                                vals[6], on != 0, props, {}});
+        } else if (key == "VPFREEZE") {
+            // VPFREEZE n idx... (v34): layers frozen in the VIEWPORT record just before it.
+            std::uint64_t n = 0;
+            if (doc.viewports.empty() || tok.size() < 2 || !to_uint(tok[1], n) || tok.size() != 2 + n) {
+                return fail("VPFREEZE record malformed");
+            }
+            for (std::size_t i = 0; i < n; ++i) {
+                std::uint64_t li = 0;
+                if (!to_uint(tok[2 + i], li)) {
+                    return fail("VPFREEZE record malformed");
+                }
+                doc.viewports.back().frozen_layers.push_back(static_cast<std::uint16_t>(li));
+            }
+        } else if (key == "VPFRZNEW") {
+            // VPFRZNEW idx (v34): the layer is frozen in every viewport created afterwards.
+            std::uint64_t li = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], li) || li >= doc.layers.size()) {
+                return fail("VPFRZNEW record malformed");
+            }
+            doc.layers[li].vp_freeze_new = true;
         } else if (key == "IMAGE") {
             // IMAGE def px py w h rot clipped u0 v0 u1 v1 <props7>
             std::uint64_t def = 0;

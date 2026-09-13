@@ -942,6 +942,42 @@ private:
     bool done_ = false;
 };
 
+/// VPLAYER: layer visibility per viewport. Freeze / Thaw layers (named, or those of picked
+/// objects) in the current viewport, all viewports or a selected one; Reset restores a
+/// viewport's defaults; Newfrz creates layers frozen in every viewport; Vpvisdflt sets a
+/// layer's default for new viewports; ? lists what each viewport freezes.
+class VplayerCommand final : public ICommand {
+public:
+    std::string name() const override { return "VPLAYER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::SelectObjects; }
+
+private:
+    enum class State {
+        Option,
+        Layers,
+        SelectObjects,
+        Target,
+        PickViewport,
+        NewNames,
+        DefaultLayers,
+        DefaultValue
+    } state_ = State::Option;
+    void prompt_option(CommandContext& ctx);
+    void ask_target(CommandContext& ctx);
+    void finish(CommandContext& ctx, core::SetViewportLayerFreezeCommand::Target target,
+                core::Vec2 pick);
+
+    core::SetViewportLayerFreezeCommand::Op op_ = core::SetViewportLayerFreezeCommand::Op::Freeze;
+    std::vector<std::string> names_;
+    bool from_selection_ = false;
+    bool default_mode_ = false; ///< the object selection feeds Vpvisdflt, not Freeze/Thaw
+    bool done_ = false;
+};
+
 /// XREF (XR): ? / Attach (a drawing file, insertion point, scale, rotation) / Detach /
 /// Reload. An xref is a block that follows its file.
 class XrefCommand final : public ICommand {

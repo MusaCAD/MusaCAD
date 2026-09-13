@@ -7,6 +7,7 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -192,6 +193,15 @@ public:
     }
     [[nodiscard]] std::uint16_t current_layer() const noexcept {
         return current_layer_.load(std::memory_order_relaxed);
+    }
+    /// VPLAYER: the layers frozen in the viewport being edited through (MSPACE), or
+    /// nullopt when no viewport is current (the layer manager's "VP Freeze" column).
+    [[nodiscard]] std::optional<std::vector<std::uint16_t>> mspace_frozen_layers() const {
+        std::scoped_lock lock(layers_mutex_);
+        if (!mspace_.active) {
+            return std::nullopt;
+        }
+        return mspace_.frozen_layers;
     }
 
     /// Requests the camera frame this world-space AABB once the viewport size is

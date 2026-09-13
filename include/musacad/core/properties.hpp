@@ -37,6 +37,7 @@ struct Layer {
     bool on = true;               ///< off layers don't render
     bool frozen = false;          ///< frozen layers don't render
     bool locked = false;          ///< locked layers render but can't be selected/modified
+    bool vp_freeze_new = false;   ///< frozen in every viewport created later (VPLAYER Vpvisdflt)
     friend bool operator==(const Layer&, const Layer&) = default;
 };
 

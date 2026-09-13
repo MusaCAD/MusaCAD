@@ -156,7 +156,7 @@ EntityHandle GeometryStore::add_datum(std::string_view letter, Vec2 tip, Vec2 po
 
 EntityHandle GeometryStore::add_viewport(Vec2 center, double width, double height,
                                         Vec2 view_center, double scale, bool on,
-                                        EntityProps props) {
+                                        EntityProps props, std::vector<std::uint16_t> frozen_layers) {
     ViewportData d;
     d.center = center;
     d.width = width;
@@ -165,6 +165,7 @@ EntityHandle GeometryStore::add_viewport(Vec2 center, double width, double heigh
     d.scale = scale;
     d.on = on;
     d.props = props;
+    d.frozen_layers = std::move(frozen_layers);
     const auto slot = viewports_.insert(d);
     return EntityHandle{slot.index, slot.generation, EntityKind::Viewport};
 }
@@ -1190,6 +1191,16 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(inserts_, fix);
     for_each_live_mut(xlines_, fix);
     for_each_live_mut(ellipses_, fix);
+    // Viewports: their own layer, and the list of layers frozen in them (VPLAYER).
+    for_each_live_mut(viewports_, [&](ViewportData& v) {
+        fix(v);
+        std::erase(v.frozen_layers, removed);
+        for (std::uint16_t& li : v.frozen_layers) {
+            if (li > removed) {
+                --li;
+            }
+        }
+    });
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

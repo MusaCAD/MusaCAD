@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include <QDialog>
@@ -28,8 +29,12 @@ public:
     using CurrentGetter = std::function<std::uint16_t()>;
     using Submit = std::function<void(core::Command)>;
 
+    /// The layers frozen in the current viewport (MSPACE), or nullopt when no viewport is
+    /// current -- the "VP Freeze" column follows it.
+    using VpFrozenGetter = std::function<std::optional<std::vector<std::uint16_t>>()>;
+
     LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit,
-                QWidget* parent = nullptr);
+                QWidget* parent = nullptr, VpFrozenGetter vp_frozen = {});
 
     /// Rebuilds the table from the current layer list (skips while the user is
     /// editing a cell, and only when the list actually changed).
@@ -43,13 +48,16 @@ public:
     [[nodiscard]] int row_count() const;
 
 private:
-    void rebuild_table(const std::vector<core::Layer>& layers, std::uint16_t current);
+    void rebuild_table(const std::vector<core::Layer>& layers, std::uint16_t current,
+                       const std::optional<std::vector<std::uint16_t>>& vp_frozen);
     void submit_row(int row);
     [[nodiscard]] core::Layer layer_from_row(int row) const;
 
     LayersGetter layers_;
     CurrentGetter current_;
     Submit submit_;
+    VpFrozenGetter vp_frozen_;
+    std::optional<std::vector<std::uint16_t>> shown_vp_; // last rendered VP Freeze state
     QTableWidget* table_ = nullptr;
     std::vector<core::Layer> shown_;   // last rendered list (change detection)
     std::uint16_t shown_current_ = 0;

@@ -16,11 +16,26 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace musacad::ui {
 
 namespace {
 // Column layout of the layer table.
-enum Col { kName = 0, kOn, kFrozen, kLocked, kColor, kLinetype, kLineweight, kColCount };
+// The two VPLAYER columns come last, as in AutoCAD's manager: "New VP Freeze" is the
+// layer's default for viewports created later; "VP Freeze" is the current viewport's.
+enum Col {
+    kName = 0,
+    kOn,
+    kFrozen,
+    kLocked,
+    kColor,
+    kLinetype,
+    kLineweight,
+    kNewVpFreeze,
+    kVpFreeze,
+    kColCount
+};
 
 // A small set of standard lineweights, in hundredths of a millimetre.
 const std::vector<int>& lineweights() {
@@ -29,9 +44,10 @@ const std::vector<int>& lineweights() {
 }
 } // namespace
 
-LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit, QWidget* parent)
+LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit, QWidget* parent,
+                         VpFrozenGetter vp_frozen)
     : QDialog(parent), layers_(std::move(layers)), current_(std::move(current)),
-      submit_(std::move(submit)) {
+      submit_(std::move(submit)), vp_frozen_(std::move(vp_frozen)) {
     setWindowTitle(QStringLiteral("Layer Properties Manager"));
     setModal(false);
     resize(640, 320);
@@ -52,8 +68,9 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 
     table_ = new QTableWidget(0, kColCount, this);
     table_->setHorizontalHeaderLabels({"Name", "On", "Frozen", "Locked", "Color", "Linetype",
-                                       "Lineweight"});
-    table_->horizontalHeader()->setStretchLastSection(true);
+                                       "Lineweight", "New VP Freeze", "VP Freeze"});
+    table_->horizontalHeader()->setStretchLastSection(false);
+    table_->horizontalHeader()->setSectionResizeMode(kName, QHeaderView::Stretch);
     table_->verticalHeader()->setVisible(false);
     outer->addWidget(table_, 1);
 
@@ -69,12 +86,27 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
         }
     });
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
-        if (!building_ && item != nullptr) {
-            submit_row(item->row());
+        if (building_ || item == nullptr) {
+            return;
         }
+        if (item->column() == kVpFreeze) {
+            // VP Freeze: the current viewport only (VPLAYER Freeze/Thaw, Current).
+            const int row = item->row();
+            if (row >= 0 && row < static_cast<int>(shown_.size())) {
+                core::SetViewportLayerFreezeCommand c;
+                c.op = item->checkState() == Qt::Checked
+                           ? core::SetViewportLayerFreezeCommand::Op::Freeze
+                           : core::SetViewportLayerFreezeCommand::Op::Thaw;
+                c.target = core::SetViewportLayerFreezeCommand::Target::Current;
+                c.layer_names = {shown_[static_cast<std::size_t>(row)].name};
+                submit_(c);
+            }
+            return;
+        }
+        submit_row(item->row());
     });
 
-    rebuild_table(layers_(), current_());
+    rebuild_table(layers_(), current_(), vp_frozen_ ? vp_frozen_() : std::nullopt);
 
     // Track external changes (commands take effect asynchronously via the engine).
     auto* timer = new QTimer(this);
@@ -87,16 +119,19 @@ int LayerDialog::row_count() const { return table_->rowCount(); }
 void LayerDialog::refresh() {
     const std::vector<core::Layer> layers = layers_();
     const std::uint16_t cur = current_();
-    if (layers == shown_ && cur == shown_current_) {
+    const std::optional<std::vector<std::uint16_t>> vp = vp_frozen_ ? vp_frozen_() : std::nullopt;
+    if (layers == shown_ && cur == shown_current_ && vp == shown_vp_) {
         return; // nothing changed -> don't disturb in-progress edits
     }
-    rebuild_table(layers, cur);
+    rebuild_table(layers, cur, vp);
 }
 
-void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uint16_t current) {
+void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uint16_t current,
+                                const std::optional<std::vector<std::uint16_t>>& vp_frozen) {
     building_ = true;
     shown_ = layers;
     shown_current_ = current;
+    shown_vp_ = vp_frozen;
     table_->setRowCount(static_cast<int>(layers.size()));
     for (int row = 0; row < static_cast<int>(layers.size()); ++row) {
         const core::Layer& l = layers[static_cast<std::size_t>(row)];
@@ -119,6 +154,17 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
         table_->setItem(row, kOn, check_item(l.on));
         table_->setItem(row, kFrozen, check_item(l.frozen));
         table_->setItem(row, kLocked, check_item(l.locked));
+        table_->setItem(row, kNewVpFreeze, check_item(l.vp_freeze_new));
+        if (vp_frozen.has_value()) {
+            const bool frozen_here = std::find(vp_frozen->begin(), vp_frozen->end(),
+                                               static_cast<std::uint16_t>(row)) != vp_frozen->end();
+            table_->setItem(row, kVpFreeze, check_item(frozen_here));
+        } else {
+            auto* none = new QTableWidgetItem(QStringLiteral("—")); // no current viewport
+            none->setFlags(Qt::NoItemFlags);
+            none->setToolTip(QStringLiteral("Freeze per viewport: MSPACE into a viewport first."));
+            table_->setItem(row, kVpFreeze, none);
+        }
 
         auto* color = new QPushButton(this);
         color->setText(QStringLiteral("■"));
@@ -193,6 +239,9 @@ core::Layer LayerDialog::layer_from_row(int row) const {
     }
     if (auto* lk = table_->item(row, kLocked)) {
         l.locked = lk->checkState() == Qt::Checked;
+    }
+    if (auto* nv = table_->item(row, kNewVpFreeze)) {
+        l.vp_freeze_new = nv->checkState() == Qt::Checked;
     }
     if (auto* lt = qobject_cast<QComboBox*>(table_->cellWidget(row, kLinetype))) {
         l.linetype = static_cast<core::Linetype>(lt->currentIndex());

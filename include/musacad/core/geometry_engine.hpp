@@ -313,6 +313,10 @@ private:
     std::uint16_t load_xref_definition(const std::string& full_path, const std::string& name,
                                        const std::string& xref_path, std::string& err);
     void apply_viewport_view(const SetViewportViewCommand& c);
+    void apply_vplayer(const SetViewportLayerFreezeCommand& c);
+    /// The viewport under `pick` on the active layout (or the MSPACE layout), else the
+    /// one whose frame is within `pick_radius`; null when none.
+    [[nodiscard]] EntityHandle viewport_at(Vec2 pick, double pick_radius) const;
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);

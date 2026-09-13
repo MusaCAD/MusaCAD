@@ -1305,6 +1305,13 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
                fmt_len(v->center.x) + ", " + fmt_len(v->center.y) + "),  view centre (" +
                fmt_len(v->view_center.x) + ", " + fmt_len(v->view_center.y) + "),  scale " +
                fmt_len(v->scale) + " mm/unit" + (v->on ? "" : ",  off");
+        if (!v->frozen_layers.empty()) {
+            out += ",  frozen here:";
+            for (const std::uint16_t li : v->frozen_layers) {
+                const Layer* l = store_.layer(li);
+                out += std::string(" ") + (l != nullptr ? l->name : std::string("?"));
+            }
+        }
         break;
     }
     default:
@@ -3832,6 +3839,11 @@ void GeometryEngine::apply_create_viewport(const CreateViewportCommand& c) {
         vp.view_center = {0.0, 0.0};
         vp.scale = 1.0;
     }
+    for (std::uint16_t li = 0; li < static_cast<std::uint16_t>(store_.layer_count()); ++li) {
+        if (store_.layer(li)->vp_freeze_new) {
+            vp.frozen_layers.push_back(li); // VPLAYER Vpvisdflt / Newfrz
+        }
+    }
     const Command add = vp;
     const EntityHandle nh = create_indexed(add);
     push_create_item(c.group, nh, add);
@@ -3870,6 +3882,229 @@ void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
     geom_dirty_ = true;
     dirty_ = true;
     report(c.on == 0 ? "Viewport off." : c.on == 1 ? "Viewport on." : "Viewport updated.");
+}
+
+EntityHandle GeometryEngine::viewport_at(Vec2 pick, double pick_radius) const {
+    // The viewport under the point on the active layout (inside it), else the one whose
+    // frame is within the aperture.
+    EntityHandle target = EntityHandle::null();
+    const auto& vps = store_.viewports();
+    for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+        if (!vps.alive(i)) {
+            continue;
+        }
+        const ViewportData& v = vps.data()[i];
+        const std::uint8_t space = store_.mspace_viewport().is_null() ? store_.active_space()
+                                                                      : store_.mspace_layout();
+        if (v.props.space() == space && std::abs(pick.x - v.center.x) <= v.width * 0.5 &&
+            std::abs(pick.y - v.center.y) <= v.height * 0.5) {
+            target = EntityHandle{i, vps.generations()[i], EntityKind::Viewport};
+        }
+    }
+    if (target.is_null()) {
+        const EntityHandle near = pick_nearest(pick, pick_radius);
+        if (near.kind == EntityKind::Viewport) {
+            target = near;
+        }
+    }
+    return target;
+}
+
+void GeometryEngine::apply_vplayer(const SetViewportLayerFreezeCommand& c) {
+    using Op = SetViewportLayerFreezeCommand::Op;
+    using Target = SetViewportLayerFreezeCommand::Target;
+    const std::uint16_t nlayers = static_cast<std::uint16_t>(store_.layer_count());
+    const auto layer_name = [&](std::uint16_t li) {
+        const Layer* l = store_.layer(li);
+        return l != nullptr ? l->name : std::string("?");
+    };
+    const auto viewport_label = [&](EntityHandle h) {
+        const ViewportData* v = store_.viewport(h);
+        const Layout* lay = v != nullptr ? store_.layout_by_id(v->props.space()) : nullptr;
+        return "viewport " + std::to_string(h.index + 1) +
+               (lay != nullptr ? " (" + lay->name + ")" : std::string());
+    };
+
+    // The layers: named (case-insensitive), plus the current selection's when asked.
+    std::vector<std::uint16_t> layers;
+    const auto add_layer_index = [&](std::uint16_t li) {
+        if (std::find(layers.begin(), layers.end(), li) == layers.end()) {
+            layers.push_back(li);
+        }
+    };
+    std::string unknown;
+    for (const std::string& name : c.layer_names) {
+        if (name.empty()) {
+            continue;
+        }
+        bool found = false;
+        for (std::uint16_t li = 0; li < nlayers; ++li) {
+            if (upper_ascii(store_.layer(li)->name) == upper_ascii(name)) {
+                add_layer_index(li);
+                found = true;
+            }
+        }
+        if (!found) {
+            unknown += (unknown.empty() ? "" : ", ") + name;
+        }
+    }
+    if (c.from_selection) {
+        for (const EntityHandle h : selection_) {
+            if (const EntityProps* p = store_.props(h)) {
+                add_layer_index(p->layer);
+            }
+        }
+    }
+    const std::string unknown_note = unknown.empty() ? "" : " (no layer named " + unknown + ")";
+
+    if (c.op == Op::List) {
+        std::string msg;
+        const auto& vps = store_.viewports();
+        for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+            if (!vps.alive(i)) {
+                continue;
+            }
+            const EntityHandle h{i, vps.generations()[i], EntityKind::Viewport};
+            std::string names;
+            for (const std::uint16_t li : vps.data()[i].frozen_layers) {
+                names += (names.empty() ? "" : ", ") + layer_name(li);
+            }
+            msg += (msg.empty() ? "" : "; ") + viewport_label(h) + ": " +
+                   (names.empty() ? std::string("nothing frozen") : names);
+        }
+        report(msg.empty() ? "No viewports." : "Frozen per viewport -- " + msg + ".");
+        return;
+    }
+    if (c.op == Op::VisDefault) {
+        if (layers.empty()) {
+            report("VPLAYER: no layers to change" + unknown_note + ".");
+            return;
+        }
+        for (const std::uint16_t li : layers) {
+            Layer l = *store_.layer(li);
+            l.vp_freeze_new = c.value;
+            store_.set_layer(li, l);
+        }
+        dirty_ = true;
+        report(std::to_string(layers.size()) + " layer(s) " + (c.value ? "frozen" : "thawed") +
+               " by default in new viewports" + unknown_note + ".");
+        return;
+    }
+    if (c.op == Op::Newfrz) {
+        int made = 0;
+        std::string existing;
+        for (const std::string& name : c.layer_names) {
+            if (name.empty()) {
+                continue;
+            }
+            bool taken = false;
+            for (std::uint16_t li = 0; li < nlayers; ++li) {
+                taken = taken || upper_ascii(store_.layer(li)->name) == upper_ascii(name);
+            }
+            if (taken) {
+                existing += (existing.empty() ? "" : ", ") + name;
+                continue;
+            }
+            Layer l;
+            l.name = name;
+            l.vp_freeze_new = true;
+            const std::uint16_t li = store_.add_layer(l);
+            const auto& vps = store_.viewports();
+            for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+                if (vps.alive(i)) {
+                    std::vector<std::uint16_t> list = vps.data()[i].frozen_layers;
+                    list.push_back(li);
+                    store_.set_viewport_frozen_layers(
+                        EntityHandle{i, vps.generations()[i], EntityKind::Viewport}, std::move(list));
+                }
+            }
+            ++made;
+        }
+        geom_dirty_ = true;
+        dirty_ = true;
+        report(std::to_string(made) + " new layer(s) frozen in all viewports" +
+               (existing.empty() ? "" : " (already exists: " + existing + ")") + ".");
+        return;
+    }
+
+    // Freeze / Thaw / Reset: which viewports.
+    std::vector<EntityHandle> targets;
+    switch (c.target) {
+    case Target::Current:
+        if (!store_.mspace_viewport().is_null()) {
+            targets.push_back(store_.mspace_viewport());
+        }
+        break;
+    case Target::All: {
+        const auto& vps = store_.viewports();
+        for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+            if (vps.alive(i)) {
+                targets.push_back(EntityHandle{i, vps.generations()[i], EntityKind::Viewport});
+            }
+        }
+        break;
+    }
+    case Target::Pick:
+        if (const EntityHandle t = viewport_at(c.pick, c.pick_radius); !t.is_null()) {
+            targets.push_back(t);
+        }
+        break;
+    }
+    if (targets.empty()) {
+        report(c.target == Target::Current
+                   ? "VPLAYER: no current viewport -- MSPACE into one, or answer All / Select."
+                   : "VPLAYER: no viewport there.");
+        return;
+    }
+    if (c.op != Op::Reset && layers.empty()) {
+        report("VPLAYER: no layers to " + std::string(c.op == Op::Freeze ? "freeze" : "thaw") +
+               unknown_note + ".");
+        return;
+    }
+    int changed = 0;
+    for (const EntityHandle h : targets) {
+        const ViewportData* v = store_.viewport(h);
+        std::vector<std::uint16_t> list = v->frozen_layers;
+        if (c.op == Op::Reset) {
+            list.clear();
+            for (std::uint16_t li = 0; li < nlayers; ++li) {
+                if (store_.layer(li)->vp_freeze_new) {
+                    list.push_back(li);
+                }
+            }
+        } else if (c.op == Op::Freeze) {
+            for (const std::uint16_t li : layers) {
+                if (std::find(list.begin(), list.end(), li) == list.end()) {
+                    list.push_back(li);
+                }
+            }
+        } else {
+            for (const std::uint16_t li : layers) {
+                std::erase(list, li);
+            }
+        }
+        if (list != v->frozen_layers) {
+            store_.set_viewport_frozen_layers(h, std::move(list));
+            ++changed;
+        }
+    }
+    if (changed > 0) {
+        geom_dirty_ = true;
+        dirty_ = true;
+        prune_selection();
+    }
+    std::string what;
+    if (c.op == Op::Reset) {
+        what = "reset to the layer defaults";
+    } else {
+        std::string names;
+        for (const std::uint16_t li : layers) {
+            names += (names.empty() ? "" : ", ") + layer_name(li);
+        }
+        what = std::string(c.op == Op::Freeze ? "froze " : "thawed ") + names;
+    }
+    report("VPLAYER: " + what + " in " + std::to_string(targets.size()) + " viewport(s)" +
+           (changed == 0 ? " (no change)" : "") + unknown_note + ".");
 }
 
 std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
@@ -4183,7 +4418,10 @@ void GeometryEngine::apply_audit(bool fix) {
             erase = store_.image(h)->def >= nimages;
             break;
         case EntityKind::Viewport:
-            break; // nothing to reference
+            for (const std::uint16_t li : store_.viewport(h)->frozen_layers) {
+                bad_ref = bad_ref || li >= nlayers; // VPLAYER list past the layer table
+            }
+            break;
         case EntityKind::Polyline:
             erase = store_.polyline(h)->count < 2;
             break;
@@ -4249,6 +4487,10 @@ void GeometryEngine::apply_audit(bool fix) {
                     }
                     if constexpr (std::is_same_v<std::decay_t<decltype(x)>, AddAttDefCommand>) {
                         x.text.style.clear();
+                    }
+                    if constexpr (std::is_same_v<std::decay_t<decltype(x)>, AddViewportCommand>) {
+                        std::erase_if(x.frozen_layers,
+                                      [&](std::uint16_t li) { return li >= nlayers; });
                     }
                     if constexpr (requires { x.props; }) {
                         if (bad_layer && x.props.has_value()) {
@@ -6814,6 +7056,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_create_viewport(c);
             } else if constexpr (std::is_same_v<T, SetViewportViewCommand>) {
                 apply_viewport_view(c);
+            } else if constexpr (std::is_same_v<T, SetViewportLayerFreezeCommand>) {
+                apply_vplayer(c);
             } else if constexpr (std::is_same_v<T, XrefAttachCommand>) {
                 apply_xref_attach(c);
             } else if constexpr (std::is_same_v<T, XrefReloadCommand>) {
@@ -7379,6 +7623,7 @@ void GeometryEngine::rebuild_and_publish() {
         buf.mspace.view_center = mv->view_center;
         buf.mspace.scale = mv->scale;
         buf.mspace.paper_px_per_mm = store_.mspace_paper_px_per_mm();
+        buf.mspace.frozen_layers = mv->frozen_layers;
     }
     buf.viewport_rects.clear();
     if (store_.active_space() != 0) {

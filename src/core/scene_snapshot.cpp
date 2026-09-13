@@ -67,15 +67,23 @@ std::uint64_t height_bucket(double h) {
 /// The space the builder is emitting: the active one, or model space while a layout's
 /// viewports are being filled (see build_render_snapshot_in).
 thread_local std::uint8_t t_build_space = 0;
+/// VPLAYER: the layers frozen in the viewport whose model view is being built (null when
+/// the build is not through a viewport). Consulted by visible()/editable() only.
+thread_local const std::vector<std::uint16_t>* t_vp_frozen = nullptr;
 
+bool vp_frozen(std::uint16_t layer) {
+    return t_vp_frozen != nullptr &&
+           std::find(t_vp_frozen->begin(), t_vp_frozen->end(), layer) != t_vp_frozen->end();
+}
 bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && p.space() == t_build_space;
+    return l != nullptr && l->on && !l->frozen && p.space() == t_build_space && !vp_frozen(p.layer);
 }
 /// Editable = visible and not on a locked layer (locked text can't be edited).
 bool editable(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && !l->locked && p.space() == t_build_space;
+    return l != nullptr && l->on && !l->frozen && !l->locked && p.space() == t_build_space &&
+           !vp_frozen(p.layer);
 }
 
 // Liang-Barsky: clip the segment a-b to the rectangle; false when nothing remains.
@@ -173,7 +181,17 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
 
 void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& kernel,
                            RenderSnapshot& out, double tolerance, double ltscale) {
+    // MSPACE: model space edited through a viewport hides the layers frozen in it.
+    const std::vector<std::uint16_t>* frozen = nullptr;
+    if (store.active_space() == 0) {
+        if (const ViewportData* mv = store.viewport(store.mspace_viewport());
+            mv != nullptr && !mv->frozen_layers.empty()) {
+            frozen = &mv->frozen_layers;
+        }
+    }
+    t_vp_frozen = frozen;
     build_render_snapshot_in(store, kernel, out, tolerance, ltscale, store.active_space(), true);
+    t_vp_frozen = nullptr;
 }
 
 void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel& kernel,
@@ -783,6 +801,17 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             std::vector<Vec2> poly;
             for (const EntityHandle h : vps) {
                 const ViewportData* v = store.viewport(h);
+                // VPLAYER: a viewport with its own frozen layers gets its own model build.
+                RenderSnapshot own;
+                const RenderSnapshot* model_src = &model;
+                if (!v->frozen_layers.empty()) {
+                    t_vp_frozen = &v->frozen_layers;
+                    build_render_snapshot_in(store, kernel, own, tolerance, ltscale, 0, false);
+                    t_vp_frozen = nullptr;
+                    t_build_space = space;
+                    model_src = &own;
+                }
+                const RenderSnapshot& mdl = *model_src;
                 const ResolvedProps rp = entity_resolved(store, v->props);
                 const double x0 = v->center.x - v->width * 0.5;
                 const double x1 = v->center.x + v->width * 0.5;
@@ -800,9 +829,9 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     return Vec2{v->center.x + (m.x - v->view_center.x) * sc,
                                 v->center.y + (m.y - v->view_center.y) * sc};
                 };
-                for (const ColorBatch& b : model.line_batches) {
+                for (const ColorBatch& b : mdl.line_batches) {
                     segs.clear();
-                    for_each_line_segment(model, b, [&](const Vec2& ma, const Vec2& mb) {
+                    for_each_line_segment(mdl, b, [&](const Vec2& ma, const Vec2& mb) {
                         Vec2 a = to_paper(ma);
                         Vec2 c = to_paper(mb);
                         if (clip_segment(a, c, x0, y0, x1, y1)) {
@@ -815,9 +844,9 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                                   static_cast<double>(b.text_height) * sc);
                     }
                 }
-                for (const ColorBatch& b : model.point_batches) {
+                for (const ColorBatch& b : mdl.point_batches) {
                     for (std::uint32_t i = b.first; i < b.first + b.count; ++i) {
-                        const Vec2 p = to_paper(model.points[i]);
+                        const Vec2 p = to_paper(mdl.points[i]);
                         if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
                             point_groups[pack_rgb(b.color)].push_back(p);
                         }
@@ -836,8 +865,8 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                         }
                     }
                 };
-                for (const ColorBatch& b : model.fill_batches) {
-                    clipped_tris(model.fill_vertices, b.first, b.count, tris);
+                for (const ColorBatch& b : mdl.fill_batches) {
+                    clipped_tris(mdl.fill_vertices, b.first, b.count, tris);
                     if (tris.empty()) {
                         continue;
                     }
@@ -847,12 +876,12 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                         add_fills(b.color, tris);
                     }
                 }
-                if (!model.wipeout_vertices.empty()) {
-                    clipped_tris(model.wipeout_vertices, 0,
-                                 static_cast<std::uint32_t>(model.wipeout_vertices.size()), tris);
+                if (!mdl.wipeout_vertices.empty()) {
+                    clipped_tris(mdl.wipeout_vertices, 0,
+                                 static_cast<std::uint32_t>(mdl.wipeout_vertices.size()), tris);
                     out.wipeout_vertices.insert(out.wipeout_vertices.end(), tris.begin(), tris.end());
                 }
-                for (const ImageInstance& im : model.images) {
+                for (const ImageInstance& im : mdl.images) {
                     ImageInstance inst = im;
                     bool inside = true;
                     for (Vec2& q : inst.quad) {

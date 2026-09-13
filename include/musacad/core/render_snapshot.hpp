@@ -55,6 +55,7 @@ struct MspaceInfo {
     Vec2 view_center;
     double scale = 1.0;           ///< paper mm per model unit
     double paper_px_per_mm = 1.0; ///< the sheet's on-screen scale when MSPACE began
+    std::vector<std::uint16_t> frozen_layers; ///< VPLAYER: layers frozen in that viewport
 };
 /// A viewport's frame on the active layout (for the double-click hit test).
 struct ViewportRect {

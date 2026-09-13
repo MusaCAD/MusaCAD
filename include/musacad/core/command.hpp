@@ -876,6 +876,7 @@ struct AddViewportCommand {
     bool on = true;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::vector<std::uint16_t> frozen_layers{}; ///< VPLAYER: layers frozen in this viewport only
 };
 /// MVIEW: a viewport from two sheet corners (or, with `fit_sheet`, filling the sheet
 /// inside a 10 mm margin) that shows the whole model, fitted.
@@ -894,6 +895,23 @@ struct SetViewportViewCommand {
     double scale = 0.0;
     std::optional<Vec2> view_center;
     std::uint64_t group = 0;
+};
+/// VPLAYER: layer visibility per viewport. Freeze / Thaw the named layers (or the layers
+/// of the current selection) in the current viewport (MSPACE), in every viewport, or in
+/// the one under `pick`; Reset puts a viewport back to the layers' defaults; Newfrz makes
+/// a new layer frozen in every viewport; VisDefault sets a layer's default for viewports
+/// created later; List reports what each viewport freezes. Like the layer table's own
+/// flags, this edits in place (not an undo step).
+struct SetViewportLayerFreezeCommand {
+    enum class Op : std::uint8_t { Freeze, Thaw, Reset, Newfrz, VisDefault, List };
+    enum class Target : std::uint8_t { Current, All, Pick };
+    Op op = Op::Freeze;
+    Target target = Target::Current;
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    std::vector<std::string> layer_names; ///< by name (case-insensitive); Newfrz: the new names
+    bool from_selection = false;          ///< also the layers of the current selection
+    bool value = true;                    ///< VisDefault: frozen (true) or thawed in new viewports
 };
 /// MSPACE: edit model space through the viewport under `pick` (a point inside it, or on
 /// its frame). `paper_px_per_mm` is the sheet's on-screen scale at that moment, kept so
@@ -1171,7 +1189,7 @@ using Command =
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,
                  CreateViewportCommand, SetViewportViewCommand, EnterMspaceCommand, LeaveMspaceCommand,
                  XrefAttachCommand, XrefReloadCommand, XrefDetachCommand, XrefListCommand,
-                 SetImagePolyClipCommand,
+                 SetImagePolyClipCommand, SetViewportLayerFreezeCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
