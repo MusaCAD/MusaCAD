@@ -10,8 +10,10 @@ The playbook for cutting a release (v0.2.0 and onward). v0.1.0 followed this exa
 | Linux | `MusaCAD-<ver>-x86_64.AppImage` | `packaging/linux/build_appimage.sh` (local) **and** `.github/workflows/build-linux.yml` (CI) |
 | Linux | `MusaCAD-<ver>.flatpak` | `packaging/flatpak/build_flatpak.sh` (local) |
 | Windows | `MusaCAD-<ver>-x86_64-setup.exe` | `.github/workflows/build-windows.yml` (CI, `windows-latest`) |
+| macOS | `MusaCAD-<ver>-arm64.dmg` (manual workflow only; command line works, the viewport needs an OpenGL 4.5 backend macOS lacks) | `.github/workflows/build-macos.yml` (CI, `macos-14`) |
 
-Packaging detail lives in `packaging/linux/BUILD_APPIMAGE.md` and `packaging/flatpak/BUILD_FLATPAK.md`.
+Packaging detail lives in `packaging/linux/BUILD_APPIMAGE.md`, `packaging/flatpak/BUILD_FLATPAK.md`
+and `packaging/macos/BUILD_MACOS.md`.
 
 ## Versioning
 
@@ -98,7 +100,9 @@ Windows asset from the release afterwards.
 
 ## Post-release
 
-- Flathub submission (manifest is ready; see `packaging/flatpak/BUILD_FLATPAK.md` → "Flathub — STAGED").
+- Flathub: update `tag` / `commit` in `packaging/flatpak/flathub/com.musacad.MusaCAD.yml` (and in
+  the Flathub repository once the app is there); see `packaging/flatpak/BUILD_FLATPAK.md` →
+  "Flathub submission — PREPARED" for the two decisions the linter raises.
 - File follow-up issues for anything deferred or surfaced during verification.
 
 ## Linux-only releases

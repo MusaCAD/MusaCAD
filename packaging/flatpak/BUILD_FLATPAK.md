@@ -54,19 +54,31 @@ flatpak run --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/out.pdf|1" com.mus
 - File access is limited to `--filesystem=home`; the OpenGL viewport uses `--device=dri`;
   X11 (`fallback-x11`) and Wayland sockets are granted.
 
-## Flathub submission — STAGED
+## Flathub submission — PREPARED
 
-The manifest + AppStream metainfo are ready, but submission to Flathub is **deferred until after
-the GitHub release** (tracked in `docs/TODO.md`). For submission:
+`flathub/com.musacad.MusaCAD.yml` is the submission manifest: the same build as the local one,
+with the tagged release as its source (`tag` + `commit`, updated together for each release).
+The AppStream metainfo carries a `<release>` per version and its screenshot URLs resolve on
+`main`. Lint both before a submission (the linter ships with `org.flatpak.Builder`):
 
-1. Swap the manifest's `dir` source for the tagged release:
-   ```yaml
-   sources:
-     - type: git
-       url: https://github.com/MusaCAD/MusaCAD.git
-       tag: v0.1.0
-       commit: <full-sha>
-   ```
-2. Open a PR adding `com.musacad.MusaCAD.yml` to `github.com/flathub/flathub` (new-app branch).
-3. Confirm the AppStream metainfo passes `flatpak run org.flatpak.Builder --validate` / the
-   Flathub linter, and that the screenshot URLs resolve on `main`.
+```sh
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/flathub/com.musacad.MusaCAD.yml
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder appstream packaging/flatpak/com.musacad.MusaCAD.metainfo.xml
+```
+
+The metainfo validates. The manifest reports two items that are decisions, not bugs:
+
+- `finish-args-home-filesystem-access` — Flathub prefers the file-chooser portal to
+  `--filesystem=home`. Musa CAD needs the folder around a drawing, not just the picked file:
+  external references, attached images and the images a DXF export writes beside it are all
+  found by relative path. Ask for the exception in the submission PR with that justification
+  (the linter's documented route), or narrow to `xdg-documents` if the reviewers insist.
+- `appid-url-not-reachable` — the id `com.musacad.MusaCAD` implies `https://musacad.com`,
+  which does not resolve today. Either serve the domain before submitting, or rename the app
+  id to `io.github.MusaCAD.MusaCAD` (Flathub's form for GitHub-hosted projects). A rename
+  touches the manifest's `app-id`, the `.desktop` and icon file names installed by the build
+  commands, the metainfo `<id>`, `build_flatpak.sh`'s `APPID`, and the self-test / docs that
+  mention the id; existing local installs would then be a different app.
+
+Then open a PR adding the manifest to `github.com/flathub/flathub` (a new-app branch), and
+after each release update `tag` / `commit` in the Flathub repository.

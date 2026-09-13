@@ -1,0 +1,101 @@
+name: Build macOS app
+
+# Manual only for now (issue #2). The build proves the tree compiles with Apple clang and
+# packages a MusaCAD.app + .dmg whose command line (--check / --plot) is smoke-tested
+# headless on the runner. The GUI viewport needs OpenGL 4.5 Core, which macOS does not
+# provide (it stops at 4.1), so the bundle is not a supported desktop build until a
+# Metal or GL 4.1 render backend exists; that is why this workflow does not run on tags
+# and does not publish. Signing + notarization run only when the secrets exist.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for the bundle (e.g. 0.4.0)"
+        required: false
+        default: "0.4.0"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-app:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        run: echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.1"
+          host: mac
+          target: desktop
+          arch: clang_64
+          modules: "qtimageformats"
+          cache: true
+
+      - name: Install build tools
+        run: brew install ninja librsvg
+
+      - name: Configure (Release, Ninja)
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
+
+      - name: Build
+        run: cmake --build build --target musacad_app
+
+      - name: Assemble MusaCAD.app + macdeployqt
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: packaging/macos/build_app.sh "$VERSION" build/bin/musacad_app
+
+      - name: Smoke-test the bundle (headless --check and --plot)
+        run: |
+          APP=MusaCAD.app/Contents/MacOS/musacad_app
+          QT_QPA_PLATFORM=offscreen "$APP" --check tests/fixtures/cli_demo.musa
+          QT_QPA_PLATFORM=offscreen "$APP" --plot tests/fixtures/cli_demo.musa smoke.pdf
+          test -s smoke.pdf && echo "plot ok: $(wc -c < smoke.pdf) bytes"
+
+      - name: Sign and notarize (only when the secrets are configured)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERT_P12" ] || [ -z "$APPLE_ID" ]; then
+            echo "No signing secrets: the bundle stays unsigned (right-click > Open to run it)."
+            exit 0
+          fi
+          echo "$MACOS_CERT_P12" | base64 --decode > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          codesign --deep --force --options runtime --timestamp \
+            --sign "Developer ID Application" MusaCAD.app
+          codesign --verify --deep --strict MusaCAD.app
+          ditto -c -k --keepParent MusaCAD.app MusaCAD.zip
+          xcrun notarytool submit MusaCAD.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple MusaCAD.app
+
+      - name: Package the .dmg
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          hdiutil create -volname "Musa CAD" -srcfolder MusaCAD.app -ov -format UDZO \
+            "MusaCAD-$VERSION-arm64.dmg"
+          ls -la MusaCAD-*.dmg
+
+      - name: Upload .dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusaCAD-${{ steps.ver.outputs.version }}-arm64.dmg
+          path: MusaCAD-*-arm64.dmg
+          if-no-files-found: error
