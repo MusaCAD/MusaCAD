@@ -3,6 +3,8 @@
 
 #include "musacad/core/text/stroke_font.hpp"
 
+#include "musacad/core/math/math.hpp"
+
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -241,7 +243,6 @@ Stroke arc_stroke(double cx, double cy, double rx, double ry, double a0_deg, dou
                   int steps) {
     Stroke s;
     s.reserve(static_cast<std::size_t>(steps) + 1);
-    constexpr double kPi = 3.14159265358979;
     for (int i = 0; i <= steps; ++i) {
         const double t = static_cast<double>(i) / steps;
         const double a = (a0_deg + (a1_deg - a0_deg) * t) * kPi / 180.0;
