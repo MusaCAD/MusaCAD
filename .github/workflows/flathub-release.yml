@@ -1,0 +1,107 @@
+name: Flathub update
+
+# Every release goes to Flathub (issue #1). A pushed release tag (v*) -- or a manual run
+# naming one -- rewrites the Flathub manifest's source pin to that tag's commit and opens
+# the pull request in the app's Flathub repository, from a fork owned by the token's user.
+#
+# Needs the repository secret FLATHUB_TOKEN: a GitHub token of a Flathub maintainer of the
+# app with permission to fork and to open pull requests on public repositories (a classic
+# token with `public_repo`). Without it, or before the app exists on Flathub (the first
+# submission is a human's pull request -- packaging/flatpak/BUILD_FLATPAK.md), the job
+# explains and ends green. Flathub's own external-data checker also follows the manifest's
+# x-checker-data, so a release reaches Flathub even if this workflow never runs; the job
+# skips when a pull request for the version is already open.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to submit (e.g. v0.4.1)"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  APP_ID: org.musacad.MusaCAD
+  UPSTREAM: MusaCAD/MusaCAD
+
+jobs:
+  flathub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history, for the tag's commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the tag and its commit
+        id: rel
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="${{ github.event.inputs.tag }}"; fi
+          COMMIT="$(git rev-parse "${TAG}^{commit}")"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "${TAG} -> ${COMMIT}"
+
+      - name: Compose the Flathub manifest for this release
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+          COMMIT: ${{ steps.rel.outputs.commit }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+          src = open('packaging/flatpak/flathub/org.musacad.MusaCAD.yml').read()
+          tag, commit = os.environ['TAG'], os.environ['COMMIT']
+          # The git source: one `commit:` line, optionally preceded by a `tag:` line and a
+          # comment block about the pin; the release gets tag + commit and no comment.
+          src = re.sub(r"(?m)^(\s*#[^\n]*\n)+(?=\s*(tag|commit):)", "", src)
+          src = re.sub(r"(?m)^(\s*)tag: [^\n]*\n", "", src)
+          src = re.sub(r"(?m)^(\s*)commit: [0-9a-f]{40}\n",
+                       lambda m: f"{m.group(1)}tag: {tag}\n{m.group(1)}commit: {commit}\n", src, count=1)
+          assert f"commit: {commit}" in src and f"tag: {tag}" in src
+          os.makedirs('out', exist_ok=True)
+          open('out/org.musacad.MusaCAD.yml', 'w').write(src)
+          print(src)
+          EOF
+
+      - name: Open the update pull request on Flathub
+        env:
+          GH_TOKEN: ${{ secrets.FLATHUB_TOKEN }}
+          TAG: ${{ steps.rel.outputs.tag }}
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -e
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::No FLATHUB_TOKEN secret: not opening a Flathub pull request. Flathub's checker follows"
+            echo "::notice::x-checker-data on its own; to have this job do it, add the secret (packaging/flatpak/BUILD_FLATPAK.md)."
+            exit 0
+          fi
+          if ! gh api "repos/flathub/${APP_ID}" >/dev/null 2>&1; then
+            echo "::notice::flathub/${APP_ID} does not exist yet: the first submission is a human's pull request"
+            echo "::notice::against flathub/flathub (new-pr) -- packaging/flatpak/BUILD_FLATPAK.md."
+            exit 0
+          fi
+          if [ -n "$(gh pr list --repo "flathub/${APP_ID}" --state open --search "${TAG} in:title" --json number -q '.[].number')" ]; then
+            echo "::notice::A pull request for ${TAG} is already open on flathub/${APP_ID}; nothing to do."
+            exit 0
+          fi
+          USER="$(gh api user -q .login)"
+          gh repo fork "flathub/${APP_ID}" --clone=false >/dev/null 2>&1 || true
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/flathub/${APP_ID}.git" app
+          cd app
+          git config user.name "Musa CAD release"
+          git config user.email "noreply@musacad.org"
+          BRANCH="release-${VERSION}"
+          git checkout -b "$BRANCH"
+          cp ../out/org.musacad.MusaCAD.yml "${APP_ID}.yml"
+          git add "${APP_ID}.yml"
+          git commit -m "Update to ${TAG}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${USER}/${APP_ID}.git" "$BRANCH" --force
+          gh pr create --repo "flathub/${APP_ID}" --base master --head "${USER}:${BRANCH}" \
+            --title "Update to ${TAG}" \
+            --body "Musa CAD ${TAG}: https://github.com/${UPSTREAM}/releases/tag/${TAG}. Notes: https://github.com/${UPSTREAM}/blob/${TAG}/docs/release-notes/${TAG}.md. Opened by the release workflow in ${UPSTREAM}."
+          echo "pull request opened on flathub/${APP_ID} from ${USER}:${BRANCH}"

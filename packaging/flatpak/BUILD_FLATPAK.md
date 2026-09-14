@@ -81,6 +81,41 @@ images a DXF export writes beside it are all found by relative path. State that 
 submission PR as the reason for the exception (the linter's documented route); narrow to
 `xdg-documents` only if the reviewers insist.
 
-To submit: fork `github.com/flathub/flathub`, branch from `new-pr`, add
-`org.musacad.MusaCAD.yml` (this directory's `flathub/` copy) at the top level, and open the
-PR against `new-pr`. After each release update `tag` / `commit` there.
+### The first submission (a person's pull request)
+
+Flathub's submission checklist asks the submitter to affirm, among other things, that no AI
+tool or agent generated or automated the pull request or its review interactions, and to
+disclose AI-generated material in the application. The pull request is therefore yours to
+open and to answer for. `flathub/submit.sh` does the mechanics up to that point -- it forks
+`github.com/flathub/flathub` under your account, clones the fork's `new-pr` branch, adds
+`org.musacad.MusaCAD.yml` at the top level and pushes a branch -- then prints the
+`gh pr create` command. `flathub/PR_BODY_DRAFT.md` is a draft of the body with the
+checklist, the requested `--filesystem=home` exception and its reason: read it, put it in
+your own words, tick only what is true, attach the short video the checklist asks for,
+and open the pull request. Flathub then builds the manifest, a reviewer looks at it, and
+on acceptance the app gets its own repository, `github.com/flathub/org.musacad.MusaCAD`,
+with you as a maintainer.
+
+The manifest pins a commit rather than the v0.4.0 tag: that tag predates the GCC 15 fixes
+the KDE runtime's toolchain needs, and a submission must build. The next release tag
+replaces the pin (below).
+
+### Every release after that (automatic)
+
+Two things keep Flathub current once the app is there:
+
+- **Flathub's external-data checker** reads the manifest's `x-checker-data` (a `git`
+  source with `tag-pattern: "^v([\d.]+)$"`) and opens a pull request in the app's Flathub
+  repository whenever a new `v*` tag appears upstream. You merge it once its build is green
+  (auto-merge is not allowed for a new app, so the linter rejects `flathub.json`).
+- **`.github/workflows/flathub-release.yml`** in this repository does the same on a pushed
+  release tag (or a manual run naming one): it rewrites the pin to the tag and its commit,
+  forks the Flathub repository under your account, pushes a `release-<ver>` branch and opens
+  the pull request there. It needs the repository secret **`FLATHUB_TOKEN`** (a GitHub token
+  of yours with permission to fork and to open pull requests on public repositories, e.g. a
+  classic token with `public_repo`); without it, or before the Flathub repository exists,
+  the job explains why it did nothing and ends green. It also skips when a pull request for
+  that version is already open, so the two paths never duplicate each other.
+
+Each release must also add its `<release>` entry to `org.musacad.MusaCAD.metainfo.xml`
+(`docs/RELEASING.md` pre-flight), since the metainfo is read from the tagged source.

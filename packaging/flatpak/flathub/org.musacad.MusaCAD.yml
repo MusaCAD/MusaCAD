@@ -1,9 +1,12 @@
-# Flathub submission manifest for Musa CAD (issue #1).
+# Flathub manifest for Musa CAD (issue #1): the one that lives in the Flathub repository.
 #
-# This is the manifest to add to a `github.com/flathub/flathub` new-app pull request. It
-# differs from ../org.musacad.MusaCAD.yml (the local build) only in its source: the
-# tagged release, pinned to its commit, instead of a local directory. Update `tag` and
-# `commit` together for each release (docs/RELEASING.md, "Post-release").
+# It differs from ../org.musacad.MusaCAD.yml (the local build) only in its source: the
+# published tree, pinned to a commit, instead of a local directory. Releases update it two
+# ways: Flathub's external data checker follows `x-checker-data` (a new v* tag opens a
+# pull request there, which you merge), and this repository's
+# `.github/workflows/flathub-release.yml` opens the same pull request itself on a tag push
+# when the FLATHUB_TOKEN secret exists. The first submission is a human's pull request --
+# submit.sh prepares it (packaging/flatpak/BUILD_FLATPAK.md).
 app-id: org.musacad.MusaCAD
 runtime: org.kde.Platform
 runtime-version: '6.11'
@@ -39,5 +42,9 @@ modules:
     sources:
       - type: git
         url: https://github.com/MusaCAD/MusaCAD.git
-        tag: v0.4.0
-        commit: 1e494acadeb39223be2d55c4ad42eabbf2b2af7f
+        # The v0.4.0 tag predates the GCC 15 fixes the KDE runtime's toolchain needs, so
+        # the pin is a later commit on main; the next release tag replaces it.
+        commit: 1c1e80be9ec16c721ab6eac4ba00fc5b40c37ac9
+        x-checker-data:
+          type: git
+          tag-pattern: "^v([\\d.]+)$"

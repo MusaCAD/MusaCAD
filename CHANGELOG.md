@@ -34,7 +34,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (on any system whose driver falls short) instead of opening a blank window.
 - The Flatpak app id is `org.musacad.MusaCAD`, the reverse of the project's domain
   (musacad.org); a locally installed `com.musacad.MusaCAD` is a different app to Flatpak and
-  can be uninstalled.
+  can be uninstalled. The Flatpak builds on the KDE 6.11 runtime.
+- **Flathub** (#1) -- the submission is prepared (`packaging/flatpak/flathub/`: the manifest,
+  a helper that stages the pull request for you, and a draft of its body), and every release
+  tag now opens the update pull request on Flathub through a workflow, with Flathub's own
+  checker as the second path.
 
 ### Changed
 - The tree builds with Apple's libc++: number parsing no longer depends on floating-point
