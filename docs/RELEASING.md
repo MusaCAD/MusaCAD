@@ -29,6 +29,8 @@ and `packaging/macos/BUILD_MACOS.md`.
    release notes at `docs/release-notes/v<ver>.md`.
 4. Re-run the license scan (`docs/THIRD_PARTY_LICENSES.md` → "Reproducing the scan"): no GPL/DWG
    library in the build graph, the binary, or the bundles; the DWG converter stays external.
+4b. Add the version's `<release>` entry to `packaging/flatpak/org.musacad.MusaCAD.metainfo.xml`
+   (Flathub reads the metainfo from the tagged source; the entry's date is the tag's).
 5. Build once inside the Flatpak SDK before tagging. The KDE runtime ships a newer GCC than the
    desktop distributions, and flatpak-builder adds `_GLIBCXX_ASSERTIONS` / `_FORTIFY_SOURCE`, so
    `-Werror` can fire there on code the host compiler accepts (v0.4.0: two null-dereference
@@ -100,9 +102,12 @@ Windows asset from the release afterwards.
 
 ## Post-release
 
-- Flathub: update `tag` / `commit` in `packaging/flatpak/flathub/org.musacad.MusaCAD.yml` (and in
-  the Flathub repository once the app is there); see `packaging/flatpak/BUILD_FLATPAK.md` →
-  "Flathub submission — PREPARED" for the two decisions the linter raises.
+- Flathub: nothing by hand once the app is on Flathub. The tag push runs
+  `.github/workflows/flathub-release.yml`, which opens the update pull request in
+  `flathub/org.musacad.MusaCAD` (needs the `FLATHUB_TOKEN` secret); Flathub's own checker opens
+  the same pull request from the manifest's `x-checker-data` if the workflow cannot. Merge it
+  when its build is green. Until the app is on Flathub, the first submission is your pull
+  request: `packaging/flatpak/flathub/submit.sh` and `packaging/flatpak/BUILD_FLATPAK.md`.
 - File follow-up issues for anything deferred or surfaced during verification.
 
 ## Linux-only releases
