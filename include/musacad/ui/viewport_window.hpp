@@ -83,6 +83,18 @@ public:
     void block_attribute_manager() override;
     [[nodiscard]] std::vector<core::TiledViewport> tiled_viewports() const override;
     [[nodiscard]] int active_tile() const override;
+    /// The text shown when the OpenGL context falls short of 4.5 Core: the version and
+    /// renderer found, the requirement, and what helps (a driver / GPU with OpenGL 4.5; on
+    /// macOS, which stops at 4.1, that a Metal or OpenGL 4.1 render backend for Musa CAD is
+    /// the missing piece). `on_macos` defaults to the platform this build runs on.
+    [[nodiscard]] static QString gl_requirement_message(int major, int minor, const QString& renderer,
+                                                        bool on_macos =
+#if defined(Q_OS_MACOS)
+                                                            true
+#else
+                                                            false
+#endif
+    );
     /// VPORTS: how many tiles the model window is split into (1 = not split).
     [[nodiscard]] int tile_count() const {
         std::scoped_lock lock(camera_mutex_);
@@ -101,6 +113,10 @@ public:
     void set_match_cursor(bool on) override;
 
 Q_SIGNALS:
+    /// The render thread could not get the OpenGL the viewport needs (4.5 Core); `reason`
+    /// is the text for the user (what was found, what is required, what to do). The host
+    /// shows it and closes the application -- nothing is drawn after this.
+    void viewportUnavailable(const QString& reason);
     void cursorWorldMoved(double x, double y);
     /// Cursor position in the viewport's logical local pixels (for anchoring DYN).
     void cursorScreenMoved(double px, double py);

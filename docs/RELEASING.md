@@ -10,7 +10,7 @@ The playbook for cutting a release (v0.2.0 and onward). v0.1.0 followed this exa
 | Linux | `MusaCAD-<ver>-x86_64.AppImage` | `packaging/linux/build_appimage.sh` (local) **and** `.github/workflows/build-linux.yml` (CI) |
 | Linux | `MusaCAD-<ver>.flatpak` | `packaging/flatpak/build_flatpak.sh` (local) |
 | Windows | `MusaCAD-<ver>-x86_64-setup.exe` | `.github/workflows/build-windows.yml` (CI, `windows-latest`) |
-| macOS | `MusaCAD-<ver>-arm64.dmg` (manual workflow only; command line works, the viewport needs an OpenGL 4.5 backend macOS lacks) | `.github/workflows/build-macos.yml` (CI, `macos-14`) |
+| macOS | `MusaCAD-<ver>-arm64.dmg` (the command line works; the viewport needs OpenGL 4.5, which macOS lacks -- the app says so at startup) | `.github/workflows/build-macos.yml` (CI, `macos-14`) |
 
 Packaging detail lives in `packaging/linux/BUILD_APPIMAGE.md`, `packaging/flatpak/BUILD_FLATPAK.md`
 and `packaging/macos/BUILD_MACOS.md`.
@@ -35,7 +35,7 @@ and `packaging/macos/BUILD_MACOS.md`.
    warnings). Quick loop without a full bundle:
 
    ```bash
-   flatpak run --command=bash --filesystem="$PWD" org.kde.Sdk//6.10 -c \
+   flatpak run --command=bash --filesystem="$PWD" org.kde.Sdk//6.11 -c \
      'cmake -S . -B build/sdk -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF \
         -DCMAKE_CXX_FLAGS="-O2 -g -Wp,-D_FORTIFY_SOURCE=3 -Wp,-D_GLIBCXX_ASSERTIONS" && \
       ninja -C build/sdk -k 0'
@@ -66,7 +66,7 @@ Verify locally (the discipline that catches breakage):
   env -u DISPLAY -u WAYLAND_DISPLAY APPIMAGE_EXTRACT_AND_RUN=1 \
       ./MusaCAD-<ver>-x86_64.AppImage --plot <drawing>.musa out.pdf --paper A4
   ```
-- Install + launch the Flatpak (`flatpak install --user ...flatpak`; `flatpak run com.musacad.MusaCAD`).
+- Install + launch the Flatpak (`flatpak install --user ...flatpak`; `flatpak run org.musacad.MusaCAD`).
 - **Windows: a human installs the `.exe` on a real Windows box** and confirms it launches + draws.
   Claude Code / Linux CI cannot verify the Windows binary at runtime — this step is manual.
   Check both programs the installer ships: `musacad_app.exe` from the Start menu (no console
@@ -100,7 +100,7 @@ Windows asset from the release afterwards.
 
 ## Post-release
 
-- Flathub: update `tag` / `commit` in `packaging/flatpak/flathub/com.musacad.MusaCAD.yml` (and in
+- Flathub: update `tag` / `commit` in `packaging/flatpak/flathub/org.musacad.MusaCAD.yml` (and in
   the Flathub repository once the app is there); see `packaging/flatpak/BUILD_FLATPAK.md` →
   "Flathub submission — PREPARED" for the two decisions the linter raises.
 - File follow-up issues for anything deferred or surfaced during verification.

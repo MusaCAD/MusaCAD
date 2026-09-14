@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>Musa CAD</string>
     <key>CFBundleIdentifier</key>
-    <string>com.musacad.MusaCAD</string>
+    <string>org.musacad.MusaCAD</string>
     <key>CFBundleExecutable</key>
     <string>musacad_app</string>
     <key>CFBundleIconFile</key>

@@ -2,16 +2,16 @@
 # Build a Musa CAD Flatpak bundle locally and (optionally) install it.
 # Produces packaging/flatpak/MusaCAD-<version>.flatpak, installable with:
 #     flatpak install --user packaging/flatpak/MusaCAD-<version>.flatpak
-#     flatpak run com.musacad.MusaCAD
+#     flatpak run org.musacad.MusaCAD
 #
 # Prereqs (user-level, no root):
-#     flatpak install --user -y flathub org.kde.Platform//6.10 org.kde.Sdk//6.10 org.flatpak.Builder
+#     flatpak install --user -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 org.flatpak.Builder
 #
 # Usage:  packaging/flatpak/build_flatpak.sh [VERSION]   (default VERSION=0.1.0)
 set -euo pipefail
 
 VERSION="${1:-0.1.0}"
-APPID="com.musacad.MusaCAD"
+APPID="org.musacad.MusaCAD"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 SRC="$HERE/.src"                 # clean source tree the manifest points at (gitignored)

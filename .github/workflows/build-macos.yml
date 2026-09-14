@@ -1,11 +1,11 @@
 name: Build macOS app
 
-# Manual only for now (issue #2). The build proves the tree compiles with Apple clang and
-# packages a MusaCAD.app + .dmg whose command line (--check / --plot) is smoke-tested
-# headless on the runner. The GUI viewport needs OpenGL 4.5 Core, which macOS does not
-# provide (it stops at 4.1), so the bundle is not a supported desktop build until a
-# Metal or GL 4.1 render backend exists; that is why this workflow does not run on tags
-# and does not publish. Signing + notarization run only when the secrets exist.
+# Same triggers as the Linux and Windows workflows: a manual run, or a pushed release tag
+# (v*), which also publishes the .dmg to the GitHub release (issue #2). The bundle's command
+# line (--check / --plot) is smoke-tested headless on the runner. The GUI viewport needs
+# OpenGL 4.5 Core, which macOS does not provide (it stops at 4.1): on such a system the app
+# says so at startup and explains what it needs, instead of opening a blank window. Signing
+# and notarization run only when the secrets exist.
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +13,9 @@ on:
         description: "Version string for the bundle (e.g. 0.4.0)"
         required: false
         default: "0.4.0"
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -20,13 +23,20 @@ permissions:
 jobs:
   macos-app:
     runs-on: macos-14 # Apple Silicon (arm64)
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Derive version
         id: ver
-        run: echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
@@ -99,3 +109,30 @@ jobs:
           name: MusaCAD-${{ steps.ver.outputs.version }}-arm64.dmg
           path: MusaCAD-*-arm64.dmg
           if-no-files-found: error
+
+  # Tag pushes also publish, like the other platforms: create the release if no job has yet,
+  # then attach the .dmg. Manual runs only build.
+  publish:
+    needs: macos-app
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MusaCAD-${{ needs.macos-app.outputs.version }}-arm64.dmg
+          path: dist
+      - name: Create the release if it does not exist, then attach the artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --title "Musa CAD $TAG" \
+              --notes "Release notes: docs/release-notes/$TAG.md (see CHANGELOG.md)." \
+              || true # another platform's job may have just created it
+          fi
+          gh release upload "$TAG" dist/* --repo "$REPO" --clobber

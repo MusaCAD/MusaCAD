@@ -538,6 +538,32 @@ void ViewportWindow::stop_render_thread() noexcept {
     }
 }
 
+QString ViewportWindow::gl_requirement_message(int major, int minor, const QString& renderer,
+                                               bool on_macos) {
+    QString m = QStringLiteral(
+        "Musa CAD's viewport needs OpenGL 4.5 Core (it draws through direct state access "
+        "and persistently mapped buffers), and this system provides OpenGL %1.%2");
+    m = m.arg(major).arg(minor);
+    if (!renderer.isEmpty()) {
+        m += QStringLiteral(" (%1)").arg(renderer);
+    }
+    m += QStringLiteral(".\n\n");
+    if (on_macos) {
+        m += QStringLiteral(
+            "macOS stops at OpenGL 4.1, so no driver update helps there: Musa CAD needs a Metal "
+            "or OpenGL 4.1 render backend, which it does not have yet (issue #2 at "
+            "github.com/MusaCAD/MusaCAD).\n\n");
+    } else {
+        m += QStringLiteral(
+            "A current graphics driver, or a GPU that supports OpenGL 4.5, is what it takes; "
+            "on a virtual machine, enable 3D acceleration.\n\n");
+    }
+    m += QStringLiteral(
+        "The command line works without the viewport: `musacad --check <drawing>` and "
+        "`musacad --plot <drawing> <out.pdf>`.\n\nMusa CAD will close now.");
+    return m;
+}
+
 void ViewportWindow::render_loop(core::threading::stop_token token) {
     // The render thread exclusively owns the GL context.
     QOpenGLContext context;
@@ -545,7 +571,29 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
     if (!context.create() || !context.makeCurrent(this)) {
         std::fprintf(stderr, "[musacad_ui] could not create/make-current GL context on render "
                              "thread; viewport disabled\n");
+        Q_EMIT viewportUnavailable(gl_requirement_message(0, 0, QStringLiteral("no OpenGL context")));
         return;
+    }
+    // Qt hands back a lower context than the 4.5 Core the format asks for when that is all
+    // the driver has (macOS: 4.1). Say so and stop, rather than fail on the first DSA call.
+    // MUSACAD_FORCE_GL_PROMPT=1 walks this path on a capable system (the self-test).
+    {
+        const QSurfaceFormat got = context.format();
+        const bool forced = std::getenv("MUSACAD_FORCE_GL_PROMPT") != nullptr;
+        const int major = forced ? 4 : got.majorVersion();
+        const int minor = forced ? 1 : got.minorVersion();
+        if (major < 4 || (major == 4 && minor < 5)) {
+            QString renderer;
+            if (QOpenGLFunctions* f0 = context.functions(); f0 != nullptr) {
+                const GLubyte* r = f0->glGetString(GL_RENDERER);
+                renderer = r != nullptr ? QString::fromUtf8(reinterpret_cast<const char*>(r)) : QString();
+            }
+            std::fprintf(stderr, "[musacad_ui] OpenGL %d.%d found, 4.5 Core required; viewport disabled\n",
+                         major, minor);
+            context.doneCurrent();
+            Q_EMIT viewportUnavailable(gl_requirement_message(major, minor, renderer));
+            return;
+        }
     }
 
     auto device = render::create_gl_device();

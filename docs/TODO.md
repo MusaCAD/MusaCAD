@@ -64,10 +64,10 @@ a paper-space viewport is shown whole or not at all today).
 ## Release / packaging (v0.1.0 infra DONE 2026-06-23; items staged)
 
 * **DONE.** Linux **AppImage** (`packaging/linux/`, bundles Qt6 + qsvg, verified locally),
-  Linux **Flatpak** (`packaging/flatpak/`, KDE 6.10 runtime, builds + installs + runs locally),
+  Linux **Flatpak** (`packaging/flatpak/`, KDE 6.11 runtime, builds + installs + runs locally),
   **Windows installer** via GitHub Actions (`.github/workflows/build-windows.yml` + NSIS), Linux
   AppImage CI (`build-linux.yml`), and `scripts/release.sh`. Playbook in `docs/RELEASING.md`.
-* **Flathub submission — PREPARED.** `packaging/flatpak/flathub/com.musacad.MusaCAD.yml` pins
+* **Flathub submission — PREPARED.** `packaging/flatpak/flathub/org.musacad.MusaCAD.yml` pins
   the tagged release; the metainfo validates. Two decisions block the PR (the home-filesystem
   exception, the app-id's domain); see `packaging/flatpak/BUILD_FLATPAK.md`.
 * **macOS — build workflow done, desktop support blocked.** `.github/workflows/build-macos.yml`

@@ -213,7 +213,7 @@ QString DwgConverter::install_hint() {
         hint += QStringLiteral(
             "\n\nThis is the Flatpak: the sandbox cannot see programs installed on your "
             "system. To use one, allow Musa CAD to run it on the host once --\n"
-            "    flatpak override --user --talk-name=org.freedesktop.Flatpak com.musacad.MusaCAD\n"
+            "    flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD\n"
             "-- then turn on \"Use a converter installed on the host\" in DWG Setup. "
             "(Built-in DXF import and export work without any of this.)");
     }
