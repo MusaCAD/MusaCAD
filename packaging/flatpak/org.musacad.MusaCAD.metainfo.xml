@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: LGPL-3.0-or-later -->
 <component type="desktop-application">
-  <id>com.musacad.MusaCAD</id>
+  <id>org.musacad.MusaCAD</id>
 
   <name>Musa CAD</name>
   <summary>High-performance multi-threaded 2D CAD</summary>
@@ -9,7 +9,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>LGPL-3.0-or-later</project_license>
 
-  <developer id="com.musacad">
+  <developer id="org.musacad">
     <name>Musa CAD contributors</name>
   </developer>
 
@@ -31,9 +31,9 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">com.musacad.MusaCAD.desktop</launchable>
+  <launchable type="desktop-id">org.musacad.MusaCAD.desktop</launchable>
 
-  <url type="homepage">https://github.com/MusaCAD/MusaCAD</url>
+  <url type="homepage">https://musacad.org/</url>
   <url type="bugtracker">https://github.com/MusaCAD/MusaCAD/issues</url>
   <url type="vcs-browser">https://github.com/MusaCAD/MusaCAD</url>
 

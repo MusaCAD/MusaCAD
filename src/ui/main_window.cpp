@@ -6215,12 +6215,12 @@ void MainWindow::configure_dwg_converter() {
         host_box->setChecked(DwgConverter::host_mode());
         host_box->setToolTip(QStringLiteral(
             "Looks the converter up and runs it outside the sandbox. Allow it once with:\n"
-            "flatpak override --user --talk-name=org.freedesktop.Flatpak com.musacad.MusaCAD"));
+            "flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD"));
         v->addWidget(host_box);
         auto* how = new QLabel(QStringLiteral(
             "Inside the Flatpak the converter must be installed on your system and Musa CAD "
             "allowed to run it there:\n    flatpak override --user --talk-name=org.freedesktop.Flatpak "
-            "com.musacad.MusaCAD"), &dlg);
+            "org.musacad.MusaCAD"), &dlg);
         how->setWordWrap(true);
         how->setTextInteractionFlags(Qt::TextSelectableByMouse);
         v->addWidget(how);

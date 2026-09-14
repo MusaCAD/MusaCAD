@@ -34,7 +34,7 @@ public:
     /// The opt-in (QSettings `io/dwg_host_converter`): inside the sandbox, look the
     /// converter up and run it on the host through `flatpak-spawn --host`. Needs the
     /// one-time `flatpak override --user --talk-name=org.freedesktop.Flatpak
-    /// com.musacad.MusaCAD` the DWG Setup dialog spells out; the default stays sandboxed.
+    /// org.musacad.MusaCAD` the DWG Setup dialog spells out; the default stays sandboxed.
     [[nodiscard]] static bool host_mode();
     static void set_host_mode(bool on);
     /// The command line that runs `program args...` on the host: flatpak-spawn --host
