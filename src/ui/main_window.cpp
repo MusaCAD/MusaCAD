@@ -297,6 +297,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     cursor_tick_->setInterval(16); // one display frame; the ceiling on UI work per move
     connect(cursor_tick_, &QTimer::timeout, this, [this] { cursor_tick(); });
     connect(viewport_, &ViewportWindow::pickerInteracted, this, [this] { refocus_dyn(); });
+    // No usable OpenGL (below 4.5 Core, or no context): tell the user what is needed and
+    // close -- a blank viewport would be worse. Queued: the signal comes from the render
+    // thread. Under the self-test the text goes to stdout instead of a modal box.
+    connect(viewport_, &ViewportWindow::viewportUnavailable, this, [this](const QString& reason) {
+        if (qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
+            std::printf("[viewport] unavailable: %s\n", reason.toStdString().c_str());
+            std::fflush(stdout);
+        } else {
+            QMessageBox::critical(this, QStringLiteral("Musa CAD cannot draw on this system"), reason);
+        }
+        QCoreApplication::exit(2);
+    }, Qt::QueuedConnection);
 
     // Properties palette (PR): a dockable panel, hidden by default (the default
     // runtime state stays as before). PR toggles it; the panel edits flow back as
@@ -5745,6 +5757,20 @@ void MainWindow::apply_vport_configuration(const char* kind) {
 }
 
 bool MainWindow::selftest_vports() {
+    // The OpenGL requirement text (shown when the context falls short of 4.5 Core) names
+    // what was found, what is required, and the macOS-specific missing piece.
+    const QString gl_mac = ViewportWindow::gl_requirement_message(4, 1, QStringLiteral("Apple M2"), true);
+    const QString gl_pc = ViewportWindow::gl_requirement_message(3, 3, QStringLiteral("llvmpipe"), false);
+    const bool gl_msg_ok = gl_mac.contains(QStringLiteral("OpenGL 4.1 (Apple M2)")) &&
+                           gl_mac.contains(QStringLiteral("4.5 Core")) &&
+                           gl_mac.contains(QStringLiteral("Metal or OpenGL 4.1 render backend")) &&
+                           gl_pc.contains(QStringLiteral("OpenGL 3.3 (llvmpipe)")) &&
+                           gl_pc.contains(QStringLiteral("graphics driver")) &&
+                           !gl_pc.contains(QStringLiteral("Metal")) &&
+                           gl_pc.contains(QStringLiteral("musacad --plot"));
+    std::printf("[selftest] OpenGL requirement message (found / required / what helps): %s\n",
+                gl_msg_ok ? "PASS" : "FAIL");
+
     const auto pump = [](auto pred) {
         for (int i = 0; i < 1500; ++i) {
             QCoreApplication::processEvents();
@@ -5817,7 +5843,7 @@ bool MainWindow::selftest_vports() {
     std::printf("[selftest] VPORTS SIngle keeps the current view in one viewport: %s\n",
                 single_ok ? "PASS" : "FAIL");
     all = all && single_ok;
-    return all;
+    return all && gl_msg_ok;
 }
 
 void MainWindow::open_from(const QString& path, bool dxf) {

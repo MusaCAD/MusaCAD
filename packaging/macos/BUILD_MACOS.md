@@ -7,17 +7,20 @@
 assembles `MusaCAD.app` (`build_app.sh`: the binary, `Info.plist.in`, an `.icns` rendered
 from the SVG logo, `macdeployqt`, plus the offscreen platform plugin so the command line
 works headless), smoke-tests `--check` and `--plot`, signs and notarizes when the secrets
-exist, and uploads `MusaCAD-<ver>-arm64.dmg` as a workflow artifact. Run it from the
-Actions tab (`workflow_dispatch`); it does not run on release tags and does not publish.
+exist, and uploads `MusaCAD-<ver>-arm64.dmg`. A pushed release tag publishes it to the
+GitHub release like the other platforms; a manual run only builds.
 
 ## Why it is not a release artifact yet
 
 The viewport renders through **OpenGL 4.5 Core** (direct state access, the render thread's
 persistent buffers). macOS stops at OpenGL 4.1 and deprecates it, so the GUI cannot create
-its context there. The bundle's command line (`musacad --check`, `musacad --plot`) works,
-which is what the workflow verifies. Desktop support on macOS needs a second render backend
--- Metal (through Qt's RHI or directly), or a reduced OpenGL 4.1 path without DSA -- behind
-the existing `GpuDevice` / `GpuCommandBuffer` seam. That work is tracked on issue #2.
+its context there. On such a system the app shows what it needs at startup (the OpenGL
+version it found, the 4.5 it requires, and that on macOS a Metal or OpenGL 4.1 render
+backend is the missing piece) and exits with code 2; the bundle's command line
+(`musacad --check`, `musacad --plot`) works, which is what the workflow verifies. Desktop
+support on macOS needs that second backend -- Metal (through Qt's RHI or directly), or a
+reduced OpenGL 4.1 path without DSA -- behind the existing `GpuDevice` / `GpuCommandBuffer`
+seam. That work is tracked on issue #2.
 
 ## Signing and notarization
 

@@ -120,8 +120,8 @@ handle and carries CLASSES and the image dictionary).
 |---|---|
 | ~~MSVC `/W4` clean, warnings as errors on Windows~~ | **Done** (#5) ✅ |
 | ~~DWG inside the Flatpak~~ | **Done** (#4) — an opt-in to a converter installed on the host. ✅ |
-| Flathub submission | Manifest, metainfo and linter run prepared (`packaging/flatpak/BUILD_FLATPAK.md`); two decisions remain (the home filesystem exception, the app-id's domain). **P2** |
-| macOS | The build workflow, bundle and command line work; the viewport needs an OpenGL 4.5 backend macOS does not have — a Metal or GL 4.1 render path is the prerequisite (`packaging/macos/BUILD_MACOS.md`). **P2** |
+| Flathub submission | Manifest (`org.musacad.MusaCAD`, the reverse of musacad.org), metainfo and linter run prepared (`packaging/flatpak/BUILD_FLATPAK.md`); the PR asks for the home-filesystem exception. **P2** |
+| macOS | The workflow publishes a `.dmg` and the command line works; the viewport needs OpenGL 4.5, which macOS does not have, and the app says so at startup — a Metal or GL 4.1 render path is the prerequisite (`packaging/macos/BUILD_MACOS.md`). **P2** |
 
 ---
 

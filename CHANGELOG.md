@@ -25,12 +25,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 - **DWG inside the Flatpak** (#4) -- DWG Setup gains "Use a converter installed on the host":
   after a one-time `flatpak override --user --talk-name=org.freedesktop.Flatpak
-  com.musacad.MusaCAD`, the sandboxed app finds and runs the ODA File Converter or
+  org.musacad.MusaCAD`, the sandboxed app finds and runs the ODA File Converter or
   LibreDWG installed on your system. The default stays sandboxed, and the app now explains
   the situation instead of only reporting "no converter".
-- **macOS build workflow** (#2) -- a manual workflow builds `MusaCAD.app` and a `.dmg` on an
-  Apple Silicon runner and smoke-tests the command line; the viewport still needs an
-  OpenGL 4.5 backend macOS does not provide, so it is not a release artifact yet.
+- **macOS** (#2) -- the tag workflow now builds `MusaCAD.app` on an Apple Silicon runner and
+  attaches `MusaCAD-<ver>-arm64.dmg` to the release. The command line works there; the
+  viewport needs OpenGL 4.5, which macOS does not provide, and the app now says so at startup
+  (on any system whose driver falls short) instead of opening a blank window.
+- The Flatpak app id is `org.musacad.MusaCAD`, the reverse of the project's domain
+  (musacad.org); a locally installed `com.musacad.MusaCAD` is a different app to Flatpak and
+  can be uninstalled.
 
 ### Changed
 - The tree builds with Apple's libc++: number parsing no longer depends on floating-point
@@ -38,7 +42,7 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `jthread` shim where the standard library has none.
 
 ### Fixed
-- MSVC builds warnings-as-errors again (#5); the Flatpak builds with the KDE 6.10 SDK's GCC 15.
+- MSVC builds warnings-as-errors again (#5); the Flatpak builds with the KDE 6.11 SDK's GCC 15.
 
 ## v0.4.0 — sheets and symbols
 
