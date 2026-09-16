@@ -18,6 +18,9 @@ untrue (its reviewers look at the source repository). These are the facts to dra
   your words and to the extent that is true; the reviewers check.
 - The logo (`assets/branding/musacad_logo.svg`) embeds a Canva content credential (C2PA)
   recording it as created by "Canva AI" (source type: composite with trained algorithmic
-  media). Flathub refuses AI-generated logos and reviewers can read that credential. Replace
-  it with hand-made artwork, commit, and pin the manifest at that commit before submitting.
+  media). Flathub's policy leaves disclosed AI material to the reviewer, and for logos the
+  answer has been "wait for a non-AI logo" (flathub/flathub#10154). Either export the version
+  before the AI refinement from Canva's history, or redraw the mark yourself (Inkscape, or
+  Canva with the AI tools untouched); check the file with `tools/asset_provenance.py` (no AI
+  step recorded), commit it, and pin the manifest at that commit before submitting.
 - The checklist asks for a short screen recording of the Flatpak build.
