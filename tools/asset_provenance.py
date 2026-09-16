@@ -33,11 +33,13 @@ def main() -> int:
         return 0
     text = raw.decode("latin-1")
     found = False
+    # CBOR text strings carry their length in the byte before them (0x60 + n for n < 24).
+    cbor_text = r"[\x60-\x77]([A-Za-z0-9 ._/:-]{1,23})"
     for label, pattern in (
-        ("software agent", r"softwareAgent.{1,3}([A-Za-z0-9 ._-]{2,40})"),
+        ("software agent", r"softwareAgent" + cbor_text),
         ("digital source type", r"digitalsourcetype/([A-Za-z]+)"),
         ("action", r"(c2pa\.(?:created|edited|placed|converted|opened|published))"),
-        ("claim generator", r"claim_generator.{0,8}([A-Za-z0-9 ._/-]{2,40})"),
+        ("claim generator", r"claim_generator_info.{0,3}name" + cbor_text),
         ("signer", r"CN=([A-Za-z0-9 ._-]{2,40})|\x13\x05(Canva)|\x0c\x05(Adobe)"),
     ):
         hits = sorted({"".join(g for g in m if g) for m in re.findall(pattern, text)})
