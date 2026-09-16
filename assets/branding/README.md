@@ -3,6 +3,12 @@
 **Single source of truth:** [`musacad_logo.svg`](musacad_logo.svg). Everything else is
 derived from it — never hand-edit the rasters.
 
+The mark is an L-shaped bracket seen in shallow perspective: a navy body (`#0e2c4c`), the
+orange fillet face curving between its two arms (`#f73c1c`), and a teal end face on the
+foot (`#0bd1b5`), separated by thin gaps that show the background. Three filled paths on a
+512 × 512 canvas with a 6 % margin, nothing else in the file, so every renderer (Qt's
+SVG module in the app, GTK on the desktop, rsvg for the macOS icon) draws it the same.
+
 | Artifact | Purpose | How it's used |
 |---|---|---|
 | `musacad_logo.svg` | the logo (vector) | embedded via `branding.qrc` as `:/branding/musacad_logo.svg` |
