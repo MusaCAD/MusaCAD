@@ -1,12 +1,3 @@
-# Flathub manifest for Musa CAD (issue #1): the one that lives in the Flathub repository.
-#
-# It differs from ../org.musacad.MusaCAD.yml (the local build) only in its source: the
-# published tree, pinned to a commit, instead of a local directory. Releases update it two
-# ways: Flathub's external data checker follows `x-checker-data` (a new v* tag opens a
-# pull request there, which you merge), and this repository's
-# `.github/workflows/flathub-release.yml` opens the same pull request itself on a tag push
-# when the FLATHUB_TOKEN secret exists. The first submission is a human's pull request --
-# submit.sh prepares it (packaging/flatpak/BUILD_FLATPAK.md).
 app-id: org.musacad.MusaCAD
 runtime: org.kde.Platform
 runtime-version: '6.11'
@@ -14,24 +5,16 @@ sdk: org.kde.Sdk
 command: musacad_app
 
 finish-args:
-  - --share=ipc                 # required for the X11 shared-memory path
-  - --socket=fallback-x11       # X11 (falls back when Wayland is unavailable)
-  - --socket=wayland            # native Wayland when present
-  - --device=dri                # GPU access for the OpenGL 4.6 viewport
-  - --filesystem=home           # open / save the user's drawings
-# DWG import/export shells out to an EXTERNAL converter (ODA File Converter / LibreDWG's
-# dwg2dxf). Inside the sandbox it is not present, so DWG is unavailable by default;
-# built-in DXF read/write works everywhere. A user can opt in to a converter installed
-# on the host (a one-time `flatpak override --talk-name=org.freedesktop.Flatpak` plus a
-# toggle in the DWG Setup dialog; the manifest asks for nothing extra). This keeps the
-# Flatpak LGPL-clean (no GPL/DWG library linked or shipped).
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home
 
 modules:
   - name: musa-cad
     buildsystem: simple
     build-commands:
-      # The project has no install() rules, so build the release target and place the
-      # artifacts under /app by hand. Flags mirror the `release` CMake preset.
       - cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
       - cmake --build build --target musacad_app
       - install -Dm755 build/bin/musacad_app /app/bin/musacad_app
@@ -42,8 +25,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/MusaCAD/MusaCAD.git
-        # The v0.4.0 tag predates the GCC 15 fixes the KDE runtime's toolchain needs, so
-        # the pin is a later commit on main; the next release tag replaces it.
         commit: 1c1e80be9ec16c721ab6eac4ba00fc5b40c37ac9
         x-checker-data:
           type: git
