@@ -33,16 +33,25 @@ def main() -> int:
         return 0
     text = raw.decode("latin-1")
     found = False
-    # CBOR text strings carry their length in the byte before them (0x60 + n for n < 24).
-    cbor_text = r"[\x60-\x77]([A-Za-z0-9 ._/:-]{1,23})"
-    for label, pattern in (
-        ("software agent", r"softwareAgent" + cbor_text),
-        ("digital source type", r"digitalsourcetype/([A-Za-z]+)"),
-        ("action", r"(c2pa\.(?:created|edited|placed|converted|opened|published))"),
-        ("claim generator", r"claim_generator_info.{0,3}name" + cbor_text),
-        ("signer", r"CN=([A-Za-z0-9 ._-]{2,40})|\x13\x05(Canva)|\x0c\x05(Adobe)"),
+
+    def cbor_text_after(key: str) -> list[str]:
+        # A CBOR text string carries its length in the byte before it (0x60 + n, n < 24).
+        out = []
+        for m in re.finditer(re.escape(key), text):
+            i = m.end()
+            if i < len(text) and 0x60 <= ord(text[i]) <= 0x77:
+                n = ord(text[i]) - 0x60
+                out.append(text[i + 1:i + 1 + n])
+        return sorted(set(out))
+
+    for label, hits in (
+        ("software agent", cbor_text_after("softwareAgent")),
+        ("digital source type", sorted(set(re.findall(r"digitalsourcetype/([A-Za-z]+)", text)))),
+        ("action", sorted(set(re.findall(r"(c2pa\.(?:created|edited|placed|converted|opened|published))", text)))),
+        ("claim generator", cbor_text_after("name")),
+        ("signer", sorted({"".join(g for g in m if g)
+                           for m in re.findall(r"CN=([A-Za-z0-9 ._-]{2,40})|\x13\x05(Canva)|\x0c\x05(Adobe)", text)})),
     ):
-        hits = sorted({"".join(g for g in m if g) for m in re.findall(pattern, text)})
         if hits:
             found = True
             print(f"{label:20s} {', '.join(hits)}")
