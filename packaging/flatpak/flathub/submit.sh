@@ -10,10 +10,9 @@
 #
 # It forks github.com/flathub/flathub under your GitHub account (if not already), clones
 # Flathub's `new-pr` branch over SSH, adds org.musacad.MusaCAD.yml at the top level, commits,
-# pushes a branch to your fork over SSH, and prints the `gh pr create` command with
-# PR_BODY_DRAFT.md as the body: read the
-# draft, edit it in your own words (the AI-disclosure line included), tick what is true,
-# then run the printed command.
+# pushes a branch to your fork over SSH, and prints the compare link. The pull request
+# text is yours to write (Flathub refuses generated text); SUBMISSION_NOTES.md lists the
+# facts to draw on.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,11 +47,7 @@ git push -q --force "$FORK" "$APP_ID"
 
 echo
 echo "==> Branch pushed: ${USER}/flathub:${APP_ID}"
-echo "    Now read and edit the draft, then open the pull request yourself:"
-echo
-echo "    \$EDITOR $HERE/PR_BODY_DRAFT.md"
-echo "    gh pr create --repo flathub/flathub --base new-pr --head ${USER}:${APP_ID} \\"
-echo "      --title 'Add $APP_ID' --body-file $HERE/PR_BODY_DRAFT.md"
-echo
-echo "    The linter will report finish-args-home-filesystem-access; the draft states why"
-echo "    the exception is needed. Work tree: $WORK/flathub"
+echo "    Open the pull request yourself, in your own words (Flathub refuses generated"
+echo "    text): base new-pr, head ${USER}:${APP_ID}, title 'Add ${APP_ID}'."
+echo "    The facts to draw on are in $HERE/SUBMISSION_NOTES.md."
+echo "    https://github.com/flathub/flathub/compare/new-pr...${USER}:${APP_ID}?expand=1"
