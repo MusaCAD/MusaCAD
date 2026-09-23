@@ -483,6 +483,11 @@ struct MirrorSelectionCommand {
     std::uint64_t group = 0;
 };
 
+/// MIRRTEXT: whether MIRROR reflects text (1) or keeps it readable (0, the default).
+struct SetMirrtextCommand {
+    bool mirror_text = false;
+};
+
 /// Offset the entity nearest `pick` by `distance` toward `side`.
 struct OffsetPickCommand {
     Vec2 pick;
@@ -1301,7 +1306,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

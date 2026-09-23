@@ -1686,6 +1686,28 @@ void CopyCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // MIRROR
 // ---------------------------------------------------------------------------
+void MirrtextCommand::start(CommandContext& ctx) {
+    ctx.set_prompt(std::string("Enter new value for MIRRTEXT <") + (s_value_ ? "1" : "0") + ">: ");
+}
+
+void MirrtextCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1") {
+            ctx.echo("Requires 0 or 1.");
+            return;
+        }
+        s_value_ = t == "1";
+        ctx.submit(core::SetMirrtextCommand{s_value_});
+    }
+    done_ = true;
+}
+
+void MirrtextCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void MirrorCommand::start(CommandContext& ctx) {
     if (!ctx.has_selection()) {
         ctx.echo("No selection. Select objects first, then run MIRROR.");
@@ -2552,11 +2574,26 @@ void AlignCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Specify first source point: ");
 }
 
+void AlignCommand::align(CommandContext& ctx, bool scale) {
+    core::AlignSelectionCommand cmd;
+    cmd.src1 = src1_;
+    cmd.dst1 = dst1_;
+    cmd.src2 = src2_;
+    cmd.dst2 = dst2_;
+    cmd.scale = scale;
+    cmd.group = ctx.group_id();
+    ctx.submit(cmd);
+    done_ = true;
+}
+
 void AlignCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
     switch (state_) {
     case State::Src1:
         if (const auto p = read_point(ctx, text)) {
             src1_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {src1_}});
             state_ = State::Dst1;
             ctx.set_prompt("Specify first destination point: ");
         }
@@ -2564,13 +2601,23 @@ void AlignCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Dst1:
         if (const auto p = read_point(ctx, text)) {
             dst1_ = *p;
+            ctx.set_last_point(*p);
+            ctx.clear_preview();
             state_ = State::Src2;
-            ctx.set_prompt("Specify second source point: ");
+            ctx.set_prompt("Specify second source point or <continue>: ");
         }
         return;
     case State::Src2:
+        if (t.empty()) {
+            // One pair: the objects move from the source point to the destination.
+            ctx.submit(core::MoveSelectionCommand{dst1_ - src1_, ctx.group_id()});
+            done_ = true;
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             src2_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {src2_}});
             state_ = State::Dst2;
             ctx.set_prompt("Specify second destination point: ");
         }
@@ -2578,21 +2625,35 @@ void AlignCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Dst2:
         if (const auto p = read_point(ctx, text)) {
             dst2_ = *p;
+            ctx.set_last_point(*p);
+            ctx.clear_preview();
+            state_ = State::Src3;
+            ctx.set_prompt("Specify third source point or <continue>: ");
+        }
+        return;
+    case State::Src3:
+        if (t.empty()) {
             state_ = State::Scale;
             ctx.set_prompt("Scale objects based on alignment points? [Yes/No] <N>: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            state_ = State::Dst3;
+            ctx.set_prompt("Specify third destination point: ");
+        }
+        return;
+    case State::Dst3:
+        if (read_point(ctx, text)) {
+            // Three pairs fix a plane in 3D; in a plane the first two decide, unscaled.
+            ctx.clear_preview();
+            align(ctx, false);
         }
         return;
     case State::Scale: {
-        const std::string u = upper(trimmed(text));
-        core::AlignSelectionCommand cmd;
-        cmd.src1 = src1_;
-        cmd.dst1 = dst1_;
-        cmd.src2 = src2_;
-        cmd.dst2 = dst2_;
-        cmd.scale = (u == "Y" || u == "YES");
-        cmd.group = ctx.group_id();
-        ctx.submit(cmd);
-        done_ = true;
+        const std::string u = upper(t);
+        align(ctx, u == "Y" || u == "YES");
         return;
     }
     }
@@ -2689,15 +2750,23 @@ void BreakCommand::input(CommandContext& ctx, const std::string& text) {
     switch (state_) {
     case State::Select:
         if (const auto p = read_point(ctx, text)) {
-            // AutoCAD: the selecting click doubles as the first break point.
+            // AutoCAD: the selecting click doubles as the first break point (and is the
+            // last point, so "@" at the next prompt breaks at a single point).
             pick_ = *p;
             p1_ = *p;
+            ctx.set_last_point(*p);
             if (at_point_) {
-                fire(p1_, p1_); // BREAKATPOINT needs nothing more
+                state_ = State::AtPoint;
+                ctx.set_prompt("Specify break point: ");
                 return;
             }
             state_ = State::Second;
             ctx.set_prompt("Specify second break point or [First point]: ");
+        }
+        return;
+    case State::AtPoint:
+        if (const auto p = read_point(ctx, text)) {
+            fire(*p, *p); // BREAKATPOINT: split with no gap
         }
         return;
     case State::Second: {
@@ -2714,6 +2783,7 @@ void BreakCommand::input(CommandContext& ctx, const std::string& text) {
     case State::FirstAgain:
         if (const auto p = read_point(ctx, text)) {
             p1_ = *p;
+            ctx.set_last_point(*p);
             state_ = State::Second;
             ctx.set_prompt("Specify second break point: ");
         }

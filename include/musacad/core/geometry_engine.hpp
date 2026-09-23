@@ -257,6 +257,7 @@ private:
     /// The direction of the straight object (or polyline segment) under a pick.
     [[nodiscard]] bool straight_under_pick(Vec2 pick, double pick_radius, Vec2& a, Vec2& b) const;
     EntityHandle last_offset_ = EntityHandle::null(); ///< the newest offset, for [Multiple]
+    bool mirrtext_ = false; ///< MIRRTEXT: 0 keeps mirrored text readable (the default)
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
                                 std::uint64_t group);
     /// One stretched entity: the handle it replaces and the edit that replaces it.

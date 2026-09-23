@@ -25,6 +25,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   radius, the centre first, and **Continue** (Enter starts tangent from the last line or arc).
   Holding **Ctrl** at a pick draws the other way round, as AutoCAD's prompts say; the rubber
   band shows the arc the click will make.
+- **ALIGN pairs** (#50) -- one pair (Enter at the second source point) moves the objects;
+  after two pairs `Specify third source point or <continue>:`; a rubber line runs from each
+  source point to its destination.
+- **MIRROR keeps text readable** (#50) -- as AutoCAD's default `MIRRTEXT` 0 does: a mirrored
+  text lands in the reflected place, turned round and re-justified so it still reads the
+  right way; `MIRRTEXT 1` reflects it. **BREAK** takes `@` for a single break point and
+  **BREAKATPOINT** asks `Specify break point:` after the selection.
 - **POLYGON and XLINE details** (#39) -- POLYGON remembers the side count (POLYSIDES) and
   the Inscribed / Circumscribed choice, limits the sides to 3..1024, stands a typed radius
   on a flat bottom edge, and shows the polygon while an edge is picked; XLINE gains

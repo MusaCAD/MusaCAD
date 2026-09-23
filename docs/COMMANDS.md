@@ -144,7 +144,7 @@ commands (Ribbon Phase A):
 | REDO | — (Ctrl+Y) | Implemented |
 | MOVE | M | Implemented -- `Specify base point or [Displacement] <Displacement>:`, `Specify second point or <use first point as displacement>:`; the last displacement is the next default |
 | COPY | CO / CP | Implemented -- `Current settings: Copy mode = Multiple`, `[Displacement/mOde]`, `Specify second point or [Array] <use first point as displacement>:` then `[Array/Exit/Undo] <Exit>:`; **Array** (`Enter number of items to array:`, `[Fit]`), **Undo** takes the last copy back, every copy its own undo step; **mOde** Single / Multiple kept for the session |
-| MIRROR | MI | Implemented |
+| MIRROR (mirrored text stays readable, `MIRRTEXT` 0; `MIRRTEXT` 1 reflects it) | MI | Implemented |
 | OFFSET (line/circle/arc) | O | Implemented -- `Current settings: Erase source=No  Layer=Source  OFFSETGAPTYPE=0`, `Specify offset distance or [Through/Erase/Layer] <last>:` (a value, two points, or **Through**), `Select object to offset or [Exit/Undo] <Exit>:`, `Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:`; **Multiple** steps out from the offset just made, **Undo** takes one back, every offset its own undo step; **Erase** removes the source, **Layer** Current / Source; the settings are kept for the session |
 | OFFSET (polyline, incl. closed rectangles + bulged/filleted corners) — each segment offset (lines parallel, arcs concentric with the bulge preserved) and **corners re-mitered** as the intersection of adjacent offset curves (line/line, line/arc, arc/arc via the shared line_line / line_circle / circle_circle primitives), so edges stay at distance d with clean corners (no trapezoid). Over-large offsets that would fold the shape fail gracefully ("Offset distance too large for this polyline.") leaving the geometry unchanged | O | Implemented |
 | ROTATE | RO | Implemented -- `Specify rotation angle or [Copy/Reference] <0>:`; the selection turns with the cursor (an engine-side band: every kind, at the current zoom) with the live angle shown at the cursor; **Reference** by a value or two points, then `Specify the new angle or [Points] <0>:` |
@@ -161,7 +161,7 @@ commands (Ribbon Phase A):
 | EXPLODE (polyline -> lines/arcs; block one level; dimension/leader -> lines, solids, text; hatch -> lines or boundary; MTEXT -> TEXT per line; table -> lines + text) | X | Implemented |
 | PURGE (unused layers) | PU | Implemented |
 | PURGE (every table: layers, dimstyles, text styles, blocks, fonts, table styles, images) | PU | Implemented (#30) |
-| ALIGN (2 point pairs, optional uniform scale) | AL | Implemented |
+| ALIGN (one pair moves; two pairs align with the scale question; `Specify third source point or <continue>:`; rubber lines from each source point) | AL | Implemented |
 | LENGTHEN (DElta / Percent / Total; lines + arcs) | LEN | Implemented |
 | BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |
 | BREAKATPOINT (split, no gap) | BREAKATPOINT | Implemented |
