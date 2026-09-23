@@ -52,16 +52,17 @@ fetch "https://github.com/AppImage/appimagetool/releases/download/continuous/app
       "$TOOLS_DIR/appimagetool-${ARCH}.AppImage"
 export PATH="$TOOLS_DIR:$PATH"
 
-# 3. Assemble a clean AppDir (no CMake install() rules, so do it by hand).
+# 3. Assemble a clean AppDir by hand: the binary, desktop entry and icon only (`cmake
+#    --install` would also place the AppStream metadata, which the AppImage does not carry).
 echo "==> Assembling AppDir"
 rm -rf "$APPDIR"
 install -Dm755 "$BIN"                                   "$APPDIR/usr/bin/musacad_app"
-install -Dm644 "$REPO_ROOT/assets/branding/musacad.desktop" \
-        "$APPDIR/usr/share/applications/musacad.desktop"
-# SVG (scalable) icon -- named to match the .desktop's `Icon=musacad`. No PNG raster
-# is needed (AppImage supports scalable icons; the app itself renders SVG via qsvg).
+install -Dm644 "$REPO_ROOT/assets/branding/org.musacad.MusaCAD.desktop" \
+        "$APPDIR/usr/share/applications/org.musacad.MusaCAD.desktop"
+# SVG (scalable) icon -- named to match the .desktop's `Icon=org.musacad.MusaCAD`. No PNG
+# raster is needed (AppImage supports scalable icons; the app itself renders SVG via qsvg).
 install -Dm644 "$REPO_ROOT/assets/branding/musacad_logo.svg" \
-        "$APPDIR/usr/share/icons/hicolor/scalable/apps/musacad.svg"
+        "$APPDIR/usr/share/icons/hicolor/scalable/apps/org.musacad.MusaCAD.svg"
 
 # 4. Run linuxdeploy with the Qt plugin. EXTRA_PLATFORM_PLUGINS pins the platform plugins
 #    we actually need; the qt plugin auto-bundles imageformats (qsvg/qico), iconengines,
@@ -88,8 +89,8 @@ rm -f "$REPO_ROOT/$OUT"
 "$TOOLS_DIR/linuxdeploy-${ARCH}.AppImage" \
   --appdir "$APPDIR" \
   --executable "$APPDIR/usr/bin/musacad_app" \
-  --desktop-file "$APPDIR/usr/share/applications/musacad.desktop" \
-  --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/musacad.svg" \
+  --desktop-file "$APPDIR/usr/share/applications/org.musacad.MusaCAD.desktop" \
+  --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/org.musacad.MusaCAD.svg" \
   --plugin qt
 
 # The Wayland CLIENT BUFFER integration is what lets a GL context exist under native

@@ -105,6 +105,9 @@ int main(int argc, char* argv[]) {
     QApplication app(qargc, qargv.data());
     QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
     QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
+    // The installed desktop entry (org.musacad.MusaCAD.desktop): on Wayland this is the
+    // window's app id, which is how the shell finds the entry's name and icon for it.
+    QGuiApplication::setDesktopFileName(QStringLiteral("org.musacad.MusaCAD"));
 
     // Branding: window / taskbar icon from the embedded logo (Qt renders the SVG at every
     // size the desktop asks for). The .desktop entry + .ico cover launcher/Windows icons.

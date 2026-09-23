@@ -37,6 +37,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ENABLE_SANITIZERS "Enable ASan+UBSan (Debug builds)" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer (mutually exclusive with ENABLE_SANITIZERS)" OFF)
 option(MUSACAD_BUILD_TESTS "Build unit tests" OFF)
+# The developer executables in tests/ (insertion benchmark, command demo, offscreen render and
+# plot checks, the SVG->PNG branding rasterizer). None of them ships, so a packaging build
+# (the Flatpak) turns them off and builds only what it installs.
+option(MUSACAD_BUILD_DEV_TOOLS "Build the developer tools in tests/" ON)
 # GCC/Clang always build -Werror (the project's standing discipline). MSVC /W4 is much stricter
 # and the codebase predates any MSVC build, so promoting MSVC warnings to errors (/WX) is opt-in
 # until the warning audit lands (tracked as a follow-up). See cmake/CompilerWarnings.cmake.
@@ -81,12 +85,30 @@ add_subdirectory(src/command)
 add_subdirectory(src/ui)
 add_subdirectory(src/app)
 
-# tests/ holds the Catch2 unit tests (built when MUSACAD_BUILD_TESTS is ON) and
-# the insertion benchmark (built in every config, so it can be timed under the
-# release preset). The subdirectory gates the unit tests internally.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+# tests/ holds the Catch2 unit tests (MUSACAD_BUILD_TESTS) and the developer tools
+# (MUSACAD_BUILD_DEV_TOOLS, on by default so the benchmark can be timed under the release
+# preset). The subdirectory gates each set internally.
+if((MUSACAD_BUILD_TESTS OR MUSACAD_BUILD_DEV_TOOLS) AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# ---------------------------------------------------------------------------
+# Install: the Linux desktop layout -- the app, its desktop entry, icon and AppStream
+# metadata under CMAKE_INSTALL_PREFIX. The Flatpak builds from this (`cmake --install`);
+# Windows and macOS package through packaging/ instead.
+# ---------------------------------------------------------------------------
+if(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    install(TARGETS musacad_app RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES assets/branding/org.musacad.MusaCAD.desktop
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES assets/branding/musacad_logo.svg
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+            RENAME org.musacad.MusaCAD.svg)
+    install(FILES packaging/flatpak/org.musacad.MusaCAD.metainfo.xml
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -99,6 +121,7 @@ message(STATUS "  C++ standard      : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Sanitizers (A+UB) : ${ENABLE_SANITIZERS}")
 message(STATUS "  ThreadSanitizer   : ${ENABLE_TSAN}")
 message(STATUS "  Build tests       : ${MUSACAD_BUILD_TESTS}")
+message(STATUS "  Build dev tools   : ${MUSACAD_BUILD_DEV_TOOLS}")
 message(STATUS "  Qt6 version       : ${Qt6_VERSION}")
 if(Vulkan_FOUND)
     message(STATUS "  Vulkan (seam)     : ${Vulkan_VERSION}")
