@@ -160,6 +160,8 @@ public:
     [[nodiscard]] bool ctrl_held() const override { return ctrl_held_; }
     /// The viewport's Ctrl state at a pick (set before pick_point(), cleared after).
     void set_ctrl_held(bool held) { ctrl_held_ = held; }
+    [[nodiscard]] bool shift_held() const override { return shift_held_; }
+    void set_shift_held(bool held) { shift_held_ = held; }
     [[nodiscard]] std::optional<core::Vec2> cursor_world() const override { return cursor_world_; }
     /// The viewport's constrained cursor, streamed on every move (direct distance entry).
     void set_cursor_world(core::Vec2 p) { cursor_world_ = p; }
@@ -196,6 +198,7 @@ private:
     std::optional<core::Vec2> last_point_;
     std::optional<LastSegment> last_segment_;
     bool ctrl_held_ = false;
+    bool shift_held_ = false;
     std::optional<core::Vec2> cursor_world_;
     std::uint64_t group_counter_ = 0;
     std::uint64_t current_group_ = 0;

@@ -319,3 +319,98 @@ TEST_CASE("#27: EXTEND on an arc with nothing ahead says so") {
     }));
     engine.stop();
 }
+
+// ---------------------------------------------------------------------------
+// #48: the corner operations keep the objects' properties, No trim only adds the
+// arc / bevel, and [Polyline] treats every corner.
+// ---------------------------------------------------------------------------
+TEST_CASE("#48: FILLET and CHAMFER keep the layer of the lines they trim") {
+    GeometryEngine engine;
+    engine.start();
+    Layer walls;
+    walls.name = "walls";
+    engine.submit(AddLayerCommand{walls});
+    EntityProps on_walls;
+    on_walls.layer = 1;
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, on_walls});
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 1, on_walls});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4 && s.layers.size() == 2; }));
+    engine.submit(FilletPickCommand{{5, 0}, {10, 5}, 2.0, 1.0, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Filleted."; }));
+    REQUIRE(engine.snapshot().line_vertices.size() > 4); // two trimmed lines and the arc
+    // Everything the fillet left -- both trimmed lines and the arc -- is on "walls":
+    // freezing that layer leaves nothing drawn.
+    Layer frozen = walls;
+    frozen.frozen = true;
+    engine.submit(SetLayerCommand{1, frozen});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty(); }));
+    engine.stop();
+}
+
+TEST_CASE("#48: No trim keeps the lines and adds only the arc; [Polyline] rounds every corner") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+    FilletPickCommand notrim{{5, 0}, {10, 5}, 2.0, 1.0, 10};
+    notrim.trim = false;
+    engine.submit(notrim);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Filleted."; }));
+    REQUIRE(has_segment(engine.snapshot(), {0, 0}, {10, 0}));   // untouched
+    REQUIRE(has_segment(engine.snapshot(), {10, 0}, {10, 10})); // untouched
+    REQUIRE(engine.snapshot().line_vertices.size() > 4);        // the arc was added
+    engine.submit(UndoLastGroupCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+
+    engine.submit(EraseCommand{EraseScope::All});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty(); }));
+    engine.submit(AddPolylineCommand{{{0, 0}, {20, 0}, {20, 10}, {0, 10}}, true, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 8; }));
+    engine.submit(FilletPolylineCommand{{10, 0}, 2.0, 1.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("4 lines were filleted", 0) == 0; }));
+    // Four rounded corners: the straight runs are shorter by 2 at each end.
+    REQUIRE(has_segment(engine.snapshot(), {2, 0}, {18, 0}));
+    REQUIRE(has_segment(engine.snapshot(), {20, 2}, {20, 8}));
+    engine.submit(UndoLastGroupCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 8; }));
+    engine.submit(ChamferPolylineCommand{{10, 0}, 3.0, 3.0, 1.0, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("4 lines were chamfered", 0) == 0; }));
+    REQUIRE(has_segment(engine.snapshot(), {3, 0}, {17, 0}));
+    REQUIRE(has_segment(engine.snapshot(), {17, 0}, {20, 3}));
+    engine.stop();
+}
+
+TEST_CASE("#49: OFFSET Through, Erase source, the current layer, and Multiple from the last offset") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
+    OffsetPickCommand through{{5, 0}, 1.0, 0.0, {5, 3}, 2};
+    through.through = true;
+    engine.submit(through);
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 3}, {10, 3}); }));
+    OffsetPickCommand erase{{5, 3}, 1.0, 2.0, {5, 9}, 3};
+    erase.erase_source = true;
+    engine.submit(erase);
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 5}, {10, 5}) && !has_segment(s, {0, 3}, {10, 3}); }));
+    OffsetPickCommand multi{{5, 5}, 1.0, 2.0, {5, 9}, 4};
+    multi.from_last = true; // the newest offset (y = 5) again, not the pick's object
+    engine.submit(multi);
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 7}, {10, 7}); }));
+    // Layer Current: the new line lands on the current layer, not the source's.
+    Layer walls;
+    walls.name = "walls";
+    engine.submit(AddLayerCommand{walls});
+    engine.submit(SetCurrentLayerCommand{1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.current_layer == 1; }));
+    OffsetPickCommand cur{{5, 7}, 1.0, 2.0, {5, 20}, 5};
+    cur.to_current_layer = true;
+    engine.submit(cur);
+    REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 9}, {10, 9}); }));
+    Layer frozen = walls;
+    frozen.frozen = true;
+    engine.submit(SetLayerCommand{1, frozen});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !has_segment(s, {0, 9}, {10, 9}) && has_segment(s, {0, 7}, {10, 7}); }));
+    engine.stop();
+}

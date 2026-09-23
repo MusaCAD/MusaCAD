@@ -5374,8 +5374,21 @@ int circle_circle_hits(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0, Vec2& p
 
 } // namespace
 
+namespace {
+/// The properties a fillet arc or chamfer line takes: those of the objects when both
+/// share a layer (AutoCAD), else the current layer's defaults.
+EntityProps joining_props(const GeometryStore& store, EntityHandle h1, EntityHandle h2) {
+    const EntityProps* p1 = store.props(h1);
+    const EntityProps* p2 = store.props(h2);
+    if (p1 != nullptr && p2 != nullptr && p1->layer == p2->layer) {
+        return *p1;
+    }
+    return EntityProps{store.current_layer()};
+}
+} // namespace
+
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
-                                  std::uint64_t group) {
+                                  std::uint64_t group, bool trim) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
     const EntityHandle h2 = pick_nearest(pick2, pick_radius);
     if (h1.is_null() || h2.is_null()) {
@@ -5402,10 +5415,12 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
             return;
         }
         const bool closed = pl->closed;
+        const EntityProps props = pl->props;
+        const double cel = store_.celtscale(h1);
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
         push_erase_item(group, h1, orig);
-        const Command np = AddPolylineCommand{std::move(pts), closed, 0, {}, std::move(bulges)};
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
         geom_dirty_ = true;
@@ -5417,7 +5432,7 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
     const auto curvy = [](EntityKind k) { return k == EntityKind::Arc || k == EntityKind::Circle; };
     const auto lineish = [&](EntityKind k) { return k == EntityKind::Line || curvy(k); };
     if (h1 != h2 && lineish(h1.kind) && lineish(h2.kind) && (curvy(h1.kind) || curvy(h2.kind))) {
-        apply_fillet_curves(h1, h2, pick1, pick2, radius, group);
+        apply_fillet_curves(h1, h2, pick1, pick2, radius, group, trim);
         return;
     }
 
@@ -5466,18 +5481,31 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         if (ccw > kPi) {
             std::swap(a1, a2); // keep the minor (rounding) arc
         }
-        arc = AddArcCommand{center, radius, a1, a2, 0};
+        arc = AddArcCommand{center, radius, a1, a2, 0, joining_props(store_, h1, h2)};
     }
 
+    if (!trim) {
+        // No trim: the lines stay as they are; only the rounding arc is added.
+        if (!arc) {
+            report("Fillet: nothing to add with radius 0 in No trim mode.");
+            return;
+        }
+        push_create_item(group, create_indexed(*arc), *arc);
+        redo_.clear();
+        geom_dirty_ = true;
+        report("Filleted.");
+        return;
+    }
+    // The trimmed lines keep their own properties (layer, colour, linetype, scale).
     const Command o1 = capture_entity(h1);
     const Command o2 = capture_entity(h2);
     remove_indexed(h1);
     push_erase_item(group, h1, o1);
     remove_indexed(h2);
     push_erase_item(group, h2, o2);
-    const Command e1 = AddLineCommand{k1, t1, 0};
+    const Command e1 = AddLineCommand{k1, t1, 0, l1.props, store_.celtscale(h1)};
     push_create_item(group, create_indexed(e1), e1);
-    const Command e2 = AddLineCommand{k2, t2, 0};
+    const Command e2 = AddLineCommand{k2, t2, 0, l2.props, store_.celtscale(h2)};
     push_create_item(group, create_indexed(e2), e2);
     if (arc) {
         push_create_item(group, create_indexed(*arc), *arc);
@@ -5485,6 +5513,92 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
     redo_.clear();
     geom_dirty_ = true;
     report("Filleted.");
+}
+
+void GeometryEngine::apply_fillet_polyline(Vec2 pick, double radius, double pick_radius,
+                                           std::uint64_t group) {
+    const EntityHandle h = pick_nearest(pick, pick_radius);
+    if (h.is_null() || h.kind != EntityKind::Polyline) {
+        report("Fillet: select a 2D polyline.");
+        return;
+    }
+    const PolylineData* pl = store_.polyline(h);
+    const std::span<const Vec2> v = store_.vertices_of(*pl);
+    std::vector<Vec2> pts(v.begin(), v.end());
+    const auto bspan = store_.bulges_of(*pl);
+    std::vector<double> bulges(bspan.begin(), bspan.end());
+    const bool closed = pl->closed;
+    const int n = static_cast<int>(pts.size());
+    int done = 0;
+    int skipped = 0;
+    // Highest index first: an insert never shifts a corner still to be rounded.
+    for (int i = n - 1; i >= 0; --i) {
+        if (!closed && (i == 0 || i == n - 1)) {
+            continue; // an open polyline's ends are not corners
+        }
+        if (radius > 0.0 && polyline_ops::fillet_corner(pts, bulges, closed, i, radius)) {
+            ++done;
+        } else {
+            ++skipped;
+        }
+    }
+    if (done == 0) {
+        report(radius > 0.0 ? "Fillet: the radius fits none of the polyline's corners."
+                            : "Fillet: a radius greater than 0 is needed for a polyline.");
+        return;
+    }
+    const EntityProps props = pl->props;
+    const double cel = store_.celtscale(h);
+    const Command orig = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(group, h, orig);
+    const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
+    push_create_item(group, create_indexed(np), np);
+    redo_.clear();
+    geom_dirty_ = true;
+    report(std::to_string(done) + " lines were filleted" +
+           (skipped > 0 ? ", " + std::to_string(skipped) + " were too short." : "."));
+}
+
+void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
+                                            std::uint64_t group) {
+    const EntityHandle h = pick_nearest(pick, pick_radius);
+    if (h.is_null() || h.kind != EntityKind::Polyline) {
+        report("Chamfer: select a 2D polyline.");
+        return;
+    }
+    const PolylineData* pl = store_.polyline(h);
+    const std::span<const Vec2> v = store_.vertices_of(*pl);
+    std::vector<Vec2> pts(v.begin(), v.end());
+    const bool closed = pl->closed;
+    const int n = static_cast<int>(pts.size());
+    int done = 0;
+    int skipped = 0;
+    for (int i = n - 1; i >= 0; --i) {
+        if (!closed && (i == 0 || i == n - 1)) {
+            continue;
+        }
+        if ((dist1 > 0.0 || dist2 > 0.0) && polyline_ops::chamfer_corner(pts, closed, i, dist1, dist2)) {
+            ++done;
+        } else {
+            ++skipped;
+        }
+    }
+    if (done == 0) {
+        report("Chamfer: the distances fit none of the polyline's corners.");
+        return;
+    }
+    const EntityProps props = pl->props;
+    const double cel = store_.celtscale(h);
+    const Command orig = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(group, h, orig);
+    const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
+    push_create_item(group, create_indexed(np), np);
+    redo_.clear();
+    geom_dirty_ = true;
+    report(std::to_string(done) + " lines were chamfered" +
+           (skipped > 0 ? ", " + std::to_string(skipped) + " were too short." : "."));
 }
 
 // FILLET between a line and an arc/circle, or two arcs/circles. The fillet circle is
@@ -5495,7 +5609,7 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
 // its tangent point on the side the pick chose -- a circle stays whole -- and the
 // rounding arc is the minor arc between the tangent points.
 void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
-                                         double radius, std::uint64_t group) {
+                                         double radius, std::uint64_t group, bool trim) {
     if (radius <= 0.0) {
         report("Fillet: a radius greater than 0 is needed to fillet a curve.");
         return;
@@ -5687,8 +5801,8 @@ void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 
         }
         return AddArcCommand{a.center, a.radius, ns, ne, 0, a.props, store_.celtscale(h)};
     };
-    const std::optional<Command> e1 = trimmed(h1, c1, t1, pick1);
-    const std::optional<Command> e2 = trimmed(h2, c2, t2, pick2);
+    const std::optional<Command> e1 = trim ? trimmed(h1, c1, t1, pick1) : std::nullopt;
+    const std::optional<Command> e2 = trim ? trimmed(h2, c2, t2, pick2) : std::nullopt;
 
     if (e1) {
         const Command o1 = capture_entity(h1);
@@ -5709,7 +5823,7 @@ void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 
 }
 
 void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2,
-                                   double pick_radius, std::uint64_t group) {
+                                   double pick_radius, std::uint64_t group, bool trim) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
     const EntityHandle h2 = pick_nearest(pick2, pick_radius);
     if (h1.is_null() || h2.is_null()) {
@@ -5742,10 +5856,12 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
             return;
         }
         const bool closed = pl->closed;
+        const EntityProps props = pl->props;
+        const double cel = store_.celtscale(h1);
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
         push_erase_item(group, h1, orig);
-        const Command np = AddPolylineCommand{std::move(pts), closed, 0};
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
         geom_dirty_ = true;
@@ -5772,18 +5888,33 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
     const Vec2 t1 = P + u1 * dist1;
     const Vec2 t2 = P + u2 * dist2;
 
+    const bool bevelled = length_squared(t1 - t2) > 1e-12; // a clean corner has no connector
+    if (!trim) {
+        // No trim: the lines stay; only the bevel is added.
+        if (!bevelled) {
+            report("Chamfer: nothing to add with zero distances in No trim mode.");
+            return;
+        }
+        const Command bevel = AddLineCommand{t1, t2, 0, joining_props(store_, h1, h2)};
+        push_create_item(group, create_indexed(bevel), bevel);
+        redo_.clear();
+        geom_dirty_ = true;
+        report("Chamfered.");
+        return;
+    }
+    // The trimmed lines keep their own properties.
     const Command o1 = capture_entity(h1);
     const Command o2 = capture_entity(h2);
     remove_indexed(h1);
     push_erase_item(group, h1, o1);
     remove_indexed(h2);
     push_erase_item(group, h2, o2);
-    const Command e1 = AddLineCommand{k1, t1, 0};
+    const Command e1 = AddLineCommand{k1, t1, 0, l1.props, store_.celtscale(h1)};
     push_create_item(group, create_indexed(e1), e1);
-    const Command e2 = AddLineCommand{k2, t2, 0};
+    const Command e2 = AddLineCommand{k2, t2, 0, l2.props, store_.celtscale(h2)};
     push_create_item(group, create_indexed(e2), e2);
-    if (length_squared(t1 - t2) > 1e-12) { // skip the connector for a clean corner
-        const Command bevel = AddLineCommand{t1, t2, 0};
+    if (bevelled) {
+        const Command bevel = AddLineCommand{t1, t2, 0, joining_props(store_, h1, h2)};
         push_create_item(group, create_indexed(bevel), bevel);
     }
     redo_.clear();
@@ -5967,17 +6098,135 @@ void GeometryEngine::apply_entity_color(bool by_layer, Rgb color, std::uint64_t 
     report(by_layer ? "Colour set to ByLayer." : "Colour override applied.");
 }
 
+bool GeometryEngine::straight_under_pick(Vec2 pick, double pick_radius, Vec2& a, Vec2& b) const {
+    const EntityHandle h = pick_nearest(pick, pick_radius);
+    if (h.is_null()) {
+        return false;
+    }
+    if (const LineData* l = store_.line(h); l != nullptr) {
+        a = l->a;
+        b = l->b;
+        return true;
+    }
+    if (const XlineData* x = store_.xline(h); x != nullptr) {
+        a = x->base;
+        b = x->base + x->dir;
+        return true;
+    }
+    if (const PolylineData* pl = store_.polyline(h); pl != nullptr && pl->count >= 2) {
+        const std::span<const Vec2> pts = store_.vertices_of(*pl);
+        const std::size_t segs = pl->closed ? pts.size() : pts.size() - 1;
+        std::size_t best = 0;
+        double best_d2 = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < segs; ++i) {
+            const Vec2 p0 = pts[i];
+            const Vec2 p1 = pts[(i + 1) % pts.size()];
+            const Vec2 d = p1 - p0;
+            const double l2 = length_squared(d);
+            const double t = l2 > 1e-24 ? std::clamp(dot(pick - p0, d) / l2, 0.0, 1.0) : 0.0;
+            const double d2 = length_squared(p0 + d * t - pick);
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                best = i;
+            }
+        }
+        a = pts[best];
+        b = pts[(best + 1) % pts.size()];
+        return length_squared(b - a) > 1e-24;
+    }
+    return false;
+}
+
+void GeometryEngine::apply_xline_offset(const XlineOffsetCommand& c) {
+    Vec2 a;
+    Vec2 b;
+    if (!straight_under_pick(c.pick, c.pick_radius, a, b)) {
+        report("Select a line object.");
+        return;
+    }
+    const Vec2 dir = normalized(b - a);
+    const Vec2 n{-dir.y, dir.x};
+    Vec2 base;
+    if (c.through) {
+        base = c.side; // through the point itself
+    } else {
+        const double side = dot(c.side - a, n) >= 0.0 ? 1.0 : -1.0;
+        base = a + n * (c.distance * side);
+    }
+    const Command add = AddXlineCommand{base, dir, false, c.group, EntityProps{store_.current_layer()}};
+    const EntityHandle h = create_indexed(add);
+    push_create_item(c.group, h, add);
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_xline_reference(const XlineReferenceCommand& c) {
+    Vec2 a;
+    Vec2 b;
+    if (!straight_under_pick(c.ref_pick, c.pick_radius, a, b)) {
+        report("Select a line object.");
+        return;
+    }
+    const double ref = std::atan2(b.y - a.y, b.x - a.x) + c.angle;
+    const Command add = AddXlineCommand{c.base, {std::cos(ref), std::sin(ref)}, false, c.group,
+                                        EntityProps{store_.current_layer()}};
+    const EntityHandle h = create_indexed(add);
+    push_create_item(c.group, h, add);
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
 void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec2 side,
                                   std::uint64_t group) {
-    const EntityHandle h = pick_nearest(pick, radius);
+    OffsetPickCommand c;
+    c.pick = pick;
+    c.radius = radius;
+    c.distance = distance;
+    c.side = side;
+    c.group = group;
+    apply_offset_cmd(c);
+}
+
+void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
+    // [Multiple] offsets the newest offset again (AutoCAD steps outwards from it).
+    EntityHandle h = (c.from_last && store_.is_valid(last_offset_)) ? last_offset_
+                                                                     : pick_nearest(c.pick, c.radius);
     if (h.is_null()) {
         report("Offset: nothing under the pick.");
         return;
     }
+    // [Through]: the distance is how far the through point is from the object, and the
+    // point itself names the side.
+    double distance = c.distance;
+    if (c.through) {
+        Vec2 cp;
+        if (!kernel_.closest_point(store_, h, c.side, cp)) {
+            report("Offset: can't offset that entity.");
+            return;
+        }
+        distance = length(c.side - cp);
+        if (distance <= 1e-12) {
+            report("Offset: the through point lies on the object.");
+            return;
+        }
+    }
     Command add;
-    if (kernel_.offset(store_, h, distance, side, add)) {
+    if (kernel_.offset(store_, h, distance, c.side, add)) {
+        if (c.to_current_layer) {
+            const std::uint16_t cur = store_.current_layer();
+            modify_cmd_props(add, [cur](EntityProps& p) { p.layer = cur; });
+        }
         const EntityHandle nh = create_indexed(add);
-        push_create_item(group, nh, add);
+        push_create_item(c.group, nh, add);
+        if (c.erase_source) {
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(c.group, h, original);
+            if (sel_contains(h)) {
+                prune_selection();
+            }
+        }
+        last_offset_ = nh;
         redo_.clear();
         geom_dirty_ = true;
         report("Offset created.");
@@ -6942,7 +7191,11 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, MirrorSelectionCommand>) {
                 apply_mirror(c.a, c.b, c.erase_source, c.group);
             } else if constexpr (std::is_same_v<T, OffsetPickCommand>) {
-                apply_offset(c.pick, c.radius, c.distance, c.side, c.group);
+                apply_offset_cmd(c);
+            } else if constexpr (std::is_same_v<T, XlineOffsetCommand>) {
+                apply_xline_offset(c);
+            } else if constexpr (std::is_same_v<T, XlineReferenceCommand>) {
+                apply_xline_reference(c);
             } else if constexpr (std::is_same_v<T, TrimPickCommand>) {
                 apply_trim(c.pick, c.radius, c.group);
             } else if constexpr (std::is_same_v<T, JoinPickCommand>) {
@@ -6996,9 +7249,13 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {
                 apply_extend(c.pick, c.radius, c.group);
             } else if constexpr (std::is_same_v<T, FilletPickCommand>) {
-                apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group);
+                apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group, c.trim);
             } else if constexpr (std::is_same_v<T, ChamferPickCommand>) {
-                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group);
+                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group, c.trim);
+            } else if constexpr (std::is_same_v<T, FilletPolylineCommand>) {
+                apply_fillet_polyline(c.pick, c.radius, c.pick_radius, c.group);
+            } else if constexpr (std::is_same_v<T, ChamferPolylineCommand>) {
+                apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group);
             } else if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
                 apply_object_dimension(c.type, c.pick1, c.pick2, c.pick3, c.pick4, c.pick_radius,
                                        c.style, c.group);

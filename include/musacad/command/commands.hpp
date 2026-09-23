@@ -234,6 +234,11 @@ public:
     bool done() const override { return done_; }
 
 private:
+    /// `Specify base point or [Displacement] <Displacement>:`, then `Specify second point
+    /// or <use first point as displacement>:`; the last displacement is the next default.
+    enum class State : std::uint8_t { Base, Second, Displacement };
+    State state_ = State::Base;
+    inline static core::Vec2 s_displacement_{};
     std::optional<core::Vec2> base_;
     bool done_ = false;
 };
@@ -247,8 +252,20 @@ public:
     bool done() const override { return done_; }
 
 private:
+    /// `Specify base point or [Displacement/mOde] <Displacement>:`; the first placement
+    /// `[Array] <use first point as displacement>`, later ones `[Array/Exit/Undo] <Exit>`
+    /// in Multiple mode; Array lays `count` items along the vector (or Fit spreads them to
+    /// the point). Every placement is its own undo step. The mode is kept for the session.
+    enum class State : std::uint8_t { Base, Displacement, Mode, Second, ArrayCount, ArrayEnd, ArrayFit };
+    State state_ = State::Base;
+    inline static core::Vec2 s_displacement_{};
+    inline static bool s_single_ = false;
     std::optional<core::Vec2> base_;
+    int placed_ = 0;
+    int array_count_ = 0;
     bool done_ = false;
+    void place(CommandContext& ctx, core::Vec2 delta);
+    void prompt_second(CommandContext& ctx);
 };
 
 class MirrorCommand final : public ICommand {
@@ -275,10 +292,24 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Distance, Object, Side } state_ = State::Distance;
-    double distance_ = 0.0;
+    /// AutoCAD's flow: `Specify offset distance or [Through/Erase/Layer] <last>:` (a value,
+    /// two points, or Through), `Select object to offset or [Exit/Undo] <Exit>:`, `Specify
+    /// point on side to offset or [Exit/Multiple/Undo] <Exit>:`. The distance (or Through),
+    /// Erase and Layer settings are kept for the session (OFFSETDIST).
+    enum class State : std::uint8_t { Distance, Second, Erase, Layer, Object, Side, Multiple };
+    State state_ = State::Distance;
+    inline static double s_distance_ = 0.0; ///< 0 = Through
+    inline static bool s_erase_ = false;
+    inline static bool s_layer_current_ = false;
+    core::Vec2 first_{};
     core::Vec2 object_pick_{};
+    int placed_ = 0;
+    bool from_last_multiple_ = false; ///< in [Multiple], the next offset steps from the last
     bool done_ = false;
+    void prompt_distance(CommandContext& ctx);
+    void prompt_object(CommandContext& ctx);
+    void prompt_side(CommandContext& ctx);
+    void place(CommandContext& ctx, core::Vec2 side, bool from_last);
 };
 
 // JOIN: pick a source object, then pick lines/arcs/open polylines that share endpoints
@@ -1333,8 +1364,15 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { First, Through, Angle, BisectVertex, BisectStart, BisectEnd };
+    enum class State {
+        First, Through, Angle, BisectVertex, BisectStart, BisectEnd,
+        RefLine, RefAngle, OffsetDist, OffsetLine, OffsetSide
+    };
     void emit(CommandContext& ctx, core::Vec2 base, core::Vec2 dir);
+    void preview(CommandContext& ctx, int mode);
+    inline static double s_offset_ = 0.0; ///< XLINE Offset's last distance (0 = Through)
+    core::Vec2 ref_pick_{};
+    core::Vec2 offset_pick_{};
 
     bool ray_ = false;
     State state_ = State::First;
@@ -1419,8 +1457,10 @@ private:
     void refresh_preview(CommandContext& ctx);
 
     State state_ = State::Sides;
-    int sides_ = 4;
-    bool inscribed_ = true;
+    inline static int s_sides_ = 4;       ///< POLYSIDES: the last side count
+    inline static bool s_inscribed_ = true;
+    int sides_ = s_sides_;
+    bool inscribed_ = s_inscribed_;
     core::Vec2 center_{};
     core::Vec2 edge1_{};
     bool done_ = false;
@@ -1562,10 +1602,20 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Radius, First, Second } state_ = State::Radius;
-    double radius_ = 0.0;
+    /// AutoCAD's flow: `Select first object or [Undo/Polyline/Radius/Trim/Multiple]:`, then
+    /// `Select second object or shift-select to apply corner or [Radius]:`. The radius and
+    /// the Trim mode are kept for the session (FILLETRAD, TRIMMODE).
+    enum class State : std::uint8_t { First, Second, Radius, TrimMode, Polyline };
+    State state_ = State::First;
+    State return_ = State::First; ///< where a [Radius] sub-step goes back to
+    inline static double s_radius_ = 0.0;
+    inline static bool s_trim_ = true;
+    bool multiple_ = false;
+    std::uint64_t last_group_ = 0; ///< the last fillet of this run, for [Undo]
     core::Vec2 pick1_{};
     bool done_ = false;
+    void prompt_first(CommandContext& ctx);
+    void after_fillet(CommandContext& ctx);
 };
 
 class ChamferCommand final : public ICommand {
@@ -1577,14 +1627,29 @@ public:
     bool done() const override { return done_; }
 
 private:
-    // Distance method (Dist1->Dist2) or Angle method (AngleLen->AngleVal, default
-    // 45 degrees), then pick the two lines.
-    enum class State { Dist1, Dist2, AngleLen, AngleVal, First, Second } state_ = State::Dist1;
-    double dist1_ = 0.0;
-    double dist2_ = 0.0;
-    double length_ = 0.0; // chamfer length on the first line (Angle method)
+    /// AutoCAD's flow: `Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/
+    /// Multiple]:`, then `Select second line or shift-select to apply corner or
+    /// [Distance/Angle/Method]:`. The distances, the length and angle, the method and the
+    /// Trim mode are kept for the session (CHAMFERA/B/C/D, CHAMMODE, TRIMMODE).
+    enum class State : std::uint8_t {
+        First, Second, Dist1, Dist2, AngleLen, AngleVal, Method, TrimMode, Polyline
+    };
+    State state_ = State::First;
+    State return_ = State::First;
+    inline static double s_dist1_ = 0.0;
+    inline static double s_dist2_ = 0.0;
+    inline static double s_length_ = 0.0;
+    inline static double s_angle_ = 0.0; ///< degrees
+    inline static bool s_angle_method_ = false;
+    inline static bool s_trim_ = true;
+    bool multiple_ = false;
+    std::uint64_t last_group_ = 0;
     core::Vec2 pick1_{};
     bool done_ = false;
+    [[nodiscard]] double dist1() const;
+    [[nodiscard]] double dist2() const;
+    void prompt_first(CommandContext& ctx);
+    void after_chamfer(CommandContext& ctx);
 };
 
 // --- Annotation (Phase 13) -------------------------------------------------

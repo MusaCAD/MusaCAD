@@ -1572,6 +1572,7 @@ bool MainWindow::selftest_modify() {
     // (corner -> two vertices => 5-vertex closed polyline = 10 line verts) AND the
     // engine's honest result must reach the command-line scrollback.
     type("CHA");
+    type("D"); // [Distance]
     type("2");
     type("2");
     type("5,0");    // bottom edge
@@ -1588,6 +1589,7 @@ bool MainWindow::selftest_modify() {
 
     // Honest failure: picking two non-adjacent edges changes nothing and says so.
     type("CHA");
+    type("D");
     type("2");
     type("2");
     type("5,0"); // bottom edge

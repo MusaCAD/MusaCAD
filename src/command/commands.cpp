@@ -1450,6 +1450,13 @@ void ZoomCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // MOVE
 // ---------------------------------------------------------------------------
+namespace {
+std::string displacement_default(CommandContext& ctx, core::Vec2 d) {
+    return "<" + core::units::format_length(d.x, ctx.units()) + ", " +
+           core::units::format_length(d.y, ctx.units()) + ", " + core::units::format_length(0.0, ctx.units()) + ">";
+}
+} // namespace
+
 void MoveCommand::start(CommandContext& ctx) {
     if (!ctx.has_selection()) {
         ctx.echo("No selection. Select objects first, then run MOVE.");
@@ -1457,24 +1464,59 @@ void MoveCommand::start(CommandContext& ctx) {
         return;
     }
     ctx.clear_last_point();
-    ctx.set_prompt("Specify base point: ");
+    ctx.set_prompt("Specify base point or [Displacement] <Displacement>: ");
 }
 
 void MoveCommand::input(CommandContext& ctx, const std::string& text) {
-    const auto p = read_point(ctx, text);
-    if (!p) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Base:
+        if (t.empty() || u == "D" || u == "DISPLACEMENT") {
+            state_ = State::Displacement;
+            ctx.set_prompt("Specify displacement " + displacement_default(ctx, s_displacement_) + ": ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Move, {*p}});
+            state_ = State::Second;
+            ctx.set_prompt("Specify second point or <use first point as displacement>: ");
+        }
+        return;
+    case State::Displacement: {
+        // A coordinate here is the vector itself (x,y), not a point in the drawing.
+        core::Vec2 d = s_displacement_;
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            d = *p;
+        }
+        s_displacement_ = d;
+        ctx.submit(core::MoveSelectionCommand{d, ctx.group_id()});
+        ctx.echo("Moved.");
+        done_ = true;
         return;
     }
-    if (!base_) {
-        base_ = *p;
-        ctx.set_last_point(*p);
-        ctx.set_preview({PreviewKind::Move, {*p}});
-        ctx.set_prompt("Specify second point: ");
+    case State::Second: {
+        core::Vec2 d;
+        if (t.empty()) {
+            d = *base_; // the first point, taken as a displacement from the origin
+        } else if (const auto p = read_point(ctx, text)) {
+            d = *p - *base_;
+        } else {
+            return;
+        }
+        s_displacement_ = d;
+        ctx.submit(core::MoveSelectionCommand{d, ctx.group_id()});
+        ctx.echo("Moved.");
+        done_ = true;
         return;
     }
-    ctx.submit(core::MoveSelectionCommand{*p - *base_, ctx.group_id()});
-    ctx.echo("Moved.");
-    done_ = true;
+    }
 }
 
 void MoveCommand::cancel(CommandContext& ctx) {
@@ -1483,7 +1525,7 @@ void MoveCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// COPY (leaves originals; repeats until Enter/Esc)
+// COPY (leaves originals; Multiple repeats until Enter/Esc, Single places one)
 // ---------------------------------------------------------------------------
 void CopyCommand::start(CommandContext& ctx) {
     if (!ctx.has_selection()) {
@@ -1492,27 +1534,147 @@ void CopyCommand::start(CommandContext& ctx) {
         return;
     }
     ctx.clear_last_point();
-    ctx.set_prompt("Specify base point: ");
+    ctx.echo(std::string("Current settings: Copy mode = ") + (s_single_ ? "Single" : "Multiple"));
+    ctx.set_prompt("Specify base point or [Displacement/mOde] <Displacement>: ");
+}
+
+void CopyCommand::prompt_second(CommandContext& ctx) {
+    state_ = State::Second;
+    ctx.set_preview({PreviewKind::Move, {*base_}});
+    ctx.set_prompt(placed_ == 0 ? "Specify second point or [Array] <use first point as displacement>: "
+                                : "Specify second point or [Array/Exit/Undo] <Exit>: ");
+}
+
+void CopyCommand::place(CommandContext& ctx, core::Vec2 delta) {
+    if (placed_ > 0) {
+        (void)ctx.new_group(); // every placement its own undo step
+    }
+    ctx.submit(core::CopySelectionCommand{delta, ctx.group_id()});
+    ++placed_;
+    s_displacement_ = delta;
 }
 
 void CopyCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
-    if (!base_) {
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Base:
+        if (u == "O" || u == "MODE") {
+            state_ = State::Mode;
+            ctx.set_prompt(std::string("Enter a copy mode option [Single/Multiple] <") +
+                           (s_single_ ? "Single" : "Multiple") + ">: ");
+            return;
+        }
+        if (t.empty() || u == "D" || u == "DISPLACEMENT") {
+            state_ = State::Displacement;
+            ctx.set_prompt("Specify displacement " + displacement_default(ctx, s_displacement_) + ": ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             base_ = *p;
             ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Move, {*p}});
-            ctx.set_prompt("Specify second point or [Exit]: ");
+            prompt_second(ctx);
         }
         return;
-    }
-    if (t.empty()) {
-        done_ = true; // Enter ends COPY
+    case State::Mode:
+        if (t.empty()) {
+            // keeps the mode
+        } else if (u == "S" || u == "SINGLE") {
+            s_single_ = true;
+        } else if (u == "M" || u == "MULTIPLE") {
+            s_single_ = false;
+        } else {
+            ctx.echo("Enter Single or Multiple.");
+            return;
+        }
+        state_ = State::Base;
+        ctx.set_prompt("Specify base point or [Displacement/mOde] <Displacement>: ");
+        return;
+    case State::Displacement: {
+        core::Vec2 d = s_displacement_;
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            d = *p;
+        }
+        place(ctx, d);
+        ctx.echo("Copy placed.");
+        done_ = true;
         return;
     }
-    if (const auto p = read_point(ctx, text)) {
-        ctx.submit(core::CopySelectionCommand{*p - *base_, ctx.group_id()});
-        ctx.echo("Copy placed.");
+    case State::Second:
+        if (t.empty() || u == "E" || u == "EXIT") {
+            if (placed_ == 0 && t.empty()) {
+                place(ctx, *base_); // the first point as a displacement from the origin
+                ctx.echo("Copy placed.");
+            }
+            done_ = true;
+            return;
+        }
+        if (u == "A" || u == "ARRAY") {
+            state_ = State::ArrayCount;
+            ctx.set_prompt("Enter number of items to array: ");
+            return;
+        }
+        if ((u == "U" || u == "UNDO") && placed_ > 0) {
+            ctx.submit(core::UndoLastGroupCommand{});
+            --placed_;
+            prompt_second(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            place(ctx, *p - *base_);
+            ctx.echo("Copy placed.");
+            if (s_single_) {
+                done_ = true;
+                return;
+            }
+            prompt_second(ctx);
+        }
+        return;
+    case State::ArrayCount:
+        if (!parse_number(t, v) || v < 2.0) {
+            ctx.echo("Requires an integer value of 2 or more.");
+            return;
+        }
+        array_count_ = static_cast<int>(v);
+        state_ = State::ArrayEnd;
+        ctx.set_prompt("Specify second point or [Fit]: ");
+        return;
+    case State::ArrayEnd:
+    case State::ArrayFit: {
+        if (state_ == State::ArrayEnd && (u == "F" || u == "FIT")) {
+            state_ = State::ArrayFit;
+            ctx.set_prompt("Specify second point or [Array]: ");
+            return;
+        }
+        if (state_ == State::ArrayFit && (u == "A" || u == "ARRAY")) {
+            state_ = State::ArrayEnd;
+            ctx.set_prompt("Specify second point or [Fit]: ");
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        // Array: `count` items counting the original, the vector between neighbours
+        // being the pick (or, with Fit, the pick is where the last item lands).
+        const core::Vec2 step = state_ == State::ArrayFit ? (*p - *base_) * (1.0 / (array_count_ - 1))
+                                                          : (*p - *base_);
+        for (int k = 1; k < array_count_; ++k) {
+            place(ctx, step * static_cast<double>(k));
+        }
+        ctx.echo(std::to_string(array_count_ - 1) + " copies placed.");
+        if (s_single_) {
+            done_ = true;
+            return;
+        }
+        prompt_second(ctx);
+        return;
+    }
     }
 }
 
@@ -1569,41 +1731,182 @@ void MirrorCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // OFFSET (distance -> pick object -> pick side; repeats)
 // ---------------------------------------------------------------------------
+void OffsetCommand::prompt_distance(CommandContext& ctx) {
+    state_ = State::Distance;
+    ctx.set_prompt("Specify offset distance or [Through/Erase/Layer] <" +
+                   (s_distance_ > 0.0 ? core::units::format_length(s_distance_, ctx.units()) : std::string("Through")) +
+                   ">: ");
+}
+
+void OffsetCommand::prompt_object(CommandContext& ctx) {
+    state_ = State::Object;
+    ctx.clear_preview();
+    ctx.set_prompt("Select object to offset or [Exit/Undo] <Exit>: ");
+}
+
+void OffsetCommand::prompt_side(CommandContext& ctx) {
+    state_ = State::Side;
+    ctx.set_prompt(s_distance_ > 0.0 ? "Specify point on side to offset or [Exit/Multiple/Undo] <Exit>: "
+                                     : "Specify through point or [Exit/Multiple/Undo] <Exit>: ");
+}
+
 void OffsetCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Specify offset distance: ");
+    ctx.echo(std::string("Current settings: Erase source=") + (s_erase_ ? "Yes" : "No") +
+             "  Layer=" + (s_layer_current_ ? "Current" : "Source") + "  OFFSETGAPTYPE=0");
+    prompt_distance(ctx);
+}
+
+void OffsetCommand::place(CommandContext& ctx, core::Vec2 side, bool from_last) {
+    if (placed_ > 0) {
+        (void)ctx.new_group(); // every offset its own undo step
+    }
+    core::OffsetPickCommand c{object_pick_, ctx.pick_radius(), s_distance_, side, ctx.group_id()};
+    c.through = s_distance_ <= 0.0;
+    c.erase_source = s_erase_;
+    c.to_current_layer = s_layer_current_;
+    c.from_last = from_last;
+    ctx.submit(c);
+    ++placed_;
 }
 
 void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
-    if (state_ == State::Distance) {
-        double d = 0.0;
-        if (!parse_number(t, d) || d <= 0.0) {
-            ctx.echo("Enter a positive offset distance.");
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Distance:
+        if (t.empty()) {
+            prompt_object(ctx); // the remembered distance (or Through)
             return;
         }
-        distance_ = d;
-        state_ = State::Object;
-        ctx.set_prompt("Select object to offset: ");
+        if (u == "T" || u == "THROUGH") {
+            s_distance_ = 0.0;
+            prompt_object(ctx);
+            return;
+        }
+        if (u == "E" || u == "ERASE") {
+            state_ = State::Erase;
+            ctx.set_prompt(std::string("Erase source object after offsetting? [Yes/No] <") + (s_erase_ ? "Yes" : "No") + ">: ");
+            return;
+        }
+        if (u == "L" || u == "LAYER") {
+            state_ = State::Layer;
+            ctx.set_prompt(std::string("Enter layer option for offset objects [Current/Source] <") +
+                           (s_layer_current_ ? "Current" : "Source") + ">: ");
+            return;
+        }
+        if (parse_number(t, v)) {
+            if (!(v > 0.0)) {
+                ctx.echo("Value must be positive and nonzero.");
+                return;
+            }
+            s_distance_ = v;
+            prompt_object(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p; // two points give the distance
+            ctx.set_last_point(*p);
+            state_ = State::Second;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify second point: ");
+        }
         return;
-    }
-    if (t.empty()) {
-        done_ = true;
+    case State::Second:
+        if (const auto p = read_point(ctx, text)) {
+            const double d = core::distance(first_, *p);
+            if (!(d > 0.0)) {
+                ctx.echo("Value must be positive and nonzero.");
+                return;
+            }
+            s_distance_ = d;
+            prompt_object(ctx);
+        }
         return;
-    }
-    const auto p = read_point(ctx, text);
-    if (!p) {
+    case State::Erase:
+        if (t.empty()) {
+            // keeps the setting
+        } else if (u == "Y" || u == "YES") {
+            s_erase_ = true;
+        } else if (u == "N" || u == "NO") {
+            s_erase_ = false;
+        } else {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        prompt_distance(ctx);
         return;
-    }
-    if (state_ == State::Object) {
-        object_pick_ = *p;
-        state_ = State::Side;
-        ctx.set_prompt("Specify point on side to offset: ");
-    } else {
-        ctx.submit(core::OffsetPickCommand{object_pick_, ctx.pick_radius(), distance_, *p,
-                                           ctx.group_id()});
-        // Result is echoed by the engine (honest status), not assumed here.
-        state_ = State::Object;
-        ctx.set_prompt("Select object to offset: ");
+    case State::Layer:
+        if (t.empty()) {
+            // keeps the setting
+        } else if (u == "C" || u == "CURRENT") {
+            s_layer_current_ = true;
+        } else if (u == "S" || u == "SOURCE") {
+            s_layer_current_ = false;
+        } else {
+            ctx.echo("Enter Current or Source.");
+            return;
+        }
+        prompt_distance(ctx);
+        return;
+    case State::Object:
+        if (t.empty() || u == "E" || u == "EXIT") {
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (placed_ == 0) {
+                ctx.echo("Nothing to undo.");
+                return;
+            }
+            ctx.submit(core::UndoLastGroupCommand{});
+            --placed_;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            object_pick_ = *p;
+            from_last_multiple_ = false;
+            prompt_side(ctx);
+        }
+        return;
+    case State::Side:
+    case State::Multiple:
+        if (t.empty() || u == "E" || u == "EXIT") {
+            if (state_ == State::Multiple) {
+                prompt_object(ctx); // Multiple ends back at the object prompt
+                return;
+            }
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (placed_ == 0) {
+                ctx.echo("Nothing to undo.");
+                return;
+            }
+            ctx.submit(core::UndoLastGroupCommand{});
+            --placed_;
+            return;
+        }
+        if ((u == "M" || u == "MULTIPLE") && state_ == State::Side) {
+            state_ = State::Multiple;
+            ctx.set_prompt(s_distance_ > 0.0 ? "Specify point on side to offset or [Exit/Undo] <Exit>: "
+                                             : "Specify through point or [Exit/Undo] <Exit>: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            if (state_ == State::Multiple) {
+                // Each further offset steps out from the one just made.
+                place(ctx, *p, placed_ > 0 && from_last_multiple_);
+                from_last_multiple_ = true;
+                ctx.set_prompt(s_distance_ > 0.0 ? "Specify point on side to offset or [Exit/Undo] <Exit>: "
+                                                 : "Specify through point or [Exit/Undo] <Exit>: ");
+                return;
+            }
+            place(ctx, *p, false);
+            prompt_object(ctx);
+        }
+        return;
     }
 }
 
@@ -5533,6 +5836,20 @@ void XlineCommand::emit(CommandContext& ctx, core::Vec2 base, core::Vec2 dir) {
     ctx.submit(core::AddXlineCommand{base, core::normalized(dir), ray_, ctx.group_id(), {}});
 }
 
+void XlineCommand::preview(CommandContext& ctx, int mode) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Xline;
+    pv.xline_mode = mode;
+    pv.xline_ray = ray_;
+    pv.xline_angle = angle_;
+    if (mode == 0) {
+        pv.points = {root_};
+    } else if (mode == 4) {
+        pv.points = {bvertex_, bstart_};
+    }
+    ctx.set_preview(pv);
+}
+
 void XlineCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::First;
@@ -5540,31 +5857,34 @@ void XlineCommand::start(CommandContext& ctx) {
     if (ray_) {
         ctx.set_prompt("Specify start point: ");
     } else {
-        ctx.set_prompt("Specify a point or [Hor/Ver/Ang/Bisect]: ");
+        ctx.set_prompt("Specify a point or [Hor/Ver/Ang/Bisect/Offset]: ");
     }
 }
 
 void XlineCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
+    double v = 0.0;
     switch (state_) {
     case State::First: {
         if (!ray_) {
             if (u == "H" || u == "HOR") {
                 mode_ = 1;
                 state_ = State::Through;
+                preview(ctx, 1);
                 ctx.set_prompt("Specify through point: ");
                 return;
             }
             if (u == "V" || u == "VER") {
                 mode_ = 2;
                 state_ = State::Through;
+                preview(ctx, 2);
                 ctx.set_prompt("Specify through point: ");
                 return;
             }
             if (u == "A" || u == "ANG") {
                 state_ = State::Angle;
-                ctx.set_prompt("Enter angle of xline (0): ");
+                ctx.set_prompt("Enter angle of xline (0) or [Reference]: ");
                 return;
             }
             if (u == "B" || u == "BISECT") {
@@ -5573,7 +5893,10 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
             if (u == "O" || u == "OFFSET") {
-                ctx.echo("XLINE Offset is not supported yet; use the OFFSET command on a line.");
+                state_ = State::OffsetDist;
+                ctx.set_prompt("Specify offset distance or [Through] <" +
+                               (s_offset_ > 0.0 ? core::units::format_length(s_offset_, ctx.units()) : std::string("Through")) +
+                               ">: ");
                 return;
             }
         }
@@ -5581,11 +5904,17 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
             root_ = *p;
             ctx.set_last_point(*p);
             state_ = State::Through;
+            preview(ctx, 0);
             ctx.set_prompt("Specify through point: ");
         }
         return;
     }
     case State::Angle: {
+        if (u == "R" || u == "REFERENCE") {
+            state_ = State::RefLine;
+            ctx.set_prompt("Select a line object: ");
+            return;
+        }
         double deg = 0.0;
         if (!t.empty() && !parse_number(t, deg)) {
             ctx.echo("Enter an angle in degrees.");
@@ -5594,6 +5923,27 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
         angle_ = core::to_radians(deg);
         mode_ = 3;
         state_ = State::Through;
+        preview(ctx, 3);
+        ctx.set_prompt("Specify through point: ");
+        return;
+    }
+    case State::RefLine:
+        if (const auto p = read_point(ctx, text)) {
+            ref_pick_ = *p;
+            state_ = State::RefAngle;
+            ctx.set_prompt("Enter angle of xline <0>: ");
+        }
+        return;
+    case State::RefAngle: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        angle_ = core::to_radians(deg);
+        mode_ = 4; // relative to the reference line: the engine resolves it per point
+        state_ = State::Through;
+        ctx.clear_preview();
         ctx.set_prompt("Specify through point: ");
         return;
     }
@@ -5604,6 +5954,11 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
         }
         const auto p = read_point(ctx, text);
         if (!p) {
+            return;
+        }
+        if (mode_ == 4) {
+            ctx.submit(core::XlineReferenceCommand{*p, ref_pick_, ctx.pick_radius(), angle_, ctx.group_id()});
+            ctx.set_prompt("Specify through point: ");
             return;
         }
         core::Vec2 base = *p;
@@ -5618,6 +5973,10 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
             // Two-point / RAY: the line runs through the root toward this point.
             base = root_;
             dir = *p - root_;
+            if (core::length_squared(dir) <= 1e-24) {
+                ctx.echo("The through point must differ from the first point.");
+                return;
+            }
         }
         emit(ctx, base, dir);
         // XLINE repeats through the SAME root; the Hor/Ver/Ang families repeat at new
@@ -5633,6 +5992,7 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
             bvertex_ = *p;
             ctx.set_last_point(*p);
             state_ = State::BisectStart;
+            ctx.set_preview({PreviewKind::Segment, {bvertex_}});
             ctx.set_prompt("Specify angle start point: ");
         }
         return;
@@ -5640,16 +6000,61 @@ void XlineCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             bstart_ = *p;
             state_ = State::BisectEnd;
+            preview(ctx, 4);
             ctx.set_prompt("Specify angle end point: ");
         }
         return;
-    case State::BisectEnd:
-        if (const auto p = read_point(ctx, text)) {
-            const core::Vec2 d0 = core::normalized(bstart_ - bvertex_);
-            const core::Vec2 d1 = core::normalized(*p - bvertex_);
-            const core::Vec2 bis = d0 + d1; // the angle bisector direction
-            emit(ctx, bvertex_, bis);
+    case State::BisectEnd: {
+        if (t.empty()) {
             done_ = true;
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        const core::Vec2 d0 = core::normalized(bstart_ - bvertex_);
+        const core::Vec2 d1 = core::normalized(*p - bvertex_);
+        const core::Vec2 bis = d0 + d1; // the angle bisector direction
+        if (core::length_squared(bis) <= 1e-24) {
+            ctx.echo("The two directions are opposite: no bisector.");
+            return;
+        }
+        emit(ctx, bvertex_, bis);
+        ctx.set_prompt("Specify angle end point: "); // more bisectors from the same start
+        return;
+    }
+    case State::OffsetDist:
+        if (t.empty()) {
+            // the remembered distance (or Through)
+        } else if (u == "T" || u == "THROUGH") {
+            s_offset_ = 0.0;
+        } else if (parse_number(t, v) && v > 0.0) {
+            s_offset_ = v;
+        } else {
+            ctx.echo("Value must be positive and nonzero.");
+            return;
+        }
+        state_ = State::OffsetLine;
+        ctx.set_prompt("Select a line object: ");
+        return;
+    case State::OffsetLine:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            offset_pick_ = *p;
+            state_ = State::OffsetSide;
+            ctx.set_prompt(s_offset_ > 0.0 ? "Specify side to offset: " : "Specify through point: ");
+        }
+        return;
+    case State::OffsetSide:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::XlineOffsetCommand{offset_pick_, ctx.pick_radius(), s_offset_, *p,
+                                                s_offset_ <= 0.0, ctx.group_id()});
+            state_ = State::OffsetLine; // the next line, until Enter
+            ctx.set_prompt("Select a line object: ");
         }
         return;
     }
@@ -5902,7 +6307,7 @@ void PolygonCommand::refresh_preview(CommandContext& ctx) {
 void PolygonCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Sides;
-    ctx.set_prompt("Enter number of sides <4>: ");
+    ctx.set_prompt("Enter number of sides <" + std::to_string(s_sides_) + ">: ");
 }
 
 void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
@@ -5911,11 +6316,12 @@ void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Sides: {
         if (!t.empty()) {
             const int n = parse_int(t, 0);
-            if (n < 3) {
-                ctx.echo("A polygon needs at least 3 sides.");
+            if (n < 3 || n > 1024) {
+                ctx.echo("Requires an integer between 3 and 1024.");
                 return;
             }
             sides_ = n;
+            s_sides_ = n;
         }
         state_ = State::Center;
         ctx.set_prompt("Specify center of polygon or [Edge]: ");
@@ -5937,27 +6343,38 @@ void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
     }
     case State::Fit: {
         const std::string u = upper(t);
-        inscribed_ = !(u == "C" || u == "CIRCUMSCRIBED");
+        if (!t.empty()) {
+            inscribed_ = !(u == "C" || u == "CIRCUMSCRIBED");
+            s_inscribed_ = inscribed_;
+        }
         state_ = State::Radius;
         refresh_preview(ctx);
         ctx.set_prompt("Specify radius of circle: ");
         return;
     }
     case State::Radius: {
-        const auto p = read_point(ctx, text);
-        if (!p) {
-            return;
+        double dist = 0.0;
+        double angle = 0.0;
+        if (double typed = 0.0; parse_number(t, typed)) {
+            // A typed radius stands the polygon on a horizontal bottom edge (AutoCAD):
+            // inscribed, a vertex sits half a step past straight down; circumscribed, the
+            // bottom edge's midpoint is straight down.
+            dist = typed;
+            angle = inscribed_ ? -core::kHalfPi - core::kPi / static_cast<double>(sides_) : -core::kHalfPi;
+        } else {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            const core::Vec2 r = *p - center_; // the pick fixes the orientation
+            dist = core::length(r);
+            angle = std::atan2(r.y, r.x);
         }
-        // A typed bare number is a radius along +X; a picked point also fixes the
-        // orientation, which is why the reference ANGLE comes from the pick.
-        const core::Vec2 r = *p - center_;
-        const double dist = core::length(r);
         if (dist <= 1e-12) {
             ctx.echo("The radius must be greater than zero.");
             return;
         }
-        const std::vector<core::Vec2> v = core::polygon_vertices(
-            center_, dist, sides_, inscribed_, std::atan2(r.y, r.x));
+        const std::vector<core::Vec2> v = core::polygon_vertices(center_, dist, sides_, inscribed_, angle);
         ctx.clear_preview();
         core::AddPolylineCommand poly;
         poly.points = v;
@@ -5973,6 +6390,10 @@ void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
             edge1_ = *p;
             ctx.set_last_point(*p);
             state_ = State::Edge2;
+            PreviewSpec pv{PreviewKind::Polygon, {edge1_}};
+            pv.sides = sides_;
+            pv.polygon_edge = true;
+            ctx.set_preview(pv);
             ctx.set_prompt("Specify second endpoint of edge: ");
         }
         return;
@@ -5981,26 +6402,13 @@ void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
         if (!p) {
             return;
         }
-        const core::Vec2 e = *p - edge1_;
-        const double side = core::length(e);
-        if (side <= 1e-12) {
+        // Edge mode: the two picks ARE one side; the polygon stands on it, to its left
+        // (the side AutoCAD builds towards) -- the same rule the band draws.
+        const std::vector<core::Vec2> v = core::polygon_on_edge(edge1_, *p, sides_);
+        if (v.empty()) {
             ctx.echo("The two edge endpoints must differ.");
             return;
         }
-        // Edge mode: the two picks ARE one side. The centre sits on the edge's
-        // perpendicular bisector, an apothem away, on the left of edge1->edge2 -- the
-        // side AutoCAD builds towards.
-        const double n = static_cast<double>(sides_);
-        const double apothem = side / (2.0 * std::tan(core::kPi / n));
-        const core::Vec2 mid{(edge1_.x + p->x) * 0.5, (edge1_.y + p->y) * 0.5};
-        const core::Vec2 dir{e.x / side, e.y / side};
-        const core::Vec2 left{-dir.y, dir.x};
-        const core::Vec2 c{mid.x + left.x * apothem, mid.y + left.y * apothem};
-        // Generated by the same rule as centre mode: edge1 is a VERTEX, so this is the
-        // inscribed case with the angle pointing at it.
-        const core::Vec2 rad = edge1_ - c;
-        const std::vector<core::Vec2> v = core::polygon_vertices(
-            c, core::length(rad), sides_, true, std::atan2(rad.y, rad.x));
         ctx.clear_preview();
         core::AddPolylineCommand poly;
         poly.points = v;
@@ -6326,33 +6734,131 @@ void ExtendCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // FILLET (radius, then two lines)
 // ---------------------------------------------------------------------------
+void FilletCommand::prompt_first(CommandContext& ctx) {
+    state_ = State::First;
+    ctx.set_prompt("Select first object or [Undo/Polyline/Radius/Trim/Multiple]: ");
+}
+
 void FilletCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Specify fillet radius <0>: ");
+    ctx.echo(std::string("Current settings: Mode = ") + (s_trim_ ? "TRIM" : "NOTRIM") +
+             ", Radius = " + core::units::format_length(s_radius_, ctx.units()));
+    prompt_first(ctx);
+}
+
+void FilletCommand::after_fillet(CommandContext& ctx) {
+    if (multiple_) {
+        (void)ctx.new_group(); // each fillet its own undo step
+        prompt_first(ctx);
+    } else {
+        done_ = true;
+    }
 }
 
 void FilletCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
-    if (state_ == State::Radius) {
-        double r = 0.0;
-        if (!t.empty() && parse_number(t, r)) {
-            radius_ = std::max(0.0, r);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::First:
+        if (t.empty()) {
+            done_ = true;
+            return;
         }
-        state_ = State::First;
-        ctx.set_prompt("Select first line: ");
+        if (u == "U" || u == "UNDO") {
+            if (last_group_ == 0) {
+                ctx.echo("Nothing to undo.");
+                return;
+            }
+            ctx.submit(core::UndoLastGroupCommand{});
+            last_group_ = 0;
+            return;
+        }
+        if (u == "P" || u == "POLYLINE") {
+            state_ = State::Polyline;
+            ctx.set_prompt("Select 2D polyline or [Radius]: ");
+            return;
+        }
+        if (u == "R" || u == "RADIUS") {
+            return_ = State::First;
+            state_ = State::Radius;
+            ctx.set_prompt("Specify fillet radius <" + core::units::format_length(s_radius_, ctx.units()) + ">: ");
+            return;
+        }
+        if (u == "T" || u == "TRIM") {
+            state_ = State::TrimMode;
+            ctx.set_prompt(std::string("Enter Trim mode option [Trim/No trim] <") + (s_trim_ ? "Trim" : "No trim") + ">: ");
+            return;
+        }
+        if (u == "M" || u == "MULTIPLE") {
+            multiple_ = true;
+            prompt_first(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pick1_ = *p;
+            state_ = State::Second;
+            ctx.set_prompt("Select second object or shift-select to apply corner or [Radius]: ");
+        }
         return;
-    }
-    const auto p = read_point(ctx, text);
-    if (!p) {
+    case State::Second:
+        if (u == "R" || u == "RADIUS") {
+            return_ = State::Second;
+            state_ = State::Radius;
+            ctx.set_prompt("Specify fillet radius <" + core::units::format_length(s_radius_, ctx.units()) + ">: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            // Shift at the pick: a sharp corner (radius 0) this once.
+            const double r = ctx.shift_held() ? 0.0 : s_radius_;
+            last_group_ = ctx.group_id();
+            ctx.submit(core::FilletPickCommand{pick1_, *p, r, ctx.pick_radius(), last_group_, s_trim_});
+            after_fillet(ctx);
+        }
         return;
-    }
-    if (state_ == State::First) {
-        pick1_ = *p;
-        state_ = State::Second;
-        ctx.set_prompt("Select second line: ");
-    } else {
-        ctx.submit(core::FilletPickCommand{pick1_, *p, radius_, ctx.pick_radius(), ctx.group_id()});
-        // Result is echoed by the engine (honest status), not assumed here.
-        done_ = true;
+    case State::Radius:
+        if (t.empty()) {
+            // Enter keeps the radius
+        } else if (parse_number(t, v) && v >= 0.0) {
+            s_radius_ = v;
+        } else if (const auto p = read_point(ctx, text)) {
+            s_radius_ = ctx.last_point() ? core::distance(*ctx.last_point(), *p) : 0.0;
+        } else {
+            ctx.echo("Value must be positive or zero.");
+            return;
+        }
+        state_ = return_;
+        if (state_ == State::First) {
+            prompt_first(ctx);
+        } else if (state_ == State::Second) {
+            ctx.set_prompt("Select second object or shift-select to apply corner or [Radius]: ");
+        } else {
+            ctx.set_prompt("Select 2D polyline or [Radius]: ");
+        }
+        return;
+    case State::TrimMode:
+        if (t.empty() || u == "T" || u == "TRIM") {
+            s_trim_ = true;
+        } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
+            s_trim_ = false;
+        } else {
+            ctx.echo("Enter Trim or No trim.");
+            return;
+        }
+        prompt_first(ctx);
+        return;
+    case State::Polyline:
+        if (u == "R" || u == "RADIUS") {
+            return_ = State::Polyline;
+            state_ = State::Radius;
+            ctx.set_prompt("Specify fillet radius <" + core::units::format_length(s_radius_, ctx.units()) + ">: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            last_group_ = ctx.group_id();
+            ctx.submit(core::FilletPolylineCommand{*p, s_radius_, ctx.pick_radius(), last_group_});
+            after_fillet(ctx);
+        }
+        return;
     }
 }
 
@@ -6362,73 +6868,238 @@ void FilletCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// CHAMFER (Distance method, or Angle method defaulting to 45 degrees)
+// CHAMFER (Distance method, or Angle method: a length on the first line and an angle)
 // ---------------------------------------------------------------------------
+double ChamferCommand::dist1() const {
+    return s_angle_method_ ? s_length_ : s_dist1_;
+}
+
+double ChamferCommand::dist2() const {
+    return s_angle_method_ ? s_length_ * std::tan(core::to_radians(s_angle_)) : s_dist2_;
+}
+
+void ChamferCommand::prompt_first(CommandContext& ctx) {
+    state_ = State::First;
+    ctx.set_prompt("Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]: ");
+}
+
 void ChamferCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Specify first chamfer distance or [Angle] <0>: ");
+    const std::string mode = s_trim_ ? "(TRIM mode) " : "(NOTRIM mode) ";
+    if (s_angle_method_) {
+        ctx.echo(mode + "Current chamfer Length = " + core::units::format_length(s_length_, ctx.units()) +
+                 ", Angle = " + core::units::format_angle(core::to_radians(s_angle_), ctx.units()));
+    } else {
+        ctx.echo(mode + "Current chamfer Dist1 = " + core::units::format_length(s_dist1_, ctx.units()) +
+                 ", Dist2 = " + core::units::format_length(s_dist2_, ctx.units()));
+    }
+    prompt_first(ctx);
+}
+
+void ChamferCommand::after_chamfer(CommandContext& ctx) {
+    if (multiple_) {
+        (void)ctx.new_group();
+        prompt_first(ctx);
+    } else {
+        done_ = true;
+    }
 }
 
 void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const auto back = [&] {
+        state_ = return_;
+        if (state_ == State::First) {
+            prompt_first(ctx);
+        } else if (state_ == State::Second) {
+            ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
+        } else {
+            ctx.set_prompt("Select 2D polyline or [Distance/Angle/mEthod]: ");
+        }
+    };
+    const auto ask_distance = [&](State ret) {
+        return_ = ret;
+        state_ = State::Dist1;
+        ctx.set_prompt("Specify first chamfer distance <" + core::units::format_length(s_dist1_, ctx.units()) + ">: ");
+    };
+    const auto ask_angle = [&](State ret) {
+        return_ = ret;
+        state_ = State::AngleLen;
+        ctx.set_prompt("Specify chamfer length on the first line <" +
+                       core::units::format_length(s_length_, ctx.units()) + ">: ");
+    };
+    const auto ask_method = [&](State ret) {
+        return_ = ret;
+        state_ = State::Method;
+        ctx.set_prompt(std::string("Enter trim method [Distance/Angle] <") + (s_angle_method_ ? "Angle" : "Distance") + ">: ");
+    };
+    double v = 0.0;
     switch (state_) {
-    case State::Dist1:
-        if (upper(t) == "A" || upper(t) == "ANGLE") {
-            state_ = State::AngleLen;
-            ctx.set_prompt("Specify chamfer length on the first line <0>: ");
+    case State::First:
+        if (t.empty()) {
+            done_ = true;
             return;
         }
-        {
-            double d = 0.0;
-            if (!t.empty() && parse_number(t, d)) {
-                dist1_ = std::max(0.0, d);
+        if (u == "U" || u == "UNDO") {
+            if (last_group_ == 0) {
+                ctx.echo("Nothing to undo.");
+                return;
             }
+            ctx.submit(core::UndoLastGroupCommand{});
+            last_group_ = 0;
+            return;
         }
-        state_ = State::Dist2;
-        ctx.set_prompt("Specify second chamfer distance <" + std::to_string(dist1_) + ">: ");
-        return;
-    case State::Dist2: {
-        double d = dist1_;
-        if (!t.empty() && !parse_number(t, d)) {
-            d = dist1_;
+        if (u == "P" || u == "POLYLINE") {
+            state_ = State::Polyline;
+            ctx.set_prompt("Select 2D polyline or [Distance/Angle/mEthod]: ");
+            return;
         }
-        dist2_ = std::max(0.0, d);
-        state_ = State::First;
-        ctx.set_prompt("Select first line: ");
-        return;
-    }
-    case State::AngleLen:
-        if (!t.empty() && !parse_number(t, length_)) {
-            length_ = 0.0;
+        if (u == "D" || u == "DISTANCE") {
+            ask_distance(State::First);
+            return;
         }
-        length_ = std::max(0.0, length_);
-        state_ = State::AngleVal;
-        ctx.set_prompt("Specify chamfer angle from the first line <45>: ");
-        return;
-    case State::AngleVal: {
-        double deg = 45.0;
-        if (!t.empty() && !parse_number(t, deg)) {
-            deg = 45.0;
+        if (u == "A" || u == "ANGLE") {
+            ask_angle(State::First);
+            return;
         }
-        // Distance on line 1 is the length; on line 2 it is length * tan(angle).
-        dist1_ = length_;
-        dist2_ = length_ * std::tan(core::to_radians(deg));
-        state_ = State::First;
-        ctx.set_prompt("Select first line: ");
-        return;
-    }
-    case State::First:
+        if (u == "T" || u == "TRIM") {
+            state_ = State::TrimMode;
+            ctx.set_prompt(std::string("Enter Trim mode option [Trim/No trim] <") + (s_trim_ ? "Trim" : "No trim") + ">: ");
+            return;
+        }
+        if (u == "E" || u == "METHOD") {
+            ask_method(State::First);
+            return;
+        }
+        if (u == "M" || u == "MULTIPLE") {
+            multiple_ = true;
+            prompt_first(ctx);
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             pick1_ = *p;
             state_ = State::Second;
-            ctx.set_prompt("Select second line: ");
+            ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         }
         return;
     case State::Second:
+        if (u == "D" || u == "DISTANCE") {
+            ask_distance(State::Second);
+            return;
+        }
+        if (u == "A" || u == "ANGLE") {
+            ask_angle(State::Second);
+            return;
+        }
+        if (u == "M" || u == "METHOD") {
+            ask_method(State::Second);
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
-            ctx.submit(core::ChamferPickCommand{pick1_, *p, dist1_, dist2_, ctx.pick_radius(),
-                                                ctx.group_id()});
-            // Result is echoed by the engine (honest status), not assumed here.
-            done_ = true;
+            const bool sharp = ctx.shift_held(); // a clean corner this once
+            last_group_ = ctx.group_id();
+            ctx.submit(core::ChamferPickCommand{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
+                                                ctx.pick_radius(), last_group_, s_trim_});
+            after_chamfer(ctx);
+        }
+        return;
+    case State::Dist1:
+        if (t.empty()) {
+            // keeps the first distance
+        } else if (parse_number(t, v) && v >= 0.0) {
+            s_dist1_ = v;
+        } else if (const auto p = read_point(ctx, text)) {
+            s_dist1_ = ctx.last_point() ? core::distance(*ctx.last_point(), *p) : 0.0;
+        } else {
+            ctx.echo("Value must be positive or zero.");
+            return;
+        }
+        s_angle_method_ = false;
+        state_ = State::Dist2;
+        // AutoCAD defaults the second distance to the first just entered.
+        ctx.set_prompt("Specify second chamfer distance <" + core::units::format_length(s_dist1_, ctx.units()) + ">: ");
+        return;
+    case State::Dist2:
+        if (t.empty()) {
+            s_dist2_ = s_dist1_;
+        } else if (parse_number(t, v) && v >= 0.0) {
+            s_dist2_ = v;
+        } else if (const auto p = read_point(ctx, text)) {
+            s_dist2_ = ctx.last_point() ? core::distance(*ctx.last_point(), *p) : 0.0;
+        } else {
+            ctx.echo("Value must be positive or zero.");
+            return;
+        }
+        back();
+        return;
+    case State::AngleLen:
+        if (t.empty()) {
+            // keeps the length
+        } else if (parse_number(t, v) && v >= 0.0) {
+            s_length_ = v;
+        } else if (const auto p = read_point(ctx, text)) {
+            s_length_ = ctx.last_point() ? core::distance(*ctx.last_point(), *p) : 0.0;
+        } else {
+            ctx.echo("Value must be positive or zero.");
+            return;
+        }
+        state_ = State::AngleVal;
+        ctx.set_prompt("Specify chamfer angle from the first line <" +
+                       core::units::format_angle(core::to_radians(s_angle_), ctx.units()) + ">: ");
+        return;
+    case State::AngleVal:
+        if (t.empty()) {
+            // keeps the angle
+        } else if (parse_number(t, v)) {
+            s_angle_ = v;
+        } else {
+            ctx.echo("Requires valid numeric angle.");
+            return;
+        }
+        s_angle_method_ = true;
+        back();
+        return;
+    case State::Method:
+        if (t.empty()) {
+            // keeps the method
+        } else if (u == "D" || u == "DISTANCE") {
+            s_angle_method_ = false;
+        } else if (u == "A" || u == "ANGLE") {
+            s_angle_method_ = true;
+        } else {
+            ctx.echo("Enter Distance or Angle.");
+            return;
+        }
+        back();
+        return;
+    case State::TrimMode:
+        if (t.empty() || u == "T" || u == "TRIM") {
+            s_trim_ = true;
+        } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
+            s_trim_ = false;
+        } else {
+            ctx.echo("Enter Trim or No trim.");
+            return;
+        }
+        prompt_first(ctx);
+        return;
+    case State::Polyline:
+        if (u == "D" || u == "DISTANCE") {
+            ask_distance(State::Polyline);
+            return;
+        }
+        if (u == "A" || u == "ANGLE") {
+            ask_angle(State::Polyline);
+            return;
+        }
+        if (u == "E" || u == "METHOD") {
+            ask_method(State::Polyline);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            last_group_ = ctx.group_id();
+            ctx.submit(core::ChamferPolylineCommand{*p, dist1(), dist2(), ctx.pick_radius(), last_group_});
+            after_chamfer(ctx);
         }
         return;
     }

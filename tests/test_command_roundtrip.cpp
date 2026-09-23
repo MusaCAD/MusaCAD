@@ -111,7 +111,8 @@ TEST_CASE("Round-trip: FILLET rounds a RECTANGLE corner via the full command pat
 
     // FILLET corner (10,0): radius 2, pick the bottom edge then the right edge.
     proc.submit_line("F");
-    proc.submit_line("2");      // Specify fillet radius
+    proc.submit_line("R");      // [Radius]
+    proc.submit_line("2");
     proc.submit_line("5,0");    // first edge  (bottom)
     proc.submit_line("10,2.5"); // second edge (right) -> shared corner (10,0)
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Filleted."; }));
@@ -144,6 +145,7 @@ TEST_CASE("Round-trip: FILLET rounds the RECTANGLE wrap corner (closing edge)") 
 
     // Corner (0,0) = vertex 0: pick the left/closing edge then the bottom edge.
     proc.submit_line("F");
+    proc.submit_line("R");
     proc.submit_line("2");
     proc.submit_line("0,2.5"); // left (closing) edge, vertex 3 -> 0
     proc.submit_line("5,0");   // bottom edge, vertex 0 -> 1
@@ -168,6 +170,7 @@ TEST_CASE("Round-trip: CHAMFER bevels a RECTANGLE corner via the full command pa
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 8; }));
 
     proc.submit_line("CHA");
+    proc.submit_line("D");      // [Distance]
     proc.submit_line("2");      // first chamfer distance
     proc.submit_line("2");      // second chamfer distance
     proc.submit_line("5,0");    // bottom edge

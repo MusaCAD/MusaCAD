@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -295,4 +296,100 @@ TEST_CASE("#23: XLINE repeats through one root; RAY is semi-infinite from its st
         REQUIRE(xs[0]->ray);
         REQUIRE(xs[0]->dir.x == Approx(1.0));
     }
+}
+
+namespace {
+struct XlPromptOutput : musacad::command::CommandOutput {
+    void append_line(const std::string& l) override { lines.push_back(l); }
+    void set_prompt(const std::string& p) override { prompts.push_back(p); }
+    std::vector<std::string> lines;
+    std::vector<std::string> prompts;
+};
+struct XlPromptHarness {
+    std::vector<Command> cmds;
+    XlPromptOutput out;
+    musacad::command::CommandProcessor proc{
+        [this](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+};
+} // namespace
+
+TEST_CASE("#39: XLINE Offset and Ang Reference go to the engine; Bisect repeats; the bands exist") {
+    XlPromptHarness h;
+    h.proc.set_pick_radius(1.0);
+    h.proc.submit_line("XL");
+    REQUIRE(h.out.prompts.back() == "Specify a point or [Hor/Ver/Ang/Bisect/Offset]: ");
+    h.proc.submit_line("O");
+    REQUIRE(h.out.prompts.back() == "Specify offset distance or [Through] <Through>: ");
+    h.proc.submit_line("5");
+    REQUIRE(h.out.prompts.back() == "Select a line object: ");
+    h.proc.submit_line("5,0");
+    REQUIRE(h.out.prompts.back() == "Specify side to offset: ");
+    h.proc.submit_line("5,9");
+    std::optional<XlineOffsetCommand> off; // a copy: later commands reallocate the vector
+    for (const auto& c : h.cmds) {
+        if (const auto* p = std::get_if<XlineOffsetCommand>(&c)) {
+            off = *p;
+        }
+    }
+    REQUIRE(off.has_value());
+    REQUIRE(off->distance == Approx(5.0));
+    REQUIRE(!off->through);
+    REQUIRE(h.out.prompts.back() == "Select a line object: "); // repeats
+    h.proc.submit_line("");
+    REQUIRE(!h.proc.has_active_command());
+
+    h.proc.submit_line("XLINE");
+    h.proc.submit_line("A");
+    REQUIRE(h.out.prompts.back() == "Enter angle of xline (0) or [Reference]: ");
+    h.proc.submit_line("R");
+    h.proc.submit_line("5,0");
+    REQUIRE(h.out.prompts.back() == "Enter angle of xline <0>: ");
+    h.proc.submit_line("30");
+    h.proc.submit_line("20,20");
+    std::optional<XlineReferenceCommand> ref;
+    for (const auto& c : h.cmds) {
+        if (const auto* p = std::get_if<XlineReferenceCommand>(&c)) {
+            ref = *p;
+        }
+    }
+    REQUIRE(ref.has_value());
+    REQUIRE(ref->angle == Approx(to_radians(30.0)));
+    REQUIRE(ref->base.x == Approx(20.0));
+    h.proc.submit_line("");
+
+    h.proc.submit_line("XL");
+    h.proc.submit_line("0,0");
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::Xline);
+    REQUIRE(h.proc.preview().xline_mode == 0);
+    h.proc.cancel();
+    h.proc.submit_line("XL");
+    h.proc.submit_line("B");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("10,0");
+    REQUIRE(h.proc.preview().xline_mode == 4);
+    h.proc.submit_line("0,10");
+    h.proc.submit_line("0,-10"); // a second bisector from the same vertex and start
+    int xlines = 0;
+    for (const auto& c : h.cmds) {
+        if (std::get_if<AddXlineCommand>(&c) != nullptr) {
+            ++xlines;
+        }
+    }
+    REQUIRE(xlines >= 2);
+    h.proc.submit_line("");
+    REQUIRE(!h.proc.has_active_command());
+
+    // The engine: the offset xline and the reference-angle xline.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
+    engine.submit(*off);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.construction_lines.size() == 1; }));
+    REQUIRE(engine.snapshot().construction_lines[0].base.y == Approx(5.0));
+    REQUIRE(std::abs(engine.snapshot().construction_lines[0].dir.y) < 1e-9);
+    engine.submit(*ref);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.construction_lines.size() == 2; }));
+    REQUIRE(std::atan2(engine.snapshot().construction_lines[1].dir.y, engine.snapshot().construction_lines[1].dir.x) == Approx(to_radians(30.0)));
+    engine.stop();
 }

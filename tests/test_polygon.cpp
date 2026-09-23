@@ -191,3 +191,96 @@ TEST_CASE("#23: POLYGON defaults to four sides when the count is left blank") {
     REQUIRE(h.cmds.size() == 1);
     REQUIRE(h.poly().points.size() == 4);
 }
+
+namespace {
+struct PolyPromptOutput : musacad::command::CommandOutput {
+    void append_line(const std::string& l) override { lines.push_back(l); }
+    void set_prompt(const std::string& p) override { prompts.push_back(p); }
+    std::vector<std::string> lines;
+    std::vector<std::string> prompts;
+};
+struct PolyPromptHarness {
+    std::vector<Command> cmds;
+    PolyPromptOutput out;
+    musacad::command::CommandProcessor proc{
+        [this](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+};
+const AddPolylineCommand* last_poly(const std::vector<Command>& cmds) {
+    const AddPolylineCommand* found = nullptr;
+    for (const auto& c : cmds) {
+        if (const auto* p = std::get_if<AddPolylineCommand>(&c)) {
+            found = p;
+        }
+    }
+    return found;
+}
+} // namespace
+
+TEST_CASE("#39: POLYGON remembers the side count and the fit, limits the sides, and stands a typed radius on a flat edge") {
+    PolyPromptHarness h;
+    h.proc.submit_line("POL");
+    h.proc.submit_line("2000");
+    REQUIRE(h.out.lines.back() == "Requires an integer between 3 and 1024.");
+    h.proc.submit_line("6");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("C");
+    h.proc.submit_line("10"); // typed: the bottom edge is horizontal
+    const auto* hex = last_poly(h.cmds);
+    REQUIRE(hex != nullptr);
+    REQUIRE(hex->points.size() == 6);
+    double min_y = 1e9;
+    int at_min = 0;
+    for (const Vec2& p : hex->points) {
+        min_y = std::min(min_y, p.y);
+    }
+    for (const Vec2& p : hex->points) {
+        if (std::abs(p.y - min_y) < 1e-9) {
+            ++at_min;
+        }
+    }
+    REQUIRE(at_min == 2); // two vertices share the lowest y: a flat bottom edge
+    REQUIRE(min_y == Approx(-10.0)); // circumscribed: the apothem is the typed radius
+    // The next POLYGON offers 6 and Circumscribed.
+    PolyPromptHarness n;
+    n.proc.submit_line("POL");
+    REQUIRE(n.out.prompts.back() == "Enter number of sides <6>: ");
+    n.proc.submit_line("");
+    n.proc.submit_line("0,0");
+    n.proc.submit_line(""); // keeps Circumscribed
+    n.proc.submit_line("10,0");
+    const auto* again = last_poly(n.cmds);
+    REQUIRE(again != nullptr);
+    REQUIRE(again->points.size() == 6);
+    // Circumscribed about radius 10 pointing at (10, 0): a flat edge stands at x = 10,
+    // its two vertices sharing that x.
+    double max_x = -1e9;
+    int at_max = 0;
+    for (const Vec2& p : again->points) {
+        max_x = std::max(max_x, p.x);
+    }
+    for (const Vec2& p : again->points) {
+        if (std::abs(p.x - max_x) < 1e-9) {
+            ++at_max;
+        }
+    }
+    REQUIRE(max_x == Approx(10.0));
+    REQUIRE(at_max == 2);
+    // Edge mode previews the polygon on the edge; put the defaults back.
+    PolyPromptHarness e;
+    e.proc.submit_line("POL");
+    e.proc.submit_line("4");
+    e.proc.submit_line("E");
+    e.proc.submit_line("0,0");
+    REQUIRE(e.proc.preview().kind == musacad::command::PreviewKind::Polygon);
+    REQUIRE(e.proc.preview().polygon_edge);
+    e.proc.submit_line("10,0");
+    const auto* sq = last_poly(e.cmds);
+    REQUIRE(sq != nullptr);
+    REQUIRE(sq->points.size() == 4);
+    PolyPromptHarness r;
+    r.proc.submit_line("POL");
+    r.proc.submit_line("4");
+    r.proc.submit_line("0,0");
+    r.proc.submit_line("I");
+    r.proc.cancel();
+}

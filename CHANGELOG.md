@@ -8,6 +8,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 ## Unreleased
 
+### Fixed
+- FILLET and CHAMFER rebuilt the trimmed lines, the arc, the bevel and the polyline without
+  their properties, so the results landed on the current layer with default colour and
+  linetype. They keep the objects' layer, colour, linetype and linetype scale; the arc or
+  bevel takes the objects' layer when both share it.
+
 ### Added
 - **Download ODA File Converter** -- DWG Setup (and the message shown when a DWG has no
   converter) can fetch the free converter from the Open Design Alliance into Musa CAD's
@@ -19,6 +25,27 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   radius, the centre first, and **Continue** (Enter starts tangent from the last line or arc).
   Holding **Ctrl** at a pick draws the other way round, as AutoCAD's prompts say; the rubber
   band shows the arc the click will make.
+- **POLYGON and XLINE details** (#39) -- POLYGON remembers the side count (POLYSIDES) and
+  the Inscribed / Circumscribed choice, limits the sides to 3..1024, stands a typed radius
+  on a flat bottom edge, and shows the polygon while an edge is picked; XLINE gains
+  `[Offset]` (a distance or Through, along a line, construction line, ray or polyline
+  segment), `Enter angle of xline (0) or [Reference]:`, more bisectors from one vertex, and
+  XLINE and RAY rubber-band the line the click would make.
+- **OFFSET options** (#49) -- `[Through/Erase/Layer]` at the distance prompt (a value, two
+  points, or Through), the last distance as the default, `[Exit/Undo]` and
+  `[Exit/Multiple/Undo]` while offsetting (Multiple steps out from the offset just made),
+  one undo step per offset, and the settings echoed at the start and kept for the session.
+- **MOVE and COPY options** (#46) -- `[Displacement]` with the last vector as the default,
+  Enter at the second point using the first point as the displacement, COPY's `[mOde]`
+  (Single / Multiple), `[Array]` with `[Fit]`, `[Undo]` and `[Exit]`, and one undo step per
+  copy.
+- **FILLET and CHAMFER as AutoCAD runs them** (#48) -- the objects are selected first and
+  the settings are options: `[Undo/Polyline/Radius/Trim/Multiple]` and
+  `[Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]`, with the current settings echoed at
+  the start and remembered for the session. **Multiple** repeats with one undo step per
+  corner, **Undo** takes the last one back, **Trim / No trim** decides whether the objects are
+  trimmed or only the arc / bevel is added, **Polyline** treats every corner of a polyline,
+  and **Shift** at the second pick makes a sharp corner.
 - **PLINE Arc mode** (#37, the geometry) -- `[Arc/Close/Length/Undo]` in line mode and
   `[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]` in arc mode, each sub-step as
   AutoCAD prompts it: an arc is tangent to the previous segment unless a direction, centre,

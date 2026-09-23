@@ -187,6 +187,28 @@ struct AddXlineCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// XLINE [Offset]: a construction line parallel to the line under `pick` (a line,
+/// construction line, ray or polyline segment), `distance` away on the side of `side` --
+/// or, with `through`, passing through `side`.
+struct XlineOffsetCommand {
+    Vec2 pick;
+    double pick_radius = 0.0;
+    double distance = 0.0;
+    Vec2 side;
+    bool through = false;
+    std::uint64_t group = 0;
+};
+
+/// XLINE Ang [Reference]: a construction line through `base` at `angle` from the line
+/// under `ref_pick`.
+struct XlineReferenceCommand {
+    Vec2 base;
+    Vec2 ref_pick;
+    double pick_radius = 0.0;
+    double angle = 0.0; ///< radians, from the reference line's direction
+    std::uint64_t group = 0;
+};
+
 /// An ellipse / elliptical arc (AutoCAD ELLIPSE): centre, major half-axis vector, ratio
 /// (minor/major, 0..1], counter-clockwise parameter range (full = 0..2pi).
 struct AddEllipseCommand {
@@ -468,6 +490,10 @@ struct OffsetPickCommand {
     double distance = 0.0;
     Vec2 side;
     std::uint64_t group = 0;
+    bool through = false;          ///< [Through]: `side` is the point the offset passes through
+    bool erase_source = false;     ///< [Erase]: the source goes once the offset exists
+    bool to_current_layer = false; ///< [Layer] Current: the offset lands on the current layer
+    bool from_last = false;        ///< [Multiple]: offset the last offset made, not the pick
 };
 
 /// Trim the (line) entity nearest `pick` to its nearest intersections.
@@ -569,12 +595,33 @@ struct FilletPickCommand {
     double radius = 0.0;
     double pick_radius = 0.0;
     std::uint64_t group = 0;
+    bool trim = true; ///< FILLET's Trim mode: false keeps the objects and only adds the arc
+};
+
+/// FILLET [Polyline]: every corner of the polyline under the pick rounded at `radius`
+/// (corners the radius does not fit are left, and counted in the report).
+struct FilletPolylineCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
 };
 
 /// Chamfer two picked lines, beveling `dist1`/`dist2` from the corner.
 struct ChamferPickCommand {
     Vec2 pick1;
     Vec2 pick2;
+    double dist1 = 0.0;
+    double dist2 = 0.0;
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+    bool trim = true; ///< CHAMFER's Trim mode: false keeps the lines and only adds the bevel
+};
+
+/// CHAMFER [Polyline]: every corner of the polyline under the pick bevelled by the two
+/// distances (the first along the segment into the corner).
+struct ChamferPolylineCommand {
+    Vec2 pick;
     double dist1 = 0.0;
     double dist2 = 0.0;
     double pick_radius = 0.0;
@@ -1253,7 +1300,9 @@ using Command =
                  SetInsertAttribsCommand, SetBlockAttDefsCommand, VportsCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
-                 TransformPreviewCommand, AddCircleTangentCommand,
+                 TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
+                 XlineOffsetCommand, XlineReferenceCommand,
+                 ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
