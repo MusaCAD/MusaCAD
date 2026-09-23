@@ -35,8 +35,14 @@ std::vector<DynField> dyn_fields(const PreviewSpec& pv, core::Vec2 cursor) {
         break;
     }
     case PreviewKind::Circle: {
-        const double r = core::distance(a, cursor);
-        out.push_back({"Radius", {(a.x + cursor.x) * 0.5, (a.y + cursor.y) * 0.5}, r, false, 0});
+        // Centre + radius: the radius; centre + diameter and 2P: the diameter (the drag
+        // distance); 3P: no field (three points define it).
+        if (pv.circle_mode == 3) {
+            break;
+        }
+        const double d = core::distance(a, cursor);
+        out.push_back({pv.circle_mode == 0 ? "Radius" : "Diameter",
+                       {(a.x + cursor.x) * 0.5, (a.y + cursor.y) * 0.5}, d, false, 0});
         break;
     }
     case PreviewKind::Rectangle: {
@@ -75,7 +81,7 @@ std::string compose_dyn_submit(const PreviewSpec& pv, core::Vec2 cursor,
         return "@" + num(len) + "<" + num(ang);
     }
     case PreviewKind::Circle: {
-        if (!primary) {
+        if (!primary || pv.circle_mode == 3) {
             return {};
         }
         double ang = std::atan2(cursor.y - a.y, cursor.x - a.x) * kRadToDeg;

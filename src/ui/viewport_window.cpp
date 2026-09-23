@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
@@ -20,6 +21,9 @@
 #include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/math/arc_construct.hpp"
+#include "musacad/core/math/tangent_circle.hpp"
+#include "musacad/core/polyline_ops.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
@@ -751,6 +755,11 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
         grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
                                   std::memory_order_relaxed);
+        double band_max_x = -std::numeric_limits<double>::infinity();
+        for (const core::Vec2& v : snap.grip_preview_segments) {
+            band_max_x = std::max(band_max_x, v.x);
+        }
+        grip_preview_max_x_.store(band_max_x, std::memory_order_relaxed);
         line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
                                  std::memory_order_relaxed);
         hovered_kind_.store(snap.has_hover ? static_cast<int>(snap.hover.kind) + 1 : 0,
@@ -1070,7 +1079,9 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                                   snap_y_.load(std::memory_order_relaxed)};
             }
             processor_->set_pick_radius(10.0 * dpr / scale);
+            processor_->set_ctrl_held((event->modifiers() & Qt::ControlModifier) != 0);
             processor_->pick_point(world, snap);
+            processor_->set_ctrl_held(false);
             rebuild_overlay();
         } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
@@ -1230,6 +1241,16 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         world = camera_.screen_to_world(screen_px);
         scale = camera_.scale();
     }
+    if (processor_ != nullptr && processor_->has_active_command()) {
+        // Direct distance entry: the constrained cursor's bearing from the last point,
+        // kept current at every point prompt (the preview path covers only those with a
+        // rubber band).
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed), snap_y_.load(std::memory_order_relaxed)};
+        }
+        processor_->set_cursor_world(processor_->resolve_pick(world, snap));
+    }
     Q_EMIT cursorWorldMoved(world.x, world.y);
     Q_EMIT cursorScreenMoved(event->position().x(), event->position().y());
 
@@ -1370,6 +1391,38 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 namespace {
+// A polyline segment with a bulge (an arc) as line segments, or the straight segment.
+void append_bulge_segment(std::vector<core::Vec2>& seg, core::Vec2 p0, core::Vec2 p1, double bulge) {
+    if (std::abs(bulge) <= 1e-12) {
+        seg.push_back(p0);
+        seg.push_back(p1);
+        return;
+    }
+    const core::BulgeArc arc = core::arc_from_bulge(p0, p1, bulge);
+    const int n = std::max(6, static_cast<int>(std::abs(arc.sweep) / core::kTwoPi * 64.0));
+    for (int k = 0; k < n; ++k) {
+        const double t0 = arc.a0 + arc.sweep * k / n;
+        const double t1 = arc.a0 + arc.sweep * (k + 1) / n;
+        seg.push_back({arc.center.x + arc.radius * std::cos(t0), arc.center.y + arc.radius * std::sin(t0)});
+        seg.push_back({arc.center.x + arc.radius * std::cos(t1), arc.center.y + arc.radius * std::sin(t1)});
+    }
+}
+
+// The arc a construction gives, as line segments.
+void append_arc(std::vector<core::Vec2>& seg, const core::ConstructedArc& arc) {
+    double sweep = arc.end - arc.start;
+    while (sweep < 0.0) {
+        sweep += core::kTwoPi;
+    }
+    const int n = std::max(8, static_cast<int>(sweep / core::kTwoPi * 96.0));
+    for (int i = 0; i < n; ++i) {
+        const double t0 = arc.start + sweep * static_cast<double>(i) / n;
+        const double t1 = arc.start + sweep * static_cast<double>(i + 1) / n;
+        seg.push_back({arc.center.x + arc.radius * std::cos(t0), arc.center.y + arc.radius * std::sin(t0)});
+        seg.push_back({arc.center.x + arc.radius * std::cos(t1), arc.center.y + arc.radius * std::sin(t1)});
+    }
+}
+
 void tess_circle(core::Vec2 c, double r, std::vector<core::Vec2>& out) {
     constexpr int kN = 64;
     core::Vec2 prev{c.x + r, c.y};
@@ -1450,6 +1503,8 @@ int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
 
 void ViewportWindow::rebuild_overlay() {
     std::optional<core::Vec2> pending_stretch; // live STRETCH delta to stream, if any
+    std::optional<core::TransformPreviewCommand> pending_transform; // live ROTATE / SCALE band
+    live_kind_ = 0;
     render::RenderOverlay ov;
 
     // Drop any typed Dynamic-Input value once the command/rubber-band ends, so a new
@@ -1483,6 +1538,7 @@ void ViewportWindow::rebuild_overlay() {
         }
         const core::Vec2 cur = processor_->resolve_pick(raw, snap);
         dyn_cursor_ = cur; // for composing a typed value on Enter
+        processor_->set_cursor_world(cur); // direct distance entry follows this bearing
         Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();
         const auto& pts = pv.points;
@@ -1517,16 +1573,47 @@ void ViewportWindow::rebuild_overlay() {
                 seg.push_back(cur_eff);
             }
             break;
-        case command::PreviewKind::Polyline:
+        case command::PreviewKind::Polyline: {
             for (std::size_t i = 1; i < pts.size(); ++i) {
-                seg.push_back(pts[i - 1]);
-                seg.push_back(pts[i]);
+                append_bulge_segment(seg, pts[i - 1], pts[i], i - 1 < pv.bulges.size() ? pv.bulges[i - 1] : 0.0);
             }
-            if (!pts.empty()) {
-                seg.push_back(pts.back());
+            if (pts.empty()) {
+                break;
+            }
+            // The segment the click would add: a line, or the arc of the step in hand.
+            const core::Vec2 last = pts.back();
+            const bool ctrl = (QGuiApplication::keyboardModifiers() & Qt::ControlModifier) != 0;
+            std::optional<core::ConstructedArc> arc;
+            switch (pv.pline_arc_mode) {
+            case 1:
+                arc = core::arc_start_end_direction(last, cur, pv.pline_tangent + (ctrl ? core::kPi : 0.0));
+                break;
+            case 2:
+                arc = core::arc_start_end_angle(last, cur, pv.pline_angle, ctrl);
+                break;
+            case 3:
+                arc = core::arc_start_center_end(last, pv.pline_center, cur, ctrl);
+                break;
+            case 4:
+                arc = core::arc_start_end_direction(last, cur, pv.pline_tangent);
+                break;
+            case 5:
+                arc = core::arc_start_end_radius(last, cur, pv.pline_radius, ctrl);
+                break;
+            case 6:
+                arc = core::arc_three_points(last, pv.pline_second, cur);
+                break;
+            default:
+                break;
+            }
+            if (arc) {
+                append_arc(seg, *arc);
+            } else {
+                seg.push_back(last);
                 seg.push_back(cur);
             }
             break;
+        }
         case command::PreviewKind::Rectangle:
             if (!pts.empty()) {
                 const core::Vec2 a = pts[0];
@@ -1538,25 +1625,39 @@ void ViewportWindow::rebuild_overlay() {
                     const double sy = (cur.y >= a.y) ? 1.0 : -1.0;
                     b = {a.x + sx * pv.fixed_w, a.y + sy * pv.fixed_h};
                 }
-                core::Vec2 c[4] = {{a.x, a.y}, {b.x, a.y}, {b.x, b.y}, {a.x, b.y}};
-                if (pv.rect_rotation != 0.0) { // RECTANGLE Rotation: spin about `a`
-                    const double cs = std::cos(pv.rect_rotation);
-                    const double sn = std::sin(pv.rect_rotation);
-                    for (core::Vec2& q : c) {
-                        const double dx = q.x - a.x;
-                        const double dy = q.y - a.y;
-                        q = {a.x + dx * cs - dy * sn, a.y + dx * sn + dy * cs};
-                    }
+                // The outline the commit will make: rotated about `a`, corners rounded or
+                // chamfered as RECTANG's [Fillet] / [Chamfer] are set.
+                std::vector<core::Vec2> c;
+                std::vector<double> bulges;
+                core::polyline_ops::rectangle_outline(a, b, pv.rect_rotation, pv.rect_fillet,
+                                                      pv.rect_chamfer_d1, pv.rect_chamfer_d2, c, bulges);
+                for (std::size_t i = 0; i < c.size(); ++i) {
+                    append_bulge_segment(seg, c[i], c[(i + 1) % c.size()],
+                                         i < bulges.size() ? bulges[i] : 0.0);
                 }
-                seg.push_back(c[0]); seg.push_back(c[1]);
-                seg.push_back(c[1]); seg.push_back(c[2]);
-                seg.push_back(c[2]); seg.push_back(c[3]);
-                seg.push_back(c[3]); seg.push_back(c[0]);
             }
             break;
         case command::PreviewKind::Circle:
-            if (!pts.empty()) {
-                tess_circle(pts[0], core::distance(pts[0], cur_eff), seg);
+            if (pv.circle_mode == 3 && pts.size() >= 2) {
+                // 3P: the circle through the two points and the cursor (a line while
+                // they are collinear).
+                core::Vec2 c;
+                double r = 0.0;
+                if (core::circumcircle(pts[0], pts[1], cur, c, r)) {
+                    tess_circle(c, r, seg);
+                } else {
+                    seg.push_back(pts[0]);
+                    seg.push_back(cur);
+                }
+            } else if (!pts.empty()) {
+                const double d = core::distance(pts[0], cur_eff);
+                if (pv.circle_mode == 2) { // 2P: the cursor is the other end of the diameter
+                    tess_circle((pts[0] + cur_eff) * 0.5, d * 0.5, seg);
+                } else { // centre + radius, or centre + diameter (the drag is the diameter)
+                    tess_circle(pts[0], pv.circle_mode == 1 ? d * 0.5 : d, seg);
+                }
+                seg.push_back(pts[0]);
+                seg.push_back(cur_eff);
             }
             break;
         case command::PreviewKind::Spline:
@@ -1635,17 +1736,68 @@ void ViewportWindow::rebuild_overlay() {
                 }
             }
             break;
-        case command::PreviewKind::Arc:
-            if (pts.size() == 1) {
-                seg.push_back(pts[0]);
-                seg.push_back(cur);
-            } else if (pts.size() == 2) {
-                seg.push_back(pts[0]);
-                seg.push_back(pts[1]);
-                seg.push_back(pts[1]);
+        case command::PreviewKind::Arc: {
+            // The arc the click would make, for the step in hand (ARC's methods), through
+            // the same constructions the command commits with; Ctrl flips the direction
+            // where AutoCAD's prompt says so.
+            const bool ctrl = (QGuiApplication::keyboardModifiers() & Qt::ControlModifier) != 0;
+            const core::Vec2 a = pts.empty() ? core::Vec2{} : pts[0];
+            const core::Vec2 b = pts.size() > 1 ? pts[1] : core::Vec2{};
+            const auto bearing = [](core::Vec2 from, core::Vec2 to) {
+                return std::atan2(to.y - from.y, to.x - from.x);
+            };
+            const auto turn = [](double ang) {
+                ang = std::fmod(ang, core::kTwoPi);
+                return ang < 0.0 ? ang + core::kTwoPi : ang;
+            };
+            std::optional<core::ConstructedArc> arc;
+            core::Vec2 band_from = a;
+            switch (pv.arc_mode) {
+            case 1:
+                arc = core::arc_three_points(a, b, cur);
+                break;
+            case 2:
+                arc = core::arc_start_center_end(a, b, cur, ctrl);
+                band_from = b;
+                break;
+            case 3:
+                arc = core::arc_start_center_angle(a, b, turn(bearing(b, cur) - bearing(b, a)), ctrl);
+                band_from = b;
+                break;
+            case 4:
+                arc = core::arc_start_center_length(a, b, core::distance(a, cur), ctrl);
+                break;
+            case 5:
+                arc = core::arc_start_center_end(a, cur, b, ctrl);
+                break;
+            case 6:
+                arc = core::arc_start_end_angle(a, b, turn(bearing(a, cur)), ctrl);
+                break;
+            case 7:
+                arc = core::arc_start_end_direction(a, b, bearing(a, cur));
+                break;
+            case 8:
+                arc = core::arc_start_end_radius(a, b, core::distance(b, cur), ctrl);
+                band_from = b;
+                break;
+            case 9:
+                arc = core::arc_start_end_direction(a, cur, pv.arc_tangent);
+                break;
+            default:
+                break;
+            }
+            if (arc) {
+                append_arc(seg, *arc);
+            } else if (pv.arc_mode == 1) {
+                seg.push_back(a);
+                seg.push_back(b);
+            }
+            if (pv.arc_mode != 9 && !pts.empty()) {
+                seg.push_back(band_from);
                 seg.push_back(cur);
             }
             break;
+        }
         case command::PreviewKind::Move:
         case command::PreviewKind::Mirror:
             if (!pts.empty()) {
@@ -1658,18 +1810,30 @@ void ViewportWindow::rebuild_overlay() {
             break;
         case command::PreviewKind::Rotate:
             if (!pts.empty()) {
-                ov.ghost_mode = 3;
-                ov.ghost_a = pts[0];
-                ov.ghost_param = std::atan2(cur.y - pts[0].y, cur.x - pts[0].x);
+                // The band is built geometry-side (TransformPreviewCommand): every entity
+                // kind, re-tessellated at this zoom, placed by the code the commit runs.
+                // The angle is the cursor's bearing from the base point, less the
+                // Reference angle; it is shown at the cursor.
+                const double ang = std::atan2(cur.y - pts[0].y, cur.x - pts[0].x) - pv.ref_angle;
+                pending_transform = core::TransformPreviewCommand{
+                    core::TransformPreviewCommand::Kind::Rotate, pts[0], cur, ang, true};
+                live_value_ = ang;
+                live_kind_ = 2;
                 seg.push_back(pts[0]);
                 seg.push_back(cur);
             }
             break;
         case command::PreviewKind::Scale:
             if (!pts.empty()) {
-                ov.ghost_mode = 4;
-                ov.ghost_a = pts[0];
-                ov.ghost_param = core::distance(pts[0], cur); // reference length 1
+                // AutoCAD's rule: the factor is the cursor's distance from the base point
+                // in drawing units (over the Reference length once one is set) -- one
+                // unit away is a factor of 1. Shown at the cursor; typing replaces it.
+                const double d = core::distance(pts[0], cur);
+                const double f = pv.ref_length > 0.0 ? d / pv.ref_length : d;
+                pending_transform = core::TransformPreviewCommand{
+                    core::TransformPreviewCommand::Kind::Scale, pts[0], cur, f, true};
+                live_value_ = f;
+                live_kind_ = 1;
                 seg.push_back(pts[0]);
                 seg.push_back(cur);
             }
@@ -1800,6 +1964,24 @@ void ViewportWindow::rebuild_overlay() {
     if (pending_stretch) {
         engine_.submit(core::StretchPreviewCommand{*pending_stretch, true});
     }
+    // The live ROTATE / SCALE band, likewise after the hand-off: only on change, and an
+    // explicit end once the step is over, so the ghost never outlives its prompt.
+    if (pending_transform) {
+        const core::TransformPreviewCommand& t = *pending_transform;
+        const bool same = transform_preview_sent_ && last_transform_.kind == t.kind &&
+                          core::length(last_transform_.base - t.base) <= 1e-12 &&
+                          core::length(last_transform_.to - t.to) <= 1e-12 &&
+                          std::abs(last_transform_.param - t.param) <= 1e-12;
+        if (!same) {
+            engine_.submit(t);
+            last_transform_ = t;
+            transform_preview_sent_ = true;
+        }
+    } else if (transform_preview_sent_) {
+        last_transform_.active = false;
+        engine_.submit(last_transform_);
+        transform_preview_sent_ = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,7 +2012,7 @@ int ViewportWindow::dyn_field_count() const {
     case PreviewKind::Segment:
         return 2;
     case PreviewKind::Circle:
-        return 1;
+        return processor_->preview().circle_mode == 3 ? 0 : 1;
     default:
         return 0;
     }
@@ -2211,9 +2393,18 @@ void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
                    : static_cast<double>(s.size()) * h * 0.55;
     };
     const std::string label = processor_ != nullptr ? processor_->current_prompt() : std::string{};
+    // The field: what has been typed, else the live value of a ROTATE / SCALE band (the
+    // angle or the factor the cursor stands for, in the drawing's units -- AutoCAD's
+    // Dynamic Input shows it the same way, and typing replaces it).
+    std::string value = sub_entry_;
+    if (value.empty() && live_kind_ != 0 && processor_ != nullptr) {
+        const core::DrawingUnits u = processor_->units();
+        value = live_kind_ == 1 ? core::units::format_length(live_value_, u)
+                                : core::units::format_angle(live_value_, u);
+    }
     const double lw = adv(label);
-    const double gap = sub_entry_.empty() ? 0.0 : 6.0 * dpr;
-    const double vw = adv(sub_entry_);
+    const double gap = value.empty() ? 0.0 : 6.0 * dpr;
+    const double vw = adv(value);
     const double bw = lw + gap + vw + 2.0 * padx + 10.0 * dpr; // trailing room for the caret
 
     // At-cursor anchor (follows the cursor), clamped on-screen.
@@ -2225,7 +2416,7 @@ void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
     ui_quad(ui.box_fills, ax, ay, bw, row);
     const double baseline = ay + pady + h;
     append_glyphs(label, ax + padx, baseline, h, ui.glyph_fills);
-    append_glyphs(sub_entry_, ax + padx + lw + gap, baseline, h, ui.glyph_fills);
+    append_glyphs(value, ax + padx + lw + gap, baseline, h, ui.glyph_fills);
     const double cx = ax + padx + lw + gap + vw + 2.0 * dpr;
     ui.lines.push_back({cx, ay + pady});
     ui.lines.push_back({cx, ay + pady + h});
@@ -2279,7 +2470,17 @@ bool ViewportWindow::dyn_handle_key(int key, const QString& text) {
     return false;
 }
 
+void ViewportWindow::keyReleaseEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Control) {
+        rebuild_overlay(); // an ARC band flips back when Ctrl is let go
+    }
+    QWindow::keyReleaseEvent(event);
+}
+
 void ViewportWindow::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Control) {
+        rebuild_overlay(); // "hold Ctrl to switch direction": the ARC band flips at once
+    }
     if (processor_ == nullptr) {
         QWindow::keyPressEvent(event);
         return;

@@ -40,6 +40,14 @@ enum class PreviewKind {
     Spline,     ///< SPLINE: the curve through/over points + cursor (see spline fields)
 };
 
+/// The end of the last line or arc drawn and the heading there: what LINE and ARC
+/// continue from when Enter answers their first prompt.
+struct LastSegment {
+    core::Vec2 end{};
+    double tangent = 0.0; ///< radians, the direction of travel at `end`
+    bool arc = false;     ///< from an arc: LINE continues tangent, asking only a length
+};
+
 struct PreviewSpec {
     PreviewKind kind = PreviewKind::None;
     std::vector<core::Vec2> points; ///< committed anchors so far
@@ -52,6 +60,11 @@ struct PreviewSpec {
     double fixed_w = 0.0;
     double fixed_h = 0.0;
     double rect_rotation = 0.0;
+    /// RECTANG's corner treatment (Fillet radius, or the two Chamfer distances), drawn on
+    /// the band exactly as the commit will cut the corners.
+    double rect_fillet = 0.0;
+    double rect_chamfer_d1 = 0.0;
+    double rect_chamfer_d2 = 0.0;
     /// Polygon preview: how many sides, and whether the cursor distance is the
     /// circumradius (inscribed) or the apothem (circumscribed). Parameterises the
     /// PreviewKind::Polygon path the same way fixed_w/fixed_h parameterise Rectangle.
@@ -63,6 +76,40 @@ struct PreviewSpec {
     /// kind rather than a new kind, so Dynamic Input's length/angle fields and ortho
     /// behave exactly as they do for LINE with no second code path.
     bool live_stretch = false;
+    /// ROTATE / SCALE (PreviewKind::Rotate / Scale): points[0] is the base point. The
+    /// live angle is the cursor's bearing from it minus `ref_angle` (radians; ROTATE
+    /// Reference), the live factor the cursor's distance from it divided by
+    /// `ref_length` (SCALE Reference; 1 = the plain factor). The viewport streams the
+    /// selection under that transform to the engine (TransformPreviewCommand) and shows
+    /// the value at the cursor.
+    double ref_angle = 0.0;
+    double ref_length = 1.0;
+    /// CIRCLE (PreviewKind::Circle): 0 centre + radius to the cursor, 1 centre + diameter
+    /// to the cursor, 2 the cursor is the other end of the diameter from points[0], 3 the
+    /// circle through points[0], points[1] and the cursor.
+    int circle_mode = 0;
+    /// ARC (PreviewKind::Arc), the arc through the cursor for the step in hand: 1 three
+    /// points (points = start, second); 2 start + centre awaiting the end; 3 ... the
+    /// included angle; 4 ... the chord length; 5 start + end awaiting the centre; 6 ...
+    /// the included angle; 7 ... the tangent direction; 8 ... the radius; 9 continuing
+    /// tangent (`arc_tangent`) from points[0]. Ctrl at the viewport flips the direction
+    /// where AutoCAD's prompt says so.
+    int arc_mode = 0;
+    double arc_tangent = 0.0;
+    /// PLINE (PreviewKind::Polyline): the bulge of each committed segment (points[i] to
+    /// points[i + 1]; empty = all straight), and the arc step in hand for the rubber
+    /// band: 0 a line to the cursor; 1 an arc tangent to the last segment (`pline_tangent`)
+    /// to the cursor; 2 a fixed included angle (`pline_angle`) to the cursor; 3 a fixed
+    /// centre (`pline_center`) to the ray through the cursor; 4 a fixed start direction
+    /// (`pline_tangent`) to the cursor; 5 a fixed radius (`pline_radius`) to the cursor; 6
+    /// through a fixed second point (`pline_second`) to the cursor.
+    std::vector<double> bulges = {};
+    int pline_arc_mode = 0;
+    double pline_tangent = 0.0;
+    double pline_angle = 0.0;
+    double pline_radius = 0.0;
+    core::Vec2 pline_center{};
+    core::Vec2 pline_second{};
     /// ELLIPSE preview (PreviewKind::Ellipse): points[0] is the centre and `major` the
     /// major half-axis. Stage 0: the other half-axis follows the cursor, axes swapping
     /// when it grows past the major -- the same rule the command commits with. Stage 1:
@@ -203,6 +250,13 @@ public:
     [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }
     /// The drawing's display units (UNITS), as last published by the engine.
     [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }
+    /// The last line or arc drawn (LINE, ARC and PLINE record it): Continue's start.
+    [[nodiscard]] virtual std::optional<LastSegment> last_segment() const { return std::nullopt; }
+    virtual void set_last_segment(LastSegment /*segment*/) {}
+    /// True while Ctrl is held at the pick being fed ("hold Ctrl to switch direction").
+    [[nodiscard]] virtual bool ctrl_held() const { return false; }
+    /// The live cursor (ortho / polar / snap applied), for direct distance entry.
+    [[nodiscard]] virtual std::optional<core::Vec2> cursor_world() const { return std::nullopt; }
     /// The drawing's text styles (STYLE table) and the current one, as last published.
     [[nodiscard]] virtual std::vector<core::TextStyle> text_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }

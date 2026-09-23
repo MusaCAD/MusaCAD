@@ -176,6 +176,11 @@ public:
     /// Real-window self-test: split into two tiles, click the right one (it becomes
     /// current), zoom it (the left keeps its view), then back to a single viewport.
     bool selftest_vports();
+    /// Real-window self-test: the SCALE band -- after the base point the cursor scales
+    /// the selection through the engine's preview (every kind, re-tessellated), Esc ends
+    /// it with the drawing untouched; ROTATE the same. MUSACAD_SCALE_SHOT=<png> captures
+    /// the band as drawn.
+    bool selftest_scale_band();
     /// Real-window self-test: DWG import/export via a MOCK external converter --
     /// discovery, off-thread convert, fail-safe load, gap catalog, export round-trip.
     bool selftest_dwg();
@@ -316,6 +321,10 @@ private:
     /// io/dwg_converter_path setting. (No auto-download: a GPL/proprietary converter
     /// can't be fetched+installed for the user -- licensing/EULA/platform/security.)
     void configure_dwg_converter();
+    /// Download ODA File Converter from the Open Design Alliance into Musa CAD's data
+    /// directory (after the user accepts its terms), unpack it, and make it the DWG
+    /// converter. Returns the installed program, or "" when declined or failed.
+    QString download_dwg_converter();
     /// No-converter dead-end recovery: show the hint with a "Configure…" button.
     /// Returns true if the user chose to configure (caller should re-discover).
     bool offer_dwg_setup(const QString& title);

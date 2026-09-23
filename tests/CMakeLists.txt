@@ -123,6 +123,9 @@ add_executable(musacad_tests
     test_kernel_intersect.cpp
     test_modify_corner.cpp
     test_modify_commands.cpp
+    test_circle_modes.cpp
+    test_arc_methods.cpp
+    test_pline_arcs.cpp
     test_modify_polyline.cpp
     test_native_roundtrip.cpp
     test_persistence_engine.cpp

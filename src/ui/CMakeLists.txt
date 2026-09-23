@@ -7,6 +7,7 @@ add_library(musacad_ui STATIC
     properties_panel.cpp
     dyn_input.cpp
     dwg_converter.cpp
+    dwg_installer.cpp
     qt_font_engine.cpp
     qt_image_decoder.cpp
     plot.cpp
@@ -23,7 +24,8 @@ add_library(musacad_ui STATIC
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/layer_dialog.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/plot_dialog.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/ribbon_bar.hpp"
-    "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_modes.hpp")
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_modes.hpp"
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/dwg_installer.hpp")
 
 add_library(musacad::ui ALIAS musacad_ui)
 
@@ -43,7 +45,8 @@ target_link_libraries(musacad_ui
         Qt6::Widgets
         Qt6::PrintSupport
     PRIVATE
-        Qt6::OpenGL)
+        Qt6::OpenGL
+        Qt6::Network)
 
 musacad_set_warnings(musacad_ui BASELINE)
 musacad_enable_sanitizers(musacad_ui)

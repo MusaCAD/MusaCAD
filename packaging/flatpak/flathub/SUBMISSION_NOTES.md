@@ -15,8 +15,10 @@ untrue (its reviewers look at the source repository). These are the facts to dra
   path (external references, attached raster images) offers to open from its folder, which
   the user grants through the portal's folder chooser; a DXF export whose drawing embeds
   images asks for the destination folder the same way, since DXF writes those images as
-  files next to the DXF. DWG conversion is a separate opt-in that runs a host-installed
-  converter through the Flatpak portal.
+  files next to the DXF. DWG conversion runs a separate converter program: DWG Setup can
+  download the free ODA File Converter from opendesign.com into the app's data directory
+  (`--share=network` is for that download), or use one installed on the host through the
+  Flatpak portal.
 - Build (review comments on `buildsystem: simple` and `desktop-file-edit`): the module is
   `buildsystem: cmake-ninja` with the project's own `install()` rules;
   `-DCMAKE_BUILD_TYPE=Release` is set because flatpak-builder passes no build type, and

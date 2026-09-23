@@ -18,19 +18,21 @@ finish-args:
   - --socket=fallback-x11       # X11 (falls back when Wayland is unavailable)
   - --socket=wayland            # native Wayland when present
   - --device=dri                # GPU access for the OpenGL 4.6 viewport
+  - --share=network             # "Download ODA File Converter" (DWG Setup) fetches it from opendesign.com
 # No filesystem access: drawings are opened and saved through the file-chooser portal,
 # which grants the file picked in the dialog. A drawing whose xrefs or images sit beside
 # it asks for its folder the same way (the portal's folder chooser), as does a DXF export
 # that writes embedded images next to the DXF.
 # NOTE: DWG import/export shells out to an EXTERNAL converter (ODA File Converter /
-# LibreDWG's dwg2dxf) found on PATH. Inside the sandbox that converter is not present,
-# so DWG is unavailable in the Flatpak by default; built-in DXF read/write works. A
-# user who needs DWG installs the converter on the host, grants the app the Flatpak
-# portal once (`flatpak override --user --talk-name=org.freedesktop.Flatpak
-# org.musacad.MusaCAD`) and turns on "Use a converter installed on the host" in the
-# DWG Setup dialog; the converter then runs through `flatpak-spawn --host`. The
-# manifest itself asks for nothing extra, so the default stays sandboxed and the
-# Flatpak LGPL-clean (no GPL/DWG library linked or shipped).
+# LibreDWG's dwg2dxf); none is shipped, so the Flatpak stays LGPL-clean and built-in
+# DXF read/write is what works out of the box. "Download ODA File Converter" in DWG
+# Setup fetches the free converter from opendesign.com into the app's data directory
+# (hence --share=network). The converter needs an X11 display: under an X11 session it
+# runs inside the sandbox (fallback-x11); under Wayland the sandbox has no display, so
+# it runs on the host through `flatpak-spawn --host`, which the user allows once with
+# `flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD` (the
+# dialog says so). A converter installed on the host is used the same way ("Use a
+# converter installed on the host").
 
 modules:
   - name: musa-cad

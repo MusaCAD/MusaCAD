@@ -186,6 +186,13 @@ TEST_CASE("RECTANGLE Rotation: fixed-size rectangle is rotated about the first c
     h.proc.submit_line("50");
     h.proc.submit_line("30");
     h.proc.submit_line("10,10"); // NE quadrant, then rotated 90 deg about (0,0)
+    // The rotation stays in force for later rectangles (AutoCAD keeps it): put it back.
+    Harness back;
+    back.proc.submit_line("REC");
+    back.proc.submit_line("0,0");
+    back.proc.submit_line("R");
+    back.proc.submit_line("0");
+    back.proc.cancel();
     const auto* pl = only_polyline(h);
     REQUIRE(pl != nullptr);
     // (50,0) rotated +90 about origin -> (0,50); (50,30) -> (-30,50).

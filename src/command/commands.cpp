@@ -16,6 +16,7 @@
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
 #include "musacad/core/spline_eval.hpp"
+#include "musacad/core/math/tangent_circle.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/polyline_ops.hpp"
 
@@ -45,7 +46,14 @@ std::string trimmed(const std::string& s) {
 /// failure. Returns nullopt (after echoing the error) when invalid -- the caller
 /// re-prompts rather than aborting.
 std::optional<core::Vec2> read_point(CommandContext& ctx, const std::string& text) {
-    const CoordParse p = parse_coordinate(text, ctx.last_point());
+    // Direct distance entry: a bare number goes along the cursor's bearing from the last
+    // point (the cursor with ortho / polar applied, as AutoCAD does it).
+    std::optional<double> bearing;
+    const auto last = ctx.last_point();
+    if (const auto cur = ctx.cursor_world(); last && cur && core::distance(*last, *cur) > 1e-12) {
+        bearing = std::atan2(cur->y - last->y, cur->x - last->x);
+    }
+    const CoordParse p = parse_coordinate(text, last, bearing);
     if (!p.ok) {
         ctx.echo(p.error);
         return std::nullopt;
@@ -55,20 +63,6 @@ std::optional<core::Vec2> read_point(CommandContext& ctx, const std::string& tex
 }
 
 /// Circumcircle of three points. Returns false if (near) collinear.
-bool circumcircle(core::Vec2 a, core::Vec2 b, core::Vec2 c, core::Vec2& center, double& radius) {
-    const double d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    if (std::abs(d) < 1e-12) {
-        return false;
-    }
-    const double a2 = core::length_squared(a);
-    const double b2 = core::length_squared(b);
-    const double c2 = core::length_squared(c);
-    center.x = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d;
-    center.y = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d;
-    radius = core::distance(center, a);
-    return true;
-}
-
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -79,18 +73,48 @@ void LineCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Specify first point: ");
 }
 
+void LineCommand::prompt_next(CommandContext& ctx) {
+    ctx.set_preview({PreviewKind::Segment, {points_.back()}});
+    if (fixed_dir_) {
+        ctx.set_prompt("Specify length of line: ");
+    } else {
+        ctx.set_prompt(points_.size() >= 3 ? "Specify next point or [Close/Undo]: "
+                                           : "Specify next point or [Undo]: ");
+    }
+}
+
+void LineCommand::add_segment(CommandContext& ctx, core::Vec2 to) {
+    const core::Vec2 from = points_.back();
+    ctx.submit(core::AddLineCommand{from, to, ctx.group_id()});
+    points_.push_back(to);
+    ctx.set_last_point(to);
+    ctx.set_last_segment({to, std::atan2(to.y - from.y, to.x - from.x), false});
+}
+
 void LineCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
     if (points_.empty()) {
         if (t.empty()) {
-            done_ = true;
+            // Continue: from the end of the last line or arc; tangent to an arc, with
+            // only the length asked.
+            const auto seg = ctx.last_segment();
+            if (!seg) {
+                done_ = true;
+                return;
+            }
+            points_.push_back(seg->end);
+            ctx.set_last_point(seg->end);
+            if (seg->arc) {
+                fixed_dir_ = seg->tangent;
+            }
+            prompt_next(ctx);
             return;
         }
         if (const auto p = read_point(ctx, text)) {
             points_.push_back(*p);
             ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Segment, {points_.back()}});
-            ctx.set_prompt("Specify next point or [Undo]: ");
+            prompt_next(ctx);
         }
         return;
     }
@@ -98,26 +122,50 @@ void LineCommand::input(CommandContext& ctx, const std::string& text) {
         done_ = true; // Enter ends LINE
         return;
     }
-    if (upper(t) == "U") {
+    if (u == "U" || u == "UNDO") {
         if (points_.size() >= 2) {
             points_.pop_back();
             ctx.submit(core::UndoLastOpCommand{});
             ctx.set_last_point(points_.back());
-            ctx.set_preview({PreviewKind::Segment, {points_.back()}});
             ctx.echo("Undo last segment");
+            prompt_next(ctx);
         } else {
             points_.clear();
+            fixed_dir_.reset();
             ctx.clear_last_point();
             ctx.clear_preview();
             ctx.set_prompt("Specify first point: ");
         }
         return;
     }
+    if ((u == "C" || u == "CLOSE") && points_.size() >= 3) {
+        add_segment(ctx, points_.front());
+        done_ = true;
+        return;
+    }
+    if (fixed_dir_) {
+        double len = 0.0;
+        if (parse_number(t, len)) {
+            // typed
+        } else if (const auto p = read_point(ctx, text)) {
+            len = core::distance(points_.back(), *p);
+        } else {
+            return;
+        }
+        if (!(len > 0.0)) {
+            ctx.echo("Value must be positive and nonzero.");
+            return;
+        }
+        const core::Vec2 to{points_.back().x + len * std::cos(*fixed_dir_),
+                            points_.back().y + len * std::sin(*fixed_dir_)};
+        fixed_dir_.reset();
+        add_segment(ctx, to);
+        prompt_next(ctx);
+        return;
+    }
     if (const auto p = read_point(ctx, text)) {
-        ctx.submit(core::AddLineCommand{points_.back(), *p, ctx.group_id()});
-        points_.push_back(*p);
-        ctx.set_last_point(*p);
-        ctx.set_preview({PreviewKind::Segment, {points_.back()}});
+        add_segment(ctx, *p);
+        prompt_next(ctx);
     }
 }
 
@@ -129,52 +177,211 @@ void LineCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // CIRCLE
 // ---------------------------------------------------------------------------
+namespace {
+double g_circle_rad = 0.0; // CIRCLERAD: the last radius, the next default
+}
+
 void CircleCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify center point: ");
+    ctx.set_prompt("Specify center point for circle or [3P/2P/Ttr (tan tan radius)]: ");
+}
+
+void CircleCommand::prompt_radius(CommandContext& ctx) {
+    const std::string dflt =
+        g_circle_rad > 0.0
+            ? " <" + core::units::format_length(state_ == State::Diameter ? 2.0 * g_circle_rad : g_circle_rad,
+                                                ctx.units()) + ">"
+            : "";
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Circle;
+    pv.points = {center_};
+    pv.circle_mode = state_ == State::Diameter ? 1 : 0;
+    ctx.set_preview(pv);
+    ctx.set_prompt(state_ == State::Diameter ? "Specify diameter of circle" + dflt + ": "
+                                             : "Specify radius of circle or [Diameter]" + dflt + ": ");
+}
+
+void CircleCommand::finish(CommandContext& ctx, core::Vec2 center, double radius) {
+    if (!(radius > 0.0)) {
+        ctx.echo("Value must be positive and nonzero.");
+        return;
+    }
+    g_circle_rad = radius;
+    ctx.submit(core::AddCircleCommand{center, radius, ctx.group_id()});
+    ctx.echo("Circle: radius " + core::units::format_length(radius, ctx.units()));
+    done_ = true;
 }
 
 void CircleCommand::input(CommandContext& ctx, const std::string& text) {
-    if (state_ == State::Center) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double value = 0.0;
+    switch (state_) {
+    case State::Center:
+        if (u == "3P") {
+            state_ = State::ThreeFirst;
+            ctx.set_prompt("Specify first point on circle: ");
+            return;
+        }
+        if (u == "2P") {
+            state_ = State::TwoFirst;
+            ctx.set_prompt("Specify first end point of circle's diameter: ");
+            return;
+        }
+        if (u == "T" || u == "TTR") {
+            state_ = State::TanFirst;
+            ctx.set_prompt("Specify point on object for first tangent of circle: ");
+            return;
+        }
+        if (u == "TTT") { // the ribbon's Tan, Tan, Tan
+            state_ = State::TttFirst;
+            ctx.set_prompt("Specify point on object for first tangent of circle: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
             ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Circle, {center_}});
             state_ = State::Radius;
-            ctx.set_prompt("Specify radius or [Diameter]: ");
+            prompt_radius(ctx);
         }
         return;
-    }
-    // The [Diameter] option keyword -- switches the value step to diameter. Works
-    // identically from the command line and Dynamic Input (both feed input()).
-    if (state_ == State::Radius) {
-        const std::string up = upper(trimmed(text));
-        if (up == "D" || up == "DIAMETER") {
+    case State::Radius:
+    case State::Diameter: {
+        if (state_ == State::Radius && (u == "D" || u == "DIAMETER")) {
             state_ = State::Diameter;
-            ctx.set_prompt("Specify diameter: ");
+            prompt_radius(ctx);
             return;
         }
-    }
-    const bool by_diameter = state_ == State::Diameter;
-    double value = 0.0;
-    if (parse_number(text, value)) {
-        // explicit radius/diameter
-    } else if (const auto p = read_point(ctx, text)) {
-        value = core::distance(center_, *p);
-        if (by_diameter) {
-            value *= 2.0; // a picked point gives the radius distance -> diameter
+        const bool by_diameter = state_ == State::Diameter;
+        if (t.empty()) {
+            if (!(g_circle_rad > 0.0)) {
+                ctx.echo("Requires numeric distance or second point.");
+                return;
+            }
+            finish(ctx, center_, g_circle_rad);
+            return;
         }
-    } else {
-        return; // read_point already echoed the error
-    }
-    const double radius = by_diameter ? value * 0.5 : value;
-    if (radius <= 0.0) {
-        ctx.echo("Value must be positive.");
+        if (parse_number(t, value)) {
+            finish(ctx, center_, by_diameter ? value * 0.5 : value);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            // A pick is the distance from the centre: the radius, or the diameter itself.
+            const double d = core::distance(center_, *p);
+            finish(ctx, center_, by_diameter ? d * 0.5 : d);
+            return;
+        }
+        ctx.echo("Requires numeric distance or second point.");
         return;
     }
-    ctx.submit(core::AddCircleCommand{center_, radius, ctx.group_id()});
-    ctx.echo("Circle: radius " + std::to_string(radius));
-    done_ = true;
+    case State::TwoFirst:
+        if (const auto p = read_point(ctx, text)) {
+            pts_ = {*p};
+            ctx.set_last_point(*p);
+            PreviewSpec pv;
+            pv.kind = PreviewKind::Circle;
+            pv.points = pts_;
+            pv.circle_mode = 2;
+            ctx.set_preview(pv);
+            state_ = State::TwoSecond;
+            ctx.set_prompt("Specify second end point of circle's diameter: ");
+        }
+        return;
+    case State::TwoSecond:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 c = (pts_[0] + *p) * 0.5;
+            const double r = core::distance(pts_[0], *p) * 0.5;
+            if (!(r > 0.0)) {
+                ctx.echo("Circle does not exist.");
+                return;
+            }
+            finish(ctx, c, r);
+        }
+        return;
+    case State::ThreeFirst:
+        if (const auto p = read_point(ctx, text)) {
+            pts_ = {*p};
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            state_ = State::ThreeSecond;
+            ctx.set_prompt("Specify second point on circle: ");
+        }
+        return;
+    case State::ThreeSecond:
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            PreviewSpec pv;
+            pv.kind = PreviewKind::Circle;
+            pv.points = pts_;
+            pv.circle_mode = 3;
+            ctx.set_preview(pv);
+            state_ = State::ThreeThird;
+            ctx.set_prompt("Specify third point on circle: ");
+        }
+        return;
+    case State::ThreeThird:
+        if (const auto p = read_point(ctx, text)) {
+            core::Vec2 c;
+            double r = 0.0;
+            if (!core::circumcircle(pts_[0], pts_[1], *p, c, r)) {
+                ctx.echo("Circle does not exist.");
+                return;
+            }
+            finish(ctx, c, r);
+        }
+        return;
+    case State::TanFirst:
+    case State::TttFirst:
+        if (const auto p = read_point(ctx, text)) {
+            pts_ = {*p};
+            state_ = state_ == State::TanFirst ? State::TanSecond : State::TttSecond;
+            ctx.set_prompt("Specify point on object for second tangent of circle: ");
+        }
+        return;
+    case State::TanSecond:
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            state_ = State::TanRadius;
+            ctx.set_prompt("Specify radius of circle" +
+                           (g_circle_rad > 0.0 ? " <" + core::units::format_length(g_circle_rad, ctx.units()) + ">"
+                                               : std::string()) +
+                           ": ");
+        }
+        return;
+    case State::TanRadius: {
+        double r = 0.0;
+        if (t.empty()) {
+            r = g_circle_rad;
+        } else if (parse_number(t, r)) {
+            // typed
+        } else if (const auto p = read_point(ctx, text)) {
+            r = ctx.last_point() ? core::distance(*ctx.last_point(), *p) : 0.0;
+        }
+        if (!(r > 0.0)) {
+            ctx.echo("Requires numeric distance or second point.");
+            return;
+        }
+        g_circle_rad = r;
+        ctx.submit(core::AddCircleTangentCommand{pts_, r, ctx.pick_radius(), ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    case State::TttSecond:
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            state_ = State::TttThird;
+            ctx.set_prompt("Specify point on object for third tangent of circle: ");
+        }
+        return;
+    case State::TttThird:
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.submit(core::AddCircleTangentCommand{pts_, 0.0, ctx.pick_radius(), ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
 }
 
 void CircleCommand::cancel(CommandContext& ctx) {
@@ -185,18 +392,133 @@ void CircleCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // PLINE
 // ---------------------------------------------------------------------------
+namespace {
+constexpr const char* kPlineArcPrompt =
+    "Specify endpoint of arc (hold Ctrl to switch direction) or "
+    "[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]: ";
+}
+
 void PolylineCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    ctx.echo("Current line-width is " + core::units::format_length(0.0, ctx.units()));
     ctx.set_prompt("Specify start point: ");
 }
 
+double PolylineCommand::start_tangent(CommandContext& ctx) const {
+    // The heading an arc leaves the last vertex with: the previous segment's end
+    // tangent; for a first segment, the last line or arc drawn; else east.
+    if (!tangents_.empty()) {
+        return tangents_.back();
+    }
+    if (const auto seg = ctx.last_segment()) {
+        return seg->tangent;
+    }
+    return 0.0;
+}
+
+void PolylineCommand::refresh_preview(CommandContext& ctx, int arc_mode) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Polyline;
+    pv.points = points_;
+    pv.bulges = bulges_;
+    pv.pline_arc_mode = arc_mode;
+    pv.pline_tangent = arc_mode == 4 ? direction_ : start_tangent(ctx);
+    pv.pline_angle = angle_;
+    pv.pline_radius = radius_;
+    pv.pline_center = center_;
+    pv.pline_second = second_;
+    ctx.set_preview(pv);
+}
+
 void PolylineCommand::prompt_next(CommandContext& ctx) {
-    ctx.set_prompt("Specify next point or [Close/Undo]: ");
+    if (state_ == State::ArcNext) {
+        refresh_preview(ctx, 1);
+        ctx.set_prompt(kPlineArcPrompt);
+        return;
+    }
+    state_ = State::Next;
+    refresh_preview(ctx, 0);
+    ctx.set_prompt(points_.size() >= 2 ? "Specify next point or [Arc/Close/Length/Undo]: "
+                                       : "Specify next point or [Arc/Length/Undo]: ");
+}
+
+void PolylineCommand::add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent) {
+    bulges_.push_back(bulge);
+    tangents_.push_back(end_tangent);
+    points_.push_back(end);
+    ctx.set_last_point(end);
+}
+
+void PolylineCommand::add_arc(CommandContext& ctx, const std::optional<core::ConstructedArc>& arc) {
+    if (!arc) {
+        ctx.echo("*Invalid*");
+        state_ = State::ArcNext;
+        prompt_next(ctx);
+        return;
+    }
+    add_segment(ctx, arc->end_point, arc->bulge(), arc->end_tangent);
+    state_ = State::ArcNext;
+    prompt_next(ctx);
+}
+
+void PolylineCommand::undo_segment(CommandContext& ctx) {
+    if (points_.size() >= 2) {
+        points_.pop_back();
+        bulges_.pop_back();
+        tangents_.pop_back();
+        ctx.set_last_point(points_.back());
+        prompt_next(ctx);
+        return;
+    }
+    points_.clear();
+    bulges_.clear();
+    tangents_.clear();
+    state_ = State::Start;
+    ctx.clear_last_point();
+    ctx.clear_preview();
+    ctx.set_prompt("Specify start point: ");
+}
+
+void PolylineCommand::finish(CommandContext& ctx, bool closed) {
+    if (points_.size() < 2) {
+        done_ = true;
+        return;
+    }
+    core::AddPolylineCommand poly;
+    poly.points = points_;
+    poly.closed = closed;
+    poly.group = ctx.group_id();
+    bool any_arc = false;
+    for (const double b : bulges_) {
+        any_arc = any_arc || std::abs(b) > 1e-12;
+    }
+    if (any_arc) {
+        poly.bulges = bulges_;
+        poly.bulges.resize(points_.size(), 0.0);
+    }
+    ctx.submit(std::move(poly));
+    ctx.echo(closed ? "Closed polyline created."
+                    : "Polyline created (" + std::to_string(points_.size()) + " vertices).");
+    if (closed && bulges_.size() == points_.size()) {
+        ctx.set_last_segment({points_.front(), tangents_.back(), std::abs(bulges_.back()) > 1e-12});
+    } else if (closed) {
+        const core::Vec2 a = points_.back();
+        const core::Vec2 b = points_.front();
+        ctx.set_last_segment({b, std::atan2(b.y - a.y, b.x - a.x), false});
+    } else {
+        ctx.set_last_segment({points_.back(), tangents_.back(), std::abs(bulges_.back()) > 1e-12});
+    }
+    done_ = true;
 }
 
 void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
-    if (points_.empty()) {
+    const std::string u = upper(t);
+    const bool ctrl = ctx.ctrl_held();
+    const core::Vec2 last = points_.empty() ? core::Vec2{} : points_.back();
+    double v = 0.0;
+    switch (state_) {
+    case State::Start:
         if (t.empty()) {
             done_ = true;
             return;
@@ -204,46 +526,284 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             points_.push_back(*p);
             ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Polyline, points_});
             prompt_next(ctx);
         }
         return;
-    }
-    if (t.empty()) {
-        if (points_.size() >= 2) {
-            ctx.submit(core::AddPolylineCommand{points_, false, ctx.group_id()});
-            ctx.echo("Polyline created (" + std::to_string(points_.size()) + " vertices).");
+
+    case State::Next:
+        if (t.empty()) {
+            finish(ctx, false);
+            return;
         }
-        done_ = true;
-        return;
-    }
-    if (upper(t) == "C") {
-        if (points_.size() >= 3) {
-            ctx.submit(core::AddPolylineCommand{points_, true, ctx.group_id()});
-            ctx.echo("Closed polyline created.");
-            done_ = true;
-        } else {
+        if (u == "A" || u == "ARC") {
+            state_ = State::ArcNext;
+            prompt_next(ctx);
+            return;
+        }
+        if ((u == "C" || u == "CLOSE") && points_.size() >= 3) {
+            finish(ctx, true);
+            return;
+        }
+        if (u == "C" || u == "CLOSE") {
             ctx.echo("Need at least 3 points to close.");
+            return;
         }
-        return;
-    }
-    if (upper(t) == "U") {
-        points_.pop_back();
-        if (points_.empty()) {
-            ctx.clear_last_point();
-            ctx.clear_preview();
-            ctx.set_prompt("Specify start point: ");
-        } else {
-            ctx.set_last_point(points_.back());
-            ctx.set_preview({PreviewKind::Polyline, points_});
+        if (u == "L" || u == "LENGTH") {
+            state_ = State::Length;
+            refresh_preview(ctx, 0);
+            ctx.set_prompt("Specify length of line: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            undo_segment(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            add_segment(ctx, *p, 0.0, std::atan2(p->y - last.y, p->x - last.x));
             prompt_next(ctx);
         }
         return;
+
+    case State::Length: {
+        // Along the previous segment (tangent to an arc), the length typed or picked.
+        double len = 0.0;
+        if (parse_number(t, len)) {
+            // typed
+        } else if (const auto p = read_point(ctx, text)) {
+            len = core::distance(last, *p);
+        } else {
+            return;
+        }
+        if (!(len > 0.0)) {
+            ctx.echo("Value must be positive and nonzero.");
+            return;
+        }
+        const double dir = start_tangent(ctx);
+        add_segment(ctx, {last.x + len * std::cos(dir), last.y + len * std::sin(dir)}, 0.0, dir);
+        state_ = State::Next;
+        prompt_next(ctx);
+        return;
     }
-    if (const auto p = read_point(ctx, text)) {
-        points_.push_back(*p);
-        ctx.set_last_point(*p);
-        ctx.set_preview({PreviewKind::Polyline, points_});
+
+    case State::ArcNext:
+        if (t.empty()) {
+            finish(ctx, false);
+            return;
+        }
+        if (u == "A" || u == "ANGLE") {
+            state_ = State::ArcAngle;
+            ctx.set_prompt("Specify included angle: ");
+            return;
+        }
+        if (u == "CE" || u == "CENTER") {
+            state_ = State::ArcCenter;
+            ctx.set_prompt("Specify center point of arc: ");
+            return;
+        }
+        if (u == "CL" || u == "CLOSE") {
+            if (points_.size() < 2) {
+                ctx.echo("Need at least 2 points to close.");
+                return;
+            }
+            // The closing arc: tangent to the last segment, back to the start.
+            const auto arc = core::arc_start_end_direction(last, points_.front(), start_tangent(ctx));
+            if (!arc) {
+                ctx.echo("*Invalid*");
+                return;
+            }
+            bulges_.push_back(arc->bulge());
+            tangents_.push_back(arc->end_tangent);
+            finish(ctx, true);
+            return;
+        }
+        if (u == "D" || u == "DIRECTION") {
+            state_ = State::ArcDirection;
+            ctx.set_prompt("Specify the tangent direction for the start point of arc: ");
+            return;
+        }
+        if (u == "L" || u == "LINE") {
+            state_ = State::Next;
+            prompt_next(ctx);
+            return;
+        }
+        if (u == "R" || u == "RADIUS") {
+            state_ = State::ArcRadius;
+            ctx.set_prompt("Specify radius of arc: ");
+            return;
+        }
+        if (u == "S" || u == "SECOND" || u == "SECOND PT") {
+            state_ = State::ArcSecond;
+            ctx.set_prompt("Specify second point on arc: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            undo_segment(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            // Tangent to the previous segment; Ctrl bends it the other way (the arc
+            // leaves in the opposite direction, as AutoCAD's Ctrl does here).
+            const double dir = start_tangent(ctx) + (ctrl ? core::kPi : 0.0);
+            add_arc(ctx, core::arc_start_end_direction(last, *p, dir));
+        }
+        return;
+
+    case State::ArcAngle:
+        if (parse_number(t, v)) {
+            angle_ = core::to_radians(v);
+            state_ = State::ArcAngleEnd;
+            refresh_preview(ctx, 2);
+            ctx.set_prompt("Specify endpoint of arc (hold Ctrl to switch direction) or [CEnter/Radius]: ");
+        } else {
+            ctx.echo("Requires valid numeric angle.");
+        }
+        return;
+    case State::ArcAngleEnd:
+        if (u == "CE" || u == "CENTER") {
+            state_ = State::ArcCenterAngle;
+            ctx.set_prompt("Specify center point of arc: ");
+            return;
+        }
+        if (u == "R" || u == "RADIUS") {
+            state_ = State::ArcAngleRadius;
+            ctx.set_prompt("Specify radius of arc: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            add_arc(ctx, core::arc_start_end_angle(last, *p, angle_, ctrl));
+        }
+        return;
+    case State::ArcAngleRadius:
+        if (parse_number(t, v) && v > 0.0) {
+            radius_ = v;
+            state_ = State::ArcAngleChordDir;
+            ctx.set_prompt("Specify direction of chord for arc <" +
+                           core::units::format_angle(start_tangent(ctx), ctx.units()) + ">: ");
+        } else {
+            ctx.echo("Value must be positive and nonzero.");
+        }
+        return;
+    case State::ArcAngleChordDir:
+    case State::ArcRadiusChordDir: {
+        // The chord of an arc of radius r and included angle a is 2 r sin(a / 2), laid
+        // along the given direction from the last vertex.
+        double dir = start_tangent(ctx);
+        if (t.empty()) {
+            // the default direction
+        } else if (parse_number(t, v)) {
+            dir = core::to_radians(v);
+        } else if (const auto p = read_point(ctx, text)) {
+            dir = std::atan2(p->y - last.y, p->x - last.x);
+        } else {
+            return;
+        }
+        const double chord = 2.0 * radius_ * std::sin(std::abs(angle_) * 0.5);
+        const core::Vec2 e{last.x + chord * std::cos(dir), last.y + chord * std::sin(dir)};
+        add_arc(ctx, core::arc_start_end_angle(last, e, angle_, ctrl));
+        return;
+    }
+
+    case State::ArcCenter:
+        if (const auto p = read_point(ctx, text)) {
+            center_ = *p;
+            state_ = State::ArcCenterEnd;
+            refresh_preview(ctx, 3);
+            ctx.set_prompt("Specify endpoint of arc (hold Ctrl to switch direction) or [Angle/Length]: ");
+        }
+        return;
+    case State::ArcCenterEnd:
+        if (u == "A" || u == "ANGLE") {
+            state_ = State::ArcCenterAngle;
+            ctx.set_prompt("Specify included angle: ");
+            return;
+        }
+        if (u == "L" || u == "LENGTH") {
+            state_ = State::ArcCenterLength;
+            ctx.set_prompt("Specify length of chord: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            add_arc(ctx, core::arc_start_center_end(last, center_, *p, ctrl));
+        }
+        return;
+    case State::ArcCenterAngle:
+        if (parse_number(t, v)) {
+            add_arc(ctx, core::arc_start_center_angle(last, center_, core::to_radians(v), ctrl));
+        } else if (const auto p = read_point(ctx, text)) {
+            // From [Angle] > [CEnter]: the point is the centre, the angle already given.
+            add_arc(ctx, core::arc_start_center_angle(last, *p, angle_, ctrl));
+        }
+        return;
+    case State::ArcCenterLength:
+        if (parse_number(t, v)) {
+            add_arc(ctx, core::arc_start_center_length(last, center_, v, ctrl));
+        } else if (const auto p = read_point(ctx, text)) {
+            add_arc(ctx, core::arc_start_center_length(last, center_, core::distance(last, *p), ctrl));
+        }
+        return;
+
+    case State::ArcDirection:
+        if (parse_number(t, v)) {
+            direction_ = core::to_radians(v);
+        } else if (const auto p = read_point(ctx, text)) {
+            direction_ = std::atan2(p->y - last.y, p->x - last.x);
+        } else {
+            return;
+        }
+        state_ = State::ArcDirectionEnd;
+        refresh_preview(ctx, 4);
+        ctx.set_prompt("Specify endpoint of arc: ");
+        return;
+    case State::ArcDirectionEnd:
+        if (const auto p = read_point(ctx, text)) {
+            add_arc(ctx, core::arc_start_end_direction(last, *p, direction_));
+        }
+        return;
+
+    case State::ArcRadius:
+        if (parse_number(t, v) && v > 0.0) {
+            radius_ = v;
+            state_ = State::ArcRadiusEnd;
+            refresh_preview(ctx, 5);
+            ctx.set_prompt("Specify endpoint of arc (hold Ctrl to switch direction) or [Angle]: ");
+        } else {
+            ctx.echo("Value must be positive and nonzero.");
+        }
+        return;
+    case State::ArcRadiusEnd:
+        if (u == "A" || u == "ANGLE") {
+            state_ = State::ArcRadiusAngle;
+            ctx.set_prompt("Specify included angle: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            add_arc(ctx, core::arc_start_end_radius(last, *p, radius_, ctrl));
+        }
+        return;
+    case State::ArcRadiusAngle:
+        if (parse_number(t, v)) {
+            angle_ = core::to_radians(v);
+            state_ = State::ArcRadiusChordDir;
+            ctx.set_prompt("Specify direction of chord for arc <" +
+                           core::units::format_angle(start_tangent(ctx), ctx.units()) + ">: ");
+        } else {
+            ctx.echo("Requires valid numeric angle.");
+        }
+        return;
+
+    case State::ArcSecond:
+        if (const auto p = read_point(ctx, text)) {
+            second_ = *p;
+            state_ = State::ArcSecondEnd;
+            refresh_preview(ctx, 6);
+            ctx.set_prompt("Specify end point of arc: ");
+        }
+        return;
+    case State::ArcSecondEnd:
+        if (const auto p = read_point(ctx, text)) {
+            add_arc(ctx, core::arc_three_points(last, second_, *p));
+        }
+        return;
     }
 }
 
@@ -255,58 +815,246 @@ void PolylineCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // ARC (three-point)
 // ---------------------------------------------------------------------------
+namespace {
+constexpr const char* kArcCenterEndPrompt =
+    "Specify end point of arc (hold Ctrl to switch direction) or [Angle/chord Length]: ";
+constexpr const char* kArcEndCenterPrompt =
+    "Specify center point of arc (hold Ctrl to switch direction) or [Angle/Direction/Radius]: ";
+double bearing_of(core::Vec2 from, core::Vec2 to) {
+    return std::atan2(to.y - from.y, to.x - from.x);
+}
+double positive_turn(double a) {
+    a = std::fmod(a, core::kTwoPi);
+    return a < 0.0 ? a + core::kTwoPi : a;
+}
+} // namespace
+
 void ArcCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify start point of arc: ");
+    ctx.set_prompt("Specify start point of arc or [Center]: ");
+}
+
+void ArcCommand::preview(CommandContext& ctx, int mode) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Arc;
+    pv.arc_mode = mode;
+    switch (mode) {
+    case 1:
+        pv.points = {s_, m_};
+        break;
+    case 2:
+    case 3:
+    case 4:
+        pv.points = {s_, c_};
+        break;
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+        pv.points = {s_, e_};
+        break;
+    default:
+        pv.points = {s_};
+        pv.arc_tangent = tangent_;
+        break;
+    }
+    ctx.set_preview(pv);
+}
+
+void ArcCommand::commit(CommandContext& ctx, const std::optional<core::ConstructedArc>& arc) {
+    if (!arc) {
+        ctx.echo("*Invalid*");
+        return;
+    }
+    ctx.submit(core::AddArcCommand{arc->center, arc->radius, arc->start, arc->end, ctx.group_id()});
+    ctx.set_last_point(arc->end_point);
+    ctx.set_last_segment({arc->end_point, arc->end_tangent, true});
+    done_ = true;
 }
 
 void ArcCommand::input(CommandContext& ctx, const std::string& text) {
-    const auto p = read_point(ctx, text);
-    if (!p) {
-        return;
-    }
-    points_.push_back(*p);
-    ctx.set_last_point(*p);
-    if (points_.size() == 1) {
-        ctx.set_preview({PreviewKind::Segment, {points_[0]}});
-        ctx.set_prompt("Specify second point of arc: ");
-        return;
-    }
-    if (points_.size() == 2) {
-        ctx.set_preview({PreviewKind::Arc, {points_[0], points_[1]}});
-        ctx.set_prompt("Specify end point of arc: ");
-        return;
-    }
-    // Three points: build the arc.
-    core::Vec2 center{};
-    double radius = 0.0;
-    if (!circumcircle(points_[0], points_[1], points_[2], center, radius)) {
-        ctx.echo("Points are collinear; specify a different end point.");
-        points_.pop_back();
-        ctx.set_last_point(points_.back());
-        return;
-    }
-    const auto ang = [&](core::Vec2 q) { return std::atan2(q.y - center.y, q.x - center.x); };
-    const double a1 = ang(points_[0]);
-    const double a2 = ang(points_[1]);
-    const double a3 = ang(points_[2]);
-    const auto rel = [](double x, double base) {
-        double r = x - base;
-        while (r < 0.0) {
-            r += core::kTwoPi;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const bool ctrl = ctx.ctrl_held();
+    double v = 0.0;
+    switch (state_) {
+    case State::Start:
+        if (t.empty()) {
+            // Continue: tangent from the end of the last line or arc.
+            const auto seg = ctx.last_segment();
+            if (!seg) {
+                return; // nothing to continue from: the prompt stands
+            }
+            s_ = seg->end;
+            tangent_ = seg->tangent;
+            ctx.set_last_point(s_);
+            state_ = State::ContinueEnd;
+            preview(ctx, 9);
+            ctx.set_prompt("Specify end point of arc (hold Ctrl to switch direction): ");
+            return;
         }
-        return r;
-    };
-    // Choose start/end so the CCW sweep from start passes through the second point.
-    double start_angle = a1;
-    double end_angle = a3;
-    if (rel(a2, a1) > rel(a3, a1)) {
-        start_angle = a3;
-        end_angle = a1;
+        if (u == "C" || u == "CENTER") {
+            state_ = State::CenterFirst;
+            ctx.set_prompt("Specify center point of arc: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            s_ = *p;
+            ctx.set_last_point(s_);
+            state_ = State::Second;
+            ctx.set_preview({PreviewKind::Segment, {s_}});
+            ctx.set_prompt("Specify second point of arc or [Center/End]: ");
+        }
+        return;
+    case State::Second:
+        if (u == "C" || u == "CENTER") {
+            state_ = State::AwaitCenter;
+            ctx.set_prompt("Specify center point of arc: ");
+            return;
+        }
+        if (u == "E" || u == "END") {
+            state_ = State::AwaitEnd;
+            ctx.set_prompt("Specify end point of arc: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            m_ = *p;
+            ctx.set_last_point(m_);
+            state_ = State::ThreeEnd;
+            preview(ctx, 1);
+            ctx.set_prompt("Specify end point of arc: ");
+        }
+        return;
+    case State::ThreeEnd:
+        if (const auto p = read_point(ctx, text)) {
+            const auto arc = core::arc_three_points(s_, m_, *p);
+            if (!arc) {
+                ctx.echo("*Invalid*"); // collinear: pick a different end point
+                return;
+            }
+            commit(ctx, arc);
+        }
+        return;
+    case State::AwaitCenter:
+        if (const auto p = read_point(ctx, text)) {
+            c_ = *p;
+            ctx.set_last_point(c_);
+            state_ = State::CenterEnd;
+            preview(ctx, 2);
+            ctx.set_prompt(kArcCenterEndPrompt);
+        }
+        return;
+    case State::CenterEnd:
+        if (u == "A" || u == "ANGLE") {
+            state_ = State::CenterAngle;
+            preview(ctx, 3);
+            ctx.set_prompt("Specify included angle (hold Ctrl to switch direction): ");
+            return;
+        }
+        if (u == "L" || u == "LENGTH") {
+            state_ = State::CenterLength;
+            preview(ctx, 4);
+            ctx.set_prompt("Specify length of chord (hold Ctrl to switch direction): ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_center_end(s_, c_, *p, ctrl));
+        }
+        return;
+    case State::CenterAngle:
+        if (parse_number(t, v)) {
+            commit(ctx, core::arc_start_center_angle(s_, c_, core::to_radians(v), ctrl));
+        } else if (const auto p = read_point(ctx, text)) {
+            // A point gives the angle it makes at the centre with the start point.
+            const double ang = positive_turn(bearing_of(c_, *p) - bearing_of(c_, s_));
+            commit(ctx, core::arc_start_center_angle(s_, c_, ang, ctrl));
+        }
+        return;
+    case State::CenterLength:
+        if (parse_number(t, v)) {
+            commit(ctx, core::arc_start_center_length(s_, c_, v, ctrl));
+        } else if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_center_length(s_, c_, core::distance(s_, *p), ctrl));
+        }
+        return;
+    case State::AwaitEnd:
+        if (const auto p = read_point(ctx, text)) {
+            e_ = *p;
+            ctx.set_last_point(e_);
+            state_ = State::EndCenter;
+            preview(ctx, 5);
+            ctx.set_prompt(kArcEndCenterPrompt);
+        }
+        return;
+    case State::EndCenter:
+        if (u == "A" || u == "ANGLE") {
+            state_ = State::EndAngle;
+            preview(ctx, 6);
+            ctx.set_prompt("Specify included angle (hold Ctrl to switch direction): ");
+            return;
+        }
+        if (u == "D" || u == "DIRECTION") {
+            state_ = State::EndDirection;
+            preview(ctx, 7);
+            ctx.set_prompt(
+                "Specify tangent direction for the start point of arc (hold Ctrl to switch direction): ");
+            return;
+        }
+        if (u == "R" || u == "RADIUS") {
+            state_ = State::EndRadius;
+            preview(ctx, 8);
+            ctx.set_prompt("Specify radius of arc (hold Ctrl to switch direction): ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_center_end(s_, *p, e_, ctrl));
+        }
+        return;
+    case State::EndAngle:
+        if (parse_number(t, v)) {
+            commit(ctx, core::arc_start_end_angle(s_, e_, core::to_radians(v), ctrl));
+        } else if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_end_angle(s_, e_, positive_turn(bearing_of(s_, *p)), ctrl));
+        }
+        return;
+    case State::EndDirection:
+        if (parse_number(t, v)) {
+            commit(ctx, core::arc_start_end_direction(s_, e_, core::to_radians(v)));
+        } else if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_end_direction(s_, e_, bearing_of(s_, *p)));
+        }
+        return;
+    case State::EndRadius:
+        if (parse_number(t, v)) {
+            commit(ctx, core::arc_start_end_radius(s_, e_, v, ctrl));
+        } else if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_end_radius(s_, e_, core::distance(e_, *p), ctrl));
+        }
+        return;
+    case State::CenterFirst:
+        if (const auto p = read_point(ctx, text)) {
+            c_ = *p;
+            ctx.set_last_point(c_);
+            state_ = State::CenterStart;
+            ctx.set_preview({PreviewKind::Segment, {c_}});
+            ctx.set_prompt("Specify start point of arc: ");
+        }
+        return;
+    case State::CenterStart:
+        if (const auto p = read_point(ctx, text)) {
+            s_ = *p;
+            ctx.set_last_point(s_);
+            state_ = State::CenterEnd;
+            preview(ctx, 2);
+            ctx.set_prompt(kArcCenterEndPrompt);
+        }
+        return;
+    case State::ContinueEnd:
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::arc_start_end_direction(s_, *p, tangent_));
+        }
+        return;
     }
-    ctx.submit(core::AddArcCommand{center, radius, start_angle, end_angle, ctx.group_id()});
-    ctx.echo("Arc: radius " + std::to_string(radius));
-    done_ = true;
 }
 
 void ArcCommand::cancel(CommandContext& ctx) {
@@ -319,15 +1067,22 @@ void ArcCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void RectangleCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    if (fillet_r_ > 0.0) {
+        ctx.echo("Current rectangle modes: Fillet=" + core::units::format_length(fillet_r_, ctx.units()));
+    } else if (chamfer_d1_ > 0.0 || chamfer_d2_ > 0.0) {
+        ctx.echo("Current rectangle modes: Chamfer=" + core::units::format_length(chamfer_d1_, ctx.units()) +
+                 " x " + core::units::format_length(chamfer_d2_, ctx.units()));
+    }
     // Elevation/Thickness are 3D and Width needs polyline width, which this model does
-    // not have, so only the two corner treatments are offered -- an option that cannot
-    // work is worse than a shorter prompt.
+    // not have yet (#37), so only the two corner treatments are offered -- an option that
+    // cannot work is worse than a shorter prompt.
     ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
 }
 
 void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
-    constexpr const char* kCornerPrompt = "Specify other corner or [Area/Dimensions/Rotation]: ";
+    constexpr const char* kCornerPrompt = "Specify other corner point or [Area/Dimensions/Rotation]: ";
     const std::string up = upper(trimmed(text));
+    const auto fmt = [&](double v) { return core::units::format_length(v, ctx.units()); };
 
     // Push the cursor preview for the current state: corner-to-corner by default, or a
     // FIXED-SIZE quadrant-flip rectangle once dimensions/area are chosen. Carries rotation.
@@ -338,55 +1093,26 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
             pv.fixed_h = width_;
         }
         pv.rect_rotation = rotation_;
+        pv.rect_fillet = fillet_r_;
+        pv.rect_chamfer_d1 = chamfer_d1_;
+        pv.rect_chamfer_d2 = chamfer_d2_;
         // Every state except the corner pick is a single scalar/keyword sub-prompt:
         // with DYN on it shows the at-cursor cell, not the two-field corner drag.
         pv.scalar_prompt = state_ != State::First && state_ != State::AwaitCorner;
         ctx.set_preview(pv);
     };
-    // The four corners from first_ to `other`, rotated about first_.
-    const auto corners = [&](core::Vec2 other) {
-        std::vector<core::Vec2> c{{first_.x, first_.y},
-                                  {other.x, first_.y},
-                                  {other.x, other.y},
-                                  {first_.x, other.y}};
-        if (rotation_ != 0.0) {
-            const double cs = std::cos(rotation_);
-            const double sn = std::sin(rotation_);
-            for (core::Vec2& q : c) {
-                const double dx = q.x - first_.x;
-                const double dy = q.y - first_.y;
-                q = {first_.x + dx * cs - dy * sn, first_.y + dx * sn + dy * cs};
-            }
-        }
-        return c;
-    };
-    // Commit the closed polyline, with every corner rounded or chamfered by the SAME
-    // routine the FILLET / CHAMFER commands use on a picked corner, so the two can never
-    // disagree. A treatment that does not fit falls back to square corners and says so,
-    // which is what AutoCAD does with an oversized radius.
+    // Commit the closed polyline through the outline the rubber band draws (the corners
+    // rounded or chamfered by the routines FILLET / CHAMFER use, so they cannot disagree).
+    // A treatment that does not fit falls back to square corners and says so, which is
+    // what AutoCAD does with an oversized radius.
     const auto commit = [&](core::Vec2 other) {
-        std::vector<core::Vec2> c = corners(other);
+        std::vector<core::Vec2> c;
         std::vector<double> bulges;
-        bool shaped = true;
-        if (fillet_r_ > 0.0) {
-            bulges.assign(4, 0.0);
-            for (int i = 3; i >= 0 && shaped; --i) { // descending: inserts never shift the rest
-                shaped = core::polyline_ops::fillet_corner(c, bulges, true, i, fillet_r_);
-            }
-            if (!shaped) {
-                ctx.echo("Fillet radius too large for this rectangle: drawn with square corners.");
-            }
-        } else if (chamfer_d1_ > 0.0 || chamfer_d2_ > 0.0) {
-            for (int i = 3; i >= 0 && shaped; --i) {
-                shaped = core::polyline_ops::chamfer_corner(c, true, i, chamfer_d1_, chamfer_d2_);
-            }
-            if (!shaped) {
-                ctx.echo("Chamfer distances too large for this rectangle: drawn with square corners.");
-            }
-        }
-        if (!shaped) {
-            c = corners(other);
-            bulges.clear();
+        if (!core::polyline_ops::rectangle_outline(first_, other, rotation_, fillet_r_, chamfer_d1_,
+                                                   chamfer_d2_, c, bulges)) {
+            ctx.echo(fillet_r_ > 0.0
+                         ? "Fillet radius too large for this rectangle: drawn with square corners."
+                         : "Chamfer distances too large for this rectangle: drawn with square corners.");
         }
         core::AddPolylineCommand poly;
         poly.points = std::move(c);
@@ -395,7 +1121,16 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         poly.bulges = std::move(bulges);
         ctx.submit(std::move(poly));
         ctx.echo("Rectangle created.");
+        s_rotation_ = rotation_;
         done_ = true;
+    };
+    // The area the corner treatment removes: four quarter-round cut-outs, or four
+    // chamfer triangles -- AutoCAD's Area option means the area of the finished shape.
+    const auto corner_loss = [&] {
+        if (fillet_r_ > 0.0) {
+            return (4.0 - core::kPi) * fillet_r_ * fillet_r_;
+        }
+        return 2.0 * chamfer_d1_ * chamfer_d2_;
     };
     const auto fmt4 = [](double v) {
         char buf[32];
@@ -479,19 +1214,20 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         if (up == "D" || up == "DIMENSIONS") {
             state_ = State::DimLen;
             refresh_preview();
-            ctx.set_prompt("Specify length for rectangles: ");
+            ctx.set_prompt("Specify length for rectangles <" + fmt(s_length_) + ">: ");
             return;
         }
         if (up == "A" || up == "AREA") {
             state_ = State::AreaVal;
             refresh_preview();
-            ctx.set_prompt("Enter area of rectangle in current units: ");
+            ctx.set_prompt("Enter area of rectangle in current units <" + fmt(s_area_) + ">: ");
             return;
         }
         if (up == "R" || up == "ROTATION") {
             state_ = State::RotVal;
             refresh_preview();
-            ctx.set_prompt("Specify rotation angle: ");
+            ctx.set_prompt("Specify rotation angle or [Pick points] <" +
+                           core::units::format_angle(rotation_, ctx.units()) + ">: ");
             return;
         }
         const auto p = read_point(ctx, text);
@@ -510,36 +1246,39 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
     }
 
     case State::DimLen: {
-        double v = 0.0;
-        if (!parse_number(text, v) || v <= 0.0) {
+        double v = s_length_; // Enter keeps the remembered default
+        if (!up.empty() && (!parse_number(text, v) || v <= 0.0)) {
             revert_to_corner();
             return;
         }
         length_ = v;
+        s_length_ = v;
         state_ = State::DimWid;
         refresh_preview();
-        ctx.set_prompt("Specify width for rectangles: ");
+        ctx.set_prompt("Specify width for rectangles <" + fmt(s_width_) + ">: ");
         return;
     }
     case State::DimWid: {
-        double v = 0.0;
-        if (!parse_number(text, v) || v <= 0.0) {
+        double v = s_width_;
+        if (!up.empty() && (!parse_number(text, v) || v <= 0.0)) {
             revert_to_corner();
             return;
         }
         width_ = v;
+        s_width_ = v;
         has_dims_ = true;
         revert_to_corner(); // back to the corner pick, now with a fixed-size preview
         return;
     }
 
     case State::AreaVal: {
-        double v = 0.0;
-        if (!parse_number(text, v) || v <= 0.0) {
+        double v = s_area_;
+        if (!up.empty() && (!parse_number(text, v) || v <= 0.0)) {
             revert_to_corner();
             return;
         }
         area_ = v;
+        s_area_ = v;
         state_ = State::AreaSide;
         refresh_preview();
         ctx.set_prompt("Calculate rectangle dimensions based on [Length/Width] <Length>: ");
@@ -549,34 +1288,72 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         area_by_length_ = !(up == "W" || up == "WIDTH"); // default + L/Length -> length
         state_ = State::AreaSideVal;
         refresh_preview();
-        ctx.set_prompt(area_by_length_ ? "Enter rectangle length: " : "Enter rectangle width: ");
+        ctx.set_prompt(area_by_length_ ? "Enter rectangle length <" + fmt(s_length_) + ">: "
+                                       : "Enter rectangle width <" + fmt(s_width_) + ">: ");
         return;
     case State::AreaSideVal: {
-        double v = 0.0;
-        if (!parse_number(text, v) || v <= 0.0) {
+        double v = area_by_length_ ? s_length_ : s_width_;
+        if (!up.empty() && (!parse_number(text, v) || v <= 0.0)) {
             revert_to_corner();
             return;
         }
+        // The other side from the area of the finished shape: the corner treatment's
+        // cut-outs are added back before dividing.
+        const double gross = area_ + corner_loss();
         if (area_by_length_) {
             length_ = v;
-            width_ = area_ / v; // other side computed from the area
+            width_ = gross / v;
         } else {
             width_ = v;
-            length_ = area_ / v;
+            length_ = gross / v;
         }
+        if (!(length_ > 0.0) || !(width_ > 0.0)) {
+            ctx.echo("The area is too small for that side with the current corner treatment.");
+            revert_to_corner();
+            return;
+        }
+        s_length_ = length_;
+        s_width_ = width_;
         has_dims_ = true;
         revert_to_corner();
         return;
     }
 
     case State::RotVal: {
-        double deg = 0.0;
-        if (parse_number(text, deg)) {
-            rotation_ = deg * (3.14159265358979323846 / 180.0);
+        if (up == "P" || up == "PICK" || up == "PICK POINTS") {
+            state_ = State::RotPick1;
+            ctx.set_prompt("Specify first point: ");
+            return;
         }
-        revert_to_corner(); // a non-number simply leaves rotation unchanged
+        double deg = 0.0;
+        if (up.empty()) {
+            // Enter keeps the rotation in force
+        } else if (parse_number(text, deg)) {
+            rotation_ = core::to_radians(deg);
+        } else if (const auto p = read_point(ctx, text)) {
+            rotation_ = std::atan2(p->y - first_.y, p->x - first_.x); // the bearing from the corner
+        }
+        s_rotation_ = rotation_;
+        revert_to_corner(); // anything else leaves the rotation unchanged
         return;
     }
+    case State::RotPick1:
+        if (const auto p = read_point(ctx, text)) {
+            rot_p1_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::RotPick2;
+            ctx.set_preview({PreviewKind::Segment, {rot_p1_}});
+            ctx.set_prompt("Specify second point: ");
+        }
+        return;
+    case State::RotPick2:
+        if (const auto p = read_point(ctx, text)) {
+            rotation_ = std::atan2(p->y - rot_p1_.y, p->x - rot_p1_.x);
+            s_rotation_ = rotation_;
+            ctx.set_last_point(first_);
+            revert_to_corner();
+        }
+        return;
     }
 }
 
@@ -1103,69 +1880,154 @@ void TrimCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // ROTATE
 // ---------------------------------------------------------------------------
+namespace {
+// The [Points] option of ROTATE / SCALE Reference: a rubber line from the first point.
+void rubber_from(CommandContext& ctx, core::Vec2 a) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Segment;
+    pv.points = {a};
+    ctx.set_preview(pv);
+}
+} // namespace
+
 void RotateCommand::start(CommandContext& ctx) {
     if (!ctx.has_selection()) {
         ctx.echo("No selection. Select objects first, then run ROTATE.");
         done_ = true;
         return;
     }
+    const core::DrawingUnits u = ctx.units();
+    char base[32];
+    std::snprintf(base, sizeof(base), "%g", core::to_degrees(u.base_angle));
+    ctx.echo(std::string("Current positive angle in UCS:  ANGDIR=") +
+             (u.clockwise ? "clockwise" : "counterclockwise") + "  ANGBASE=" + base);
     ctx.clear_last_point();
     ctx.set_prompt("Specify base point: ");
 }
 
-void RotateCommand::input(CommandContext& ctx, const std::string& text) {
-    if (!base_) {
-        if (const auto p = read_point(ctx, text)) {
-            base_ = *p;
-            ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Rotate, {*p}});
-            ctx.set_prompt("Specify rotation angle or [Copy/Reference] <0>: ");
-        }
-        return;
-    }
-    const std::string t = trimmed(text);
-    const std::string u = upper(t);
-    if (u == "C" || u == "COPY") {
-        copy_ = true;
-        ctx.echo("Rotating a copy of the selected objects.");
-        ctx.set_prompt("Specify rotation angle or [Copy/Reference] <0>: ");
-        return;
-    }
-    if (u == "R" || u == "REFERENCE") {
-        reference_ = true;
-        have_ref_ = false;
-        ctx.set_prompt("Specify the reference angle <0>: ");
-        return;
-    }
-    double deg = 0.0;
-    double angle = 0.0;
-    if (t.empty() && !reference_) {
-        angle = 0.0;
-    } else if (parse_number(t, deg)) {
-        angle = core::to_radians(deg); // typed number = degrees
-    } else if (const auto p = read_point(ctx, text)) {
-        angle = std::atan2(p->y - base_->y, p->x - base_->x); // picked = angle to point
-    } else if (t.empty() && reference_ && !have_ref_) {
-        angle = 0.0; // the default reference angle
-    } else {
-        return;
-    }
-    if (reference_ && !have_ref_) {
-        ref_angle_ = angle;
-        have_ref_ = true;
-        ctx.set_prompt("Specify the new angle: ");
-        return;
-    }
-    if (reference_) {
-        angle -= ref_angle_; // rotate so the reference direction lands on the new one
-    }
+void RotateCommand::prompt_angle(CommandContext& ctx) {
+    // The live band: the selection turned by the cursor's bearing from the base point
+    // (minus the reference angle once one is set), the angle shown at the cursor.
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Rotate;
+    pv.points = {*base_};
+    pv.ref_angle = state_ == State::NewAngle ? ref_angle_ : 0.0;
+    ctx.set_preview(pv);
+    ctx.set_prompt(state_ == State::NewAngle ? "Specify the new angle or [Points] <0>: "
+                                             : "Specify rotation angle or [Copy/Reference] <0>: ");
+}
+
+void RotateCommand::commit(CommandContext& ctx, double angle) {
     ctx.submit(core::RotateSelectionCommand{*base_, angle, ctx.group_id(), copy_});
     ctx.echo(copy_ ? "Rotated a copy." : "Rotated.");
     done_ = true;
 }
 
+void RotateCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double deg = 0.0;
+    switch (state_) {
+    case State::Base:
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Angle;
+            prompt_angle(ctx);
+        }
+        return;
+    case State::Angle:
+        if (u == "C" || u == "COPY") {
+            copy_ = true;
+            ctx.echo("Rotating a copy of the selected objects.");
+            prompt_angle(ctx);
+            return;
+        }
+        if (u == "R" || u == "REFERENCE") {
+            state_ = State::RefAngle;
+            ctx.clear_preview();
+            ctx.set_prompt("Specify the reference angle <0>: ");
+            return;
+        }
+        if (t.empty()) {
+            commit(ctx, 0.0); // the default
+            return;
+        }
+        if (parse_number(t, deg)) {
+            commit(ctx, core::to_radians(deg)); // a typed number is degrees
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, std::atan2(p->y - base_->y, p->x - base_->x)); // the bearing to the point
+            return;
+        }
+        ctx.echo("Requires valid numeric angle or second point.");
+        return;
+    case State::RefAngle:
+        if (t.empty()) {
+            ref_angle_ = 0.0;
+        } else if (parse_number(t, deg)) {
+            ref_angle_ = core::to_radians(deg);
+        } else if (const auto p = read_point(ctx, text)) {
+            first_ = *p; // two points define the reference angle
+            state_ = State::RefSecond;
+            rubber_from(ctx, first_);
+            ctx.set_prompt("Specify second point: ");
+            return;
+        } else {
+            ctx.echo("Requires valid numeric angle or two points.");
+            return;
+        }
+        state_ = State::NewAngle;
+        prompt_angle(ctx);
+        return;
+    case State::RefSecond:
+        if (const auto p = read_point(ctx, text)) {
+            ref_angle_ = std::atan2(p->y - first_.y, p->x - first_.x);
+            state_ = State::NewAngle;
+            prompt_angle(ctx);
+        }
+        return;
+    case State::NewAngle:
+        if (u == "P" || u == "POINTS") {
+            state_ = State::NewFirst;
+            ctx.clear_preview();
+            ctx.set_prompt("Specify first point: ");
+            return;
+        }
+        if (t.empty()) {
+            commit(ctx, -ref_angle_); // the default new angle, 0
+            return;
+        }
+        if (parse_number(t, deg)) {
+            commit(ctx, core::to_radians(deg) - ref_angle_);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, std::atan2(p->y - base_->y, p->x - base_->x) - ref_angle_);
+            return;
+        }
+        ctx.echo("Requires valid numeric angle or second point.");
+        return;
+    case State::NewFirst:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            state_ = State::NewSecond;
+            rubber_from(ctx, first_);
+            ctx.set_prompt("Specify second point: ");
+        }
+        return;
+    case State::NewSecond:
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, std::atan2(p->y - first_.y, p->x - first_.x) - ref_angle_);
+        }
+        return;
+    }
+}
+
 void RotateCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.submit(core::TransformPreviewCommand{core::TransformPreviewCommand::Kind::Rotate, {}, {}, 0.0, false});
     done_ = true;
 }
 
@@ -1182,60 +2044,144 @@ void ScaleCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Specify base point: ");
 }
 
-void ScaleCommand::input(CommandContext& ctx, const std::string& text) {
-    if (!base_) {
-        if (const auto p = read_point(ctx, text)) {
-            base_ = *p;
-            ctx.set_last_point(*p);
-            ctx.set_preview({PreviewKind::Scale, {*p}});
-            ctx.set_prompt("Specify scale factor: ");
-        }
-        return;
-    }
-    const std::string t = trimmed(text);
-    const std::string u = upper(t);
-    if (u == "C" || u == "COPY") {
-        copy_ = true;
-        ctx.echo("Scaling a copy of the selected objects.");
-        ctx.set_prompt("Specify scale factor or [Copy/Reference]: ");
-        return;
-    }
-    if (u == "R" || u == "REFERENCE") {
-        reference_ = true;
-        have_ref_ = false;
-        ctx.set_prompt("Specify reference length <1>: ");
-        return;
-    }
-    double factor = 0.0;
-    if (parse_number(t, factor)) {
-        // typed factor (or a length, in Reference mode)
-    } else if (const auto p = read_point(ctx, text)) {
-        factor = core::distance(*base_, *p); // picked = distance (reference length 1)
-    } else if (t.empty() && reference_ && !have_ref_) {
-        factor = 1.0; // the default reference length
+void ScaleCommand::prompt_factor(CommandContext& ctx) {
+    // The live band: the selection scaled by the cursor's distance from the base point
+    // in drawing units (divided by the reference length once one is set), the factor
+    // shown at the cursor. AutoCAD's rule: one unit away is a factor of 1.
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Scale;
+    pv.points = {*base_};
+    pv.ref_length = state_ == State::NewLength ? ref_len_ : 1.0;
+    ctx.set_preview(pv);
+    if (state_ == State::NewLength) {
+        ctx.set_prompt("Specify new length or [Points] <" +
+                       core::units::format_length(1.0, ctx.units()) + ">: ");
     } else {
-        return;
+        ctx.set_prompt("Specify scale factor or [Copy/Reference]: ");
     }
+}
+
+void ScaleCommand::commit(CommandContext& ctx, double factor) {
     if (!(factor > 0.0)) {
-        ctx.echo("Value must be positive.");
+        ctx.echo("Value must be positive and nonzero.");
         return;
-    }
-    if (reference_ && !have_ref_) {
-        ref_len_ = factor;
-        have_ref_ = true;
-        ctx.set_prompt("Specify new length: ");
-        return;
-    }
-    if (reference_) {
-        factor = factor / ref_len_; // the reference length becomes the new length
     }
     ctx.submit(core::ScaleSelectionCommand{*base_, factor, ctx.group_id(), copy_});
     ctx.echo(copy_ ? "Scaled a copy." : "Scaled.");
     done_ = true;
 }
 
+void ScaleCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Base:
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Factor;
+            prompt_factor(ctx);
+        }
+        return;
+    case State::Factor:
+        if (u == "C" || u == "COPY") {
+            copy_ = true;
+            ctx.echo("Scaling a copy of the selected objects.");
+            prompt_factor(ctx);
+            return;
+        }
+        if (u == "R" || u == "REFERENCE") {
+            state_ = State::RefLength;
+            ctx.clear_preview();
+            ctx.set_prompt("Specify reference length <" +
+                           core::units::format_length(1.0, ctx.units()) + ">: ");
+            return;
+        }
+        if (parse_number(t, v)) {
+            commit(ctx, v);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::distance(*base_, *p)); // the distance from the base point
+            return;
+        }
+        ctx.echo("Requires numeric distance or second point.");
+        return;
+    case State::RefLength:
+        if (t.empty()) {
+            ref_len_ = 1.0;
+        } else if (parse_number(t, v)) {
+            if (!(v > 0.0)) {
+                ctx.echo("Value must be positive and nonzero.");
+                return;
+            }
+            ref_len_ = v;
+        } else if (const auto p = read_point(ctx, text)) {
+            first_ = *p; // two points define the reference length
+            state_ = State::RefSecond;
+            rubber_from(ctx, first_);
+            ctx.set_prompt("Specify second point: ");
+            return;
+        } else {
+            ctx.echo("Requires numeric distance or two points.");
+            return;
+        }
+        state_ = State::NewLength;
+        prompt_factor(ctx);
+        return;
+    case State::RefSecond:
+        if (const auto p = read_point(ctx, text)) {
+            const double len = core::distance(first_, *p);
+            if (!(len > 0.0)) {
+                ctx.echo("Value must be positive and nonzero.");
+                return;
+            }
+            ref_len_ = len;
+            state_ = State::NewLength;
+            prompt_factor(ctx);
+        }
+        return;
+    case State::NewLength:
+        if (u == "P" || u == "POINTS") {
+            state_ = State::NewFirst;
+            ctx.clear_preview();
+            ctx.set_prompt("Specify first point: ");
+            return;
+        }
+        if (t.empty()) {
+            commit(ctx, 1.0 / ref_len_); // the default new length, 1
+            return;
+        }
+        if (parse_number(t, v)) {
+            commit(ctx, v / ref_len_);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::distance(*base_, *p) / ref_len_);
+            return;
+        }
+        ctx.echo("Requires numeric distance or second point.");
+        return;
+    case State::NewFirst:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            state_ = State::NewSecond;
+            rubber_from(ctx, first_);
+            ctx.set_prompt("Specify second point: ");
+        }
+        return;
+    case State::NewSecond:
+        if (const auto p = read_point(ctx, text)) {
+            commit(ctx, core::distance(first_, *p) / ref_len_);
+        }
+        return;
+    }
+}
+
 void ScaleCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.submit(core::TransformPreviewCommand{core::TransformPreviewCommand::Kind::Scale, {}, {}, 0.0, false});
     done_ = true;
 }
 

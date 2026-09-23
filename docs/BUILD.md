@@ -84,30 +84,37 @@ kernel behind the `IGeometryKernel` interface.
 
 DWG support is **not built in** and adds **no build dependency**. Musa CAD is
 LGPL; the DWG converters are GPL (LibreDWG) or proprietary (ODA File Converter),
-so Musa CAD never links, bundles, or vendors them. Instead it *invokes a converter
-you install* as a subprocess and reads the DXF it produces — the licensing boundary
-is a process boundary, keeping Musa CAD's code and shipped binaries GPL-free.
+so Musa CAD never links, bundles, or vendors them. Instead it *invokes a converter*
+as a subprocess and reads the DXF it produces — the licensing boundary is a process
+boundary, keeping Musa CAD's code and shipped binaries GPL-free.
 
-To enable DWG import/export, install **one** converter:
+The quickest way to get one is the **"Download ODA File Converter…"** button in
+**DWG Setup** (File panel), also offered when Import/Export DWG finds no converter.
+After you accept the Open Design Alliance's terms, Musa CAD downloads the current
+release from opendesign.com (about 85 MB on Linux, 29 MB on Windows, 60 MB on macOS),
+unpacks it into its own data directory (`<app data>/converters/oda`) and uses it from
+then on; **"Remove downloaded"** deletes it again. The converter needs an X11 display on
+Linux (it runs under XWayland on a Wayland session).
+
+Or install one yourself and Musa CAD auto-detects it on `PATH`:
 
 * **ODA File Converter** (free, from opendesign.com) — put `ODAFileConverter` on
   your `PATH`, or
 * **LibreDWG** (`dwg2dxf` / `dxf2dwg`) — e.g. `sudo apt-get install libredwg-bin`,
   or build from source; put `dwg2dxf` on your `PATH`.
 
-Musa CAD auto-detects either on `PATH`. Use the **"DWG Setup"** button (File panel)
-to see what was detected, **Browse** to a specific binary (or a custom wrapper
-invoked as `converter <in> <out>`), auto-detect on `PATH`, or open the download
-pages — it saves the `io/dwg_converter_path` setting for you. If no converter is
-found, Import/Export DWG shows that dialog via a "Configure…" button — nothing
-crashes. (Musa CAD does not download/install the converter for you: licensing, the
-ODA EULA, and per-platform installers make that the user's step.)
+**DWG Setup** shows what was detected and lets you **Browse** to a specific binary (or
+a custom wrapper invoked as `converter <in> <out>`) or auto-detect on `PATH` — it saves
+the `io/dwg_converter_path` setting for you. Nothing crashes without a converter: the
+dialog explains, and DXF works regardless.
 
-**Flatpak:** the sandbox cannot see programs installed on your system, so DWG is off by
-default there. Install the converter on the host, allow the app to run it once with
-`flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD`, and
-turn on **"Use a converter installed on the host"** in DWG Setup; the dialog says the same
-when it finds nothing. See `packaging/flatpak/BUILD_FLATPAK.md`.
+**Flatpak:** the download works there too (the sandbox has network access for it). The
+converter needs an X11 display: under an X11 session it runs inside the sandbox; under
+Wayland the sandbox has no display, so it runs outside the sandbox through the Flatpak
+portal, which you allow once with
+`flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD` (the
+dialog says so). A converter installed on your system is used the same way with **"Use a
+converter installed on the host"**. See `packaging/flatpak/BUILD_FLATPAK.md`.
 
 ## Sanitizers
 

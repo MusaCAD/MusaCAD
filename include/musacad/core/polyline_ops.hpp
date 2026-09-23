@@ -19,6 +19,52 @@
 
 namespace musacad::core::polyline_ops {
 
+inline bool fillet_corner(std::vector<Vec2>& pts, std::vector<double>& bulges, bool closed,
+                          int sv, double r);
+inline bool chamfer_corner(std::vector<Vec2>& pts, bool closed, int sv, double d_prev,
+                           double d_next);
+
+/// RECTANG's outline: the four corners from `first` to `other`, turned by `rotation`
+/// about `first`, every corner rounded by `fillet_r` or cut by the chamfer distances --
+/// through the same routines FILLET and CHAMFER use on a picked corner, so the two can
+/// never disagree. Returns false (and the plain rectangle) when the treatment does not
+/// fit, which is what AutoCAD does with an oversized radius.
+inline bool rectangle_outline(Vec2 first, Vec2 other, double rotation, double fillet_r,
+                              double chamfer_d1, double chamfer_d2, std::vector<Vec2>& pts,
+                              std::vector<double>& bulges) {
+    const auto corners = [&] {
+        std::vector<Vec2> c{{first.x, first.y}, {other.x, first.y}, {other.x, other.y}, {first.x, other.y}};
+        if (rotation != 0.0) {
+            const double cs = std::cos(rotation);
+            const double sn = std::sin(rotation);
+            for (Vec2& q : c) {
+                const double dx = q.x - first.x;
+                const double dy = q.y - first.y;
+                q = {first.x + dx * cs - dy * sn, first.y + dx * sn + dy * cs};
+            }
+        }
+        return c;
+    };
+    pts = corners();
+    bulges.clear();
+    bool shaped = true;
+    if (fillet_r > 0.0) {
+        bulges.assign(4, 0.0);
+        for (int i = 3; i >= 0 && shaped; --i) { // descending: inserts never shift the rest
+            shaped = fillet_corner(pts, bulges, true, i, fillet_r);
+        }
+    } else if (chamfer_d1 > 0.0 || chamfer_d2 > 0.0) {
+        for (int i = 3; i >= 0 && shaped; --i) {
+            shaped = chamfer_corner(pts, true, i, chamfer_d1, chamfer_d2);
+        }
+    }
+    if (!shaped) {
+        pts = corners();
+        bulges.clear();
+    }
+    return shaped;
+}
+
 /// Replace vertex `sv` with a tangent arc of radius r, approximated by vertices.
 // Rounds corner `sv` with a true arc by replacing the corner vertex with its two
 // tangent points and recording the arc as a BULGE on the first -- the geometry

@@ -155,6 +155,14 @@ public:
     [[nodiscard]] std::optional<core::Vec2> last_point() const override { return last_point_; }
     void set_last_point(core::Vec2 p) override { last_point_ = p; }
     void clear_last_point() override { last_point_.reset(); }
+    [[nodiscard]] std::optional<LastSegment> last_segment() const override { return last_segment_; }
+    void set_last_segment(LastSegment segment) override { last_segment_ = segment; }
+    [[nodiscard]] bool ctrl_held() const override { return ctrl_held_; }
+    /// The viewport's Ctrl state at a pick (set before pick_point(), cleared after).
+    void set_ctrl_held(bool held) { ctrl_held_ = held; }
+    [[nodiscard]] std::optional<core::Vec2> cursor_world() const override { return cursor_world_; }
+    /// The viewport's constrained cursor, streamed on every move (direct distance entry).
+    void set_cursor_world(core::Vec2 p) { cursor_world_ = p; }
     void set_preview(PreviewSpec spec) override { preview_ = std::move(spec); }
     void clear_preview() override { preview_ = PreviewSpec{}; }
     [[nodiscard]] int selection_count() const override { return selection_count_; }
@@ -186,6 +194,9 @@ private:
 
     std::unique_ptr<ICommand> active_;
     std::optional<core::Vec2> last_point_;
+    std::optional<LastSegment> last_segment_;
+    bool ctrl_held_ = false;
+    std::optional<core::Vec2> cursor_world_;
     std::uint64_t group_counter_ = 0;
     std::uint64_t current_group_ = 0;
     std::string last_command_alias_;

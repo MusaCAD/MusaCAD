@@ -150,6 +150,8 @@ private:
         std::vector<EntityHandle> stretch_windows_sel;
         bool stretch_preview_active = false;
         Vec2 stretch_preview_delta{};
+        bool transform_preview_active = false;
+        TransformPreviewCommand transform_preview{};
     };
     struct DocMeta {
         std::uint64_t id = 0;
@@ -243,6 +245,8 @@ private:
     void apply_area_query(Vec2 at, double radius);
     void apply_list_query(Vec2 at, double radius);
     void apply_stretch(Vec2 delta, std::uint64_t group);
+    /// CIRCLE Ttr / Tan, Tan, Tan: the objects under the picks, the tangent circle.
+    void apply_circle_tangent(const AddCircleTangentCommand& c);
     /// One stretched entity: the handle it replaces and the edit that replaces it.
     struct StretchEdit {
         EntityHandle handle;
@@ -439,6 +443,10 @@ private:
     // The live rubber-band (StretchPreviewCommand): previewed on grip_preview_store_.
     bool stretch_preview_active_ = false;
     Vec2 stretch_preview_delta_{};
+    // The live ROTATE / SCALE band (TransformPreviewCommand): the selection under the
+    // transform, previewed on grip_preview_store_ like a grip drag. Ends with the commit.
+    bool transform_preview_active_ = false;
+    TransformPreviewCommand transform_preview_{};
 
     // Publish-cost bookkeeping. A publish runs on every cursor move, so anything in it
     // that scales with the scene or the selection is paid per mouse move -- which is

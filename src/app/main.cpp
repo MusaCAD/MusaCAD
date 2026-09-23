@@ -189,10 +189,11 @@ int main(int argc, char* argv[]) {
             const bool ok_dwg = window.selftest_dwg();
             const bool ok_cmds = window.selftest_commands();
             const bool ok_vports = window.selftest_vports();
+            const bool ok_band = window.selftest_scale_band();
             const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
                             ok_linetype && ok_dimprops && ok_dyn && ok_pdlg && ok_dwg &&
-                            ok_cmds && ok_vports;
+                            ok_cmds && ok_vports && ok_band;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

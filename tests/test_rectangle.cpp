@@ -163,3 +163,98 @@ TEST_CASE("#33: setting a chamfer clears the fillet and vice versa") {
     }
     reset_defaults();
 }
+
+namespace {
+struct PromptOutput : musacad::command::CommandOutput {
+    void append_line(const std::string& l) override { lines.push_back(l); }
+    void set_prompt(const std::string& p) override { prompts.push_back(p); }
+    std::vector<std::string> lines;
+    std::vector<std::string> prompts;
+};
+struct PromptHarness {
+    std::vector<Command> cmds;
+    PromptOutput out;
+    musacad::command::CommandProcessor proc{
+        [this](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+};
+} // namespace
+
+TEST_CASE("#36: RECTANG wording, remembered defaults, and Rotation by picked points") {
+    reset_defaults();
+    PromptHarness h;
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    REQUIRE(h.out.prompts.back() == "Specify other corner point or [Area/Dimensions/Rotation]: ");
+    h.proc.submit_line("D");
+    // The defaults are whatever the last rectangle used (earlier cases set their own).
+    REQUIRE(h.out.prompts.back().rfind("Specify length for rectangles <", 0) == 0);
+    h.proc.submit_line("40");
+    REQUIRE(h.out.prompts.back().rfind("Specify width for rectangles <", 0) == 0);
+    h.proc.submit_line("20");
+    h.proc.submit_line("5,5");
+    REQUIRE(h.cmds.size() == 1);
+    // Next time the values are the defaults, and Enter takes them.
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("D");
+    REQUIRE(h.out.prompts.back() == "Specify length for rectangles <40.0000>: ");
+    h.proc.submit_line("");
+    REQUIRE(h.out.prompts.back() == "Specify width for rectangles <20.0000>: ");
+    h.proc.submit_line("");
+    h.proc.submit_line("5,5");
+    const auto& pl = std::get<AddPolylineCommand>(h.cmds.at(1));
+    REQUIRE(has_pt(pl.points, {40, 20}));
+
+    // Rotation by two picked points: 45 degrees, remembered for the next rectangle.
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("R");
+    REQUIRE(h.out.prompts.back() == "Specify rotation angle or [Pick points] <0>: ");
+    h.proc.submit_line("P");
+    REQUIRE(h.out.prompts.back() == "Specify first point: ");
+    h.proc.submit_line("100,100");
+    REQUIRE(h.out.prompts.back() == "Specify second point: ");
+    h.proc.submit_line("110,110");
+    REQUIRE(h.out.prompts.back() == "Specify other corner point or [Area/Dimensions/Rotation]: ");
+    h.proc.submit_line("10,0"); // a corner 10 along x, turned 45 degrees: (7.07, 7.07)
+    const auto& rot = std::get<AddPolylineCommand>(h.cmds.at(2));
+    REQUIRE(has_pt(rot.points, {10.0 / std::sqrt(2.0), 10.0 / std::sqrt(2.0)}));
+    h.proc.submit_line("REC");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("R");
+    REQUIRE(h.out.prompts.back() == "Specify rotation angle or [Pick points] <45>: ");
+    h.proc.submit_line("0"); // back to square
+    h.proc.cancel();
+}
+
+TEST_CASE("#36: the Area option means the finished shape's area, corner cut-outs included") {
+    reset_defaults();
+    PromptHarness h;
+    h.proc.submit_line("REC");
+    h.proc.submit_line("F");
+    h.proc.submit_line("2");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("A");
+    REQUIRE(h.out.prompts.back().rfind("Enter area of rectangle in current units <", 0) == 0);
+    h.proc.submit_line("100");
+    h.proc.submit_line("L");
+    h.proc.submit_line("10");
+    h.proc.submit_line("5,5");
+    // A 10 x W rectangle with four r=2 rounded corners has area 10 W - (4 - pi) 4;
+    // asking for 100 gives W = (100 + (4 - pi) 4) / 10.
+    const double w = (100.0 + (4.0 - kPi) * 4.0) / 10.0;
+    const auto& pl = std::get<AddPolylineCommand>(h.cmds.at(0));
+    double max_y = 0.0;
+    for (const Vec2& p : pl.points) {
+        max_y = std::max(max_y, p.y);
+    }
+    REQUIRE(max_y == Approx(w));
+    // The mode echo names the treatment in force.
+    PromptHarness e;
+    e.proc.submit_line("REC");
+    REQUIRE(std::any_of(e.out.lines.begin(), e.out.lines.end(), [](const std::string& l) {
+        return l == "Current rectangle modes: Fillet=2.0000";
+    }));
+    e.proc.cancel();
+    reset_defaults();
+}
