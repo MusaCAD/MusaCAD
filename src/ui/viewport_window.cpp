@@ -1080,8 +1080,10 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             }
             processor_->set_pick_radius(10.0 * dpr / scale);
             processor_->set_ctrl_held((event->modifiers() & Qt::ControlModifier) != 0);
+            processor_->set_shift_held((event->modifiers() & Qt::ShiftModifier) != 0);
             processor_->pick_point(world, snap);
             processor_->set_ctrl_held(false);
+            processor_->set_shift_held(false);
             rebuild_overlay();
         } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
@@ -1721,8 +1723,61 @@ void ViewportWindow::rebuild_overlay() {
                 }
             }
             break;
+        case command::PreviewKind::Xline: {
+            // The construction line the click would make: through the cursor, or from
+            // the first point; drawn far past the view either way (a ray one way only).
+            constexpr double kFar = 1.0e6;
+            core::Vec2 base = cur;
+            core::Vec2 dir{1.0, 0.0};
+            bool ray = false;
+            switch (pv.xline_mode) {
+            case 0:
+                if (pts.empty()) {
+                    break;
+                }
+                base = pts[0];
+                dir = cur - pts[0];
+                ray = pv.xline_ray;
+                break;
+            case 1:
+                dir = {1.0, 0.0};
+                break;
+            case 2:
+                dir = {0.0, 1.0};
+                break;
+            case 3:
+                dir = {std::cos(pv.xline_angle), std::sin(pv.xline_angle)};
+                break;
+            case 4:
+                if (pts.size() < 2) {
+                    break;
+                }
+                base = pts[0];
+                dir = core::normalized(pts[1] - pts[0]) + core::normalized(cur - pts[0]);
+                seg.push_back(pts[0]);
+                seg.push_back(cur);
+                break;
+            default:
+                break;
+            }
+            if (core::length_squared(dir) > 1e-24) {
+                dir = core::normalized(dir);
+                seg.push_back(ray ? base : base - dir * kFar);
+                seg.push_back(base + dir * kFar);
+            }
+            break;
+        }
         case command::PreviewKind::Polygon:
-            if (!pts.empty() && pv.sides >= 3) {
+            if (pv.polygon_edge && !pts.empty()) {
+                // [Edge]: the polygon standing on the edge from the first end to the cursor.
+                const std::vector<core::Vec2> v = core::polygon_on_edge(pts[0], cur_eff, pv.sides);
+                for (std::size_t i = 0; i < v.size(); ++i) {
+                    seg.push_back(v[i]);
+                    seg.push_back(v[(i + 1) % v.size()]);
+                }
+                seg.push_back(pts[0]);
+                seg.push_back(cur_eff);
+            } else if (!pts.empty() && pv.sides >= 3) {
                 // Built by the SAME rule the command commits with, so what is dragged
                 // out is what lands: the cursor fixes one vertex when inscribed, or the
                 // midpoint of one edge when circumscribed.

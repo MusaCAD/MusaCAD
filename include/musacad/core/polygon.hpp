@@ -16,6 +16,10 @@
 
 namespace musacad::core {
 
+/// Vertices of the regular polygon standing on the edge `e1` -> `e2` (to its left, the
+/// side AutoCAD builds towards); empty when the two ends coincide.
+[[nodiscard]] inline std::vector<Vec2> polygon_on_edge(Vec2 e1, Vec2 e2, int sides);
+
 /// Vertices of a regular polygon centred at `center`.
 ///
 /// `dist` is measured from the centre to the point the user is pointing at, and what
@@ -43,6 +47,22 @@ namespace musacad::core {
         out.push_back({center.x + circum * std::cos(a), center.y + circum * std::sin(a)});
     }
     return out;
+}
+
+inline std::vector<Vec2> polygon_on_edge(Vec2 e1, Vec2 e2, int sides) {
+    const Vec2 e = e2 - e1;
+    const double side = length(e);
+    if (sides < 3 || !(side > 1e-12)) {
+        return {};
+    }
+    const double n = static_cast<double>(sides);
+    const double apothem = side / (2.0 * std::tan(kPi / n));
+    const Vec2 mid{(e1.x + e2.x) * 0.5, (e1.y + e2.y) * 0.5};
+    const Vec2 dir{e.x / side, e.y / side};
+    const Vec2 left{-dir.y, dir.x};
+    const Vec2 c{mid.x + left.x * apothem, mid.y + left.y * apothem};
+    const Vec2 rad = e1 - c; // e1 is a vertex: the inscribed rule pointed at it
+    return polygon_vertices(c, length(rad), sides, true, std::atan2(rad.y, rad.x));
 }
 
 } // namespace musacad::core

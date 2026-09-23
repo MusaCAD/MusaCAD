@@ -38,6 +38,7 @@ enum class PreviewKind {
     Polygon,    ///< regular n-gon about points[0], sized by the cursor (POLYGON)
     Ellipse,    ///< ELLIPSE rubber band: see PreviewSpec's ellipse fields
     Spline,     ///< SPLINE: the curve through/over points + cursor (see spline fields)
+    Xline,      ///< XLINE / RAY: the construction line the click would make (xline_mode)
 };
 
 /// The end of the last line or arc drawn and the heading there: what LINE and ARC
@@ -70,6 +71,16 @@ struct PreviewSpec {
     /// PreviewKind::Polygon path the same way fixed_w/fixed_h parameterise Rectangle.
     int sides = 4;
     bool inscribed = true;
+    /// POLYGON [Edge]: points[0] is the first edge end and the cursor the second; the
+    /// polygon stands on that edge, to its left.
+    bool polygon_edge = false;
+    /// XLINE / RAY (PreviewKind::Xline): 0 through points[0] and the cursor (a ray from
+    /// points[0] when `xline_ray`); 1 horizontal through the cursor; 2 vertical; 3 at
+    /// `xline_angle` through the cursor; 4 the bisector of points[0] -> points[1] and
+    /// points[0] -> cursor.
+    int xline_mode = 0;
+    bool xline_ray = false;
+    double xline_angle = 0.0;
     /// STRETCH's second-point step: besides the Segment rubber line from points[0], the
     /// viewport streams the cursor delta to the engine, which previews the whole
     /// selection stretched by it (StretchPreviewCommand). A flag on the existing Segment
@@ -255,6 +266,8 @@ public:
     virtual void set_last_segment(LastSegment /*segment*/) {}
     /// True while Ctrl is held at the pick being fed ("hold Ctrl to switch direction").
     [[nodiscard]] virtual bool ctrl_held() const { return false; }
+    /// True while Shift is held at the pick being fed ("shift-select to apply corner").
+    [[nodiscard]] virtual bool shift_held() const { return false; }
     /// The live cursor (ortho / polar / snap applied), for direct distance entry.
     [[nodiscard]] virtual std::optional<core::Vec2> cursor_world() const { return std::nullopt; }
     /// The drawing's text styles (STYLE table) and the current one, as last published.

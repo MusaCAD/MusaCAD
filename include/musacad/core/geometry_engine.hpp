@@ -247,6 +247,18 @@ private:
     void apply_stretch(Vec2 delta, std::uint64_t group);
     /// CIRCLE Ttr / Tan, Tan, Tan: the objects under the picks, the tangent circle.
     void apply_circle_tangent(const AddCircleTangentCommand& c);
+    /// FILLET / CHAMFER [Polyline]: every corner of the polyline under the pick.
+    void apply_fillet_polyline(Vec2 pick, double radius, double pick_radius, std::uint64_t group);
+    /// OFFSET with its options (the plain form calls this too).
+    void apply_offset_cmd(const OffsetPickCommand& c);
+    /// XLINE [Offset] and Ang [Reference]: the line under a pick gives the direction.
+    void apply_xline_offset(const XlineOffsetCommand& c);
+    void apply_xline_reference(const XlineReferenceCommand& c);
+    /// The direction of the straight object (or polyline segment) under a pick.
+    [[nodiscard]] bool straight_under_pick(Vec2 pick, double pick_radius, Vec2& a, Vec2& b) const;
+    EntityHandle last_offset_ = EntityHandle::null(); ///< the newest offset, for [Multiple]
+    void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
+                                std::uint64_t group);
     /// One stretched entity: the handle it replaces and the edit that replaces it.
     struct StretchEdit {
         EntityHandle handle;
@@ -288,7 +300,7 @@ private:
     void apply_lengthen(const LengthenCommand& c);
     bool nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mov, Vec2& target) const;
     void apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
-                             double radius, std::uint64_t group);
+                             double radius, std::uint64_t group, bool trim);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
     void apply_purge(std::uint8_t what);
     void apply_audit(bool fix);
@@ -333,9 +345,9 @@ private:
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
     void apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
-                      std::uint64_t group);
+                      std::uint64_t group, bool trim = true);
     void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
-                       std::uint64_t group);
+                       std::uint64_t group, bool trim = true);
     // Object-aware dimensioning: resolve the entity(ies) under the pick(s) via the
     // spatial index + selectable() gate and build the matching dimension from their
     // intrinsic geometry. The dimension captures DEF POINTS only (no entity ref), so

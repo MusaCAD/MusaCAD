@@ -126,7 +126,7 @@ commands (Ribbon Phase A):
 | RECTANGLE first-corner options: Chamfer / Fillet | C / F | Implemented (Elevation / Thickness / Width are not offered: 2D only, no polyline width) |
 | SPLINE | SPL | Implemented (#23) -- Fit and CV methods |
 | ELLIPSE | EL | Implemented (#23) -- axis-end, Center, Rotation, Arc |
-| POLYGON | POL | Implemented (#23) -- inscribed / circumscribed / Edge |
+| POLYGON (side count and Inscribed / Circumscribed remembered, 3..1024 sides, a typed radius stands the polygon on a flat bottom edge, an Edge-mode band) | POL | Implemented (#23) -- inscribed / circumscribed / Edge |
 | POINT | PO | Implemented (#23) |
 | XLINE / RAY | XL | Implemented (#23) -- Hor / Ver / Ang / Bisect / two-point |
 | HATCH / BHATCH — **SOLID fill** of a region (Part A). Two boundary modes: **pick an internal point** (the engine traces the enclosing boundary from surrounding geometry — lines, arcs, circles, polylines — building a **planar arrangement** so a partitioning line correctly splits the region; closed entities inside become **islands/holes**) or **pre-select** closed polylines (noun-verb). "Valid hatch boundary not found." when no closed boundary encloses the pick. Fill is **derived, not baked** (rendered via the fill pipeline, so it plots as PDF vectors). Pickable (point-in-region, islands respected), PR-editable (Pattern/Scale/Angle/Origin), MATCHPROP-matchable, native + DXF round-trip. Selected hatch shows a **highlight tint over the fill + a grip at every boundary vertex** (drag to reshape) | H / BHATCH | Implemented (Part A: SOLID; line patterns = Part B) |
@@ -142,10 +142,10 @@ commands (Ribbon Phase A):
 | ERASE (Last / All / pick) | E | Implemented |
 | UNDO | U | Implemented |
 | REDO | — (Ctrl+Y) | Implemented |
-| MOVE | M | Implemented |
-| COPY | CO / CP | Implemented |
+| MOVE | M | Implemented -- `Specify base point or [Displacement] <Displacement>:`, `Specify second point or <use first point as displacement>:`; the last displacement is the next default |
+| COPY | CO / CP | Implemented -- `Current settings: Copy mode = Multiple`, `[Displacement/mOde]`, `Specify second point or [Array] <use first point as displacement>:` then `[Array/Exit/Undo] <Exit>:`; **Array** (`Enter number of items to array:`, `[Fit]`), **Undo** takes the last copy back, every copy its own undo step; **mOde** Single / Multiple kept for the session |
 | MIRROR | MI | Implemented |
-| OFFSET (line/circle/arc) | O | Implemented |
+| OFFSET (line/circle/arc) | O | Implemented -- `Current settings: Erase source=No  Layer=Source  OFFSETGAPTYPE=0`, `Specify offset distance or [Through/Erase/Layer] <last>:` (a value, two points, or **Through**), `Select object to offset or [Exit/Undo] <Exit>:`, `Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:`; **Multiple** steps out from the offset just made, **Undo** takes one back, every offset its own undo step; **Erase** removes the source, **Layer** Current / Source; the settings are kept for the session |
 | OFFSET (polyline, incl. closed rectangles + bulged/filleted corners) — each segment offset (lines parallel, arcs concentric with the bulge preserved) and **corners re-mitered** as the intersection of adjacent offset curves (line/line, line/arc, arc/arc via the shared line_line / line_circle / circle_circle primitives), so edges stay at distance d with clean corners (no trapezoid). Over-large offsets that would fold the shape fail gracefully ("Offset distance too large for this polyline.") leaving the geometry unchanged | O | Implemented |
 | ROTATE | RO | Implemented -- `Specify rotation angle or [Copy/Reference] <0>:`; the selection turns with the cursor (an engine-side band: every kind, at the current zoom) with the live angle shown at the cursor; **Reference** by a value or two points, then `Specify the new angle or [Points] <0>:` |
 | SCALE | SC | Implemented -- `Specify scale factor or [Copy/Reference]:`; dragging scales by the cursor's distance from the base point in drawing units (AutoCAD's rule: one unit away is a factor of 1), previewed by the engine with the live factor at the cursor; **Reference** by a value or two points, then `Specify new length or [Points] <1.0000>:` |
@@ -200,11 +200,11 @@ commands (Ribbon Phase A):
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
 | EXTEND an arc *entity* | EX | Implemented |
 | EXTEND an open polyline *entity* (straight end segment; polylines also act as boundaries) | EX | Implemented (an arc end segment is refused) |
-| FILLET (line/line; radius 0 or tangent arc) | F | Implemented |
+| FILLET (line/line; radius 0 or tangent arc) | F | Implemented -- `Current settings: Mode = TRIM, Radius = …`, `Select first object or [Undo/Polyline/Radius/Trim/Multiple]:`, `Select second object or shift-select to apply corner or [Radius]:`; the radius and Trim mode are remembered; **Multiple** repeats with one undo step per corner, **Undo** takes the last one back, **No trim** adds only the arc, **Polyline** rounds every corner, **Shift** at the second pick makes a sharp corner; the trimmed objects keep their layer, colour and linetype |
 | FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented (incl. RECTANGLE corners — a rectangle IS a closed polyline; verified end-to-end through the full F-command path, including the closing-edge wrap corner) |
 | Polyline arc segments (per-vertex bulge, AutoCAD LWPOLYLINE) | — | Implemented |
 | FILLET line/arc, line/circle, arc/arc, arc/circle, circle/circle (radius > 0; nearest to the picks) | F | Implemented |
-| CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
+| CHAMFER (line/line; Distance or Angle method) | CHA | Implemented -- `(TRIM mode) Current chamfer Dist1 = …, Dist2 = …`, `Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]:`, `Select second line or shift-select to apply corner or [Distance/Angle/Method]:`; distances, length and angle, method and Trim mode remembered; **Multiple**, **Undo**, **No trim**, **Polyline** (every corner), **Shift** for a clean corner; the trimmed lines keep their properties |
 | CHAMFER (polyline corner) | CHA | Implemented |
 | JOIN — **select** lines/arcs/open polylines (any way), then JOIN merges every connected chain among them into ONE polyline each (arcs become bulged segments), inheriting the source's layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). The merged polyline is a single entity — moving it or a grip keeps it connected. With nothing pre-selected, JOIN falls back to picking a source + targets. One undo group | J | Implemented |
 | ARRAY dialog (parametric grid / polar / path with a live preview) | AR | Implemented (Ph11 ParameterDialog) |
