@@ -3,7 +3,8 @@
 //
 // DXF IMAGE / IMAGEDEF (#31): the writer's handles, CLASSES and OBJECTS web, a placed
 // image both ways (placement, rotation, rectangular and polygonal clips), sidecar files
-// for embedded images on save, and absolute references pulled in on load.
+// for embedded images on save (and a report of any that could not be written), and
+// absolute references pulled in on load.
 
 #include <cmath>
 #include <filesystem>
@@ -146,4 +147,38 @@ TEST_CASE("#31 DXF files: an embedded image is written beside the file; an absol
     REQUIRE(loaded.image_defs.size() == 1);
     CHECK(loaded.image_defs[0].source.empty());
     CHECK(loaded.image_defs[0].bytes.size() == 7);
+}
+
+TEST_CASE("#31 DXF files: an embedded image that cannot be written beside the file is named in the result") {
+    const auto dir = temp_dir() / "unwritten";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    Document doc;
+    DocImageDef def;
+    def.bytes = {0x89, 'P', 'N', 'G', 1, 2, 3, 4};
+    def.pixel_w = 2;
+    def.pixel_h = 2;
+    doc.image_defs = {def, def};
+    DocImage first;
+    first.width = 2;
+    first.height = 2;
+    DocImage second = first;
+    second.def = 1;
+    doc.images = {first, second};
+
+    // The first sidecar's name is taken by a directory: that write fails, the second lands.
+    std::filesystem::create_directories(dir / "plan-image1.png");
+    const std::string path = (dir / "plan.dxf").string();
+    const IoResult r = save_dxf(doc, path);
+    CHECK(r.ok); // the DXF itself is written
+    CHECK(std::filesystem::is_regular_file(dir / "plan-image2.png"));
+    CHECK(r.message.find("plan-image1.png") != std::string::npos);
+    CHECK(r.message.find("plan-image2.png") == std::string::npos);
+
+    // All written: the message is the plain success line.
+    std::filesystem::remove_all(dir / "plan-image1.png");
+    const IoResult ok = save_dxf(doc, path);
+    CHECK(ok.ok);
+    CHECK(ok.message.find("image") == std::string::npos);
+    std::filesystem::remove_all(dir);
 }

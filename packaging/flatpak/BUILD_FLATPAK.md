@@ -28,9 +28,10 @@ The script:
 1. Rsyncs a **clean** working tree into `packaging/flatpak/.src` (gitignored), excluding
    `build/`, `.git/`, samples, and prior artifacts — so uncommitted changes are built without
    copying the huge `build/` tree. The manifest's `dir` source points at `.src`.
-2. Runs `flatpak-builder` against `org.musacad.MusaCAD.yml`: configures + builds the **release**
-   target inside the sandbox, then installs the binary, the app-id-named `.desktop`, the SVG
-   icon, and the AppStream `.metainfo.xml` under `/app`.
+2. Runs `flatpak-builder` against `org.musacad.MusaCAD.yml`: a `cmake-ninja` build of the
+   **Release** configuration inside the sandbox (the developer tools in `tests/` off), then the
+   project's `install()` rules place the binary, `org.musacad.MusaCAD.desktop`, the SVG icon
+   (as `org.musacad.MusaCAD.svg`) and the AppStream `.metainfo.xml` under `/app`.
 3. Exports a single-file bundle `packaging/flatpak/MusaCAD-<version>.flatpak`.
 
 ## Install + verify
@@ -39,8 +40,9 @@ The script:
 flatpak install --user -y packaging/flatpak/MusaCAD-0.1.0.flatpak
 flatpak run org.musacad.MusaCAD                       # launches the GUI
 
-# Headless load + plot self-test (pass envs through the sandbox):
-flatpak run --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/out.pdf|1" org.musacad.MusaCAD
+# Headless load + plot self-test (pass envs through the sandbox; the one-off
+# --filesystem grant lets it read and write paths it was not handed by a dialog):
+flatpak run --filesystem=home --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/out.pdf|1" org.musacad.MusaCAD
 ```
 
 ## What is bundled / what is not
@@ -57,29 +59,35 @@ flatpak run --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/out.pdf|1" org.mus
   existence check and the conversion then run on the host through `flatpak-spawn --host`,
   with the converter's scratch files under the app's cache directory (a path the host sees).
   The manifest asks for nothing extra, so the default stays sandboxed.
-- File access is limited to `--filesystem=home`; the OpenGL viewport uses `--device=dri`;
-  X11 (`fallback-x11`) and Wayland sockets are granted.
+- **No filesystem access.** Every file dialog is the desktop's own, which Qt routes through the
+  file-chooser portal: the app gets the file picked, nothing else. A drawing whose external
+  references or images sit beside it offers to open from its folder instead (the portal's
+  folder chooser grants it), so relative paths resolve as usual; a DXF export whose drawing
+  embeds images asks for the destination folder the same way, since DXF writes those images
+  as files beside it. Save As keeps a name typed without the extension as typed, because the
+  portal grants exactly that name. The OpenGL viewport uses `--device=dri`; X11
+  (`fallback-x11`) and Wayland sockets are granted.
 
 ## Flathub submission — PREPARED
 
-`flathub/org.musacad.MusaCAD.yml` is the submission manifest: the same build as the local one,
+`flathub/org.musacad.MusaCAD.yml` is the submission manifest: the same module as the local one,
 with the tagged release as its source (`tag` + `commit`, updated together for each release).
 The AppStream metainfo carries a `<release>` per version and its screenshot URLs resolve on
-`main`. Lint both before a submission (the linter ships with `org.flatpak.Builder`):
+`main`. Lint both before a submission (the linter ships with `org.flatpak.Builder`; its sandbox
+needs to see the files):
 
 ```sh
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/flathub/org.musacad.MusaCAD.yml
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder appstream packaging/flatpak/org.musacad.MusaCAD.metainfo.xml
+flatpak run --filesystem="$PWD" --command=flatpak-builder-lint org.flatpak.Builder \
+  --exceptions --exceptions-repo stable manifest "$PWD/packaging/flatpak/flathub/org.musacad.MusaCAD.yml"
+flatpak run --filesystem="$PWD" --command=flatpak-builder-lint org.flatpak.Builder \
+  appstream "$PWD/packaging/flatpak/org.musacad.MusaCAD.metainfo.xml"
 ```
 
-The metainfo validates. The app id is `org.musacad.MusaCAD`, the reverse of the project's
-domain (`https://musacad.org/`, the metainfo's homepage), which is what Flathub verifies.
-The manifest reports one item that is a decision, not a bug: `finish-args-home-filesystem-access`.
-Flathub prefers the file-chooser portal to `--filesystem=home`; Musa CAD needs the folder
-around a drawing, not just the picked file -- external references, attached images and the
-images a DXF export writes beside it are all found by relative path. State that in the
-submission PR as the reason for the exception (the linter's documented route); narrow to
-`xdg-documents` only if the reviewers insist.
+Both pass clean. The app id is `org.musacad.MusaCAD`, the reverse of the project's domain
+(`https://musacad.org/`, the metainfo's homepage), which is what Flathub verifies. The
+manifest asks for no filesystem permission (see above) and has no build commands of its own:
+`cmake-ninja` plus the project's `install()` rules, with the desktop entry already named and
+pointing at the app-id icon.
 
 ### The first submission (a person's pull request)
 
@@ -90,15 +98,15 @@ The pull request is therefore yours to write and to answer for. `flathub/submit.
 mechanics up to it -- it forks `github.com/flathub/flathub` under your account, clones
 Flathub's `new-pr` branch, adds `org.musacad.MusaCAD.yml` at the top level and pushes a
 branch -- then prints the compare link. `flathub/SUBMISSION_NOTES.md` lists the facts to
-draw on (the exception and its reason, the pin, the disclosure); the words are yours. The
+draw on (the review points, the pin, the disclosure); the words are yours. The
 manifest itself is plain YAML with no comments, as a reviewer expects to see it.
 
 Flathub then builds the manifest, a reviewer looks at it, and on acceptance the app gets its
 own repository, `github.com/flathub/org.musacad.MusaCAD`, with you as a maintainer.
 
 The manifest pins a commit rather than the v0.4.0 tag: that tag predates the GCC 15 fixes
-the KDE runtime's toolchain needs, and a submission must build. The next release tag
-replaces the pin (below).
+the KDE runtime's toolchain needs and the install rules the `cmake-ninja` module builds from,
+and a submission must build. The next release tag replaces the pin (below).
 
 ### Every release after that (automatic)
 

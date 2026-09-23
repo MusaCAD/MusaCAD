@@ -9,19 +9,14 @@ finish-args:
   - --socket=fallback-x11
   - --socket=wayland
   - --device=dri
-  - --filesystem=home
 
 modules:
   - name: musa-cad
-    buildsystem: simple
-    build-commands:
-      - cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
-      - cmake --build build --target musacad_app
-      - install -Dm755 build/bin/musacad_app /app/bin/musacad_app
-      - install -Dm644 assets/branding/musacad.desktop /app/share/applications/org.musacad.MusaCAD.desktop
-      - desktop-file-edit --set-icon=org.musacad.MusaCAD /app/share/applications/org.musacad.MusaCAD.desktop
-      - install -Dm644 assets/branding/musacad_logo.svg /app/share/icons/hicolor/scalable/apps/org.musacad.MusaCAD.svg
-      - install -Dm644 packaging/flatpak/org.musacad.MusaCAD.metainfo.xml /app/share/metainfo/org.musacad.MusaCAD.metainfo.xml
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DMUSACAD_BUILD_DEV_TOOLS=OFF
     sources:
       - type: git
         url: https://github.com/MusaCAD/MusaCAD.git

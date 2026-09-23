@@ -291,6 +291,21 @@ private:
     void file_save_as();
     void file_import_dxf();
     void file_export_dxf();
+    // Sandboxed builds (Flatpak) reach the user's files through the document portal, which
+    // grants exactly the file picked in a dialog -- not its folder. These three keep the
+    // file flows correct under that rule; outside a portal grant they change nothing.
+    /// A chosen save path with `ext` (".musa", ".dxf", ...) appended when the name lacks it
+    /// -- except for a portal grant, where only the name typed in the dialog is writable
+    /// (any other name becomes a hidden temporary on the host): it is kept as typed.
+    QString save_path_with_extension(QString path, const QString& ext);
+    /// Opening through the portal: when the drawing loads xrefs or images kept beside it,
+    /// offer to grant its folder and open it from there, where they resolve as usual.
+    /// Returns the path to open ("" = the user cancelled).
+    QString open_path_with_references(const QString& path, bool dxf);
+    /// DXF export through the portal: embedded images go out as files beside the DXF,
+    /// which a single-file grant cannot hold, so offer to grant the destination folder and
+    /// export into it. Returns the path to write ("" = the user cancelled).
+    QString export_path_with_images(const QString& path);
     // DWG via an external converter subprocess (LGPL-clean: never linked/bundled).
     // Import = convert DWG->DXF then the existing fail-safe DXF load; export =
     // existing DXF export then convert DXF->DWG. Conversion runs off the UI thread.

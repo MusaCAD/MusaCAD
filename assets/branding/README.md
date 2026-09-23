@@ -14,7 +14,7 @@ SVG module in the app, GTK on the desktop, rsvg for the macOS icon) draws it the
 | `musacad_logo.svg` | the logo (vector) | embedded via `branding.qrc` as `:/branding/musacad_logo.svg` |
 | `icons/hicolor/<N>x<N>/apps/musacad.png` | Linux launcher / menu icons | install to `…/share/icons/hicolor/` |
 | `musacad.ico` | Windows executable icon (multi-res) | linked via `musacad.rc` (built only `if(WIN32)`) |
-| `musacad.desktop` | Linux app/launcher entry | install to `…/share/applications/` |
+| `org.musacad.MusaCAD.desktop` | Linux app/launcher entry (`Icon=org.musacad.MusaCAD`) | installed to `…/share/applications/` by `cmake --install`, which also installs `musacad_logo.svg` as the `org.musacad.MusaCAD` icon |
 | `branding.qrc` | Qt resource embedding the SVG | `AUTORCC` on `musacad_app` |
 
 ## In-app use

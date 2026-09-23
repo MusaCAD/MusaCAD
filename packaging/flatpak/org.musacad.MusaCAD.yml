@@ -5,13 +5,8 @@
 #      `flatpak install --user MusaCAD-<ver>.flatpak`.
 #
 # The local build script rsyncs a clean working tree into `.src` (so uncommitted
-# changes are picked up without copying build/, .git, etc.). For the STAGED Flathub
-# submission, swap the single `dir` source below for the tagged release, e.g.:
-#       sources:
-#         - type: git
-#           url: https://github.com/MusaCAD/MusaCAD.git
-#           tag: v0.1.0
-#           commit: <full-sha>
+# changes are picked up without copying build/, .git, etc.). The Flathub submission,
+# flathub/org.musacad.MusaCAD.yml, is this same module with a pinned `git` source.
 app-id: org.musacad.MusaCAD
 runtime: org.kde.Platform
 runtime-version: '6.11'
@@ -23,7 +18,10 @@ finish-args:
   - --socket=fallback-x11       # X11 (falls back when Wayland is unavailable)
   - --socket=wayland            # native Wayland when present
   - --device=dri                # GPU access for the OpenGL 4.6 viewport
-  - --filesystem=home           # open / save the user's drawings
+# No filesystem access: drawings are opened and saved through the file-chooser portal,
+# which grants the file picked in the dialog. A drawing whose xrefs or images sit beside
+# it asks for its folder the same way (the portal's folder chooser), as does a DXF export
+# that writes embedded images next to the DXF.
 # NOTE: DWG import/export shells out to an EXTERNAL converter (ODA File Converter /
 # LibreDWG's dwg2dxf) found on PATH. Inside the sandbox that converter is not present,
 # so DWG is unavailable in the Flatpak by default; built-in DXF read/write works. A
@@ -36,17 +34,14 @@ finish-args:
 
 modules:
   - name: musa-cad
-    buildsystem: simple
-    build-commands:
-      # The project has no install() rules, so build the release target and place the
-      # artifacts under /app by hand. Flags mirror the `release` CMake preset.
-      - cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
-      - cmake --build build --target musacad_app
-      - install -Dm755 build/bin/musacad_app /app/bin/musacad_app
-      - install -Dm644 assets/branding/musacad.desktop /app/share/applications/org.musacad.MusaCAD.desktop
-      - desktop-file-edit --set-icon=org.musacad.MusaCAD /app/share/applications/org.musacad.MusaCAD.desktop
-      - install -Dm644 assets/branding/musacad_logo.svg /app/share/icons/hicolor/scalable/apps/org.musacad.MusaCAD.svg
-      - install -Dm644 packaging/flatpak/org.musacad.MusaCAD.metainfo.xml /app/share/metainfo/org.musacad.MusaCAD.metainfo.xml
+    # The project's install() rules place the binary, the desktop entry, the icon and the
+    # AppStream metadata. flatpak-builder sets no build type, so it is given here; the
+    # developer tools in tests/ are not shipped, so they are not built.
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DMUSACAD_BUILD_DEV_TOOLS=OFF
     sources:
       - type: dir
         path: .src               # populated by build_flatpak.sh (clean rsync of the tree)

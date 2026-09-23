@@ -2530,10 +2530,12 @@ IoResult save_dxf(const Document& doc, const std::string& path) {
         return IoResult::failure("Cannot write file: " + path);
     }
     // DXF has no embedded rasters: an embedded image is written next to the file as
-    // <stem>-imageN.<png|jpg> and referenced by that name.
+    // <stem>-imageN.<png|jpg> and referenced by that name. One that cannot be written (a
+    // read-only folder) is still referenced by that name, and the result says it is missing.
     Document copy = doc;
     namespace fs = std::filesystem;
     const fs::path out_path(path);
+    std::vector<std::string> unwritten;
     for (std::size_t i = 0; i < copy.image_defs.size(); ++i) {
         DocImageDef& d = copy.image_defs[i];
         if (d.bytes.empty()) {
@@ -2542,20 +2544,38 @@ IoResult save_dxf(const Document& doc, const std::string& path) {
         const bool jpeg = d.bytes.size() > 2 && d.bytes[0] == 0xFF && d.bytes[1] == 0xD8;
         const std::string name = out_path.stem().string() + "-image" + std::to_string(i + 1) +
                                  (jpeg ? ".jpg" : ".png");
-        std::ofstream side(out_path.parent_path() / name, std::ios::binary | std::ios::trunc);
-        if (side) {
-            side.write(reinterpret_cast<const char*>(d.bytes.data()),
-                       static_cast<std::streamsize>(d.bytes.size()));
-            d.source = name;
-            d.bytes.clear();
+        const fs::path side_path = out_path.parent_path() / name;
+        std::ofstream side(side_path, std::ios::binary | std::ios::trunc);
+        const bool opened = side.is_open();
+        side.write(reinterpret_cast<const char*>(d.bytes.data()),
+                   static_cast<std::streamsize>(d.bytes.size()));
+        side.close();
+        if (!side) {
+            if (opened) {
+                std::error_code ec;
+                fs::remove(side_path, ec); // no truncated image left behind
+            }
+            unwritten.push_back(name);
         }
+        d.source = name;
+        d.bytes.clear();
     }
     const std::string text = serialize_dxf(copy);
     f.write(text.data(), static_cast<std::streamsize>(text.size()));
     if (!f) {
         return IoResult::failure("Write failed: " + path);
     }
-    return IoResult::success("Exported " + std::to_string(doc.entity_count()) + " entities to DXF.");
+    std::string msg = "Exported " + std::to_string(doc.entity_count()) + " entities to DXF";
+    if (!unwritten.empty()) {
+        msg += "; " + std::to_string(unwritten.size()) +
+               (unwritten.size() == 1 ? " embedded image" : " embedded images") +
+               " could not be written beside it (";
+        for (std::size_t i = 0; i < unwritten.size(); ++i) {
+            msg += (i == 0 ? "" : ", ") + unwritten[i];
+        }
+        msg += "), so the DXF refers to missing files";
+    }
+    return IoResult::success(msg + ".");
 }
 
 IoResult load_dxf(const std::string& path, Document& out) {

@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------------------
-# Insertion benchmark (built in every configuration).
+# Developer tools (MUSACAD_BUILD_DEV_TOOLS, on by default). Insertion benchmark first.
 # ---------------------------------------------------------------------------
+if(MUSACAD_BUILD_DEV_TOOLS)
 add_executable(musacad_bench_insert bench_insert.cpp)
 target_link_libraries(musacad_bench_insert PRIVATE musacad::core)
 musacad_enable_sanitizers(musacad_bench_insert)
@@ -44,6 +45,7 @@ target_link_libraries(musacad_svg2png PRIVATE Qt6::Gui)
 musacad_enable_sanitizers(musacad_svg2png)
 set_target_properties(musacad_svg2png PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
 
 # ---------------------------------------------------------------------------
 # Unit tests (Catch2 via FetchContent). Only when MUSACAD_BUILD_TESTS is ON.
@@ -166,6 +168,7 @@ add_executable(musacad_tests
     test_xref.cpp
     test_image_polyclip.cpp
     test_dxf_image.cpp
+    test_external_files.cpp
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp

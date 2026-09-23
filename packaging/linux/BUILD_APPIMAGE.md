@@ -16,11 +16,12 @@ This is the same script CI runs (`.github/workflows/build-linux.yml`). It:
 1. Configures + builds the **release** preset (`cmake --preset release && cmake --build --preset release --target musacad_app`). Set `BUILD=0` to skip if already built.
 2. Downloads the deploy tools on demand into `packaging/linux/.tools/` (gitignored):
    `linuxdeploy`, `linuxdeploy-plugin-qt`, `appimagetool` (the `continuous` releases).
-3. Assembles `build/AppDir/` by hand (the project has no `install()` rules):
+3. Assembles `build/AppDir/` by hand (just these three; `cmake --install` would also place the
+   AppStream metadata, which the AppImage does not carry):
    - `usr/bin/musacad_app`
-   - `usr/share/applications/musacad.desktop` (from `assets/branding/`)
-   - `usr/share/icons/hicolor/scalable/apps/musacad.svg` (the logo, named to match the
-     desktop file's `Icon=musacad`; AppImage supports scalable icons, so no PNG raster is needed)
+   - `usr/share/applications/org.musacad.MusaCAD.desktop` (from `assets/branding/`)
+   - `usr/share/icons/hicolor/scalable/apps/org.musacad.MusaCAD.svg` (the logo, named to match the
+     desktop file's `Icon=org.musacad.MusaCAD`; AppImage supports scalable icons, so no PNG raster is needed)
 4. Runs `linuxdeploy --plugin qt`, which pulls in Qt's libraries + plugins. `EXTRA_QT_PLUGINS`
    pins `svg;imageformats/qsvg;iconengines/qsvgicon;styles`; `EXTRA_PLATFORM_PLUGINS` pins xcb, the two Wayland platform plugins (so the app runs natively on a Wayland session rather than through XWayland, which costs a display refresh of pointer latency per frame), offscreen and minimal.
    `QMAKE` defaults to `qmake6` (the qt plugin uses it to locate Qt).

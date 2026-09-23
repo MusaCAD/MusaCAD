@@ -68,6 +68,9 @@ public:
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
     std::vector<core::LayoutInfo> layouts();
     std::uint8_t active_space();
+    /// Image definitions whose pixels are embedded in the drawing (a DXF export writes
+    /// each one out as a file beside the DXF), from the last consumed snapshot.
+    std::size_t embedded_image_count();
     bool mspace_active();
     void zoom_scale(double factor) override;
     void open_properties() override;
@@ -622,6 +625,7 @@ private:
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
     std::vector<core::LayoutInfo> layouts_;   ///< under layers_mutex_
     std::uint8_t active_space_ = 0;           ///< under layers_mutex_
+    std::size_t embedded_images_ = 0;         ///< under layers_mutex_
     core::MspaceInfo mspace_;                 ///< under layers_mutex_
     std::vector<core::ViewportRect> viewport_rects_; ///< under layers_mutex_
     bool mspace_seen_ = false;                ///< render thread: last published MSPACE state
