@@ -20,7 +20,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/MusaCAD/MusaCAD.git
-        commit: 1a4384f0b8e983003a7516c7eb1313c9f6b4072e
+        commit: 65f038b8643083f7f486823d2e2780b3fe7fadae
         x-checker-data:
           type: git
           tag-pattern: "^v([\\d.]+)$"
