@@ -10,6 +10,7 @@
 
 #include "musacad/core/command.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/text_mirror.hpp"
 
 using namespace musacad::core;
 using Catch::Approx;
@@ -184,4 +185,36 @@ TEST_CASE("ROTATE band: the selection turned about the base point; an inactive b
     REQUIRE(engine.snapshot().selection.size() == 1);
     REQUIRE(engine.snapshot().grip_preview_segments.empty());
     engine.stop();
+}
+
+TEST_CASE("#50: MIRRTEXT 0 keeps mirrored text readable; 1 reflects it") {
+    // Across a vertical axis a left-justified, unrotated text is turned round: rotation 0
+    // again, now right-justified at the reflected point.
+    std::uint8_t j = 0;
+    double r = mirrored_text_rotation(0.0, kHalfPi, false, j);
+    CHECK(std::cos(r) == Approx(1.0));
+    CHECK(j == 2);
+    // Across a horizontal axis it already reads the right way: nothing turns.
+    j = 0;
+    r = mirrored_text_rotation(0.0, 0.0, false, j);
+    CHECK(std::cos(r) == Approx(1.0));
+    CHECK(j == 0);
+    // A text reading upwards (90 degrees) across a vertical axis stays readable upwards.
+    j = 1;
+    r = mirrored_text_rotation(kHalfPi, kHalfPi, false, j);
+    CHECK(std::sin(r) == Approx(1.0));
+    CHECK(j == 1);
+    // MIRRTEXT 1: the plain reflection (reading back to front).
+    j = 0;
+    r = mirrored_text_rotation(0.0, kHalfPi, true, j);
+    CHECK(std::cos(r) == Approx(-1.0));
+    CHECK(j == 0);
+    // MTEXT: the attachment's column swaps sides when the text turns round.
+    std::uint8_t attach = 0; // TL
+    r = mirrored_mtext_rotation(0.0, kHalfPi, false, attach);
+    CHECK(attach == 2); // TR
+    attach = 7; // BC
+    r = mirrored_mtext_rotation(0.0, kHalfPi, false, attach);
+    CHECK(attach == 7);
+    (void)r;
 }

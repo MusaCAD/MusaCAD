@@ -309,6 +309,7 @@ TEST_CASE("#27: the ALIGN and LENGTHEN command flows") {
         h.proc.submit_line("5,5");
         h.proc.submit_line("10,0");
         h.proc.submit_line("5,15");
+        h.proc.submit_line("");  // no third pair
         h.proc.submit_line("Y");
         REQUIRE(h.cmds.size() == 1);
         const auto* a = std::get_if<AlignSelectionCommand>(&h.cmds[0]);
@@ -347,5 +348,38 @@ TEST_CASE("#27: the ALIGN and LENGTHEN command flows") {
         h.proc.submit_line("50");
         h.proc.submit_line("99,0");
         REQUIRE(h.cmds.size() == 1);
+    }
+}
+
+TEST_CASE("#50: ALIGN with one pair moves; a third pair aligns unscaled; the rubber lines") {
+    {
+        ProcHarness h;
+        h.proc.set_selection_count(1);
+        h.proc.submit_line("AL");
+        h.proc.submit_line("0,0");
+        REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::Segment);
+        h.proc.submit_line("5,5");
+        h.proc.submit_line(""); // one pair: a plain move
+        REQUIRE(h.cmds.size() == 1);
+        const auto* m = std::get_if<MoveSelectionCommand>(&h.cmds[0]);
+        REQUIRE(m != nullptr);
+        REQUIRE(m->delta == Vec2{5, 5});
+        REQUIRE(!h.proc.has_active_command());
+    }
+    {
+        ProcHarness h;
+        h.proc.set_selection_count(1);
+        h.proc.submit_line("AL");
+        h.proc.submit_line("0,0");
+        h.proc.submit_line("5,5");
+        h.proc.submit_line("10,0");
+        h.proc.submit_line("5,15");
+        h.proc.submit_line("20,0");  // a third pair: no scale question
+        h.proc.submit_line("5,25");
+        REQUIRE(h.cmds.size() == 1);
+        const auto* a = std::get_if<AlignSelectionCommand>(&h.cmds[0]);
+        REQUIRE(a != nullptr);
+        REQUIRE(!a->scale);
+        REQUIRE(!h.proc.has_active_command());
     }
 }

@@ -268,6 +268,21 @@ private:
     void prompt_second(CommandContext& ctx);
 };
 
+/// MIRRTEXT: `Enter new value for MIRRTEXT <0>:` -- 0 keeps mirrored text readable
+/// (AutoCAD's default), 1 reflects it.
+class MirrtextCommand final : public ICommand {
+public:
+    std::string name() const override { return "MIRRTEXT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    inline static bool s_value_ = false; ///< the session's MIRRTEXT
+
+private:
+    bool done_ = false;
+};
+
 class MirrorCommand final : public ICommand {
 public:
     std::string name() const override { return "MIRROR"; }
@@ -678,13 +693,17 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Src1, Dst1, Src2, Dst2, Scale };
+    /// AutoCAD's flow: one pair (Enter at the second source point) just moves; two pairs
+    /// align, then `Specify third source point or <continue>:` and, with two pairs, the
+    /// scale question. A rubber line runs from each source point to its destination.
+    enum class State { Src1, Dst1, Src2, Dst2, Src3, Dst3, Scale };
     State state_ = State::Src1;
     core::Vec2 src1_{};
     core::Vec2 dst1_{};
     core::Vec2 src2_{};
     core::Vec2 dst2_{};
     bool done_ = false;
+    void align(CommandContext& ctx, bool scale);
 };
 
 /// LENGTHEN (AutoCAD LEN): change the length of a line or arc. The mode is chosen
@@ -723,7 +742,7 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Select, Second, FirstAgain };
+    enum class State { Select, Second, FirstAgain, AtPoint };
     bool at_point_ = false;
     State state_ = State::Select;
     core::Vec2 pick_{};

@@ -352,13 +352,41 @@ TEST_CASE("#27: the selecting click doubles as the first break point") {
     }
 }
 
-TEST_CASE("#27: BREAKATPOINT takes one point and fires immediately") {
+TEST_CASE("#27: BREAKATPOINT selects, then takes the one break point and fires") {
     ProcHarness h;
     h.proc.submit_line("BREAKATPOINT");
-    h.proc.submit_line("40,0");
+    h.proc.submit_line("40,0"); // selects the object
+    h.proc.submit_line("40,0"); // the break point (AutoCAD asks it separately)
     REQUIRE(h.cmds.size() == 1);
     const auto* b = std::get_if<BreakCommand>(&h.cmds[0]);
     REQUIRE(b != nullptr);
     REQUIRE(b->p1 == b->p2); // the signal for "split, do not remove"
     REQUIRE(!h.proc.has_active_command());
+}
+
+TEST_CASE("#50: BREAK @ breaks at the selecting point; BREAKATPOINT asks the point") {
+    {
+        ProcHarness h;
+        h.proc.submit_line("BREAK");
+        h.proc.submit_line("50,0");
+        h.proc.submit_line("@"); // the last point: a single break point
+        REQUIRE(h.cmds.size() == 1);
+        const auto* b = std::get_if<BreakCommand>(&h.cmds[0]);
+        REQUIRE(b != nullptr);
+        REQUIRE(b->p1.x == Approx(50.0));
+        REQUIRE(b->p2.x == Approx(50.0));
+    }
+    {
+        ProcHarness h;
+        h.proc.submit_line("BREAKATPOINT");
+        h.proc.submit_line("50,0"); // selects
+        REQUIRE(h.cmds.empty());    // and asks the point
+        h.proc.submit_line("30,0");
+        REQUIRE(h.cmds.size() == 1);
+        const auto* b = std::get_if<BreakCommand>(&h.cmds[0]);
+        REQUIRE(b != nullptr);
+        REQUIRE(b->pick.x == Approx(50.0));
+        REQUIRE(b->p1.x == Approx(30.0));
+        REQUIRE(b->p2.x == Approx(30.0));
+    }
 }

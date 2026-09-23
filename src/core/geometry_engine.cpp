@@ -4,6 +4,7 @@
 #include "musacad/core/geometry_engine.hpp"
 
 #include "musacad/core/math/tangent_circle.hpp"
+#include "musacad/core/text_mirror.hpp"
 
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/spline_eval.hpp"
@@ -712,7 +713,7 @@ void translate_cmd(Command& c, Vec2 d) {
         c);
 }
 
-void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
+void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
     const Vec2 dir = normalized(B - A);
     const double axis = std::atan2(dir.y, dir.x);
     const auto refl = [&](Vec2 p) {
@@ -777,10 +778,10 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos = refl(x.text.pos);
-                x.text.rotation = refl_ang(x.text.rotation);
+                x.text.rotation = mirrored_text_rotation(x.text.rotation, axis, mirrtext, x.text.justify);
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = refl(x.pos);
-                x.rotation = refl_ang(x.rotation);
+                x.rotation = mirrored_text_rotation(x.rotation, axis, mirrtext, x.justify);
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
@@ -790,13 +791,13 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 x.knee = refl(x.knee);
             } else if constexpr (std::is_same_v<T, AddMTextCommand>) {
                 x.block.pos = refl(x.block.pos);
-                x.block.rotation = refl_ang(x.block.rotation);
+                x.block.rotation = mirrored_mtext_rotation(x.block.rotation, axis, mirrtext, x.block.attach);
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 for (Vec2& v : x.vertices) {
                     v = refl(v);
                 }
                 x.block.pos = refl(x.block.pos);
-                x.block.rotation = refl_ang(x.block.rotation);
+                x.block.rotation = mirrored_mtext_rotation(x.block.rotation, axis, mirrtext, x.block.attach);
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 // Mirror the insertion point + orientation; negating one scale axis
                 // reflects the referenced geometry without baking it.
@@ -1667,7 +1668,7 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
         }
         const Command original = capture_entity(h);
         Command mirrored = original;
-        mirror_cmd(mirrored, a, b);
+        mirror_cmd(mirrored, a, b, mirrtext_);
         if (erase_source) {
             remove_indexed(h);
             push_erase_item(group, h, original);
@@ -7192,6 +7193,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_mirror(c.a, c.b, c.erase_source, c.group);
             } else if constexpr (std::is_same_v<T, OffsetPickCommand>) {
                 apply_offset_cmd(c);
+            } else if constexpr (std::is_same_v<T, SetMirrtextCommand>) {
+                mirrtext_ = c.mirror_text;
             } else if constexpr (std::is_same_v<T, XlineOffsetCommand>) {
                 apply_xline_offset(c);
             } else if constexpr (std::is_same_v<T, XlineReferenceCommand>) {
@@ -7816,6 +7819,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, BuildPlotSnapshotCommand> || // read-only plot build
                 std::is_same_v<T, StretchPreviewCommand> || // rubber band only
                 std::is_same_v<T, TransformPreviewCommand> || // rubber band only
+                std::is_same_v<T, SetMirrtextCommand> || // a setting, not an edit
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
@@ -8352,7 +8356,7 @@ void GeometryEngine::rebuild_and_publish() {
                 scale_cmd(edited, t.base, t.param);
                 break;
             case TransformPreviewCommand::Kind::Mirror:
-                mirror_cmd(edited, t.base, t.to);
+                mirror_cmd(edited, t.base, t.to, mirrtext_);
                 break;
             }
             const EntityProps* ep = store_.props(h);

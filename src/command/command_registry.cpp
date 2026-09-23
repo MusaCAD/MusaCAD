@@ -127,6 +127,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Move selected objects a specified distance and direction.");
     reg({"CO", "CP", "COPY"}, [] { return std::make_unique<CopyCommand>(); },
         "assets/ribbon/copy.svg", "Duplicate selected objects at a specified offset.");
+    reg({"MIRRTEXT"}, [] { return std::make_unique<MirrtextCommand>(); }, "",
+        "Whether MIRROR reflects text (1) or keeps it readable (0).");
     reg({"MI", "MIRROR"}, [] { return std::make_unique<MirrorCommand>(); },
         "assets/ribbon/mirror.svg", "Create a mirror-image copy of objects across an axis.");
     reg({"O", "OFFSET"}, [] { return std::make_unique<OffsetCommand>(); }, "assets/ribbon/offset.svg",
