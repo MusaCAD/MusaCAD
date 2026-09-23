@@ -6,13 +6,23 @@ untrue (its reviewers look at the source repository). These are the facts to dra
 
 - App id `org.musacad.MusaCAD`; home page https://musacad.org/; source
   https://github.com/MusaCAD/MusaCAD; LGPL-3.0-or-later.
-- The manifest pins a commit on `main` rather than the `v0.4.0` tag because that tag does
-  not build with the KDE 6.11 runtime's GCC 15; the next release tag replaces the pin.
-- The linter reports `finish-args-home-filesystem-access`. Reason for the exception: a
-  drawing refers to files beside it by relative path -- external references (XREF),
-  attached raster images, and the image files a DXF export writes next to the DXF -- so a
-  single portal-picked file is not enough. DXF works with nothing else; DWG conversion is a
-  separate opt-in that runs a host-installed converter through the Flatpak portal.
+- The manifest pins a commit on `main` rather than the `v0.4.0` tag: that tag predates the
+  GCC 15 fixes the KDE 6.11 runtime needs, the CMake install rules and the portal changes
+  below; the next release tag replaces the pin.
+- File access (review comment on `--filesystem=home`): the manifest now asks for no
+  filesystem permission. The app's file dialogs are the desktop's own, which Qt sends
+  through the file-chooser portal. A drawing that refers to files beside it by relative
+  path (external references, attached raster images) offers to open from its folder, which
+  the user grants through the portal's folder chooser; a DXF export whose drawing embeds
+  images asks for the destination folder the same way, since DXF writes those images as
+  files next to the DXF. DWG conversion is a separate opt-in that runs a host-installed
+  converter through the Flatpak portal.
+- Build (review comments on `buildsystem: simple` and `desktop-file-edit`): the module is
+  `buildsystem: cmake-ninja` with the project's own `install()` rules;
+  `-DCMAKE_BUILD_TYPE=Release` is set because flatpak-builder passes no build type, and
+  `-DMUSACAD_BUILD_DEV_TOOLS=OFF` skips developer executables that are not shipped. The
+  desktop entry is `org.musacad.MusaCAD.desktop` upstream with `Icon=org.musacad.MusaCAD`,
+  so the manifest no longer edits it.
 - Disclosure: a large part of the source code, and this packaging (manifest, metainfo),
   were written with an AI coding assistant under your direction and review. Say so, in
   your words and to the extent that is true; the reviewers check.
