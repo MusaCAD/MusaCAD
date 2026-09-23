@@ -19,9 +19,9 @@ commands (Ribbon Phase A):
 | Command (alias) | Description |
 |---|---|
 | LINE (L) | Create a series of straight-line segments. |
-| CIRCLE (C) | Draw a circle from a center point and a radius or diameter. |
+| CIRCLE (C) | Draw a circle by centre and radius or diameter, two or three points, or tangent to objects. |
 | PLINE (PL) | Draw a connected sequence of line and arc segments as one object. |
-| ARC (A) | Draw a circular arc through three points. |
+| ARC (A) | Draw an arc by three points, or from a start, centre or end with an angle, chord, direction or radius. |
 | RECTANGLE (REC) | Draw a rectangle from two opposite corners. |
 | ERASE (E) | Delete selected objects from the drawing. |
 | UNDO (U) | Reverse the most recent action. |
@@ -116,11 +116,12 @@ commands (Ribbon Phase A):
 
 | Command | Alias | Status |
 |---|---|---|
-| LINE | L | Implemented |
-| PLINE (polyline) | PL | Implemented |
-| CIRCLE | C | Implemented |
-| ARC (3-point) | A | Implemented |
+| LINE | L | Implemented -- `Specify next point or [Close/Undo]:`; **Close** joins back to the first point; Enter at the first prompt **continues** from the last line or arc (tangent to an arc: `Specify length of line:`) |
+| PLINE (polyline) | PL | Implemented -- `Specify next point or [Arc/Close/Length/Undo]:`; **Arc** mode `[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]` with each sub-step (an arc is tangent to the previous segment unless told otherwise; Ctrl bends it the other way); **Length** continues along the last segment; the band shows the arc the click will make. Width / Halfwidth wait on the polyline width model (#37) |
+| CIRCLE | C | Implemented -- `Specify center point for circle or [3P/2P/Ttr (tan tan radius)]:`; centre + radius / `[Diameter]` with the last radius as the default (CIRCLERAD); **3P** through three points; **2P** by the ends of a diameter; **Ttr** tangent to two objects with a radius; **TTT** tangent to three objects (lines, circles, arcs, construction lines, polyline segments; the branch nearest the picks) |
+| ARC | A | Implemented -- `Specify start point of arc or [Center]:`, `Specify second point of arc or [Center/End]:`; the **Center** branch (end, `[Angle/chord Length]`) and the **End** branch (centre, `[Angle/Direction/Radius]`), the centre first, **Continue** (Enter at the first prompt: tangent from the last line or arc), **Ctrl** at a pick switches the direction; the rubber band shows the arc the click will make |
 | RECTANGLE | REC | Implemented |
+| RECTANG (the command echoes as RECTANG) -- `Specify other corner point or [Area/Dimensions/Rotation]:`; length / width / area remembered as the next defaults; **Rotation** by an angle or `[Pick points]`, in force for later rectangles; `Current rectangle modes: Fillet=…` echoed; Area means the finished shape (corner cut-outs included); the band shows the rounded / chamfered corners | typed mid-command | Implemented |
 | RECTANGLE options: **Dimensions** (`D` → length → width → quadrant-flip placement click), **Area** (`A` → area → `[Length/Width]` → side → placement), **Rotation** (`R` → angle) | typed mid-command | Implemented (option keywords, same state machine as CIRCLE `[Diameter]`) |
 | RECTANGLE first-corner options: Chamfer / Fillet | C / F | Implemented (Elevation / Thickness / Width are not offered: 2D only, no polyline width) |
 | SPLINE | SPL | Implemented (#23) -- Fit and CV methods |
@@ -146,8 +147,8 @@ commands (Ribbon Phase A):
 | MIRROR | MI | Implemented |
 | OFFSET (line/circle/arc) | O | Implemented |
 | OFFSET (polyline, incl. closed rectangles + bulged/filleted corners) — each segment offset (lines parallel, arcs concentric with the bulge preserved) and **corners re-mitered** as the intersection of adjacent offset curves (line/line, line/arc, arc/arc via the shared line_line / line_circle / circle_circle primitives), so edges stay at distance d with clean corners (no trapezoid). Over-large offsets that would fold the shape fail gracefully ("Offset distance too large for this polyline.") leaving the geometry unchanged | O | Implemented |
-| ROTATE | RO | Implemented |
-| SCALE | SC | Implemented |
+| ROTATE | RO | Implemented -- `Specify rotation angle or [Copy/Reference] <0>:`; the selection turns with the cursor (an engine-side band: every kind, at the current zoom) with the live angle shown at the cursor; **Reference** by a value or two points, then `Specify the new angle or [Points] <0>:` |
+| SCALE | SC | Implemented -- `Specify scale factor or [Copy/Reference]:`; dragging scales by the cursor's distance from the base point in drawing units (AutoCAD's rule: one unit away is a factor of 1), previewed by the engine with the live factor at the cursor; **Reference** by a value or two points, then `Specify new length or [Points] <1.0000>:` |
 | ARRAY (asks the type: Rectangular / PAth / POlar) | AR, -ARRAY | Implemented |
 | ARRAYRECT (rows, columns, spacings, angle of axes) | ARRAYRECT | Implemented |
 | ARRAYPOLAR (centre, count, fill angle, rotate items) | ARRAYPOLAR | Implemented |
@@ -347,7 +348,7 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | POLYGON command | POL | Implemented (#23; the prompts, no dialog) |
 | **Import DWG** — runs an external converter (DWG→DXF) off-thread, then the existing DXF importer (fail-safe); writes a `<file>.dwg.import.log` gap catalog | ribbon / DWGIN | Implemented (Ph27; needs an installed converter — ODA File Converter or LibreDWG) |
 | **Export DWG** — existing DXF export, then the external converter (DXF→DWG, default ACAD2018) | ribbon / DWGOUT | Implemented (Ph27; two-stage lossy, see ARCHITECTURE) |
-| **DWG Setup** dialog — detect/Browse/auto-detect the converter, links to downloads; saves the path setting (offered via "Configure…" when none is found) | ribbon "DWG Setup" | Implemented (Ph27) |
+| **DWG Setup** dialog — **Download ODA File Converter** (fetched from opendesign.com into the app's data directory after you accept its terms; "Remove downloaded" deletes it), or detect / Browse / auto-detect a converter you installed; saves the path setting (offered, with the download, when a DWG finds no converter) | ribbon "DWG Setup" | Implemented |
 | DWG converter path (configurable) | `io/dwg_converter_path` setting / DWG Setup dialog | Implemented (Ph27; auto-detects ODA/LibreDWG on PATH otherwise) |
 | Per-entity linetype scale (CELTSCALE) | PR "Linetype scale" | Implemented (native v12, DXF 48) |
 | Lineweight property (hundredths-mm) | LWT toggle | Implemented (model, round-trip, on-screen weight with LWDISPLAY) |

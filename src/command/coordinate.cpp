@@ -42,10 +42,37 @@ std::string fmt_point(core::Vec2 p) {
 bool parse_number(std::string_view text, double& out) { return to_double(text, out); }
 
 CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> last) {
+    return parse_coordinate(text, last, std::nullopt);
+}
+
+CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> last,
+                            std::optional<double> cursor_bearing) {
     CoordParse r;
     const std::string_view t = trim(text);
     if (t.empty()) {
         r.error = "Empty coordinate.";
+        return r;
+    }
+    if (t == "@") {
+        if (!last) {
+            r.error = "No previous point for a relative coordinate.";
+            return r;
+        }
+        r.point = *last;
+        r.ok = true;
+        r.interpretation = fmt_point(r.point) + "  (the last point)";
+        return r;
+    }
+    if (double dist = 0.0; t.front() != '@' && t.find(',') == std::string_view::npos &&
+                           t.find('<') == std::string_view::npos && to_double(t, dist)) {
+        // Direct distance entry: along the cursor's bearing from the last point.
+        if (!last || !cursor_bearing) {
+            r.error = "Requires a point, or a distance with the cursor showing the direction.";
+            return r;
+        }
+        r.point = *last + core::Vec2{dist * std::cos(*cursor_bearing), dist * std::sin(*cursor_bearing)};
+        r.ok = true;
+        r.interpretation = fmt_point(r.point) + "  (direct distance " + std::to_string(dist) + ")";
         return r;
     }
 

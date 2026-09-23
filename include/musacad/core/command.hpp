@@ -285,6 +285,18 @@ struct AddCircleCommand {
     double celtscale = 1.0;
 };
 
+/// CIRCLE's Ttr and Tan, Tan, Tan: a circle tangent to the objects under the picks --
+/// two of them with `radius`, or three (radius 0) solved for. Resolved geometry-side
+/// (the picks name lines, circles, arcs, construction lines or polyline segments); the
+/// branch nearest the picks is taken, and "Circle does not exist." is reported when
+/// none satisfies the constraints.
+struct AddCircleTangentCommand {
+    std::vector<Vec2> picks;
+    double radius = 0.0;      ///< Ttr; 0 = three tangents
+    double pick_radius = 0.0; ///< the pick aperture in world units
+    std::uint64_t group = 0;
+};
+
 struct AddArcCommand {
     Vec2 center;
     double radius = 0.0;
@@ -417,6 +429,22 @@ struct StretchSelectionCommand {
 struct StretchPreviewCommand {
     Vec2 delta;
     bool active = true;
+};
+
+/// The live rubber-band of ROTATE and SCALE. While `active`, every publish previews the
+/// whole selection under the transform -- on the same scratch store and through the same
+/// channel as a grip drag -- so the ghost is re-tessellated at the current zoom and every
+/// entity kind (text, hatches, dimensions, blocks) appears where the commit will put it.
+/// Built by the same transform helpers the commit runs, so the band cannot differ from
+/// the result. Move and Mirror are accepted for completeness (a client may prefer this
+/// band to the render-side ghost).
+struct TransformPreviewCommand {
+    enum class Kind : std::uint8_t { Move, Rotate, Scale, Mirror };
+    Kind kind = Kind::Move;
+    Vec2 base;          ///< the base point (Move: from; Mirror: the axis' first point)
+    Vec2 to;            ///< Move: the destination; Mirror: the axis' second point
+    double param = 0.0; ///< Rotate: the angle in radians; Scale: the factor
+    bool active = true; ///< false ends the band (the commit ends it on its own)
 };
 
 /// Copy all selected entities by `delta`, leaving the originals.
@@ -1225,6 +1253,7 @@ using Command =
                  SetInsertAttribsCommand, SetBlockAttDefsCommand, VportsCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
+                 TransformPreviewCommand, AddCircleTangentCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,

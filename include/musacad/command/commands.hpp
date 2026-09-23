@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "musacad/command/command.hpp"
+#include "musacad/core/math/arc_construct.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/properties.hpp"
 
@@ -28,7 +29,11 @@ public:
 
 private:
     std::vector<core::Vec2> points_;
+    /// Continuing from an arc: the line leaves tangent to it, so only a length is asked.
+    std::optional<double> fixed_dir_;
     bool done_ = false;
+    void add_segment(CommandContext& ctx, core::Vec2 to);
+    void prompt_next(CommandContext& ctx);
 };
 
 class CircleCommand final : public ICommand {
@@ -40,9 +45,22 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Center, Radius, Diameter } state_ = State::Center;
+    /// AutoCAD's methods: centre + radius / [Diameter]; 3P; 2P; Ttr (two objects and a
+    /// radius); Tan, Tan, Tan (three objects). The last radius is the next default
+    /// (CIRCLERAD).
+    enum class State : std::uint8_t {
+        Center, Radius, Diameter,
+        TwoFirst, TwoSecond,
+        ThreeFirst, ThreeSecond, ThreeThird,
+        TanFirst, TanSecond, TanRadius,
+        TttFirst, TttSecond, TttThird,
+    };
+    State state_ = State::Center;
     core::Vec2 center_{};
+    std::vector<core::Vec2> pts_;
     bool done_ = false;
+    void finish(CommandContext& ctx, core::Vec2 center, double radius);
+    void prompt_radius(CommandContext& ctx);
 };
 
 class PolylineCommand final : public ICommand {
@@ -54,9 +72,34 @@ public:
     bool done() const override { return done_; }
 
 private:
-    void prompt_next(CommandContext& ctx);
+    /// Line mode (`[Arc/Close/Length/Undo]`) and Arc mode (`[Angle/CEnter/CLose/Direction/
+    /// Line/Radius/Second pt/Undo]`) with AutoCAD's sub-steps; every arc segment is a
+    /// bulge on the vertex it leaves, tangent to the previous segment unless a direction,
+    /// centre, radius or second point says otherwise. Widths wait on the polyline width
+    /// model (#37).
+    enum class State : std::uint8_t {
+        Start, Next, Length,
+        ArcNext, ArcAngle, ArcAngleEnd, ArcAngleRadius, ArcAngleChordDir, ArcCenter, ArcCenterEnd,
+        ArcCenterAngle, ArcCenterLength, ArcDirection, ArcDirectionEnd, ArcRadius, ArcRadiusEnd,
+        ArcRadiusAngle, ArcRadiusChordDir, ArcSecond, ArcSecondEnd,
+    };
+    State state_ = State::Start;
     std::vector<core::Vec2> points_;
+    std::vector<double> bulges_;   ///< bulges_[i]: the segment points_[i] -> points_[i + 1]
+    std::vector<double> tangents_; ///< the heading at the end of each segment
+    double angle_ = 0.0;
+    double radius_ = 0.0;
+    double direction_ = 0.0;
+    core::Vec2 center_{};
+    core::Vec2 second_{};
     bool done_ = false;
+    [[nodiscard]] double start_tangent(CommandContext& ctx) const;
+    void add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent);
+    void add_arc(CommandContext& ctx, const std::optional<core::ConstructedArc>& arc);
+    void prompt_next(CommandContext& ctx);
+    void refresh_preview(CommandContext& ctx, int arc_mode = 0);
+    void finish(CommandContext& ctx, bool closed);
+    void undo_segment(CommandContext& ctx);
 };
 
 class ArcCommand final : public ICommand {
@@ -68,13 +111,31 @@ public:
     bool done() const override { return done_; }
 
 private:
-    std::vector<core::Vec2> points_;
+    /// AutoCAD's methods: three points; the Center branch (start, centre, then the end,
+    /// an included Angle or a chord Length); the End branch (start, end, then the centre,
+    /// an Angle, a tangent Direction or a Radius); the centre first; Continue (Enter at
+    /// the first prompt: tangent from the last line or arc). Ctrl at a pick flips the
+    /// direction where the prompt says so.
+    enum class State : std::uint8_t {
+        Start, Second, ThreeEnd,
+        AwaitCenter, CenterEnd, CenterAngle, CenterLength,
+        AwaitEnd, EndCenter, EndAngle, EndDirection, EndRadius,
+        CenterFirst, CenterStart, ContinueEnd,
+    };
+    State state_ = State::Start;
+    core::Vec2 s_{};
+    core::Vec2 m_{};
+    core::Vec2 c_{};
+    core::Vec2 e_{};
+    double tangent_ = 0.0;
     bool done_ = false;
+    void preview(CommandContext& ctx, int mode);
+    void commit(CommandContext& ctx, const std::optional<core::ConstructedArc>& arc);
 };
 
 class RectangleCommand final : public ICommand {
 public:
-    std::string name() const override { return "RECTANGLE"; }
+    std::string name() const override { return "RECTANG"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -93,6 +154,8 @@ private:
         AreaSide,
         AreaSideVal,
         RotVal,
+        RotPick1,  ///< [Rotation] > [Pick points]: the first of two points
+        RotPick2,
         ChamferD1, ///< [Chamfer] first distance (before the first corner, as in AutoCAD)
         ChamferD2, ///< [Chamfer] second distance
         FilletR,   ///< [Fillet] radius
@@ -103,13 +166,20 @@ private:
     inline static double s_chamfer_d1_ = 0.0;
     inline static double s_chamfer_d2_ = 0.0;
     inline static double s_fillet_r_ = 0.0;
+    // The last length, width, area and rotation: the defaults AutoCAD offers next time
+    // (the rotation stays in force for later rectangles, as it does there).
+    inline static double s_length_ = 10.0;
+    inline static double s_width_ = 10.0;
+    inline static double s_area_ = 100.0;
+    inline static double s_rotation_ = 0.0;
+    core::Vec2 rot_p1_{};
     double chamfer_d1_ = s_chamfer_d1_;
     double chamfer_d2_ = s_chamfer_d2_;
     double fillet_r_ = s_fillet_r_;
     core::Vec2 first_{};
     double length_ = 0.0;   ///< fixed width along X (0 => corner-to-corner, no fixed size)
     double width_ = 0.0;    ///< fixed width along Y
-    double rotation_ = 0.0; ///< radians, applied about first_
+    double rotation_ = s_rotation_; ///< radians, applied about first_
     double area_ = 0.0;
     bool area_by_length_ = true; ///< Area option: user gave Length (else Width)
     bool has_dims_ = false;      ///< fixed (length_, width_) chosen -> quadrant-flip placement
@@ -485,12 +555,18 @@ public:
     bool done() const override { return done_; }
 
 private:
+    /// AutoCAD's flow: base point; angle or [Copy/Reference]; Reference asks the
+    /// reference angle (a value, or two points), then the new angle or [Points] (a
+    /// value, a point from the base, or two points).
+    enum class State : std::uint8_t { Base, Angle, RefAngle, RefSecond, NewAngle, NewFirst, NewSecond };
+    State state_ = State::Base;
     std::optional<core::Vec2> base_;
+    core::Vec2 first_{};     ///< the first of a two-point angle
     bool copy_ = false;      ///< [Copy]: rotate copies, keep the originals
-    bool reference_ = false; ///< [Reference]: angle = new - reference
-    double ref_angle_ = 0.0;
-    bool have_ref_ = false;
+    double ref_angle_ = 0.0; ///< [Reference]: rotation = new - reference
     bool done_ = false;
+    void commit(CommandContext& ctx, double angle);
+    void prompt_angle(CommandContext& ctx);
 };
 
 class ScaleCommand final : public ICommand {
@@ -502,12 +578,19 @@ public:
     bool done() const override { return done_; }
 
 private:
+    /// AutoCAD's flow: base point; factor or [Copy/Reference]; Reference asks the
+    /// reference length (a value, or two points), then the new length or [Points] (a
+    /// value, a point from the base, or two points). A picked factor is the distance
+    /// from the base point in drawing units.
+    enum class State : std::uint8_t { Base, Factor, RefLength, RefSecond, NewLength, NewFirst, NewSecond };
+    State state_ = State::Base;
     std::optional<core::Vec2> base_;
-    bool copy_ = false;      ///< [Copy]
-    bool reference_ = false; ///< [Reference]: factor = new length / reference length
-    double ref_len_ = 1.0;
-    bool have_ref_ = false;
+    core::Vec2 first_{};   ///< the first of a two-point length
+    bool copy_ = false;    ///< [Copy]
+    double ref_len_ = 1.0; ///< [Reference]: factor = new length / reference length
     bool done_ = false;
+    void commit(CommandContext& ctx, double factor);
+    void prompt_factor(CommandContext& ctx);
 };
 
 /// OSNAP (OS, DDOSNAP): the running object-snap settings dialog.

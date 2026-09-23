@@ -25,6 +25,11 @@ struct CoordParse {
 ///   * polar relative  `@dist<angle`   (angle in degrees, CCW from +X)
 /// Relative forms require `last`; otherwise an error is returned.
 [[nodiscard]] CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> last);
+/// The same, with the cursor's bearing from `last` (radians) for direct distance entry: a
+/// bare number is that far along it ("10" + Enter draws 10 units towards the cursor), and
+/// a bare "@" is `last` itself.
+[[nodiscard]] CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> last,
+                                          std::optional<double> cursor_bearing);
 
 /// Parses a bare number (for radius, zoom factor, ...). Returns false if the
 /// trimmed text is not a single valid number.

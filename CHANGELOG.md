@@ -9,6 +9,48 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Download ODA File Converter** -- DWG Setup (and the message shown when a DWG has no
+  converter) can fetch the free converter from the Open Design Alliance into Musa CAD's
+  own data directory, after you accept its terms, and set it up; "Remove downloaded"
+  deletes it. Linux, Windows and macOS builds are supported; the Flatpak downloads too and
+  runs it through the portal under Wayland.
+- **ARC construction methods** (#34) -- `[Center]` at the first prompt and `[Center/End]` at
+  the second: start-centre-end / angle / chord length, start-end-centre / angle / direction /
+  radius, the centre first, and **Continue** (Enter starts tangent from the last line or arc).
+  Holding **Ctrl** at a pick draws the other way round, as AutoCAD's prompts say; the rubber
+  band shows the arc the click will make.
+- **PLINE Arc mode** (#37, the geometry) -- `[Arc/Close/Length/Undo]` in line mode and
+  `[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]` in arc mode, each sub-step as
+  AutoCAD prompts it: an arc is tangent to the previous segment unless a direction, centre,
+  radius or second point says otherwise, Ctrl bends it the other way, CLose returns to the
+  start with an arc, and Length continues along the last segment. The band shows the arc the
+  click will make. Width and Halfwidth wait on polyline widths.
+- **RECTANG details** (#36, the parts that need no polyline width) -- `Specify other corner
+  point or [Area/Dimensions/Rotation]:`; the length, width, area and rotation are remembered
+  as the next defaults (the rotation stays in force, as in AutoCAD); `Specify rotation
+  angle or [Pick points]`; `Current rectangle modes: Fillet=…` at the start; the Area option
+  means the finished shape's area, corner cut-outs included; the rubber band shows the
+  rounded or chamfered corners. Width, Elevation and Thickness wait on #37.
+- **Direct distance entry** -- at any point prompt a bare number is a distance along the
+  cursor's direction from the last point (`10` + Enter), with ortho and polar applied; a
+  bare `@` is the last point.
+- **LINE Close and Continue** -- `[Close/Undo]` once two segments exist; Enter at the first
+  prompt continues from the last line or arc (tangent to an arc, asking a length).
+- **CIRCLE construction methods** (#35) -- `[3P/2P/Ttr (tan tan radius)]` at the first
+  prompt, plus `TTT` (tangent to three objects); the tangent circles are solved against
+  lines, circles, arcs, construction lines and polyline segments, on the branch nearest the
+  picks ("Circle does not exist." otherwise). The last radius is the next default; a pick
+  at the diameter prompt is the diameter (it used to be doubled); the rubber band and the
+  Dynamic Input field follow the chosen method.
+- **ROTATE and SCALE bands** -- the selection is previewed by the engine while you drag:
+  every kind (text, hatches, dimensions, blocks) at the current zoom, exactly where the
+  click will put it; the live angle or factor shows at the cursor in the drawing's units,
+  and typing replaces it. The factor follows AutoCAD's rule: the cursor's distance from
+  the base point in drawing units.
+- **ROTATE and SCALE Reference** as AutoCAD words it: the reference by a value or two
+  points, then `Specify the new angle or [Points] <0>:` / `Specify new length or [Points]
+  <1.0000>:` with the value, a point from the base, or two points; `Specify scale factor
+  or [Copy/Reference]:` offers both options from the start.
 - **Tiled model-space viewports** (#33) -- `VPORTS` splits the window into viewports that
   each pan and zoom on their own (2, 3, 4, SIngle, Join, and Save / Restore / Delete / `?`
   for named configurations); the View tab's Viewport Configuration list applies a standard

@@ -3,6 +3,8 @@
 
 #include "musacad/core/geometry_engine.hpp"
 
+#include "musacad/core/math/tangent_circle.hpp"
+
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/spline_eval.hpp"
 #include "musacad/core/units.hpp"
@@ -1042,6 +1044,7 @@ void scale_cmd(Command& c, Vec2 base, double f) {
 } // namespace
 
 void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
+    transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
     std::vector<EntityHandle> moved;
     for (const EntityHandle h : sel) {
@@ -1375,6 +1378,75 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
     return out;
 }
 
+void GeometryEngine::apply_circle_tangent(const AddCircleTangentCommand& c) {
+    // Each pick names an object; its tangency constraint is the line or circle it lies
+    // on (an arc counts as its circle, a polyline the segment nearest the pick).
+    std::vector<TangentObject> objs;
+    for (const Vec2 pick : c.picks) {
+        const EntityHandle h = pick_nearest(pick, c.pick_radius);
+        if (h.is_null()) {
+            report("No object at the pick point. Circle does not exist.");
+            return;
+        }
+        if (const LineData* l = store_.line(h); l != nullptr) {
+            objs.push_back(TangentObject::line(l->a, l->b));
+        } else if (const CircleData* ci = store_.circle(h); ci != nullptr) {
+            objs.push_back(TangentObject::circle(ci->center, ci->radius));
+        } else if (const ArcData* ar = store_.arc(h); ar != nullptr) {
+            objs.push_back(TangentObject::circle(ar->center, ar->radius));
+        } else if (const XlineData* x = store_.xline(h); x != nullptr) {
+            objs.push_back(TangentObject::line(x->base, x->base + x->dir));
+        } else if (const PolylineData* pl = store_.polyline(h); pl != nullptr && pl->count >= 2) {
+            const std::span<const Vec2> pts = store_.vertices_of(*pl);
+            const std::span<const double> bulges = store_.bulges_of(*pl);
+            const std::size_t segs = pl->closed ? pts.size() : pts.size() - 1;
+            std::size_t best = 0;
+            double best_d2 = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < segs; ++i) {
+                const Vec2 a = pts[i];
+                const Vec2 b = pts[(i + 1) % pts.size()];
+                const Vec2 d = b - a;
+                const double l2 = length_squared(d);
+                const double t = l2 > 1e-24 ? std::clamp(dot(pick - a, d) / l2, 0.0, 1.0) : 0.0;
+                const double d2 = length_squared(a + d * t - pick);
+                if (d2 < best_d2) {
+                    best_d2 = d2;
+                    best = i;
+                }
+            }
+            const Vec2 a = pts[best];
+            const Vec2 b = pts[(best + 1) % pts.size()];
+            const double bulge = best < bulges.size() ? bulges[best] : 0.0;
+            if (std::abs(bulge) > 1e-12) {
+                const BulgeArc arc = arc_from_bulge(a, b, bulge);
+                objs.push_back(TangentObject::circle(arc.center, arc.radius));
+            } else {
+                objs.push_back(TangentObject::line(a, b));
+            }
+        } else {
+            report("The object must be a line, circle, arc, construction line or polyline. Circle does not exist.");
+            return;
+        }
+    }
+    std::optional<TangentCircle> result;
+    if (objs.size() == 3) {
+        result = circle_tan_tan_tan(objs[0], c.picks[0], objs[1], c.picks[1], objs[2], c.picks[2]);
+    } else if (objs.size() == 2) {
+        result = circle_tan_tan_radius(objs[0], c.picks[0], objs[1], c.picks[1], c.radius);
+    }
+    if (!result) {
+        report("Circle does not exist.");
+        return;
+    }
+    const AddCircleCommand add{result->center, result->radius, c.group};
+    const Command cmd = add;
+    const EntityHandle h = create_indexed(cmd);
+    push_create_item(c.group, h, cmd);
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Circle: radius " + std::to_string(result->radius));
+}
+
 void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
     stretch_preview_active_ = false; // the rubber band ends with the commit
     prune_selection();
@@ -1586,6 +1658,7 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
 }
 
 void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group) {
+    transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
     std::vector<EntityHandle> result_handles;
     for (const EntityHandle h : sel) {
@@ -1611,6 +1684,7 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
 }
 
 void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, bool copy) {
+    transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
     std::vector<EntityHandle> out;
     for (const EntityHandle h : sel) {
@@ -1636,6 +1710,7 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, 
 }
 
 void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, bool copy) {
+    transform_preview_active_ = false; // the band ends with the commit
     if (!(factor > 0.0)) {
         return;
     }
@@ -6900,10 +6975,18 @@ void GeometryEngine::apply(const Command& command) {
                 apply_revcloud_reverse(c.group);
             } else if constexpr (std::is_same_v<T, ExplodeSelectionCommand>) {
                 apply_explode(c.group);
+            } else if constexpr (std::is_same_v<T, AddCircleTangentCommand>) {
+                apply_circle_tangent(c);
             } else if constexpr (std::is_same_v<T, StretchPreviewCommand>) {
                 // Preview only: recomputed at the next publish on the scratch store.
                 stretch_preview_active_ = c.active && !selection_.empty();
                 stretch_preview_delta_ = c.delta;
+            } else if constexpr (std::is_same_v<T, TransformPreviewCommand>) {
+                // Preview only: the selection under the transform, rebuilt at each publish.
+                transform_preview_active_ =
+                    c.active && !selection_.empty() &&
+                    (c.kind != TransformPreviewCommand::Kind::Scale || c.param > 0.0);
+                transform_preview_ = c;
             } else if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
                 apply_align(c);
             } else if constexpr (std::is_same_v<T, LengthenCommand>) {
@@ -7475,6 +7558,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, SetViewScaleCommand> ||
                 std::is_same_v<T, BuildPlotSnapshotCommand> || // read-only plot build
                 std::is_same_v<T, StretchPreviewCommand> || // rubber band only
+                std::is_same_v<T, TransformPreviewCommand> || // rubber band only
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
@@ -7541,6 +7625,7 @@ void GeometryEngine::reset_active_state() {
     grip_preview_store_.clear();
     forget_stretch_windows();
     stretch_preview_active_ = false;
+    transform_preview_active_ = false;
 }
 
 void GeometryEngine::new_document() {
@@ -7573,6 +7658,8 @@ void GeometryEngine::park_active(DocState& d) {
     d.stretch_windows_sel = std::move(stretch_windows_sel_);
     d.stretch_preview_active = stretch_preview_active_;
     d.stretch_preview_delta = stretch_preview_delta_;
+    d.transform_preview_active = transform_preview_active_;
+    d.transform_preview = transform_preview_;
 }
 
 void GeometryEngine::load_active(DocState& d) {
@@ -7602,6 +7689,8 @@ void GeometryEngine::load_active(DocState& d) {
     stretch_windows_sel_ = std::move(d.stretch_windows_sel);
     stretch_preview_active_ = d.stretch_preview_active;
     stretch_preview_delta_ = d.stretch_preview_delta;
+    transform_preview_active_ = d.transform_preview_active;
+    transform_preview_ = d.transform_preview;
 }
 
 std::size_t GeometryEngine::doc_index(std::uint64_t id) const {
@@ -7974,6 +8063,47 @@ void GeometryEngine::rebuild_and_publish() {
                 add_command_to_store(grip_preview_store_, e.edited,
                                      ep != nullptr ? *ep : EntityProps{store_.current_layer()});
             }
+            RenderSnapshot tmp;
+            build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_,
+                                  store_.ltscale());
+            buf.grip_preview_segments = std::move(tmp.line_vertices);
+            buf.grip_preview_fills = std::move(tmp.fill_vertices);
+        }
+    } else if (transform_preview_active_) {
+        // Live ROTATE / SCALE (or a client's MOVE / MIRROR band): every selected entity
+        // under the transform, through the helpers the commit uses, on the scratch store
+        // -- re-tessellated at the current zoom, with text, hatches and dimensions in
+        // place, and the real store untouched.
+        const TransformPreviewCommand& t = transform_preview_;
+        grip_preview_store_.clear();
+        grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
+        grip_preview_store_.set_dimstyle_table(store_.dimstyles());
+        bool any = false;
+        for (const EntityHandle h : selection_) {
+            if (!store_.is_valid(h)) {
+                continue;
+            }
+            Command edited = capture_entity(h);
+            switch (t.kind) {
+            case TransformPreviewCommand::Kind::Move:
+                translate_cmd(edited, t.to - t.base);
+                break;
+            case TransformPreviewCommand::Kind::Rotate:
+                rotate_cmd(edited, t.base, t.param);
+                break;
+            case TransformPreviewCommand::Kind::Scale:
+                scale_cmd(edited, t.base, t.param);
+                break;
+            case TransformPreviewCommand::Kind::Mirror:
+                mirror_cmd(edited, t.base, t.to);
+                break;
+            }
+            const EntityProps* ep = store_.props(h);
+            add_command_to_store(grip_preview_store_, edited,
+                                 ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+            any = true;
+        }
+        if (any) {
             RenderSnapshot tmp;
             build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_,
                                   store_.ltscale());

@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <limits>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -247,6 +248,11 @@ public:
     [[nodiscard]] int grip_preview_vertex_count() const noexcept {
         return grip_preview_count_.load(std::memory_order_relaxed);
     }
+    /// The largest x of the published band (-inf when there is none): the self-test's
+    /// check that a SCALE band sits where the factor puts it.
+    [[nodiscard]] double grip_preview_max_x() const noexcept {
+        return grip_preview_max_x_.load(std::memory_order_relaxed);
+    }
     void set_modes(ViewportModes* modes) noexcept { modes_ = modes; }
 
     /// A double-click on a text-bearing entity (TEXT/MTEXT/QLEADER label): where it
@@ -432,6 +438,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
 
 private:
     void start_render_thread();
@@ -546,6 +553,7 @@ private:
     std::atomic<int> selection_count_{0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};
+    std::atomic<double> grip_preview_max_x_{0.0};
     std::atomic<int> hovered_kind_{0}; // EntityKind+1, or 0 for nothing hovered
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
@@ -594,6 +602,12 @@ private:
     /// redraw that did not move the cursor does not resubmit an identical preview.
     core::Vec2 last_stretch_delta_{};
     bool stretch_preview_sent_ = false;
+    /// The live ROTATE / SCALE band streamed to the engine (TransformPreviewCommand) and
+    /// the value it shows at the cursor: 1 = a scale factor, 2 = an angle in radians.
+    core::TransformPreviewCommand last_transform_{};
+    bool transform_preview_sent_ = false;
+    double live_value_ = 0.0;
+    int live_kind_ = 0;
     core::Vec2 grip_origin_{};
 
     // Published layer table + current layer (for the Layer Manager / ribbon combo).

@@ -3,6 +3,8 @@
 
 #include "musacad/ui/dwg_converter.hpp"
 
+#include "musacad/ui/dwg_installer.hpp"
+
 #include <QCollator>
 #include <QDir>
 #include <QFile>
@@ -55,6 +57,11 @@ bool run_sync(const QString& program, const QStringList& args, QString& err, boo
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
         const QString tail = QString::fromUtf8(proc.readAllStandardError()).trimmed();
         err = QStringLiteral("Converter exited with code %1. %2").arg(proc.exitCode()).arg(tail);
+        if (host) {
+            err += QStringLiteral(
+                "\n\nThe converter runs outside the sandbox; if that was refused, allow it once "
+                "with:\n    flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD");
+        }
         return false;
     }
     return true;
@@ -163,6 +170,22 @@ DwgConverter DwgConverter::discover_on_path() {
     return DwgConverter{}; // None
 }
 
+DwgConverter DwgConverter::discover_managed() {
+    const QString program = OdaInstaller::installed_program();
+    if (program.isEmpty()) {
+        return DwgConverter{};
+    }
+    // The ODA converter needs an X11 display. Inside the Flatpak under Wayland the
+    // sandbox has none (fallback-x11), so it runs on the host, where the session has one.
+    const bool host = in_flatpak() && (host_mode() || qEnvironmentVariable("DISPLAY").isEmpty());
+    return DwgConverter{Kind::Oda, program, host};
+}
+
+DwgConverter DwgConverter::discover_default() {
+    const DwgConverter managed = discover_managed();
+    return managed.available() ? managed : discover_on_path();
+}
+
 DwgConverter DwgConverter::from_program(const QString& path) {
     if (path.isEmpty()) {
         return DwgConverter{}; // None
@@ -181,12 +204,15 @@ DwgConverter DwgConverter::discover() {
     const QString configured =
         QSettings().value(QStringLiteral("io/dwg_converter_path")).toString();
     if (!configured.isEmpty()) {
+        if (configured == OdaInstaller::installed_program()) {
+            return discover_managed(); // the downloaded one, with its host/sandbox choice
+        }
         const DwgConverter c = from_program(configured);
         if (c.available()) {
             return c;
         }
     }
-    return discover_on_path();
+    return discover_default();
 }
 
 QString DwgConverter::kind_name(Kind k) {
@@ -205,10 +231,11 @@ QString DwgConverter::kind_name(Kind k) {
 
 QString DwgConverter::install_hint() {
     QString hint = QStringLiteral(
-        "No DWG converter found. DWG support needs an external converter (Musa CAD never "
-        "bundles one -- it stays LGPL-clean). Install the free ODA File Converter "
-        "(opendesign.com) or LibreDWG (dwg2dxf), then use the \"DWG Setup\" button to "
-        "Browse to it or auto-detect it on your PATH.");
+        "No DWG converter found. DWG import and export run through a separate converter "
+        "program (Musa CAD never bundles one -- it stays LGPL-clean). \"Download ODA File "
+        "Converter\" fetches the free converter from the Open Design Alliance and sets it up; "
+        "or install ODA File Converter (opendesign.com) or LibreDWG (dwg2dxf) yourself and "
+        "Browse to it in DWG Setup.");
     if (in_flatpak()) {
         hint += QStringLiteral(
             "\n\nThis is the Flatpak: the sandbox cannot see programs installed on your "

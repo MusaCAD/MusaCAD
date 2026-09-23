@@ -114,3 +114,74 @@ TEST_CASE("ARRAY polar replicates the selection around a centre; undo restores")
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
     engine.stop();
 }
+
+// ---------------------------------------------------------------------------
+// The live ROTATE / SCALE band (TransformPreviewCommand): the selection under the
+// transform, previewed on the scratch store -- re-tessellated, every kind, and no
+// change to the drawing until the commit, which ends the band.
+// ---------------------------------------------------------------------------
+namespace {
+bool preview_has(const RenderSnapshot& s, Vec2 p, double eps = 1e-6) {
+    for (const Vec2& v : s.grip_preview_segments) {
+        if (std::abs(v.x - p.x) < eps && std::abs(v.y - p.y) < eps) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST_CASE("SCALE band: the selection scaled about the base point, the drawing untouched") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    const std::uint64_t gv = engine.snapshot().geometry_version;
+
+    engine.submit(TransformPreviewCommand{TransformPreviewCommand::Kind::Scale, {0, 0}, {2, 0}, 2.0, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return preview_has(s, {200, 0}); }));
+    REQUIRE(preview_has(engine.snapshot(), {0, 0}));
+    REQUIRE(engine.snapshot().geometry_version == gv);
+    REQUIRE(has_segment(engine.snapshot(), {0, 0}, {100, 0})); // the line itself unchanged
+
+    // The cursor moves on: the band follows (about a different base, a smaller factor).
+    engine.submit(TransformPreviewCommand{TransformPreviewCommand::Kind::Scale, {100, 0}, {}, 0.5, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return preview_has(s, {50, 0}) && preview_has(s, {100, 0}); }));
+
+    // The band ends with the commit: the drawing changes, the preview goes.
+    engine.submit(ScaleSelectionCommand{{0, 0}, 3.0, 7, false});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.grip_preview_segments.empty() && has_segment(s, {0, 0}, {300, 0});
+    }));
+    engine.stop();
+}
+
+TEST_CASE("ROTATE band: the selection turned about the base point; an inactive band clears") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+
+    engine.submit(TransformPreviewCommand{TransformPreviewCommand::Kind::Rotate, {0, 0}, {}, kHalfPi, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return preview_has(s, {0, 100}); }));
+    REQUIRE(has_segment(engine.snapshot(), {0, 0}, {100, 0}));
+
+    // Esc: the command sends an inactive band; nothing was changed.
+    engine.submit(TransformPreviewCommand{TransformPreviewCommand::Kind::Rotate, {}, {}, 0.0, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.empty(); }));
+    REQUIRE(has_segment(engine.snapshot(), {0, 0}, {100, 0}));
+
+    // A non-positive scale factor never previews (the collapsed selection is not a band).
+    engine.submit(TransformPreviewCommand{TransformPreviewCommand::Kind::Scale, {0, 0}, {}, 0.0, true});
+    Layer marker;
+    marker.name = "marker";
+    engine.submit(AddLayerCommand{marker}); // a later publish, with the selection kept
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layers.size() == 2; }));
+    REQUIRE(engine.snapshot().selection.size() == 1);
+    REQUIRE(engine.snapshot().grip_preview_segments.empty());
+    engine.stop();
+}

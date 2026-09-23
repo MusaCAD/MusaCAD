@@ -50,15 +50,16 @@ flatpak run --filesystem=home --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/
 - The KDE runtime supplies Qt 6 + the platform/imageformats plugins (incl. **qsvg**); nothing
   extra is vendored. Musa CAD's own assets are compiled into the binary (Qt resources).
 - **DWG import/export** shells out to an external converter (ODA File Converter / LibreDWG
-  `dwg2dxf`) found on `PATH`. That converter is **not** present in the sandbox, so DWG is
-  unavailable in the Flatpak by default; built-in **DXF** read/write works. This keeps the
-  Flatpak LGPL-clean (no GPL/DWG library linked or shipped). To use a converter installed on
-  your system anyway (issue #4): grant the app the Flatpak portal once,
-  `flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD`, then turn
-  on **"Use a converter installed on the host"** in the DWG Setup dialog. Discovery, the
-  existence check and the conversion then run on the host through `flatpak-spawn --host`,
-  with the converter's scratch files under the app's cache directory (a path the host sees).
-  The manifest asks for nothing extra, so the default stays sandboxed.
+  `dwg2dxf`); none is shipped, so the Flatpak stays LGPL-clean and DXF is what works out of
+  the box. **"Download ODA File Converter"** in DWG Setup fetches the free converter from
+  opendesign.com into the app's data directory (`--share=network` exists for that). The
+  converter needs an X11 display: under an X11 session it runs inside the sandbox
+  (`fallback-x11`); under Wayland the sandbox has no display, so it runs on the host
+  through `flatpak-spawn --host`, which you allow once with
+  `flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD`. A
+  converter installed on the host is used the same way (**"Use a converter installed on
+  the host"**); discovery, the run and the converter's scratch files (under the app's cache
+  directory, a path the host sees) all go through the portal then.
 - **No filesystem access.** Every file dialog is the desktop's own, which Qt routes through the
   file-chooser portal: the app gets the file picked, nothing else. A drawing whose external
   references or images sit beside it offers to open from its folder instead (the portal's

@@ -45,14 +45,23 @@ public:
     [[nodiscard]] bool on_host() const noexcept { return host_; }
 
     /// Detects a converter. Order: (1) the configured path in QSettings
-    /// `io/dwg_converter_path` (kind inferred from its basename), (2) ODA File
-    /// Converter on PATH, (3) LibreDWG `dwg2dxf` on PATH. Returns a None converter
+    /// `io/dwg_converter_path` (kind inferred from its basename), (2) the converter
+    /// Musa CAD downloaded (discover_managed()), (3) ODA File Converter on PATH,
+    /// (4) LibreDWG `dwg2dxf` on PATH. Returns a None converter
     /// if nothing is found (callers degrade gracefully -- see install_hint()). In host
     /// mode the lookups and the existence checks happen on the host.
     [[nodiscard]] static DwgConverter discover();
 
     /// PATH-only discovery (ignores the configured setting): ODA then LibreDWG.
     [[nodiscard]] static DwgConverter discover_on_path();
+
+    /// The converter Musa CAD downloaded itself (OdaInstaller), if one is installed:
+    /// ODA File Converter under the app's data directory. Inside the Flatpak it runs
+    /// on the host when the sandbox has no X11 display (the converter needs one) or
+    /// host mode is on.
+    [[nodiscard]] static DwgConverter discover_managed();
+    /// What a blank setting resolves to: the downloaded converter, else PATH.
+    [[nodiscard]] static DwgConverter discover_default();
 
     /// Build a converter from an explicit program path (kind inferred from the
     /// basename). Available only if the file exists. For the setup dialog's "Browse".

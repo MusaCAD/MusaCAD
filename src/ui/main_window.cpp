@@ -31,6 +31,7 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEventLoop>
 #include <QGroupBox>
 #include <QDockWidget>
 #include <QEvent>
@@ -49,6 +50,7 @@
 #include <QElapsedTimer>
 #include <QProcessEnvironment>
 #include <QProgressDialog>
+#include <QSysInfo>
 #include <QPushButton>
 #include <QKeySequence>
 #include <QLabel>
@@ -93,6 +95,7 @@
 #include <QPrinterInfo>
 
 #include "musacad/ui/dwg_converter.hpp"
+#include "musacad/ui/dwg_installer.hpp"
 #include "musacad/ui/dyn_input.hpp"
 #include "musacad/ui/plot.hpp"
 #include "musacad/ui/plot_dialog.hpp"
@@ -4996,6 +4999,104 @@ bool MainWindow::selftest_commands() {
     return all;
 }
 
+bool MainWindow::selftest_scale_band() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1500; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    const auto settle = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    const auto move_to = [this, &settle](core::Vec2 w) {
+        const core::Vec2 l = viewport_->world_to_widget(w);
+        const QPointF lp(l.x, l.y);
+        const QPoint gp = viewport_->mapToGlobal(lp.toPoint());
+        QMouseEvent ev(QEvent::MouseMove, lp, QPointF(gp), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(viewport_, &ev);
+        settle(60);
+    };
+    const auto escape = [this] {
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(viewport_, &esc);
+    };
+    bool all = true;
+    processor_->cancel();
+    pump([this] { return !processor_->has_active_command(); });
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(core::AddPolylineCommand{{{0, 0}, {10, 0}, {10, 5}, {0, 5}}, true, 7101});
+    core::AddTextCommand label;
+    label.pos = {2, 2};
+    label.height = 1.5;
+    label.content = "band";
+    label.group = 7102;
+    engine_->submit(label);
+    if (!pump([this] { return viewport_->line_vertex_count() >= 8; })) {
+        std::printf("[selftest] FAIL: scale band fixture not drawn\n");
+        return false;
+    }
+    viewport_->zoom_extents();
+    settle(100);
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 2; });
+    processor_->set_selection_count(viewport_->selection_count());
+    const int drawn = viewport_->line_vertex_count();
+
+    // SCALE: base point typed, then the cursor 1.5 units out -> a factor of 1.5 (AutoCAD's
+    // rule: the distance from the base point in drawing units), previewed by the engine:
+    // the rectangle's right edge lands at x = 15, and the text is in the band too.
+    processor_->submit_line("SC");
+    processor_->submit_line("0,0");
+    pump([this] { return processor_->preview().kind == command::PreviewKind::Scale; });
+    move_to({1.5, 0});
+    const bool band = pump([this] {
+        return viewport_->grip_preview_vertex_count() > 8 &&
+               std::abs(viewport_->grip_preview_max_x() - 15.0) < 1e-6;
+    });
+    if (const char* shot = std::getenv("MUSACAD_SCALE_SHOT"); shot != nullptr && *shot != '\0') {
+        request_viewport_capture(shot);
+        settle(400);
+    }
+    escape();
+    const bool ended = pump([this] {
+        return !processor_->has_active_command() && viewport_->grip_preview_vertex_count() == 0;
+    });
+    const bool untouched = viewport_->line_vertex_count() == drawn;
+    std::printf("[selftest] SCALE band (engine preview follows the cursor; Esc clears, drawing "
+                "untouched): %s\n",
+                (band && ended && untouched) ? "PASS" : "FAIL");
+    all = all && band && ended && untouched;
+
+    // ROTATE: the same band, then a typed angle commits and ends it.
+    engine_->submit(core::SelectAllCommand{});
+    pump([this] { return viewport_->selection_count() == 2; });
+    processor_->set_selection_count(viewport_->selection_count());
+    processor_->submit_line("RO");
+    processor_->submit_line("0,0");
+    pump([this] { return processor_->preview().kind == command::PreviewKind::Rotate; });
+    move_to({0, 20});
+    const bool rband = pump([this] { return viewport_->grip_preview_vertex_count() > 8; });
+    processor_->submit_line("90");
+    const bool rdone = pump([this] {
+        return !processor_->has_active_command() && viewport_->grip_preview_vertex_count() == 0;
+    });
+    std::printf("[selftest] ROTATE band (engine preview; the typed angle commits and ends it): %s\n",
+                (rband && rdone) ? "PASS" : "FAIL");
+    all = all && rband && rdone;
+    processor_->undo();
+    pump([this, drawn] { return viewport_->line_vertex_count() == drawn; });
+    return all;
+}
+
 bool MainWindow::selftest_dwg() {
     const auto pump = [](auto pred) {
         for (int i = 0; i < 1200; ++i) {
@@ -5010,6 +5111,62 @@ bool MainWindow::selftest_dwg() {
     bool all = true;
     const QString saved = QSettings().value(QStringLiteral("io/dwg_converter_path")).toString();
     const QString dir = QDir::temp().path();
+
+    // The downloadable converter (OdaInstaller): the page parser names this platform's
+    // file, the file link is the guestfiles endpoint, and -- on Linux -- a stand-in
+    // AppImage that unpacks like the real one lands as the managed converter that a blank
+    // setting resolves to; Remove clears it.
+    {
+        const QByteArray page =
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_27.1.AppImage\">"
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_vc16_amd64dll_27.1.msi\">"
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_arm64_15.0dll_27.1.dmg\">"
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_x64_15.0dll_27.1.dmg\">";
+        const auto rel = OdaInstaller::parse_release(page);
+        const OdaInstaller::Release known = OdaInstaller::fallback_release();
+        const bool parse_ok = known.filename.isEmpty() ? !rel.has_value()
+                                                       : (rel.has_value() && rel->filename == known.filename &&
+                                                          rel->version == QStringLiteral("27.1"));
+        const bool url_ok = OdaInstaller::download_url(known.filename).toString().contains(
+            QStringLiteral("opendesign.com/guestfiles/get?filename="));
+        std::printf("[selftest] ODA download: page parsed to this platform's file + guestfiles link: %s\n",
+                    (parse_ok && url_ok) ? "PASS" : "FAIL");
+        all = all && parse_ok && url_ok;
+#if defined(Q_OS_LINUX)
+        const QString oda_dir = dir + QStringLiteral("/musacad_selftest_oda");
+        QDir(oda_dir).removeRecursively();
+        qputenv("MUSACAD_ODA_DIR", oda_dir.toUtf8());
+        QDir().mkpath(oda_dir + QStringLiteral("/download"));
+        const QString fake = oda_dir + QStringLiteral("/download/fake.AppImage");
+        {
+            QFile f(fake);
+            f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+            f.write("#!/bin/sh\n"
+                    "# stands in for a type-2 AppImage: --appimage-extract unpacks into ./squashfs-root\n"
+                    "[ \"$1\" = --appimage-extract ] || exit 2\n"
+                    "mkdir -p squashfs-root/usr/bin && printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/usr/bin/ODAFileConverter "
+                    "&& chmod +x squashfs-root/usr/bin/ODAFileConverter\n");
+            f.close();
+        }
+        QSettings().remove(QStringLiteral("io/dwg_converter_path"));
+        QString program;
+        QString err;
+        const bool unpacked = OdaInstaller::install_from_file(fake, program, err);
+        const bool placed = unpacked && program == OdaInstaller::installed_program() &&
+                            QFileInfo::exists(program) && !QFileInfo::exists(fake);
+        const DwgConverter managed = DwgConverter::discover();
+        const bool found = managed.available() && managed.kind() == DwgConverter::Kind::Oda &&
+                           managed.program() == program;
+        QString rm_err;
+        const bool removed = OdaInstaller::remove_installed(rm_err) && OdaInstaller::installed_program().isEmpty();
+        std::printf("[selftest] ODA download: unpack -> managed converter found by a blank setting -> removed: %s%s\n",
+                    (placed && found && removed) ? "PASS" : "FAIL",
+                    unpacked ? "" : qPrintable(QStringLiteral(" (") + err + QStringLiteral(")")));
+        all = all && placed && found && removed;
+        qunsetenv("MUSACAD_ODA_DIR");
+        QSettings().setValue(QStringLiteral("io/dwg_converter_path"), saved);
+#endif
+    }
 
     // A MOCK converter (Generic kind): `<prog> <in> <out>` just copies in->out, so a
     // .dwg whose bytes are valid DXF round-trips through the real pipeline. (No real
@@ -6301,15 +6458,133 @@ bool MainWindow::offer_dwg_setup(const QString& title) {
     box.setIcon(QMessageBox::Information);
     box.setWindowTitle(title);
     box.setText(DwgConverter::install_hint());
-    QPushButton* cfg = box.addButton(QStringLiteral("Configure…"), QMessageBox::ActionRole);
+    QPushButton* dl = box.addButton(QStringLiteral("Download ODA File Converter…"), QMessageBox::AcceptRole);
+    QPushButton* cfg = box.addButton(QStringLiteral("DWG Setup…"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Cancel);
     box.exec();
     command_widget_->append_line(DwgConverter::install_hint().toStdString());
+    if (box.clickedButton() == dl) {
+        return !download_dwg_converter().isEmpty();
+    }
     if (box.clickedButton() == cfg) {
         configure_dwg_converter();
         return true;
     }
     return false;
+}
+
+QString MainWindow::download_dwg_converter() {
+    const OdaInstaller::Release known = OdaInstaller::fallback_release();
+    if (known.filename.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Download ODA File Converter"),
+                                 QStringLiteral("The Open Design Alliance publishes no ODA File Converter "
+                                                "for this platform (%1 %2).")
+                                     .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture()));
+        return {};
+    }
+    // The acknowledgement: what is fetched, from where, to where, under whose terms.
+    QDialog ack(this);
+    ack.setWindowTitle(QStringLiteral("Download ODA File Converter"));
+    auto* v = new QVBoxLayout(&ack);
+    auto* text = new QLabel(
+        QStringLiteral(
+            "Musa CAD will download ODA File Converter from the Open Design Alliance "
+            "(opendesign.com), about %1 MB, and keep it in:\n%2\n\n"
+            "ODA File Converter is a separate program published under the Open Design "
+            "Alliance's own terms; it is not part of Musa CAD and Musa CAD's license does not "
+            "cover it. Musa CAD only runs it, as a separate process, to convert DWG files. "
+            "You can remove it at any time from DWG Setup.")
+            .arg(known.size_hint / 1'000'000)
+            .arg(QDir::toNativeSeparators(OdaInstaller::install_dir())),
+        &ack);
+    text->setWordWrap(true);
+    v->addWidget(text);
+    if (DwgConverter::in_flatpak() && qEnvironmentVariable("DISPLAY").isEmpty()) {
+        auto* fp = new QLabel(QStringLiteral(
+            "Inside the Flatpak the converter runs outside the sandbox (it needs an X11 "
+            "display, which the sandbox has none of under Wayland). Allow that once with:\n"
+            "    flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD"), &ack);
+        fp->setWordWrap(true);
+        fp->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        v->addWidget(fp);
+    }
+    auto* link = new QLabel(QStringLiteral("<a href=\"%1\">The ODA File Converter page at opendesign.com</a>")
+                                .arg(OdaInstaller::page_url().toString()), &ack);
+    link->setOpenExternalLinks(true);
+    v->addWidget(link);
+    auto* accept = new QCheckBox(QStringLiteral("I accept the Open Design Alliance's terms for ODA File Converter"), &ack);
+    accept->setObjectName(QStringLiteral("OdaAccept"));
+    v->addWidget(accept);
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &ack);
+    bb->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Download"));
+    bb->button(QDialogButtonBox::Ok)->setEnabled(false);
+    connect(accept, &QCheckBox::toggled, bb->button(QDialogButtonBox::Ok), &QPushButton::setEnabled);
+    connect(bb, &QDialogButtonBox::accepted, &ack, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &ack, &QDialog::reject);
+    v->addWidget(bb);
+    if (ack.exec() != QDialog::Accepted || !accept->isChecked()) {
+        return {};
+    }
+
+    // The download, with progress and a Cancel.
+    QProgressDialog dlg(QStringLiteral("Reading the download page…"), QStringLiteral("Cancel"), 0, 100, this);
+    dlg.setWindowTitle(QStringLiteral("Download ODA File Converter"));
+    dlg.setWindowModality(Qt::ApplicationModal);
+    dlg.setMinimumDuration(0);
+    dlg.setAutoClose(false);
+    dlg.setAutoReset(false);
+    dlg.setValue(0);
+    OdaInstaller installer;
+    bool ok = false;
+    QString result;
+    QEventLoop loop;
+    connect(&installer, &OdaInstaller::stage, &dlg, &QProgressDialog::setLabelText);
+    connect(&installer, &OdaInstaller::progress, &dlg, [&dlg](qint64 done, qint64 total) {
+        if (total > 0) {
+            dlg.setMaximum(100);
+            dlg.setValue(static_cast<int>(done * 100 / total));
+            dlg.setLabelText(QStringLiteral("Downloading… %1 of %2 MB").arg(done / 1'000'000).arg(total / 1'000'000));
+        } else {
+            dlg.setMaximum(0);
+        }
+    });
+    connect(&installer, &OdaInstaller::finished, &loop, [&](bool good, const QString& what) {
+        ok = good;
+        result = what;
+        loop.quit();
+    });
+    connect(&dlg, &QProgressDialog::canceled, &installer, &OdaInstaller::cancel);
+    installer.start();
+    if (!ok && result.isEmpty()) {
+        loop.exec();
+    }
+    dlg.close();
+    if (!ok) {
+        if (result != QStringLiteral("Cancelled.")) {
+            QMessageBox::warning(this, QStringLiteral("Download ODA File Converter"), result);
+            command_widget_->append_line(result.toStdString());
+        }
+        return {};
+    }
+
+    // Unpack (a subprocess; off the GUI thread behind the indeterminate dialog).
+    const QString archive = result;
+    QString program;
+    QString err;
+    const bool unpacked = run_with_progress(
+        QStringLiteral("Unpacking ODA File Converter…"),
+        [&](QString& e) { return OdaInstaller::install_from_file(archive, program, e); }, err);
+    if (!unpacked) {
+        QMessageBox::warning(this, QStringLiteral("Download ODA File Converter"), err);
+        command_widget_->append_line(err.toStdString());
+        return {};
+    }
+    QSettings().setValue(QStringLiteral("io/dwg_converter_path"), program);
+    const QString note = QStringLiteral("ODA File Converter %1 is installed at %2. DWG import and export use it from now on.")
+                             .arg(installer.release().version, QDir::toNativeSeparators(program));
+    command_widget_->append_line(note.toStdString());
+    QMessageBox::information(this, QStringLiteral("Download ODA File Converter"), note);
+    return program;
 }
 
 void MainWindow::configure_dwg_converter() {
@@ -6319,13 +6594,12 @@ void MainWindow::configure_dwg_converter() {
 
     auto* info = new QLabel(
         QStringLiteral(
-            "DWG needs an external converter. Musa CAD never bundles one (it stays "
-            "LGPL-clean) -- it runs a converter you install:\n"
-            "  • ODA File Converter (free) -- opendesign.com\n"
-            "  • LibreDWG (dwg2dxf)\n\n"
-            "Browse to its executable below, or Auto-detect if it is on your PATH. "
-            "(Musa CAD cannot download/install it for you -- licensing + per-platform "
-            "installers + the ODA EULA make that the user's step.)"),
+            "DWG import and export run through a separate converter program; Musa CAD never "
+            "bundles one (it stays LGPL-clean).\n"
+            "  • Download ODA File Converter: Musa CAD fetches the free converter from the Open "
+            "Design Alliance into its own data directory and sets it up.\n"
+            "  • Or install ODA File Converter (opendesign.com) or LibreDWG (dwg2dxf) yourself "
+            "and Browse to it, or Auto-detect it on your PATH."),
         &dlg);
     info->setWordWrap(true);
     v->addWidget(info);
@@ -6370,11 +6644,14 @@ void MainWindow::configure_dwg_converter() {
             DwgConverter::set_host_mode(host_box->isChecked()); // discovery follows the toggle
         }
         const QString p = path_edit->text().trimmed();
-        const DwgConverter c =
-            p.isEmpty() ? DwgConverter::discover_on_path() : DwgConverter::from_program(p);
+        const DwgConverter c = p.isEmpty()                                   ? DwgConverter::discover_default()
+                               : p == OdaInstaller::installed_program()      ? DwgConverter::discover_managed()
+                                                                             : DwgConverter::from_program(p);
         if (c.available()) {
-            status->setText(QStringLiteral("✔ Detected: %1 — %2%3")
+            const bool managed = c.program() == OdaInstaller::installed_program();
+            status->setText(QStringLiteral("✔ Detected: %1 — %2%3%4")
                                 .arg(DwgConverter::kind_name(c.kind()), c.program(),
+                                     managed ? QStringLiteral(" (downloaded by Musa CAD)") : QString(),
                                      c.on_host() ? QStringLiteral(" (on the host)") : QString()));
         } else if (DwgConverter::host_mode()) {
             status->setText(p.isEmpty()
@@ -6401,10 +6678,15 @@ void MainWindow::configure_dwg_converter() {
     auto* lh = new QHBoxLayout(links);
     lh->setContentsMargins(0, 0, 0, 0);
     auto* detect = new QPushButton(QStringLiteral("Auto-detect on PATH"), links);
-    auto* oda = new QPushButton(QStringLiteral("Get ODA…"), links);
+    auto* oda = new QPushButton(QStringLiteral("Download ODA File Converter…"), links);
+    oda->setObjectName(QStringLiteral("DwgDownloadOda"));
+    auto* remove = new QPushButton(QStringLiteral("Remove downloaded"), links);
+    remove->setObjectName(QStringLiteral("DwgRemoveOda"));
+    remove->setEnabled(!OdaInstaller::installed_program().isEmpty());
     auto* ldwg = new QPushButton(QStringLiteral("Get LibreDWG…"), links);
     lh->addWidget(detect);
     lh->addWidget(oda);
+    lh->addWidget(remove);
     lh->addWidget(ldwg);
     v->addWidget(links);
     connect(detect, &QPushButton::clicked, &dlg, [path_edit, refresh] {
@@ -6412,8 +6694,31 @@ void MainWindow::configure_dwg_converter() {
         path_edit->setText(c.available() ? c.program() : QString());
         refresh();
     });
-    connect(oda, &QPushButton::clicked, &dlg, [] {
-        QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.opendesign.com/guestfiles")));
+    connect(oda, &QPushButton::clicked, &dlg, [this, path_edit, remove, refresh] {
+        const QString program = download_dwg_converter();
+        if (!program.isEmpty()) {
+            path_edit->setText(program);
+            remove->setEnabled(true);
+            refresh();
+        }
+    });
+    connect(remove, &QPushButton::clicked, &dlg, [this, &dlg, path_edit, remove, refresh] {
+        if (QMessageBox::question(&dlg, QStringLiteral("Remove ODA File Converter"),
+                                  QStringLiteral("Delete the ODA File Converter that Musa CAD downloaded (%1)?")
+                                      .arg(QDir::toNativeSeparators(OdaInstaller::install_dir()))) != QMessageBox::Yes) {
+            return;
+        }
+        QString err;
+        if (!OdaInstaller::remove_installed(err)) {
+            QMessageBox::warning(&dlg, QStringLiteral("Remove ODA File Converter"), err);
+            return;
+        }
+        if (path_edit->text().trimmed().startsWith(OdaInstaller::install_dir())) {
+            path_edit->clear();
+        }
+        remove->setEnabled(false);
+        command_widget_->append_line("Removed the downloaded ODA File Converter.");
+        refresh();
     });
     connect(ldwg, &QPushButton::clicked, &dlg, [] {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.gnu.org/software/libredwg/")));

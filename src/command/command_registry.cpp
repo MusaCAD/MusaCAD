@@ -99,18 +99,18 @@ CommandRegistry CommandRegistry::make_default() {
 
     // --- Draw ---
     reg({"L", "LINE"}, [] { return std::make_unique<LineCommand>(); }, "assets/ribbon/line.svg",
-        "Create a series of straight-line segments.");
+        "Create a series of straight-line segments (Close, Undo; Enter continues the last line or arc).");
     reg({"C", "CIRCLE"}, [] { return std::make_unique<CircleCommand>(); }, "assets/ribbon/circle.svg",
-        "Draw a circle from a center point and a radius or diameter.");
+        "Draw a circle by centre and radius or diameter, two or three points, or tangent to objects.");
     reg({"EL", "ELLIPSE"}, [] { return std::make_unique<EllipseCommand>(); },
         "assets/ribbon/ellipse.svg", "Draw an ellipse or an elliptical arc.");
     reg({"SPL", "SPLINE"}, [] { return std::make_unique<SplineCommand>(); },
         "assets/ribbon/spline.svg", "Draw a spline through fit points or by control vertices.");
     reg({"PL", "PLINE"}, [] { return std::make_unique<PolylineCommand>(); },
         "assets/ribbon/polyline.svg",
-        "Draw a connected sequence of line and arc segments as one object.");
+        "Draw a connected sequence of line and arc segments as one object (Arc, Close, Length, Undo).");
     reg({"A", "ARC"}, [] { return std::make_unique<ArcCommand>(); }, "assets/ribbon/arc.svg",
-        "Draw a circular arc through three points.");
+        "Draw an arc by three points, or from a start, centre or end with an angle, chord, direction or radius.");
     reg({"REC", "RECTANGLE", "RECTANG"}, [] { return std::make_unique<RectangleCommand>(); },
         "assets/ribbon/rectangle.svg", "Draw a rectangle from two opposite corners.");
 

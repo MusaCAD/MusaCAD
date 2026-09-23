@@ -53,3 +53,23 @@ TEST_CASE("Coordinate: bare number") {
     REQUIRE_FALSE(parse_number("4,2", v));
     REQUIRE_FALSE(parse_number("", v));
 }
+
+TEST_CASE("direct distance entry: a bare number goes along the cursor's bearing; @ is the last point") {
+    using musacad::command::parse_coordinate;
+    const musacad::core::Vec2 last{10.0, 10.0};
+    const auto d = parse_coordinate("5", last, musacad::core::kHalfPi); // the cursor is straight up
+    REQUIRE(d.ok);
+    REQUIRE(d.point.x == Approx(10.0));
+    REQUIRE(d.point.y == Approx(15.0));
+    REQUIRE(d.interpretation.find("direct distance") != std::string::npos);
+    const auto at = parse_coordinate("@", last, std::nullopt);
+    REQUIRE(at.ok);
+    REQUIRE(at.point.x == Approx(10.0));
+    REQUIRE(at.point.y == Approx(10.0));
+    // Without a cursor direction a bare number is not a point.
+    REQUIRE(!parse_coordinate("5", last, std::nullopt).ok);
+    REQUIRE(!parse_coordinate("5", std::nullopt, musacad::core::kHalfPi).ok);
+    // The usual forms are untouched.
+    REQUIRE(parse_coordinate("3,4", last, musacad::core::kHalfPi).point.x == Approx(3.0));
+    REQUIRE(parse_coordinate("@3<0", last, musacad::core::kHalfPi).point.x == Approx(13.0));
+}
