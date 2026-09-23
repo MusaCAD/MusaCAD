@@ -197,6 +197,11 @@ std::uint8_t ViewportWindow::active_space() {
     return active_space_;
 }
 
+std::size_t ViewportWindow::embedded_image_count() {
+    std::scoped_lock lock(layers_mutex_);
+    return embedded_images_;
+}
+
 bool ViewportWindow::mspace_active() {
     std::scoped_lock lock(layers_mutex_);
     return mspace_.active;
@@ -801,6 +806,9 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             block_attdefs_ = snap.block_attdefs;
             layouts_ = snap.layouts;
             active_space_ = snap.active_space;
+            embedded_images_ = static_cast<std::size_t>(
+                std::count_if(snap.image_defs.begin(), snap.image_defs.end(),
+                              [](const core::ImageDefView& d) { return d.bytes && !d.bytes->empty(); }));
             mspace_ = snap.mspace;
             viewport_rects_ = snap.viewport_rects;
         }

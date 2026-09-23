@@ -166,6 +166,7 @@ add_executable(musacad_tests
     test_xref.cpp
     test_image_polyclip.cpp
     test_dxf_image.cpp
+    test_external_files.cpp
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp

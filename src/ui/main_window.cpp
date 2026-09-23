@@ -76,6 +76,7 @@
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/io/external_files.hpp"
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/core/snap.hpp"
 #include "musacad/core/version.hpp"
@@ -5846,7 +5847,118 @@ bool MainWindow::selftest_vports() {
     return all && gl_msg_ok;
 }
 
-void MainWindow::open_from(const QString& path, bool dxf) {
+namespace {
+/// A file the document portal granted on its own (Flatpak): nothing beside it is reachable.
+bool portal_file_grant(const QString& path) {
+    return core::io::is_portal_file_grant(path.toStdString(),
+                                          qEnvironmentVariable("XDG_RUNTIME_DIR").toStdString());
+}
+} // namespace
+
+QString MainWindow::save_path_with_extension(QString path, const QString& ext) {
+    if (path.isEmpty() || path.endsWith(ext, Qt::CaseInsensitive)) {
+        return path;
+    }
+    if (portal_file_grant(path)) {
+        command_widget_->append_line("Saving as \"" + QFileInfo(path).fileName().toStdString() +
+                                     "\" without " + ext.toStdString() +
+                                     ": the sandbox may write only the name chosen in the dialog.");
+        return path;
+    }
+    return path + ext;
+}
+
+QString MainWindow::open_path_with_references(const QString& path, bool dxf) {
+    if (!portal_file_grant(path)) {
+        return path;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return path; // the load reports the error
+    }
+    const QByteArray text = file.readAll();
+    if (!core::io::references_external_files(
+            std::string_view(text.constData(), static_cast<std::size_t>(text.size())), dxf)) {
+        return path;
+    }
+    const QString name = QFileInfo(path).fileName();
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(QStringLiteral("Open %1").arg(name));
+    box.setText(QStringLiteral("%1 uses other files kept beside it: external references or images.")
+                    .arg(name));
+    box.setInformativeText(QStringLiteral(
+        "Musa CAD runs in a sandbox and was given only this one file. Choose the folder that "
+        "contains it so those files can load too."));
+    QPushButton* choose = box.addButton(QStringLiteral("Choose Folder…"), QMessageBox::AcceptRole);
+    QPushButton* without = box.addButton(QStringLiteral("Open Without Them"), QMessageBox::ActionRole);
+    QPushButton* cancel = box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(choose);
+    box.setEscapeButton(cancel);
+    box.exec();
+    if (box.clickedButton() == without) {
+        return path;
+    }
+    if (box.clickedButton() != choose) {
+        return QString();
+    }
+    const QString dir =
+        QFileDialog::getExistingDirectory(this, QStringLiteral("Folder containing %1").arg(name));
+    const QString inside = dir.isEmpty() ? QString() : QDir(dir).filePath(name);
+    if (!inside.isEmpty() && QFileInfo(inside).isFile()) {
+        return inside; // relative xref and image paths resolve against this folder
+    }
+    command_widget_->append_line("Opening \"" + name.toStdString() +
+                                 "\" without its external files" +
+                                 (dir.isEmpty() ? std::string(".") : ": it is not in the folder chosen."));
+    return path;
+}
+
+QString MainWindow::export_path_with_images(const QString& path) {
+    if (!portal_file_grant(path) || viewport_ == nullptr) {
+        return path;
+    }
+    const std::size_t images = viewport_->embedded_image_count();
+    if (images == 0) {
+        return path;
+    }
+    const QString name = QFileInfo(path).fileName();
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(QStringLiteral("Export DXF"));
+    box.setText(QStringLiteral("The drawing embeds %1 %2, and DXF keeps images as separate files "
+                               "beside the drawing.")
+                    .arg(images)
+                    .arg(images == 1 ? QStringLiteral("image") : QStringLiteral("images")));
+    box.setInformativeText(QStringLiteral(
+        "Musa CAD runs in a sandbox and may write only the one file you chose. Choose the "
+        "folder to export %1 into, so the images can be written there too.").arg(name));
+    QPushButton* choose = box.addButton(QStringLiteral("Choose Folder…"), QMessageBox::AcceptRole);
+    QPushButton* cancel = box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(choose);
+    box.setEscapeButton(cancel);
+    box.exec();
+    if (box.clickedButton() != choose) {
+        return QString();
+    }
+    const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Export %1 into").arg(name));
+    if (dir.isEmpty()) {
+        return QString();
+    }
+    const QString target = QDir(dir).filePath(name);
+    // The save dialog confirmed replacing a file only in the folder it showed; a
+    // same-named file in a different folder gets its own confirmation.
+    if (QFileInfo::exists(target) && !QFileInfo::exists(path) &&
+        QMessageBox::question(this, QStringLiteral("Export DXF"),
+                              QStringLiteral("%1 already exists in that folder. Replace it?").arg(name)) !=
+            QMessageBox::Yes) {
+        return QString();
+    }
+    return target;
+}
+
+void MainWindow::open_from(const QString& path_in, bool dxf) {
+    const QString path = path_in.isEmpty() ? path_in : open_path_with_references(path_in, dxf);
     if (path.isEmpty()) {
         return;
     }
@@ -5876,8 +5988,7 @@ void MainWindow::file_new() {
 
 void MainWindow::file_open() {
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Drawing"),
-                                                      QString(), QStringLiteral("Musa CAD (*.musa)"),
-                                                      nullptr, QFileDialog::DontUseNativeDialog);
+                                                      QString(), QStringLiteral("Musa CAD (*.musa)"));
     open_from(path, false);
 }
 
@@ -5891,13 +6002,9 @@ void MainWindow::file_save() {
 }
 
 void MainWindow::file_save_as() {
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
-                                                QStringLiteral("Musa CAD (*.musa)"), nullptr,
-                                                QFileDialog::DontUseNativeDialog);
-    if (!path.isEmpty() && !path.endsWith(QStringLiteral(".musa"), Qt::CaseInsensitive)) {
-        path += QStringLiteral(".musa");
-    }
-    save_to(path, false);
+    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
+                                                      QStringLiteral("Musa CAD (*.musa)"));
+    save_to(save_path_with_extension(path, QStringLiteral(".musa")), false);
 }
 
 // --- multi-document tab strip ---------------------------------------------
@@ -6102,14 +6209,11 @@ bool MainWindow::prompt_save_document(std::uint64_t id, const QString& name, con
         QString p = path;
         if (p.isEmpty()) {
             p = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
-                                             QStringLiteral("Musa CAD (*.musa)"), nullptr,
-                                             QFileDialog::DontUseNativeDialog);
+                                             QStringLiteral("Musa CAD (*.musa)"));
             if (p.isEmpty()) {
                 return false; // cancelled the path dialog -> abort
             }
-            if (!p.endsWith(QStringLiteral(".musa"), Qt::CaseInsensitive)) {
-                p += QStringLiteral(".musa");
-            }
+            p = save_path_with_extension(p, QStringLiteral(".musa"));
         }
         engine_->submit(core::SaveDocumentCommand{p.toStdString(), false});
     }
@@ -6179,19 +6283,17 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 void MainWindow::file_import_dxf() {
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Import DXF"), QString(),
-                                                      QStringLiteral("DXF (*.dxf)"), nullptr,
-                                                      QFileDialog::DontUseNativeDialog);
+                                                      QStringLiteral("DXF (*.dxf)"));
     open_from(path, true); // a new tab; current work is untouched
 }
 
 void MainWindow::file_export_dxf() {
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export DXF"), QString(),
-                                                QStringLiteral("DXF (*.dxf)"), nullptr,
-                                                QFileDialog::DontUseNativeDialog);
-    if (!path.isEmpty() && !path.endsWith(QStringLiteral(".dxf"), Qt::CaseInsensitive)) {
-        path += QStringLiteral(".dxf");
+    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export DXF"), QString(),
+                                                      QStringLiteral("DXF (*.dxf)"));
+    if (path.isEmpty()) {
+        return;
     }
-    save_to(path, true);
+    save_to(export_path_with_images(save_path_with_extension(path, QStringLiteral(".dxf"))), true);
 }
 
 bool MainWindow::offer_dwg_setup(const QString& title) {
@@ -6289,9 +6391,7 @@ void MainWindow::configure_dwg_converter() {
         connect(host_box, &QCheckBox::toggled, &dlg, [refresh](bool) { refresh(); });
     }
     connect(browse, &QPushButton::clicked, &dlg, [&dlg, path_edit] {
-        const QString f = QFileDialog::getOpenFileName(&dlg, QStringLiteral("Select DWG converter"),
-                                                       QString(), QString(), nullptr,
-                                                       QFileDialog::DontUseNativeDialog);
+        const QString f = QFileDialog::getOpenFileName(&dlg, QStringLiteral("Select DWG converter"));
         if (!f.isEmpty()) {
             path_edit->setText(f);
         }
@@ -6393,8 +6493,7 @@ bool MainWindow::pump_with_progress(const QString& label, const std::function<bo
 
 void MainWindow::file_import_dwg() {
     const QString dwg = QFileDialog::getOpenFileName(this, QStringLiteral("Import DWG"), QString(),
-                                                     QStringLiteral("DWG (*.dwg)"), nullptr,
-                                                     QFileDialog::DontUseNativeDialog);
+                                                     QStringLiteral("DWG (*.dwg)"));
     if (dwg.isEmpty()) {
         return;
     }
@@ -6428,7 +6527,11 @@ void MainWindow::file_import_dwg() {
     pump_with_progress(QStringLiteral("Loading drawing…"),
                        [this, sv0] { return viewport_->status_version() != sv0; }, 600'000);
     const std::string summary = viewport_->last_status();
-    if (!summary.empty()) {
+    if (!summary.empty() && portal_file_grant(dwg)) {
+        // No log file beside a portal grant (it would be a hidden temporary): the command
+        // line carries the gap catalog instead.
+        command_widget_->append_line("DWG imported via " + conv.program().toStdString() + ": " + summary);
+    } else if (!summary.empty()) {
         const QString log_path = dwg + QStringLiteral(".import.log");
         QFile log(log_path);
         if (log.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
@@ -6452,14 +6555,11 @@ void MainWindow::file_export_dwg() {
         }
     }
     QString dwg = QFileDialog::getSaveFileName(this, QStringLiteral("Export DWG"), QString(),
-                                               QStringLiteral("DWG (*.dwg)"), nullptr,
-                                               QFileDialog::DontUseNativeDialog);
+                                               QStringLiteral("DWG (*.dwg)"));
     if (dwg.isEmpty()) {
         return;
     }
-    if (!dwg.endsWith(QStringLiteral(".dwg"), Qt::CaseInsensitive)) {
-        dwg += QStringLiteral(".dwg");
-    }
+    dwg = save_path_with_extension(dwg, QStringLiteral(".dwg"));
     // Stage 1: the EXISTING exporter writes a temp DXF on the geometry thread.
     const QString tmp = QDir::temp().filePath(QStringLiteral("musacad_dwgout.dxf"));
     QFile::remove(tmp);
@@ -6697,14 +6797,11 @@ void MainWindow::do_plot(const PlotSpec& spec) {
 
     if (spec.target == "PDF") {
         QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Plot to PDF"), QString(),
-                                                    QStringLiteral("PDF (*.pdf)"), nullptr,
-                                                    QFileDialog::DontUseNativeDialog);
+                                                    QStringLiteral("PDF (*.pdf)"));
         if (path.isEmpty()) {
             return;
         }
-        if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) {
-            path += QStringLiteral(".pdf");
-        }
+        path = save_path_with_extension(path, QStringLiteral(".pdf"));
         QString err;
         std::string write_err;
         // write_plot_pdf is the shared device setup + paint_plot call the headless CLI uses;

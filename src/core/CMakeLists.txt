@@ -11,6 +11,7 @@ add_library(musacad_core STATIC
     io/document.cpp
     io/native_format.cpp
     io/dxf.cpp
+    io/external_files.cpp
     text/stroke_font.cpp
     text/mtext.cpp
     text/text_codes.cpp
