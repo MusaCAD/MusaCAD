@@ -351,7 +351,7 @@ TEST_CASE("#27: the ALIGN and LENGTHEN command flows") {
     }
 }
 
-TEST_CASE("#50: ALIGN with one pair moves; a third pair aligns unscaled; the rubber lines") {
+TEST_CASE("#52: ALIGN with one pair moves; a third pair aligns unscaled; the rubber lines") {
     {
         ProcHarness h;
         h.proc.set_selection_count(1);

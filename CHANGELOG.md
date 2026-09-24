@@ -25,10 +25,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   radius, the centre first, and **Continue** (Enter starts tangent from the last line or arc).
   Holding **Ctrl** at a pick draws the other way round, as AutoCAD's prompts say; the rubber
   band shows the arc the click will make.
-- **ALIGN pairs** (#50) -- one pair (Enter at the second source point) moves the objects;
+- **ALIGN pairs** (#52) -- one pair (Enter at the second source point) moves the objects;
   after two pairs `Specify third source point or <continue>:`; a rubber line runs from each
   source point to its destination.
-- **MIRROR keeps text readable** (#50) -- as AutoCAD's default `MIRRTEXT` 0 does: a mirrored
+- **MIRROR keeps text readable** (#52) -- as AutoCAD's default `MIRRTEXT` 0 does: a mirrored
   text lands in the reflected place, turned round and re-justified so it still reads the
   right way; `MIRRTEXT 1` reflects it. **BREAK** takes `@` for a single break point and
   **BREAKATPOINT** asks `Specify break point:` after the selection.
@@ -38,15 +38,15 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `[Offset]` (a distance or Through, along a line, construction line, ray or polyline
   segment), `Enter angle of xline (0) or [Reference]:`, more bisectors from one vertex, and
   XLINE and RAY rubber-band the line the click would make.
-- **OFFSET options** (#49) -- `[Through/Erase/Layer]` at the distance prompt (a value, two
+- **OFFSET options** (#50) -- `[Through/Erase/Layer]` at the distance prompt (a value, two
   points, or Through), the last distance as the default, `[Exit/Undo]` and
   `[Exit/Multiple/Undo]` while offsetting (Multiple steps out from the offset just made),
   one undo step per offset, and the settings echoed at the start and kept for the session.
-- **MOVE and COPY options** (#46) -- `[Displacement]` with the last vector as the default,
+- **MOVE and COPY options** (#47) -- `[Displacement]` with the last vector as the default,
   Enter at the second point using the first point as the displacement, COPY's `[mOde]`
   (Single / Multiple), `[Array]` with `[Fit]`, `[Undo]` and `[Exit]`, and one undo step per
   copy.
-- **FILLET and CHAMFER as AutoCAD runs them** (#48) -- the objects are selected first and
+- **FILLET and CHAMFER as AutoCAD runs them** (#49) -- the objects are selected first and
   the settings are options: `[Undo/Polyline/Radius/Trim/Multiple]` and
   `[Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]`, with the current settings echoed at
   the start and remembered for the session. **Multiple** repeats with one undo step per
