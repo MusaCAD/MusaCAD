@@ -321,10 +321,10 @@ TEST_CASE("#27: EXTEND on an arc with nothing ahead says so") {
 }
 
 // ---------------------------------------------------------------------------
-// #48: the corner operations keep the objects' properties, No trim only adds the
+// #49: the corner operations keep the objects' properties, No trim only adds the
 // arc / bevel, and [Polyline] treats every corner.
 // ---------------------------------------------------------------------------
-TEST_CASE("#48: FILLET and CHAMFER keep the layer of the lines they trim") {
+TEST_CASE("#49: FILLET and CHAMFER keep the layer of the lines they trim") {
     GeometryEngine engine;
     engine.start();
     Layer walls;
@@ -347,7 +347,7 @@ TEST_CASE("#48: FILLET and CHAMFER keep the layer of the lines they trim") {
     engine.stop();
 }
 
-TEST_CASE("#48: No trim keeps the lines and adds only the arc; [Polyline] rounds every corner") {
+TEST_CASE("#49: No trim keeps the lines and adds only the arc; [Polyline] rounds every corner") {
     GeometryEngine engine;
     engine.start();
     engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
@@ -381,7 +381,7 @@ TEST_CASE("#48: No trim keeps the lines and adds only the arc; [Polyline] rounds
     engine.stop();
 }
 
-TEST_CASE("#49: OFFSET Through, Erase source, the current layer, and Multiple from the last offset") {
+TEST_CASE("#50: OFFSET Through, Erase source, the current layer, and Multiple from the last offset") {
     GeometryEngine engine;
     engine.start();
     engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});

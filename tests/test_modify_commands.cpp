@@ -314,7 +314,7 @@ TEST_CASE("LINE: direct distance entry draws along the cursor; Close; Continue f
 }
 
 // ---------------------------------------------------------------------------
-// FILLET / CHAMFER (#48): AutoCAD's prompt order (objects first, the settings as
+// FILLET / CHAMFER (#49): AutoCAD's prompt order (objects first, the settings as
 // options), the remembered settings, Multiple with its own undo step per corner,
 // Undo, Trim / No trim, Polyline, and Shift at the second pick for a sharp corner.
 // ---------------------------------------------------------------------------
@@ -436,7 +436,7 @@ TEST_CASE("CHAMFER: the method is remembered; Angle, mEthod, Trim, Polyline, Und
 }
 
 // ---------------------------------------------------------------------------
-// MOVE / COPY (#46): Displacement, the first point as the displacement, COPY's mode,
+// MOVE / COPY (#47): Displacement, the first point as the displacement, COPY's mode,
 // Array (and Fit), Undo and Exit, every copy its own undo step.
 // ---------------------------------------------------------------------------
 TEST_CASE("MOVE: Displacement, and Enter at the second point uses the first as the vector") {
@@ -526,7 +526,7 @@ TEST_CASE("COPY: Multiple with Undo and Exit, Array and Fit, Single mode") {
 }
 
 // ---------------------------------------------------------------------------
-// OFFSET (#49): the settings echoed, Through / Erase / Layer, a two-point distance,
+// OFFSET (#50): the settings echoed, Through / Erase / Layer, a two-point distance,
 // Exit / Multiple / Undo, every offset its own undo step.
 // ---------------------------------------------------------------------------
 TEST_CASE("OFFSET: options, two-point distance, Multiple steps from the last offset, Undo") {

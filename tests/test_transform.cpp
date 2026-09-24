@@ -187,7 +187,7 @@ TEST_CASE("ROTATE band: the selection turned about the base point; an inactive b
     engine.stop();
 }
 
-TEST_CASE("#50: MIRRTEXT 0 keeps mirrored text readable; 1 reflects it") {
+TEST_CASE("#52: MIRRTEXT 0 keeps mirrored text readable; 1 reflects it") {
     // Across a vertical axis a left-justified, unrotated text is turned round: rotation 0
     // again, now right-justified at the reflected point.
     std::uint8_t j = 0;

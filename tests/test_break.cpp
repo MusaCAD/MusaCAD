@@ -364,7 +364,7 @@ TEST_CASE("#27: BREAKATPOINT selects, then takes the one break point and fires")
     REQUIRE(!h.proc.has_active_command());
 }
 
-TEST_CASE("#50: BREAK @ breaks at the selecting point; BREAKATPOINT asks the point") {
+TEST_CASE("#52: BREAK @ breaks at the selecting point; BREAKATPOINT asks the point") {
     {
         ProcHarness h;
         h.proc.submit_line("BREAK");
