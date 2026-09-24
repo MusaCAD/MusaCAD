@@ -25,6 +25,8 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStackedWidget>
+#include <QStyleOptionToolButton>
+#include <QStylePainter>
 #include <QTabBar>
 #include <QTimer>
 #include <QToolButton>
@@ -35,7 +37,116 @@ namespace musacad::ui {
 namespace {
 constexpr int kFullIcon = 24;
 constexpr int kCompactIcon = 18;
+constexpr int kSmallIcon = 16;
 constexpr int kFullMinW = 52;
+
+/// A ribbon button with AutoCAD's two split shapes. A large split button (icon over its
+/// label) runs its command from the icon and opens its menu from the label, with the chevron
+/// centred under the label; a small one (icon, label beside) keeps the chevron at the right
+/// with the icon and label as the command zone. Qt's own split button is a right-hand strip
+/// with the arrow inside it, which is the wrong shape for both, so this paints the plain
+/// button and places the chevron itself; the click zones follow the same geometry.
+class RibbonButton : public QToolButton {
+public:
+    explicit RibbonButton(QWidget* parent) : QToolButton(parent) {}
+    /// Paint the chevron although no menu is attached (a collapsed panel's button, which
+    /// opens its fly-out rather than a QMenu).
+    void set_always_arrow(bool on) {
+        always_arrow_ = on;
+        updateGeometry();
+        update();
+    }
+
+    [[nodiscard]] QSize sizeHint() const override {
+        QSize s = QToolButton::sizeHint();
+        if (has_arrow() && popupMode() == QToolButton::MenuButtonPopup && menu() != nullptr) {
+            QStyleOptionToolButton opt;
+            initStyleOption(&opt);
+            s.rwidth() -= style()->pixelMetric(QStyle::PM_MenuButtonIndicator, &opt, this);
+        }
+        // Every large button keeps the band under its label, so the labels of a row line up
+        // whether or not a chevron sits in it (AutoCAD's large buttons share one height).
+        if (arrow_under_label()) {
+            s.rheight() += kArrowBand;
+        } else if (has_arrow()) {
+            s.rwidth() += kArrowBand;
+        }
+        return s;
+    }
+    [[nodiscard]] QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    static constexpr int kArrowBand = 11; // room for the 9 px chevron and a gap
+    static constexpr int kArrow = 9;
+
+    [[nodiscard]] bool arrow_under_label() const {
+        return toolButtonStyle() == Qt::ToolButtonTextUnderIcon;
+    }
+    [[nodiscard]] bool has_arrow() const { return always_arrow_ || menu() != nullptr; }
+    /// The part of the button that opens the menu: under a large button's icon (the label and
+    /// the chevron), the chevron's band at the right of a small one.
+    [[nodiscard]] bool in_menu_zone(const QPoint& pos) const {
+        if (arrow_under_label()) {
+            const int lines = static_cast<int>(text().count(QLatin1Char('\n'))) + 1;
+            return pos.y() >= height() - (fontMetrics().height() * lines + kArrowBand + 2);
+        }
+        return pos.x() >= width() - kArrowBand - 3;
+    }
+
+    void mousePressEvent(QMouseEvent* e) override {
+        if (menu() != nullptr && popupMode() == QToolButton::MenuButtonPopup &&
+            e->button() == Qt::LeftButton) {
+            if (in_menu_zone(e->position().toPoint())) {
+                showMenu();
+                return;
+            }
+            // Skip QToolButton's own zone test (Qt's right-hand strip), which would open the
+            // menu from the right edge of the icon.
+            QAbstractButton::mousePressEvent(e);
+            return;
+        }
+        QToolButton::mousePressEvent(e);
+    }
+
+    void paintEvent(QPaintEvent* e) override {
+        const bool has_menu = has_arrow();
+        if (!has_menu && !arrow_under_label()) {
+            QToolButton::paintEvent(e);
+            return;
+        }
+        QStylePainter p(this);
+        QStyleOptionToolButton opt;
+        initStyleOption(&opt);
+        opt.features &= ~(QStyleOptionToolButton::MenuButtonPopup | QStyleOptionToolButton::HasMenu);
+        opt.subControls = QStyle::SC_ToolButton;
+        opt.activeSubControls &= QStyle::SC_ToolButton;
+        // The frame over the whole button, then the icon and label in the part left beside
+        // (or above) the chevron.
+        QStyleOptionToolButton frame = opt;
+        frame.icon = QIcon();
+        frame.text.clear();
+        frame.toolButtonStyle = Qt::ToolButtonIconOnly;
+        p.drawComplexControl(QStyle::CC_ToolButton, frame);
+        QStyleOptionToolButton label = opt;
+        QRect arrow_rect;
+        if (arrow_under_label()) {
+            label.rect.setBottom(label.rect.bottom() - kArrowBand);
+            arrow_rect = QRect(opt.rect.center().x() - kArrow / 2, opt.rect.bottom() - kArrow, kArrow, kArrow);
+        } else {
+            label.rect.setRight(label.rect.right() - kArrowBand);
+            arrow_rect = QRect(opt.rect.right() - kArrow - 2, opt.rect.center().y() - kArrow / 2 + 1, kArrow, kArrow);
+        }
+        p.drawControl(QStyle::CE_ToolButtonLabel, label);
+        if (has_menu) {
+            static const QIcon chevron(QStringLiteral(":/ribbon/chevron-down.svg"));
+            p.drawPixmap(arrow_rect, chevron.pixmap(QSize(kArrow, kArrow),
+                                                    isEnabled() ? QIcon::Normal : QIcon::Disabled));
+        }
+    }
+
+private:
+    bool always_arrow_ = false;
+};
 
 /// A QTabBar that paints a coloured accent stripe along the top edge of contextual tabs
 /// (keyed by their stable page index). QSS `:selected` overrides setTabTextColor, so the
@@ -91,42 +202,199 @@ RibbonPanel::RibbonPanel(const QString& title, QWidget* parent) : QFrame(parent)
     content_->setSpacing(5);
     outer_->addWidget(content_widget_, 1);
 
-    title_label_ = new QLabel(title, this);
+    // The title row: the title (a button once the panel has a slide-out) and, at the
+    // right, the dialog launcher when one is set.
+    title_row_ = new QWidget(this);
+    auto* tl = new QHBoxLayout(title_row_);
+    tl->setContentsMargins(0, 0, 0, 0);
+    tl->setSpacing(0);
+    title_label_ = new QLabel(title, title_row_);
     title_label_->setObjectName(QStringLiteral("RibbonPanelTitle"));
     title_label_->setAlignment(Qt::AlignHCenter);
-    outer_->addWidget(title_label_);
+    tl->addWidget(title_label_, 1);
+    outer_->addWidget(title_row_);
 }
 
 RibbonPanel::~RibbonPanel() {
-    // The popout is parented to the top-level window (so it can overlay below the tab strip),
-    // and the click-outside dismiss installs an app-wide event filter -- neither is owned by
-    // this widget's parent chain, so release both here to avoid a leak / use-after-free.
+    // The popouts are parented to the top-level window (so they can overlay below the tab
+    // strip), and the click-outside dismiss installs an app-wide event filter -- neither is
+    // owned by this widget's parent chain, so release them here to avoid a leak / use-after-free.
     if (filter_on_) {
         qApp->removeEventFilter(this);
         filter_on_ = false;
     }
     delete popout_;
     popout_ = nullptr;
+    delete expander_popout_;
+    expander_popout_ = nullptr;
 }
 
 void RibbonPanel::set_representative_icon(const QIcon& icon) { repr_icon_ = icon; }
 
-QToolButton* RibbonPanel::make_button(const QIcon& icon, const QString& label, bool enabled,
-                                      RibbonTier tier) {
-    auto* btn = new QToolButton(content_widget_);
-    btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+QToolButton* RibbonPanel::make_button_in(QWidget* host, const QIcon& icon, const QString& label,
+                                         bool enabled, RibbonTier tier, bool small) {
+    auto* btn = new RibbonButton(host);
+    const bool text = !small || std::find(icon_only_columns_.begin(), icon_only_columns_.end(), host) ==
+                                    icon_only_columns_.end();
+    btn->setToolButtonStyle(!small ? Qt::ToolButtonTextUnderIcon
+                            : text ? Qt::ToolButtonTextBesideIcon
+                                   : Qt::ToolButtonIconOnly);
     btn->setIcon(icon);
-    btn->setIconSize(QSize(kFullIcon, kFullIcon));
+    btn->setIconSize(QSize(small ? kSmallIcon : kFullIcon, small ? kSmallIcon : kFullIcon));
     btn->setText(label);
     btn->setAutoRaise(true);
     btn->setEnabled(enabled);
-    btn->setMinimumWidth(kFullMinW);
+    btn->setMinimumWidth(small ? 0 : kFullMinW);
     if (!enabled) {
         btn->setToolTip(label + QStringLiteral(" (coming soon)"));
+    } else if (!text) {
+        btn->setToolTip(label); // the label lives in the tooltip; bind() may replace it
     }
-    content_->addWidget(btn);
-    buttons_.push_back({btn, tier});
+    if (QLayout* lay = host->layout(); lay != nullptr) {
+        lay->addWidget(btn);
+    }
+    buttons_.push_back({btn, tier, small, text});
     return btn;
+}
+
+QToolButton* RibbonPanel::make_button(const QIcon& icon, const QString& label, bool enabled,
+                                      RibbonTier tier) {
+    return make_button_in(content_widget_, icon, label, enabled, tier, false);
+}
+
+QWidget* RibbonPanel::add_column_to(QWidget* host, bool icon_only) {
+    auto* col = new QWidget(host);
+    col->setObjectName(QStringLiteral("RibbonColumn"));
+    auto* vl = new QVBoxLayout(col);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(1);
+    vl->setAlignment(Qt::AlignTop);
+    if (QLayout* lay = host->layout(); lay != nullptr) {
+        lay->addWidget(col);
+    }
+    if (host == content_widget_) {
+        columns_.push_back(col);
+    }
+    if (icon_only) {
+        icon_only_columns_.push_back(col);
+    }
+    return col;
+}
+
+QWidget* RibbonPanel::add_column(bool icon_only) { return add_column_to(content_widget_, icon_only); }
+
+QToolButton* RibbonPanel::add_small(QWidget* column, const QIcon& icon, const QString& label,
+                                    bool enabled) {
+    QToolButton* b = make_button_in(column, icon, label, enabled, RibbonTier::Secondary, true);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); // the column's buttons line up
+    return b;
+}
+
+QToolButton* RibbonPanel::add_small_dropdown(QWidget* column, const QIcon& icon, const QString& label,
+                                             QMenu* menu, bool split) {
+    QToolButton* b = add_small(column, icon, label, true);
+    b->setMenu(menu);
+    b->setPopupMode(split ? QToolButton::MenuButtonPopup : QToolButton::InstantPopup);
+    return b;
+}
+
+QToolButton* RibbonPanel::add_button_to(QWidget* host, const QIcon& icon, const QString& label,
+                                        bool enabled, RibbonTier tier) {
+    return make_button_in(host, icon, label, enabled, tier, false);
+}
+
+QToolButton* RibbonPanel::add_dropdown_to(QWidget* host, const QIcon& icon, const QString& label,
+                                          QMenu* menu, bool split, RibbonTier tier) {
+    QToolButton* b = make_button_in(host, icon, label, true, tier, false);
+    b->setMenu(menu);
+    b->setPopupMode(split ? QToolButton::MenuButtonPopup : QToolButton::InstantPopup);
+    return b;
+}
+
+QWidget* RibbonPanel::expander() {
+    if (expander_widget_ != nullptr) {
+        return expander_widget_;
+    }
+    // The slide-out's own row of tools; shown in a frame below the panel on demand.
+    expander_popout_ = new QFrame(window());
+    expander_popout_->setObjectName(QStringLiteral("RibbonPopout"));
+    expander_popout_->setFrameShape(QFrame::StyledPanel);
+    auto* pl = new QVBoxLayout(expander_popout_);
+    pl->setContentsMargins(6, 6, 6, 4);
+    pl->setSpacing(2);
+    expander_widget_ = new QWidget(expander_popout_);
+    auto* row = new QHBoxLayout(expander_widget_);
+    row->setContentsMargins(2, 2, 2, 2);
+    row->setSpacing(5);
+    pl->addWidget(expander_widget_);
+    auto* foot = new QLabel(title_, expander_popout_);
+    foot->setObjectName(QStringLiteral("RibbonPanelTitle"));
+    foot->setAlignment(Qt::AlignHCenter);
+    pl->addWidget(foot);
+    expander_popout_->hide();
+    // The title turns into the arrowed button that opens it.
+    title_button_ = new QToolButton(title_row_);
+    title_button_->setObjectName(QStringLiteral("RibbonPanelTitleButton"));
+    title_button_->setText(title_ + QStringLiteral("  \u25BE"));
+    title_button_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    title_button_->setAutoRaise(true);
+    title_button_->setToolTip(QStringLiteral("More %1 tools").arg(title_));
+    connect(title_button_, &QToolButton::clicked, this, [this] { toggle_expander(); });
+    auto* tl = static_cast<QHBoxLayout*>(title_row_->layout());
+    delete tl->replaceWidget(title_label_, title_button_); // the old item is the caller's to free
+    title_label_->hide();
+    return expander_widget_;
+}
+
+void RibbonPanel::toggle_expander() {
+    if (expander_popout_ == nullptr) {
+        return;
+    }
+    if (expander_popout_->isVisible()) {
+        expander_popout_->hide();
+        return;
+    }
+    if (popout_ != nullptr && popout_->isVisible()) {
+        popout_->hide();
+    }
+    // Below the panel (or its fly-out button when collapsed), in the window's coordinates.
+    expander_popout_->adjustSize();
+    const QWidget* anchor = state_ == PanelState::Collapsed && flyout_btn_ != nullptr
+                                ? static_cast<QWidget*>(flyout_btn_)
+                                : static_cast<QWidget*>(this);
+    const QPoint below = anchor->mapTo(window(), QPoint(0, anchor->height() + 1));
+    int x = below.x();
+    if (expander_popout_->parentWidget() != nullptr) {
+        x = std::min(x, expander_popout_->parentWidget()->width() - expander_popout_->width() - 2);
+        x = std::max(x, 2);
+    }
+    expander_popout_->move(x, below.y());
+    expander_popout_->show();
+    expander_popout_->raise();
+    for (const Btn& b : buttons_) { // a tool used from the slide-out closes it
+        if (b.btn->parentWidget() != nullptr && expander_widget_ != nullptr &&
+            (b.btn->parentWidget() == expander_widget_ || expander_widget_->isAncestorOf(b.btn))) {
+            connect(b.btn, &QToolButton::clicked, expander_popout_, &QFrame::hide, Qt::UniqueConnection);
+        }
+    }
+    if (!filter_on_) {
+        qApp->installEventFilter(this);
+        filter_on_ = true;
+    }
+}
+
+void RibbonPanel::set_dialog_launcher(const QString& tooltip, std::function<void()> open) {
+    if (launcher_btn_ == nullptr) {
+        launcher_btn_ = new QToolButton(title_row_);
+        launcher_btn_->setObjectName(QStringLiteral("RibbonLauncher"));
+        launcher_btn_->setAutoRaise(true);
+        launcher_btn_->setIcon(QIcon(QStringLiteral(":/ribbon/launcher.svg")));
+        launcher_btn_->setIconSize(QSize(9, 9));
+        launcher_btn_->setFixedSize(13, 13);
+        static_cast<QHBoxLayout*>(title_row_->layout())->addWidget(launcher_btn_, 0, Qt::AlignVCenter);
+    }
+    launcher_btn_->setToolTip(tooltip);
+    connect(launcher_btn_, &QToolButton::clicked, this, [open = std::move(open)] { open(); });
 }
 
 QToolButton* RibbonPanel::add_button(const QIcon& icon, const QString& label, RibbonTier tier) {
@@ -150,10 +418,18 @@ void RibbonPanel::add_widget(QWidget* widget) { content_->addWidget(widget); }
 
 void RibbonPanel::style_buttons(bool compact) {
     for (const Btn& b : buttons_) {
-        const bool small = compact && b.tier == RibbonTier::Secondary;
-        b.btn->setToolButtonStyle(small ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextUnderIcon);
-        b.btn->setIconSize(QSize(small ? kCompactIcon : kFullIcon, small ? kCompactIcon : kFullIcon));
-        b.btn->setMinimumWidth(small ? 0 : kFullMinW);
+        if (b.small) {
+            // A column button: the label goes in the Compact state, the 16 px icon stays.
+            b.btn->setToolButtonStyle(compact || !b.text ? Qt::ToolButtonIconOnly
+                                                          : Qt::ToolButtonTextBesideIcon);
+            b.btn->setIconSize(QSize(kSmallIcon, kSmallIcon));
+            b.btn->setMinimumWidth(0);
+            continue;
+        }
+        const bool shrink = compact && b.tier == RibbonTier::Secondary;
+        b.btn->setToolButtonStyle(shrink ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextUnderIcon);
+        b.btn->setIconSize(QSize(shrink ? kCompactIcon : kFullIcon, shrink ? kCompactIcon : kFullIcon));
+        b.btn->setMinimumWidth(shrink ? 0 : kFullMinW);
     }
 }
 
@@ -170,7 +446,7 @@ void RibbonPanel::set_state(PanelState s) {
         content_widget_->setParent(this);
         outer_->insertWidget(0, content_widget_, 1);
         content_widget_->show();
-        title_label_->show();
+        title_row_->show();
         if (flyout_btn_ != nullptr) {
             flyout_btn_->hide();
         }
@@ -179,9 +455,14 @@ void RibbonPanel::set_state(PanelState s) {
     state_ = s;
 
     if (s == PanelState::Collapsed) {
-        title_label_->hide();
+        title_row_->hide();
+        if (expander_popout_ != nullptr) {
+            expander_popout_->hide();
+        }
         if (flyout_btn_ == nullptr) {
-            flyout_btn_ = new QToolButton(this);
+            auto* fly = new RibbonButton(this);
+            fly->set_always_arrow(true); // AutoCAD's collapsed panel shows the chevron too
+            flyout_btn_ = fly;
             flyout_btn_->setObjectName(QStringLiteral("RibbonFlyout"));
             flyout_btn_->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
             flyout_btn_->setIconSize(QSize(kFullIcon, kFullIcon));
@@ -243,6 +524,27 @@ void RibbonPanel::force_settle() {
         flyout_btn_->updateGeometry();
     }
     title_label_->ensurePolished();
+    // A column is a widget with its own layout: its cached size in the content row only refreshes
+    // when the column's geometry is updated, so activate each column's layout in-line too --
+    // otherwise the width measured for a Full panel is the one from before the labels came back.
+    const auto settle = [](QWidget* w) {
+        w->ensurePolished();
+        if (QLayout* wl = w->layout(); wl != nullptr) {
+            wl->invalidate();
+            wl->activate();
+        }
+        w->updateGeometry();
+    };
+    for (QWidget* col : columns_) {
+        // Deepest first: a nested row (the layer tools) must be fresh before its column reads it.
+        const QList<QWidget*> nested = col->findChildren<QWidget*>();
+        for (auto it = nested.rbegin(); it != nested.rend(); ++it) {
+            if ((*it)->layout() != nullptr) {
+                settle(*it);
+            }
+        }
+        settle(col);
+    }
     content_widget_->updateGeometry();
     if (content_ != nullptr) {
         content_->invalidate();
@@ -276,21 +578,34 @@ void RibbonPanel::toggle_popout() {
 }
 
 bool RibbonPanel::eventFilter(QObject* watched, QEvent* event) {
-    if (popout_ != nullptr && popout_->isVisible() && event->type() == QEvent::MouseButtonPress) {
+    if (event->type() == QEvent::MouseButtonPress) {
         const auto* me = static_cast<QMouseEvent*>(event);
         const QPoint gp = me->globalPosition().toPoint();
-        const bool in_popout = popout_->geometry().contains(popout_->parentWidget() != nullptr
-                                                                ? popout_->parentWidget()->mapFromGlobal(gp)
-                                                                : gp);
-        const bool on_flyout = flyout_btn_ != nullptr &&
+        const auto inside = [&](QWidget* w) {
+            return w != nullptr && w->isVisible() &&
+                   w->geometry().contains(w->parentWidget() != nullptr ? w->parentWidget()->mapFromGlobal(gp) : gp);
+        };
+        const bool on_flyout = flyout_btn_ != nullptr && flyout_btn_->isVisible() &&
                                flyout_btn_->rect().contains(flyout_btn_->mapFromGlobal(gp));
-        if (!in_popout && !on_flyout) {
+        const bool on_title = title_button_ != nullptr && title_button_->isVisible() &&
+                              title_button_->rect().contains(title_button_->mapFromGlobal(gp));
+        if (popout_ != nullptr && popout_->isVisible() && !inside(popout_) && !on_flyout &&
+            !inside(expander_popout_)) {
             popout_->hide();
         }
+        if (expander_popout_ != nullptr && expander_popout_->isVisible() && !inside(expander_popout_) &&
+            !on_title) {
+            expander_popout_->hide();
+        }
     }
-    if (event->type() == QEvent::Hide && watched == popout_ && filter_on_) {
-        qApp->removeEventFilter(this);
-        filter_on_ = false;
+    if (event->type() == QEvent::Hide && (watched == popout_ || watched == expander_popout_) && filter_on_) {
+        const bool any_open = (popout_ != nullptr && popout_->isVisible() && watched != popout_) ||
+                              (expander_popout_ != nullptr && expander_popout_->isVisible() &&
+                               watched != expander_popout_);
+        if (!any_open) {
+            qApp->removeEventFilter(this);
+            filter_on_ = false;
+        }
     }
     return QFrame::eventFilter(watched, event);
 }
@@ -313,11 +628,17 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     qat_layout_->setContentsMargins(2, 2, 2, 2);
     qat_layout_->setSpacing(2);
 
+    // The application button sits at the left with the quick-access tools right after it, as
+    // AutoCAD's strip has them; the stretch keeps everything at the left edge when the window is
+    // wide (a button with no fixed policy would otherwise grow across the row).
     app_button_ = new QPushButton(QStringLiteral("Musa CAD"), qat);
     app_button_->setObjectName(QStringLiteral("AppButton"));
     app_button_->setToolTip(QStringLiteral("Application menu"));
+    app_button_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    app_button_->setCursor(Qt::PointingHandCursor);
     qat_layout_->addWidget(app_button_);
     qat_layout_->addSpacing(8);
+    qat_layout_->addStretch(1); // quick-access buttons are inserted before this
     root->addWidget(qat);
 
     tabs_ = new RibbonTabBar(this);
@@ -332,7 +653,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     // with breathing room, so the titles are never clipped and the ribbon doesn't crowd the
     // document tab strip below. (Collapse keeps the row within width, so the horizontal scroll
     // bar -- which would otherwise eat into this height -- only appears when fully collapsed.)
-    pages_->setMinimumHeight(86);
+    pages_->setMinimumHeight(94); // three small rows (or a large button) plus the title row
     root->addWidget(pages_);
 
     // Tab index is decoupled from page (stack) index via tabData -- contextual tabs can
@@ -356,7 +677,7 @@ void RibbonBar::add_qat_action(QAction* action) {
     auto* btn = new QToolButton(this);
     btn->setDefaultAction(action);
     btn->setAutoRaise(true);
-    qat_layout_->addWidget(btn);
+    qat_layout_->insertWidget(qat_layout_->count() - 1, btn); // before the trailing stretch
 }
 
 int RibbonBar::create_page() {

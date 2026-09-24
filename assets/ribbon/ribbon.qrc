@@ -1,90 +1,134 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
   <qresource prefix="/ribbon">
+    <file>align.svg</file>
     <file>arc.svg</file>
     <file>array.svg</file>
+    <file>attdef.svg</file>
+    <file>attedit.svg</file>
+    <file>audit.svg</file>
+    <file>battman.svg</file>
+    <file>blend.svg</file>
+    <file>block.svg</file>
+    <file>break.svg</file>
+    <file>c-coincident.svg</file>
+    <file>c-collinear.svg</file>
+    <file>c-concentric.svg</file>
+    <file>c-equal.svg</file>
+    <file>c-fix.svg</file>
+    <file>c-horizontal.svg</file>
+    <file>c-parallel.svg</file>
+    <file>c-perpendicular.svg</file>
+    <file>c-smooth.svg</file>
+    <file>c-symmetric.svg</file>
+    <file>c-tangent.svg</file>
+    <file>c-vertical.svg</file>
+    <file>calculator.svg</file>
+    <file>centermark.svg</file>
     <file>chamfer.svg</file>
+    <file>chevron-down.svg</file>
     <file>circle.svg</file>
     <file>color-swatch.svg</file>
-    <file>datum.svg</file>
     <file>copy.svg</file>
+    <file>copybase.svg</file>
+    <file>copyclip.svg</file>
+    <file>cut.svg</file>
+    <file>datum.svg</file>
+    <file>delconstraint.svg</file>
     <file>dim-aligned.svg</file>
     <file>dim-angular.svg</file>
+    <file>dim-arc.svg</file>
     <file>dim-diameter.svg</file>
+    <file>dim-jogged.svg</file>
     <file>dim-linear.svg</file>
+    <file>dim-ordinate.svg</file>
     <file>dim-radius.svg</file>
     <file>dim-style.svg</file>
     <file>dim.svg</file>
+    <file>dimbaseline.svg</file>
+    <file>dimcontinue.svg</file>
+    <file>distance.svg</file>
+    <file>divide.svg</file>
+    <file>donut.svg</file>
+    <file>ellipse.svg</file>
     <file>erase.svg</file>
+    <file>explode.svg</file>
     <file>export.svg</file>
     <file>extend.svg</file>
+    <file>field.svg</file>
     <file>fillet.svg</file>
+    <file>find.svg</file>
+    <file>gradient.svg</file>
+    <file>group-select.svg</file>
+    <file>group.svg</file>
     <file>hatch.svg</file>
+    <file>id-point.svg</file>
+    <file>image.svg</file>
+    <file>imageclip.svg</file>
+    <file>imageframe.svg</file>
     <file>import.svg</file>
     <file>insert.svg</file>
     <file>join.svg</file>
+    <file>launcher.svg</file>
+    <file>layer-current.svg</file>
+    <file>layer-freeze.svg</file>
+    <file>layer-iso.svg</file>
+    <file>layer-off.svg</file>
     <file>layer-props.svg</file>
     <file>layers.svg</file>
     <file>leader.svg</file>
+    <file>lengthen.svg</file>
     <file>line.svg</file>
+    <file>list.svg</file>
     <file>ltscale.svg</file>
     <file>lwt.svg</file>
     <file>matchprop.svg</file>
+    <file>measure.svg</file>
     <file>mirror.svg</file>
     <file>move.svg</file>
     <file>mtext.svg</file>
     <file>new.svg</file>
     <file>offset.svg</file>
     <file>open.svg</file>
+    <file>overkill.svg</file>
+    <file>pagesetup.svg</file>
+    <file>pan.svg</file>
+    <file>parameters.svg</file>
+    <file>paste.svg</file>
     <file>plot.svg</file>
-    <file>polyline.svg</file>
-    <file>properties.svg</file>
-    <file>rectangle.svg</file>
-    <file>redo.svg</file>
-    <file>rotate.svg</file>
-    <file>saveas.svg</file>
-    <file>save.svg</file>
-    <file>scale.svg</file>
-    <file>settings.svg</file>
-    <file>text.svg</file>
-    <file>trim.svg</file>
-    <file>undo.svg</file>
-    <file>zoom-extents.svg</file>
-    <file>zoom.svg</file>
-    <file>chevron-down.svg</file>
-    <file>dimbaseline.svg</file>
-    <file>dimcontinue.svg</file>
-    <file>list.svg</file>
-    <file>measure.svg</file>
     <file>point.svg</file>
     <file>polygon.svg</file>
-    <file>break.svg</file>
-    <file>align.svg</file>
+    <file>polyline.svg</file>
+    <file>preview.svg</file>
+    <file>properties.svg</file>
     <file>purge.svg</file>
-    <file>revcloud.svg</file>
-    <file>xline.svg</file>
-    <file>ellipse.svg</file>
-    <file>spline.svg</file>
-    <file>dim-ordinate.svg</file>
-    <file>dim-jogged.svg</file>
-    <file>dim-arc.svg</file>
-    <file>donut.svg</file>
-    <file>view.svg</file>
-    <file>group.svg</file>
-    <file>ungroup.svg</file>
-    <file>block.svg</file>
+    <file>quick-select.svg</file>
     <file>ray.svg</file>
-    <file>explode.svg</file>
-    <file>lengthen.svg</file>
-    <file>divide.svg</file>
+    <file>rectangle.svg</file>
+    <file>redo.svg</file>
+    <file>refedit.svg</file>
+    <file>region.svg</file>
+    <file>revcloud.svg</file>
+    <file>rotate.svg</file>
+    <file>save.svg</file>
+    <file>saveas.svg</file>
+    <file>scale.svg</file>
+    <file>settings.svg</file>
+    <file>spline.svg</file>
     <file>stretch.svg</file>
     <file>table.svg</file>
+    <file>text-style.svg</file>
+    <file>text.svg</file>
     <file>tolerance.svg</file>
-    <file>attdef.svg</file>
-    <file>attedit.svg</file>
-    <file>battman.svg</file>
-    <file>refedit.svg</file>
-    <file>xref.svg</file>
+    <file>trim.svg</file>
+    <file>undo.svg</file>
+    <file>ungroup.svg</file>
+    <file>view.svg</file>
     <file>vports.svg</file>
+    <file>wipeout.svg</file>
+    <file>xline.svg</file>
+    <file>xref.svg</file>
+    <file>zoom-extents.svg</file>
+    <file>zoom.svg</file>
   </qresource>
 </RCC>

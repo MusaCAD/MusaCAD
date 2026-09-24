@@ -209,6 +209,10 @@ struct RenderSnapshot {
     std::vector<ColorBatch> point_batches;
     std::vector<Layer> layers;
     std::uint16_t current_layer = 0;
+    /// The current entity properties (SetCurrentPropsCommand): the colour / linetype /
+    /// lineweight a fresh object gets, ByLayer or an override (the layer field is the
+    /// current layer).
+    EntityProps current_props{};
     std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)

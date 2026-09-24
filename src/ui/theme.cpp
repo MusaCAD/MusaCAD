@@ -117,7 +117,7 @@ QTabBar#RibbonTabs::tab {
 QTabBar#RibbonTabs::tab:selected {
     background: #3f3f3f;
     color: #ffffff;
-    border-bottom: 2px solid #4a90d9;
+    border-bottom: 2px solid #0bd1b5; /* the mark's teal */
 }
 QTabBar#RibbonTabs::tab:hover:!selected { color: #ffffff; }
 QWidget#RibbonPage { background: #3f3f3f; }
@@ -138,6 +138,20 @@ QLabel#RibbonPanelTitle {
     padding-top: 1px;
     qproperty-alignment: AlignCenter;
 }
+/* The title of a panel with a slide-out ("Draw ▾"): the same text, clickable. */
+QToolButton#RibbonPanelTitleButton {
+    color: #8e9298;
+    font-size: 10px;
+    background: transparent;
+    border: none;
+    padding: 0px 2px;
+}
+QToolButton#RibbonPanelTitleButton:hover { color: #ffffff; background: #4d5562; border-radius: 2px; }
+/* The dialog launcher at the right of a title. */
+QToolButton#RibbonLauncher { background: transparent; border: none; padding: 0px; }
+QToolButton#RibbonLauncher:hover { background: #4d5562; border-radius: 2px; }
+/* A column of small buttons lines its labels up. */
+QWidget#RibbonColumn QToolButton { text-align: left; }
 QFrame#RibbonPanel QToolButton, QFrame#RibbonPopout QToolButton {
     background: transparent;
     border: 1px solid transparent;
@@ -149,32 +163,20 @@ QFrame#RibbonPanel QToolButton, QFrame#RibbonPopout QToolButton {
 }
 QFrame#RibbonPanel QToolButton:hover:enabled, QFrame#RibbonPopout QToolButton:hover:enabled {
     background: #4d5562;
-    border: 1px solid #4a90d9;
+    border: 1px solid #0bd1b5;
 }
 QFrame#RibbonPanel QToolButton:pressed:enabled, QFrame#RibbonPopout QToolButton:pressed:enabled {
-    background: #3a6ea5;
+    background: #1d5b57;
+}
+QFrame#RibbonPanel QToolButton:checked, QFrame#RibbonPopout QToolButton:checked {
+    background: #1d5b57;
+    border: 1px solid #0bd1b5;
 }
 QFrame#RibbonPanel QToolButton:disabled, QFrame#RibbonPopout QToolButton:disabled {
     color: #6f6f6f;
 }
-/* Dropdown / split buttons: a small chevron at the bottom-right instead of the default
-   full-height sunken menu-button strip (which looked like an odd black bar). */
-QFrame#RibbonPanel QToolButton::menu-button, QFrame#RibbonPopout QToolButton::menu-button {
-    background: transparent;
-    border: none;
-    /* no width override -- the default menu-button width IS counted in the button sizeHint,
-       so the collapse measurement stays accurate. */
-}
-QFrame#RibbonPanel QToolButton::menu-arrow, QFrame#RibbonPopout QToolButton::menu-arrow,
-QFrame#RibbonPanel QToolButton::menu-indicator, QFrame#RibbonPopout QToolButton::menu-indicator {
-    image: url(:/ribbon/chevron-down.svg);
-    width: 9px;
-    height: 9px;
-    subcontrol-origin: padding;
-    subcontrol-position: bottom right;
-    bottom: 2px;
-    right: 2px;
-}
+/* Dropdown / split buttons paint their own chevron (RibbonButton in ribbon_bar.cpp): under
+   the label of a large button, at the right of a small one -- AutoCAD's two shapes. */
 
 /* ----- File / layout tab rows ----- */
 QTabBar#FileTabs::tab, QTabBar#LayoutTabs::tab {

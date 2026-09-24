@@ -40,6 +40,36 @@ CommandProcessor::CommandProcessor(CommandSink sink, ViewControl* view, CommandO
     show_ready();
 }
 
+void CommandProcessor::start_macro(const std::string& alias, std::vector<std::string> tokens) {
+    macro_.clear();
+    macro_waiting_ = false;
+    start_command(alias);
+    if (!active_) {
+        return; // the command ended at once (or the alias is unknown): nothing to feed
+    }
+    macro_.assign(tokens.begin(), tokens.end());
+    run_macro();
+}
+
+void CommandProcessor::run_macro() {
+    // Feed tokens until one asks to wait for the user, the queue empties, or the
+    // command ends (a rejected token ends the macro too: the prompt then stands as is).
+    while (active_ && !macro_.empty()) {
+        const std::string token = macro_.front();
+        macro_.pop_front();
+        if (token == "\\") {
+            macro_waiting_ = true;
+            return;
+        }
+        active_->input(*this, token);
+        finalize_if_done();
+    }
+    if (!active_) {
+        macro_.clear();
+        macro_waiting_ = false;
+    }
+}
+
 void CommandProcessor::submit_line(const std::string& text) {
     // History: record every non-empty submitted line (newest last) so the bottom bar
     // AND the on-canvas command-entry box recall from one place. Reset the recall
@@ -54,6 +84,13 @@ void CommandProcessor::submit_line(const std::string& text) {
     if (active_) {
         active_->input(*this, text);
         finalize_if_done();
+        if (macro_waiting_ && active_) {
+            macro_waiting_ = false; // the user's input released the macro: feed on
+            run_macro();
+        } else if (!active_) {
+            macro_.clear();
+            macro_waiting_ = false;
+        }
         return;
     }
 
@@ -68,6 +105,8 @@ void CommandProcessor::submit_line(const std::string& text) {
 }
 
 void CommandProcessor::cancel() {
+    macro_.clear();
+    macro_waiting_ = false;
     if (active_) {
         active_->cancel(*this);
         active_.reset();

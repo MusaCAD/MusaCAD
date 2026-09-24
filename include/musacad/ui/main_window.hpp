@@ -13,6 +13,7 @@
 #include <QString>
 
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/properties_palette.hpp"
 #include "musacad/ui/qt_image_decoder.hpp"
 #include "musacad/ui/plot.hpp"
 #include "musacad/ui/viewport_modes.hpp"
@@ -224,6 +225,9 @@ private:
     [[nodiscard]] QString active_doc_path() const; ///< the active document's native path ("")
     [[nodiscard]] QString active_doc_name() const; ///< the active document's display name
     void build_ribbon();
+    /// The ribbon's Properties controls (ribbon_layout.cpp): apply a pick, mirror the state.
+    void apply_property_combo(core::PropertyId id, int index);
+    void refresh_property_combos(bool force = false);
     void build_contextual_tabs();   ///< Hatch/Text/Block editor tabs (shown reactively)
     void sync_ribbon_context();     ///< re-evaluate contextual-tab predicates on selection change
     QWidget* build_central();
@@ -400,6 +404,9 @@ private:
     bool tick_constrained_pending_ = false;
     QString coord_text_shown_;
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
+    QComboBox* color_combo_ = nullptr;      // ribbon Properties panel: colour / linetype /
+    QComboBox* linetype_combo_ = nullptr;   // lineweight of the selection, or the current
+    QComboBox* lineweight_combo_ = nullptr; // entity properties when nothing is selected
 
     ViewportModes modes_;
     QAction* osnap_action_ = nullptr;

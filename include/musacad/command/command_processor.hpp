@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -40,6 +41,14 @@ public:
 
     /// Cancels the active command (ESC).
     void cancel();
+
+    /// Starts `alias` and feeds it `tokens` the way an AutoCAD ribbon macro does: each
+    /// token is submitted as a typed line, and the token "\\" (a backslash) waits for the
+    /// user's next input before the rest goes on -- so "Circle > 2-Point" is {"2P"} and
+    /// "Arc > Start, Center, End" is {"\\", "C"}. The queue empties when the command ends
+    /// or is cancelled.
+    void start_macro(const std::string& alias, std::vector<std::string> tokens);
+    [[nodiscard]] bool macro_pending() const noexcept { return !macro_.empty(); }
 
     /// Delivers a cursor pick (a viewport click). `snap` is the active OSNAP
     /// point if any (it wins over `world`). For a selection command (ERASE) this
@@ -196,6 +205,9 @@ private:
 
     std::unique_ptr<ICommand> active_;
     std::optional<core::Vec2> last_point_;
+    std::deque<std::string> macro_;  ///< tokens still to feed (start_macro)
+    bool macro_waiting_ = false;     ///< the next user input releases the macro
+    void run_macro();
     std::optional<LastSegment> last_segment_;
     bool ctrl_held_ = false;
     bool shift_held_ = false;

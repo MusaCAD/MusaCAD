@@ -536,3 +536,37 @@ TEST_CASE("MATCHPROP copies CELTSCALE (universal) between dashing entities") {
     }));
     engine.stop();
 }
+
+// ---------------------------------------------------------------------------
+// The current entity properties (CECOLOR / CELTYPE / CELWEIGHT): what a fresh object
+// is drawn with, published for the ribbon's Properties panel, reset by a new drawing.
+// ---------------------------------------------------------------------------
+TEST_CASE("SetCurrentPropsCommand: a fresh object takes the current overrides; a new drawing resets them") {
+    GeometryEngine engine;
+    engine.start();
+    EntityProps cur;
+    cur.set_color_by_layer(false);
+    cur.color = Rgb{255, 0, 0};
+    cur.set_linetype_by_layer(false);
+    cur.linetype = Linetype::Dashed;
+    engine.submit(SetCurrentPropsCommand{cur});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return !s.current_props.color_by_layer() && s.current_props.color == Rgb{255, 0, 0} &&
+               !s.current_props.linetype_by_layer() && s.current_props.linetype == Linetype::Dashed;
+    }));
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        const PropertyField* col = nullptr;
+        for (const PropertyField& f : s.selection_summary.fields) {
+            if (f.id == PropertyId::Color) {
+                col = &f;
+            }
+        }
+        return s.selection.size() == 1 && col != nullptr && !col->value.flag && col->value.color == Rgb{255, 0, 0};
+    }));
+    // A setting, not an edit: the drawing is not marked modified by it alone.
+    engine.submit(NewDocumentCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty() && s.current_props.color_by_layer(); }));
+    engine.stop();
+}

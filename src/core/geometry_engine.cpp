@@ -119,7 +119,9 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
     // A fresh draw (props unset) lands on the current layer, fully ByLayer; a
     // captured/restored/transformed entity carries its exact props. The apply logic
     // is shared with the grip-preview path via core::add_command_to_store.
-    EntityProps fresh{store_.current_layer()};
+    // The current entity properties (CECOLOR / CELTYPE / CELWEIGHT) on the current layer.
+    EntityProps fresh = current_props_;
+    fresh.layer = store_.current_layer();
     fresh.set_space(store_.active_space()); // a new object belongs to the space being edited
     return add_command_to_store(store_, add_command, fresh);
 }
@@ -7195,6 +7197,9 @@ void GeometryEngine::apply(const Command& command) {
                 apply_offset_cmd(c);
             } else if constexpr (std::is_same_v<T, SetMirrtextCommand>) {
                 mirrtext_ = c.mirror_text;
+            } else if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
+                current_props_ = c.current;
+                current_props_.layer = 0; // the current layer applies at creation
             } else if constexpr (std::is_same_v<T, XlineOffsetCommand>) {
                 apply_xline_offset(c);
             } else if constexpr (std::is_same_v<T, XlineReferenceCommand>) {
@@ -7820,6 +7825,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, StretchPreviewCommand> || // rubber band only
                 std::is_same_v<T, TransformPreviewCommand> || // rubber band only
                 std::is_same_v<T, SetMirrtextCommand> || // a setting, not an edit
+                std::is_same_v<T, SetCurrentPropsCommand> ||
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
@@ -7887,6 +7893,7 @@ void GeometryEngine::reset_active_state() {
     forget_stretch_windows();
     stretch_preview_active_ = false;
     transform_preview_active_ = false;
+    current_props_ = EntityProps{};
 }
 
 void GeometryEngine::new_document() {
@@ -7921,6 +7928,7 @@ void GeometryEngine::park_active(DocState& d) {
     d.stretch_preview_delta = stretch_preview_delta_;
     d.transform_preview_active = transform_preview_active_;
     d.transform_preview = transform_preview_;
+    d.current_props = current_props_;
 }
 
 void GeometryEngine::load_active(DocState& d) {
@@ -7952,6 +7960,7 @@ void GeometryEngine::load_active(DocState& d) {
     stretch_preview_delta_ = d.stretch_preview_delta;
     transform_preview_active_ = d.transform_preview_active;
     transform_preview_ = d.transform_preview;
+    current_props_ = d.current_props;
 }
 
 std::size_t GeometryEngine::doc_index(std::uint64_t id) const {
@@ -8110,6 +8119,8 @@ void GeometryEngine::rebuild_and_publish() {
     // rebuild (e.g. SetCurrentLayer), so publish them fresh from the store.
     buf.layers.assign(store_.layers().begin(), store_.layers().end());
     buf.current_layer = store_.current_layer();
+    buf.current_props = current_props_;
+    buf.current_props.layer = store_.current_layer();
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
