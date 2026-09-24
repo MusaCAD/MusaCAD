@@ -457,6 +457,30 @@ button dropdown).
 
 ## Ribbon (responsive + contextual)
 
+The ribbon follows AutoCAD's Drafting & Annotation workspace: the same tabs, panels,
+groupings and shapes, over Musa CAD's commands. A tool Musa CAD does not have yet stands
+in AutoCAD's place as a disabled button (its issue is linked from the audit issues).
+
+| Tab | Panels (large tools; stacked small tools; slide-out behind the title's ▾) |
+|---|---|
+| **Home** | **Draw**: Line, Polyline, Circle ▾ (Center-Radius, Center-Diameter, 2-Point, 3-Point, Tan Tan Radius, Tan Tan Tan), Arc ▾ (the eleven methods); Rectangle ▾ (Polygon), Ellipse ▾ (Center, Axis End, Elliptical Arc), Hatch ▾ (Gradient); slide-out: Revision Cloud, Wipeout, Donut, Spline ▾ (Fit / CV), Point ▾ (Multiple Points, Divide, Measure), Polygon, Construction Line, Ray, Region. **Modify**: Move, Copy, Stretch / Rotate, Mirror, Scale / Trim ▾ (Extend), Fillet ▾ (Chamfer), Array ▾ (Rectangular, Path, Polar) / Erase, Explode, Offset; slide-out: Lengthen, Edit Polyline, Break, Break at Point, Join, Align, Match Properties, Blend Curves, Delete Duplicate Objects. **Annotation**: Text ▾ (Multiline, Single Line), Dimension; Linear ▾ (Aligned, Angular, Arc Length, Radius, Diameter, Jogged, Ordinate), Leader ▾, Table; slide-out: Dimension Style, Text Style, Edit Text, Continue, Baseline, Tolerance; launcher: Dimension Style. **Layers**: Layer Properties, the current layer, Off / Isolate / Freeze / Make Current. **Block**: Insert; Create ▾ (Write Block), Edit, Edit Attributes ▾. **Properties**: Match Properties; the colour, linetype and lineweight controls (the selection's, or the current entity properties for new objects); slide-out: Linetype Scale, List, Lineweight Display; launcher: the Properties palette. **Groups**: Group; Ungroup, Group Edit, Group Selection On/Off. **Utilities**: Measure ▾ (Distance, Area, ID Point, List); Quick Select, Quick Calculator, ID Point. **Clipboard**: Paste; Cut, Copy Clip, Copy with Base Point |
+| **Insert** | Block; Block Definition; Reference (Attach ▾ Xref / Image, Clip, Frames ▾, External References ▾); Import ▾; Data (Field, Table, Update Fields, Data Link) |
+| **Annotate** | Text (Multiline Text ▾, Text Style, Edit Text, Find Text); Dimensions (Dimension, Linear ▾, Continue ▾, Dimension Style; slide-out Tolerance, Datum, Center Mark); Leaders; Tables; Markup (Revision Cloud, Wipeout) |
+| **Parametric** | Geometric, Dimensional, Manage -- AutoCAD's constraint tools, all placeholders (#70) |
+| **View** | Navigate 2D (Zoom ▾: Extents, All, In, Out, Scale; Pan); Named Views ▾ (Save, Restore, Delete, List; New View); Model Viewports (Viewport Configuration ▾, Named, Join); Palettes (Properties, Layer Properties, Tool Palettes) |
+| **Manage** | Cleanup (Purge, Audit); Customization (User Interface, Tool Palettes) |
+| **Output** | Plot (Plot, Batch Plot, Preview, Page Setup Manager); Export ▾ (DXF, DWG, PDF), DWG Setup |
+
+The application menu on the Musa mark carries New, Open, Save, Save As, Import, Export,
+Plot, DWG Setup, About and Exit; the Quick Access Toolbar beside it has New, Open, Save,
+Save As, Undo, Redo and Plot. A large split button (Circle ▾) runs its command from the
+icon and opens its menu from the label; a small one (Rotate ▾) opens the menu from the
+chevron at its right. A method entry such as "Circle ▸ 2-Point" runs the command and
+feeds it the option (AutoCAD's ribbon macros). Home's stacked tools are bare icons with
+the names in their tooltips, as in AutoCAD; panels collapse in three stages as the window
+narrows (labels off the small tools, then a fly-out per panel), and the Musa palette
+(navy, orange, teal) marks the active tab, hover and pressed states.
+
 The ribbon is registry-driven (icons + tooltips from each command's registration) and
 **responsive**: as the window narrows, panels degrade FULL → COMPACT (secondary buttons
 become icon-only) → COLLAPSED (the panel folds to one fly-out button that pops out the full

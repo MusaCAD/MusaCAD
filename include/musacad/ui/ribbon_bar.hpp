@@ -74,6 +74,33 @@ public:
     /// Adds an arbitrary widget (e.g. the current-layer combo); treated as Primary.
     void add_widget(QWidget* widget);
 
+    /// A column of up to three SMALL buttons (16 px icon, label beside it), the way
+    /// AutoCAD stacks Rectangle / Ellipse / Hatch beside the large Draw buttons or lays
+    /// the whole Modify panel out. In the Compact state the labels go and the icons stay.
+    /// `icon_only` keeps the labels off even in the Full state (AutoCAD shows most of Home's
+    /// columns -- Rectangle / Ellipse / Hatch, Trim / Fillet / Array, the layer tools -- as
+    /// bare icons; the label stays in the tooltip).
+    QWidget* add_column(bool icon_only = false);
+    QToolButton* add_small(QWidget* column, const QIcon& icon, const QString& label,
+                           bool enabled = true);
+    QToolButton* add_small_dropdown(QWidget* column, const QIcon& icon, const QString& label,
+                                    QMenu* menu, bool split);
+
+    /// The slide-out: the extra tools AutoCAD keeps behind the panel title's arrow
+    /// ("Draw ▾"). Returns the row the caller fills with add_*_to(); the title becomes a
+    /// button that drops the row out below the panel and a click elsewhere closes it.
+    QWidget* expander();
+    /// Buttons for the slide-out (or any host row): the same three shapes as above.
+    QToolButton* add_button_to(QWidget* host, const QIcon& icon, const QString& label,
+                               bool enabled = true, RibbonTier tier = RibbonTier::Primary);
+    QToolButton* add_dropdown_to(QWidget* host, const QIcon& icon, const QString& label,
+                                 QMenu* menu, bool split, RibbonTier tier = RibbonTier::Primary);
+    QWidget* add_column_to(QWidget* host, bool icon_only = false);
+
+    /// The small arrow at the right of the title that opens a dialog (AutoCAD's dialog
+    /// launcher, as on Properties or Annotation).
+    void set_dialog_launcher(const QString& tooltip, std::function<void()> open);
+
     void set_priority(int p) { priority_ = p; }
     [[nodiscard]] int priority() const { return priority_; }
     void set_representative_icon(const QIcon& icon);
@@ -87,6 +114,9 @@ protected:
 private:
     QToolButton* make_button(const QIcon& icon, const QString& label, bool enabled,
                              RibbonTier tier);
+    QToolButton* make_button_in(QWidget* host, const QIcon& icon, const QString& label,
+                                bool enabled, RibbonTier tier, bool small);
+    void toggle_expander();
     void style_buttons(bool compact); // Full/popout = false, Compact = true
     void toggle_popout();             // show/hide the collapsed fly-out panel
     void force_settle();              // make this panel's sizeHint accurate IN-LINE (see .cpp)
@@ -94,7 +124,12 @@ private:
     QVBoxLayout* outer_ = nullptr;
     QWidget* content_widget_ = nullptr;
     QHBoxLayout* content_ = nullptr;
+    QWidget* title_row_ = nullptr;
     QLabel* title_label_ = nullptr;
+    QToolButton* title_button_ = nullptr;   ///< replaces the label once a slide-out exists
+    QToolButton* launcher_btn_ = nullptr;
+    QWidget* expander_widget_ = nullptr;    ///< the slide-out's row of tools
+    QFrame* expander_popout_ = nullptr;     ///< the slide-out shown below the panel
     QString title_;
     QIcon repr_icon_;
     int priority_ = 50;
@@ -103,8 +138,12 @@ private:
     struct Btn {
         QToolButton* btn;
         RibbonTier tier;
+        bool small = false; ///< a column button: 16 px icon, label beside; Compact drops the label
+        bool text = true;   ///< false: the label never shows (an icon-only column)
     };
     std::vector<Btn> buttons_;
+    std::vector<QWidget*> columns_;           ///< the in-line columns (settled with the buttons)
+    std::vector<QWidget*> icon_only_columns_; ///< columns whose small buttons stay icon-only
 
     // Collapsed: a fly-out button + a child-widget popout that hosts the (reparented)
     // content widget inline below the tab strip (captureable; click-outside dismisses).

@@ -807,6 +807,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         {
             std::scoped_lock lock(layers_mutex_);
             layers_ = snap.layers;
+            current_props_ = snap.current_props;
             named_views_ = snap.named_views;
             units_ = snap.units;
             text_styles_ = snap.text_styles;

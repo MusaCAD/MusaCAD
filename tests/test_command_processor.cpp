@@ -544,3 +544,38 @@ TEST_CASE("Processor: CIRCLE [Diameter] option -> radius = diameter/2") {
     REQUIRE(c->center == Vec2{0.0, 0.0});
     REQUIRE(c->radius == Approx(25.0));
 }
+
+// ---------------------------------------------------------------------------
+// Ribbon macros (start_macro): the tokens a ribbon entry feeds its command, with "\"
+// waiting for the user's next input -- AutoCAD's macro convention.
+// ---------------------------------------------------------------------------
+TEST_CASE("start_macro feeds a command its option tokens, waiting where told") {
+    Harness h;
+    // Circle > 2-Point: the option goes in at once; the two points come from the user.
+    h.proc.start_macro("C", {"2P"});
+    REQUIRE(h.proc.has_active_command());
+    REQUIRE(!h.proc.macro_pending());
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("10,0");
+    const auto* circle = std::get_if<musacad::core::AddCircleCommand>(&h.cmds.back());
+    REQUIRE(circle != nullptr);
+    REQUIRE(circle->radius == Approx(5.0));
+
+    // Arc > Start, Center, End: the start point comes from the user, then "C" goes in.
+    h.proc.start_macro("A", {"\\", "C"});
+    REQUIRE(h.proc.macro_pending());
+    h.proc.submit_line("10,0"); // the start point releases the macro: "C" is fed
+    REQUIRE(!h.proc.macro_pending());
+    REQUIRE(h.proc.preview().kind == PreviewKind::Segment); // now awaiting the centre
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("0,20");
+    const auto* arc = std::get_if<musacad::core::AddArcCommand>(&h.cmds.back());
+    REQUIRE(arc != nullptr);
+    REQUIRE(arc->radius == Approx(10.0));
+
+    // Esc drops what a macro still had to feed.
+    h.proc.start_macro("A", {"\\", "C", "\\", "A"});
+    h.proc.cancel();
+    REQUIRE(!h.proc.macro_pending());
+    REQUIRE(!h.proc.has_active_command());
+}

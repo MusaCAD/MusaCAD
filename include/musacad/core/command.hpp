@@ -488,6 +488,16 @@ struct SetMirrtextCommand {
     bool mirror_text = false;
 };
 
+/// The current entity properties (AutoCAD's CECOLOR / CELTYPE / CELWEIGHT): what a fresh
+/// object is drawn with -- ByLayer by default, or an override -- on top of the current
+/// layer. The layer and space fields of `props` are ignored (the store's current ones
+/// apply). A setting, not an edit: neither undoable nor a modification of the drawing.
+/// (Named `current`, not `props`: the property visitors treat a `props` member as an add
+/// command's optional properties.)
+struct SetCurrentPropsCommand {
+    EntityProps current;
+};
+
 /// Offset the entity nearest `pick` by `distance` toward `side`.
 struct OffsetPickCommand {
     Vec2 pick;
@@ -1306,7 +1316,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

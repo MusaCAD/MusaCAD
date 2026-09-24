@@ -13,6 +13,7 @@ add_library(musacad_ui STATIC
     plot.cpp
     plot_dialog.cpp
     ribbon_bar.cpp
+    ribbon_layout.cpp
     command_icons.cpp
     theme.cpp
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/properties_panel.hpp"

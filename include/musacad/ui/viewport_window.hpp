@@ -217,6 +217,12 @@ public:
     }
 
     /// The published layer table + current layer (for the Layer Manager / combo).
+    /// The current entity properties (colour / linetype / lineweight of new objects), as
+    /// last published.
+    [[nodiscard]] core::EntityProps current_props() const {
+        std::scoped_lock lock(layers_mutex_);
+        return current_props_;
+    }
     [[nodiscard]] std::vector<core::Layer> layers() const {
         std::scoped_lock lock(layers_mutex_);
         return layers_;
@@ -613,6 +619,7 @@ private:
     // Published layer table + current layer (for the Layer Manager / ribbon combo).
     mutable std::mutex layers_mutex_;
     std::vector<core::Layer> layers_;
+    core::EntityProps current_props_{};
     std::atomic<std::uint16_t> current_layer_{0};
 
     // Engine command-result status, copied from the published snapshot.

@@ -15,6 +15,22 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   bevel takes the objects' layer when both share it.
 
 ### Added
+- **The ribbon laid out as AutoCAD's** -- the Drafting & Annotation tabs (Home, Insert,
+  Annotate, Parametric, View, Manage, Output), their panels and groupings: large tools with
+  stacked small ones, drop-downs under the labels (Circle ▾ with its six methods, Arc ▾ with
+  its eleven, Linear ▾ with the dimension kinds, Zoom ▾ …), slide-outs behind the panel
+  titles ("Draw ▾"), dialog launchers, and the file operations in the application menu on
+  the Musa mark. The buttons take AutoCAD's two split shapes: a large one runs its command
+  from the icon and opens its menu from the label, with the chevron under it; a small one
+  keeps the chevron at its right. Home's stacked tools (Rectangle, Ellipse, Hatch; Trim,
+  Fillet, Array; the layer, block, group, utility and clipboard tools) show as bare icons
+  with their names in the tooltips, as AutoCAD lays them out, so the whole Home tab fits
+  a 1500 px window. The Properties panel gains the colour, linetype and lineweight
+  controls, which edit the selection or, with nothing selected, set what new objects are
+  drawn with (the current entity properties). Tools Musa CAD lacks stand in AutoCAD's
+  place as disabled buttons whose tooltips say so; the collapse behaviour and the
+  contextual tabs are unchanged. The application button and the Quick Access Toolbar sit
+  at the left of the strip.
 - **Download ODA File Converter** -- DWG Setup (and the message shown when a DWG has no
   converter) can fetch the free converter from the Open Design Alliance into Musa CAD's
   own data directory, after you accept its terms, and set it up; "Remove downloaded"
