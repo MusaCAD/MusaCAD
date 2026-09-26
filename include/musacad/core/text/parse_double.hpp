@@ -42,7 +42,12 @@ inline ParsedDouble parse_double(const char* begin, const char* end, double& out
     if (begin == end || *begin == '+' || *begin == ' ' || *begin == '\t') {
         return ParsedDouble{begin, false};
     }
+#if defined(_MSC_VER)
+    // The MSVC CRT spells the per-call locale API with a leading underscore.
+    static const _locale_t c_locale = _create_locale(LC_ALL, "C");
+#else
     static const locale_t c_locale = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
+#endif
     char small[96];
     std::string big;
     const char* text = nullptr;
@@ -56,7 +61,11 @@ inline ParsedDouble parse_double(const char* begin, const char* end, double& out
         text = big.c_str();
     }
     char* stop = nullptr;
+#if defined(_MSC_VER)
+    const double v = _strtod_l(text, &stop, c_locale);
+#else
     const double v = strtod_l(text, &stop, c_locale);
+#endif
     if (stop == text) {
         return ParsedDouble{begin, false};
     }
