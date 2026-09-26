@@ -579,7 +579,7 @@ void MainWindow::build_ribbon() {
     {
         QWidget* col = util->add_column(/*icon_only=*/true);
         small(util, col, QStringLiteral("Quick Select"), "QSELECT", "quick-select");
-        todo_small(util, col, QStringLiteral("Quick Calculator"), "calculator");
+        small(util, col, QStringLiteral("Quick Calculator"), "QUICKCALC", "calculator");
         small(util, col, QStringLiteral("ID Point"), "ID", "id-point");
     }
 

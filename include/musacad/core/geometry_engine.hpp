@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <functional>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <stop_token>
@@ -157,6 +158,8 @@ private:
         std::vector<Command> oops;
         bool pickstyle_hatch = false;
         double current_celtscale = 1.0;
+        bool timer_on = true;
+        double timer_seconds = 0.0;
     };
     struct DocMeta {
         std::uint64_t id = 0;
@@ -268,8 +271,17 @@ private:
     Clipboard clipboard_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;
     void apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group);
-    void apply_area_query(Vec2 at, double radius);
-    void apply_list_query(Vec2 at, double radius);
+    void apply_area_query(const AreaQueryCommand& c);
+    [[nodiscard]] std::string list_geometry(EntityHandle h) const;
+    [[nodiscard]] std::string list_block(EntityHandle h) const;
+    void apply_measure_query(const MeasureQueryCommand& c);
+    void apply_massprop();
+    void apply_time(std::uint8_t op);
+    void apply_status(const std::string& modes);
+    /// Fold the time this document has been active into its total editing time.
+    void tick_edit_time();
+    [[nodiscard]] DrawingTimes current_times() const;
+    void apply_list_query(const ListQueryCommand& c);
     void apply_stretch(Vec2 delta, std::uint64_t group);
     /// CIRCLE Ttr / Tan, Tan, Tan: the objects under the picks, the tangent circle.
     void apply_circle_tangent(const AddCircleTangentCommand& c);
@@ -409,6 +421,11 @@ private:
     std::vector<Command> oops_;                                ///< the last ERASE's objects
     bool pickstyle_hatch_ = false;                             ///< PICKSTYLE bit 2
     double current_celtscale_ = 1.0;                           ///< CELTSCALE
+    double area_total_ = 0.0;                                  ///< AREA Add / Subtract
+    std::chrono::steady_clock::time_point activated_at_ = std::chrono::steady_clock::now();
+    bool timer_on_ = true;                                     ///< TIME's elapsed timer
+    double timer_base_ = 0.0;                                  ///< seconds before the timer's start
+    std::chrono::steady_clock::time_point timer_started_at_ = std::chrono::steady_clock::now();
     std::vector<Vec2> preview_lines_;                          ///< SELECTIONPREVIEW drag set
     std::vector<RenderSnapshot::PickCandidate> pick_candidates_;
     std::uint64_t pick_candidates_version_ = 0;

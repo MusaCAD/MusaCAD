@@ -354,13 +354,27 @@ CommandRegistry CommandRegistry::make_default() {
 
     // --- Inquiry (issue #30) ---
     reg({"DI", "DIST"}, [] { return std::make_unique<DistCommand>(); },
-        "assets/ribbon/measure.svg", "Measure the distance and angle between two points.");
+        "assets/ribbon/measure.svg", "Measure the distance and angle between two points, or along several (Multiple points).");
     reg({"ID"}, [] { return std::make_unique<IdCommand>(); }, "assets/ribbon/measure.svg",
         "Report the coordinates of a point.");
     reg({"AA", "AREA"}, [] { return std::make_unique<AreaCommand>(); },
-        "assets/ribbon/measure.svg", "Report the area and perimeter of an object.");
+        "assets/ribbon/measure.svg", "The area and perimeter of an object or of picked points (Arc, Length, Undo), with Add and Subtract running totals.");
     reg({"LI", "LIST"}, [] { return std::make_unique<ListCommand>(); },
-        "assets/ribbon/list.svg", "List an object's type, layer and defining parameters.");
+        "assets/ribbon/list.svg", "List the selected objects: kind, layer, space, handle, properties, geometry, area and perimeter.");
+    reg({"MEA", "MEASUREGEOM"}, [] { return std::make_unique<MeasureGeomCommand>(); },
+        "assets/ribbon/measure.svg", "Measure Distance, Radius, Angle, ARea or Volume, or click objects in Quick mode.");
+    reg({"MASSPROP"}, [] { return std::make_unique<MassPropCommand>(); }, "assets/ribbon/measure.svg",
+        "The area, perimeter, bounding box, centroid, moments of inertia and radii of gyration of closed shapes.");
+    reg({"TIME"}, [] { return std::make_unique<TimeCommand>(); }, "",
+        "The current time, the drawing's creation and last-saved times, the total editing time and the elapsed timer.");
+    reg({"STATUS"}, [] { return std::make_unique<StatusCommand>(); }, "",
+        "The drawing's object count, extents, drafting modes and current settings.");
+    reg({"CAL"}, [] { return std::make_unique<CalCommand>(false); }, "assets/ribbon/calculator.svg",
+        "Evaluate an expression: arithmetic, sin/cos/tan, sqrt, [x,y] points, dist, ang, vec, cvunit.");
+    reg({"QC", "QUICKCALC"}, [] { return std::make_unique<CalCommand>(true); }, "assets/ribbon/calculator.svg",
+        "The calculator palette: a number pad, scientific functions and unit conversion.");
+    reg({"DWGPROPS"}, [] { return std::make_unique<DwgPropsCommand>(); }, "",
+        "The drawing's properties: title, subject, author, keywords, comments and custom fields, with its statistics.");
 
     reg({"S", "STRETCH"}, [] { return std::make_unique<StretchCommand>(); },
         "assets/ribbon/stretch.svg",

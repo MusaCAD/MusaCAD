@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(MusaCAD
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "Modern cross-platform multi-threaded 2D/3D CAD engine"
     LANGUAGES CXX)
 

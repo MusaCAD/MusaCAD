@@ -273,6 +273,11 @@ private:
     void open_purge_dialog();
     /// UNITS: the Drawing Units dialog (length, angle, insertion scale, direction).
     void open_units_dialog();
+    /// QUICKCALC: the calculator palette (modeless; CAL's expressions, a number pad,
+    /// scientific functions, unit conversion, paste to the command line).
+    void open_quickcalc_dialog();
+    /// DWGPROPS: General, Summary, Statistics and Custom.
+    void open_dwgprops_dialog();
     [[nodiscard]] core::MatchPropFilter read_match_filter() const;
     void write_match_filter(const core::MatchPropFilter& f);
 

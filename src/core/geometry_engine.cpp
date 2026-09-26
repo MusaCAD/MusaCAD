@@ -16,7 +16,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cctype>
+#include <chrono>
+#include <ctime>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -1832,52 +1833,62 @@ void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t
     report(baseline ? "Baseline dimension added." : "Continued dimension added.");
 }
 
-void GeometryEngine::apply_area_query(Vec2 at, double radius) {
-    const EntityHandle h = pick_nearest(at, radius);
-    if (!store_.is_valid(h)) {
-        report("AREA: no object found at that point.");
-        return;
+void GeometryEngine::apply_area_query(const AreaQueryCommand& c) {
+    if (c.reset) {
+        area_total_ = 0.0;
     }
-    // Circles and arcs have exact closed forms; everything else is measured from the
-    // SAME tessellation the renderer draws, so the reported area matches what is on
-    // screen rather than an independent approximation.
-    if (h.kind == EntityKind::Circle) {
-        const CircleData* c = store_.circle(h);
-        const double r = c->radius;
-        report("Area = " + fmt_len(kPi * r * r) + ",  Circumference = " + fmt_len(kTwoPi * r));
-        return;
-    }
-    std::vector<Vec2> pts;
-    kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
-    if (pts.size() < 2) {
-        report("AREA: that object has no measurable extent.");
-        return;
-    }
-    bool closed = distance(pts.front(), pts.back()) < 1e-9;
-    if (h.kind == EntityKind::Polyline) {
-        const PolylineData* pl = store_.polyline(h);
-        closed = closed || pl->closed;
-    }
-    if (closed) {
-        report("Area = " + fmt_len(std::abs(shoelace(pts))) + ",  Perimeter = " +
-               fmt_len(path_length(pts, true)));
+    double area = 0.0;
+    double length = 0.0;
+    const char* length_word = "Perimeter";
+    if (c.from_points) {
+        area = c.points_area;
+        length = c.points_perimeter;
     } else {
-        // An open path has no area; saying so is better than reporting the area of the
-        // polygon you would get by closing it, which is what the number would mean.
-        report("Length = " + fmt_len(path_length(pts, false)) + "  (open object -- no area)");
+        const EntityHandle h = pick_nearest(c.at, c.pick_radius);
+        if (!store_.is_valid(h)) {
+            report("AREA: no object found at that point.");
+            return;
+        }
+        // Circles have an exact closed form; everything else is measured from the SAME
+        // tessellation the renderer draws, so the reported area matches what is on screen.
+        if (h.kind == EntityKind::Circle) {
+            const double r = store_.circle(h)->radius;
+            area = kPi * r * r;
+            length = kTwoPi * r;
+            length_word = "Circumference";
+        } else {
+            std::vector<Vec2> pts;
+            kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+            if (pts.size() < 2) {
+                report("AREA: that object has no measurable extent.");
+                return;
+            }
+            bool closed = distance(pts.front(), pts.back()) < 1e-9;
+            if (h.kind == EntityKind::Polyline) {
+                closed = closed || store_.polyline(h)->closed;
+            }
+            // An open object is measured as if closed by a line from its end to its
+            // start (AutoCAD's rule), and its own length is reported as Length.
+            area = std::abs(shoelace(pts));
+            length = path_length(pts, closed);
+            if (!closed) {
+                length_word = "Length";
+            }
+        }
     }
+    std::string msg = "Area = " + fmt_len(area) + ",  " + length_word + " = " + fmt_len(length);
+    if (c.height > 0.0) {
+        msg += "\nVolume = " + fmt_len(area * c.height);
+    }
+    if (c.mode != 0) {
+        area_total_ += c.mode > 0 ? area : -area;
+        msg += "\nTotal area = " + fmt_len(area_total_);
+    }
+    report(msg);
 }
 
-void GeometryEngine::apply_list_query(Vec2 at, double radius) {
-    const EntityHandle h = pick_nearest(at, radius);
-    if (!store_.is_valid(h)) {
-        report("LIST: no object found at that point.");
-        return;
-    }
-    const EntityProps* pr = store_.props(h);
-    const std::string layer =
-        pr != nullptr && pr->layer < store_.layers().size() ? store_.layers()[pr->layer].name : "?";
-    std::string out = std::string(kind_name(h.kind)) + "  on layer \"" + layer + "\"";
+std::string GeometryEngine::list_geometry(EntityHandle h) const {
+    std::string out;
     switch (h.kind) {
     case EntityKind::Ellipse: {
         const EllipseData* e = store_.ellipse(h);
@@ -1981,6 +1992,446 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
     default:
         break;
     }
+    return out;
+}
+
+std::string GeometryEngine::list_block(EntityHandle h) const {
+    // AutoCAD's LIST block: the kind and layer, the space, the handle, the properties,
+    // then the geometry one item per line, and the area and perimeter of a closed shape.
+    const EntityProps* pr = store_.props(h);
+    const std::string layer =
+        pr != nullptr && pr->layer < store_.layers().size() ? store_.layers()[pr->layer].name : "?";
+    std::string kind = kind_name(h.kind);
+    for (char& ch : kind) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    std::string out = "                  " + kind + "      Layer: \"" + layer + "\"";
+    std::string space = "Model space";
+    if (pr != nullptr && pr->space() != 0) {
+        space = "Paper space";
+        for (const Layout& l : store_.layouts()) {
+            if (l.id == pr->space()) {
+                space += " (" + l.name + ")";
+            }
+        }
+    }
+    out += "\n                            Space: " + space;
+    char handle[32];
+    std::snprintf(handle, sizeof(handle), "%x%x", static_cast<unsigned>(h.kind), static_cast<unsigned>(h.index));
+    out += "\n                            Handle = " + std::string(handle);
+    if (pr != nullptr) {
+        const std::string color = pr->color_by_layer() ? "BYLAYER"
+                                                       : std::to_string(pr->color.r) + "," + std::to_string(pr->color.g) + "," +
+                                                             std::to_string(pr->color.b);
+        static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
+        const auto lti = static_cast<std::size_t>(pr->linetype);
+        const std::string ltype = pr->linetype_by_layer() ? "BYLAYER" : (lti < 4 ? kLt[lti] : "Continuous");
+        char lw[32];
+        std::snprintf(lw, sizeof(lw), "%.2f mm", pr->lineweight / 100.0);
+        out += "\n                            Color: " + color + "    Linetype: " + ltype +
+               "    Lineweight: " + (pr->lineweight_by_layer() ? std::string("BYLAYER") : std::string(lw));
+        if (std::abs(store_.celtscale(h) - 1.0) > 1e-12) {
+            out += "    Linetype scale: " + fmt_len(store_.celtscale(h));
+        }
+        if (pr->hidden()) {
+            out += "    (hidden)";
+        }
+    }
+    // The geometry, one item per line.
+    const std::string geom = list_geometry(h);
+    std::size_t pos = 0;
+    while (pos < geom.size()) {
+        const std::size_t next = geom.find(",  ", pos);
+        const std::string item = geom.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+        if (!item.empty()) {
+            out += "\n             " + item;
+        }
+        if (next == std::string::npos) {
+            break;
+        }
+        pos = next + 3;
+    }
+    // Area and perimeter of what encloses something.
+    if (h.kind == EntityKind::Circle) {
+        const double r = store_.circle(h)->radius;
+        out += "\n             area " + fmt_len(kPi * r * r) + ",  circumference " + fmt_len(kTwoPi * r);
+    } else if (h.kind == EntityKind::Polyline || h.kind == EntityKind::Ellipse || h.kind == EntityKind::Spline ||
+               h.kind == EntityKind::Hatch) {
+        std::vector<Vec2> pts;
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+        if (pts.size() >= 2) {
+            bool closed = distance(pts.front(), pts.back()) < 1e-9;
+            if (h.kind == EntityKind::Polyline) {
+                closed = closed || store_.polyline(h)->closed;
+            }
+            if (closed) {
+                out += "\n             area " + fmt_len(std::abs(shoelace(pts))) + ",  perimeter " + fmt_len(path_length(pts, true));
+            } else {
+                out += "\n             length " + fmt_len(path_length(pts, false));
+            }
+        }
+    } else if (h.kind == EntityKind::Line) {
+        const LineData* l = store_.line(h);
+        const Vec2 d = l->b - l->a;
+        out += "\n             Length = " + fmt_len(length(d)) + ",  Angle in XY Plane = " + fmt_ang(std::atan2(d.y, d.x)) +
+               "\n             Delta X = " + fmt_len(d.x) + ",  Delta Y = " + fmt_len(d.y) + ",  Delta Z = " + fmt_len(0.0);
+    } else if (h.kind == EntityKind::Arc) {
+        const ArcData* a = store_.arc(h);
+        std::vector<Vec2> pts;
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+        out += "\n             length " + fmt_len(path_length(pts, false)) + ",  included angle " +
+               fmt_ang(std::fmod(a->end_angle - a->start_angle + kTwoPi * 2.0, kTwoPi));
+    }
+    return out;
+}
+
+void GeometryEngine::apply_list_query(const ListQueryCommand& c) {
+    std::vector<EntityHandle> targets;
+    if (c.selection) {
+        prune_selection();
+        targets = selection_;
+    } else if (const EntityHandle h = pick_nearest(c.at, c.pick_radius); store_.is_valid(h)) {
+        targets.push_back(h);
+    }
+    if (targets.empty()) {
+        report(c.selection ? "LIST: nothing selected." : "LIST: no object found at that point.");
+        return;
+    }
+    std::string out;
+    for (const EntityHandle h : targets) {
+        if (!out.empty()) {
+            out += "\n";
+        }
+        out += list_block(h);
+    }
+    report(out);
+}
+
+void GeometryEngine::apply_measure_query(const MeasureQueryCommand& c) {
+    const EntityHandle h = pick_nearest(c.at, c.pick_radius);
+    if (!store_.is_valid(h)) {
+        report("MEASUREGEOM: no object found at that point.");
+        return;
+    }
+    if (c.what == 0) {
+        if (h.kind == EntityKind::Circle) {
+            const double r = store_.circle(h)->radius;
+            report("Radius = " + fmt_len(r) + "\nDiameter = " + fmt_len(2.0 * r));
+        } else if (h.kind == EntityKind::Arc) {
+            const double r = store_.arc(h)->radius;
+            report("Radius = " + fmt_len(r) + "\nDiameter = " + fmt_len(2.0 * r));
+        } else {
+            report("Select an arc or circle.");
+        }
+        return;
+    }
+    if (c.what == 1) {
+        if (h.kind == EntityKind::Arc) {
+            const ArcData* a = store_.arc(h);
+            report("Angle = " + fmt_ang(std::fmod(a->end_angle - a->start_angle + kTwoPi * 2.0, kTwoPi)));
+            return;
+        }
+        if (h.kind != EntityKind::Line) {
+            report("Select a line, arc, circle, or polyline segment.");
+            return;
+        }
+        const EntityHandle h2 = pick_nearest(c.at2, c.pick_radius);
+        if (!store_.is_valid(h2) || h2.kind != EntityKind::Line) {
+            report("Select a second line.");
+            return;
+        }
+        const LineData* l1 = store_.line(h);
+        const LineData* l2 = store_.line(h2);
+        const Vec2 d1 = l1->b - l1->a;
+        const Vec2 d2 = l2->b - l2->a;
+        const double len = length(d1) * length(d2);
+        if (len < 1e-12) {
+            report("The lines have no length.");
+            return;
+        }
+        const double cosang = std::clamp((d1.x * d2.x + d1.y * d2.y) / len, -1.0, 1.0);
+        report("Angle = " + fmt_ang(std::acos(cosang)));
+        return;
+    }
+    // Quick: the object's own measurements.
+    std::string out;
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store_.line(h);
+        const Vec2 d = l->b - l->a;
+        out = "Length = " + fmt_len(length(d)) + ",  Angle = " + fmt_ang(std::atan2(d.y, d.x));
+        break;
+    }
+    case EntityKind::Circle: {
+        const double r = store_.circle(h)->radius;
+        out = "Radius = " + fmt_len(r) + ",  Diameter = " + fmt_len(2.0 * r) + ",  Area = " + fmt_len(kPi * r * r) +
+              ",  Circumference = " + fmt_len(kTwoPi * r);
+        break;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store_.arc(h);
+        std::vector<Vec2> pts;
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+        out = "Radius = " + fmt_len(a->radius) + ",  Length = " + fmt_len(path_length(pts, false)) + ",  Angle = " +
+              fmt_ang(std::fmod(a->end_angle - a->start_angle + kTwoPi * 2.0, kTwoPi));
+        break;
+    }
+    default: {
+        std::vector<Vec2> pts;
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+        if (pts.size() < 2) {
+            out = std::string(kind_name(h.kind)) + ": nothing to measure.";
+            break;
+        }
+        bool closed = distance(pts.front(), pts.back()) < 1e-9;
+        if (h.kind == EntityKind::Polyline) {
+            closed = closed || store_.polyline(h)->closed;
+        }
+        out = closed ? "Area = " + fmt_len(std::abs(shoelace(pts))) + ",  Perimeter = " + fmt_len(path_length(pts, true))
+                     : "Length = " + fmt_len(path_length(pts, false));
+        break;
+    }
+    }
+    report(out);
+}
+
+void GeometryEngine::apply_massprop() {
+    // The area properties of every closed shape selected (circles, closed polylines,
+    // ellipses, closed splines): AutoCAD's MASSPROP block for regions, from the polygon
+    // integrals over the same tessellation the renderer draws.
+    prune_selection();
+    double A = 0.0;
+    double per = 0.0;
+    double Mx = 0.0;  // first moments
+    double My = 0.0;
+    double Ixx = 0.0; // second moments about the origin
+    double Iyy = 0.0;
+    double Ixy = 0.0;
+    Vec2 lo{1e300, 1e300};
+    Vec2 hi{-1e300, -1e300};
+    int shapes = 0;
+    std::vector<Vec2> pts;
+    for (const EntityHandle h : selection_) {
+        pts.clear();
+        kernel_.tessellate(store_, h, kDefaultTessTolerance * 0.25, pts);
+        if (pts.size() < 3) {
+            continue;
+        }
+        bool closed = distance(pts.front(), pts.back()) < 1e-9 || h.kind == EntityKind::Circle;
+        if (h.kind == EntityKind::Polyline) {
+            closed = closed || store_.polyline(h)->closed;
+        }
+        if (!closed) {
+            continue;
+        }
+        if (distance(pts.front(), pts.back()) < 1e-9) {
+            pts.pop_back();
+        }
+        double a = 0.0;
+        double mx = 0.0;
+        double my = 0.0;
+        double ixx = 0.0;
+        double iyy = 0.0;
+        double ixy = 0.0;
+        for (std::size_t k = 0; k < pts.size(); ++k) {
+            const Vec2 p = pts[k];
+            const Vec2 q = pts[(k + 1) % pts.size()];
+            const double cross = p.x * q.y - q.x * p.y;
+            a += cross;
+            mx += (p.x + q.x) * cross;
+            my += (p.y + q.y) * cross;
+            ixx += (p.y * p.y + p.y * q.y + q.y * q.y) * cross;
+            iyy += (p.x * p.x + p.x * q.x + q.x * q.x) * cross;
+            ixy += (p.x * q.y + 2.0 * p.x * p.y + 2.0 * q.x * q.y + q.x * p.y) * cross;
+            lo.x = std::min(lo.x, p.x);
+            lo.y = std::min(lo.y, p.y);
+            hi.x = std::max(hi.x, p.x);
+            hi.y = std::max(hi.y, p.y);
+        }
+        const double sign = a < 0.0 ? -1.0 : 1.0; // orientation-free
+        A += sign * a / 2.0;
+        Mx += sign * mx / 6.0;
+        My += sign * my / 6.0;
+        Ixx += sign * ixx / 12.0;
+        Iyy += sign * iyy / 12.0;
+        Ixy += sign * ixy / 24.0;
+        per += path_length(pts, true);
+        ++shapes;
+    }
+    if (shapes == 0 || A < 1e-12) {
+        report("MASSPROP: select closed objects (circles, closed polylines, ellipses or closed splines).");
+        return;
+    }
+    const double cx = Mx / A;
+    const double cy = My / A;
+    const double Ixx_c = Ixx - A * cy * cy;
+    const double Iyy_c = Iyy - A * cx * cx;
+    const double Ixy_c = Ixy - A * cx * cy;
+    const double avg = (Ixx_c + Iyy_c) / 2.0;
+    const double diff = (Ixx_c - Iyy_c) / 2.0;
+    const double rad = std::sqrt(diff * diff + Ixy_c * Ixy_c);
+    const double I1 = avg + rad;
+    const double I2 = avg - rad;
+    const double theta = 0.5 * std::atan2(-2.0 * Ixy_c, Ixx_c - Iyy_c);
+    const auto f = [this](double v) { return fmt_len(v); };
+    std::string out = "----------------   REGIONS   ----------------";
+    out += "\nArea:                    " + f(A);
+    out += "\nPerimeter:               " + f(per);
+    out += "\nBounding box:         X: " + f(lo.x) + "  --  " + f(hi.x);
+    out += "\n                      Y: " + f(lo.y) + "  --  " + f(hi.y);
+    out += "\nCentroid:             X: " + f(cx);
+    out += "\n                      Y: " + f(cy);
+    out += "\nMoments of inertia:   X: " + f(Ixx);
+    out += "\n                      Y: " + f(Iyy);
+    out += "\nProduct of inertia:  XY: " + f(Ixy);
+    out += "\nRadii of gyration:    X: " + f(std::sqrt(Ixx / A));
+    out += "\n                      Y: " + f(std::sqrt(Iyy / A));
+    out += "\nPrincipal moments and X-Y directions about centroid:";
+    out += "\n                      I: " + f(I1) + " along [" + f(std::cos(theta)) + " " + f(std::sin(theta)) + "]";
+    out += "\n                      J: " + f(I2) + " along [" + f(-std::sin(theta)) + " " + f(std::cos(theta)) + "]";
+    report(out);
+}
+
+namespace {
+std::string local_time_text(std::int64_t epoch) {
+    if (epoch <= 0) {
+        return "unknown";
+    }
+    const std::time_t t = static_cast<std::time_t>(epoch);
+    std::tm tmv{};
+#ifdef _WIN32
+    localtime_s(&tmv, &t);
+#else
+    localtime_r(&t, &tmv);
+#endif
+    char buf[96];
+    std::strftime(buf, sizeof(buf), "%A, %B %d, %Y %I:%M:%S %p", &tmv);
+    return buf;
+}
+std::string duration_text(double seconds) {
+    const auto total = static_cast<long long>(std::max(0.0, seconds));
+    const long long days = total / 86400;
+    const long long h = (total % 86400) / 3600;
+    const long long m = (total % 3600) / 60;
+    const long long sec = total % 60;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%lld days %02lld:%02lld:%02lld", days, h, m, sec);
+    return buf;
+}
+std::int64_t now_epoch() {
+    return static_cast<std::int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+} // namespace
+
+void GeometryEngine::tick_edit_time() {
+    const auto now = std::chrono::steady_clock::now();
+    DrawingTimes t = store_.times();
+    t.edit_seconds += std::chrono::duration<double>(now - activated_at_).count();
+    if (t.created == 0) {
+        t.created = now_epoch();
+    }
+    store_.set_times(t);
+    activated_at_ = now;
+}
+
+DrawingTimes GeometryEngine::current_times() const {
+    DrawingTimes t = store_.times();
+    t.edit_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - activated_at_).count();
+    if (t.created == 0) {
+        t.created = now_epoch();
+    }
+    return t;
+}
+
+void GeometryEngine::apply_time(std::uint8_t op) {
+    tick_edit_time();
+    const auto now = std::chrono::steady_clock::now();
+    const double timer = timer_base_ + (timer_on_ ? std::chrono::duration<double>(now - timer_started_at_).count() : 0.0);
+    if (op == 1) {
+        if (!timer_on_) {
+            timer_on_ = true;
+            timer_started_at_ = now;
+        }
+    } else if (op == 2) {
+        if (timer_on_) {
+            timer_base_ = timer;
+            timer_on_ = false;
+        }
+    } else if (op == 3) {
+        timer_base_ = 0.0;
+        timer_started_at_ = now;
+    }
+    const double shown = op == 3 ? 0.0 : (op == 2 ? timer_base_ : timer);
+    const DrawingTimes t = store_.times();
+    std::string out = "Current time:             " + local_time_text(now_epoch());
+    out += "\nTimes for this drawing:";
+    out += "\n  Created:                " + local_time_text(t.created);
+    out += "\n  Last updated:           " + (t.updated > 0 ? local_time_text(t.updated) : std::string("never saved"));
+    out += "\n  Total editing time:     " + duration_text(t.edit_seconds);
+    out += std::string("\n  Elapsed timer (") + (timer_on_ ? "on" : "off") + "):     " + duration_text(shown);
+    out += "\n  Next automatic save in: <no automatic save>";
+    report(out);
+}
+
+void GeometryEngine::apply_status(const std::string& modes) {
+    const std::string name = active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].name : "Drawing";
+    std::string out = std::to_string(store_.live_count()) + " objects in " + name;
+    Vec2 lo{1e300, 1e300};
+    Vec2 hi{-1e300, -1e300};
+    bool any = false;
+    for (const EntityHandle h : all_live()) {
+        Vec2 a;
+        Vec2 b;
+        const EntityProps* p = store_.props(h);
+        if (p == nullptr || p->space() != store_.active_space()) {
+            continue;
+        }
+        if (entity_aabb(store_, h, a, b)) {
+            lo.x = std::min(lo.x, a.x);
+            lo.y = std::min(lo.y, a.y);
+            hi.x = std::max(hi.x, b.x);
+            hi.y = std::max(hi.y, b.y);
+            any = true;
+        }
+    }
+    const bool paper = store_.active_space() != 0;
+    out += std::string("\n") + (paper ? "Paper" : "Model") + " space limits are    not set";
+    if (any) {
+        out += std::string("\n") + (paper ? "Paper" : "Model") + " space uses          X: " + fmt_len(lo.x) + "  Y: " + fmt_len(lo.y);
+        out += "\n                          X: " + fmt_len(hi.x) + "  Y: " + fmt_len(hi.y);
+    } else {
+        out += std::string("\n") + (paper ? "Paper" : "Model") + " space uses          nothing yet";
+    }
+    out += "\nInsertion base is         X: " + fmt_len(0.0) + "  Y: " + fmt_len(0.0) + "  Z: " + fmt_len(0.0);
+    if (!modes.empty()) {
+        out += "\n" + modes;
+    }
+    std::string space = "Model space";
+    if (paper) {
+        space = "Paper space";
+        for (const Layout& l : store_.layouts()) {
+            if (l.id == store_.active_space()) {
+                space += " (" + l.name + ")";
+            }
+        }
+    }
+    out += "\nCurrent space:            " + space;
+    const Layer* cur = store_.layer(store_.current_layer());
+    out += "\nCurrent layer:            \"" + (cur != nullptr ? cur->name : std::string("0")) + "\"";
+    const EntityProps& cp = current_props_;
+    out += "\nCurrent color:            " + (cp.color_by_layer() ? std::string("BYLAYER") : std::to_string(cp.color.r) + "," + std::to_string(cp.color.g) + "," + std::to_string(cp.color.b));
+    static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
+    const auto lti = static_cast<std::size_t>(cp.linetype);
+    out += "\nCurrent linetype:         " + (cp.linetype_by_layer() ? std::string("BYLAYER") : std::string(lti < 4 ? kLt[lti] : "Continuous"));
+    char lw[32];
+    std::snprintf(lw, sizeof(lw), "%.2f mm", cp.lineweight / 100.0);
+    out += "\nCurrent lineweight:       " + (cp.lineweight_by_layer() ? std::string("BYLAYER") : std::string(lw));
+    out += "\nCurrent linetype scale:   " + fmt_len(store_.ltscale()) + "  (objects: " + fmt_len(current_celtscale_) + ")";
+    out += "\nCurrent elevation:        " + fmt_len(0.0) + "  thickness:  " + fmt_len(0.0);
+    out += "\nUnits:                    " + std::string(units::linear_name(store_.units().linear)) + ", " +
+           units::angular_name(store_.units().angular) + ", insertion " + units::insunits_name(store_.units().insunits);
+    out += std::string("\nDrawing changed since last save: ") + (dirty_ ? "yes" : "no");
     report(out);
 }
 
@@ -8159,9 +8610,22 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 apply_chain_dimension(c.at, c.baseline, c.group);
             } else if constexpr (std::is_same_v<T, AreaQueryCommand>) {
-                apply_area_query(c.at, c.pick_radius);
+                apply_area_query(c);
             } else if constexpr (std::is_same_v<T, ListQueryCommand>) {
-                apply_list_query(c.at, c.pick_radius);
+                apply_list_query(c);
+            } else if constexpr (std::is_same_v<T, MeasureQueryCommand>) {
+                apply_measure_query(c);
+            } else if constexpr (std::is_same_v<T, MassPropQueryCommand>) {
+                apply_massprop();
+            } else if constexpr (std::is_same_v<T, TimeCommand>) {
+                apply_time(c.op);
+            } else if constexpr (std::is_same_v<T, StatusQueryCommand>) {
+                apply_status(c.modes);
+            } else if constexpr (std::is_same_v<T, SetDrawingPropsCommand>) {
+                store_.set_drawing_props(c.summary);
+                dirty_ = true;
+                geom_dirty_ = true; // republish so the dialog sees them
+                report("Drawing properties updated.");
             } else if constexpr (std::is_same_v<T, StretchSelectionCommand>) {
                 apply_stretch(c.delta, c.group);
             } else if constexpr (std::is_same_v<T, MoveSelectionCommand>) {
@@ -8299,6 +8763,12 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, MatchPropApplyCommand>) {
                 apply_match_apply(c.point, c.radius, c.filter, c.group);
             } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
+                if (!c.dxf) {
+                    tick_edit_time(); // TIME: the total editing time and the last-saved time go in the file
+                    DrawingTimes t = store_.times();
+                    t.updated = now_epoch();
+                    store_.set_times(t);
+                }
                 const io::Document doc = io::document_from_store(store_);
                 const io::IoResult r =
                     c.dxf ? io::save_dxf(doc, c.path) : io::save_native(doc, c.path);
@@ -8811,6 +9281,9 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, SelectHandleCommand> || std::is_same_v<T, SelectPreviewCommand> ||
                 std::is_same_v<T, SelectSimilarCommand> || std::is_same_v<T, SelectFilterCommand> ||
                 std::is_same_v<T, ListGroupsCommand> || // read-only
+                std::is_same_v<T, AreaQueryCommand> || std::is_same_v<T, ListQueryCommand> ||
+                std::is_same_v<T, MeasureQueryCommand> || std::is_same_v<T, MassPropQueryCommand> ||
+                std::is_same_v<T, TimeCommand> || std::is_same_v<T, StatusQueryCommand> ||
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
@@ -8844,6 +9317,12 @@ void GeometryEngine::load_document_replace(const Command& command) {
     store_.clear();
     grid_.clear();
     io::populate_store(store_, doc);
+    activated_at_ = std::chrono::steady_clock::now(); // TIME counts from here
+    if (store_.times().created == 0) {
+        DrawingTimes t = store_.times();
+        t.created = now_epoch();
+        store_.set_times(t);
+    }
     reload_all_xrefs(); // an XREF shows what its file holds now
     for (const EntityHandle h : all_live()) {
         Vec2 lo;
@@ -8895,10 +9374,18 @@ void GeometryEngine::reset_active_state() {
     purge_cache_valid_ = false;
     any_hidden_ = false;
     current_celtscale_ = 1.0;
+    area_total_ = 0.0;
+    activated_at_ = std::chrono::steady_clock::now();
+    timer_on_ = true;
+    timer_base_ = 0.0;
+    timer_started_at_ = activated_at_;
 }
 
 void GeometryEngine::new_document() {
     reset_active_state();
+    DrawingTimes t;
+    t.created = now_epoch();
+    store_.set_times(t);
     ++document_version_;
     report("New drawing.");
 }
@@ -8934,6 +9421,10 @@ void GeometryEngine::park_active(DocState& d) {
     d.oops = std::move(oops_);
     d.pickstyle_hatch = pickstyle_hatch_;
     d.current_celtscale = current_celtscale_;
+    tick_edit_time();
+    const auto now = std::chrono::steady_clock::now();
+    d.timer_on = timer_on_;
+    d.timer_seconds = timer_base_ + (timer_on_ ? std::chrono::duration<double>(now - timer_started_at_).count() : 0.0);
     selection_history_.clear();
     preview_lines_.clear();
     pick_candidates_.clear();
@@ -8974,6 +9465,11 @@ void GeometryEngine::load_active(DocState& d) {
     oops_ = std::move(d.oops);
     pickstyle_hatch_ = d.pickstyle_hatch;
     current_celtscale_ = d.current_celtscale;
+    activated_at_ = std::chrono::steady_clock::now();
+    timer_on_ = d.timer_on;
+    timer_base_ = d.timer_seconds;
+    timer_started_at_ = activated_at_;
+    area_total_ = 0.0;
     selection_history_.clear();
     preview_lines_.clear();
     pick_candidates_.clear();
@@ -9038,6 +9534,12 @@ void GeometryEngine::open_into_new_tab(const Command& command) {
     parked_[doc_metas_[active_idx_].id] = std::move(parked);
     reset_active_state();
     io::populate_store(store_, doc);
+    activated_at_ = std::chrono::steady_clock::now(); // TIME counts from here
+    if (store_.times().created == 0) {
+        DrawingTimes t = store_.times();
+        t.created = now_epoch();
+        store_.set_times(t);
+    }
     reload_all_xrefs(); // an XREF shows what its file holds now
     for (const EntityHandle h : all_live()) {
         Vec2 lo;
@@ -9169,6 +9671,8 @@ void GeometryEngine::rebuild_and_publish() {
     buf.msltscale = store_.msltscale();
     buf.ltscale = store_.ltscale();
     buf.current_celtscale = current_celtscale_;
+    buf.drawing_props = store_.drawing_props();
+    buf.times = current_times();
     buf.pickstyle = static_cast<std::uint8_t>((pickstyle_group_ ? 1 : 0) + (pickstyle_hatch_ ? 2 : 0));
     buf.preview_line_vertices = preview_lines_;
     buf.pick_candidates = pick_candidates_;

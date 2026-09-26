@@ -4,7 +4,8 @@ add_library(musacad_command STATIC
     commands.cpp
     dyn_fields.cpp
     command_registry.cpp
-    command_processor.cpp)
+    command_processor.cpp
+    calc.cpp)
 
 add_library(musacad::command ALIAS musacad_command)
 

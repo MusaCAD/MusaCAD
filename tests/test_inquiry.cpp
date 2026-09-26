@@ -64,9 +64,9 @@ TEST_CASE("#30: AREA of a closed polyline uses the shoelace formula") {
     REQUIRE(engine.snapshot().status.find("Perimeter = 60") != std::string::npos);
 }
 
-TEST_CASE("#30: an OPEN object reports its length and says it has no area") {
-    // Reporting the area of the polygon you would get by closing an open path would be a
-    // number that means something the user did not ask for.
+TEST_CASE("#30: an OPEN object reports its length, and its area as if closed (AutoCAD's rule)") {
+    // AutoCAD measures an open object as if a line closed it and reports its own length
+    // as Length: a lone line encloses nothing.
     GeometryEngine engine;
     engine.start();
     engine.submit(AddLineCommand{{0, 0}, {30, 40}, 1}); // 3-4-5 -> length 50
@@ -74,7 +74,7 @@ TEST_CASE("#30: an OPEN object reports its length and says it has no area") {
 
     engine.submit(AreaQueryCommand{{15.0, 20.0}, 2.0});
     REQUIRE(status_contains(engine, "Length = 50"));
-    REQUIRE(engine.snapshot().status.find("no area") != std::string::npos);
+    REQUIRE(engine.snapshot().status.find("Area = 0.0000") != std::string::npos);
 }
 
 TEST_CASE("#30: AREA and LIST report honestly when nothing is under the pick") {
@@ -98,7 +98,7 @@ TEST_CASE("#30: LIST names the entity, its layer and its defining parameters") {
     engine.submit(ListQueryCommand{{15.0, 20.0}, 2.0});
     REQUIRE(status_contains(engine, "Line"));
     const std::string s = engine.snapshot().status;
-    REQUIRE(s.find("layer \"0\"") != std::string::npos);
+    REQUIRE(s.find("Layer: \"0\"") != std::string::npos); // AutoCAD's LIST block
     REQUIRE(s.find("length 50") != std::string::npos);
 }
 
@@ -120,7 +120,7 @@ TEST_CASE("#30: LIST names a circle's centre and radius") {
     REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
 
     engine.submit(ListQueryCommand{{12.0, 6.0}, 2.0});
-    REQUIRE(status_contains(engine, "Circle"));
+    REQUIRE(status_contains(engine, "CIRCLE"));
     const std::string s = engine.snapshot().status;
     REQUIRE(s.find("centre (5.0000,6.0000)") != std::string::npos); // UNITS default: 4 decimals
     REQUIRE(s.find("radius 7.0000") != std::string::npos);
@@ -140,7 +140,7 @@ TEST_CASE("#30: an inquiry never mutates the drawing") {
     engine.submit(AreaQueryCommand{{10.0, 0.0}, 2.0});
     REQUIRE(status_contains(engine, "Area ="));
     engine.submit(ListQueryCommand{{10.0, 0.0}, 2.0});
-    REQUIRE(status_contains(engine, "Circle"));
+    REQUIRE(status_contains(engine, "CIRCLE"));
     engine.consume_snapshot();
     REQUIRE(engine.snapshot().geometry_version == gv);
     REQUIRE(engine.snapshot().line_vertices.size() == verts);

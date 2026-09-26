@@ -28,6 +28,13 @@ commands (Ribbon Phase A):
 | SELECT | Select objects with AutoCAD's keywords (Window, Crossing, BOX, ALL, Fence, WPolygon, CPolygon, Group, Last, Previous, Add, Remove, Undo, SIngle); the set stays for the next command. |
 | SELECTSIMILAR | Select every object of the same kind and properties as the selected ones (SELECTSIMILARMODE says which properties count; default layer and name). |
 | QSELECT / FILTER (FI) | The Quick Select dialog: by object type and one property (FILTER: several conditions, all of which must hold). |
+| MEASUREGEOM (MEA) | Measure Distance, Radius, Angle, ARea or Volume, repeating until eXit; Quick mode measures the object clicked. |
+| MASSPROP | The area, perimeter, bounding box, centroid, moments and product of inertia, radii of gyration and principal moments of the selected closed shapes. |
+| TIME | The current time, the drawing's creation and last-saved times, its total editing time and the elapsed timer (Display/ON/OFF/Reset). |
+| STATUS | The object count, the space's extents, the drafting modes and the current layer, colour, linetype, lineweight and units. |
+| CAL | One expression: arithmetic, sin/cos/tan (degrees), sqrt, ln, log, [x,y] points, dist, ang, vec, nor, abs, cvunit(v, from, to). |
+| QUICKCALC (QC) | The calculator palette: a number pad, scientific functions, unit conversion, history, paste to the command line. |
+| DWGPROPS | The drawing's properties: General, Summary (title, subject, author, keywords, comments, hyperlink base), Statistics and Custom fields, saved with the drawing. |
 | ISOLATEOBJECTS / HIDEOBJECTS / UNISOLATEOBJECTS | Hide everything but the selection, hide the selection, show everything again. Hidden objects are neither drawn nor pickable; the flag is saved with the drawing. |
 | PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
 | UNDO (U) | Reverse the most recent action. |

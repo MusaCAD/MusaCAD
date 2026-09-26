@@ -6,7 +6,7 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.5.0 - 2026-09-26
 
 ### Fixed
 - FILLET and CHAMFER rebuilt the trimmed lines, the arc, the bevel and the polyline without
@@ -50,6 +50,20 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   current value as its default and says `Regenerating model.`; CELTSCALE sets the linetype
   scale new objects take; PSLTSCALE scales linetypes seen through layout viewports by the
   viewport scale; MSLTSCALE is recorded.
+- **The inquiry commands as AutoCAD has them** (#63) -- AREA asks `Specify first corner
+  point or [Object/Add area/Subtract area] <Object>:` and measures picked points with
+  `[Arc/Length/Undo]` and `[Arc/Length/Undo/Total] <Total>` (arcs tangent to the last
+  segment or through a Second pt), keeps Add and Subtract running totals, and reports an
+  open object as if closed plus its length; DIST has `[Multiple points]` with a running
+  total and the full readout (Angle from XY Plane, Delta Z); ID reports Z; LIST takes a
+  `Select objects:` set and prints AutoCAD's block per object (kind, layer, space, handle,
+  colour, linetype, lineweight, the geometry, area and perimeter). New: MEASUREGEOM (MEA)
+  with Distance, Radius, Angle, ARea, Volume, Quick and Mode; MASSPROP (area, perimeter,
+  bounding box, centroid, moments and product of inertia, radii of gyration, principal
+  moments); TIME with the creation, last-saved and total editing times kept in the drawing
+  and the elapsed timer's Display/ON/OFF/Reset; STATUS; CAL and QUICKCALC (a calculator
+  palette with a number pad, scientific functions, unit conversion and paste to the command
+  line); DWGPROPS (General, Summary, Statistics, Custom), saved with the drawing.
 - Enter at a point prompt that has no default asks again instead of complaining (#38).
 - **The ribbon laid out as AutoCAD's** -- the Drafting & Annotation tabs (Home, Insert,
   Annotate, Parametric, View, Manage, Output), their panels and groupings: large tools with

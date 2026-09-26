@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "musacad/core/block_attdef_info.hpp"
+#include "musacad/core/drawing_props.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/named_view.hpp"
@@ -215,6 +216,8 @@ struct RenderSnapshot {
     EntityProps current_props{};
     double current_celtscale = 1.0; ///< CELTSCALE: new objects' linetype scale
     double ltscale = 1.0;           ///< LTSCALE
+    DrawingProps drawing_props;     ///< DWGPROPS
+    DrawingTimes times;             ///< TIME: created, last saved, total editing time so far
     std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)

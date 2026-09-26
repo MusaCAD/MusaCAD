@@ -160,6 +160,17 @@ void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> sn
     submit_line(buf); // feed as an absolute coordinate to the active command
 }
 
+std::string CommandProcessor::status_modes() const {
+    char grid[64];
+    std::snprintf(grid, sizeof(grid), "%.4g", grid_spacing_);
+    std::string out = std::string("Snap resolution is       X: ") + grid + "  Y: " + grid +
+                      (grid_snap_ ? "  (on)" : "  (off)");
+    out += std::string("\nGrid spacing is          X: ") + grid + "  Y: " + grid;
+    out += std::string("\nOrtho ") + (ortho_ ? "on" : "off") + "   Polar " + (polar_ ? "on" : "off") +
+           "   Snap " + (grid_snap_ ? "on" : "off");
+    return out;
+}
+
 void CommandProcessor::notify_selection_gesture() {
     if (active_ && active_->in_selection_phase()) {
         active_->selection_gesture(*this);
