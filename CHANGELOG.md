@@ -13,6 +13,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   their properties, so the results landed on the current layer with default colour and
   linetype. They keep the objects' layer, colour, linetype and linetype scale; the arc or
   bevel takes the objects' layer when both share it.
+- Windows: the engine's command dispatcher no longer compiled with MSVC once its `else if`
+  chain passed the compiler's block-nesting limit (C1061); the branches are independent
+  now, with the same behaviour. The portable `parse_double` fallback (the shim self-test)
+  uses the MSVC CRT's spelling of the per-call locale API, so the `dev` preset builds
+  there too.
 
 ### Added
 - **AutoCAD's selection conventions** (#46) -- every edit command now starts at `Select
