@@ -59,6 +59,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.5.0" date="2026-09-26">
+      <description>
+        <p>AutoCAD's conventions: the ribbon laid out as AutoCAD's, every edit command
+        starting at Select objects with the full keyword set, lassos and click-click boxes,
+        the inquiry commands with running totals and LIST's blocks, the Drawing Units and
+        Purge dialogs, a one-click download of the DWG converter, and the draw and modify
+        commands brought to AutoCAD's prompts option for option.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-09-12">
       <description>
         <p>Sheets and symbols: layouts with viewports and paper space, block authoring,

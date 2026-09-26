@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "musacad/core/drawing_props.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/generational_arena.hpp"
 #include "musacad/core/math/math.hpp"
@@ -871,6 +872,11 @@ public:
     void set_psltscale(bool on) noexcept { psltscale_ = on; }
     [[nodiscard]] bool msltscale() const noexcept { return msltscale_; }
     void set_msltscale(bool on) noexcept { msltscale_ = on; }
+    /// DWGPROPS and TIME: the summary information and the drawing's times, saved with it.
+    [[nodiscard]] const DrawingProps& drawing_props() const noexcept { return drawing_props_; }
+    void set_drawing_props(DrawingProps p) { drawing_props_ = std::move(p); }
+    [[nodiscard]] const DrawingTimes& times() const noexcept { return times_; }
+    void set_times(DrawingTimes t) noexcept { times_ = t; }
 
     /// Per-entity linetype scale (AutoCAD CELTSCALE, DXF code 48); default 1.0. SPARSE:
     /// only entities with a non-default scale have an entry, so the hot data structs stay
@@ -1138,6 +1144,8 @@ private:
     double ltscale_ = 1.0;                                  // global linetype scale
     bool psltscale_ = true;                                 // PSLTSCALE
     bool msltscale_ = true;                                 // MSLTSCALE
+    DrawingProps drawing_props_;                            // DWGPROPS
+    DrawingTimes times_;                                    // TIME
     std::unordered_map<std::uint64_t, double> celtscale_;  // sparse per-entity CELTSCALE (def 1.0)
     std::vector<PageSetup> page_setups_;
     std::vector<NamedView> named_views_;

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "musacad/core/drawing_props.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
@@ -67,7 +68,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 35;
+inline constexpr std::uint32_t kFormatVersion = 36;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -364,8 +365,10 @@ struct Document {
     std::uint16_t current_layer = 0;
     std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
     double ltscale = 1.0;                                  // global linetype scale (LTSCALE)
-    bool psltscale = true;                                 // PSLTSCALE (v40)
-    bool msltscale = true;                                 // MSLTSCALE (v40)
+    bool psltscale = true;                                 // PSLTSCALE (v36)
+    bool msltscale = true;                                 // MSLTSCALE (v36)
+    DrawingProps props;                                    // DWGPROPS (v36)
+    DrawingTimes times;                                    // TIME (v36)
     std::vector<PageSetup> page_setups;                    // saved PLOT configurations (v11)
     std::vector<NamedView> views;
     std::vector<TiledViewport> vports;     ///< VPORTS: the model window's tiles (fewer than two = one)

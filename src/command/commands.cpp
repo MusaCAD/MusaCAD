@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 
+#include "musacad/command/calc.hpp"
 #include "musacad/command/coordinate.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/ellipse.hpp"
@@ -8265,35 +8266,124 @@ void ChainDimCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Inquiry: DIST / ID / AREA / LIST (issue #30)
+// Inquiry (issues #30, #63): DIST / ID / AREA / LIST / MEASUREGEOM / MASSPROP / TIME /
+// STATUS / CAL / DWGPROPS
 // ---------------------------------------------------------------------------
+namespace {
+double poly_area(const std::vector<core::Vec2>& p) {
+    double a = 0.0;
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const core::Vec2 u = p[i];
+        const core::Vec2 v = p[(i + 1) % p.size()];
+        a += u.x * v.y - v.x * u.y;
+    }
+    return std::abs(a) * 0.5;
+}
+double poly_length(const std::vector<core::Vec2>& p, bool closed) {
+    double l = 0.0;
+    for (std::size_t i = 1; i < p.size(); ++i) {
+        l += core::distance(p[i - 1], p[i]);
+    }
+    if (closed && p.size() > 2) {
+        l += core::distance(p.back(), p.front());
+    }
+    return l;
+}
+std::string dist_readout(CommandContext& ctx, core::Vec2 a, core::Vec2 b) {
+    // AutoCAD's DIST block, the Z figures included (always zero in 2D).
+    const core::Vec2 d = b - a;
+    const core::DrawingUnits u = ctx.units();
+    return "Distance = " + core::units::format_length(core::length(d), u) +
+           ",  Angle in XY Plane = " + core::units::format_angle(std::atan2(d.y, d.x), u) +
+           ",  Angle from XY Plane = " + core::units::format_angle(0.0, u) + "\nDelta X = " +
+           core::units::format_length(d.x, u) + ",  Delta Y = " + core::units::format_length(d.y, u) +
+           ",  Delta Z = " + core::units::format_length(0.0, u);
+}
+} // namespace
+
+void DistCommand::prompt_next(CommandContext& ctx) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Polyline;
+    pv.points = pts_;
+    ctx.set_preview(pv);
+    ctx.set_prompt("Specify next point or [Length/Undo/Total] <Total>: ");
+}
+
 void DistCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    have_first_ = false;
-    ctx.set_prompt("Specify first point: ");
+    state_ = State::First;
+    pts_.clear();
+    total_ = 0.0;
+    ctx.set_prompt("Specify first point or [Multiple points]: ");
 }
 
 void DistCommand::input(CommandContext& ctx, const std::string& text) {
-    const auto p = read_point(ctx, text);
-    if (!p) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (u == "M" || u == "MULTIPLE" || u == "MULTIPLE POINTS") {
+            state_ = State::MultiFirst;
+            ctx.set_prompt("Specify first point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            state_ = State::Second;
+            ctx.set_prompt("Specify second point or [Multiple points]: ");
+        }
+        return;
+    case State::Second:
+        if (u == "M" || u == "MULTIPLE" || u == "MULTIPLE POINTS") {
+            pts_ = {first_};
+            state_ = State::MultiNext;
+            prompt_next(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            // Answered from the picked points alone -- no store access, so no round trip.
+            ctx.echo(dist_readout(ctx, first_, *p));
+            done_ = true;
+        }
+        return;
+    case State::MultiFirst:
+        if (const auto p = read_point(ctx, text)) {
+            pts_ = {*p};
+            ctx.set_last_point(*p);
+            state_ = State::MultiNext;
+            prompt_next(ctx);
+        }
+        return;
+    case State::MultiNext:
+        if (t.empty() || u == "T" || u == "TOTAL") {
+            ctx.echo("Distance = " + core::units::format_length(total_, ctx.units()));
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (pts_.size() > 1) {
+                total_ -= core::distance(pts_[pts_.size() - 2], pts_.back());
+                pts_.pop_back();
+                ctx.set_last_point(pts_.back());
+            }
+            prompt_next(ctx);
+            return;
+        }
+        if (u == "L" || u == "LENGTH") {
+            ctx.set_prompt("Specify length of line: ");
+            return; // a number goes along the cursor (direct distance entry)
+        }
+        if (const auto p = read_point(ctx, text)) {
+            total_ += core::distance(pts_.back(), *p);
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            ctx.echo("Distance = " + core::units::format_length(total_, ctx.units()));
+            prompt_next(ctx);
+        }
         return;
     }
-    if (!have_first_) {
-        first_ = *p;
-        have_first_ = true;
-        ctx.set_last_point(*p);
-        ctx.set_prompt("Specify second point: ");
-        return;
-    }
-    // Answered from the picked points alone -- no store access, so no round trip.
-    // In the drawing's display units (UNITS), as AutoCAD reports them.
-    const core::Vec2 d = *p - first_;
-    const core::DrawingUnits u = ctx.units();
-    ctx.echo("Distance = " + core::units::format_length(core::length(d), u) +
-             ",  Angle in XY Plane = " + core::units::format_angle(std::atan2(d.y, d.x), u) +
-             ",  Delta X = " + core::units::format_length(d.x, u) +
-             ",  Delta Y = " + core::units::format_length(d.y, u));
-    done_ = true;
 }
 
 void DistCommand::cancel(CommandContext& ctx) {
@@ -8309,8 +8399,9 @@ void IdCommand::start(CommandContext& ctx) {
 void IdCommand::input(CommandContext& ctx, const std::string& text) {
     if (const auto p = read_point(ctx, text)) {
         const core::DrawingUnits u = ctx.units();
-        ctx.echo("X = " + core::units::format_length(p->x, u) + ",  Y = " +
-                 core::units::format_length(p->y, u));
+        ctx.echo("X = " + core::units::format_length(p->x, u) + "     Y = " + core::units::format_length(p->y, u) +
+                 "     Z = " + core::units::format_length(0.0, u));
+        ctx.set_last_point(*p);
         done_ = true;
     }
 }
@@ -8320,16 +8411,287 @@ void IdCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// --- AREA -----------------------------------------------------------------
+void AreaCommand::prompt_first(CommandContext& ctx) {
+    state_ = State::First;
+    pts_.clear();
+    marks_.clear();
+    have_dir_ = false;
+    ctx.clear_preview();
+    if (mode_ > 0) {
+        ctx.set_prompt("Specify first corner point or [Object/Subtract area/eXit] <Object>: ");
+    } else if (mode_ < 0) {
+        ctx.set_prompt("Specify first corner point or [Object/Add area/eXit] <Object>: ");
+    } else {
+        ctx.set_prompt("Specify first corner point or [Object/Add area/Subtract area] <Object>: ");
+    }
+}
+
+void AreaCommand::refresh_preview(CommandContext& ctx) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Polyline;
+    pv.points = pts_;
+    ctx.set_preview(pv);
+}
+
+void AreaCommand::prompt_next(CommandContext& ctx) {
+    state_ = State::Next;
+    refresh_preview(ctx);
+    ctx.set_prompt(pts_.size() >= 3 ? "Specify next point or [Arc/Length/Undo/Total] <Total>: "
+                                    : "Specify next point or [Arc/Length/Undo]: ");
+}
+
+void AreaCommand::add_point(CommandContext& ctx, core::Vec2 p) {
+    marks_.push_back(pts_.size());
+    if (!pts_.empty()) {
+        const core::Vec2 d = p - pts_.back();
+        if (core::length(d) > 1e-12) {
+            last_dir_ = std::atan2(d.y, d.x);
+            have_dir_ = true;
+        }
+    }
+    pts_.push_back(p);
+    ctx.set_last_point(p);
+}
+
+void AreaCommand::add_arc(CommandContext& ctx, const core::ConstructedArc& arc) {
+    // The arc as the polygon sees it: sampled from its start round to the end point.
+    marks_.push_back(pts_.size());
+    const int n = std::max(8, static_cast<int>(std::abs(arc.sweep) / core::kTwoPi * 64.0));
+    for (int i = 1; i <= n; ++i) {
+        const double a = arc.start + arc.sweep * static_cast<double>(i) / n;
+        pts_.push_back({arc.center.x + arc.radius * std::cos(a), arc.center.y + arc.radius * std::sin(a)});
+    }
+    pts_.back() = arc.end_point;
+    last_dir_ = arc.end_tangent;
+    have_dir_ = true;
+    ctx.set_last_point(arc.end_point);
+}
+
+void AreaCommand::undo_segment(CommandContext& ctx) {
+    if (marks_.empty()) {
+        ctx.echo("Nothing to undo.");
+        return;
+    }
+    pts_.resize(marks_.back());
+    marks_.pop_back();
+    if (pts_.size() >= 2) {
+        const core::Vec2 d = pts_.back() - pts_[pts_.size() - 2];
+        last_dir_ = std::atan2(d.y, d.x);
+        have_dir_ = core::length(d) > 1e-12;
+    } else {
+        have_dir_ = false;
+    }
+    if (!pts_.empty()) {
+        ctx.set_last_point(pts_.back());
+    }
+}
+
+void AreaCommand::submit(CommandContext& ctx, core::AreaQueryCommand q) {
+    q.pick_radius = ctx.pick_radius();
+    q.mode = mode_;
+    q.reset = mode_ != 0 && first_total_;
+    if (volume_ && q.height <= 0.0) {
+        pending_ = q;
+        state_ = State::Height;
+        ctx.set_prompt("Specify height: ");
+        return;
+    }
+    ctx.submit(q); // the engine reports the value and keeps the running total
+    first_total_ = false;
+    if (mode_ == 0) {
+        done_ = true;
+        ctx.clear_preview();
+    } else {
+        prompt_first(ctx);
+    }
+}
+
+void AreaCommand::finish_points(CommandContext& ctx) {
+    core::AreaQueryCommand q;
+    q.from_points = true;
+    q.points_area = pts_.size() >= 3 ? poly_area(pts_) : 0.0;
+    q.points_perimeter = poly_length(pts_, pts_.size() >= 3);
+    submit(ctx, q);
+}
+
 void AreaCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Select an object to measure: ");
+    mode_ = 0;
+    first_total_ = true;
+    prompt_first(ctx);
 }
 
 void AreaCommand::input(CommandContext& ctx, const std::string& text) {
-    if (const auto p = read_point(ctx, text)) {
-        // The engine resolves the entity and reports -- the UI never reads the store.
-        ctx.submit(core::AreaQueryCommand{*p, ctx.pick_radius()});
-        done_ = true;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (t.empty() || u == "O" || u == "OBJECT") {
+            state_ = State::Object;
+            ctx.set_prompt("Select objects: ");
+            return;
+        }
+        if (u == "A" || u == "ADD" || u == "ADD AREA") {
+            mode_ = 1;
+            prompt_first(ctx);
+            return;
+        }
+        if (u == "S" || u == "SUBTRACT" || u == "SUBTRACT AREA") {
+            mode_ = -1;
+            prompt_first(ctx);
+            return;
+        }
+        if ((u == "X" || u == "EXIT") && mode_ != 0) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            add_point(ctx, *p);
+            prompt_next(ctx);
+        }
+        return;
+    case State::Object:
+        if (t.empty()) {
+            if (mode_ == 0) {
+                done_ = true;
+            } else {
+                prompt_first(ctx);
+            }
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            core::AreaQueryCommand q;
+            q.at = *p;
+            submit(ctx, q);
+        }
+        return;
+    case State::Next:
+        if (t.empty() || u == "T" || u == "TOTAL") {
+            finish_points(ctx);
+            return;
+        }
+        if (u == "A" || u == "ARC") {
+            state_ = State::ArcEnd;
+            ctx.set_prompt("Specify endpoint of arc or [Second pt/Line/Undo]: ");
+            return;
+        }
+        if (u == "L" || u == "LENGTH") {
+            state_ = State::Length;
+            ctx.set_prompt("Specify length of line: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            undo_segment(ctx);
+            prompt_next(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            add_point(ctx, *p);
+            prompt_next(ctx);
+        }
+        return;
+    case State::Length:
+        if (const auto p = read_point(ctx, text)) { // a bare number goes along the cursor
+            add_point(ctx, *p);
+        }
+        prompt_next(ctx);
+        return;
+    case State::ArcEnd:
+        if (t.empty() || u == "T" || u == "TOTAL") {
+            finish_points(ctx);
+            return;
+        }
+        if (u == "L" || u == "LINE") {
+            prompt_next(ctx);
+            return;
+        }
+        if (u == "S" || u == "SECOND" || u == "SECOND PT") {
+            state_ = State::ArcSecond;
+            ctx.set_prompt("Specify second point on arc: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            undo_segment(ctx);
+            refresh_preview(ctx);
+            ctx.set_prompt("Specify endpoint of arc or [Second pt/Line/Undo]: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            if (!have_dir_) {
+                ctx.echo("No direction to continue from: give a Second pt first.");
+                return;
+            }
+            // Tangent to the last segment: the centre sits on the normal at the start.
+            const core::Vec2 s0 = pts_.back();
+            const core::Vec2 tdir{std::cos(last_dir_), std::sin(last_dir_)};
+            const core::Vec2 n{-tdir.y, tdir.x};
+            const core::Vec2 d = *p - s0;
+            const double nd = n.x * d.x + n.y * d.y;
+            if (std::abs(nd) < 1e-9 * (1.0 + core::length(d))) {
+                add_point(ctx, *p); // collinear: a straight segment
+            } else {
+                const double r = core::length_squared(d) / (2.0 * nd); // signed: + centre to the left
+                const core::Vec2 c = s0 + n * r;
+                const double a0 = std::atan2(s0.y - c.y, s0.x - c.x);
+                const double a1 = std::atan2(p->y - c.y, p->x - c.x);
+                double sweep = a1 - a0;
+                if (r > 0.0) { // counter-clockwise
+                    while (sweep <= 0.0) {
+                        sweep += core::kTwoPi;
+                    }
+                } else {
+                    while (sweep >= 0.0) {
+                        sweep -= core::kTwoPi;
+                    }
+                }
+                core::ConstructedArc arc = core::arc_detail::from_sweep(c, std::abs(r), a0, sweep);
+                arc.end_point = *p;
+                add_arc(ctx, arc);
+            }
+            refresh_preview(ctx);
+            ctx.set_prompt("Specify endpoint of arc or [Second pt/Line/Undo]: ");
+        }
+        return;
+    case State::ArcSecond:
+        if (const auto p = read_point(ctx, text)) {
+            arc_second_ = *p;
+            state_ = State::ArcSecondEnd;
+            ctx.set_prompt("Specify end point of arc: ");
+        }
+        return;
+    case State::ArcSecondEnd:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 s0 = pts_.back();
+            if (const auto arc = core::arc_three_points(s0, arc_second_, *p)) {
+                add_arc(ctx, *arc);
+            } else {
+                ctx.echo("The three points are in a line: a straight segment is used.");
+                add_point(ctx, *p);
+            }
+            state_ = State::ArcEnd;
+            refresh_preview(ctx);
+            ctx.set_prompt("Specify endpoint of arc or [Second pt/Line/Undo]: ");
+        }
+        return;
+    case State::Height: {
+        double h = 0.0;
+        if (!parse_number(t, h) || !(h > 0.0)) {
+            ctx.echo("Enter a positive height.");
+            return;
+        }
+        core::AreaQueryCommand q = pending_;
+        q.height = h;
+        ctx.submit(q);
+        first_total_ = false;
+        if (mode_ == 0) {
+            done_ = true;
+            ctx.clear_preview();
+        } else {
+            prompt_first(ctx);
+        }
+        return;
+    }
     }
 }
 
@@ -8338,15 +8700,34 @@ void AreaCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// --- LIST -----------------------------------------------------------------
+void ListCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        core::ListQueryCommand q;
+        q.selection = true;
+        ctx.submit(q);
+    }
+    done_ = true;
+}
+
 void ListCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Select an object to list: ");
+    if (ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    select_.begin(ctx);
 }
 
 void ListCommand::input(CommandContext& ctx, const std::string& text) {
-    if (const auto p = read_point(ctx, text)) {
-        ctx.submit(core::ListQueryCommand{*p, ctx.pick_radius()});
-        done_ = true;
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void ListCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
     }
 }
 
@@ -8355,6 +8736,272 @@ void ListCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// --- MEASUREGEOM ----------------------------------------------------------
+void MeasureGeomCommand::prompt_option(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.clear_preview();
+    if (quick_) {
+        ctx.set_prompt("Click an object to measure, or [Distance/Radius/Angle/ARea/Volume/Mode/eXit] <eXit>: ");
+    } else if (measured_) {
+        ctx.set_prompt("Enter an option [Distance/Radius/Angle/ARea/Volume/Quick/Mode/eXit] <eXit>: ");
+    } else {
+        ctx.set_prompt("Enter an option [Distance/Radius/Angle/ARea/Volume/Quick/Mode] <Distance>: ");
+    }
+}
+
+void MeasureGeomCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    measured_ = false;
+    prompt_option(ctx);
+}
+
+void MeasureGeomCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void MeasureGeomCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (state_ == State::Area) {
+        area_->input(ctx, text);
+        if (area_->done()) {
+            area_.reset();
+            measured_ = true;
+            prompt_option(ctx);
+        }
+        return;
+    }
+    switch (state_) {
+    case State::Option:
+        if (t.empty()) {
+            if (measured_ || quick_) {
+                done_ = true;
+                return;
+            }
+            state_ = State::DistFirst;
+            ctx.set_prompt("Specify first point: ");
+            return;
+        }
+        if (u == "X" || u == "EXIT") {
+            done_ = true;
+        } else if (u == "D" || u == "DISTANCE") {
+            state_ = State::DistFirst;
+            ctx.set_prompt("Specify first point: ");
+        } else if (u == "R" || u == "RADIUS") {
+            state_ = State::Radius;
+            ctx.set_prompt("Select arc or circle: ");
+        } else if (u == "A" || u == "ANGLE") {
+            state_ = State::AngleFirst;
+            ctx.set_prompt("Select arc, circle, line, or <specify vertex>: ");
+        } else if (u == "AR" || u == "AREA" || u == "V" || u == "VOLUME") {
+            area_ = std::make_unique<AreaCommand>();
+            area_->set_volume(u == "V" || u == "VOLUME");
+            state_ = State::Area;
+            area_->start(ctx);
+        } else if (u == "Q" || u == "QUICK") {
+            quick_ = true;
+            prompt_option(ctx);
+        } else if (u == "M" || u == "MODE") {
+            state_ = State::Mode;
+            ctx.set_prompt(std::string("Enter a mode [Quick/Standard] <") + (quick_ ? "Quick" : "Standard") + ">: ");
+        } else if (quick_) {
+            if (const auto p = read_point(ctx, text)) {
+                core::MeasureQueryCommand q;
+                q.at = *p;
+                q.pick_radius = ctx.pick_radius();
+                q.what = 2;
+                ctx.submit(q);
+                measured_ = true;
+                prompt_option(ctx);
+            }
+        } else {
+            ctx.echo("Enter Distance, Radius, Angle, ARea, Volume, Quick, Mode or eXit.");
+        }
+        return;
+    case State::Mode:
+        if (u == "Q" || u == "QUICK") {
+            quick_ = true;
+        } else if (u == "S" || u == "STANDARD") {
+            quick_ = false;
+        } else if (!t.empty()) {
+            ctx.echo("Enter Quick or Standard.");
+            return;
+        }
+        prompt_option(ctx);
+        return;
+    case State::DistFirst:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            state_ = State::DistSecond;
+            ctx.set_prompt("Specify second point: ");
+        }
+        return;
+    case State::DistSecond:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.echo(dist_readout(ctx, first_, *p));
+            measured_ = true;
+            prompt_option(ctx);
+        }
+        return;
+    case State::Radius:
+        if (const auto p = read_point(ctx, text)) {
+            core::MeasureQueryCommand q;
+            q.at = *p;
+            q.pick_radius = ctx.pick_radius();
+            q.what = 0;
+            ctx.submit(q);
+            measured_ = true;
+            prompt_option(ctx);
+        }
+        return;
+    case State::AngleFirst:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            const auto k = ctx.hovered_kind();
+            if (k.has_value() && (*k == core::EntityKind::Arc || *k == core::EntityKind::Circle)) {
+                core::MeasureQueryCommand q;
+                q.at = *p;
+                q.at2 = *p;
+                q.pick_radius = ctx.pick_radius();
+                q.what = 1;
+                ctx.submit(q);
+                measured_ = true;
+                prompt_option(ctx);
+                return;
+            }
+            state_ = State::AngleSecond;
+            ctx.set_prompt("Select second line: ");
+        }
+        return;
+    case State::AngleSecond:
+        if (const auto p = read_point(ctx, text)) {
+            core::MeasureQueryCommand q;
+            q.at = first_;
+            q.at2 = *p;
+            q.pick_radius = ctx.pick_radius();
+            q.what = 1;
+            ctx.submit(q);
+            measured_ = true;
+            prompt_option(ctx);
+        }
+        return;
+    case State::Quick:
+    case State::Area:
+        return;
+    }
+}
+
+// --- MASSPROP / TIME / STATUS / CAL / DWGPROPS ----------------------------
+void MassPropCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::MassPropQueryCommand{});
+    }
+    done_ = true;
+}
+
+void MassPropCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void MassPropCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void MassPropCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void MassPropCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TimeCommand::start(CommandContext& ctx) {
+    ctx.submit(core::TimeCommand{0}); // the engine prints the times
+    ctx.set_prompt("Enter option [Display/ON/OFF/Reset]: ");
+}
+
+void TimeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
+        done_ = true;
+        return;
+    }
+    if (u == "D" || u == "DISPLAY") {
+        ctx.submit(core::TimeCommand{0});
+    } else if (u == "ON") {
+        ctx.submit(core::TimeCommand{1});
+    } else if (u == "OFF") {
+        ctx.submit(core::TimeCommand{2});
+    } else if (u == "R" || u == "RESET") {
+        ctx.submit(core::TimeCommand{3});
+    } else {
+        ctx.echo("Enter Display, ON, OFF or Reset.");
+    }
+    ctx.set_prompt("Enter option [Display/ON/OFF/Reset]: ");
+}
+
+void TimeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void StatusCommand::start(CommandContext& ctx) {
+    ctx.submit(core::StatusQueryCommand{ctx.status_modes()});
+    done_ = true;
+}
+
+void CalCommand::start(CommandContext& ctx) {
+    if (palette_ && ctx.view() != nullptr && ctx.view()->quickcalc_dialog()) {
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt(">> Expression: ");
+}
+
+void CalCommand::input(CommandContext& ctx, const std::string& text) {
+    std::string error;
+    const auto v = calc::evaluate(text, error);
+    if (!v) {
+        ctx.echo("CAL: " + error);
+        return;
+    }
+    ctx.echo(calc::format(*v));
+    done_ = true;
+}
+
+void CalCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DwgPropsCommand::start(CommandContext& ctx) {
+    if (ctx.view() != nullptr && ctx.view()->dwgprops_dialog()) {
+        done_ = true;
+        return;
+    }
+    const core::DrawingProps p = ctx.drawing_props();
+    ctx.echo("Title: " + p.title + "\nSubject: " + p.subject + "\nAuthor: " + p.author + "\nKeywords: " + p.keywords +
+             "\nComments: " + p.comments + "\nHyperlink base: " + p.hyperlink_base);
+    for (const auto& [k, v] : p.custom) {
+        ctx.echo(k + ": " + v);
+    }
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // STRETCH: crossing window -> base point -> displacement
 // ---------------------------------------------------------------------------

@@ -91,6 +91,19 @@ public:
     void set_quick_select_callback(std::function<void(bool)> cb) { quick_select_callback_ = std::move(cb); }
     void set_purge_dialog_callback(std::function<void()> cb) { purge_dialog_callback_ = std::move(cb); }
     void set_units_dialog_callback(std::function<void()> cb) { units_dialog_callback_ = std::move(cb); }
+    bool quickcalc_dialog() override;
+    bool dwgprops_dialog() override;
+    void set_quickcalc_callback(std::function<void()> cb) { quickcalc_callback_ = std::move(cb); }
+    void set_dwgprops_callback(std::function<void()> cb) { dwgprops_callback_ = std::move(cb); }
+    /// DWGPROPS: the drawing's summary information and times, as last published.
+    [[nodiscard]] core::DrawingProps drawing_props() const {
+        std::scoped_lock lock(layers_mutex_);
+        return drawing_props_;
+    }
+    [[nodiscard]] core::DrawingTimes drawing_times() const {
+        std::scoped_lock lock(layers_mutex_);
+        return times_;
+    }
     /// PURGE's candidates, LTSCALE / CELTSCALE / PSLTSCALE / MSLTSCALE and PICKSTYLE, as
     /// last published (the host hands them to the processor).
     [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const {
@@ -638,6 +651,10 @@ private:
     std::function<void(bool)> quick_select_callback_;
     std::function<void()> purge_dialog_callback_;
     std::function<void()> units_dialog_callback_;
+    std::function<void()> quickcalc_callback_;
+    std::function<void()> dwgprops_callback_;
+    core::DrawingProps drawing_props_; ///< under layers_mutex_
+    core::DrawingTimes times_;         ///< under layers_mutex_
     std::atomic<int> selection_count_{0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};

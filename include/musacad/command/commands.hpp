@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include "musacad/command/command.hpp"
@@ -560,6 +561,7 @@ private:
     bool done_ = false;
 };
 
+/// DIST: two points, or `[Multiple points]` with a running total; AutoCAD's full readout.
 class DistCommand final : public ICommand {
 public:
     std::string name() const override { return "DIST"; }
@@ -569,9 +571,13 @@ public:
     bool done() const override { return done_; }
 
 private:
+    enum class State { First, Second, MultiFirst, MultiNext };
+    void prompt_next(CommandContext& ctx);
+    State state_ = State::First;
     bool done_ = false;
-    bool have_first_ = false;
     core::Vec2 first_{};
+    std::vector<core::Vec2> pts_;
+    double total_ = 0.0;
 };
 
 class IdCommand final : public ICommand {
@@ -586,9 +592,106 @@ private:
     bool done_ = false;
 };
 
+/// AREA (issue #63): `Specify first corner point or [Object/Add area/Subtract area]
+/// <Object>:`, points with `[Arc/Length/Undo]` then `[Arc/Length/Undo/Total] <Total>:`,
+/// Add and Subtract modes with a running total (kept by the engine), and Object. The
+/// arc sub-mode draws a tangent arc to the endpoint, or one through a Second pt.
+/// MEASUREGEOM's ARea and Volume run the same flow (`set_volume` asks a height).
 class AreaCommand final : public ICommand {
 public:
     std::string name() const override { return "AREA"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    void set_volume(bool on) { volume_ = on; }
+
+private:
+    enum class State { First, Object, Next, ArcEnd, ArcSecond, ArcSecondEnd, Length, Height };
+    void prompt_first(CommandContext& ctx);
+    void prompt_next(CommandContext& ctx);
+    void add_point(CommandContext& ctx, core::Vec2 p);
+    void add_arc(CommandContext& ctx, const core::ConstructedArc& arc);
+    void undo_segment(CommandContext& ctx);
+    void finish_points(CommandContext& ctx);
+    void submit(CommandContext& ctx, core::AreaQueryCommand q);
+    void refresh_preview(CommandContext& ctx);
+    State state_ = State::First;
+    std::int8_t mode_ = 0;      ///< 0 one value, 1 Add, -1 Subtract
+    bool first_total_ = true;   ///< the first Add / Subtract starts the total at zero
+    std::vector<core::Vec2> pts_;
+    std::vector<std::size_t> marks_; ///< pts_ size before each segment (Undo)
+    core::Vec2 arc_second_{};
+    double last_dir_ = 0.0;
+    bool have_dir_ = false;
+    bool volume_ = false;
+    core::AreaQueryCommand pending_{}; ///< the query awaiting a height (Volume)
+    bool done_ = false;
+};
+
+/// LIST: `Select objects:` then AutoCAD's block per object (kind, layer, space, handle,
+/// colour, linetype, lineweight, the geometry, area and perimeter).
+class ListCommand final : public ICommand {
+public:
+    std::string name() const override { return "LIST"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// MEASUREGEOM (MEA): `[Distance/Radius/Angle/ARea/Volume/Quick/Mode]`, repeating until
+/// eXit. Quick mode measures the object clicked (length, radius and angle, area).
+class MeasureGeomCommand final : public ICommand {
+public:
+    std::string name() const override { return "MEASUREGEOM"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Option, DistFirst, DistSecond, Radius, AngleFirst, AngleSecond, Quick, Mode, Area };
+    void prompt_option(CommandContext& ctx);
+    State state_ = State::Option;
+    bool measured_ = false; ///< after the first measurement the default is eXit
+    bool quick_ = false;    ///< Mode: Quick (the default in AutoCAD 2020+) or Standard
+    core::Vec2 first_{};
+    std::unique_ptr<AreaCommand> area_;
+    bool done_ = false;
+};
+
+/// MASSPROP: the area properties (area, perimeter, bounding box, centroid, moments,
+/// radii of gyration, principal moments) of the selected closed shapes.
+class MassPropCommand final : public ICommand {
+public:
+    std::string name() const override { return "MASSPROP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// TIME: the drawing's times, then `[Display/ON/OFF/Reset]` for the elapsed timer.
+class TimeCommand final : public ICommand {
+public:
+    std::string name() const override { return "TIME"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -598,12 +701,43 @@ private:
     bool done_ = false;
 };
 
-class ListCommand final : public ICommand {
+/// STATUS: the drawing's counts, extents, modes and current settings.
+class StatusCommand final : public ICommand {
 public:
-    std::string name() const override { return "LIST"; }
+    std::string name() const override { return "STATUS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// CAL: one expression at the command line (see calc.hpp); QUICKCALC opens the
+/// calculator palette, or falls back to the same prompt.
+class CalCommand final : public ICommand {
+public:
+    explicit CalCommand(bool palette) : palette_(palette) {}
+    std::string name() const override { return palette_ ? "QUICKCALC" : "CAL"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool palette_;
+    bool done_ = false;
+};
+
+/// DWGPROPS: the Drawing Properties dialog (General, Summary, Statistics, Custom), or
+/// the summary printed where there is no dialog.
+class DwgPropsCommand final : public ICommand {
+public:
+    std::string name() const override { return "DWGPROPS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
     bool done() const override { return done_; }
 
 private:

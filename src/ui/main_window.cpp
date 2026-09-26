@@ -17,6 +17,8 @@
 #include <atomic>
 #include <thread>
 
+#include <memory>
+
 #include <QAbstractButton>
 #include <QGridLayout>
 #include <QAction>
@@ -46,6 +48,10 @@
 #include <QMessageBox>
 #include <QTableWidget>
 #include <QTreeWidget>
+#include <QTabWidget>
+#include <QClipboard>
+#include <QDateTime>
+#include <QPointer>
 #include <QListWidget>
 #include <QRadioButton>
 #include <QHeaderView>
@@ -75,6 +81,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "musacad/command/calc.hpp"
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/units.hpp"
@@ -270,6 +277,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_quick_select_callback([this](bool filter) { open_quick_select_dialog(filter); });
     viewport_->set_purge_dialog_callback([this] { open_purge_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
+    viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
+    viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
 
     // Dynamic Input (F12): a frameless surface that floats at the crosshair. It
     // routes typed text through the SAME processor (submit_line) and mirrors the
@@ -379,6 +388,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_ltscales(viewport_->ltscale(), viewport_->current_celtscale(), viewport_->psltscale(),
                                  viewport_->msltscale());
         processor_->set_pickstyle(viewport_->pickstyle());
+        processor_->set_drawing_props(viewport_->drawing_props());
         {
             std::vector<std::string> lnames;
             for (const core::LayoutInfo& l : viewport_->layouts()) {
@@ -1963,6 +1973,306 @@ void MainWindow::open_purge_dialog() {
 // ---------------------------------------------------------------------------
 // UNITS: the Drawing Units dialog (issue #67)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// QUICKCALC: the calculator palette (issue #63)
+// ---------------------------------------------------------------------------
+void MainWindow::open_quickcalc_dialog() {
+    static QPointer<QDialog> palette;
+    if (palette != nullptr) {
+        palette->show();
+        palette->raise();
+        palette->activateWindow();
+        return;
+    }
+    auto* dlg = new QDialog(this);
+    palette = dlg;
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("QuickCalc"));
+    dlg->setObjectName(QStringLiteral("QuickCalcDialog"));
+    auto* outer = new QVBoxLayout(dlg);
+    auto* history = new QListWidget(dlg);
+    history->setObjectName(QStringLiteral("QuickCalcHistory"));
+    history->setMaximumHeight(90);
+    outer->addWidget(history);
+    auto* expr = new QLineEdit(dlg);
+    expr->setObjectName(QStringLiteral("QuickCalcExpression"));
+    expr->setPlaceholderText(QStringLiteral("Expression, e.g. 2*(3+4), sin(30), dist([0,0],[3,4]), cvunit(1,inch,mm)"));
+    outer->addWidget(expr);
+    auto* result = new QLabel(QStringLiteral("= "), dlg);
+    result->setObjectName(QStringLiteral("QuickCalcResult"));
+    result->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    outer->addWidget(result);
+    // Lives with the modeless palette, not with this call.
+    auto last_value = std::make_shared<std::string>();
+    const auto evaluate = [=]() {
+        std::string error;
+        const auto v = command::calc::evaluate(expr->text().toStdString(), error);
+        if (!v) {
+            result->setText(QStringLiteral("Error: %1").arg(QString::fromStdString(error)));
+            return;
+        }
+        *last_value = command::calc::format(*v);
+        result->setText(QStringLiteral("= %1").arg(QString::fromStdString(*last_value)));
+        history->addItem(QStringLiteral("%1 = %2").arg(expr->text(), QString::fromStdString(*last_value)));
+        history->scrollToBottom();
+    };
+    connect(expr, &QLineEdit::returnPressed, dlg, evaluate);
+    connect(history, &QListWidget::itemDoubleClicked, dlg, [expr](QListWidgetItem* it) {
+        expr->setText(it->text().section(QStringLiteral(" = "), 0, 0));
+    });
+
+    // The number pad and the scientific row: every key inserts at the cursor.
+    auto* pad = new QGridLayout;
+    const char* keys[] = {"7", "8", "9", "/", "(", "4", "5", "6", "*", ")", "1", "2", "3", "-", "^",
+                          "0", ".", ",", "+", "="};
+    int k = 0;
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 5; ++c) {
+            const QString key = QString::fromUtf8(keys[k++]);
+            auto* b = new QPushButton(key, dlg);
+            b->setFixedWidth(40);
+            pad->addWidget(b, r, c);
+            if (key == QStringLiteral("=")) {
+                connect(b, &QPushButton::clicked, dlg, evaluate);
+            } else {
+                connect(b, &QPushButton::clicked, dlg, [expr, key] { expr->insert(key); });
+            }
+        }
+    }
+    outer->addLayout(pad);
+    auto* sci = new QGridLayout;
+    const char* fns[] = {"sin", "cos", "tan", "asin", "acos", "atan", "sqrt", "sqr", "ln", "log", "exp", "round",
+                         "abs", "dist", "ang", "vec", "cvunit", "pi"};
+    k = 0;
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 6; ++c) {
+            const QString fn = QString::fromUtf8(fns[k++]);
+            auto* b = new QPushButton(fn, dlg);
+            sci->addWidget(b, r, c);
+            connect(b, &QPushButton::clicked, dlg, [expr, fn] {
+                expr->insert(fn == QStringLiteral("pi") ? fn : fn + QStringLiteral("("));
+            });
+        }
+    }
+    outer->addLayout(sci);
+    auto* edit_row = new QHBoxLayout;
+    auto* clear = new QPushButton(QStringLiteral("Clear"), dlg);
+    auto* back = new QPushButton(QStringLiteral("Backspace"), dlg);
+    edit_row->addWidget(clear);
+    edit_row->addWidget(back);
+    outer->addLayout(edit_row);
+    connect(clear, &QPushButton::clicked, dlg, [expr, result] {
+        expr->clear();
+        result->setText(QStringLiteral("= "));
+    });
+    connect(back, &QPushButton::clicked, dlg, [expr] { expr->backspace(); });
+
+    // Units conversion (length): the same table cvunit uses.
+    auto* units = new QGroupBox(QStringLiteral("Units Conversion"), dlg);
+    auto* ug = new QGridLayout(units);
+    auto* uvalue = new QLineEdit(QStringLiteral("1"), units);
+    auto* ufrom = new QComboBox(units);
+    auto* uto = new QComboBox(units);
+    const QStringList unames = {QStringLiteral("mm"), QStringLiteral("cm"), QStringLiteral("m"), QStringLiteral("km"),
+                                QStringLiteral("inch"), QStringLiteral("foot"), QStringLiteral("yard"),
+                                QStringLiteral("mile")};
+    ufrom->addItems(unames);
+    uto->addItems(unames);
+    ufrom->setCurrentIndex(4);
+    uto->setCurrentIndex(0);
+    auto* uresult = new QLabel(units);
+    ug->addWidget(new QLabel(QStringLiteral("Value:"), units), 0, 0);
+    ug->addWidget(uvalue, 0, 1);
+    ug->addWidget(new QLabel(QStringLiteral("Convert from:"), units), 1, 0);
+    ug->addWidget(ufrom, 1, 1);
+    ug->addWidget(new QLabel(QStringLiteral("Convert to:"), units), 2, 0);
+    ug->addWidget(uto, 2, 1);
+    ug->addWidget(new QLabel(QStringLiteral("Converted value:"), units), 3, 0);
+    ug->addWidget(uresult, 3, 1);
+    const auto convert = [=] {
+        std::string error;
+        const std::string e = "cvunit(" + uvalue->text().toStdString() + "," + ufrom->currentText().toStdString() +
+                              "," + uto->currentText().toStdString() + ")";
+        const auto v = command::calc::evaluate(e, error);
+        uresult->setText(v ? QString::fromStdString(command::calc::format(*v)) : QString::fromStdString(error));
+    };
+    connect(uvalue, &QLineEdit::textChanged, dlg, [convert](const QString&) { convert(); });
+    connect(ufrom, &QComboBox::currentIndexChanged, dlg, [convert](int) { convert(); });
+    connect(uto, &QComboBox::currentIndexChanged, dlg, [convert](int) { convert(); });
+    convert();
+    outer->addWidget(units);
+
+    auto* buttons = new QDialogButtonBox(dlg);
+    QPushButton* paste = buttons->addButton(QStringLiteral("Paste to command line"), QDialogButtonBox::ActionRole);
+    QPushButton* apply = buttons->addButton(QStringLiteral("Apply"), QDialogButtonBox::ActionRole);
+    buttons->addButton(QDialogButtonBox::Close);
+    paste->setToolTip(QStringLiteral("Type the value into the command line (an active prompt takes it)."));
+    apply->setToolTip(QStringLiteral("Feed the value to the running command's prompt."));
+    connect(paste, &QPushButton::clicked, dlg, [this, last_value, evaluate]() {
+        if (last_value->empty()) {
+            evaluate();
+        }
+        if (!last_value->empty()) {
+            if (processor_->has_active_command()) {
+                processor_->submit_line(*last_value);
+            } else {
+                QApplication::clipboard()->setText(QString::fromStdString(*last_value));
+                processor_->echo("QuickCalc: " + *last_value + " (copied to the clipboard)");
+            }
+        }
+    });
+    connect(apply, &QPushButton::clicked, dlg, [this, last_value, evaluate]() {
+        if (last_value->empty()) {
+            evaluate();
+        }
+        if (!last_value->empty() && processor_->has_active_command()) {
+            processor_->submit_line(*last_value);
+        }
+    });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    outer->addWidget(buttons);
+    dlg->show();
+}
+
+// ---------------------------------------------------------------------------
+// DWGPROPS: the Drawing Properties dialog (issue #63)
+// ---------------------------------------------------------------------------
+void MainWindow::open_dwgprops_dialog() {
+    const core::DrawingProps cur = viewport_->drawing_props();
+    const core::DrawingTimes times = viewport_->drawing_times();
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Drawing Properties"));
+    dlg.setObjectName(QStringLiteral("DwgPropsDialog"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* tabs = new QTabWidget(&dlg);
+    outer->addWidget(tabs);
+
+    // General: the file, as the desktop knows it.
+    auto* general = new QWidget(tabs);
+    auto* gl = new QGridLayout(general);
+    QString path;
+    for (const core::DocumentInfo& d : viewport_->documents()) {
+        if (d.id == viewport_->active_document_id()) {
+            path = QString::fromStdString(d.path);
+        }
+    }
+    const QFileInfo fi(path);
+    int row = 0;
+    const auto gen_row = [&](const QString& label, const QString& value) {
+        gl->addWidget(new QLabel(label, general), row, 0);
+        auto* v = new QLabel(value, general);
+        v->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        gl->addWidget(v, row, 1);
+        ++row;
+    };
+    gen_row(QStringLiteral("Name:"), path.isEmpty() ? QStringLiteral("(not saved yet)") : fi.fileName());
+    gen_row(QStringLiteral("Location:"), path.isEmpty() ? QStringLiteral("-") : fi.absolutePath());
+    gen_row(QStringLiteral("Size:"), fi.exists() ? QStringLiteral("%1 bytes").arg(fi.size()) : QStringLiteral("-"));
+    gen_row(QStringLiteral("Modified:"), fi.exists() ? fi.lastModified().toString() : QStringLiteral("-"));
+    gl->setRowStretch(row, 1);
+    tabs->addTab(general, QStringLiteral("General"));
+
+    // Summary: the six fields.
+    auto* summary = new QWidget(tabs);
+    auto* sl = new QGridLayout(summary);
+    const auto field = [&](int r, const QString& label, const std::string& value) {
+        sl->addWidget(new QLabel(label, summary), r, 0);
+        auto* e = new QLineEdit(QString::fromStdString(value), summary);
+        sl->addWidget(e, r, 1);
+        return e;
+    };
+    QLineEdit* title = field(0, QStringLiteral("Title:"), cur.title);
+    QLineEdit* subject = field(1, QStringLiteral("Subject:"), cur.subject);
+    QLineEdit* author = field(2, QStringLiteral("Author:"), cur.author);
+    QLineEdit* keywords = field(3, QStringLiteral("Keywords:"), cur.keywords);
+    sl->addWidget(new QLabel(QStringLiteral("Comments:"), summary), 4, 0);
+    auto* comments = new QPlainTextEdit(QString::fromStdString(cur.comments), summary);
+    comments->setMaximumHeight(90);
+    sl->addWidget(comments, 4, 1);
+    QLineEdit* hyperlink = field(5, QStringLiteral("Hyperlink base:"), cur.hyperlink_base);
+    tabs->addTab(summary, QStringLiteral("Summary"));
+
+    // Statistics: the drawing's times.
+    auto* stats = new QWidget(tabs);
+    auto* stl = new QGridLayout(stats);
+    const auto when = [](std::int64_t epoch) {
+        return epoch > 0 ? QDateTime::fromSecsSinceEpoch(epoch).toString() : QStringLiteral("-");
+    };
+    const auto total = static_cast<long long>(times.edit_seconds);
+    stl->addWidget(new QLabel(QStringLiteral("Created:"), stats), 0, 0);
+    stl->addWidget(new QLabel(when(times.created), stats), 0, 1);
+    stl->addWidget(new QLabel(QStringLiteral("Last saved:"), stats), 1, 0);
+    stl->addWidget(new QLabel(when(times.updated), stats), 1, 1);
+    stl->addWidget(new QLabel(QStringLiteral("Total editing time:"), stats), 2, 0);
+    stl->addWidget(new QLabel(QStringLiteral("%1 days %2:%3:%4")
+                                  .arg(total / 86400)
+                                  .arg((total % 86400) / 3600, 2, 10, QLatin1Char('0'))
+                                  .arg((total % 3600) / 60, 2, 10, QLatin1Char('0'))
+                                  .arg(total % 60, 2, 10, QLatin1Char('0')),
+                              stats),
+                   2, 1);
+    stl->setRowStretch(3, 1);
+    tabs->addTab(stats, QStringLiteral("Statistics"));
+
+    // Custom: name / value pairs.
+    auto* custom = new QWidget(tabs);
+    auto* cl = new QVBoxLayout(custom);
+    auto* table = new QTableWidget(static_cast<int>(cur.custom.size()), 2, custom);
+    table->setObjectName(QStringLiteral("DwgPropsCustom"));
+    table->setHorizontalHeaderLabels({QStringLiteral("Name"), QStringLiteral("Value")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    for (int i = 0; i < static_cast<int>(cur.custom.size()); ++i) {
+        table->setItem(i, 0, new QTableWidgetItem(QString::fromStdString(cur.custom[static_cast<std::size_t>(i)].first)));
+        table->setItem(i, 1, new QTableWidgetItem(QString::fromStdString(cur.custom[static_cast<std::size_t>(i)].second)));
+    }
+    cl->addWidget(table);
+    auto* crow = new QHBoxLayout;
+    auto* add = new QPushButton(QStringLiteral("Add"), custom);
+    auto* del = new QPushButton(QStringLiteral("Delete"), custom);
+    crow->addWidget(add);
+    crow->addWidget(del);
+    crow->addStretch(1);
+    cl->addLayout(crow);
+    connect(add, &QPushButton::clicked, &dlg, [table] {
+        const int r = table->rowCount();
+        table->insertRow(r);
+        table->setItem(r, 0, new QTableWidgetItem(QStringLiteral("Property")));
+        table->setItem(r, 1, new QTableWidgetItem(QString()));
+        table->editItem(table->item(r, 0));
+    });
+    connect(del, &QPushButton::clicked, &dlg, [table] {
+        if (table->currentRow() >= 0) {
+            table->removeRow(table->currentRow());
+        }
+    });
+    tabs->addTab(custom, QStringLiteral("Custom"));
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    core::DrawingProps p;
+    p.title = title->text().toStdString();
+    p.subject = subject->text().toStdString();
+    p.author = author->text().toStdString();
+    p.keywords = keywords->text().toStdString();
+    p.comments = comments->toPlainText().toStdString();
+    p.hyperlink_base = hyperlink->text().toStdString();
+    for (int i = 0; i < table->rowCount(); ++i) {
+        const QTableWidgetItem* n = table->item(i, 0);
+        const QTableWidgetItem* v = table->item(i, 1);
+        if (n != nullptr && !n->text().trimmed().isEmpty()) {
+            p.custom.emplace_back(n->text().trimmed().toStdString(), v != nullptr ? v->text().toStdString() : std::string());
+        }
+    }
+    if (!(p == cur)) {
+        engine_->submit(core::SetDrawingPropsCommand{std::move(p)});
+    }
+}
+
 void MainWindow::open_units_dialog() {
     core::DrawingUnits u = viewport_->units();
     QDialog dlg(this);

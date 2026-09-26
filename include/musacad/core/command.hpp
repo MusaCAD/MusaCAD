@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "musacad/core/block_attdef_info.hpp"
+#include "musacad/core/drawing_props.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
@@ -549,10 +550,46 @@ struct ChainDimensionCommand {
 struct AreaQueryCommand {
     Vec2 at;
     double pick_radius = 0.0;
+    /// AREA's running total (issue #63): 0 reports the one value, 1 adds it to the total,
+    /// -1 subtracts it; `reset` starts the total at zero first. `from_points` reports the
+    /// polygon the command measured itself (`points_area`, `points_perimeter`) instead of
+    /// picking an object. `height` > 0 reports a volume too (MEASUREGEOM Volume).
+    std::int8_t mode = 0;
+    bool reset = false;
+    bool from_points = false;
+    double points_area = 0.0;
+    double points_perimeter = 0.0;
+    double height = 0.0;
 };
 struct ListQueryCommand {
     Vec2 at;
     double pick_radius = 0.0;
+    /// LIST every selected object (the "Select objects:" form) instead of the one under `at`.
+    bool selection = false;
+};
+/// MEASUREGEOM (issue #63): `what` 0 Radius (an arc or circle under `at`), 1 Angle (two
+/// lines under `at` and `at2`, or one arc), 2 Quick (the object's own measurements).
+struct MeasureQueryCommand {
+    Vec2 at;
+    Vec2 at2{};
+    double pick_radius = 0.0;
+    std::uint8_t what = 0;
+};
+/// MASSPROP: the area properties of the selection's closed shapes.
+struct MassPropQueryCommand {};
+/// TIME: 0 display, 1 timer on, 2 timer off, 3 reset the timer.
+struct TimeCommand {
+    std::uint8_t op = 0;
+};
+/// STATUS: the drawing's counts, extents and current settings; `modes` is the line the
+/// command layer knows (snap, grid, ortho, polar).
+struct StatusQueryCommand {
+    std::string modes;
+};
+/// DWGPROPS: set the drawing's summary information. (Named `summary`, not `props`: the
+/// add-command visitors treat a `props` member as an entity's optional properties.)
+struct SetDrawingPropsCommand {
+    DrawingProps summary;
 };
 
 /// STRETCH (AutoCAD): move the selection by `delta` under AutoCAD's rule --
@@ -1467,7 +1504,8 @@ using Command =
                  SelectHandleCommand, SelectPreviewCommand, SelectSimilarCommand,
                  SelectFilterCommand, IsolateObjectsCommand, OopsCommand, GroupEditCommand,
                  ListGroupsCommand, SetLtscaleModesCommand, MatchPropApplySelectionCommand,
-                 SetCeltscaleCommand,
+                 SetCeltscaleCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
+                 StatusQueryCommand, SetDrawingPropsCommand,
                  ChainDimensionCommand>;
 
 } // namespace musacad::core

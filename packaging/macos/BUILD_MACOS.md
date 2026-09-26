@@ -42,8 +42,8 @@ Without them the `.dmg` is unsigned: Gatekeeper asks once (right-click ▸ Open)
 ```sh
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
 cmake --build build --target musacad_app
-QT_ROOT_DIR=~/Qt/6.8.1/macos packaging/macos/build_app.sh 0.4.0 build/bin/musacad_app
-hdiutil create -volname "Musa CAD" -srcfolder MusaCAD.app -ov -format UDZO MusaCAD-0.4.0-arm64.dmg
+QT_ROOT_DIR=~/Qt/6.8.1/macos packaging/macos/build_app.sh 0.5.0 build/bin/musacad_app
+hdiutil create -volname "Musa CAD" -srcfolder MusaCAD.app -ov -format UDZO MusaCAD-0.5.0-arm64.dmg
 ```
 
 Needs Qt 6 (`macdeployqt`), Ninja and, for the icon, `rsvg-convert` (`brew install ninja librsvg`).

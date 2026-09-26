@@ -176,6 +176,8 @@ Document document_from_store(const GeometryStore& store) {
     doc.ltscale = store.ltscale();
     doc.psltscale = store.psltscale();
     doc.msltscale = store.msltscale();
+    doc.props = store.drawing_props();
+    doc.times = store.times();
     doc.page_setups = store.page_setups();
     doc.views = store.named_views();
     doc.vports = store.vports();
@@ -474,6 +476,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_ltscale(doc.ltscale);
     store.set_psltscale(doc.psltscale);
     store.set_msltscale(doc.msltscale);
+    store.set_drawing_props(doc.props);
+    store.set_times(doc.times);
     store.set_page_setups(doc.page_setups);
 
     // Block definitions: name -> index (defs may reference each other; resolve all by

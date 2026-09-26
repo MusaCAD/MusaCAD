@@ -263,12 +263,54 @@ std::string serialize_native(const Document& doc) {
     s += "LTSCALE ";
     append_double(s, doc.ltscale);
     s += '\n';
-    // v40: LTSCALEMODE psltscale msltscale
+    // v36: LTSCALEMODE psltscale msltscale
     s += "LTSCALEMODE ";
     append_uint(s, doc.psltscale ? 1 : 0);
     s += ' ';
     append_uint(s, doc.msltscale ? 1 : 0);
     s += '\n';
+    // v36: TIMES created updated edit_seconds; DWGPROP key value (strings space-escaped
+    // to 0x1f, "-" = empty). The summary fields use fixed keys; custom ones "c:<name>".
+    s += "TIMES ";
+    s += std::to_string(doc.times.created);
+    s += ' ';
+    s += std::to_string(doc.times.updated);
+    s += ' ';
+    append_double(s, doc.times.edit_seconds);
+    s += '\n';
+    {
+        const auto esc = [](const std::string& in) -> std::string {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& c : out) {
+                if (c == ' ' || c == '\n' || c == '\t') {
+                    c = '\x1f';
+                }
+            }
+            return out;
+        };
+        const auto prop = [&](const char* key, const std::string& value) {
+            if (!value.empty()) {
+                s += "DWGPROP ";
+                s += key;
+                s += ' ';
+                s += esc(value);
+                s += '\n';
+            }
+        };
+        prop("title", doc.props.title);
+        prop("subject", doc.props.subject);
+        prop("author", doc.props.author);
+        prop("keywords", doc.props.keywords);
+        prop("comments", doc.props.comments);
+        prop("hyperlink", doc.props.hyperlink_base);
+        for (const auto& [k, v] : doc.props.custom) {
+            s += "DWGPROP c:";
+            s += esc(k);
+            s += ' ';
+            s += esc(v);
+            s += '\n';
+        }
+    }
     // LAYER <r> <g> <b> <linetype> <lineweight> <on> <frozen> <locked> <name...>
     for (const Layer& l : doc.layers) {
         s += "LAYER ";
@@ -1326,6 +1368,50 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed LTSCALE");
             }
             doc.ltscale = ls;
+        } else if (key == "TIMES") {
+            double es = 0.0;
+            if (tok.size() != 4 || !to_double(tok[3], es)) {
+                return fail("malformed TIMES");
+            }
+            try {
+                doc.times.created = std::stoll(std::string(tok[1]));
+                doc.times.updated = std::stoll(std::string(tok[2]));
+            } catch (const std::exception&) {
+                return fail("malformed TIMES");
+            }
+            doc.times.edit_seconds = es;
+        } else if (key == "DWGPROP") {
+            if (tok.size() != 3) {
+                return fail("malformed DWGPROP");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            const std::string k(tok[1]);
+            const std::string v = dec(tok[2]);
+            if (k == "title") {
+                doc.props.title = v;
+            } else if (k == "subject") {
+                doc.props.subject = v;
+            } else if (k == "author") {
+                doc.props.author = v;
+            } else if (k == "keywords") {
+                doc.props.keywords = v;
+            } else if (k == "comments") {
+                doc.props.comments = v;
+            } else if (k == "hyperlink") {
+                doc.props.hyperlink_base = v;
+            } else if (k.rfind("c:", 0) == 0) {
+                doc.props.custom.emplace_back(dec(std::string_view(k).substr(2)), v);
+            } else {
+                return fail("malformed DWGPROP key");
+            }
         } else if (key == "LTSCALEMODE") {
             std::uint64_t ps = 1;
             std::uint64_t ms = 1;

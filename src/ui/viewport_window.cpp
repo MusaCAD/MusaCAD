@@ -286,6 +286,22 @@ bool ViewportWindow::units_dialog() {
     return true;
 }
 
+bool ViewportWindow::quickcalc_dialog() {
+    if (!quickcalc_callback_) {
+        return false;
+    }
+    quickcalc_callback_();
+    return true;
+}
+
+bool ViewportWindow::dwgprops_dialog() {
+    if (!dwgprops_callback_) {
+        return false;
+    }
+    dwgprops_callback_();
+    return true;
+}
+
 void ViewportWindow::finish_gesture() {
     submit_selection_preview(true);
     if (processor_ != nullptr && processor_->in_selection_phase()) {
@@ -1033,6 +1049,8 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             msltscale_ = snap.msltscale;
             pickstyle_ = snap.pickstyle;
             object_isolation_ = snap.object_isolation;
+            drawing_props_ = snap.drawing_props;
+            times_ = snap.times;
             if (snap.pick_candidates_version != pick_candidates_seen_) {
                 pick_candidates_seen_ = snap.pick_candidates_version;
                 pick_candidates_ = snap.pick_candidates;

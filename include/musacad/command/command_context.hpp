@@ -231,6 +231,10 @@ public:
     /// flows run instead).
     virtual bool purge_dialog() { return false; }
     virtual bool units_dialog() { return false; }
+    /// QUICKCALC's calculator palette and DWGPROPS' Drawing Properties dialog; false
+    /// when there is none (CAL's prompt / a printed summary run instead).
+    virtual bool quickcalc_dialog() { return false; }
+    virtual bool dwgprops_dialog() { return false; }
 };
 
 /// The services a running command uses to interact with the system. Commands
@@ -305,6 +309,11 @@ public:
     [[nodiscard]] virtual bool psltscale() const { return true; }
     [[nodiscard]] virtual bool msltscale() const { return true; }
     [[nodiscard]] virtual std::uint8_t pickstyle() const { return 1; }
+    /// STATUS: the drafting modes the command layer keeps (snap, grid, ortho, polar), as
+    /// the lines AutoCAD prints for them.
+    [[nodiscard]] virtual std::string status_modes() const { return {}; }
+    /// The drawing's summary information, as last published (DWGPROPS without a dialog).
+    [[nodiscard]] virtual core::DrawingProps drawing_props() const { return {}; }
 };
 
 } // namespace musacad::command

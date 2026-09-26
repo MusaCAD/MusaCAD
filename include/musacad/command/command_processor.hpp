@@ -121,6 +121,9 @@ public:
     [[nodiscard]] bool msltscale() const override { return msltscale_; }
     void set_pickstyle(std::uint8_t v) noexcept { pickstyle_ = v; }
     [[nodiscard]] std::uint8_t pickstyle() const override { return pickstyle_; }
+    [[nodiscard]] std::string status_modes() const override;
+    void set_drawing_props(core::DrawingProps p) { drawing_props_ = std::move(p); }
+    [[nodiscard]] core::DrawingProps drawing_props() const override { return drawing_props_; }
     [[nodiscard]] std::vector<std::string> block_names() const override { return block_names_; }
     void set_layouts(std::vector<std::string> names, std::uint8_t active) {
         layout_names_ = std::move(names);
@@ -253,6 +256,7 @@ private:
     bool psltscale_ = true;
     bool msltscale_ = true;
     std::uint8_t pickstyle_ = 1;
+    core::DrawingProps drawing_props_;
 };
 
 } // namespace musacad::command

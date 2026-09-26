@@ -95,6 +95,7 @@ add_executable(musacad_tests
     test_selection.cpp
     test_select_objects.cpp
     test_selection_ops.cpp
+    test_inquiry_ops.cpp
     test_modify.cpp
     test_stretch.cpp
     test_array.cpp
