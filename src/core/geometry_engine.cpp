@@ -8374,7 +8374,8 @@ void GeometryEngine::apply(const Command& command) {
                 push_create_item(c.group, h, command);
                 redo_.clear();
                 geom_dirty_ = true;
-            } else if constexpr (std::is_same_v<T, EraseCommand>) {
+            }
+            if constexpr (std::is_same_v<T, EraseCommand>) {
                 std::vector<EntityHandle> targets;
                 if (c.scope == EraseScope::All) {
                     targets = all_live();
@@ -8393,7 +8394,8 @@ void GeometryEngine::apply(const Command& command) {
                 }
                 redo_.clear();
                 geom_dirty_ = true;
-            } else if constexpr (std::is_same_v<T, ErasePickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ErasePickCommand>) {
                 const EntityHandle h = pick_nearest(c.world, c.pick_radius);
                 if (!h.is_null()) {
                     Command restore = capture_entity(h);
@@ -8403,23 +8405,28 @@ void GeometryEngine::apply(const Command& command) {
                     redo_.clear();
                     geom_dirty_ = true;
                 }
-            } else if constexpr (std::is_same_v<T, UndoLastGroupCommand>) {
+            }
+            if constexpr (std::is_same_v<T, UndoLastGroupCommand>) {
                 do_undo_group();
                 geom_dirty_ = true;
-            } else if constexpr (std::is_same_v<T, RedoLastGroupCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RedoLastGroupCommand>) {
                 do_redo_group();
                 geom_dirty_ = true;
-            } else if constexpr (std::is_same_v<T, UndoLastOpCommand>) {
+            }
+            if constexpr (std::is_same_v<T, UndoLastOpCommand>) {
                 do_undo_op();
                 geom_dirty_ = true;
-            } else if constexpr (std::is_same_v<T, SetCursorCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetCursorCommand>) {
                 cursor_ = c.world;
                 pick_radius_ = c.pick_radius;
                 osnap_enabled_ = c.osnap;
                 snap_mask_ = c.snap_mask;
                 has_from_ = c.has_from;
                 from_ = c.from;
-            } else if constexpr (std::is_same_v<T, EraseSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, EraseSelectionCommand>) {
                 const std::vector<EntityHandle> sel = selection_;
                 std::vector<Command> gone;
                 for (const EntityHandle h : sel) {
@@ -8437,7 +8444,8 @@ void GeometryEngine::apply(const Command& command) {
                 selection_.clear();
                 redo_.clear();
                 geom_dirty_ = true;
-            } else if constexpr (std::is_same_v<T, SelectPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectPickCommand>) {
                 if (c.announce) {
                     remember_selection_step();
                 }
@@ -8487,9 +8495,11 @@ void GeometryEngine::apply(const Command& command) {
                 }
                 note_selection_for_windows(); // a picked object moves whole; windows stay
                 announce_found(picked.is_null() ? 0 : 1, before, c.additive, removing, c.announce);
-            } else if constexpr (std::is_same_v<T, SelectWindowCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectWindowCommand>) {
                 select_window(c.min, c.max, c.crossing, c.additive, c.announce, c.remove);
-            } else if constexpr (std::is_same_v<T, SelectAllCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectAllCommand>) {
                 if (c.announce) {
                     remember_selection_step();
                 }
@@ -8503,22 +8513,27 @@ void GeometryEngine::apply(const Command& command) {
                 if (c.announce) {
                     report(std::to_string(selection_.size()) + " found.");
                 }
-            } else if constexpr (std::is_same_v<T, SelectFenceCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectFenceCommand>) {
                 select_where([&](EntityHandle h) { return entity_hits_fence(h, c.points); }, c.remove,
                              c.announce);
-            } else if constexpr (std::is_same_v<T, SelectPolygonCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectPolygonCommand>) {
                 select_where([&](EntityHandle h) { return entity_hits_polygon(h, c.points, c.crossing); },
                              c.remove, c.announce);
-            } else if constexpr (std::is_same_v<T, SelectLastCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectLastCommand>) {
                 const EntityHandle last = most_recent_live();
                 select_where([&](EntityHandle h) { return h == last; }, c.remove, c.announce);
-            } else if constexpr (std::is_same_v<T, SelectPreviousCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectPreviousCommand>) {
                 std::erase_if(previous_selection_, [this](EntityHandle h) { return !store_.is_valid(h); });
                 const std::vector<EntityHandle> prev = previous_selection_;
                 select_where(
                     [&](EntityHandle h) { return std::find(prev.begin(), prev.end(), h) != prev.end(); },
                     false, c.announce);
-            } else if constexpr (std::is_same_v<T, SelectGroupCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectGroupCommand>) {
                 const std::size_t gi = store_.group_index(c.name);
                 if (gi == static_cast<std::size_t>(-1)) {
                     report("No group named \"" + c.name + "\".");
@@ -8528,7 +8543,8 @@ void GeometryEngine::apply(const Command& command) {
                         [&](EntityHandle h) { return std::find(members.begin(), members.end(), h) != members.end(); },
                         c.remove, c.announce);
                 }
-            } else if constexpr (std::is_same_v<T, SelectUndoCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectUndoCommand>) {
                 if (selection_history_.empty()) {
                     report("Nothing to undo.");
                 } else {
@@ -8538,7 +8554,8 @@ void GeometryEngine::apply(const Command& command) {
                     note_selection_for_windows();
                     report(std::to_string(selection_.size()) + " total.");
                 }
-            } else if constexpr (std::is_same_v<T, SelectHandleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectHandleCommand>) {
                 if (c.announce) {
                     remember_selection_step();
                 }
@@ -8553,27 +8570,37 @@ void GeometryEngine::apply(const Command& command) {
                 }
                 note_selection_for_windows();
                 announce_found(ok ? 1 : 0, before, c.additive, false, c.announce);
-            } else if constexpr (std::is_same_v<T, SelectPreviewCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectPreviewCommand>) {
                 select_preview(c);
-            } else if constexpr (std::is_same_v<T, SelectSimilarCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectSimilarCommand>) {
                 select_similar(c.mode);
-            } else if constexpr (std::is_same_v<T, SelectFilterCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SelectFilterCommand>) {
                 select_filter(c);
-            } else if constexpr (std::is_same_v<T, IsolateObjectsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, IsolateObjectsCommand>) {
                 apply_isolate(c.mode);
-            } else if constexpr (std::is_same_v<T, OopsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, OopsCommand>) {
                 apply_oops(c.group);
-            } else if constexpr (std::is_same_v<T, GroupEditCommand>) {
+            }
+            if constexpr (std::is_same_v<T, GroupEditCommand>) {
                 apply_group_edit(c);
-            } else if constexpr (std::is_same_v<T, ListGroupsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ListGroupsCommand>) {
                 list_groups();
-            } else if constexpr (std::is_same_v<T, SetCeltscaleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetCeltscaleCommand>) {
                 current_celtscale_ = c.scale > 0.0 ? c.scale : current_celtscale_;
-            } else if constexpr (std::is_same_v<T, SetLtscaleModesCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetLtscaleModesCommand>) {
                 store_.set_psltscale(c.psltscale);
                 store_.set_msltscale(c.msltscale);
                 geom_dirty_ = true; // viewport dashes follow PSLTSCALE at the rebuild
-            } else if constexpr (std::is_same_v<T, MatchPropApplySelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MatchPropApplySelectionCommand>) {
                 if (!match_source_.has_value()) {
                     report("MATCHPROP: select a source object first.");
                 } else {
@@ -8604,111 +8631,157 @@ void GeometryEngine::apply(const Command& command) {
                     }
                     report(n == 0 ? "Nothing to match." : "Properties matched to " + std::to_string(n) + " object(s).");
                 }
-            } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
                 selection_.clear();
                 forget_stretch_windows();
-            } else if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 apply_chain_dimension(c.at, c.baseline, c.group);
-            } else if constexpr (std::is_same_v<T, AreaQueryCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AreaQueryCommand>) {
                 apply_area_query(c);
-            } else if constexpr (std::is_same_v<T, ListQueryCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ListQueryCommand>) {
                 apply_list_query(c);
-            } else if constexpr (std::is_same_v<T, MeasureQueryCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MeasureQueryCommand>) {
                 apply_measure_query(c);
-            } else if constexpr (std::is_same_v<T, MassPropQueryCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MassPropQueryCommand>) {
                 apply_massprop();
-            } else if constexpr (std::is_same_v<T, TimeCommand>) {
+            }
+            if constexpr (std::is_same_v<T, TimeCommand>) {
                 apply_time(c.op);
-            } else if constexpr (std::is_same_v<T, StatusQueryCommand>) {
+            }
+            if constexpr (std::is_same_v<T, StatusQueryCommand>) {
                 apply_status(c.modes);
-            } else if constexpr (std::is_same_v<T, SetDrawingPropsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetDrawingPropsCommand>) {
                 store_.set_drawing_props(c.summary);
                 dirty_ = true;
                 geom_dirty_ = true; // republish so the dialog sees them
                 report("Drawing properties updated.");
-            } else if constexpr (std::is_same_v<T, StretchSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, StretchSelectionCommand>) {
                 apply_stretch(c.delta, c.group);
-            } else if constexpr (std::is_same_v<T, MoveSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MoveSelectionCommand>) {
                 apply_move(c.delta, false, c.group);
-            } else if constexpr (std::is_same_v<T, CopySelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CopySelectionCommand>) {
                 apply_move(c.delta, true, c.group);
-            } else if constexpr (std::is_same_v<T, MirrorSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MirrorSelectionCommand>) {
                 apply_mirror(c.a, c.b, c.erase_source, c.group);
-            } else if constexpr (std::is_same_v<T, OffsetPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, OffsetPickCommand>) {
                 apply_offset_cmd(c);
-            } else if constexpr (std::is_same_v<T, SetMirrtextCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetMirrtextCommand>) {
                 mirrtext_ = c.mirror_text;
-            } else if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
                 current_props_ = c.current;
                 current_props_.layer = 0; // the current layer applies at creation
-            } else if constexpr (std::is_same_v<T, XlineOffsetCommand>) {
+            }
+            if constexpr (std::is_same_v<T, XlineOffsetCommand>) {
                 apply_xline_offset(c);
-            } else if constexpr (std::is_same_v<T, XlineReferenceCommand>) {
+            }
+            if constexpr (std::is_same_v<T, XlineReferenceCommand>) {
                 apply_xline_reference(c);
-            } else if constexpr (std::is_same_v<T, TrimPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, TrimPickCommand>) {
                 apply_trim(c.pick, c.radius, c.group);
-            } else if constexpr (std::is_same_v<T, JoinPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, JoinPickCommand>) {
                 apply_join(c.picks, c.radius, c.group);
-            } else if constexpr (std::is_same_v<T, JoinSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, JoinSelectionCommand>) {
                 apply_join_selection(c.radius, c.group);
-            } else if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
                 apply_hatch_from_selection(c.pattern_name, c.pattern_scale, c.pattern_angle,
                                            c.group, c.color2);
-            } else if constexpr (std::is_same_v<T, HatchPickPointCommand>) {
+            }
+            if constexpr (std::is_same_v<T, HatchPickPointCommand>) {
                 apply_hatch_pick_point(c.point, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                        c.group, c.color2);
-            } else if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
                 apply_rotate(c.base, c.angle, c.group, c.copy);
-            } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
                 apply_scale(c.base, c.factor, c.group, c.copy);
-            } else if constexpr (std::is_same_v<T, ArrayRectCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ArrayRectCommand>) {
                 apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
-            } else if constexpr (std::is_same_v<T, ArrayPathCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ArrayPathCommand>) {
                 apply_array_path(c);
-            } else if constexpr (std::is_same_v<T, DividePathCommand>) {
+            }
+            if constexpr (std::is_same_v<T, DividePathCommand>) {
                 apply_divide_measure(c);
-            } else if constexpr (std::is_same_v<T, BreakCommand>) {
+            }
+            if constexpr (std::is_same_v<T, BreakCommand>) {
                 apply_break(c);
-            } else if constexpr (std::is_same_v<T, PurgeCommand>) {
+            }
+            if constexpr (std::is_same_v<T, PurgeCommand>) {
                 apply_purge(c);
-            } else if constexpr (std::is_same_v<T, RevcloudObjectCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RevcloudObjectCommand>) {
                 apply_revcloud_object(c);
-            } else if constexpr (std::is_same_v<T, RevcloudReverseCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RevcloudReverseCommand>) {
                 apply_revcloud_reverse(c.group);
-            } else if constexpr (std::is_same_v<T, ExplodeSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ExplodeSelectionCommand>) {
                 apply_explode(c.group);
-            } else if constexpr (std::is_same_v<T, AddCircleTangentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AddCircleTangentCommand>) {
                 apply_circle_tangent(c);
-            } else if constexpr (std::is_same_v<T, StretchPreviewCommand>) {
+            }
+            if constexpr (std::is_same_v<T, StretchPreviewCommand>) {
                 // Preview only: recomputed at the next publish on the scratch store.
                 stretch_preview_active_ = c.active && !selection_.empty();
                 stretch_preview_delta_ = c.delta;
-            } else if constexpr (std::is_same_v<T, TransformPreviewCommand>) {
+            }
+            if constexpr (std::is_same_v<T, TransformPreviewCommand>) {
                 // Preview only: the selection under the transform, rebuilt at each publish.
                 transform_preview_active_ =
                     c.active && !selection_.empty() &&
                     (c.kind != TransformPreviewCommand::Kind::Scale || c.param > 0.0);
                 transform_preview_ = c;
-            } else if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
                 apply_align(c);
-            } else if constexpr (std::is_same_v<T, LengthenCommand>) {
+            }
+            if constexpr (std::is_same_v<T, LengthenCommand>) {
                 apply_lengthen(c);
-            } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
-            } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ExtendPickCommand>) {
                 apply_extend(c.pick, c.radius, c.group);
-            } else if constexpr (std::is_same_v<T, FilletPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, FilletPickCommand>) {
                 apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group, c.trim);
-            } else if constexpr (std::is_same_v<T, ChamferPickCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ChamferPickCommand>) {
                 apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group, c.trim);
-            } else if constexpr (std::is_same_v<T, FilletPolylineCommand>) {
+            }
+            if constexpr (std::is_same_v<T, FilletPolylineCommand>) {
                 apply_fillet_polyline(c.pick, c.radius, c.pick_radius, c.group);
-            } else if constexpr (std::is_same_v<T, ChamferPolylineCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ChamferPolylineCommand>) {
                 apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group);
-            } else if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
                 apply_object_dimension(c.type, c.pick1, c.pick2, c.pick3, c.pick4, c.pick_radius,
                                        c.style, c.group);
-            } else if constexpr (std::is_same_v<T, ResolveDimObjectCommand>) {
+            }
+            if constexpr (std::is_same_v<T, ResolveDimObjectCommand>) {
                 // Non-mutating: resolve def points for the UI placement preview.
                 DimData d;
                 has_pending_dim_ = resolve_dim_defs(c.type, c.pick1, c.pick2, c.pick_radius, d);
@@ -8716,7 +8789,8 @@ void GeometryEngine::apply(const Command& command) {
                     pending_dim_ = d;
                 }
                 ++pending_dim_version_;
-            } else if constexpr (std::is_same_v<T, SetViewScaleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetViewScaleCommand>) {
                 // Zoom-adaptive tessellation: re-tessellate only when the view scale
                 // crosses a half-octave bucket (so panning never re-tessellates).
                 view_world_per_px_ = c.world_per_px > 0.0 ? c.world_per_px : view_world_per_px_;
@@ -8728,7 +8802,8 @@ void GeometryEngine::apply(const Command& command) {
                     tess_tolerance_ = std::max(1e-9, kChordPx * view_world_per_px_);
                     geom_dirty_ = true; // force re-tessellation at the new resolution
                 }
-            } else if constexpr (std::is_same_v<T, BuildPlotSnapshotCommand>) {
+            }
+            if constexpr (std::is_same_v<T, BuildPlotSnapshotCommand>) {
                 // Read-only: build a fine-tolerance snapshot into the plot buffer (smooth
                 // arcs at any paper scale), then bump the version the UI waits on. The
                 // store is never mutated; the live snapshot/triple-buffer is untouched.
@@ -8736,7 +8811,8 @@ void GeometryEngine::apply(const Command& command) {
                 text::set_field_context(field_context_now());
                 build_render_snapshot(store_, kernel_, plot_snapshot_, tol, store_.ltscale());
                 plot_version_.fetch_add(1, std::memory_order_release);
-            } else if constexpr (std::is_same_v<T, GripDragCommand>) {
+            }
+            if constexpr (std::is_same_v<T, GripDragCommand>) {
                 using P = GripDragCommand::Phase;
                 if (c.phase == P::Begin) {
                     // Arm the drag only if the entity is selectable (layer on/unlocked).
@@ -8752,17 +8828,23 @@ void GeometryEngine::apply(const Command& command) {
                 } else { // Cancel
                     grip_active_ = false;
                 }
-            } else if constexpr (std::is_same_v<T, EditTextContentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, EditTextContentCommand>) {
                 apply_text_edit(c.at, c.pick_radius, c.content, c.group);
-            } else if constexpr (std::is_same_v<T, SetPropertyCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetPropertyCommand>) {
                 apply_set_property(c.id, c.value, c.group);
-            } else if constexpr (std::is_same_v<T, MatchPropPickSourceCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MatchPropPickSourceCommand>) {
                 apply_match_pick_source(c.point, c.radius);
-            } else if constexpr (std::is_same_v<T, MatchPropSourceFromSelectionCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MatchPropSourceFromSelectionCommand>) {
                 apply_match_source_from_selection();
-            } else if constexpr (std::is_same_v<T, MatchPropApplyCommand>) {
+            }
+            if constexpr (std::is_same_v<T, MatchPropApplyCommand>) {
                 apply_match_apply(c.point, c.radius, c.filter, c.group);
-            } else if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
                 if (!c.dxf) {
                     tick_edit_time(); // TIME: the total editing time and the last-saved time go in the file
                     DrawingTimes t = store_.times();
@@ -8784,65 +8866,85 @@ void GeometryEngine::apply(const Command& command) {
                     }
                 }
                 report(r.message);
-            } else if constexpr (std::is_same_v<T, OpenDocumentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, OpenDocumentCommand>) {
                 if (c.new_tab) {
                     open_into_new_tab(command);
                 } else {
                     load_document_replace(command);
                 }
-            } else if constexpr (std::is_same_v<T, NewDocumentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, NewDocumentCommand>) {
                 new_document();
-            } else if constexpr (std::is_same_v<T, CreateDocumentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CreateDocumentCommand>) {
                 create_document(c.name);
-            } else if constexpr (std::is_same_v<T, SwitchDocumentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SwitchDocumentCommand>) {
                 switch_document(c.id);
-            } else if constexpr (std::is_same_v<T, CloseDocumentCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CloseDocumentCommand>) {
                 close_document(c.id);
-            } else if constexpr (std::is_same_v<T, CopyClipboardCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CopyClipboardCommand>) {
                 apply_copy_clipboard();
-            } else if constexpr (std::is_same_v<T, CutClipboardCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CutClipboardCommand>) {
                 apply_cut_clipboard(c.group);
-            } else if constexpr (std::is_same_v<T, PasteClipboardCommand>) {
+            }
+            if constexpr (std::is_same_v<T, PasteClipboardCommand>) {
                 apply_paste_clipboard(c.at, c.group, c.at_cursor);
-            } else if constexpr (std::is_same_v<T, AddLayerCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AddLayerCommand>) {
                 store_.add_layer(c.layer);
                 geom_dirty_ = true;
                 report("Layer \"" + c.layer.name + "\" added.");
-            } else if constexpr (std::is_same_v<T, SetLayerCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetLayerCommand>) {
                 store_.set_layer(c.index, c.layer);
                 geom_dirty_ = true;
                 prune_selection();
-            } else if constexpr (std::is_same_v<T, RemoveLayerCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RemoveLayerCommand>) {
                 if (store_.remove_layer(c.index)) {
                     geom_dirty_ = true;
                     report("Layer removed.");
                 } else {
                     report("Cannot delete layer 0, the current layer, or a layer with objects.");
                 }
-            } else if constexpr (std::is_same_v<T, SetCurrentLayerCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetCurrentLayerCommand>) {
                 store_.set_current_layer(c.index);
-            } else if constexpr (std::is_same_v<T, SetEntityLayerCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetEntityLayerCommand>) {
                 apply_entity_layer(c.index, c.group);
-            } else if constexpr (std::is_same_v<T, SetEntityColorCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetEntityColorCommand>) {
                 apply_entity_color(c.by_layer, c.color, c.group);
-            } else if constexpr (std::is_same_v<T, AddDimStyleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AddDimStyleCommand>) {
                 store_.add_dimstyle(c.style);
                 geom_dirty_ = true;
                 report("Dimension style \"" + c.style.name + "\" added.");
-            } else if constexpr (std::is_same_v<T, SetDimStyleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetDimStyleCommand>) {
                 store_.set_dimstyle(c.index, c.style);
                 geom_dirty_ = true; // dims using this style recompute on rebuild
-            } else if constexpr (std::is_same_v<T, SetLineweightDisplayCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetLineweightDisplayCommand>) {
                 lineweight_display_ = c.on;
-            } else if constexpr (std::is_same_v<T, SetLtscaleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetLtscaleCommand>) {
                 store_.set_ltscale(c.scale);
                 geom_dirty_ = true; // re-dash all non-continuous entities at rebuild
-            } else if constexpr (std::is_same_v<T, AddPageSetupCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AddPageSetupCommand>) {
                 store_.add_page_setup(c.setup);
                 dirty_ = true;      // an unsaved document change
                 geom_dirty_ = true; // republish so the snapshot carries the new setup
                 report("Page setup \"" + c.setup.name + "\" saved.");
-            } else if constexpr (std::is_same_v<T, VportsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, VportsCommand>) {
                 using Op = VportsCommand::Op;
                 if (c.op == Op::Set) {
                     store_.set_vports(c.tiles, c.active);
@@ -8887,12 +8989,14 @@ void GeometryEngine::apply(const Command& command) {
                     report(names.empty() ? "No saved viewport configurations."
                                          : "Saved viewport configurations: " + names + ".");
                 }
-            } else if constexpr (std::is_same_v<T, SaveNamedViewCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SaveNamedViewCommand>) {
                 store_.add_named_view(c.view);
                 dirty_ = true;
                 geom_dirty_ = true; // republish the VIEW table
                 report("View \"" + c.view.name + "\" saved.");
-            } else if constexpr (std::is_same_v<T, DeleteNamedViewCommand>) {
+            }
+            if constexpr (std::is_same_v<T, DeleteNamedViewCommand>) {
                 if (store_.remove_named_view(c.name)) {
                     dirty_ = true;
                     geom_dirty_ = true;
@@ -8900,7 +9004,8 @@ void GeometryEngine::apply(const Command& command) {
                 } else {
                     report("View \"" + c.name + "\" not found.");
                 }
-            } else if constexpr (std::is_same_v<T, CreateGroupCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CreateGroupCommand>) {
                 prune_selection();
                 if (selection_.empty()) {
                     report("Group: nothing selected.");
@@ -8919,7 +9024,8 @@ void GeometryEngine::apply(const Command& command) {
                                "\" has been created.");
                     }
                 }
-            } else if constexpr (std::is_same_v<T, UngroupCommand>) {
+            }
+            if constexpr (std::is_same_v<T, UngroupCommand>) {
                 std::size_t gi = static_cast<std::size_t>(-1);
                 if (c.by_name) {
                     gi = store_.group_index(c.name);
@@ -8939,11 +9045,13 @@ void GeometryEngine::apply(const Command& command) {
                     geom_dirty_ = true;
                     report("Group \"" + name + "\" exploded.");
                 }
-            } else if constexpr (std::is_same_v<T, SetPickStyleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetPickStyleCommand>) {
                 pickstyle_group_ = c.group_select;
                 pickstyle_hatch_ = c.hatch_assoc;
                 report("PICKSTYLE = " + std::to_string((c.group_select ? 1 : 0) + (c.hatch_assoc ? 2 : 0)) + ".");
-            } else if constexpr (std::is_same_v<T, SetUnitsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetUnitsCommand>) {
                 store_.set_units(c.units);
                 dirty_ = true;
                 geom_dirty_ = true; // republish: the readout and inquiry formats follow
@@ -8951,9 +9059,11 @@ void GeometryEngine::apply(const Command& command) {
                        std::to_string(c.units.linear_precision) + "; angles " +
                        units::angular_name(c.units.angular) + ", precision " +
                        std::to_string(c.units.angular_precision) + ".");
-            } else if constexpr (std::is_same_v<T, AuditCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AuditCommand>) {
                 apply_audit(c.fix);
-            } else if constexpr (std::is_same_v<T, SetTextStyleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetTextStyleCommand>) {
                 const std::uint16_t i = store_.add_text_style(c.style);
                 if (c.make_current) {
                     store_.set_current_text_style(i);
@@ -8961,9 +9071,11 @@ void GeometryEngine::apply(const Command& command) {
                 dirty_ = true;
                 geom_dirty_ = true; // texts using the style re-lay-out; the table republishes
                 report("\"" + c.style.name + "\" is now the current text style.");
-            } else if constexpr (std::is_same_v<T, DefineBlockCommand>) {
+            }
+            if constexpr (std::is_same_v<T, DefineBlockCommand>) {
                 apply_define_block(c);
-            } else if constexpr (std::is_same_v<T, InsertBlockCommand>) {
+            }
+            if constexpr (std::is_same_v<T, InsertBlockCommand>) {
                 std::uint16_t bi = 0xFFFF;
                 for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
                     if (store_.block(i)->name == c.name) {
@@ -8983,26 +9095,36 @@ void GeometryEngine::apply(const Command& command) {
                     dirty_ = true;
                     report("Inserted \"" + c.name + "\".");
                 }
-            } else if constexpr (std::is_same_v<T, WriteBlockCommand>) {
+            }
+            if constexpr (std::is_same_v<T, WriteBlockCommand>) {
                 apply_write_block(c);
-            } else if constexpr (std::is_same_v<T, RegenCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RegenCommand>) {
                 geom_dirty_ = true;
                 report("Regenerating model.");
-            } else if constexpr (std::is_same_v<T, PeditCommand>) {
+            }
+            if constexpr (std::is_same_v<T, PeditCommand>) {
                 apply_pedit(c);
-            } else if constexpr (std::is_same_v<T, RefEditCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RefEditCommand>) {
                 apply_refedit(c);
-            } else if constexpr (std::is_same_v<T, RefSetCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RefSetCommand>) {
                 apply_refset(c);
-            } else if constexpr (std::is_same_v<T, RefCloseCommand>) {
+            }
+            if constexpr (std::is_same_v<T, RefCloseCommand>) {
                 apply_refclose(c);
-            } else if constexpr (std::is_same_v<T, PolylineVertexCommand>) {
+            }
+            if constexpr (std::is_same_v<T, PolylineVertexCommand>) {
                 apply_polyline_vertex(c);
-            } else if constexpr (std::is_same_v<T, AttachImageCommand>) {
+            }
+            if constexpr (std::is_same_v<T, AttachImageCommand>) {
                 apply_attach_image(c);
-            } else if constexpr (std::is_same_v<T, SetImageClipCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetImageClipCommand>) {
                 apply_image_clip(c);
-            } else if constexpr (std::is_same_v<T, SetImagePolyClipCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetImagePolyClipCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
                 const ImageData* im = store_.image(h);
                 if (im == nullptr) {
@@ -9035,23 +9157,32 @@ void GeometryEngine::apply(const Command& command) {
                     dirty_ = true;
                     report("Image clipped to the polygon.");
                 }
-            } else if constexpr (std::is_same_v<T, CreateViewportCommand>) {
+            }
+            if constexpr (std::is_same_v<T, CreateViewportCommand>) {
                 apply_create_viewport(c);
-            } else if constexpr (std::is_same_v<T, SetViewportViewCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetViewportViewCommand>) {
                 apply_viewport_view(c);
-            } else if constexpr (std::is_same_v<T, SetViewportLayerFreezeCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetViewportLayerFreezeCommand>) {
                 apply_vplayer(c);
-            } else if constexpr (std::is_same_v<T, SetInsertAttribsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetInsertAttribsCommand>) {
                 apply_insert_attribs(c);
-            } else if constexpr (std::is_same_v<T, SetBlockAttDefsCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetBlockAttDefsCommand>) {
                 apply_block_attdefs(c);
-            } else if constexpr (std::is_same_v<T, XrefAttachCommand>) {
+            }
+            if constexpr (std::is_same_v<T, XrefAttachCommand>) {
                 apply_xref_attach(c);
-            } else if constexpr (std::is_same_v<T, XrefReloadCommand>) {
+            }
+            if constexpr (std::is_same_v<T, XrefReloadCommand>) {
                 apply_xref_reload(c);
-            } else if constexpr (std::is_same_v<T, XrefDetachCommand>) {
+            }
+            if constexpr (std::is_same_v<T, XrefDetachCommand>) {
                 apply_xref_detach(c);
-            } else if constexpr (std::is_same_v<T, XrefListCommand>) {
+            }
+            if constexpr (std::is_same_v<T, XrefListCommand>) {
                 std::string msg;
                 for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
                     const BlockDef* b = store_.block(i);
@@ -9060,7 +9191,8 @@ void GeometryEngine::apply(const Command& command) {
                     }
                 }
                 report(msg.empty() ? "No xrefs attached." : "Xrefs: " + msg);
-            } else if constexpr (std::is_same_v<T, EnterMspaceCommand>) {
+            }
+            if constexpr (std::is_same_v<T, EnterMspaceCommand>) {
                 if (store_.active_space() == 0) {
                     report("MSPACE works on a layout with a viewport (double-click inside one).");
                 } else if (!store_.mspace_viewport().is_null()) {
@@ -9098,7 +9230,8 @@ void GeometryEngine::apply(const Command& command) {
                                "returns to the sheet with the view you leave.");
                     }
                 }
-            } else if constexpr (std::is_same_v<T, LeaveMspaceCommand>) {
+            }
+            if constexpr (std::is_same_v<T, LeaveMspaceCommand>) {
                 if (store_.mspace_viewport().is_null()) {
                     report("Not editing through a viewport.");
                 } else {
@@ -9113,7 +9246,8 @@ void GeometryEngine::apply(const Command& command) {
                     geom_dirty_ = true;
                     report("Paper space.");
                 }
-            } else if constexpr (std::is_same_v<T, SetActiveSpaceCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetActiveSpaceCommand>) {
                 std::uint8_t target = c.space;
                 if (!c.name.empty()) {
                     target = upper_ascii(c.name) == "MODEL" ? std::uint8_t{0} : std::uint8_t{0xFF};
@@ -9137,23 +9271,27 @@ void GeometryEngine::apply(const Command& command) {
                     report(target == 0 ? std::string("Model space.")
                                        : "Layout \"" + (l != nullptr ? l->name : std::string()) + "\".");
                 }
-            } else if constexpr (std::is_same_v<T, LayoutCommand>) {
+            }
+            if constexpr (std::is_same_v<T, LayoutCommand>) {
                 apply_layout(c);
-            } else if constexpr (std::is_same_v<T, SetImageFrameCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetImageFrameCommand>) {
                 store_.set_image_frame(c.mode);
                 geom_dirty_ = true;
                 dirty_ = true;
                 report(c.mode == 0 ? "Image frames hidden."
                        : c.mode == 1 ? "Image frames shown and plotted."
                                      : "Image frames shown on screen only.");
-            } else if constexpr (std::is_same_v<T, SetAttDispCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetAttDispCommand>) {
                 store_.set_attdisp(c.mode);
                 geom_dirty_ = true;
                 dirty_ = true;
                 report(c.mode == 1   ? "Attributes: all on."
                        : c.mode == 2 ? "Attributes: all off."
                                      : "Attributes: normal (each attribute's own visibility).");
-            } else if constexpr (std::is_same_v<T, SetInsertAttribCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetInsertAttribCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
                 const InsertData* in = store_.insert(h);
                 const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
@@ -9202,12 +9340,14 @@ void GeometryEngine::apply(const Command& command) {
                         report("Attribute updated.");
                     }
                 }
-            } else if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
                 store_.set_wipeout_frames(c.on);
                 dirty_ = true;
                 geom_dirty_ = true;
                 report(c.on ? "Wipeout frames on." : "Wipeout frames off.");
-            } else if constexpr (std::is_same_v<T, WipeoutFromPolylineCommand>) {
+            }
+            if constexpr (std::is_same_v<T, WipeoutFromPolylineCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
                 if (h.is_null() || h.kind != EntityKind::Polyline || !store_.polyline(h)->closed) {
                     report("Wipeout: select a closed polyline.");
@@ -9237,7 +9377,8 @@ void GeometryEngine::apply(const Command& command) {
                         report("Wipeout created.");
                     }
                 }
-            } else if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
+            }
+            if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
                 const std::uint16_t i = store_.text_style_index(c.name);
                 if (i == 0xFFFF) {
                     report("Text style \"" + c.name + "\" not found.");
