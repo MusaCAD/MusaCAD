@@ -51,6 +51,12 @@ struct RenderOverlay {
     int rect_mode = 0;
     core::Vec2 rect_a{};
     core::Vec2 rect_b{};
+    /// Lasso (press-and-drag) selection: the polygon so far; `lasso_mode` 1 window, 2
+    /// crossing, 3 fence (Space cycles them while dragging).
+    std::vector<core::Vec2> lasso;
+    int lasso_mode = 0;
+    /// HIGHLIGHT 0: the selection is drawn without its highlight.
+    bool hide_selection = false;
 
     /// Ghost transform applied by the renderer to the snapshot's selected
     /// geometry: 0 = none, 1 = move (translate by ghost_b - ghost_a),
@@ -70,6 +76,9 @@ struct RenderOverlay {
     void clear() noexcept {
         preview_segments.clear();
         rect_mode = 0;
+        lasso.clear();
+        lasso_mode = 0;
+        hide_selection = false;
         ghost_mode = 0;
         dyn_labels.clear();
         command_ui = CanvasCommandUI{};

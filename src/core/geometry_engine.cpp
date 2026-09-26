@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/image.hpp"
 
 #include "musacad/core/math/tangent_circle.hpp"
 #include "musacad/core/text_mirror.hpp"
@@ -14,6 +15,7 @@
 #include "musacad/core/properties_registry.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
@@ -128,6 +130,12 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
 
 EntityHandle GeometryEngine::create_indexed(const Command& add_command) {
     const EntityHandle h = create_entity(add_command);
+    // CELTSCALE: a fresh draw (props unset in the command) takes the current linetype
+    // scale; a captured entity carries its own through the command's props path.
+    if (std::abs(current_celtscale_ - 1.0) > 1e-12 && !h.is_null() &&
+        std::abs(store_.celtscale(h) - 1.0) < 1e-12) {
+        store_.set_celtscale(h, current_celtscale_);
+    }
     Vec2 lo;
     Vec2 hi;
     if (entity_aabb(store_, h, lo, hi)) {
@@ -202,7 +210,8 @@ bool GeometryEngine::selectable(EntityHandle h) const {
         return false;
     }
     const Layer* l = store_.layer(p->layer);
-    return l != nullptr && l->on && !l->frozen && !l->locked && p->space() == store_.active_space();
+    return l != nullptr && l->on && !l->frozen && !l->locked && !p->hidden() &&
+           p->space() == store_.active_space();
 }
 
 std::vector<EntityHandle> GeometryEngine::all_live() const {
@@ -364,6 +373,648 @@ void GeometryEngine::prune_selection() {
     std::erase_if(selection_, [this](EntityHandle h) { return !store_.is_valid(h); });
 }
 
+void GeometryEngine::sel_remove(EntityHandle h) { std::erase(selection_, h); }
+
+void GeometryEngine::remember_selection_step() {
+    if (selection_history_.size() >= 64) {
+        selection_history_.erase(selection_history_.begin());
+    }
+    selection_history_.push_back(selection_);
+}
+
+void GeometryEngine::announce_found(std::size_t matched, std::size_t before, bool additive,
+                                    bool remove, bool announce) {
+    if (!announce) {
+        return;
+    }
+    if (remove) {
+        const std::size_t removed = before > selection_.size() ? before - selection_.size() : 0;
+        report(std::to_string(matched) + " found, " + std::to_string(removed) + " removed, " +
+               std::to_string(selection_.size()) + " total.");
+        return;
+    }
+    std::string msg = std::to_string(matched) + " found";
+    if (additive && before > 0) {
+        msg += ", " + std::to_string(selection_.size()) + " total";
+    }
+    report(msg + ".");
+}
+
+std::size_t GeometryEngine::select_where(const std::function<bool(EntityHandle)>& hit, bool remove,
+                                         bool announce) {
+    if (announce) {
+        remember_selection_step();
+    }
+    const std::size_t before = selection_.size();
+    std::size_t matched = 0;
+    for (const EntityHandle h : all_live()) {
+        if (!selectable(h) || !hit(h)) {
+            continue;
+        }
+        ++matched;
+        if (remove) {
+            sel_remove(h);
+        } else {
+            sel_add(h);
+        }
+    }
+    note_selection_for_windows();
+    announce_found(matched, before, true, remove, announce);
+    return matched;
+}
+
+std::vector<EntityHandle> GeometryEngine::pick_all(Vec2 world, double radius) const {
+    std::vector<std::pair<double, EntityHandle>> hits;
+    if (radius <= 0.0) {
+        return {};
+    }
+    std::vector<EntityHandle> candidates;
+    grid_.query({world.x - radius, world.y - radius}, {world.x + radius, world.y + radius},
+                candidates);
+    Vec2 cp;
+    for (const EntityHandle h : candidates) {
+        if (selectable(h) && kernel_.closest_point(store_, h, world, cp)) {
+            const double d2 = length_squared(cp - world);
+            if (d2 <= radius * radius) {
+                hits.emplace_back(d2, h);
+            }
+        }
+    }
+    std::sort(hits.begin(), hits.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<EntityHandle> out;
+    out.reserve(hits.size());
+    for (const auto& [d2, h] : hits) {
+        out.push_back(h);
+    }
+    return out;
+}
+
+namespace {
+// Defined further down (the inquiry helpers); used by the selection filters above them.
+double shoelace(const std::vector<Vec2>& p);
+double path_length(const std::vector<Vec2>& p, bool closed);
+// Does the segment a-b cross any edge of the closed polygon `poly`?
+bool segment_crosses_polygon(Vec2 a, Vec2 b, const std::vector<Vec2>& poly) {
+    Vec2 hit{};
+    for (std::size_t i = 0; i < poly.size(); ++i) {
+        const Vec2 p = poly[i];
+        const Vec2 q = poly[(i + 1) % poly.size()];
+        if (segment_intersection(a, b, p, q, hit)) {
+            return true;
+        }
+    }
+    return false;
+}
+// Case-insensitive wild-card match: `*` any run of characters, `?` any one (AutoCAD's).
+bool glob_match(std::string_view pattern, std::string_view text) {
+    std::size_t p = 0;
+    std::size_t t = 0;
+    std::size_t star = std::string_view::npos;
+    std::size_t mark = 0;
+    const auto lower = [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); };
+    while (t < text.size()) {
+        if (p < pattern.size() && (pattern[p] == '?' || lower(pattern[p]) == lower(text[t]))) {
+            ++p;
+            ++t;
+        } else if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            mark = t;
+        } else if (star != std::string_view::npos) {
+            p = star + 1;
+            t = ++mark;
+        } else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '*') {
+        ++p;
+    }
+    return p == pattern.size();
+}
+bool blank(std::string_view sv) {
+    return std::all_of(sv.begin(), sv.end(),
+                       [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; });
+}
+} // namespace
+
+bool GeometryEngine::entity_hits_polygon(EntityHandle h, const std::vector<Vec2>& poly,
+                                         bool crossing) const {
+    if (poly.size() < 3) {
+        return false;
+    }
+    std::vector<Vec2> tess;
+    kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+    if (tess.empty()) {
+        return false;
+    }
+    const bool pairs = h.kind == EntityKind::Insert;
+    const std::span<const Vec2> ring(poly.data(), poly.size());
+    bool any_inside = false;
+    bool all_inside = true;
+    for (const Vec2& p : tess) {
+        const bool in = point_in_polygon(ring, p);
+        any_inside = any_inside || in;
+        all_inside = all_inside && in;
+    }
+    bool crosses = false;
+    if (pairs) {
+        for (std::size_t i = 0; i + 1 < tess.size() && !crosses; i += 2) {
+            crosses = segment_crosses_polygon(tess[i], tess[i + 1], poly);
+        }
+    } else {
+        for (std::size_t i = 1; i < tess.size() && !crosses; ++i) {
+            crosses = segment_crosses_polygon(tess[i - 1], tess[i], poly);
+        }
+    }
+    return crossing ? (any_inside || crosses) : (all_inside && !crosses);
+}
+
+bool GeometryEngine::entity_hits_fence(EntityHandle h, const std::vector<Vec2>& fence) const {
+    if (fence.size() < 2) {
+        return false;
+    }
+    std::vector<Vec2> tess;
+    kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+    const bool pairs = h.kind == EntityKind::Insert;
+    Vec2 hit{};
+    const auto seg_hits = [&](Vec2 a, Vec2 b) {
+        for (std::size_t f = 1; f < fence.size(); ++f) {
+            if (segment_intersection(a, b, fence[f - 1], fence[f], hit)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (pairs) {
+        for (std::size_t i = 0; i + 1 < tess.size(); i += 2) {
+            if (seg_hits(tess[i], tess[i + 1])) {
+                return true;
+            }
+        }
+    } else {
+        for (std::size_t i = 1; i < tess.size(); ++i) {
+            if (seg_hits(tess[i - 1], tess[i])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void GeometryEngine::select_preview(const SelectPreviewCommand& c) {
+    preview_lines_.clear();
+    const bool box = c.polygon.empty() && !c.fence;
+    if (box && c.min == c.max) {
+        return; // cleared
+    }
+    std::vector<EntityHandle> candidates;
+    if (box) {
+        grid_.query(c.min, c.max, candidates);
+    } else {
+        candidates = all_live();
+    }
+    for (const EntityHandle h : candidates) {
+        if (!selectable(h)) {
+            continue;
+        }
+        const bool hit = box       ? entity_hits_rect(h, c.min, c.max, c.crossing)
+                         : c.fence ? entity_hits_fence(h, c.polygon)
+                                   : entity_hits_polygon(h, c.polygon, c.crossing);
+        if (!hit) {
+            continue;
+        }
+        std::vector<Vec2> tess;
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+        if (h.kind == EntityKind::Insert) {
+            for (std::size_t i = 0; i + 1 < tess.size(); i += 2) {
+                preview_lines_.push_back(tess[i]);
+                preview_lines_.push_back(tess[i + 1]);
+            }
+        } else {
+            for (std::size_t i = 1; i < tess.size(); ++i) {
+                preview_lines_.push_back(tess[i - 1]);
+                preview_lines_.push_back(tess[i]);
+            }
+        }
+    }
+}
+
+void GeometryEngine::select_similar(std::uint32_t mode) {
+    prune_selection();
+    const std::vector<EntityHandle> seeds = selection_;
+    if (seeds.empty()) {
+        report("SELECTSIMILAR: nothing selected.");
+        return;
+    }
+    const auto style_of = [this](EntityHandle h) -> int {
+        switch (h.kind) {
+        case EntityKind::Text: return store_.text(h)->style;
+        case EntityKind::Dimension: return store_.dimension(h)->style;
+        case EntityKind::Leader: return store_.leader(h)->style;
+        case EntityKind::MLeader: return store_.mleader(h)->style;
+        case EntityKind::Table: return store_.table(h)->style;
+        default: return -1;
+        }
+    };
+    const auto similar = [&](EntityHandle a, EntityHandle b) {
+        const EntityProps* pa = store_.props(a);
+        const EntityProps* pb = store_.props(b);
+        if (pa == nullptr || pb == nullptr) {
+            return false;
+        }
+        if ((mode & 1u) != 0 && (pa->color_by_layer() != pb->color_by_layer() ||
+                                 (!pa->color_by_layer() && !(pa->color == pb->color)))) {
+            return false;
+        }
+        if ((mode & 2u) != 0 && pa->layer != pb->layer) {
+            return false;
+        }
+        if ((mode & 4u) != 0 && (pa->linetype_by_layer() != pb->linetype_by_layer() ||
+                                 (!pa->linetype_by_layer() && pa->linetype != pb->linetype))) {
+            return false;
+        }
+        if ((mode & 8u) != 0 && std::abs(store_.celtscale(a) - store_.celtscale(b)) > 1e-9) {
+            return false;
+        }
+        if ((mode & 16u) != 0 && (pa->lineweight_by_layer() != pb->lineweight_by_layer() ||
+                                  (!pa->lineweight_by_layer() && pa->lineweight != pb->lineweight))) {
+            return false;
+        }
+        if ((mode & 64u) != 0 && style_of(a) != style_of(b)) {
+            return false;
+        }
+        if ((mode & 128u) != 0 && a.kind == EntityKind::Insert &&
+            store_.insert(a)->block != store_.insert(b)->block) {
+            return false;
+        }
+        return true;
+    };
+    remember_selection_step();
+    const std::size_t before = selection_.size();
+    std::size_t found = 0;
+    for (const EntityHandle h : all_live()) {
+        if (!selectable(h) || sel_contains(h)) {
+            continue;
+        }
+        for (const EntityHandle sd : seeds) {
+            if (sd.kind == h.kind && similar(sd, h)) {
+                sel_add(h);
+                ++found;
+                break;
+            }
+        }
+    }
+    note_selection_for_windows();
+    report(std::to_string(found) + " found, " + std::to_string(before + found) + " total.");
+}
+
+void GeometryEngine::select_filter(const SelectFilterCommand& c) {
+    static constexpr const char* kLinetypeNames[] = {"Continuous", "Dashed", "Center", "Hidden"};
+    const auto props_of = [this](EntityHandle h) { return store_.props(h); };
+    // The property's value for `h`: a number and/or a text; false when `h` has no such
+    // property (a circle has no text contents), which is simply "no match".
+    const auto value_of = [&](EntityHandle h, double& num, std::string& text) -> bool {
+        const EntityProps* p = props_of(h);
+        if (p == nullptr) {
+            return false;
+        }
+        switch (c.property) {
+        case 0:
+            return true;
+        case 1:
+            text = p->color_by_layer() ? "ByLayer"
+                                       : std::to_string(p->color.r) + "," + std::to_string(p->color.g) + "," +
+                                             std::to_string(p->color.b);
+            return true;
+        case 2:
+            text = p->layer < store_.layers().size() ? store_.layers()[p->layer].name : "";
+            return true;
+        case 3: {
+            const Linetype lt = p->linetype_by_layer() && p->layer < store_.layers().size()
+                                    ? store_.layers()[p->layer].linetype
+                                    : p->linetype;
+            const auto i = static_cast<std::size_t>(lt);
+            text = i < 4 ? kLinetypeNames[i] : "Continuous";
+            return true;
+        }
+        case 4:
+            num = p->lineweight_by_layer() && p->layer < store_.layers().size()
+                      ? store_.layers()[p->layer].lineweight
+                      : p->lineweight;
+            return true;
+        case 5:
+            num = store_.celtscale(h);
+            return true;
+        case 6:
+            if (h.kind == EntityKind::Circle) {
+                num = store_.circle(h)->radius;
+                return true;
+            }
+            if (h.kind == EntityKind::Arc) {
+                num = store_.arc(h)->radius;
+                return true;
+            }
+            return false;
+        case 7: {
+            if (h.kind == EntityKind::Circle || h.kind == EntityKind::Text || h.kind == EntityKind::MText ||
+                h.kind == EntityKind::Insert || h.kind == EntityKind::Hatch || h.kind == EntityKind::Point) {
+                return false;
+            }
+            std::vector<Vec2> pts;
+            kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+            if (pts.size() < 2) {
+                return false;
+            }
+            bool closed = false;
+            if (h.kind == EntityKind::Polyline) {
+                closed = store_.polyline(h)->closed;
+            }
+            num = path_length(pts, closed);
+            return true;
+        }
+        case 8:
+            if (h.kind == EntityKind::Text) {
+                text = std::string(store_.string_of(*store_.text(h)));
+                return true;
+            }
+            if (h.kind == EntityKind::MText) {
+                text = std::string(store_.string_of(store_.mtext(h)->text));
+                return true;
+            }
+            return false;
+        case 9:
+            if (h.kind == EntityKind::Insert) {
+                const BlockDef* b = store_.block(store_.insert(h)->block);
+                text = b != nullptr ? b->name : "";
+                return true;
+            }
+            return false;
+        case 10:
+            if (h.kind == EntityKind::Text) {
+                num = store_.text(h)->height;
+                return true;
+            }
+            if (h.kind == EntityKind::MText) {
+                num = store_.mtext(h)->text.height;
+                return true;
+            }
+            return false;
+        case 11: {
+            if (h.kind == EntityKind::Circle) {
+                const double r = store_.circle(h)->radius;
+                num = kPi * r * r;
+                return true;
+            }
+            if (h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse && h.kind != EntityKind::Spline) {
+                return false;
+            }
+            std::vector<Vec2> pts;
+            kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+            if (pts.size() < 3) {
+                return false;
+            }
+            num = std::abs(shoelace(pts));
+            return true;
+        }
+        default:
+            return false;
+        }
+    };
+    const bool textual = c.property == 1 || c.property == 2 || c.property == 3 || c.property == 8 || c.property == 9;
+    const auto lower = [](std::string v) {
+        for (char& ch : v) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return v;
+    };
+    const auto matches = [&](EntityHandle h) {
+        if (c.kind >= 0 && static_cast<int>(h.kind) != c.kind) {
+            return false;
+        }
+        double num = 0.0;
+        std::string text;
+        if (!value_of(h, num, text)) {
+            return false;
+        }
+        if (c.property == 0) {
+            return true;
+        }
+        if (textual) {
+            switch (c.op) {
+            case 1: return lower(text) != lower(c.text);
+            case 4: return glob_match(c.text, text);
+            default: return lower(text) == lower(c.text);
+            }
+        }
+        switch (c.op) {
+        case 1: return std::abs(num - c.number) > 1e-9;
+        case 2: return num > c.number;
+        case 3: return num < c.number;
+        default: return std::abs(num - c.number) <= 1e-9;
+        }
+    };
+    prune_selection();
+    const std::vector<EntityHandle> pool = c.whole_drawing ? all_live() : selection_;
+    std::vector<EntityHandle> result;
+    for (const EntityHandle h : pool) {
+        if (!selectable(h)) {
+            continue;
+        }
+        if (matches(h) == c.include) {
+            result.push_back(h);
+        }
+    }
+    remember_selection_step();
+    if (!c.append) {
+        selection_.clear();
+        forget_stretch_windows();
+    }
+    std::size_t added = 0;
+    for (const EntityHandle h : result) {
+        if (!sel_contains(h)) {
+            sel_add(h);
+            ++added;
+        }
+    }
+    note_selection_for_windows();
+    report(std::to_string(added) + " found, " + std::to_string(selection_.size()) + " total.");
+}
+
+void GeometryEngine::apply_isolate(std::uint8_t mode) {
+    std::size_t n = 0;
+    if (mode == 2) {
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            if (p != nullptr && p->hidden()) {
+                EntityProps np = *p;
+                np.set_hidden(false);
+                store_.set_props(h, np);
+                ++n;
+            }
+        }
+        geom_dirty_ = true;
+        dirty_ = n > 0 || dirty_;
+        report(n == 0 ? "No hidden objects." : std::to_string(n) + " object(s) shown again.");
+        return;
+    }
+    prune_selection();
+    if (selection_.empty()) {
+        report(mode == 0 ? "ISOLATEOBJECTS: nothing selected." : "HIDEOBJECTS: nothing selected.");
+        return;
+    }
+    const std::vector<EntityHandle> sel = selection_;
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* p = store_.props(h);
+        if (p == nullptr || p->hidden() || p->space() != store_.active_space()) {
+            continue;
+        }
+        const bool in_sel = std::find(sel.begin(), sel.end(), h) != sel.end();
+        if ((mode == 0) ? in_sel : !in_sel) {
+            continue;
+        }
+        EntityProps np = *p;
+        np.set_hidden(true);
+        store_.set_props(h, np);
+        ++n;
+    }
+    if (mode == 1) {
+        selection_.clear();
+        forget_stretch_windows();
+    }
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(n) + " object(s) hidden. UNISOLATEOBJECTS shows them again.");
+}
+
+void GeometryEngine::apply_oops(std::uint64_t group) {
+    if (oops_.empty()) {
+        report("OOPS: nothing to restore.");
+        return;
+    }
+    std::size_t n = 0;
+    for (const Command& cmd : oops_) {
+        const EntityHandle h = create_indexed(cmd);
+        push_create_item(group, h, cmd);
+        ++n;
+    }
+    oops_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(n) + " object(s) restored.");
+}
+
+void GeometryEngine::apply_group_edit(const GroupEditCommand& c) {
+    std::vector<EntityGroup> gs = store_.groups();
+    std::size_t gi = static_cast<std::size_t>(-1);
+    if (c.by_pick) {
+        if (const EntityHandle h = pick_nearest(c.pick, c.pick_radius); !h.is_null()) {
+            gi = store_.group_of(h);
+        }
+        if (gi == static_cast<std::size_t>(-1)) {
+            report("That object is not in a group.");
+            return;
+        }
+    } else {
+        gi = store_.group_index(c.name);
+        if (gi == static_cast<std::size_t>(-1)) {
+            report("No group named \"" + c.name + "\".");
+            return;
+        }
+    }
+    EntityGroup& g = gs[gi];
+    prune_selection();
+    std::string msg;
+    switch (c.op) {
+    case 0: {
+        std::size_t n = 0;
+        for (const EntityHandle h : selection_) {
+            if (std::find(g.members.begin(), g.members.end(), h) == g.members.end()) {
+                g.members.push_back(h);
+                ++n;
+            }
+        }
+        msg = std::to_string(n) + " object(s) added to group \"" + g.name + "\".";
+        break;
+    }
+    case 1: {
+        const std::size_t before = g.members.size();
+        for (const EntityHandle h : selection_) {
+            std::erase(g.members, h);
+        }
+        msg = std::to_string(before - g.members.size()) + " object(s) removed from group \"" + g.name + "\".";
+        if (g.members.empty()) {
+            gs.erase(gs.begin() + static_cast<std::ptrdiff_t>(gi));
+            msg += " The empty group was deleted.";
+        }
+        break;
+    }
+    case 2:
+        if (c.text.empty() || store_.group_index(c.text) != static_cast<std::size_t>(-1)) {
+            report(c.text.empty() ? "A group needs a name." : "Group \"" + c.text + "\" already exists.");
+            return;
+        }
+        msg = "Group \"" + g.name + "\" renamed to \"" + c.text + "\".";
+        g.name = c.text;
+        break;
+    case 3:
+        g.description = c.text;
+        msg = "Description of group \"" + g.name + "\" set.";
+        break;
+    case 4:
+        g.selectable = c.flag;
+        msg = "Group \"" + g.name + "\" is " + (c.flag ? "selectable." : "not selectable.");
+        break;
+    case 5: {
+        const int n = static_cast<int>(g.members.size());
+        if (c.from < 0 || c.from >= n || c.to < 0 || c.to >= n) {
+            report("Positions run from 0 to " + std::to_string(n - 1) + ".");
+            return;
+        }
+        const EntityHandle m = g.members[static_cast<std::size_t>(c.from)];
+        g.members.erase(g.members.begin() + c.from);
+        g.members.insert(g.members.begin() + c.to, m);
+        msg = "Member " + std::to_string(c.from) + " of group \"" + g.name + "\" moved to " + std::to_string(c.to) + ".";
+        break;
+    }
+    case 6:
+        msg = "Group \"" + g.name + "\" exploded.";
+        gs.erase(gs.begin() + static_cast<std::ptrdiff_t>(gi));
+        break;
+    default:
+        return;
+    }
+    store_.set_groups(std::move(gs));
+    dirty_ = true;
+    geom_dirty_ = true;
+    report(msg);
+}
+
+void GeometryEngine::list_groups() {
+    if (store_.groups().empty()) {
+        report("No groups defined.");
+        return;
+    }
+    std::string out = "Group name          Selectable  Objects  Description";
+    for (const EntityGroup& g : store_.groups()) {
+        std::size_t live = 0;
+        for (const EntityHandle m : g.members) {
+            live += store_.is_valid(m) ? 1u : 0u;
+        }
+        std::string line = "\n" + g.name;
+        while (line.size() < 21) {
+            line += ' ';
+        }
+        line += g.selectable ? "Yes         " : "No          ";
+        std::string n = std::to_string(live);
+        while (n.size() < 9) {
+            n += ' ';
+        }
+        out += line + n + g.description;
+    }
+    report(out);
+}
+
 namespace {
 bool point_in_rect(Vec2 p, Vec2 mn, Vec2 mx) {
     return p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y;
@@ -460,12 +1111,16 @@ bool xline_hits_rect(const XlineData& x, Vec2 mn, Vec2 mx) {
 } // namespace
 
 void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additive,
-                                   bool announce) {
-    if (!additive) {
+                                   bool announce, bool remove) {
+    if (announce) {
+        remember_selection_step();
+    }
+    if (!additive && !remove) {
         selection_.clear();
         forget_stretch_windows();
     }
     const std::size_t before = selection_.size();
+    std::size_t matched = 0;
     std::vector<EntityHandle> candidates;
     grid_.query(mn, mx, candidates);
     for (const EntityHandle h : candidates) {
@@ -473,7 +1128,12 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
             continue; // window/crossing select ignores off/frozen/locked layers
         }
         if (entity_hits_rect(h, mn, mx, crossing)) {
-            sel_add(h);
+            ++matched;
+            if (remove) {
+                sel_remove(h);
+            } else {
+                sel_add(h);
+            }
         }
     }
     // Construction lines are not in the grid. A CROSSING window catches one whose
@@ -488,7 +1148,12 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
             const EntityHandle h{i, xl.generations()[i], EntityKind::Xline};
             const XlineData* xd = xl.get(i, xl.generations()[i]);
             if (xd != nullptr && selectable(h) && xline_hits_rect(*xd, mn, mx)) {
-                sel_add(h);
+                ++matched;
+                if (remove) {
+                    sel_remove(h);
+                } else {
+                    sel_add(h);
+                }
             }
         }
     }
@@ -499,14 +1164,7 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
         stretch_windows_.emplace_back(mn, mx);
     }
     note_selection_for_windows();
-    if (announce) {
-        const std::size_t found = selection_.size() - before;
-        std::string msg = std::to_string(found) + " found";
-        if (additive && before > 0) {
-            msg += ", " + std::to_string(selection_.size()) + " total";
-        }
-        report(msg + ".");
-    }
+    announce_found(matched, before, additive, remove, announce);
 }
 
 // ---------------------------------------------------------------------------
@@ -3037,63 +3695,186 @@ std::string GeometryEngine::fmt_ang(double radians) const {
     return units::format_angle(radians, store_.units());
 }
 
-void GeometryEngine::apply_purge(std::uint8_t what) {
+void GeometryEngine::collect_purge_candidates(RenderSnapshot::PurgeCandidates& out) const {
+    out = RenderSnapshot::PurgeCandidates{};
+    for (std::size_t i = 1; i < store_.layer_count(); ++i) {
+        if (!store_.layer_in_use(static_cast<std::uint16_t>(i))) {
+            out.layers.push_back(store_.layers()[i].name);
+        }
+    }
+    for (std::size_t i = 1; i < store_.dimstyles().size(); ++i) {
+        if (!store_.dimstyle_in_use(static_cast<std::uint16_t>(i))) {
+            out.dimstyles.push_back(store_.dimstyles()[i].name);
+        }
+    }
+    for (std::size_t i = 1; i < store_.table_styles().size(); ++i) {
+        if (!store_.table_style_in_use(static_cast<std::uint16_t>(i))) {
+            out.tablestyles.push_back(store_.table_styles()[i].name);
+        }
+    }
+    for (std::size_t i = 0; i < store_.block_count(); ++i) {
+        if (!store_.block_in_use(static_cast<std::uint16_t>(i))) {
+            out.blocks.push_back(store_.block(static_cast<std::uint16_t>(i))->name);
+        }
+    }
+    for (std::size_t i = 0; i < store_.image_defs().size(); ++i) {
+        if (!store_.image_def_in_use(static_cast<std::uint16_t>(i))) {
+            const ImageDef& d = store_.image_defs()[i];
+            out.images.push_back(d.source.empty() ? "image " + std::to_string(i) : d.source);
+        }
+    }
+    for (std::size_t i = 1; i < store_.text_styles().size(); ++i) {
+        if (!store_.text_style_in_use(static_cast<std::uint16_t>(i))) {
+            out.textstyles.push_back(store_.text_styles()[i].name);
+        }
+    }
+    for (const EntityGroup& g : store_.groups()) {
+        bool alive = false;
+        for (const EntityHandle m : g.members) {
+            alive = alive || store_.is_valid(m);
+        }
+        if (!alive) {
+            out.groups.push_back(g.name);
+        }
+    }
+    std::vector<Vec2> pts;
+    for (const EntityHandle h : all_live()) {
+        switch (h.kind) {
+        case EntityKind::Line:
+        case EntityKind::Arc:
+        case EntityKind::Circle:
+        case EntityKind::Polyline:
+        case EntityKind::Spline:
+        case EntityKind::Ellipse:
+            pts.clear();
+            kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+            if (pts.size() < 2 || path_length(pts, false) < 1e-9) {
+                ++out.zero_length;
+            }
+            break;
+        case EntityKind::Text:
+            if (blank(store_.string_of(*store_.text(h)))) {
+                ++out.empty_text;
+            }
+            break;
+        case EntityKind::MText:
+            if (blank(store_.string_of(store_.mtext(h)->text))) {
+                ++out.empty_text;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+void GeometryEngine::apply_purge(const PurgeCommand& c) {
     // Walk each table BACKWARDS: a removal reindexes every reference above the slot it
     // drops, so going down means the indices still to be examined never move under us.
-    const bool all = what == 0;
+    const bool all = c.what == 0;
+    const bool any_name = c.name.empty() || c.name == "*";
+    const auto wanted = [&](const std::string& n) { return any_name || glob_match(c.name, n); };
+    if (c.list_only) {
+        RenderSnapshot::PurgeCandidates cand;
+        collect_purge_candidates(cand);
+        std::string out;
+        const auto section = [&](std::uint8_t what, const char* title, const std::vector<std::string>& names) {
+            if (!all && c.what != what) {
+                return;
+            }
+            std::string list;
+            for (const std::string& n : names) {
+                if (wanted(n)) {
+                    list += (list.empty() ? "" : ", ") + n;
+                }
+            }
+            if (!list.empty()) {
+                out += std::string(out.empty() ? "" : "\n") + title + ": " + list;
+            }
+        };
+        section(1, "Unused blocks", cand.blocks);
+        section(2, "Unused dimension styles", cand.dimstyles);
+        section(3, "Empty groups", cand.groups);
+        section(4, "Unused layers", cand.layers);
+        section(5, "Unused table styles", cand.tablestyles);
+        section(6, "Unused images", cand.images);
+        section(7, "Unused text styles", cand.textstyles);
+        if ((all || c.what == 8) && cand.zero_length > 0) {
+            out += std::string(out.empty() ? "" : "\n") + "Zero-length geometry: " + std::to_string(cand.zero_length);
+        }
+        if ((all || c.what == 9) && cand.empty_text > 0) {
+            out += std::string(out.empty() ? "" : "\n") + "Empty text objects: " + std::to_string(cand.empty_text);
+        }
+        report(out.empty() ? "No unused objects found." : out);
+        return;
+    }
     int layers = 0;
     int dimstyles = 0;
     int tstyles = 0;
     int blocks = 0;
     int images = 0;
     int groups = 0;
-    if (all || what == 4) {
+    int tstyles_text = 0;
+    int zero = 0;
+    int empty = 0;
+    if (all || c.what == 4) {
         for (std::size_t i = store_.layer_count(); i-- > 1;) {
-            layers += store_.remove_layer(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            if (wanted(store_.layers()[i].name)) {
+                layers += store_.remove_layer(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            }
         }
     }
-    if (all || what == 2) {
+    if (all || c.what == 2) {
         for (std::size_t i = store_.dimstyles().size(); i-- > 1;) {
-            dimstyles += store_.remove_dimstyle(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            if (wanted(store_.dimstyles()[i].name)) {
+                dimstyles += store_.remove_dimstyle(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            }
         }
     }
-    if (all || what == 5) {
+    if (all || c.what == 5) {
         for (std::size_t i = store_.table_styles().size(); i-- > 1;) {
-            tstyles += store_.remove_table_style(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            if (wanted(store_.table_styles()[i].name)) {
+                tstyles += store_.remove_table_style(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            }
         }
     }
-    if (all || what == 1) {
+    if (all || c.what == 1) {
         // Repeat until stable: a block only referenced from another unused block frees
         // up once that block is gone.
         for (bool again = true; again;) {
             again = false;
             for (std::size_t i = store_.block_count(); i-- > 0;) {
-                if (store_.remove_block(static_cast<std::uint16_t>(i))) {
+                if (wanted(store_.block(static_cast<std::uint16_t>(i))->name) &&
+                    store_.remove_block(static_cast<std::uint16_t>(i))) {
                     ++blocks;
                     again = true;
                 }
             }
         }
     }
-    if (all || what == 6) {
+    if (all || c.what == 6) {
         for (std::size_t i = store_.image_defs().size(); i-- > 0;) {
-            images += store_.remove_image_def(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            const ImageDef& d = store_.image_defs()[i];
+            if (wanted(d.source.empty() ? "image " + std::to_string(i) : d.source)) {
+                images += store_.remove_image_def(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            }
         }
     }
-    int tstyles_text = 0;
-    if (all || what == 7) {
+    if (all || c.what == 7) {
         for (std::size_t i = store_.text_styles().size(); i-- > 1;) {
-            tstyles_text += store_.remove_text_style(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            if (wanted(store_.text_styles()[i].name)) {
+                tstyles_text += store_.remove_text_style(static_cast<std::uint16_t>(i)) ? 1 : 0;
+            }
         }
     }
-    if (all || what == 3) {
+    if (all || c.what == 3) {
         std::vector<EntityGroup> kept;
         for (const EntityGroup& g : store_.groups()) {
             bool alive = false;
             for (const EntityHandle m : g.members) {
                 alive = alive || store_.is_valid(m);
             }
-            if (alive) {
+            if (alive || !wanted(g.name)) {
                 kept.push_back(g);
             } else {
                 ++groups;
@@ -3103,7 +3884,52 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
             store_.set_groups(std::move(kept));
         }
     }
-    const int total = layers + dimstyles + tstyles + blocks + images + groups + tstyles_text;
+    if (all || c.what == 8 || c.what == 9) {
+        std::vector<Vec2> pts;
+        std::vector<Command> gone;
+        for (const EntityHandle h : all_live()) {
+            bool drop = false;
+            if (all || c.what == 8) {
+                switch (h.kind) {
+                case EntityKind::Line:
+                case EntityKind::Arc:
+                case EntityKind::Circle:
+                case EntityKind::Polyline:
+                case EntityKind::Spline:
+                case EntityKind::Ellipse:
+                    pts.clear();
+                    kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+                    drop = pts.size() < 2 || path_length(pts, false) < 1e-9;
+                    if (drop) {
+                        ++zero;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+            if (!drop && (all || c.what == 9)) {
+                if (h.kind == EntityKind::Text) {
+                    drop = blank(store_.string_of(*store_.text(h)));
+                } else if (h.kind == EntityKind::MText) {
+                    drop = blank(store_.string_of(store_.mtext(h)->text));
+                }
+                if (drop) {
+                    ++empty;
+                }
+            }
+            if (drop) {
+                Command restore = capture_entity(h);
+                sel_remove(h);
+                remove_indexed(h);
+                push_erase_item(c.group, h, std::move(restore));
+            }
+        }
+        if (zero + empty > 0) {
+            redo_.clear();
+        }
+    }
+    const int total = layers + dimstyles + tstyles + blocks + images + groups + tstyles_text + zero + empty;
     if (total == 0) {
         report("Purge: nothing to purge.");
         return;
@@ -3123,8 +3949,10 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
     part(tstyles, "table style", "table styles");
     part(blocks, "block", "blocks");
     part(images, "image definition", "image definitions");
-    part(groups, "empty group", "empty groups");
+    part(groups, "group", "groups");
     part(tstyles_text, "text style", "text styles");
+    part(zero, "zero-length object", "zero-length objects");
+    part(empty, "empty text object", "empty text objects");
     msg.back() = '.';
     report(msg);
 }
@@ -7067,6 +7895,10 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
 }
 
 void GeometryEngine::apply(const Command& command) {
+    // The selection as an edit finds it (cursor updates are too frequent to copy for).
+    if (!std::holds_alternative<SetCursorCommand>(command)) {
+        selection_before_apply_ = selection_;
+    }
     std::visit(
         [this, &command](const auto& c) {
             using T = std::decay_t<decltype(c)>;
@@ -7098,10 +7930,15 @@ void GeometryEngine::apply(const Command& command) {
                 } else if (const EntityHandle last = most_recent_live(); !last.is_null()) {
                     targets.push_back(last);
                 }
+                std::vector<Command> gone;
                 for (const EntityHandle h : targets) {
                     Command restore = capture_entity(h);
+                    gone.push_back(restore);
                     remove_indexed(h);
                     push_erase_item(c.group, h, std::move(restore));
+                }
+                if (!gone.empty()) {
+                    oops_ = std::move(gone); // OOPS brings exactly this set back
                 }
                 redo_.clear();
                 geom_dirty_ = true;
@@ -7109,6 +7946,7 @@ void GeometryEngine::apply(const Command& command) {
                 const EntityHandle h = pick_nearest(c.world, c.pick_radius);
                 if (!h.is_null()) {
                     Command restore = capture_entity(h);
+                    oops_ = {restore};
                     remove_indexed(h);
                     push_erase_item(c.group, h, std::move(restore));
                     redo_.clear();
@@ -7132,50 +7970,189 @@ void GeometryEngine::apply(const Command& command) {
                 from_ = c.from;
             } else if constexpr (std::is_same_v<T, EraseSelectionCommand>) {
                 const std::vector<EntityHandle> sel = selection_;
+                std::vector<Command> gone;
                 for (const EntityHandle h : sel) {
                     if (!store_.is_valid(h)) {
                         continue;
                     }
                     Command restore = capture_entity(h);
+                    gone.push_back(restore);
                     remove_indexed(h);
                     push_erase_item(c.group, h, std::move(restore));
+                }
+                if (!gone.empty()) {
+                    oops_ = std::move(gone);
                 }
                 selection_.clear();
                 redo_.clear();
                 geom_dirty_ = true;
             } else if constexpr (std::is_same_v<T, SelectPickCommand>) {
-                if (!c.additive) {
+                if (c.announce) {
+                    remember_selection_step();
+                }
+                const EntityHandle picked = pick_nearest(c.world, c.radius);
+                // Shift + click takes a selected object out (PICKADD 2), else adds.
+                const bool removing = c.remove || (c.toggle && !picked.is_null() && sel_contains(picked));
+                if (!c.additive && !c.toggle && !c.remove) {
                     selection_.clear();
                     forget_stretch_windows();
                 }
                 const std::size_t before = selection_.size();
-                const EntityHandle picked = pick_nearest(c.world, c.radius);
-                sel_add(picked);
+                // Selection cycling: everything under the aperture, for the UI's list.
+                pick_candidates_.clear();
+                if (c.cycle) {
+                    for (const EntityHandle h : pick_all(c.world, c.radius)) {
+                        const EntityProps* p = store_.props(h);
+                        const std::string layer =
+                            p != nullptr && p->layer < store_.layers().size() ? store_.layers()[p->layer].name : "";
+                        pick_candidates_.push_back({h, std::string(kind_name(h.kind)) + " (" + layer + ")"});
+                    }
+                    if (pick_candidates_.size() < 2) {
+                        pick_candidates_.clear(); // one object is no choice
+                    }
+                }
+                ++pick_candidates_version_;
+                std::vector<EntityHandle> set;
+                if (!picked.is_null()) {
+                    set.push_back(picked);
+                }
                 // GROUP: picking a member selects the whole group (PICKSTYLE on).
                 if (pickstyle_group_ && !picked.is_null()) {
                     const std::size_t gi = store_.group_of(picked);
                     if (gi != static_cast<std::size_t>(-1) && store_.groups()[gi].selectable) {
                         for (const EntityHandle m : store_.groups()[gi].members) {
-                            if (selectable(m)) {
-                                sel_add(m);
+                            if (selectable(m) && m != picked) {
+                                set.push_back(m);
                             }
                         }
                     }
                 }
-                note_selection_for_windows(); // a picked object moves whole; windows stay
-                if (c.announce) {
-                    const std::size_t found = selection_.size() - before;
-                    std::string msg = std::to_string(found) + " found";
-                    if (c.additive && before > 0) {
-                        msg += ", " + std::to_string(selection_.size()) + " total";
+                for (const EntityHandle h : set) {
+                    if (removing) {
+                        sel_remove(h);
+                    } else {
+                        sel_add(h);
                     }
-                    report(msg + ".");
                 }
+                note_selection_for_windows(); // a picked object moves whole; windows stay
+                announce_found(picked.is_null() ? 0 : 1, before, c.additive, removing, c.announce);
             } else if constexpr (std::is_same_v<T, SelectWindowCommand>) {
-                select_window(c.min, c.max, c.crossing, c.additive, c.announce);
+                select_window(c.min, c.max, c.crossing, c.additive, c.announce, c.remove);
             } else if constexpr (std::is_same_v<T, SelectAllCommand>) {
-                selection_ = all_live();
+                if (c.announce) {
+                    remember_selection_step();
+                }
+                selection_.clear();
+                for (const EntityHandle h : all_live()) {
+                    if (selectable(h)) {
+                        selection_.push_back(h);
+                    }
+                }
                 forget_stretch_windows(); // nothing was "caught": everything moves whole
+                if (c.announce) {
+                    report(std::to_string(selection_.size()) + " found.");
+                }
+            } else if constexpr (std::is_same_v<T, SelectFenceCommand>) {
+                select_where([&](EntityHandle h) { return entity_hits_fence(h, c.points); }, c.remove,
+                             c.announce);
+            } else if constexpr (std::is_same_v<T, SelectPolygonCommand>) {
+                select_where([&](EntityHandle h) { return entity_hits_polygon(h, c.points, c.crossing); },
+                             c.remove, c.announce);
+            } else if constexpr (std::is_same_v<T, SelectLastCommand>) {
+                const EntityHandle last = most_recent_live();
+                select_where([&](EntityHandle h) { return h == last; }, c.remove, c.announce);
+            } else if constexpr (std::is_same_v<T, SelectPreviousCommand>) {
+                std::erase_if(previous_selection_, [this](EntityHandle h) { return !store_.is_valid(h); });
+                const std::vector<EntityHandle> prev = previous_selection_;
+                select_where(
+                    [&](EntityHandle h) { return std::find(prev.begin(), prev.end(), h) != prev.end(); },
+                    false, c.announce);
+            } else if constexpr (std::is_same_v<T, SelectGroupCommand>) {
+                const std::size_t gi = store_.group_index(c.name);
+                if (gi == static_cast<std::size_t>(-1)) {
+                    report("No group named \"" + c.name + "\".");
+                } else {
+                    const std::vector<EntityHandle> members = store_.groups()[gi].members;
+                    select_where(
+                        [&](EntityHandle h) { return std::find(members.begin(), members.end(), h) != members.end(); },
+                        c.remove, c.announce);
+                }
+            } else if constexpr (std::is_same_v<T, SelectUndoCommand>) {
+                if (selection_history_.empty()) {
+                    report("Nothing to undo.");
+                } else {
+                    selection_ = std::move(selection_history_.back());
+                    selection_history_.pop_back();
+                    prune_selection();
+                    note_selection_for_windows();
+                    report(std::to_string(selection_.size()) + " total.");
+                }
+            } else if constexpr (std::is_same_v<T, SelectHandleCommand>) {
+                if (c.announce) {
+                    remember_selection_step();
+                }
+                if (!c.additive) {
+                    selection_.clear();
+                    forget_stretch_windows();
+                }
+                const std::size_t before = selection_.size();
+                const bool ok = store_.is_valid(c.handle) && selectable(c.handle);
+                if (ok) {
+                    sel_add(c.handle);
+                }
+                note_selection_for_windows();
+                announce_found(ok ? 1 : 0, before, c.additive, false, c.announce);
+            } else if constexpr (std::is_same_v<T, SelectPreviewCommand>) {
+                select_preview(c);
+            } else if constexpr (std::is_same_v<T, SelectSimilarCommand>) {
+                select_similar(c.mode);
+            } else if constexpr (std::is_same_v<T, SelectFilterCommand>) {
+                select_filter(c);
+            } else if constexpr (std::is_same_v<T, IsolateObjectsCommand>) {
+                apply_isolate(c.mode);
+            } else if constexpr (std::is_same_v<T, OopsCommand>) {
+                apply_oops(c.group);
+            } else if constexpr (std::is_same_v<T, GroupEditCommand>) {
+                apply_group_edit(c);
+            } else if constexpr (std::is_same_v<T, ListGroupsCommand>) {
+                list_groups();
+            } else if constexpr (std::is_same_v<T, SetCeltscaleCommand>) {
+                current_celtscale_ = c.scale > 0.0 ? c.scale : current_celtscale_;
+            } else if constexpr (std::is_same_v<T, SetLtscaleModesCommand>) {
+                store_.set_psltscale(c.psltscale);
+                store_.set_msltscale(c.msltscale);
+                geom_dirty_ = true; // viewport dashes follow PSLTSCALE at the rebuild
+            } else if constexpr (std::is_same_v<T, MatchPropApplySelectionCommand>) {
+                if (!match_source_.has_value()) {
+                    report("MATCHPROP: select a source object first.");
+                } else {
+                    prune_selection();
+                    const std::vector<EntityHandle> sel = selection_;
+                    std::size_t n = 0;
+                    for (const EntityHandle h : sel) {
+                        if (!selectable(h) || h == match_source_handle_) {
+                            continue;
+                        }
+                        const Command original = capture_entity(h);
+                        Command modified = original;
+                        if (match_properties(*match_source_, modified, c.filter) == 0) {
+                            continue;
+                        }
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(modified);
+                        push_create_item(c.group, nh, modified);
+                        ++n;
+                    }
+                    selection_.clear();
+                    forget_stretch_windows();
+                    if (n > 0) {
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                    }
+                    report(n == 0 ? "Nothing to match." : "Properties matched to " + std::to_string(n) + " object(s).");
+                }
             } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
                 selection_.clear();
                 forget_stretch_windows();
@@ -7229,7 +8206,7 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, BreakCommand>) {
                 apply_break(c);
             } else if constexpr (std::is_same_v<T, PurgeCommand>) {
-                apply_purge(c.what);
+                apply_purge(c);
             } else if constexpr (std::is_same_v<T, RevcloudObjectCommand>) {
                 apply_revcloud_object(c);
             } else if constexpr (std::is_same_v<T, RevcloudReverseCommand>) {
@@ -7494,7 +8471,8 @@ void GeometryEngine::apply(const Command& command) {
                 }
             } else if constexpr (std::is_same_v<T, SetPickStyleCommand>) {
                 pickstyle_group_ = c.group_select;
-                report(std::string("PICKSTYLE = ") + (c.group_select ? "1" : "0") + ".");
+                pickstyle_hatch_ = c.hatch_assoc;
+                report("PICKSTYLE = " + std::to_string((c.group_select ? 1 : 0) + (c.hatch_assoc ? 2 : 0)) + ".");
             } else if constexpr (std::is_same_v<T, SetUnitsCommand>) {
                 store_.set_units(c.units);
                 dirty_ = true;
@@ -7826,10 +8804,25 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, TransformPreviewCommand> || // rubber band only
                 std::is_same_v<T, SetMirrtextCommand> || // a setting, not an edit
                 std::is_same_v<T, SetCurrentPropsCommand> ||
+                std::is_same_v<T, SetCeltscaleCommand> ||
+                std::is_same_v<T, SelectFenceCommand> || std::is_same_v<T, SelectPolygonCommand> ||
+                std::is_same_v<T, SelectLastCommand> || std::is_same_v<T, SelectPreviousCommand> ||
+                std::is_same_v<T, SelectGroupCommand> || std::is_same_v<T, SelectUndoCommand> ||
+                std::is_same_v<T, SelectHandleCommand> || std::is_same_v<T, SelectPreviewCommand> ||
+                std::is_same_v<T, SelectSimilarCommand> || std::is_same_v<T, SelectFilterCommand> ||
+                std::is_same_v<T, ListGroupsCommand> || // read-only
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
                 ++edit_serial_;
+                // Select objects: Previous is the set the last edit worked on -- as it is
+                // afterwards (an edit re-creates its objects under new handles), else as it
+                // was (an erase leaves nothing selected).
+                if (!selection_.empty()) {
+                    previous_selection_ = selection_;
+                } else if (!selection_before_apply_.empty()) {
+                    previous_selection_ = selection_before_apply_;
+                }
             }
         },
         command);
@@ -7894,6 +8887,14 @@ void GeometryEngine::reset_active_state() {
     stretch_preview_active_ = false;
     transform_preview_active_ = false;
     current_props_ = EntityProps{};
+    previous_selection_.clear();
+    selection_history_.clear();
+    oops_.clear();
+    preview_lines_.clear();
+    pick_candidates_.clear();
+    purge_cache_valid_ = false;
+    any_hidden_ = false;
+    current_celtscale_ = 1.0;
 }
 
 void GeometryEngine::new_document() {
@@ -7929,6 +8930,14 @@ void GeometryEngine::park_active(DocState& d) {
     d.transform_preview_active = transform_preview_active_;
     d.transform_preview = transform_preview_;
     d.current_props = current_props_;
+    d.previous_selection = std::move(previous_selection_);
+    d.oops = std::move(oops_);
+    d.pickstyle_hatch = pickstyle_hatch_;
+    d.current_celtscale = current_celtscale_;
+    selection_history_.clear();
+    preview_lines_.clear();
+    pick_candidates_.clear();
+    purge_cache_valid_ = false;
 }
 
 void GeometryEngine::load_active(DocState& d) {
@@ -7961,6 +8970,14 @@ void GeometryEngine::load_active(DocState& d) {
     transform_preview_active_ = d.transform_preview_active;
     transform_preview_ = d.transform_preview;
     current_props_ = d.current_props;
+    previous_selection_ = std::move(d.previous_selection);
+    oops_ = std::move(d.oops);
+    pickstyle_hatch_ = d.pickstyle_hatch;
+    current_celtscale_ = d.current_celtscale;
+    selection_history_.clear();
+    preview_lines_.clear();
+    pick_candidates_.clear();
+    purge_cache_valid_ = false;
 }
 
 std::size_t GeometryEngine::doc_index(std::uint64_t id) const {
@@ -8138,6 +9155,41 @@ void GeometryEngine::rebuild_and_publish() {
     for (const EntityGroup& g : store_.groups()) {
         buf.group_names.push_back(g.name); // GROUP names (feedback / ?)
     }
+    buf.group_descriptions.clear();
+    buf.group_sizes.clear();
+    for (const EntityGroup& g : store_.groups()) {
+        buf.group_descriptions.push_back(g.description);
+        int live = 0;
+        for (const EntityHandle m : g.members) {
+            live += store_.is_valid(m) ? 1 : 0;
+        }
+        buf.group_sizes.push_back(live);
+    }
+    buf.psltscale = store_.psltscale();
+    buf.msltscale = store_.msltscale();
+    buf.ltscale = store_.ltscale();
+    buf.current_celtscale = current_celtscale_;
+    buf.pickstyle = static_cast<std::uint8_t>((pickstyle_group_ ? 1 : 0) + (pickstyle_hatch_ ? 2 : 0));
+    buf.preview_line_vertices = preview_lines_;
+    buf.pick_candidates = pick_candidates_;
+    buf.pick_candidates_version = pick_candidates_version_;
+    // What PURGE could remove, and whether anything is hidden: a table walk, refreshed
+    // only when an edit happened (publishes are far more frequent than edits).
+    if (!purge_cache_valid_ || purge_cache_serial_ != edit_serial_) {
+        collect_purge_candidates(purge_cache_);
+        any_hidden_ = false;
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            if (p != nullptr && p->hidden()) {
+                any_hidden_ = true;
+                break;
+            }
+        }
+        purge_cache_valid_ = true;
+        purge_cache_serial_ = edit_serial_;
+    }
+    buf.purge = purge_cache_;
+    buf.object_isolation = any_hidden_;
     buf.block_names.clear();
     for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
         buf.block_names.push_back(store_.block(bi)->name); // INSERT ? / prompt default

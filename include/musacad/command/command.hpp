@@ -45,6 +45,13 @@ public:
     /// window is a screen region, not geometry. State-dependent by design: the same
     /// command's later coordinate picks DO snap and honour ortho.
     [[nodiscard]] virtual bool in_selection_phase() const { return false; }
+    /// Remove mode at "Select objects:" (the Remove keyword): the viewport's picks and
+    /// windows take objects out of the selection instead of adding them.
+    [[nodiscard]] virtual bool selection_removing() const { return false; }
+    /// The viewport finished a selection gesture (a pick, a window, a lasso) while the
+    /// command sat at "Select objects:". SIngle mode ends the phase on it; MATCHPROP
+    /// applies to what was just chosen.
+    virtual void selection_gesture(CommandContext& /*ctx*/) {}
 };
 
 } // namespace musacad::command

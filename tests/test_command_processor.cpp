@@ -290,10 +290,11 @@ TEST_CASE("Processor: ENTER repeats the last command") {
 TEST_CASE("Processor: ERASE and UNDO emit messages") {
     Harness h;
     h.proc.submit_line("ERASE");
-    h.proc.submit_line("L");
-    REQUIRE(std::holds_alternative<musacad::core::EraseCommand>(h.cmds.back()));
-    REQUIRE(std::get<musacad::core::EraseCommand>(h.cmds.back()).scope ==
-            musacad::core::EraseScope::Last);
+    h.proc.submit_line("L"); // Select objects: Last
+    REQUIRE(std::holds_alternative<musacad::core::SelectLastCommand>(h.cmds.back()));
+    h.proc.set_selection_count(1);
+    h.proc.submit_line(""); // Enter erases the set
+    REQUIRE(std::holds_alternative<musacad::core::EraseSelectionCommand>(h.cmds.back()));
 
     h.proc.submit_line("U");
     REQUIRE(std::holds_alternative<musacad::core::UndoLastGroupCommand>(h.cmds.back()));

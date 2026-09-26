@@ -42,12 +42,13 @@ TEST_CASE("ROTATE flow emits RotateSelectionCommand with the typed angle") {
     REQUIRE(rot->angle == Approx(musacad::core::kHalfPi));
 }
 
-TEST_CASE("ROTATE with no selection does nothing") {
+TEST_CASE("ROTATE with no selection asks Select objects and ends when nothing is chosen") {
     Harness h;
     h.proc.set_selection_count(0);
     h.proc.submit_line("RO");
-    h.proc.submit_line("0,0");
-    h.proc.submit_line("90");
+    REQUIRE(h.proc.in_selection_phase()); // verb-noun (#46)
+    h.proc.submit_line("");               // nothing chosen
+    REQUIRE(!h.proc.has_active_command());
     REQUIRE(h.cmds.empty());
 }
 

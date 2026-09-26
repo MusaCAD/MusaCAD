@@ -186,6 +186,38 @@ private:
     bool done_ = false;
 };
 
+/// AutoCAD's "Select objects:" prompt as a reusable step (issue #46). While it is
+/// `active()` the viewport's picks, windows and lassos accumulate on their own; typed
+/// answers come through `input()`: a point picks; Window, Crossing, BOX, ALL, Fence,
+/// WPolygon, CPolygon, Group, Last, Previous, Add, Remove, Multiple, Undo, AUto and
+/// SIngle do what they do in AutoCAD; Enter ends the step (`Done`). The owner then reads
+/// `ctx.has_selection()`: nothing selected ends the command quietly, as AutoCAD does.
+class SelectObjectsPhase {
+public:
+    enum class Result { Continue, Done };
+    void begin(CommandContext& ctx, std::string prompt = "Select objects: ");
+    Result input(CommandContext& ctx, const std::string& text);
+    /// The viewport finished a gesture; in SIngle mode that ends the step.
+    Result gesture(CommandContext& ctx);
+    [[nodiscard]] bool removing() const noexcept { return remove_; }
+    [[nodiscard]] bool active() const noexcept { return active_; }
+
+private:
+    enum class Sub { Objects, Corner1, Corner2, Fence, Polygon, GroupName };
+    void reprompt(CommandContext& ctx);
+    Sub sub_ = Sub::Objects;
+    bool active_ = false;
+    bool crossing_ = false;
+    bool box_ = false;
+    bool remove_ = false;
+    bool single_ = false;
+    std::string prompt_;
+    core::Vec2 c1_{};
+    std::vector<core::Vec2> pts_;
+};
+
+/// ERASE: `Select objects:` gathers picks, windows and keywords until Enter, then erases
+/// the set (a pre-selection is erased at once); OOPS brings the set back.
 class EraseCommand final : public ICommand {
 public:
     std::string name() const override { return "ERASE"; }
@@ -193,7 +225,24 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool wants_selection() const override { return true; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// OOPS: the objects the last ERASE removed come back.
+class OopsCommand final : public ICommand {
+public:
+    std::string name() const override { return "OOPS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
 
 private:
     bool done_ = false;
@@ -236,11 +285,20 @@ public:
 private:
     /// `Specify base point or [Displacement] <Displacement>:`, then `Specify second point
     /// or <use first point as displacement>:`; the last displacement is the next default.
-    enum class State : std::uint8_t { Base, Second, Displacement };
+    enum class State : std::uint8_t { Select, Base, Second, Displacement };
     State state_ = State::Base;
     inline static core::Vec2 s_displacement_{};
     std::optional<core::Vec2> base_;
     bool done_ = false;
+
+public:
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void begin_base(CommandContext& ctx);
+    SelectObjectsPhase select_;
 };
 
 class CopyCommand final : public ICommand {
@@ -256,7 +314,7 @@ private:
     /// `[Array] <use first point as displacement>`, later ones `[Array/Exit/Undo] <Exit>`
     /// in Multiple mode; Array lays `count` items along the vector (or Fit spreads them to
     /// the point). Every placement is its own undo step. The mode is kept for the session.
-    enum class State : std::uint8_t { Base, Displacement, Mode, Second, ArrayCount, ArrayEnd, ArrayFit };
+    enum class State : std::uint8_t { Select, Base, Displacement, Mode, Second, ArrayCount, ArrayEnd, ArrayFit };
     State state_ = State::Base;
     inline static core::Vec2 s_displacement_{};
     inline static bool s_single_ = false;
@@ -266,6 +324,13 @@ private:
     bool done_ = false;
     void place(CommandContext& ctx, core::Vec2 delta);
     void prompt_second(CommandContext& ctx);
+    void begin_base(CommandContext& ctx);
+    SelectObjectsPhase select_;
+
+public:
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 };
 
 /// MIRRTEXT: `Enter new value for MIRRTEXT <0>:` -- 0 keeps mirrored text readable
@@ -292,10 +357,16 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { First, Second, Ask } state_ = State::First;
+    enum class State { Select, First, Second, Ask } state_ = State::First;
     core::Vec2 p1_{};
     core::Vec2 p2_{};
     bool done_ = false;
+    SelectObjectsPhase select_;
+
+public:
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 };
 
 class OffsetCommand final : public ICommand {
@@ -358,6 +429,13 @@ public:
 private:
     enum class State { Source, Targets } state_ = State::Source;
     bool done_ = false;
+    void begin_targets(CommandContext& ctx);
+
+public:
+    /// Destinations are a "Select objects:" step: a pick, a window or a crossing applies
+    /// the source's properties to what it catches, as one undo step each.
+    bool in_selection_phase() const override { return !done_ && state_ == State::Targets; }
+    void selection_gesture(CommandContext& ctx) override;
 };
 
 // HATCH / H: fill a closed boundary with a pattern (Part A: SOLID, from selected closed
@@ -580,6 +658,7 @@ private:
     double row_h_ = 8.0;
 };
 
+/// TRIM: every pick is its own undo step and `Undo` takes the last one back.
 class TrimCommand final : public ICommand {
 public:
     std::string name() const override { return "TRIM"; }
@@ -590,6 +669,7 @@ public:
 
 private:
     bool done_ = false;
+    int picks_ = 0;
 };
 
 class RotateCommand final : public ICommand {
@@ -604,7 +684,7 @@ private:
     /// AutoCAD's flow: base point; angle or [Copy/Reference]; Reference asks the
     /// reference angle (a value, or two points), then the new angle or [Points] (a
     /// value, a point from the base, or two points).
-    enum class State : std::uint8_t { Base, Angle, RefAngle, RefSecond, NewAngle, NewFirst, NewSecond };
+    enum class State : std::uint8_t { Select, Base, Angle, RefAngle, RefSecond, NewAngle, NewFirst, NewSecond };
     State state_ = State::Base;
     std::optional<core::Vec2> base_;
     core::Vec2 first_{};     ///< the first of a two-point angle
@@ -613,6 +693,13 @@ private:
     bool done_ = false;
     void commit(CommandContext& ctx, double angle);
     void prompt_angle(CommandContext& ctx);
+    void begin_base(CommandContext& ctx);
+    SelectObjectsPhase select_;
+
+public:
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 };
 
 class ScaleCommand final : public ICommand {
@@ -628,7 +715,7 @@ private:
     /// reference length (a value, or two points), then the new length or [Points] (a
     /// value, a point from the base, or two points). A picked factor is the distance
     /// from the base point in drawing units.
-    enum class State : std::uint8_t { Base, Factor, RefLength, RefSecond, NewLength, NewFirst, NewSecond };
+    enum class State : std::uint8_t { Select, Base, Factor, RefLength, RefSecond, NewLength, NewFirst, NewSecond };
     State state_ = State::Base;
     std::optional<core::Vec2> base_;
     core::Vec2 first_{};   ///< the first of a two-point length
@@ -637,6 +724,13 @@ private:
     bool done_ = false;
     void commit(CommandContext& ctx, double factor);
     void prompt_factor(CommandContext& ctx);
+    void begin_base(CommandContext& ctx);
+    SelectObjectsPhase select_;
+
+public:
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 };
 
 /// OSNAP (OS, DDOSNAP): the running object-snap settings dialog.
@@ -669,16 +763,27 @@ private:
 /// PURGE (AutoCAD PU). No prompts: an imported drawing's unused layers just go, and the
 /// engine reports how many. Undo is deliberately NOT offered -- purging removes symbol
 /// table entries nothing refers to, so there is no geometry to restore.
+/// PURGE opens the Purge dialog; -PURGE (or PURGE where there is no dialog) runs
+/// AutoCAD's prompts: the type, `Enter name(s) to purge <*>:`, `Verify each name to be
+/// purged? [Yes/No] <Y>:` and then one question per name.
 class PurgeCommand final : public ICommand {
 public:
-    std::string name() const override { return "PURGE"; }
+    explicit PurgeCommand(bool dialog = true) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "PURGE" : "-PURGE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
 private:
+    enum class State { Type, Names, Verify, Each };
+    void ask_next(CommandContext& ctx);
+    bool dialog_;
     bool done_ = false;
+    State state_ = State::Type;
+    std::uint8_t what_ = 0;
+    std::string pattern_ = "*";
+    std::vector<std::pair<std::uint8_t, std::string>> queue_; ///< (type, name) still to ask
 };
 
 /// ALIGN (AutoCAD AL): fit the selection between two known points in one step, with an
@@ -696,7 +801,7 @@ private:
     /// AutoCAD's flow: one pair (Enter at the second source point) just moves; two pairs
     /// align, then `Specify third source point or <continue>:` and, with two pairs, the
     /// scale question. A rubber line runs from each source point to its destination.
-    enum class State { Src1, Dst1, Src2, Dst2, Src3, Dst3, Scale };
+    enum class State { Select, Src1, Dst1, Src2, Dst2, Src3, Dst3, Scale };
     State state_ = State::Src1;
     core::Vec2 src1_{};
     core::Vec2 dst1_{};
@@ -704,6 +809,13 @@ private:
     core::Vec2 dst2_{};
     bool done_ = false;
     void align(CommandContext& ctx, bool scale);
+    void begin_points(CommandContext& ctx);
+    SelectObjectsPhase select_;
+
+public:
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 };
 
 /// LENGTHEN (AutoCAD LEN): change the length of a line or arc. The mode is chosen
@@ -1256,9 +1368,12 @@ private:
 
 /// UNITS (UN, -UNITS): the command-line flow -- linear format and precision, angle
 /// format and precision, direction of angle 0, clockwise -- stored with the drawing.
+/// UNITS opens the Drawing Units dialog; -UNITS (or UNITS with no dialog) prints
+/// AutoCAD's numbered format tables and asks `Enter choice, 1 to 5 <2>:` and the rest.
 class UnitsCommand final : public ICommand {
 public:
-    std::string name() const override { return "UNITS"; }
+    explicit UnitsCommand(bool dialog = true) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "UNITS" : "-UNITS"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -1266,8 +1381,146 @@ public:
 
 private:
     enum class State { Linear, LinearPrecision, Angular, AngularPrecision, Base, Clockwise };
+    void prompts(CommandContext& ctx);
+    bool dialog_;
     State state_ = State::Linear;
     core::DrawingUnits u_{};
+    bool done_ = false;
+};
+
+/// INSUNITS: the drawing's insertion unit (0..20; AutoCAD's numbering).
+class InsunitsCommand final : public ICommand {
+public:
+    std::string name() const override { return "INSUNITS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// SELECT: a "Select objects:" step on its own; the set stays for the next command
+/// (and is what Previous recalls).
+class SelectCommand final : public ICommand {
+public:
+    std::string name() const override { return "SELECT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// SELECTSIMILAR: objects of the same kind and properties as the selected ones
+/// (SELECTSIMILARMODE says which properties count).
+class SelectSimilarCommand final : public ICommand {
+public:
+    std::string name() const override { return "SELECTSIMILAR"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && selecting_; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    inline static std::uint32_t s_mode_ = 130; ///< SELECTSIMILARMODE
+
+private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool selecting_ = false;
+    bool done_ = false;
+};
+
+/// SELECTSIMILARMODE: the bit sum (1 colour, 2 layer, 4 linetype, 8 linetype scale, 16
+/// lineweight, 32 plot style, 64 object style, 128 name).
+class SelectSimilarModeCommand final : public ICommand {
+public:
+    std::string name() const override { return "SELECTSIMILARMODE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// QSELECT and FILTER open the Quick Select dialog (FILTER with several conditions).
+class QSelectCommand final : public ICommand {
+public:
+    explicit QSelectCommand(bool filter) : filter_(filter) {}
+    std::string name() const override { return filter_ ? "FILTER" : "QSELECT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext&) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool filter_;
+    bool done_ = false;
+};
+
+/// ISOLATEOBJECTS (0), HIDEOBJECTS (1) and UNISOLATEOBJECTS (2).
+class IsolateCommand final : public ICommand {
+public:
+    explicit IsolateCommand(std::uint8_t mode) : mode_(mode) {}
+    std::string name() const override {
+        return mode_ == 0 ? "ISOLATEOBJECTS" : mode_ == 1 ? "HIDEOBJECTS" : "UNISOLATEOBJECTS";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && selecting_; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void finish(CommandContext& ctx);
+    std::uint8_t mode_;
+    SelectObjectsPhase select_;
+    bool selecting_ = false;
+    bool done_ = false;
+};
+
+/// The selection system variables (PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG,
+/// HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING): `Enter new value for X <current>:`,
+/// kept by the viewport.
+class SelectionSettingCommand final : public ICommand {
+public:
+    explicit SelectionSettingCommand(std::string var) : var_(std::move(var)) {}
+    std::string name() const override { return var_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::string var_;
+    bool done_ = false;
+};
+
+/// CELTSCALE, PSLTSCALE and MSLTSCALE as system variables.
+class LtscaleVarCommand final : public ICommand {
+public:
+    explicit LtscaleVarCommand(std::string var) : var_(std::move(var)) {}
+    std::string name() const override { return var_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::string var_;
     bool done_ = false;
 };
 
@@ -1339,6 +1592,52 @@ private:
     std::string name_;
     std::string description_;
     bool done_ = false;
+};
+
+/// -GROUP: `[?/Order/Add/Remove/Explode/REName/Selectable/Create] <Create>`.
+class DashGroupCommand final : public ICommand {
+public:
+    std::string name() const override { return "-GROUP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State { Option, Name, NewName, Description, Selectable, From, To, Select };
+    void prompt_option(CommandContext& ctx);
+    void finish_select(CommandContext& ctx);
+    State state_ = State::Option;
+    char op_ = 'C'; ///< ?, O, A, R, E, N (rename), S, C
+    std::string name_;
+    std::string text_;
+    int from_ = 0;
+    bool done_ = false;
+    SelectObjectsPhase select_;
+};
+
+/// GROUPEDIT: `Select group or [Name]:` then `[Add objects/Remove objects/REName]`.
+class GroupEditCommand final : public ICommand {
+public:
+    std::string name() const override { return "GROUPEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State { Pick, Name, Option, NewName, Select };
+    void prompt_option(CommandContext& ctx);
+    State state_ = State::Pick;
+    core::GroupEditCommand cmd_{};
+    bool done_ = false;
+    SelectObjectsPhase select_;
 };
 
 /// UNGROUP: pick a member (or give a name) to dissolve the group.
@@ -1452,9 +1751,13 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool in_selection_phase() const override { return !done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
     bool done_ = false;
 };
 
@@ -1559,9 +1862,15 @@ public:
     /// The path pick selects a curve, but it is a COORDINATE pick here (the engine
     /// resolves the curve from the point), so the normal snap rules apply.
     bool wants_selection() const override { return false; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
+    void begin(CommandContext& ctx);
+    SelectObjectsPhase select_;
     enum class State {
+        Select,
         Type,
         // Rectangular
         Rows,
@@ -1600,6 +1909,7 @@ private:
     bool done_ = false;
 };
 
+/// EXTEND: every pick is its own undo step and `Undo` takes the last one back.
 class ExtendCommand final : public ICommand {
 public:
     std::string name() const override { return "EXTEND"; }
@@ -1610,6 +1920,7 @@ public:
 
 private:
     bool done_ = false;
+    int picks_ = 0;
 };
 
 class FilletCommand final : public ICommand {

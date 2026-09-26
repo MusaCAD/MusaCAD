@@ -969,8 +969,12 @@ void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
     }
 
     // Selected geometry highlight.
-    if (!snapshot.selected_line_vertices.empty()) {
+    if (!snapshot.selected_line_vertices.empty() && !overlay().hide_selection) {
         draw_world(snapshot.selected_line_vertices, kSelectColor);
+    }
+    // SELECTIONPREVIEW: what the box or lasso being dragged would select.
+    if (!snapshot.preview_line_vertices.empty()) {
+        draw_world(snapshot.preview_line_vertices, theme::kSelectPreview);
     }
 
     // Ghost: transform the selected geometry render-side (move/mirror/rotate/scale).
@@ -1013,16 +1017,44 @@ void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
         draw_world(overlay().preview_segments, kPreviewColor);
     }
 
-    // Selection rubber-band rectangle.
+    // Selection rubber-band rectangle: AutoCAD's tinted box (blue window, green
+    // crossing) -- a translucent fill through the fill pipeline, then the outline.
     if (overlay().rect_mode != 0) {
         const core::Vec2 a = overlay().rect_a;
         const core::Vec2 b = overlay().rect_b;
+        const std::vector<core::Vec2> tris = {{a.x, a.y}, {b.x, a.y}, {b.x, b.y},
+                                              {a.x, a.y}, {b.x, b.y}, {a.x, b.y}};
+        const std::size_t n = pack_positions(tris, scratch_);
+        if (n > 0) {
+            const float(&fill)[4] = overlay().rect_mode == 2 ? theme::kCrossingFill : theme::kWindowFill;
+            cmd.bind_pipeline(*fill_pipeline_);
+            cmd.set_uniform_mat3("u_transform", view);
+            aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            cmd.set_uniform_vec4("u_color", fill[0], fill[1], fill[2], fill[3]);
+            cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+            cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
+            ++stats_.draw_calls;
+            cmd.bind_pipeline(*line_pipeline_); // back to lines for the outline
+            cmd.set_uniform_mat3("u_transform", view);
+        }
         std::vector<core::Vec2> rect;
         edge(rect, {a.x, a.y}, {b.x, a.y});
         edge(rect, {b.x, a.y}, {b.x, b.y});
         edge(rect, {b.x, b.y}, {a.x, b.y});
         edge(rect, {a.x, b.y}, {a.x, a.y});
         draw_world(rect, overlay().rect_mode == 2 ? kCrossingColor : kWindowColor);
+    }
+    // Lasso: the polygon so far (closed for window / crossing, open for a fence).
+    if (overlay().lasso.size() >= 2) {
+        const auto& l = overlay().lasso;
+        std::vector<core::Vec2> seg;
+        for (std::size_t i = 1; i < l.size(); ++i) {
+            edge(seg, l[i - 1], l[i]);
+        }
+        if (overlay().lasso_mode != 3 && l.size() >= 3) {
+            edge(seg, l.back(), l.front());
+        }
+        draw_world(seg, overlay().lasso_mode == 2 ? kCrossingColor : kWindowColor);
     }
 
     // Grip drag preview: the edited entity (computed geometry-side on a temp store)

@@ -11,6 +11,7 @@
 #include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/render_snapshot.hpp"
 #include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/snap.hpp"
 #include "musacad/core/text_style.hpp"
@@ -218,6 +219,18 @@ public:
     /// MATCHPROP: switch the viewport to the match (paintbrush) cursor while picking
     /// targets; restore the normal cursor when `on` is false. No-op headless.
     virtual void set_match_cursor(bool on) { (void)on; }
+    /// The selection settings as system variables -- PICKBOX, PICKFIRST, PICKADD,
+    /// PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING -- read and
+    /// written by name; a setter returns false for a value out of range.
+    [[nodiscard]] virtual int selection_setting(const std::string& /*name*/) const { return 0; }
+    virtual bool set_selection_setting(const std::string& /*name*/, int /*value*/) { return false; }
+    /// QSELECT / FILTER: the Quick Select dialog (`filter` adds FILTER's several
+    /// conditions). False when there is no dialog (headless).
+    virtual bool quick_select_dialog(bool /*filter*/) { return false; }
+    /// PURGE and UNITS as dialogs; false when there is none (the -PURGE / -UNITS
+    /// flows run instead).
+    virtual bool purge_dialog() { return false; }
+    virtual bool units_dialog() { return false; }
 };
 
 /// The services a running command uses to interact with the system. Commands
@@ -284,6 +297,14 @@ public:
     [[nodiscard]] virtual std::vector<core::BlockAttDefInfo> block_attdefs(const std::string& /*block*/) const {
         return {};
     }
+    /// What PURGE could remove, by name (-PURGE's Verify loop asks per name).
+    [[nodiscard]] virtual core::RenderSnapshot::PurgeCandidates purge_candidates() const { return {}; }
+    /// LTSCALE, CELTSCALE, PSLTSCALE / MSLTSCALE and PICKSTYLE, as last published.
+    [[nodiscard]] virtual double ltscale() const { return 1.0; }
+    [[nodiscard]] virtual double current_celtscale() const { return 1.0; }
+    [[nodiscard]] virtual bool psltscale() const { return true; }
+    [[nodiscard]] virtual bool msltscale() const { return true; }
+    [[nodiscard]] virtual std::uint8_t pickstyle() const { return 1; }
 };
 
 } // namespace musacad::command

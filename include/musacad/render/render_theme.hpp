@@ -29,6 +29,9 @@ inline constexpr float kPreview[4] = {0.90f, 0.90f, 0.40f, 1.0f}; // rubber-band
 inline constexpr float kGhost[4] = {0.55f, 0.80f, 1.0f, 1.0f};    // move/mirror ghost
 inline constexpr float kWindow[4] = {0.35f, 0.55f, 1.0f, 1.0f};   // window select box
 inline constexpr float kCrossing[4] = {0.35f, 0.90f, 0.45f, 1.0f}; // crossing select box
+inline constexpr float kWindowFill[4] = {0.35f, 0.55f, 1.0f, 0.18f};   // its translucent tint
+inline constexpr float kCrossingFill[4] = {0.35f, 0.90f, 0.45f, 0.18f};
+inline constexpr float kSelectPreview[4] = {0.70f, 0.85f, 1.0f, 1.0f}; // the box's would-be set
 inline constexpr float kGrip[4] = {0.30f, 0.55f, 1.0f, 1.0f};     // grip square (AutoCAD blue)
 inline constexpr float kHotGrip[4] = {1.0f, 0.25f, 0.20f, 1.0f};  // grabbed/hovered grip (hot red)
 

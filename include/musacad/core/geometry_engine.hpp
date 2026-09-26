@@ -153,6 +153,10 @@ private:
         bool transform_preview_active = false;
         TransformPreviewCommand transform_preview{};
         EntityProps current_props{};
+        std::vector<EntityHandle> previous_selection;
+        std::vector<Command> oops;
+        bool pickstyle_hatch = false;
+        double current_celtscale = 1.0;
     };
     struct DocMeta {
         std::uint64_t id = 0;
@@ -214,7 +218,28 @@ private:
     [[nodiscard]] bool sel_contains(EntityHandle h) const;
     void sel_add(EntityHandle h);
     void prune_selection();
-    void select_window(Vec2 min, Vec2 max, bool crossing, bool additive, bool announce);
+    void select_window(Vec2 min, Vec2 max, bool crossing, bool additive, bool announce,
+                       bool remove = false);
+    void sel_remove(EntityHandle h);
+    /// Every selectable object within `radius` of `world`, nearest first (selection cycling).
+    [[nodiscard]] std::vector<EntityHandle> pick_all(Vec2 world, double radius) const;
+    /// The "Select objects:" answers of issue #46. `select_where` is the shared loop: every
+    /// selectable object `hit` accepts goes into (or, with `remove`, out of) the selection,
+    /// and the count is announced AutoCAD's way. Returns how many matched.
+    std::size_t select_where(const std::function<bool(EntityHandle)>& hit, bool remove, bool announce);
+    void announce_found(std::size_t matched, std::size_t before, bool additive, bool remove,
+                        bool announce);
+    void remember_selection_step(); ///< for Select objects: Undo
+    [[nodiscard]] bool entity_hits_polygon(EntityHandle h, const std::vector<Vec2>& poly,
+                                           bool crossing) const;
+    [[nodiscard]] bool entity_hits_fence(EntityHandle h, const std::vector<Vec2>& fence) const;
+    void select_preview(const SelectPreviewCommand& c);
+    void select_similar(std::uint32_t mode);
+    void select_filter(const SelectFilterCommand& c);
+    void apply_isolate(std::uint8_t mode);
+    void apply_oops(std::uint64_t group);
+    void apply_group_edit(const GroupEditCommand& c);
+    void list_groups();
     /// Does `h` satisfy a box selection? `crossing` = any part inside or touching the
     /// box; otherwise every point must be inside. THE box test, shared by window
     /// selection and by STRETCH's "was this object crossed by the window" decision, so
@@ -305,7 +330,9 @@ private:
     void apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
                              double radius, std::uint64_t group, bool trim);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
-    void apply_purge(std::uint8_t what);
+    void apply_purge(const PurgeCommand& c);
+    /// What PURGE could remove right now, by name (nothing refers to them).
+    void collect_purge_candidates(RenderSnapshot::PurgeCandidates& out) const;
     void apply_audit(bool fix);
     void apply_define_block(const DefineBlockCommand& c);
     void apply_write_block(const WriteBlockCommand& c);
@@ -376,6 +403,19 @@ private:
     std::vector<Group> undo_;
     std::vector<Group> redo_;
     std::vector<EntityHandle> selection_;
+    std::vector<EntityHandle> selection_before_apply_;         ///< see apply(): Previous
+    std::vector<EntityHandle> previous_selection_;             ///< Select objects: Previous
+    std::vector<std::vector<EntityHandle>> selection_history_; ///< Select objects: Undo
+    std::vector<Command> oops_;                                ///< the last ERASE's objects
+    bool pickstyle_hatch_ = false;                             ///< PICKSTYLE bit 2
+    double current_celtscale_ = 1.0;                           ///< CELTSCALE
+    std::vector<Vec2> preview_lines_;                          ///< SELECTIONPREVIEW drag set
+    std::vector<RenderSnapshot::PickCandidate> pick_candidates_;
+    std::uint64_t pick_candidates_version_ = 0;
+    RenderSnapshot::PurgeCandidates purge_cache_;
+    bool purge_cache_valid_ = false;
+    std::uint64_t purge_cache_serial_ = 0;
+    bool any_hidden_ = false;
     RefEditSession refedit_;
 
     // MATCHPROP source: the captured source entity (a snapshot of its property values as

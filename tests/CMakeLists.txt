@@ -93,6 +93,8 @@ add_executable(musacad_tests
     test_ortho.cpp
     test_preview_no_mutation.cpp
     test_selection.cpp
+    test_select_objects.cpp
+    test_selection_ops.cpp
     test_modify.cpp
     test_stretch.cpp
     test_array.cpp

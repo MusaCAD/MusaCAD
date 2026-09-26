@@ -142,7 +142,7 @@ TEST_CASE("#30 UNITS command flow sets every field; DIST and ID report in the un
     ProcHarness h;
     h.proc.submit_line("-UNITS");
     h.proc.submit_line("F");   // fractional
-    h.proc.submit_line("3");   // 1/8
+    h.proc.submit_line("8");   // the denominator: 1/8 is precision 3
     h.proc.submit_line("DMS"); // deg-min-sec
     h.proc.submit_line("2");
     h.proc.submit_line("90");  // angle 0 = north
@@ -219,12 +219,16 @@ TEST_CASE("#30 PURGE: unused dimension styles, table styles, blocks and image de
 
 TEST_CASE("#30 PURGE by type through the engine; AUDIT finds and fixes a bad layer reference") {
     ProcHarness h;
-    h.proc.submit_line("PURGE");
+    h.proc.submit_line("PURGE"); // no dialog here: AutoCAD's -PURGE prompts run
     h.proc.submit_line("D");
+    h.proc.submit_line("");  // every name
+    h.proc.submit_line("N"); // no verify: one command
     REQUIRE(h.last<PurgeCommand>() != nullptr);
     REQUIRE(h.last<PurgeCommand>()->what == 2);
     h.proc.submit_line("PU");
     h.proc.submit_line("");
+    h.proc.submit_line("");
+    h.proc.submit_line("N");
     REQUIRE(h.last<PurgeCommand>()->what == 0);
     h.proc.submit_line("AUDIT");
     h.proc.submit_line("Y");

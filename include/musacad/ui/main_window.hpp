@@ -267,6 +267,12 @@ private:
     // destination prompt; choices persist in QSettings for the session. read_match_filter
     // is what the running MATCHPROP command reads for each target (via the viewport).
     void open_matchprop_dialog();
+    /// QSELECT (one condition) / FILTER (several conditions, all of which must hold).
+    void open_quick_select_dialog(bool filter);
+    /// PURGE: the unused table entries by category, checked off and purged.
+    void open_purge_dialog();
+    /// UNITS: the Drawing Units dialog (length, angle, insertion scale, direction).
+    void open_units_dialog();
     [[nodiscard]] core::MatchPropFilter read_match_filter() const;
     void write_match_filter(const core::MatchPropFilter& f);
 

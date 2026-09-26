@@ -75,9 +75,13 @@ TEST_CASE("Round-trip: ERASE last then UNDO restores the entity") {
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 8; }));
     const std::size_t with_circle = engine.snapshot().line_vertices.size();
 
-    // Erase last -> empty.
+    // Erase: Select objects -> Last, then Enter erases the set (the host normally hands
+    // the processor the published selection count; here the test does).
     proc.submit_line("ERASE");
     proc.submit_line("L");
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    proc.set_selection_count(1);
+    proc.submit_line("");
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty(); }));
 
     // Undo the erase -> circle restored.

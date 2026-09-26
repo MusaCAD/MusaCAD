@@ -263,6 +263,12 @@ std::string serialize_native(const Document& doc) {
     s += "LTSCALE ";
     append_double(s, doc.ltscale);
     s += '\n';
+    // v40: LTSCALEMODE psltscale msltscale
+    s += "LTSCALEMODE ";
+    append_uint(s, doc.psltscale ? 1 : 0);
+    s += ' ';
+    append_uint(s, doc.msltscale ? 1 : 0);
+    s += '\n';
     // LAYER <r> <g> <b> <linetype> <lineweight> <on> <frozen> <locked> <name...>
     for (const Layer& l : doc.layers) {
         s += "LAYER ";
@@ -957,6 +963,8 @@ std::string serialize_native(const Document& doc) {
     append_uint(s, doc.display_units.clockwise ? 1 : 0);
     s += ' ';
     append_double(s, doc.display_units.base_angle);
+    s += ' ';
+    append_uint(s, doc.display_units.insunits); // v40: INSUNITS (older readers stop at 7)
     s += '\n';
     // v24: VIEW cx cy scale name  and  GROUP selectable n k1 i1 ... kn in name description
     // (names/descriptions space-escaped like PAGESETUP's strings; "-" = empty).
@@ -1318,6 +1326,14 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed LTSCALE");
             }
             doc.ltscale = ls;
+        } else if (key == "LTSCALEMODE") {
+            std::uint64_t ps = 1;
+            std::uint64_t ms = 1;
+            if (tok.size() != 3 || !to_uint(tok[1], ps) || !to_uint(tok[2], ms)) {
+                return fail("malformed LTSCALEMODE");
+            }
+            doc.psltscale = ps != 0;
+            doc.msltscale = ms != 0;
         } else if (key == "TEXTSTYLE") {
             if (tok.size() != 6) {
                 return fail("malformed TEXTSTYLE");
@@ -1365,11 +1381,14 @@ IoResult parse_native(std::string_view text, Document& out) {
             doc.current_text_style = static_cast<std::uint16_t>(i);
         } else if (key == "UNITSFMT") {
             std::uint64_t v[5] = {2, 4, 0, 0, 0};
-            if (tok.size() != 7 || !to_uint(tok[1], v[0]) || !to_uint(tok[2], v[1]) ||
+            std::uint64_t ins = 0;
+            if ((tok.size() != 7 && tok.size() != 8) || !to_uint(tok[1], v[0]) || !to_uint(tok[2], v[1]) ||
                 !to_uint(tok[3], v[2]) || !to_uint(tok[4], v[3]) || !to_uint(tok[5], v[4]) ||
-                !to_double(tok[6], doc.display_units.base_angle)) {
+                !to_double(tok[6], doc.display_units.base_angle) ||
+                (tok.size() == 8 && !to_uint(tok[7], ins))) {
                 return fail("malformed UNITSFMT");
             }
+            doc.display_units.insunits = static_cast<std::uint8_t>(std::min<std::uint64_t>(ins, 20));
             doc.display_units.linear = static_cast<LinearFormat>(std::clamp<std::uint64_t>(v[0], 1, 5));
             doc.display_units.linear_precision = static_cast<std::uint8_t>(std::min<std::uint64_t>(v[1], 8));
             doc.display_units.angular = static_cast<AngleFormat>(std::min<std::uint64_t>(v[2], 4));

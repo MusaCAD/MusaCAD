@@ -143,7 +143,9 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/rotate.svg", "Rotate selected objects around a base point.");
     reg({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); }, "assets/ribbon/scale.svg",
         "Resize selected objects uniformly about a base point.");
-    reg({"PU", "PURGE"}, [] { return std::make_unique<PurgeCommand>(); },
+    reg({"-PURGE"}, [] { return std::make_unique<PurgeCommand>(false); }, "assets/ribbon/purge.svg",
+        "Purge from the command line: the type, the names (wild cards), and Verify each name.");
+    reg({"PU", "PURGE"}, [] { return std::make_unique<PurgeCommand>(true); },
         "assets/ribbon/purge.svg", "Remove unused layers from the drawing.");
     reg({"AL", "ALIGN"}, [] { return std::make_unique<AlignCommand>(); },
         "assets/ribbon/align.svg",
@@ -219,8 +221,46 @@ CommandRegistry CommandRegistry::make_default() {
         "Rebuild and redraw the scene.");
     reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
         "Create or change a named text style and make it current.");
-    reg({"UN", "UNITS", "-UNITS"}, [] { return std::make_unique<UnitsCommand>(); }, "",
-        "Set the display format and precision of lengths and angles.");
+    reg({"UN", "UNITS"}, [] { return std::make_unique<UnitsCommand>(true); }, "",
+        "Set the display format and precision of lengths and angles (the Drawing Units dialog).");
+    reg({"-UNITS"}, [] { return std::make_unique<UnitsCommand>(false); }, "",
+        "Set the units from the command line: the numbered format tables, angle base and direction.");
+    reg({"INSUNITS"}, [] { return std::make_unique<InsunitsCommand>(); }, "",
+        "The drawing unit blocks and images are scaled to on insertion (0 unitless, 4 millimeters, 1 inches ...).");
+    reg({"SELECT"}, [] { return std::make_unique<SelectCommand>(); }, "assets/ribbon/quick-select.svg",
+        "Select objects with AutoCAD's keywords (Window, Crossing, Fence, WPolygon, ALL, Last, Previous ...); the set stays for the next command.");
+    reg({"SELECTSIMILAR"}, [] { return std::make_unique<SelectSimilarCommand>(); }, "assets/ribbon/quick-select.svg",
+        "Select every object of the same kind and properties as the selected ones (SELECTSIMILARMODE).");
+    reg({"SELECTSIMILARMODE"}, [] { return std::make_unique<SelectSimilarModeCommand>(); }, "",
+        "Which properties SELECTSIMILAR compares: a bit sum (1 colour, 2 layer, 4 linetype, 8 linetype scale, 16 lineweight, 64 style, 128 name).");
+    reg({"QSELECT"}, [] { return std::make_unique<QSelectCommand>(false); }, "assets/ribbon/quick-select.svg",
+        "Select by object type and property (the Quick Select dialog).");
+    reg({"FILTER", "FI"}, [] { return std::make_unique<QSelectCommand>(true); }, "assets/ribbon/quick-select.svg",
+        "Select by several type and property conditions at once.");
+    reg({"ISOLATEOBJECTS"}, [] { return std::make_unique<IsolateCommand>(0); }, "",
+        "Hide everything but the selected objects until UNISOLATEOBJECTS.");
+    reg({"HIDEOBJECTS"}, [] { return std::make_unique<IsolateCommand>(1); }, "",
+        "Hide the selected objects until UNISOLATEOBJECTS.");
+    reg({"UNISOLATEOBJECTS", "UNHIDEOBJECTS"}, [] { return std::make_unique<IsolateCommand>(2); }, "",
+        "Show the objects ISOLATEOBJECTS or HIDEOBJECTS hid.");
+    reg({"OOPS"}, [] { return std::make_unique<OopsCommand>(); }, "assets/ribbon/undo.svg",
+        "Bring back the objects the last ERASE removed, keeping everything done since.");
+    reg({"PICKBOX"}, [] { return std::make_unique<SelectionSettingCommand>("PICKBOX"); }, "",
+        "The pick aperture in pixels (0 to 50).");
+    reg({"PICKFIRST"}, [] { return std::make_unique<SelectionSettingCommand>("PICKFIRST"); }, "",
+        "1: objects selected before a command are what it works on; 0: every command asks Select objects.");
+    reg({"PICKADD"}, [] { return std::make_unique<SelectionSettingCommand>("PICKADD"); }, "",
+        "2 (default): a click adds to the selection and Shift+click removes; 0: a click replaces it.");
+    reg({"PICKAUTO"}, [] { return std::make_unique<SelectionSettingCommand>("PICKAUTO"); }, "",
+        "Whether a click on empty space starts a window or crossing box (0 off, 1 on).");
+    reg({"PICKDRAG"}, [] { return std::make_unique<SelectionSettingCommand>("PICKDRAG"); }, "",
+        "How a selection box is drawn: 0 click and click, 1 press and drag, 2 both (press-and-drag is a lasso).");
+    reg({"HIGHLIGHT"}, [] { return std::make_unique<SelectionSettingCommand>("HIGHLIGHT"); }, "",
+        "Whether selected objects are highlighted (0 off, 1 on).");
+    reg({"SELECTIONPREVIEW"}, [] { return std::make_unique<SelectionSettingCommand>("SELECTIONPREVIEW"); }, "",
+        "Rollover and box preview highlighting: 0 off, 1 when no command is active, 2 when a command asks, 3 both.");
+    reg({"SELECTIONCYCLING"}, [] { return std::make_unique<SelectionSettingCommand>("SELECTIONCYCLING"); }, "",
+        "Overlapping objects under a pick: 2 offers the list (Ctrl+W toggles), 0 picks the nearest.");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
         "Check the drawing for bad references and structure; optionally fix them.");
     reg({"DO", "DONUT"}, [] { return std::make_unique<DonutCommand>(); },
@@ -231,6 +271,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/group.svg", "Make the selected objects a named group.");
     reg({"UNGROUP"}, [] { return std::make_unique<UngroupCommand>(); },
         "assets/ribbon/ungroup.svg", "Dissolve a group.");
+    reg({"-GROUP", "-G"}, [] { return std::make_unique<DashGroupCommand>(); }, "assets/ribbon/group.svg",
+        "Group options from the command line: ?, Order, Add, Remove, Explode, REName, Selectable, Create.");
+    reg({"GROUPEDIT"}, [] { return std::make_unique<GroupEditCommand>(); }, "assets/ribbon/group.svg",
+        "Add objects to a group, remove objects from it, or rename it.");
     reg({"PICKSTYLE"}, [] { return std::make_unique<PickStyleCommand>(); }, "",
         "Whether picking a group member selects the whole group.");
     reg({"REVCLOUD"}, [] { return std::make_unique<RevcloudCommand>(); },
@@ -351,6 +395,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Plot or print the drawing to paper or PDF.");
     reg({"LTSCALE", "LTS"}, [] { return std::make_unique<LtscaleCommand>(); },
         "assets/ribbon/ltscale.svg", "Set the global linetype scale factor.");
+    reg({"CELTSCALE"}, [] { return std::make_unique<LtscaleVarCommand>("CELTSCALE"); },
+        "assets/ribbon/ltscale.svg", "The linetype scale new objects are created with.");
+    reg({"PSLTSCALE"}, [] { return std::make_unique<LtscaleVarCommand>("PSLTSCALE"); },
+        "assets/ribbon/ltscale.svg", "1: linetypes seen through layout viewports are scaled by the viewport scale.");
+    reg({"MSLTSCALE"}, [] { return std::make_unique<LtscaleVarCommand>("MSLTSCALE"); },
+        "assets/ribbon/ltscale.svg", "1: model-space linetypes follow the annotation scale.");
     return r;
 }
 

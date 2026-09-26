@@ -564,6 +564,8 @@ void GeometryStore::clear() noexcept {
     active_space_ = 0;
     clear_mspace();
     ltscale_ = 1.0;
+    psltscale_ = true;
+    msltscale_ = true;
     blocks_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font
 }

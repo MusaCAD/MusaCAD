@@ -225,6 +225,217 @@ void ViewportWindow::open_properties() {
     }
 }
 
+int ViewportWindow::selection_setting(const std::string& name) const {
+    if (name == "PICKBOX") return pickbox_;
+    if (name == "PICKFIRST") return pickfirst_;
+    if (name == "PICKADD") return pickadd_;
+    if (name == "PICKAUTO") return pickauto_;
+    if (name == "PICKDRAG") return pickdrag_;
+    if (name == "HIGHLIGHT") return highlight_;
+    if (name == "SELECTIONPREVIEW") return selectionpreview_;
+    if (name == "SELECTIONCYCLING") return selectioncycling_;
+    return 0;
+}
+
+bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
+    const auto in = [value](int lo, int hi) { return value >= lo && value <= hi; };
+    if (name == "PICKBOX" && in(0, 50)) {
+        pickbox_ = value;
+    } else if (name == "PICKFIRST" && in(0, 1)) {
+        pickfirst_ = value;
+    } else if (name == "PICKADD" && in(0, 2)) {
+        pickadd_ = value;
+    } else if (name == "PICKAUTO" && in(0, 3)) {
+        pickauto_ = value;
+    } else if (name == "PICKDRAG" && in(0, 2)) {
+        pickdrag_ = value;
+    } else if (name == "HIGHLIGHT" && in(0, 1)) {
+        highlight_ = value;
+    } else if (name == "SELECTIONPREVIEW" && in(0, 3)) {
+        selectionpreview_ = value;
+    } else if (name == "SELECTIONCYCLING" && in(-2, 2)) {
+        selectioncycling_ = value;
+    } else {
+        return false;
+    }
+    rebuild_overlay();
+    return true;
+}
+
+bool ViewportWindow::quick_select_dialog(bool filter) {
+    if (!quick_select_callback_) {
+        return false;
+    }
+    quick_select_callback_(filter);
+    return true;
+}
+
+bool ViewportWindow::purge_dialog() {
+    if (!purge_dialog_callback_) {
+        return false;
+    }
+    purge_dialog_callback_();
+    return true;
+}
+
+bool ViewportWindow::units_dialog() {
+    if (!units_dialog_callback_) {
+        return false;
+    }
+    units_dialog_callback_();
+    return true;
+}
+
+void ViewportWindow::finish_gesture() {
+    submit_selection_preview(true);
+    if (processor_ != nullptr && processor_->in_selection_phase()) {
+        processor_->notify_selection_gesture();
+    }
+}
+
+void ViewportWindow::submit_selection_preview(bool clear) {
+    // SELECTIONPREVIEW bit 1: idle; bit 2: at a command's Select objects prompt.
+    const bool at_prompt = processor_ != nullptr && processor_->in_selection_phase();
+    const bool allowed = (selectionpreview_ & (at_prompt ? 2 : 1)) != 0;
+    if (clear || !allowed) {
+        if (!clear) {
+            return;
+        }
+        engine_.submit(core::SelectPreviewCommand{});
+        return;
+    }
+    core::SelectPreviewCommand pv;
+    if (lasso_active_) {
+        pv.polygon = lasso_world_;
+        pv.crossing = lasso_mode_ == 2;
+        pv.fence = lasso_mode_ == 3;
+    } else {
+        const double cx = cursor_px_x_.load(std::memory_order_relaxed);
+        pv.min = {std::min(sel_start_world_.x, sel_cur_world_.x), std::min(sel_start_world_.y, sel_cur_world_.y)};
+        pv.max = {std::max(sel_start_world_.x, sel_cur_world_.x), std::max(sel_start_world_.y, sel_cur_world_.y)};
+        pv.crossing = cx < sel_start_screen_.x;
+    }
+    engine_.submit(std::move(pv));
+}
+
+void ViewportWindow::show_cycle_menu() {
+    std::vector<core::RenderSnapshot::PickCandidate> cands;
+    {
+        std::scoped_lock lock(layers_mutex_);
+        cands = pick_candidates_;
+    }
+    if (cands.size() < 2 || processor_ == nullptr) {
+        return;
+    }
+    QMenu menu;
+    menu.setObjectName(QStringLiteral("SelectionCycling"));
+    std::vector<QAction*> acts;
+    for (const auto& c : cands) {
+        acts.push_back(menu.addAction(QString::fromStdString(c.name)));
+    }
+    QAction* chosen = menu.exec(QCursor::pos());
+    for (std::size_t i = 0; i < acts.size(); ++i) {
+        if (acts[i] == chosen) {
+            const bool at_prompt = processor_->in_selection_phase();
+            engine_.submit(core::SelectHandleCommand{cands[i].handle, at_prompt, at_prompt});
+            if (at_prompt) {
+                processor_->notify_selection_gesture();
+            }
+            break;
+        }
+    }
+    rebuild_overlay();
+}
+
+void ViewportWindow::show_context_menu(QPoint global, core::Vec2 world) {
+    if (processor_ == nullptr) {
+        return;
+    }
+    const bool has_sel = selection_count_.load(std::memory_order_relaxed) > 0;
+    QMenu menu;
+    menu.setObjectName(QStringLiteral("ViewportContextMenu"));
+    const std::string last = processor_->last_command();
+    QAction* repeat = nullptr;
+    if (!last.empty()) {
+        repeat = menu.addAction(QStringLiteral("Repeat %1").arg(QString::fromStdString(last).toUpper()));
+    }
+    QMenu* recent = menu.addMenu(QStringLiteral("Recent Input"));
+    std::vector<std::pair<QAction*, std::string>> recents;
+    const auto& hist = processor_->history();
+    for (auto it = hist.rbegin(); it != hist.rend() && recents.size() < 10; ++it) {
+        recents.emplace_back(recent->addAction(QString::fromStdString(*it)), *it);
+    }
+    recent->setEnabled(!recents.empty());
+    menu.addSeparator();
+    QMenu* clip = menu.addMenu(QStringLiteral("Clipboard"));
+    QAction* cut = clip->addAction(QStringLiteral("Cut"));
+    QAction* copy = clip->addAction(QStringLiteral("Copy"));
+    QAction* paste = clip->addAction(QStringLiteral("Paste"));
+    cut->setEnabled(has_sel);
+    copy->setEnabled(has_sel);
+    QMenu* iso = menu.addMenu(QStringLiteral("Isolate"));
+    QAction* isolate = iso->addAction(QStringLiteral("Isolate Objects"));
+    QAction* hide = iso->addAction(QStringLiteral("Hide Objects"));
+    QAction* end_iso = iso->addAction(QStringLiteral("End Object Isolation"));
+    isolate->setEnabled(has_sel);
+    hide->setEnabled(has_sel);
+    end_iso->setEnabled(object_isolation());
+    menu.addSeparator();
+    QAction* erase = has_sel ? menu.addAction(QStringLiteral("Erase")) : nullptr;
+    QAction* similar = menu.addAction(QStringLiteral("Select Similar"));
+    similar->setEnabled(has_sel);
+    QAction* qselect = menu.addAction(QStringLiteral("Quick Select\u2026"));
+    QAction* deselect = menu.addAction(QStringLiteral("Deselect All"));
+    deselect->setEnabled(has_sel);
+    menu.addSeparator();
+    QAction* undo = menu.addAction(QStringLiteral("Undo"));
+    QAction* redo = menu.addAction(QStringLiteral("Redo"));
+    menu.addSeparator();
+    QAction* props = menu.addAction(QStringLiteral("Properties"));
+    QAction* chosen = menu.exec(global);
+    if (chosen == nullptr) {
+        return;
+    }
+    const auto run = [this](const char* alias) { processor_->start_command(alias); };
+    if (chosen == repeat) {
+        run(last.c_str());
+    } else if (chosen == cut) {
+        engine_.submit(core::CutClipboardCommand{processor_->begin_group()});
+    } else if (chosen == copy) {
+        engine_.submit(core::CopyClipboardCommand{});
+    } else if (chosen == paste) {
+        engine_.submit(core::PasteClipboardCommand{world, processor_->begin_group()});
+    } else if (chosen == isolate) {
+        run("ISOLATEOBJECTS");
+    } else if (chosen == hide) {
+        run("HIDEOBJECTS");
+    } else if (chosen == end_iso) {
+        run("UNISOLATEOBJECTS");
+    } else if (chosen == erase) {
+        run("ERASE");
+    } else if (chosen == similar) {
+        run("SELECTSIMILAR");
+    } else if (chosen == qselect) {
+        run("QSELECT");
+    } else if (chosen == deselect) {
+        engine_.submit(core::ClearSelectionCommand{});
+    } else if (chosen == undo) {
+        processor_->undo();
+    } else if (chosen == redo) {
+        processor_->redo();
+    } else if (chosen == props) {
+        open_properties();
+    } else {
+        for (const auto& [a, text] : recents) {
+            if (a == chosen) {
+                processor_->submit_line(text);
+                break;
+            }
+        }
+    }
+    rebuild_overlay();
+}
+
 void ViewportWindow::import_dwg() {
     if (dwg_import_callback_) {
         dwg_import_callback_();
@@ -815,6 +1026,21 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
             layouts_ = snap.layouts;
+            purge_ = snap.purge;
+            ltscale_ = snap.ltscale;
+            celtscale_ = snap.current_celtscale;
+            psltscale_ = snap.psltscale;
+            msltscale_ = snap.msltscale;
+            pickstyle_ = snap.pickstyle;
+            object_isolation_ = snap.object_isolation;
+            if (snap.pick_candidates_version != pick_candidates_seen_) {
+                pick_candidates_seen_ = snap.pick_candidates_version;
+                pick_candidates_ = snap.pick_candidates;
+                if (pick_candidates_.size() >= 2) {
+                    // The list is a GUI-thread affair; this is the render thread.
+                    QMetaObject::invokeMethod(this, [this] { show_cycle_menu(); }, Qt::QueuedConnection);
+                }
+            }
             active_space_ = snap.active_space;
             embedded_images_ = static_cast<std::size_t>(
                 std::count_if(snap.image_defs.begin(), snap.image_defs.end(),
@@ -1027,7 +1253,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 world = camera_.screen_to_world(screen_px);
                 scale = camera_.scale();
             }
-            if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
+            if (const int gi = grip_at(world, pick_aperture(dpr, scale)); gi >= 0) {
                 core::GripInfo ginfo;
                 {
                     std::scoped_lock lock(grips_mutex_);
@@ -1036,6 +1262,14 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 if (ginfo.handle.kind == core::EntityKind::Polyline) {
                     show_polyline_grip_menu(ginfo, event->globalPosition().toPoint());
                 }
+            } else if (box_pending_ || lasso_active_) {
+                box_pending_ = false; // right-click abandons a box in progress
+                lasso_active_ = false;
+                lasso_world_.clear();
+                submit_selection_preview(true);
+                rebuild_overlay();
+            } else {
+                show_context_menu(event->globalPosition().toPoint(), world);
             }
         }
         return;
@@ -1063,15 +1297,34 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             sel_start_screen_ = screen_px;
             sel_start_world_ = world;
             sel_cur_world_ = world;
+        } else if (box_pending_) {
+            // The second click of a click-click box (PICKAUTO): window left-to-right,
+            // crossing right-to-left, as a drag would be.
+            box_pending_ = false;
+            const bool at_prompt = processor_->in_selection_phase();
+            const bool crossing = screen_px.x < sel_start_screen_.x;
+            const core::Vec2 mn{std::min(sel_start_world_.x, world.x), std::min(sel_start_world_.y, world.y)};
+            const core::Vec2 mx{std::max(sel_start_world_.x, world.x), std::max(sel_start_world_.y, world.y)};
+            core::SelectWindowCommand w{mn, mx, crossing, sel_additive_ || at_prompt, at_prompt};
+            w.remove = at_prompt && processor_->selection_phase_removing();
+            engine_.submit(w);
+            finish_gesture();
+            rebuild_overlay();
+            Q_EMIT pickerInteracted();
+            return;
         } else if (processor_->in_selection_phase()) {
             // "Select objects:" -- the same drag the idle canvas uses (a pick, a window
             // left-to-right, a crossing window right-to-left), on the RAW cursor, but
             // always accumulating and announced as "N found". Never a tab-to-tab drop.
             selecting_ = true;
             sel_additive_ = true;
+            sel_toggle_ = (event->modifiers() & Qt::ShiftModifier) != 0;
             sel_start_screen_ = screen_px;
             sel_start_world_ = world;
             sel_cur_world_ = world;
+            lasso_world_.clear();
+            lasso_active_ = false;
+            lasso_mode_ = 1;
             had_selection_at_press_ = false;
         } else if (processor_->has_active_command()) {
             std::optional<core::Vec2> snap;
@@ -1079,14 +1332,14 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                                   snap_y_.load(std::memory_order_relaxed)};
             }
-            processor_->set_pick_radius(10.0 * dpr / scale);
+            processor_->set_pick_radius(pick_aperture(dpr, scale));
             processor_->set_ctrl_held((event->modifiers() & Qt::ControlModifier) != 0);
             processor_->set_shift_held((event->modifiers() & Qt::ShiftModifier) != 0);
             processor_->pick_point(world, snap);
             processor_->set_ctrl_held(false);
             processor_->set_shift_held(false);
             rebuild_overlay();
-        } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
+        } else if (const int gi = grip_at(world, pick_aperture(dpr, scale)); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
             // drag. ORTHO/POLAR resolve relative to the grip's origin.
             core::GripInfo ginfo;
@@ -1096,19 +1349,26 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             }
             dragging_grip_ = true;
             grip_origin_ = ginfo.pos;
-            processor_->set_pick_radius(10.0 * dpr / scale);
+            processor_->set_pick_radius(pick_aperture(dpr, scale));
             processor_->set_last_point(ginfo.pos);
             engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
                                                  ginfo.index, {}, 0});
-        } else {
+        } else if (pickfirst_ != 0) {
             // Idle: begin a selection drag (single click or window/crossing box). If a
             // selection already exists, this drag may instead be a tab-to-tab transfer
-            // (resolved on release if it ends over a document tab).
+            // (resolved on release if it ends over a document tab). PICKADD 2: a click
+            // adds and Shift + click takes a selected object out; PICKADD 0: a click
+            // replaces the set and Shift adds.
             selecting_ = true;
-            sel_additive_ = (event->modifiers() & Qt::ShiftModifier) != 0;
+            const bool shift = (event->modifiers() & Qt::ShiftModifier) != 0;
+            sel_additive_ = pickadd_ == 0 ? shift : (pickadd_ == 1 || shift);
+            sel_toggle_ = shift && pickadd_ == 2;
             sel_start_screen_ = screen_px;
             sel_start_world_ = world;
             sel_cur_world_ = world;
+            lasso_world_.clear();
+            lasso_active_ = false;
+            lasso_mode_ = 1;
             had_selection_at_press_ = selection_count_.load(std::memory_order_relaxed) > 0;
         }
     }
@@ -1164,7 +1424,7 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
         world = camera_.screen_to_world(screen_px);
         scale = camera_.scale();
     }
-    const double pad = 10.0 * dpr / scale; // pick aperture in world units (DPR-aware)
+    const double pad = pick_aperture(dpr, scale); // pick aperture in world units (DPR-aware)
     bool found = false;
     std::string content;
     bool multiline = false;
@@ -1295,8 +1555,24 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         engine_.submit(
             core::GripDragCommand{core::GripDragCommand::Phase::Move, {}, 0, target, 0});
     }
-    if (selecting_) {
+    if (selecting_ || box_pending_) {
         sel_cur_world_ = world;
+        if (selecting_ && !plot_picking_ && pickdrag_ == 2 &&
+            core::length(screen_px - sel_start_screen_) >= 4.0 * dpr) {
+            // PICKDRAG 2: press-and-drag is a lasso; the polygon grows with the cursor.
+            if (!lasso_active_) {
+                lasso_active_ = true;
+                lasso_world_ = {sel_start_world_};
+                // AutoCAD: a lasso started leftwards is a crossing, rightwards a window.
+                lasso_mode_ = screen_px.x < sel_start_screen_.x ? 2 : 1;
+            }
+            if (core::length(world - lasso_world_.back()) * scale >= 2.0 * dpr) {
+                lasso_world_.push_back(world);
+            }
+        }
+        if (!plot_picking_ && !had_selection_at_press_) {
+            submit_selection_preview(false);
+        }
     }
     rebuild_overlay();
 }
@@ -1374,10 +1650,43 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         had_selection_at_press_ = false;
         // At a command's "Select objects:" prompt the engine echoes AutoCAD's "N found".
         const bool announce = processor_ != nullptr && processor_->in_selection_phase();
-        if (drag_px < 4.0 * dpr) {
-            // Single-click pick.
-            engine_.submit(
-                core::SelectPickCommand{world, 10.0 * dpr / scale, sel_additive_, announce});
+        const bool removing = announce && processor_->selection_phase_removing();
+        if (lasso_active_) {
+            // PICKDRAG 2: the lasso closes (or, as a fence, ends) where the button went up.
+            lasso_active_ = false;
+            std::vector<core::Vec2> pts = std::move(lasso_world_);
+            lasso_world_.clear();
+            if (lasso_mode_ == 3 ? pts.size() >= 2 : pts.size() >= 3) {
+                if (lasso_mode_ == 3) {
+                    engine_.submit(core::SelectFenceCommand{std::move(pts), removing, announce});
+                } else {
+                    if (!sel_additive_ && !announce) {
+                        engine_.submit(core::ClearSelectionCommand{});
+                    }
+                    engine_.submit(core::SelectPolygonCommand{std::move(pts), lasso_mode_ == 2, removing, announce});
+                }
+            }
+            finish_gesture();
+        } else if (drag_px < 4.0 * dpr) {
+            const bool over_object = hovered_kind().has_value();
+            if (over_object || !(pickauto_ != 0 && (pickdrag_ != 1))) {
+                // Single-click pick; Shift + click toggles (PICKADD 2); cycling offers the
+                // list when several objects sit under the aperture.
+                core::SelectPickCommand pk{world, pick_aperture(dpr, scale), sel_additive_, announce};
+                pk.remove = removing;
+                pk.toggle = sel_toggle_ && !removing;
+                pk.cycle = selectioncycling_ != 0;
+                engine_.submit(pk);
+                finish_gesture();
+            } else {
+                // An empty click starts a click-click box (PICKAUTO); idle, it also
+                // drops the selection, as AutoCAD's does.
+                if (!sel_additive_ && !announce) {
+                    engine_.submit(core::ClearSelectionCommand{});
+                }
+                box_pending_ = true;
+                sel_cur_world_ = world;
+            }
         } else {
             // Window (left->right) vs crossing (right->left), per AutoCAD.
             const bool crossing = rel_screen.x < sel_start_screen_.x;
@@ -1385,8 +1694,10 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
                                 std::min(sel_start_world_.y, world.y)};
             const core::Vec2 mx{std::max(sel_start_world_.x, world.x),
                                 std::max(sel_start_world_.y, world.y)};
-            engine_.submit(
-                core::SelectWindowCommand{mn, mx, crossing, sel_additive_, announce});
+            core::SelectWindowCommand w{mn, mx, crossing, sel_additive_, announce};
+            w.remove = removing;
+            engine_.submit(w);
+            finish_gesture();
         }
         rebuild_overlay();
         Q_EMIT pickerInteracted();
@@ -1516,7 +1827,12 @@ void ViewportWindow::rebuild_overlay() {
         dyn_reset();
     }
 
-    if (selecting_) {
+    ov.hide_selection = highlight_ == 0;
+    if (lasso_active_) {
+        ov.lasso = lasso_world_;
+        ov.lasso.push_back(sel_cur_world_);
+        ov.lasso_mode = lasso_mode_;
+    } else if (selecting_ || box_pending_) {
         const double drag_px = std::abs(cursor_px_x_.load(std::memory_order_relaxed) -
                                         sel_start_screen_.x);
         ov.rect_mode = (cursor_px_x_.load(std::memory_order_relaxed) < sel_start_screen_.x) ? 2 : 1;
@@ -2549,7 +2865,41 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
             cancel_plot_window_pick(); // re-opens the plot dialog (ok=false)
             return;
         }
+        if (box_pending_ || lasso_active_ || selecting_) {
+            box_pending_ = false;
+            lasso_active_ = false;
+            selecting_ = false;
+            lasso_world_.clear();
+            submit_selection_preview(true);
+            rebuild_overlay();
+            return;
+        }
         handle_escape();
+        return;
+    }
+    if (event->key() == Qt::Key_Space && lasso_active_) {
+        lasso_mode_ = lasso_mode_ % 3 + 1; // window -> crossing -> fence -> window
+        rebuild_overlay();
+        return;
+    }
+    const bool ctrl = (event->modifiers() & Qt::ControlModifier) != 0;
+    const bool shift = (event->modifiers() & Qt::ShiftModifier) != 0;
+    if (ctrl && event->key() == Qt::Key_A && !shift && !processor_->has_active_command()) {
+        engine_.submit(core::SelectAllCommand{});
+        rebuild_overlay();
+        return;
+    }
+    if (ctrl && event->key() == Qt::Key_W) {
+        selectioncycling_ = selectioncycling_ == 0 ? 2 : 0; // the Ctrl+W toggle
+        processor_->echo(selectioncycling_ != 0 ? "<Selection cycling on>" : "<Selection cycling off>");
+        return;
+    }
+    if (ctrl && (event->key() == Qt::Key_H || (shift && event->key() == Qt::Key_A))) {
+        // Ctrl+H (Ctrl+Shift+A): group selection on / off (PICKSTYLE's bit 1).
+        const int cur = pickstyle();
+        const int next = (cur & 1) != 0 ? cur & ~1 : cur | 1;
+        processor_->start_macro("PICKSTYLE", {std::to_string(next)});
+        processor_->echo((next & 1) != 0 ? "<Group on>" : "<Group off>");
         return;
     }
     QWindow::keyPressEvent(event);

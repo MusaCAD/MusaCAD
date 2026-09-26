@@ -213,6 +213,8 @@ struct RenderSnapshot {
     /// lineweight a fresh object gets, ByLayer or an override (the layer field is the
     /// current layer).
     EntityProps current_props{};
+    double current_celtscale = 1.0; ///< CELTSCALE: new objects' linetype scale
+    double ltscale = 1.0;           ///< LTSCALE
     std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
@@ -264,6 +266,37 @@ struct RenderSnapshot {
     EntityHandle hover;
     bool has_hover = false;
     std::vector<Vec2> hover_line_vertices;
+    /// SELECTIONPREVIEW: the objects the window / crossing / lasso being dragged would
+    /// select, highlighted while the drag lasts (SelectPreviewCommand).
+    std::vector<Vec2> preview_line_vertices;
+    /// Selection cycling: the objects that lay within the aperture of the last pick when
+    /// there were several (the UI offers them); `pick_candidates_version` bumps per pick.
+    struct PickCandidate {
+        EntityHandle handle;
+        std::string name; ///< "Line", "Circle", ... with its layer
+    };
+    std::vector<PickCandidate> pick_candidates;
+    std::uint64_t pick_candidates_version = 0;
+    /// What PURGE could remove right now (nothing refers to them), by name, and the
+    /// counts of the two object classes it can clean up.
+    struct PurgeCandidates {
+        std::vector<std::string> blocks;
+        std::vector<std::string> dimstyles;
+        std::vector<std::string> groups;
+        std::vector<std::string> layers;
+        std::vector<std::string> tablestyles;
+        std::vector<std::string> images;
+        std::vector<std::string> textstyles;
+        int zero_length = 0;
+        int empty_text = 0;
+    };
+    PurgeCandidates purge;
+    std::vector<std::string> group_descriptions; ///< parallel to group_names
+    std::vector<int> group_sizes;                ///< parallel to group_names
+    bool psltscale = true;                       ///< PSLTSCALE
+    bool msltscale = true;                       ///< MSLTSCALE
+    std::uint8_t pickstyle = 1;                  ///< PICKSTYLE 0..3
+    bool object_isolation = false;               ///< some objects are hidden (ISOLATEOBJECTS)
 
     // Pending object-dimension def points, resolved once (geometry-side) when the
     // user selects the object during an object-based dimension command. The UI
@@ -380,6 +413,12 @@ struct RenderSnapshot {
         hover = EntityHandle{};
         has_hover = false;
         hover_line_vertices.clear();
+        preview_line_vertices.clear();
+        pick_candidates.clear();
+        pick_candidates_version = 0;
+        purge = PurgeCandidates{};
+        group_descriptions.clear();
+        group_sizes.clear();
         status.clear();
         status_version = 0;
         dirty = false;

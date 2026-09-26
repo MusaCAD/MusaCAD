@@ -364,6 +364,8 @@ struct Document {
     std::uint16_t current_layer = 0;
     std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
     double ltscale = 1.0;                                  // global linetype scale (LTSCALE)
+    bool psltscale = true;                                 // PSLTSCALE (v40)
+    bool msltscale = true;                                 // MSLTSCALE (v40)
     std::vector<PageSetup> page_setups;                    // saved PLOT configurations (v11)
     std::vector<NamedView> views;
     std::vector<TiledViewport> vports;     ///< VPORTS: the model window's tiles (fewer than two = one)

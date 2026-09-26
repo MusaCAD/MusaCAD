@@ -864,6 +864,13 @@ public:
     /// geometry is derived at snapshot from this + the stored linetype (not baked).
     [[nodiscard]] double ltscale() const noexcept { return ltscale_; }
     void set_ltscale(double scale) noexcept { ltscale_ = scale > 0.0 ? scale : ltscale_; }
+    /// PSLTSCALE: linetypes seen through a layout viewport are scaled by its scale, so a
+    /// dash is LTSCALE long on the sheet whatever the zoom. MSLTSCALE: model-space
+    /// linetypes follow the annotation scale (recorded; there is no annotation scale yet).
+    [[nodiscard]] bool psltscale() const noexcept { return psltscale_; }
+    void set_psltscale(bool on) noexcept { psltscale_ = on; }
+    [[nodiscard]] bool msltscale() const noexcept { return msltscale_; }
+    void set_msltscale(bool on) noexcept { msltscale_ = on; }
 
     /// Per-entity linetype scale (AutoCAD CELTSCALE, DXF code 48); default 1.0. SPARSE:
     /// only entities with a non-default scale have an entry, so the hot data structs stay
@@ -1129,6 +1136,8 @@ private:
     std::uint16_t current_layer_ = 0;
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
+    bool psltscale_ = true;                                 // PSLTSCALE
+    bool msltscale_ = true;                                 // MSLTSCALE
     std::unordered_map<std::uint64_t, double> celtscale_;  // sparse per-entity CELTSCALE (def 1.0)
     std::vector<PageSetup> page_setups_;
     std::vector<NamedView> named_views_;

@@ -473,13 +473,15 @@ TEST_CASE("ARRAY: ARRAYPATH's Measure branch carries the spacing through") {
     REQUIRE(!ap->align);
 }
 
-TEST_CASE("ARRAY: every array command refuses to start with an empty selection") {
+TEST_CASE("ARRAY: every array command asks Select objects with an empty selection, and ends when nothing is chosen") {
     for (const char* alias : {"AR", "ARRAY", "-ARRAY", "ARRAYRECT", "ARRAYPOLAR", "ARRAYPATH"}) {
         ProcHarness h;
         h.proc.set_selection_count(0);
         h.proc.submit_line(alias);
         INFO(alias);
+        REQUIRE(h.proc.in_selection_phase()); // verb-noun (#46)
+        h.proc.submit_line("");               // Enter with nothing chosen
         REQUIRE(h.cmds.empty());
-        REQUIRE(!h.proc.has_active_command()); // it ended immediately rather than prompting
+        REQUIRE(!h.proc.has_active_command()); // it ended rather than prompting for the array
     }
 }
