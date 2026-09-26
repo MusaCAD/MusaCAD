@@ -39,7 +39,10 @@ rsync -a --delete \
 
 echo "==> Building the Flatpak ($APPID, branch stable)"
 rm -rf "$BUILDDIR" "$REPODIR"
-"${FB[@]}" --user --force-clean --default-branch=stable --repo="$REPODIR" "$BUILDDIR" "$HERE/$APPID.yml"
+# FLATPAK_BUILDER_JOBS caps the sandbox's compilers: the largest translation units take
+# several GB each at -O2, so a machine with little memory to spare builds with 2 or 3.
+"${FB[@]}" --user --force-clean --default-branch=stable --repo="$REPODIR" \
+  ${FLATPAK_BUILDER_JOBS:+--jobs="$FLATPAK_BUILDER_JOBS"} "$BUILDDIR" "$HERE/$APPID.yml"
 
 echo "==> Exporting a single-file bundle: $BUNDLE"
 # 4th arg is the BRANCH (not the version) -- must match --default-branch above.

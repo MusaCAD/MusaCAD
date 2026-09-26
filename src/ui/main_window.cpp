@@ -5509,7 +5509,10 @@ bool MainWindow::selftest_dwg() {
         const QString fake = oda_dir + QStringLiteral("/download/fake.AppImage");
         {
             QFile f(fake);
-            f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                std::printf("[selftest] cannot write the stand-in AppImage at %s\n", fake.toUtf8().constData());
+                return false;
+            }
             f.write("#!/bin/sh\n"
                     "# stands in for a type-2 AppImage: --appimage-extract unpacks into ./squashfs-root\n"
                     "[ \"$1\" = --appimage-extract ] || exit 2\n"
