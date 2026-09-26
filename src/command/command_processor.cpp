@@ -160,6 +160,13 @@ void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> sn
     submit_line(buf); // feed as an absolute coordinate to the active command
 }
 
+void CommandProcessor::notify_selection_gesture() {
+    if (active_ && active_->in_selection_phase()) {
+        active_->selection_gesture(*this);
+        finalize_if_done();
+    }
+}
+
 void CommandProcessor::set_hovered_kind(std::optional<core::EntityKind> kind) {
     if (kind == hovered_kind_) {
         return; // only react to changes

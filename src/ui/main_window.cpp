@@ -45,6 +45,9 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QTableWidget>
+#include <QTreeWidget>
+#include <QListWidget>
+#include <QRadioButton>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QElapsedTimer>
@@ -264,6 +267,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // dialog through the viewport's ViewControl, which forwards to the MainWindow.
     viewport_->set_match_filter_callback([this] { return read_match_filter(); });
     viewport_->set_match_settings_callback([this] { open_matchprop_dialog(); });
+    viewport_->set_quick_select_callback([this](bool filter) { open_quick_select_dialog(filter); });
+    viewport_->set_purge_dialog_callback([this] { open_purge_dialog(); });
+    viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
 
     // Dynamic Input (F12): a frameless surface that floats at the crosshair. It
     // routes typed text through the SAME processor (submit_line) and mirrors the
@@ -369,6 +375,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
+        processor_->set_purge_candidates(viewport_->purge_candidates());
+        processor_->set_ltscales(viewport_->ltscale(), viewport_->current_celtscale(), viewport_->psltscale(),
+                                 viewport_->msltscale());
+        processor_->set_pickstyle(viewport_->pickstyle());
         {
             std::vector<std::string> lnames;
             for (const core::LayoutInfo& l : viewport_->layouts()) {
@@ -1546,6 +1556,17 @@ core::MatchPropFilter MainWindow::read_match_filter() const {
     f.celtscale = s.value(QStringLiteral("matchprop/celtscale"), true).toBool();
     f.text = s.value(QStringLiteral("matchprop/text"), true).toBool();
     f.dimension = s.value(QStringLiteral("matchprop/dimension"), true).toBool();
+    f.hatch = s.value(QStringLiteral("matchprop/hatch"), true).toBool();
+    f.polyline = s.value(QStringLiteral("matchprop/polyline"), true).toBool();
+    f.plotstyle = s.value(QStringLiteral("matchprop/plotstyle"), true).toBool();
+    f.transparency = s.value(QStringLiteral("matchprop/transparency"), true).toBool();
+    f.thickness = s.value(QStringLiteral("matchprop/thickness"), true).toBool();
+    f.material = s.value(QStringLiteral("matchprop/material"), true).toBool();
+    f.shadow = s.value(QStringLiteral("matchprop/shadow"), true).toBool();
+    f.multileader = s.value(QStringLiteral("matchprop/multileader"), true).toBool();
+    f.table = s.value(QStringLiteral("matchprop/table"), true).toBool();
+    f.viewport = s.value(QStringLiteral("matchprop/viewport"), true).toBool();
+    f.center_object = s.value(QStringLiteral("matchprop/center_object"), true).toBool();
     return f;
 }
 
@@ -1558,6 +1579,17 @@ void MainWindow::write_match_filter(const core::MatchPropFilter& f) {
     s.setValue(QStringLiteral("matchprop/celtscale"), f.celtscale);
     s.setValue(QStringLiteral("matchprop/text"), f.text);
     s.setValue(QStringLiteral("matchprop/dimension"), f.dimension);
+    s.setValue(QStringLiteral("matchprop/hatch"), f.hatch);
+    s.setValue(QStringLiteral("matchprop/polyline"), f.polyline);
+    s.setValue(QStringLiteral("matchprop/plotstyle"), f.plotstyle);
+    s.setValue(QStringLiteral("matchprop/transparency"), f.transparency);
+    s.setValue(QStringLiteral("matchprop/thickness"), f.thickness);
+    s.setValue(QStringLiteral("matchprop/material"), f.material);
+    s.setValue(QStringLiteral("matchprop/shadow"), f.shadow);
+    s.setValue(QStringLiteral("matchprop/multileader"), f.multileader);
+    s.setValue(QStringLiteral("matchprop/table"), f.table);
+    s.setValue(QStringLiteral("matchprop/viewport"), f.viewport);
+    s.setValue(QStringLiteral("matchprop/center_object"), f.center_object);
 }
 
 void MainWindow::open_matchprop_dialog() {
@@ -1589,15 +1621,29 @@ void MainWindow::open_matchprop_dialog() {
     QCheckBox* c_lw = add_check(bl, QStringLiteral("Lineweight"), cur.lineweight, true);
     QCheckBox* c_lt = add_check(bl, QStringLiteral("Linetype"), cur.linetype, true);
     QCheckBox* c_cts = add_check(bl, QStringLiteral("Linetype Scale"), cur.celtscale, true);
-    add_check(bl, QStringLiteral("Plot Style"), cur.plotstyle, false);
+    QCheckBox* c_plot = add_check(bl, QStringLiteral("Plot Style"), cur.plotstyle, false);
+    QCheckBox* c_transp = add_check(bl, QStringLiteral("Transparency"), cur.transparency, false);
+    QCheckBox* c_thick = add_check(bl, QStringLiteral("Thickness"), cur.thickness, false);
     outer->addWidget(basic);
 
+    // AutoCAD's Special Properties, in its two columns; the ones without a modelled
+    // property are shown disabled so a saved filter reads the same as AutoCAD's.
     auto* special = new QGroupBox(QStringLiteral("Special Properties"), &dlg);
-    auto* sl = new QVBoxLayout(special);
-    QCheckBox* c_text = add_check(sl, QStringLiteral("Text"), cur.text, true);
+    auto* sg = new QGridLayout(special);
+    auto* sl = new QVBoxLayout;
+    auto* sr = new QVBoxLayout;
+    sg->addLayout(sl, 0, 0);
+    sg->addLayout(sr, 0, 1);
     QCheckBox* c_dim = add_check(sl, QStringLiteral("Dimension"), cur.dimension, true);
-    add_check(sl, QStringLiteral("Hatch"), cur.hatch, false);
-    add_check(sl, QStringLiteral("Polyline"), cur.polyline, false);
+    QCheckBox* c_text = add_check(sl, QStringLiteral("Text"), cur.text, true);
+    QCheckBox* c_hatch = add_check(sl, QStringLiteral("Hatch"), cur.hatch, true);
+    QCheckBox* c_pline = add_check(sl, QStringLiteral("Polyline"), cur.polyline, false);
+    QCheckBox* c_vp = add_check(sl, QStringLiteral("Viewport"), cur.viewport, false);
+    QCheckBox* c_table = add_check(sr, QStringLiteral("Table"), cur.table, true);
+    QCheckBox* c_mat = add_check(sr, QStringLiteral("Material"), cur.material, false);
+    QCheckBox* c_shadow = add_check(sr, QStringLiteral("Shadow display"), cur.shadow, false);
+    QCheckBox* c_mld = add_check(sr, QStringLiteral("Multileader"), cur.multileader, true);
+    QCheckBox* c_center = add_check(sr, QStringLiteral("Center object"), cur.center_object, false);
     outer->addWidget(special);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -1614,9 +1660,448 @@ void MainWindow::open_matchprop_dialog() {
     f.lineweight = c_lw->isChecked();
     f.linetype = c_lt->isChecked();
     f.celtscale = c_cts->isChecked();
+    f.plotstyle = c_plot->isChecked();
+    f.transparency = c_transp->isChecked();
+    f.thickness = c_thick->isChecked();
     f.text = c_text->isChecked();
     f.dimension = c_dim->isChecked();
+    f.hatch = c_hatch->isChecked();
+    f.polyline = c_pline->isChecked();
+    f.viewport = c_vp->isChecked();
+    f.table = c_table->isChecked();
+    f.material = c_mat->isChecked();
+    f.shadow = c_shadow->isChecked();
+    f.multileader = c_mld->isChecked();
+    f.center_object = c_center->isChecked();
     write_match_filter(f);
+}
+
+// ---------------------------------------------------------------------------
+// QSELECT / FILTER: the Quick Select dialog (issue #46)
+// ---------------------------------------------------------------------------
+void MainWindow::open_quick_select_dialog(bool filter) {
+    struct Kind {
+        const char* label;
+        int kind; // -1 = any
+    };
+    static const Kind kKinds[] = {
+        {"Multiple", -1},
+        {"Line", static_cast<int>(core::EntityKind::Line)},
+        {"Polyline", static_cast<int>(core::EntityKind::Polyline)},
+        {"Circle", static_cast<int>(core::EntityKind::Circle)},
+        {"Arc", static_cast<int>(core::EntityKind::Arc)},
+        {"Ellipse", static_cast<int>(core::EntityKind::Ellipse)},
+        {"Spline", static_cast<int>(core::EntityKind::Spline)},
+        {"Text", static_cast<int>(core::EntityKind::Text)},
+        {"MText", static_cast<int>(core::EntityKind::MText)},
+        {"Dimension", static_cast<int>(core::EntityKind::Dimension)},
+        {"Leader", static_cast<int>(core::EntityKind::Leader)},
+        {"Multileader", static_cast<int>(core::EntityKind::MLeader)},
+        {"Block Reference", static_cast<int>(core::EntityKind::Insert)},
+        {"Hatch", static_cast<int>(core::EntityKind::Hatch)},
+        {"Table", static_cast<int>(core::EntityKind::Table)},
+        {"Image", static_cast<int>(core::EntityKind::Image)},
+        {"Point", static_cast<int>(core::EntityKind::Point)},
+        {"Construction Line", static_cast<int>(core::EntityKind::Xline)},
+    };
+    struct Prop {
+        const char* label;
+        std::uint8_t id;
+        bool textual;
+    };
+    static const Prop kProps[] = {
+        {"Color", 1, true},        {"Layer", 2, true},         {"Linetype", 3, true},
+        {"Lineweight", 4, false},  {"Linetype scale", 5, false}, {"Radius", 6, false},
+        {"Length", 7, false},      {"Contents", 8, true},       {"Block name", 9, true},
+        {"Height", 10, false},     {"Area", 11, false},
+    };
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(filter ? QStringLiteral("Object Selection Filters") : QStringLiteral("Quick Select"));
+    dlg.setObjectName(filter ? QStringLiteral("FilterDialog") : QStringLiteral("QuickSelectDialog"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* form = new QGridLayout;
+    outer->addLayout(form);
+    int row = 0;
+    const auto add_row = [&](const QString& label, QWidget* w) {
+        form->addWidget(new QLabel(label, &dlg), row, 0);
+        form->addWidget(w, row, 1);
+        ++row;
+    };
+    auto* apply_to = new QComboBox(&dlg);
+    apply_to->addItems({QStringLiteral("Entire drawing"), QStringLiteral("Current selection")});
+    apply_to->setEnabled(viewport_->selection_count() > 0);
+    add_row(QStringLiteral("Apply to:"), apply_to);
+    auto* kind = new QComboBox(&dlg);
+    for (const Kind& k : kKinds) {
+        kind->addItem(QString::fromUtf8(k.label));
+    }
+    add_row(QStringLiteral("Object type:"), kind);
+    auto* prop = new QComboBox(&dlg);
+    prop->addItem(QStringLiteral("(none: the object type alone)"));
+    for (const Prop& p : kProps) {
+        prop->addItem(QString::fromUtf8(p.label));
+    }
+    add_row(QStringLiteral("Properties:"), prop);
+    auto* op = new QComboBox(&dlg);
+    op->addItems({QStringLiteral("= Equals"), QStringLiteral("<> Not Equal"), QStringLiteral("> Greater than"),
+                  QStringLiteral("< Less than"), QStringLiteral("* Wildcard Match")});
+    add_row(QStringLiteral("Operator:"), op);
+    auto* value = new QComboBox(&dlg);
+    value->setEditable(true);
+    add_row(QStringLiteral("Value:"), value);
+    // The value list follows the property: layer names, linetypes, colours.
+    const auto refill = [&] {
+        value->clear();
+        const int pi = prop->currentIndex() - 1;
+        if (pi < 0) {
+            return;
+        }
+        switch (kProps[pi].id) {
+        case 1:
+            value->addItems({QStringLiteral("ByLayer"), QStringLiteral("255,0,0"), QStringLiteral("255,255,0"),
+                             QStringLiteral("0,255,0"), QStringLiteral("0,255,255"), QStringLiteral("0,0,255"),
+                             QStringLiteral("255,0,255"), QStringLiteral("255,255,255")});
+            break;
+        case 2:
+            for (const core::Layer& l : viewport_->layers()) {
+                value->addItem(QString::fromStdString(l.name));
+            }
+            break;
+        case 3:
+            value->addItems({QStringLiteral("Continuous"), QStringLiteral("Dashed"), QStringLiteral("Center"),
+                             QStringLiteral("Hidden")});
+            break;
+        case 9:
+            for (const std::string& b : viewport_->block_names()) {
+                value->addItem(QString::fromStdString(b));
+            }
+            break;
+        default:
+            break;
+        }
+    };
+    connect(prop, &QComboBox::currentIndexChanged, &dlg, [&](int) { refill(); });
+    refill();
+
+    auto* how = new QGroupBox(QStringLiteral("How to apply:"), &dlg);
+    auto* hl = new QVBoxLayout(how);
+    auto* include = new QRadioButton(QStringLiteral("Include in new selection set"), how);
+    auto* exclude = new QRadioButton(QStringLiteral("Exclude from new selection set"), how);
+    include->setChecked(true);
+    hl->addWidget(include);
+    hl->addWidget(exclude);
+    outer->addWidget(how);
+    auto* append = new QCheckBox(QStringLiteral("Append to current selection set"), &dlg);
+    outer->addWidget(append);
+
+    // FILTER: several conditions, all of which must hold (each narrows the last).
+    QListWidget* list = nullptr;
+    if (filter) {
+        list = new QListWidget(&dlg);
+        list->setObjectName(QStringLiteral("FilterConditions"));
+        outer->addWidget(new QLabel(QStringLiteral("Conditions (every one must hold):"), &dlg));
+        outer->addWidget(list);
+        auto* add_btn = new QPushButton(QStringLiteral("Add to List"), &dlg);
+        outer->addWidget(add_btn);
+        connect(add_btn, &QPushButton::clicked, &dlg, [&] {
+            list->addItem(QStringLiteral("%1 | %2 %3 %4")
+                              .arg(kind->currentText(), prop->currentText(), op->currentText().left(2).trimmed(),
+                                   value->currentText()));
+            auto* it = list->item(list->count() - 1);
+            it->setData(Qt::UserRole, kind->currentIndex());
+            it->setData(Qt::UserRole + 1, prop->currentIndex());
+            it->setData(Qt::UserRole + 2, op->currentIndex());
+            it->setData(Qt::UserRole + 3, value->currentText());
+        });
+    }
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    buttons->button(QDialogButtonBox::Ok)->setText(filter ? QStringLiteral("Apply") : QStringLiteral("OK"));
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto make = [&](int ki, int pi, int oi, const QString& val) {
+        core::SelectFilterCommand c;
+        c.kind = kKinds[ki].kind;
+        c.property = pi > 0 ? kProps[pi - 1].id : 0;
+        c.op = static_cast<std::uint8_t>(oi);
+        c.text = val.toStdString();
+        c.number = val.toDouble();
+        c.whole_drawing = apply_to->currentIndex() == 0;
+        c.include = include->isChecked();
+        c.append = append->isChecked();
+        return c;
+    };
+    if (list != nullptr && list->count() > 0) {
+        for (int i = 0; i < list->count(); ++i) {
+            QListWidgetItem* it = list->item(i);
+            core::SelectFilterCommand c = make(it->data(Qt::UserRole).toInt(), it->data(Qt::UserRole + 1).toInt(),
+                                              it->data(Qt::UserRole + 2).toInt(), it->data(Qt::UserRole + 3).toString());
+            if (i > 0) {
+                c.whole_drawing = false; // narrows what the previous condition left
+                c.append = false;
+            }
+            engine_->submit(c);
+        }
+        return;
+    }
+    engine_->submit(make(kind->currentIndex(), prop->currentIndex(), op->currentIndex(), value->currentText()));
+}
+
+// ---------------------------------------------------------------------------
+// PURGE: the dialog (issue #53)
+// ---------------------------------------------------------------------------
+void MainWindow::open_purge_dialog() {
+    const core::RenderSnapshot::PurgeCandidates cand = viewport_->purge_candidates();
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Purge"));
+    dlg.setObjectName(QStringLiteral("PurgeDialog"));
+    auto* outer = new QVBoxLayout(&dlg);
+    outer->addWidget(new QLabel(QStringLiteral("Items not used in drawing:"), &dlg));
+    auto* tree = new QTreeWidget(&dlg);
+    tree->setObjectName(QStringLiteral("PurgeTree"));
+    tree->setHeaderHidden(true);
+    outer->addWidget(tree);
+    struct Cat {
+        const char* title;
+        std::uint8_t what;
+        const std::vector<std::string>* names;
+    };
+    const Cat cats[] = {{"Blocks", 1, &cand.blocks},          {"Dimension Styles", 2, &cand.dimstyles},
+                        {"Groups", 3, &cand.groups},          {"Layers", 4, &cand.layers},
+                        {"Table Styles", 5, &cand.tablestyles}, {"Images", 6, &cand.images},
+                        {"Text Styles", 7, &cand.textstyles}};
+    int total = 0;
+    for (const Cat& c : cats) {
+        if (c.names->empty()) {
+            continue;
+        }
+        auto* top = new QTreeWidgetItem(tree, {QStringLiteral("%1 (%2)").arg(QString::fromUtf8(c.title)).arg(c.names->size())});
+        top->setFlags(top->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
+        top->setCheckState(0, Qt::Checked);
+        for (const std::string& n : *c.names) {
+            auto* it = new QTreeWidgetItem(top, {QString::fromStdString(n)});
+            it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+            it->setCheckState(0, Qt::Checked);
+            it->setData(0, Qt::UserRole, c.what);
+            ++total;
+        }
+        top->setExpanded(true);
+    }
+    if (total == 0) {
+        auto* none = new QTreeWidgetItem(tree, {QStringLiteral("(nothing unused)")});
+        none->setFlags(Qt::NoItemFlags);
+    }
+    auto* confirm = new QCheckBox(QStringLiteral("Confirm each item to be purged"), &dlg);
+    outer->addWidget(confirm);
+    auto* unnamed = new QGroupBox(QStringLiteral("Unnamed Objects"), &dlg);
+    auto* ul = new QVBoxLayout(unnamed);
+    auto* zero = new QCheckBox(QStringLiteral("Purge zero-length geometry (%1)").arg(cand.zero_length), unnamed);
+    auto* empty = new QCheckBox(QStringLiteral("Purge empty text objects (%1)").arg(cand.empty_text), unnamed);
+    zero->setEnabled(cand.zero_length > 0);
+    empty->setEnabled(cand.empty_text > 0);
+    ul->addWidget(zero);
+    ul->addWidget(empty);
+    outer->addWidget(unnamed);
+    auto* buttons = new QDialogButtonBox(&dlg);
+    QPushButton* purge_checked = buttons->addButton(QStringLiteral("Purge Checked Items"), QDialogButtonBox::AcceptRole);
+    QPushButton* purge_all = buttons->addButton(QStringLiteral("Purge All"), QDialogButtonBox::ActionRole);
+    buttons->addButton(QDialogButtonBox::Close);
+    purge_checked->setEnabled(total > 0 || cand.zero_length > 0 || cand.empty_text > 0);
+    purge_all->setEnabled(purge_checked->isEnabled());
+    bool all = false;
+    connect(purge_all, &QPushButton::clicked, &dlg, [&] {
+        all = true;
+        dlg.accept();
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    int purged = 0;
+    for (int t = 0; t < tree->topLevelItemCount(); ++t) {
+        QTreeWidgetItem* top = tree->topLevelItem(t);
+        for (int i = 0; i < top->childCount(); ++i) {
+            QTreeWidgetItem* it = top->child(i);
+            if (!all && it->checkState(0) != Qt::Checked) {
+                continue;
+            }
+            if (confirm->isChecked() &&
+                QMessageBox::question(this, QStringLiteral("Purge"),
+                                      QStringLiteral("Purge \"%1\"?").arg(it->text(0))) != QMessageBox::Yes) {
+                continue;
+            }
+            core::PurgeCommand c;
+            c.group = processor_->begin_group();
+            c.what = static_cast<std::uint8_t>(it->data(0, Qt::UserRole).toInt());
+            c.name = it->text(0).toStdString();
+            engine_->submit(c);
+            ++purged;
+        }
+    }
+    if (all || zero->isChecked()) {
+        core::PurgeCommand c;
+        c.group = processor_->begin_group();
+        c.what = 8;
+        engine_->submit(c);
+    }
+    if (all || empty->isChecked()) {
+        core::PurgeCommand c;
+        c.group = processor_->begin_group();
+        c.what = 9;
+        engine_->submit(c);
+    }
+    (void)purged;
+}
+
+// ---------------------------------------------------------------------------
+// UNITS: the Drawing Units dialog (issue #67)
+// ---------------------------------------------------------------------------
+void MainWindow::open_units_dialog() {
+    core::DrawingUnits u = viewport_->units();
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Drawing Units"));
+    dlg.setObjectName(QStringLiteral("UnitsDialog"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* top = new QHBoxLayout;
+    outer->addLayout(top);
+
+    auto* length = new QGroupBox(QStringLiteral("Length"), &dlg);
+    auto* lg = new QGridLayout(length);
+    lg->addWidget(new QLabel(QStringLiteral("Type:"), length), 0, 0);
+    auto* ltype = new QComboBox(length);
+    ltype->addItems({QStringLiteral("Scientific"), QStringLiteral("Decimal"), QStringLiteral("Engineering"),
+                     QStringLiteral("Architectural"), QStringLiteral("Fractional")});
+    ltype->setCurrentIndex(static_cast<int>(u.linear) - 1);
+    lg->addWidget(ltype, 1, 0);
+    lg->addWidget(new QLabel(QStringLiteral("Precision:"), length), 2, 0);
+    auto* lprec = new QComboBox(length);
+    lg->addWidget(lprec, 3, 0);
+    top->addWidget(length);
+
+    auto* angle = new QGroupBox(QStringLiteral("Angle"), &dlg);
+    auto* ag = new QGridLayout(angle);
+    ag->addWidget(new QLabel(QStringLiteral("Type:"), angle), 0, 0);
+    auto* atype = new QComboBox(angle);
+    atype->addItems({QStringLiteral("Decimal Degrees"), QStringLiteral("Deg/Min/Sec"), QStringLiteral("Grads"),
+                     QStringLiteral("Radians"), QStringLiteral("Surveyor's Units")});
+    atype->setCurrentIndex(static_cast<int>(u.angular));
+    ag->addWidget(atype, 1, 0);
+    ag->addWidget(new QLabel(QStringLiteral("Precision:"), angle), 2, 0);
+    auto* aprec = new QComboBox(angle);
+    for (int i = 0; i <= 8; ++i) {
+        aprec->addItem(QString::number(i));
+    }
+    aprec->setCurrentIndex(u.angular_precision);
+    ag->addWidget(aprec, 3, 0);
+    auto* clockwise = new QCheckBox(QStringLiteral("Clockwise"), angle);
+    clockwise->setChecked(u.clockwise);
+    ag->addWidget(clockwise, 4, 0);
+    top->addWidget(angle);
+
+    const auto fill_precision = [&] {
+        const int keep = lprec->currentIndex() >= 0 ? lprec->currentIndex() : u.linear_precision;
+        lprec->clear();
+        const bool fractional = ltype->currentIndex() >= 3;
+        for (int i = 0; i <= 8; ++i) {
+            if (fractional) {
+                lprec->addItem(i == 0 ? QStringLiteral("0") : QStringLiteral("1/%1").arg(1 << i));
+            } else {
+                lprec->addItem(i == 0 ? QStringLiteral("0") : QStringLiteral("0.%1").arg(QString(i, QLatin1Char('0'))));
+            }
+        }
+        lprec->setCurrentIndex(std::clamp(keep, 0, 8));
+    };
+    fill_precision();
+    lprec->setCurrentIndex(u.linear_precision);
+    connect(ltype, &QComboBox::currentIndexChanged, &dlg, [&](int) { fill_precision(); });
+
+    auto* ins = new QGroupBox(QStringLiteral("Insertion scale"), &dlg);
+    auto* il = new QVBoxLayout(ins);
+    il->addWidget(new QLabel(QStringLiteral("Units to scale inserted content:"), ins));
+    auto* insunits = new QComboBox(ins);
+    for (int i = 0; i < core::units::kInsunitsCount; ++i) {
+        insunits->addItem(QString::fromUtf8(core::units::insunits_name(static_cast<std::uint8_t>(i))));
+    }
+    insunits->setCurrentIndex(u.insunits);
+    il->addWidget(insunits);
+    outer->addWidget(ins);
+
+    auto* sample = new QGroupBox(QStringLiteral("Sample Output"), &dlg);
+    auto* sl = new QVBoxLayout(sample);
+    auto* sample_label = new QLabel(sample);
+    sl->addWidget(sample_label);
+    outer->addWidget(sample);
+    double base_angle = u.base_angle;
+    const auto current = [&] {
+        core::DrawingUnits n;
+        n.linear = static_cast<core::LinearFormat>(ltype->currentIndex() + 1);
+        n.linear_precision = static_cast<std::uint8_t>(std::max(0, lprec->currentIndex()));
+        n.angular = static_cast<core::AngleFormat>(atype->currentIndex());
+        n.angular_precision = static_cast<std::uint8_t>(aprec->currentIndex());
+        n.clockwise = clockwise->isChecked();
+        n.base_angle = base_angle;
+        n.insunits = static_cast<std::uint8_t>(insunits->currentIndex());
+        return n;
+    };
+    const auto refresh_sample = [&] {
+        const core::DrawingUnits n = current();
+        sample_label->setText(QStringLiteral("%1, %2, 0\n3<%3, 0")
+                                  .arg(QString::fromStdString(core::units::format_length(1.5, n)),
+                                       QString::fromStdString(core::units::format_length(2.0039, n)),
+                                       QString::fromStdString(core::units::format_angle(core::to_radians(45.0), n))));
+    };
+    for (QComboBox* cb : {ltype, lprec, atype, aprec}) {
+        connect(cb, &QComboBox::currentIndexChanged, &dlg, [&](int) { refresh_sample(); });
+    }
+    connect(clockwise, &QCheckBox::toggled, &dlg, [&](bool) { refresh_sample(); });
+    refresh_sample();
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    QPushButton* direction = buttons->addButton(QStringLiteral("Direction\u2026"), QDialogButtonBox::ActionRole);
+    connect(direction, &QPushButton::clicked, &dlg, [&] {
+        // Direction Control: the base angle from one of the compass points or a value.
+        QDialog dd(&dlg);
+        dd.setWindowTitle(QStringLiteral("Direction Control"));
+        auto* dl = new QVBoxLayout(&dd);
+        dl->addWidget(new QLabel(QStringLiteral("Base Angle"), &dd));
+        auto* east = new QRadioButton(QStringLiteral("East      0"), &dd);
+        auto* north = new QRadioButton(QStringLiteral("North    90"), &dd);
+        auto* west = new QRadioButton(QStringLiteral("West    180"), &dd);
+        auto* south = new QRadioButton(QStringLiteral("South   270"), &dd);
+        auto* other = new QRadioButton(QStringLiteral("Other"), &dd);
+        auto* value = new QLineEdit(QString::number(core::to_degrees(base_angle)), &dd);
+        const double deg = core::to_degrees(base_angle);
+        (std::abs(deg) < 1e-9 ? east : std::abs(deg - 90.0) < 1e-9 ? north : std::abs(deg - 180.0) < 1e-9 ? west
+                                : std::abs(deg - 270.0) < 1e-9 ? south : other)->setChecked(true);
+        for (QRadioButton* r : {east, north, west, south, other}) {
+            dl->addWidget(r);
+        }
+        dl->addWidget(value);
+        auto* db = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dd);
+        connect(db, &QDialogButtonBox::accepted, &dd, &QDialog::accept);
+        connect(db, &QDialogButtonBox::rejected, &dd, &QDialog::reject);
+        dl->addWidget(db);
+        if (dd.exec() == QDialog::Accepted) {
+            double d = east->isChecked() ? 0.0 : north->isChecked() ? 90.0 : west->isChecked() ? 180.0
+                       : south->isChecked() ? 270.0 : value->text().toDouble();
+            base_angle = core::to_radians(d);
+            refresh_sample();
+        }
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    engine_->submit(core::SetUnitsCommand{current()});
 }
 
 void MainWindow::open_layer_dialog() {

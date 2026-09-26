@@ -165,6 +165,18 @@ struct MatchPropFilter {
     bool dimension = true;
     bool hatch = true;     ///< HATCH pattern/scale/angle (family-scoped, hatch<->hatch)
     bool polyline = true;  ///< reserved (no polyline-specific registry descriptor yet)
+    // AutoCAD's remaining Property Settings. They are kept (and shown in the dialog)
+    // so a saved filter reads the same; the ones without a modelled property are
+    // inert until it exists: transparency and thickness (issue #68), material and
+    // shadow display (3D), the viewport's own properties.
+    bool transparency = true;
+    bool thickness = true;
+    bool material = true;
+    bool shadow = true;
+    bool multileader = true; ///< a multileader's style (family-scoped, with the Text slot)
+    bool table = true;       ///< a table's style (family-scoped, with the Text slot)
+    bool viewport = true;
+    bool center_object = true;
 
     /// Whether the category gating `slot` is currently enabled.
     [[nodiscard]] constexpr bool allows(MatchSlot s) const noexcept {

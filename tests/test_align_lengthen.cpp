@@ -321,7 +321,9 @@ TEST_CASE("#27: the ALIGN and LENGTHEN command flows") {
     {
         ProcHarness h;
         h.proc.set_selection_count(0);
-        h.proc.submit_line("ALIGN"); // no selection -> ends without prompting
+        h.proc.submit_line("ALIGN"); // no selection -> Select objects first (#46)
+        REQUIRE(h.proc.in_selection_phase());
+        h.proc.submit_line(""); // nothing chosen: the command ends
         REQUIRE(h.cmds.empty());
         REQUIRE(!h.proc.has_active_command());
     }

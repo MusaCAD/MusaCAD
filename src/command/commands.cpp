@@ -46,6 +46,10 @@ std::string trimmed(const std::string& s) {
 /// failure. Returns nullopt (after echoing the error) when invalid -- the caller
 /// re-prompts rather than aborting.
 std::optional<core::Vec2> read_point(CommandContext& ctx, const std::string& text) {
+    // Enter at a point prompt with no default: AutoCAD asks again, saying nothing.
+    if (trimmed(text).empty()) {
+        return std::nullopt;
+    }
     // Direct distance entry: a bare number goes along the cursor's bearing from the last
     // point (the cursor with ortho / polar applied, as AutoCAD does it).
     std::optional<double> bearing;
@@ -1365,28 +1369,200 @@ void RectangleCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // ERASE
 // ---------------------------------------------------------------------------
-void EraseCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Select objects [Last/All]: ");
+// ---------------------------------------------------------------------------
+// "Select objects:" (issue #46) -- the step every edit command starts with
+// ---------------------------------------------------------------------------
+void SelectObjectsPhase::begin(CommandContext& ctx, std::string prompt) {
+    prompt_ = std::move(prompt);
+    sub_ = Sub::Objects;
+    active_ = true;
+    remove_ = false;
+    single_ = false;
+    box_ = false;
+    crossing_ = false;
+    pts_.clear();
+    reprompt(ctx);
 }
 
-void EraseCommand::input(CommandContext& ctx, const std::string& text) {
-    const std::string u = upper(trimmed(text));
-    if (u.empty()) {
+void SelectObjectsPhase::reprompt(CommandContext& ctx) {
+    ctx.set_prompt(remove_ ? "Remove objects: " : prompt_);
+}
+
+SelectObjectsPhase::Result SelectObjectsPhase::gesture(CommandContext& ctx) {
+    if (single_) {
+        active_ = false;
+        ctx.clear_preview();
+        return Result::Done;
+    }
+    return Result::Continue;
+}
+
+SelectObjectsPhase::Result SelectObjectsPhase::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (sub_) {
+    case Sub::Corner1:
+        if (const auto p = read_point(ctx, text)) {
+            c1_ = *p;
+            sub_ = Sub::Corner2;
+            ctx.set_preview({PreviewKind::Rectangle, {c1_}});
+            ctx.set_prompt("Specify opposite corner: ");
+        }
+        return Result::Continue;
+    case Sub::Corner2:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 mn{std::min(c1_.x, p->x), std::min(c1_.y, p->y)};
+            const core::Vec2 mx{std::max(c1_.x, p->x), std::max(c1_.y, p->y)};
+            const bool crossing = box_ ? p->x < c1_.x : crossing_; // BOX: by direction
+            ctx.submit(core::SelectWindowCommand{mn, mx, crossing, true, true, remove_});
+            ctx.clear_preview();
+            sub_ = Sub::Objects;
+            reprompt(ctx);
+            return gesture(ctx);
+        }
+        return Result::Continue;
+    case Sub::Fence:
+    case Sub::Polygon: {
+        const bool fence = sub_ == Sub::Fence;
+        if (t.empty()) {
+            if (fence && pts_.size() >= 2) {
+                ctx.submit(core::SelectFenceCommand{pts_, remove_, true});
+            } else if (!fence && pts_.size() >= 3) {
+                ctx.submit(core::SelectPolygonCommand{pts_, crossing_, remove_, true});
+            }
+            pts_.clear();
+            ctx.clear_preview();
+            sub_ = Sub::Objects;
+            reprompt(ctx);
+            return gesture(ctx);
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!pts_.empty()) {
+                pts_.pop_back();
+            }
+        } else if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+        } else {
+            return Result::Continue;
+        }
+        if (pts_.empty()) {
+            ctx.clear_preview();
+            ctx.set_prompt(fence ? "Specify first fence point or pick/drag cursor: "
+                                 : "First polygon point or pick/drag cursor: ");
+        } else {
+            PreviewSpec pv;
+            pv.kind = PreviewKind::Polyline;
+            pv.points = pts_;
+            ctx.set_preview(pv);
+            ctx.set_prompt(fence ? "Specify next fence point or [Undo]: " : "Specify endpoint of line or [Undo]: ");
+        }
+        return Result::Continue;
+    }
+    case Sub::GroupName:
+        if (!t.empty()) {
+            ctx.submit(core::SelectGroupCommand{t, remove_, true});
+        }
+        sub_ = Sub::Objects;
+        reprompt(ctx);
+        return Result::Continue;
+    case Sub::Objects:
+        break;
+    }
+    if (t.empty()) {
+        active_ = false;
+        ctx.clear_preview();
+        return Result::Done;
+    }
+    if (u == "W" || u == "WINDOW" || u == "C" || u == "CROSSING" || u == "BOX") {
+        crossing_ = u == "C" || u == "CROSSING";
+        box_ = u == "BOX";
+        sub_ = Sub::Corner1;
+        ctx.set_prompt("Specify first corner: ");
+    } else if (u == "ALL") {
+        ctx.submit(core::SelectAllCommand{true});
+        return gesture(ctx);
+    } else if (u == "F" || u == "FENCE") {
+        sub_ = Sub::Fence;
+        pts_.clear();
+        ctx.set_prompt("Specify first fence point or pick/drag cursor: ");
+    } else if (u == "WP" || u == "WPOLYGON" || u == "CP" || u == "CPOLYGON") {
+        crossing_ = u == "CP" || u == "CPOLYGON";
+        sub_ = Sub::Polygon;
+        pts_.clear();
+        ctx.set_prompt("First polygon point or pick/drag cursor: ");
+    } else if (u == "G" || u == "GROUP") {
+        sub_ = Sub::GroupName;
+        ctx.set_prompt("Enter group name: ");
+    } else if (u == "L" || u == "LAST") {
+        ctx.submit(core::SelectLastCommand{remove_, true});
+        return gesture(ctx);
+    } else if (u == "P" || u == "PREVIOUS") {
+        ctx.submit(core::SelectPreviousCommand{true});
+        return gesture(ctx);
+    } else if (u == "A" || u == "ADD") {
+        remove_ = false;
+        reprompt(ctx);
+    } else if (u == "R" || u == "REMOVE") {
+        remove_ = true;
+        reprompt(ctx);
+    } else if (u == "M" || u == "MULTIPLE" || u == "AU" || u == "AUTO") {
+        reprompt(ctx); // the default way of working here
+    } else if (u == "U" || u == "UNDO") {
+        ctx.submit(core::SelectUndoCommand{});
+        reprompt(ctx);
+    } else if (u == "SI" || u == "SINGLE") {
+        single_ = true;
+        reprompt(ctx);
+    } else if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true, remove_});
+        reprompt(ctx);
+        return gesture(ctx);
+    } else {
+        ctx.echo("Expects a point or Window/Last/Crossing/BOX/ALL/Fence/WPolygon/CPolygon/Group/"
+                 "Add/Remove/Multiple/Previous/Undo/AUto/SIngle");
+        reprompt(ctx);
+    }
+    return Result::Continue;
+}
+
+// ---------------------------------------------------------------------------
+// ERASE / OOPS
+// ---------------------------------------------------------------------------
+void EraseCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        ctx.submit(core::EraseSelectionCommand{ctx.group_id()});
         done_ = true;
         return;
     }
-    if (u == "L" || u == "LAST") {
-        ctx.submit(core::EraseCommand{core::EraseScope::Last, ctx.group_id()});
-        ctx.echo("Erased last object.");
-        done_ = true;
-    } else if (u == "ALL" || u == "A") {
-        ctx.submit(core::EraseCommand{core::EraseScope::All, ctx.group_id()});
-        ctx.echo("Erased all objects.");
-        done_ = true;
-    } else {
-        ctx.echo("Enter L (last) or ALL.");
+    select_.begin(ctx);
+}
+
+void EraseCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::EraseSelectionCommand{ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void EraseCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
     }
 }
+
+void EraseCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void OopsCommand::start(CommandContext& ctx) {
+    ctx.submit(core::OopsCommand{ctx.group_id()});
+    done_ = true;
+}
+
 
 void EraseCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
@@ -1457,20 +1633,41 @@ std::string displacement_default(CommandContext& ctx, core::Vec2 d) {
 }
 } // namespace
 
+void MoveCommand::begin_base(CommandContext& ctx) {
+    state_ = State::Base;
+    ctx.set_prompt("Specify base point or [Displacement] <Displacement>: ");
+}
+
 void MoveCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
     if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run MOVE.");
-        done_ = true;
+        state_ = State::Select; // verb-noun: gather the set first
+        select_.begin(ctx);
         return;
     }
-    ctx.clear_last_point();
-    ctx.set_prompt("Specify base point or [Displacement] <Displacement>: ");
+    begin_base(ctx);
+}
+
+void MoveCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
 }
 
 void MoveCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true; // nothing chosen: the command ends, as AutoCAD's does
+            return;
+        }
+        begin_base(ctx);
+        return;
     case State::Base:
         if (t.empty() || u == "D" || u == "DISPLACEMENT") {
             state_ = State::Displacement;
@@ -1527,15 +1724,26 @@ void MoveCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // COPY (leaves originals; Multiple repeats until Enter/Esc, Single places one)
 // ---------------------------------------------------------------------------
-void CopyCommand::start(CommandContext& ctx) {
-    if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run COPY.");
-        done_ = true;
-        return;
-    }
-    ctx.clear_last_point();
+void CopyCommand::begin_base(CommandContext& ctx) {
+    state_ = State::Base;
     ctx.echo(std::string("Current settings: Copy mode = ") + (s_single_ ? "Single" : "Multiple"));
     ctx.set_prompt("Specify base point or [Displacement/mOde] <Displacement>: ");
+}
+
+void CopyCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!ctx.has_selection()) {
+        state_ = State::Select;
+        select_.begin(ctx);
+        return;
+    }
+    begin_base(ctx);
+}
+
+void CopyCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
 }
 
 void CopyCommand::prompt_second(CommandContext& ctx) {
@@ -1559,6 +1767,16 @@ void CopyCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(t);
     double v = 0.0;
     switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin_base(ctx);
+        return;
     case State::Base:
         if (u == "O" || u == "MODE") {
             state_ = State::Mode;
@@ -1709,16 +1927,35 @@ void MirrtextCommand::cancel(CommandContext& ctx) {
 }
 
 void MirrorCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
     if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run MIRROR.");
-        done_ = true;
+        state_ = State::Select;
+        select_.begin(ctx);
         return;
     }
-    ctx.clear_last_point();
+    state_ = State::First;
     ctx.set_prompt("Specify first point of mirror line: ");
 }
 
+void MirrorCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
+}
+
 void MirrorCommand::input(CommandContext& ctx, const std::string& text) {
+    if (state_ == State::Select) {
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        state_ = State::First;
+        ctx.set_prompt("Specify first point of mirror line: ");
+        return;
+    }
     if (state_ == State::Ask) {
         const std::string u = upper(trimmed(text));
         const bool erase = (u == "Y" || u == "YES");
@@ -2115,19 +2352,61 @@ void HatchCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // MATCHPROP / MA (source -> N targets; paintbrush cursor; per-target undo)
 // ---------------------------------------------------------------------------
+namespace {
+std::string match_settings_line(const core::MatchPropFilter& f) {
+    // AutoCAD's "Current active settings:" line, in its order.
+    std::string out = "Current active settings:";
+    const auto add = [&](bool on, const char* name) {
+        if (on) {
+            out += std::string(" ") + name;
+        }
+    };
+    add(f.color, "Color");
+    add(f.layer, "Layer");
+    add(f.linetype, "Ltype");
+    add(f.celtscale, "Ltscale");
+    add(f.lineweight, "Lineweight");
+    add(f.transparency, "Transparency");
+    add(f.thickness, "Thickness");
+    add(f.plotstyle, "PlotStyle");
+    add(f.dimension, "Dim");
+    add(f.text, "Text");
+    add(f.hatch, "Hatch");
+    add(f.polyline, "Polyline");
+    add(f.viewport, "Viewport");
+    add(f.table, "Table");
+    add(f.material, "Material");
+    add(f.shadow, "Shadow display");
+    add(f.multileader, "Multileader");
+    add(f.center_object, "Center object");
+    return out;
+}
+} // namespace
+
+void MatchPropCommand::begin_targets(CommandContext& ctx) {
+    state_ = State::Targets;
+    if (ctx.view() != nullptr) {
+        ctx.view()->set_match_cursor(true); // paintbrush while matching
+        ctx.echo(match_settings_line(ctx.view()->match_filter()));
+    }
+    ctx.set_prompt("Select destination object(s) or [Settings]: ");
+}
+
 void MatchPropCommand::start(CommandContext& ctx) {
     // Noun-verb: if objects are already selected, the first becomes the source and we go
     // straight to picking destinations (same convenience as JOIN).
     if (ctx.has_selection()) {
         ctx.submit(core::MatchPropSourceFromSelectionCommand{});
-        state_ = State::Targets;
-        if (ctx.view() != nullptr) {
-            ctx.view()->set_match_cursor(true);
-        }
-        ctx.set_prompt("Select destination object(s) or [Settings]: ");
+        begin_targets(ctx);
         return;
     }
     ctx.set_prompt("Select source object: ");
+}
+
+void MatchPropCommand::selection_gesture(CommandContext& ctx) {
+    // The viewport's pick / window / crossing chose the destinations: apply to them.
+    const core::MatchPropFilter filter = ctx.view() != nullptr ? ctx.view()->match_filter() : core::MatchPropFilter{};
+    ctx.submit(core::MatchPropApplySelectionCommand{filter, ctx.new_group()});
 }
 
 void MatchPropCommand::input(CommandContext& ctx, const std::string& text) {
@@ -2139,14 +2418,11 @@ void MatchPropCommand::input(CommandContext& ctx, const std::string& text) {
         }
         // Capture the source on the geometry thread (the UI never reads the store).
         ctx.submit(core::MatchPropPickSourceCommand{*p, ctx.pick_radius()});
-        state_ = State::Targets;
-        if (ctx.view() != nullptr) {
-            ctx.view()->set_match_cursor(true); // paintbrush while matching
-        }
-        ctx.set_prompt("Select destination object(s) or [Settings]: ");
+        begin_targets(ctx);
         return;
     }
-    // Targets: Enter finishes; "S"/"Settings" opens the category dialog; else apply.
+    // Targets: Enter finishes; "S"/"Settings" opens the category dialog; a typed point
+    // is one destination.
     if (t.empty()) {
         if (ctx.view() != nullptr) {
             ctx.view()->set_match_cursor(false);
@@ -2157,15 +2433,14 @@ void MatchPropCommand::input(CommandContext& ctx, const std::string& text) {
     if (upper(t) == "S" || upper(t) == "SETTINGS") {
         if (ctx.view() != nullptr) {
             ctx.view()->match_settings_dialog(); // modal; persists the filter
+            ctx.echo(match_settings_line(ctx.view()->match_filter()));
         }
         ctx.set_prompt("Select destination object(s) or [Settings]: ");
         return;
     }
     if (const auto p = read_point(ctx, text)) {
-        const core::MatchPropFilter filter =
-            ctx.view() != nullptr ? ctx.view()->match_filter() : core::MatchPropFilter{};
-        // Each matched target is its OWN undo group, so Ctrl+Z undoes them in reverse.
-        ctx.submit(core::MatchPropApplyCommand{*p, ctx.pick_radius(), filter, ctx.new_group()});
+        ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+        selection_gesture(ctx);
     }
 }
 
@@ -2181,19 +2456,34 @@ void MatchPropCommand::cancel(CommandContext& ctx) {
 // TRIM (line subset; repeats)
 // ---------------------------------------------------------------------------
 void TrimCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Select line to trim: ");
+    picks_ = 0;
+    ctx.set_prompt("Select object to trim or [Undo]: ");
 }
 
 void TrimCommand::input(CommandContext& ctx, const std::string& text) {
-    if (trimmed(text).empty()) {
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
         done_ = true;
+        return;
+    }
+    if (u == "U" || u == "UNDO") {
+        if (picks_ == 0) {
+            ctx.echo("Nothing to undo.");
+        } else {
+            ctx.submit(core::UndoLastGroupCommand{}); // the last pick is its own step
+            --picks_;
+        }
         return;
     }
     const auto p = read_point(ctx, text);
     if (!p) {
         return;
     }
+    if (picks_ > 0) {
+        (void)ctx.new_group(); // every pick its own undo step
+    }
     ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+    ++picks_;
     // Result is echoed by the engine (honest status), not assumed here.
 }
 
@@ -2215,19 +2505,30 @@ void rubber_from(CommandContext& ctx, core::Vec2 a) {
 }
 } // namespace
 
-void RotateCommand::start(CommandContext& ctx) {
-    if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run ROTATE.");
-        done_ = true;
-        return;
-    }
+void RotateCommand::begin_base(CommandContext& ctx) {
     const core::DrawingUnits u = ctx.units();
     char base[32];
     std::snprintf(base, sizeof(base), "%g", core::to_degrees(u.base_angle));
     ctx.echo(std::string("Current positive angle in UCS:  ANGDIR=") +
              (u.clockwise ? "clockwise" : "counterclockwise") + "  ANGBASE=" + base);
-    ctx.clear_last_point();
+    state_ = State::Base;
     ctx.set_prompt("Specify base point: ");
+}
+
+void RotateCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!ctx.has_selection()) {
+        state_ = State::Select;
+        select_.begin(ctx);
+        return;
+    }
+    begin_base(ctx);
+}
+
+void RotateCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
 }
 
 void RotateCommand::prompt_angle(CommandContext& ctx) {
@@ -2253,6 +2554,16 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(t);
     double deg = 0.0;
     switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin_base(ctx);
+        return;
     case State::Base:
         if (const auto p = read_point(ctx, text)) {
             base_ = *p;
@@ -2359,14 +2670,25 @@ void RotateCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // SCALE
 // ---------------------------------------------------------------------------
+void ScaleCommand::begin_base(CommandContext& ctx) {
+    state_ = State::Base;
+    ctx.set_prompt("Specify base point: ");
+}
+
 void ScaleCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
     if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run SCALE.");
-        done_ = true;
+        state_ = State::Select;
+        select_.begin(ctx);
         return;
     }
-    ctx.clear_last_point();
-    ctx.set_prompt("Specify base point: ");
+    begin_base(ctx);
+}
+
+void ScaleCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
 }
 
 void ScaleCommand::prompt_factor(CommandContext& ctx) {
@@ -2401,6 +2723,16 @@ void ScaleCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(t);
     double v = 0.0;
     switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin_base(ctx);
+        return;
     case State::Base:
         if (const auto p = read_point(ctx, text)) {
             base_ = *p;
@@ -2524,35 +2856,130 @@ int parse_int(const std::string& t, int fallback) {
 // PURGE: drop unused symbol-table entries
 // ---------------------------------------------------------------------------
 void PurgeCommand::start(CommandContext& ctx) {
-    ctx.set_prompt(
-        "Enter type of unused objects to purge [Blocks/Dimstyles/Groups/LAyers/Tablestyles/Images/textSTyles/All] <All>: ");
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->purge_dialog()) {
+        done_ = true; // the dialog does the rest
+        return;
+    }
+    state_ = State::Type;
+    ctx.set_prompt("Enter type of unused objects to purge [Blocks/Dimstyles/Groups/LAyers/Tablestyles/"
+                   "Images/textSTyles/Zero-length geometry/Empty text objects/All] <All>: ");
+}
+
+void PurgeCommand::ask_next(CommandContext& ctx) {
+    static constexpr const char* kTypeNames[] = {"", "block", "dimension style", "group", "layer",
+                                                 "table style", "image", "text style"};
+    if (queue_.empty()) {
+        done_ = true;
+        return;
+    }
+    const auto& [what, name] = queue_.front();
+    ctx.set_prompt(std::string("Purge ") + kTypeNames[what] + " \"" + name + "\"? [Yes/No/All] <N>: ");
 }
 
 void PurgeCommand::input(CommandContext& ctx, const std::string& text) {
-    const std::string u = upper(trimmed(text));
-    std::uint8_t what = 0;
-    if (u.empty() || u == "A" || u == "ALL") {
-        what = 0;
-    } else if (u == "B" || u == "BLOCKS") {
-        what = 1;
-    } else if (u == "D" || u == "DIMSTYLES") {
-        what = 2;
-    } else if (u == "G" || u == "GROUPS") {
-        what = 3;
-    } else if (u == "LA" || u == "LAYERS") {
-        what = 4;
-    } else if (u == "T" || u == "TABLESTYLES") {
-        what = 5;
-    } else if (u == "I" || u == "IMAGES") {
-        what = 6;
-    } else if (u == "ST" || u == "TEXTSTYLES") {
-        what = 7;
-    } else {
-        ctx.echo("Enter Blocks, Dimstyles, Groups, LAyers, Tablestyles, Images, textSTyles or All.");
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Type:
+        if (u.empty() || u == "A" || u == "ALL") {
+            what_ = 0;
+        } else if (u == "B" || u == "BLOCKS") {
+            what_ = 1;
+        } else if (u == "D" || u == "DIMSTYLES") {
+            what_ = 2;
+        } else if (u == "G" || u == "GROUPS") {
+            what_ = 3;
+        } else if (u == "LA" || u == "LAYERS") {
+            what_ = 4;
+        } else if (u == "T" || u == "TABLESTYLES") {
+            what_ = 5;
+        } else if (u == "I" || u == "IMAGES") {
+            what_ = 6;
+        } else if (u == "ST" || u == "TEXTSTYLES") {
+            what_ = 7;
+        } else if (u == "Z" || u == "ZERO-LENGTH GEOMETRY" || u == "ZERO") {
+            what_ = 8;
+        } else if (u == "E" || u == "EMPTY TEXT OBJECTS" || u == "EMPTY") {
+            what_ = 9;
+        } else {
+            ctx.echo("Enter Blocks, Dimstyles, Groups, LAyers, Tablestyles, Images, textSTyles, "
+                     "Zero-length geometry, Empty text objects or All.");
+            return;
+        }
+        if (what_ == 8 || what_ == 9) {
+            // Objects, not names: no pattern to ask for.
+            ctx.submit(core::PurgeCommand{ctx.group_id(), what_}); // the engine reports what went
+            done_ = true;
+            return;
+        }
+        state_ = State::Names;
+        ctx.set_prompt("Enter name(s) to purge <*>: ");
+        return;
+    case State::Names:
+        pattern_ = t.empty() ? "*" : t;
+        state_ = State::Verify;
+        ctx.set_prompt("Verify each name to be purged? [Yes/No] <Y>: ");
+        return;
+    case State::Verify: {
+        if (u == "N" || u == "NO") {
+            ctx.submit(core::PurgeCommand{ctx.group_id(), what_, pattern_});
+            done_ = true;
+            return;
+        }
+        if (!u.empty() && u != "Y" && u != "YES") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        // One question per unused name, from the engine's published candidates.
+        const core::RenderSnapshot::PurgeCandidates cand = ctx.purge_candidates();
+        const auto take = [&](std::uint8_t what, const std::vector<std::string>& names) {
+            if (what_ != 0 && what_ != what) {
+                return;
+            }
+            for (const std::string& n : names) {
+                if (pattern_ == "*" || upper(n) == upper(pattern_) ||
+                    (pattern_.find('*') != std::string::npos && upper(n).rfind(upper(pattern_).substr(0, pattern_.find('*')), 0) == 0)) {
+                    queue_.emplace_back(what, n);
+                }
+            }
+        };
+        take(1, cand.blocks);
+        take(2, cand.dimstyles);
+        take(3, cand.groups);
+        take(4, cand.layers);
+        take(5, cand.tablestyles);
+        take(6, cand.images);
+        take(7, cand.textstyles);
+        if (queue_.empty()) {
+            ctx.echo("No unused objects found.");
+            done_ = true;
+            return;
+        }
+        state_ = State::Each;
+        ask_next(ctx);
         return;
     }
-    ctx.submit(core::PurgeCommand{ctx.group_id(), what}); // the engine reports what went
-    done_ = true;
+    case State::Each: {
+        const auto [what, name] = queue_.front();
+        queue_.erase(queue_.begin());
+        if (u == "Y" || u == "YES") {
+            ctx.submit(core::PurgeCommand{ctx.new_group(), what, name});
+        } else if (u == "A" || u == "ALL") {
+            ctx.submit(core::PurgeCommand{ctx.new_group(), what, name});
+            // ... and everything still queued, without asking.
+            for (const auto& [w2, n2] : queue_) {
+                ctx.submit(core::PurgeCommand{ctx.new_group(), w2, n2});
+            }
+            queue_.clear();
+        } else if (!u.empty() && u != "N" && u != "NO") {
+            queue_.insert(queue_.begin(), {what, name});
+            ctx.echo("Enter Yes, No or All.");
+            return;
+        }
+        ask_next(ctx);
+        return;
+    }
+    }
 }
 
 void PurgeCommand::cancel(CommandContext& ctx) {
@@ -2563,15 +2990,25 @@ void PurgeCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // ALIGN: two source/destination pairs, optional uniform scale
 // ---------------------------------------------------------------------------
-void AlignCommand::start(CommandContext& ctx) {
-    if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run ALIGN.");
-        done_ = true;
-        return;
-    }
-    ctx.clear_last_point();
+void AlignCommand::begin_points(CommandContext& ctx) {
     state_ = State::Src1;
     ctx.set_prompt("Specify first source point: ");
+}
+
+void AlignCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!ctx.has_selection()) {
+        state_ = State::Select;
+        select_.begin(ctx);
+        return;
+    }
+    begin_points(ctx);
+}
+
+void AlignCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
 }
 
 void AlignCommand::align(CommandContext& ctx, bool scale) {
@@ -2589,6 +3026,16 @@ void AlignCommand::align(CommandContext& ctx, bool scale) {
 void AlignCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin_points(ctx);
+        return;
     case State::Src1:
         if (const auto p = read_point(ctx, text)) {
             src1_ = *p;
@@ -3570,7 +4017,7 @@ void GroupCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Name:
         if (u == "?") {
-            ctx.echo("Group names are listed by the engine when created; use UNGROUP by name to remove one.");
+            ctx.submit(core::ListGroupsCommand{}); // the engine lists them
             return;
         }
         name_ = t;
@@ -3620,7 +4067,7 @@ void UngroupCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void PickStyleCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Enter new value for PICKSTYLE <1>: ");
+    ctx.set_prompt("Enter new value for PICKSTYLE <" + std::to_string(ctx.pickstyle()) + ">: ");
 }
 
 void PickStyleCommand::cancel(CommandContext& ctx) {
@@ -3630,12 +4077,13 @@ void PickStyleCommand::cancel(CommandContext& ctx) {
 
 void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
-    double v = 1.0;
-    if (!t.empty() && (!parse_number(t, v) || (v != 0.0 && v != 1.0))) {
-        ctx.echo("Enter 0 or 1.");
+    double v = ctx.pickstyle();
+    if (!t.empty() && (!parse_number(t, v) || v < 0.0 || v > 3.0 || v != std::floor(v))) {
+        ctx.echo("Enter 0, 1, 2 or 3 (1 = groups, 2 = associative hatches, 3 = both).");
         return;
     }
-    ctx.submit(core::SetPickStyleCommand{v != 0.0});
+    const int iv = static_cast<int>(v);
+    ctx.submit(core::SetPickStyleCommand{(iv & 1) != 0, (iv & 2) != 0});
     done_ = true;
 }
 
@@ -5762,15 +6210,24 @@ void StyleCommand::input(CommandContext& ctx, const std::string& text) {
 // ---------------------------------------------------------------------------
 // UNITS (-UNITS): the command-line flow, prompt by prompt
 // ---------------------------------------------------------------------------
+void UnitsCommand::prompts(CommandContext& ctx) {
+    ctx.echo("Report formats:      (Examples)");
+    ctx.echo("1.  Scientific       1.55E+01");
+    ctx.echo("2.  Decimal          15.50");
+    ctx.echo("3.  Engineering      1'-3.50\"");
+    ctx.echo("4.  Architectural    1'-3 1/2\"");
+    ctx.echo("5.  Fractional       15 1/2");
+    ctx.set_prompt("Enter choice, 1 to 5 <" + std::to_string(static_cast<int>(u_.linear)) + ">: ");
+}
+
 void UnitsCommand::start(CommandContext& ctx) {
     u_ = ctx.units();
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->units_dialog()) {
+        done_ = true; // the Drawing Units dialog does the rest
+        return;
+    }
     state_ = State::Linear;
-    ctx.echo(std::string("Current units: ") + core::units::linear_name(u_.linear) + ", precision " +
-             std::to_string(u_.linear_precision) + "; angles " + core::units::angular_name(u_.angular) +
-             ", precision " + std::to_string(u_.angular_precision) + "; base angle " +
-             fmt4(core::to_degrees(u_.base_angle)) + (u_.clockwise ? "; clockwise." : "; counter-clockwise."));
-    ctx.set_prompt(std::string("Enter units type [Scientific/Decimal/Engineering/Architectural/Fractional] <") +
-                   core::units::linear_name(u_.linear) + ">: ");
+    prompts(ctx);
 }
 
 void UnitsCommand::cancel(CommandContext& ctx) {
@@ -5782,6 +6239,7 @@ void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     double v = 0.0;
+    const bool fractional = u_.linear == core::LinearFormat::Architectural || u_.linear == core::LinearFormat::Fractional;
     switch (state_) {
     case State::Linear:
         if (u == "S" || u == "SCIENTIFIC" || u == "1") {
@@ -5795,24 +6253,50 @@ void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "F" || u == "FRACTIONAL" || u == "5") {
             u_.linear = core::LinearFormat::Fractional;
         } else if (!t.empty()) {
-            ctx.echo("Enter Scientific, Decimal, Engineering, Architectural or Fractional.");
+            ctx.echo("Enter a choice from 1 to 5.");
             return;
         }
         state_ = State::LinearPrecision;
-        ctx.set_prompt("Enter number of digits to right of decimal point (0 to 8) <" +
-                       std::to_string(u_.linear_precision) + ">: ");
+        if (u_.linear == core::LinearFormat::Architectural || u_.linear == core::LinearFormat::Fractional) {
+            ctx.set_prompt("Enter denominator of smallest fraction to display (1, 2, 4, 8, 16, 32, 64, 128, or 256) <" +
+                           std::to_string(1 << std::min<int>(u_.linear_precision, 8)) + ">: ");
+        } else {
+            ctx.set_prompt("Enter number of digits to right of decimal point (0 to 8) <" +
+                           std::to_string(u_.linear_precision) + ">: ");
+        }
         return;
     case State::LinearPrecision:
         if (!t.empty()) {
-            if (!parse_number(t, v) || v < 0.0 || v > 8.0) {
-                ctx.echo("Enter a value from 0 to 8.");
+            if (!parse_number(t, v) || v < 0.0) {
+                ctx.echo(fractional ? "Enter 1, 2, 4, 8, 16, 32, 64, 128 or 256." : "Enter a value from 0 to 8.");
                 return;
             }
-            u_.linear_precision = static_cast<std::uint8_t>(v);
+            if (fractional) {
+                int n = 0;
+                while (n < 8 && (1 << n) < static_cast<int>(v)) {
+                    ++n;
+                }
+                if ((1 << n) != static_cast<int>(v)) {
+                    ctx.echo("Enter 1, 2, 4, 8, 16, 32, 64, 128 or 256.");
+                    return;
+                }
+                u_.linear_precision = static_cast<std::uint8_t>(n);
+            } else {
+                if (v > 8.0) {
+                    ctx.echo("Enter a value from 0 to 8.");
+                    return;
+                }
+                u_.linear_precision = static_cast<std::uint8_t>(v);
+            }
         }
         state_ = State::Angular;
-        ctx.set_prompt(std::string("Enter angle format [Decimal degrees/Deg-Min-Sec/Grads/Radians/Surveyor] <") +
-                       core::units::angular_name(u_.angular) + ">: ");
+        ctx.echo("Systems of angle measure:      (Examples)");
+        ctx.echo("1.  Decimal degrees          45.0000");
+        ctx.echo("2.  Degrees/minutes/seconds  45d0'0\"");
+        ctx.echo("3.  Grads                    50.0000g");
+        ctx.echo("4.  Radians                  0.7854r");
+        ctx.echo("5.  Surveyor's units         N 45d0'0\" E");
+        ctx.set_prompt("Enter choice, 1 to 5 <" + std::to_string(static_cast<int>(u_.angular) + 1) + ">: ");
         return;
     case State::Angular:
         if (u == "D" || u == "DECIMAL DEGREES" || u == "1") {
@@ -5826,7 +6310,7 @@ void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "S" || u == "SURVEYOR" || u == "5") {
             u_.angular = core::AngleFormat::Surveyor;
         } else if (!t.empty()) {
-            ctx.echo("Enter Decimal degrees, Deg-Min-Sec, Grads, Radians or Surveyor.");
+            ctx.echo("Enter a choice from 1 to 5.");
             return;
         }
         state_ = State::AngularPrecision;
@@ -5842,7 +6326,11 @@ void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
             u_.angular_precision = static_cast<std::uint8_t>(v);
         }
         state_ = State::Base;
-        ctx.echo("Direction for angle 0: East 3 o'clock = 0, North 12 o'clock = 90, West 9 o'clock = 180, South 6 o'clock = 270");
+        ctx.echo("Direction for angle 0:");
+        ctx.echo("   East    3 o'clock =    0");
+        ctx.echo("   North  12 o'clock =   90");
+        ctx.echo("   West    9 o'clock =  180");
+        ctx.echo("   South   6 o'clock =  270");
         ctx.set_prompt("Enter direction for angle 0 <" + fmt4(core::to_degrees(u_.base_angle)) + ">: ");
         return;
     case State::Base:
@@ -5854,7 +6342,7 @@ void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
             u_.base_angle = core::to_radians(v);
         }
         state_ = State::Clockwise;
-        ctx.set_prompt(std::string("Measure angles clockwise? [Yes/No] <") + (u_.clockwise ? "Y" : "N") + ">: ");
+        ctx.set_prompt(std::string("Do you want angles measured clockwise? [Yes/No] <") + (u_.clockwise ? "Y" : "N") + ">: ");
         return;
     case State::Clockwise:
         if (u == "Y" || u == "YES") {
@@ -5869,6 +6357,32 @@ void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
         done_ = true;
         return;
     }
+}
+
+void InsunitsCommand::start(CommandContext& ctx) {
+    const core::DrawingUnits u = ctx.units();
+    ctx.set_prompt("Enter new value for INSUNITS <" + std::to_string(u.insunits) + ">: ");
+}
+
+void InsunitsCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    core::DrawingUnits u = ctx.units();
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v < 0.0 || v > 20.0 || v != std::floor(v)) {
+            ctx.echo("Enter a value from 0 to 20 (0 unitless, 1 inches, 2 feet, 4 millimeters, 5 centimeters, 6 meters ...).");
+            return;
+        }
+        u.insunits = static_cast<std::uint8_t>(v);
+        ctx.submit(core::SetUnitsCommand{u});
+        ctx.echo(std::string("INSUNITS = ") + std::to_string(u.insunits) + " (" + core::units::insunits_name(u.insunits) + ")");
+    }
+    done_ = true;
+}
+
+void InsunitsCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -6335,27 +6849,25 @@ void ExplodeCommand::start(CommandContext& ctx) {
         done_ = true; // the engine reports what it broke and what it could not (Ph10.1)
         return;
     }
-    ctx.set_prompt("Select objects: ");
+    select_.begin(ctx);
+}
+
+void ExplodeCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void ExplodeCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
 }
 
 void ExplodeCommand::input(CommandContext& ctx, const std::string& text) {
-    const std::string t = trimmed(text);
-    if (t.empty()) {
-        if (!ctx.has_selection()) {
-            ctx.echo("Nothing selected.");
-            done_ = true;
-            return;
-        }
-        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
-        done_ = true;
-        return;
-    }
-    if (upper(t) == "ALL") {
-        ctx.submit(core::SelectAllCommand{});
-        return;
-    }
-    if (const auto p = read_point(ctx, text)) {
-        ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
     }
 }
 
@@ -6589,12 +7101,23 @@ void ArrayCommand::begin_path(CommandContext& ctx) {
 }
 
 void ArrayCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
     if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run " + name() + ".");
-        done_ = true;
+        state_ = State::Select;
+        select_.begin(ctx);
         return;
     }
-    ctx.clear_last_point();
+    begin(ctx);
+}
+
+void ArrayCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
+}
+
+void ArrayCommand::begin(CommandContext& ctx) {
+    state_ = State::Type;
     switch (type_) {
     case Type::Rect:
         begin_rect(ctx);
@@ -6614,6 +7137,16 @@ void ArrayCommand::start(CommandContext& ctx) {
 void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin(ctx);
+        return;
     case State::Type: {
         // AutoCAD's own capitalisation picks the keywords apart: PA=path, PO=polar,
         // and a bare P is ambiguous, so it is rejected rather than guessed at.
@@ -6782,16 +7315,31 @@ void ArrayCommand::cancel(CommandContext& ctx) {
 // EXTEND (pick the object to extend; repeats)
 // ---------------------------------------------------------------------------
 void ExtendCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Select object to extend: ");
+    picks_ = 0;
+    ctx.set_prompt("Select object to extend or [Undo]: ");
 }
 
 void ExtendCommand::input(CommandContext& ctx, const std::string& text) {
-    if (trimmed(text).empty()) {
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
         done_ = true;
         return;
     }
+    if (u == "U" || u == "UNDO") {
+        if (picks_ == 0) {
+            ctx.echo("Nothing to undo.");
+        } else {
+            ctx.submit(core::UndoLastGroupCommand{});
+            --picks_;
+        }
+        return;
+    }
     if (const auto p = read_point(ctx, text)) {
+        if (picks_ > 0) {
+            (void)ctx.new_group();
+        }
         ctx.submit(core::ExtendPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+        ++picks_;
         // Result is echoed by the engine (honest status), not assumed here.
     }
 }
@@ -8298,29 +8846,481 @@ void PlotCommand::start(CommandContext& ctx) {
 // LTSCALE: prompt for the global linetype scale factor, then apply it.
 // ---------------------------------------------------------------------------
 void LtscaleCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Enter new linetype scale factor <1.0>: ");
+    ctx.set_prompt("Enter new linetype scale factor <" + core::units::format_length(ctx.ltscale(), ctx.units()) + ">: ");
 }
 
 void LtscaleCommand::input(CommandContext& ctx, const std::string& text) {
-    if (text.empty()) {
-        done_ = true; // Enter with no value -> keep current
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true; // Enter keeps the current value
         return;
     }
-    try {
-        const double scale = std::stod(text);
-        if (scale > 0.0) {
-            ctx.submit(core::SetLtscaleCommand{scale});
-            ctx.echo("LTSCALE = " + text);
-        } else {
-            ctx.echo("Value must be positive.");
-        }
-    } catch (const std::exception&) {
+    double scale = 0.0;
+    if (!parse_number(t, scale)) {
         ctx.echo("Requires a numeric scale.");
+        return;
     }
+    if (!(scale > 0.0)) {
+        ctx.echo("Value must be positive.");
+        return;
+    }
+    ctx.submit(core::SetLtscaleCommand{scale});
+    ctx.echo("Regenerating model.");
     done_ = true;
 }
 
 void LtscaleCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// -GROUP / GROUPEDIT (issue #53)
+// ---------------------------------------------------------------------------
+void DashGroupCommand::prompt_option(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.set_prompt("Enter a group option [?/Order/Add/Remove/Explode/REName/Selectable/Create] <Create>: ");
+}
+
+void DashGroupCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    prompt_option(ctx);
+}
+
+void DashGroupCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DashGroupCommand::finish_select(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("Nothing selected.");
+        done_ = true;
+        return;
+    }
+    if (op_ == 'C') {
+        ctx.submit(core::CreateGroupCommand{name_, text_});
+    } else {
+        core::GroupEditCommand cmd;
+        cmd.name = name_;
+        cmd.op = op_ == 'A' ? 0 : 1;
+        ctx.submit(cmd);
+    }
+    done_ = true;
+}
+
+void DashGroupCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish_select(ctx);
+    }
+}
+
+void DashGroupCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Option:
+        if (u == "?") {
+            ctx.submit(core::ListGroupsCommand{});
+            prompt_option(ctx);
+            return;
+        }
+        if (u.empty() || u == "C" || u == "CREATE") {
+            op_ = 'C';
+            state_ = State::Name;
+            ctx.set_prompt("Enter a group name or [?]: ");
+            return;
+        }
+        if (u == "O" || u == "ORDER" || u == "A" || u == "ADD" || u == "R" || u == "REMOVE" || u == "E" ||
+            u == "EXPLODE" || u == "RE" || u == "REN" || u == "RENAME" || u == "S" || u == "SELECTABLE") {
+            op_ = u[0] == 'R' && u.size() >= 2 && u[1] == 'E' ? 'N' : u[0];
+            state_ = State::Name;
+            ctx.set_prompt("Enter a group name or [?]: ");
+            return;
+        }
+        ctx.echo("Enter ?, Order, Add, Remove, Explode, REName, Selectable or Create.");
+        return;
+    case State::Name:
+        if (u == "?") {
+            ctx.submit(core::ListGroupsCommand{});
+            return;
+        }
+        if (t.empty() && op_ != 'C') {
+            ctx.echo("A group name is needed.");
+            return;
+        }
+        name_ = t;
+        switch (op_) {
+        case 'C':
+            state_ = State::Description;
+            ctx.set_prompt("Enter a group description: ");
+            return;
+        case 'A':
+        case 'R':
+            state_ = State::Select;
+            select_.begin(ctx, op_ == 'A' ? "Select objects to add to group: " : "Select objects to remove from group: ");
+            return;
+        case 'E': {
+            core::GroupEditCommand cmd;
+            cmd.name = name_;
+            cmd.op = 6;
+            ctx.submit(cmd);
+            done_ = true;
+            return;
+        }
+        case 'N':
+            state_ = State::NewName;
+            ctx.set_prompt("Enter a new name for the group: ");
+            return;
+        case 'S':
+            state_ = State::Selectable;
+            ctx.set_prompt("This group is selectable. Do you want to change it? [Yes/No] <N>: ");
+            return;
+        case 'O':
+            state_ = State::From;
+            ctx.set_prompt("Enter object position number to reorder (0 is first): ");
+            return;
+        default:
+            done_ = true;
+            return;
+        }
+    case State::Description:
+        text_ = t;
+        state_ = State::Select;
+        select_.begin(ctx);
+        return;
+    case State::NewName: {
+        core::GroupEditCommand cmd;
+        cmd.name = name_;
+        cmd.op = 2;
+        cmd.text = t;
+        ctx.submit(cmd);
+        done_ = true;
+        return;
+    }
+    case State::Selectable: {
+        core::GroupEditCommand cmd;
+        cmd.name = name_;
+        cmd.op = 4;
+        cmd.flag = !(u == "Y" || u == "YES"); // "change it" flips the (assumed on) state
+        ctx.submit(cmd);
+        done_ = true;
+        return;
+    }
+    case State::From:
+        if (!parse_number(t, v) || v < 0.0) {
+            ctx.echo("Enter a position number.");
+            return;
+        }
+        from_ = static_cast<int>(v);
+        state_ = State::To;
+        ctx.set_prompt("Enter new position number for the object: ");
+        return;
+    case State::To: {
+        if (!parse_number(t, v) || v < 0.0) {
+            ctx.echo("Enter a position number.");
+            return;
+        }
+        core::GroupEditCommand cmd;
+        cmd.name = name_;
+        cmd.op = 5;
+        cmd.from = from_;
+        cmd.to = static_cast<int>(v);
+        ctx.submit(cmd);
+        done_ = true;
+        return;
+    }
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            finish_select(ctx);
+        }
+        return;
+    }
+}
+
+void GroupEditCommand::prompt_option(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.set_prompt("Enter an option [Add objects/Remove objects/REName]: ");
+}
+
+void GroupEditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    cmd_ = core::GroupEditCommand{};
+    state_ = State::Pick;
+    ctx.set_prompt("Select group or [Name]: ");
+}
+
+void GroupEditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void GroupEditCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
+}
+
+void GroupEditCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Pick:
+        if (u == "N" || u == "NAME") {
+            state_ = State::Name;
+            ctx.set_prompt("Enter group name or [?]: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.by_pick = true;
+            cmd_.pick = *p;
+            cmd_.pick_radius = ctx.pick_radius();
+            prompt_option(ctx);
+        }
+        return;
+    case State::Name:
+        if (u == "?") {
+            ctx.submit(core::ListGroupsCommand{});
+            return;
+        }
+        if (t.empty()) {
+            ctx.echo("A group name is needed.");
+            return;
+        }
+        cmd_.by_pick = false;
+        cmd_.name = t;
+        prompt_option(ctx);
+        return;
+    case State::Option:
+        if (u == "A" || u == "ADD" || u == "ADD OBJECTS") {
+            cmd_.op = 0;
+            state_ = State::Select;
+            select_.begin(ctx, "Select objects to add to group: ");
+        } else if (u == "R" || u == "REMOVE" || u == "REMOVE OBJECTS") {
+            cmd_.op = 1;
+            state_ = State::Select;
+            select_.begin(ctx, "Select objects to remove from group: ");
+        } else if (u == "RE" || u == "RENAME") {
+            cmd_.op = 2;
+            state_ = State::NewName;
+            ctx.set_prompt("Enter a new name for the group: ");
+        } else {
+            ctx.echo("Enter Add objects, Remove objects or REName.");
+        }
+        return;
+    case State::NewName:
+        cmd_.text = t;
+        ctx.submit(cmd_);
+        done_ = true;
+        return;
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            ctx.echo("Nothing selected.");
+            done_ = true;
+            return;
+        }
+        ctx.submit(cmd_);
+        done_ = true;
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SELECT / SELECTSIMILAR / QSELECT / FILTER / ISOLATEOBJECTS and the selection
+// system variables (issue #46)
+// ---------------------------------------------------------------------------
+void SelectCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    select_.begin(ctx);
+}
+
+void SelectCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        done_ = true; // the set stays selected for the next command
+    }
+}
+
+void SelectCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        done_ = true;
+    }
+}
+
+void SelectCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void SelectSimilarCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::SelectSimilarCommand{s_mode_});
+    }
+    done_ = true;
+}
+
+void SelectSimilarCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    selecting_ = true;
+    select_.begin(ctx);
+}
+
+void SelectSimilarCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void SelectSimilarCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void SelectSimilarCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void SelectSimilarModeCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for SELECTSIMILARMODE <" + std::to_string(SelectSimilarCommand::s_mode_) + ">: ");
+}
+
+void SelectSimilarModeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v < 0.0 || v > 255.0 || v != std::floor(v)) {
+            ctx.echo("Enter a bit sum from 0 to 255 (1 colour, 2 layer, 4 linetype, 8 linetype scale, "
+                     "16 lineweight, 32 plot style, 64 object style, 128 name).");
+            return;
+        }
+        SelectSimilarCommand::s_mode_ = static_cast<std::uint32_t>(v);
+    }
+    done_ = true;
+}
+
+void SelectSimilarModeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void QSelectCommand::start(CommandContext& ctx) {
+    if (ctx.view() == nullptr || !ctx.view()->quick_select_dialog(filter_)) {
+        ctx.echo(std::string(filter_ ? "FILTER" : "QSELECT") + " needs the Quick Select dialog, which is not available here.");
+    }
+    done_ = true;
+}
+
+void IsolateCommand::finish(CommandContext& ctx) {
+    if (mode_ == 2 || ctx.has_selection()) {
+        ctx.submit(core::IsolateObjectsCommand{mode_});
+    }
+    done_ = true;
+}
+
+void IsolateCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (mode_ == 2 || ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    selecting_ = true;
+    select_.begin(ctx);
+}
+
+void IsolateCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void IsolateCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void IsolateCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void SelectionSettingCommand::start(CommandContext& ctx) {
+    const int cur = ctx.view() != nullptr ? ctx.view()->selection_setting(var_) : 0;
+    ctx.set_prompt("Enter new value for " + var_ + " <" + std::to_string(cur) + ">: ");
+}
+
+void SelectionSettingCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v != std::floor(v)) {
+            ctx.echo("Requires an integer value.");
+            return;
+        }
+        if (ctx.view() == nullptr || !ctx.view()->set_selection_setting(var_, static_cast<int>(v))) {
+            ctx.echo("Value out of range for " + var_ + ".");
+            return;
+        }
+    }
+    done_ = true;
+}
+
+void SelectionSettingCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void LtscaleVarCommand::start(CommandContext& ctx) {
+    std::string cur;
+    if (var_ == "CELTSCALE") {
+        cur = core::units::format_length(ctx.current_celtscale(), ctx.units());
+    } else if (var_ == "PSLTSCALE") {
+        cur = ctx.psltscale() ? "1" : "0";
+    } else {
+        cur = ctx.msltscale() ? "1" : "0";
+    }
+    ctx.set_prompt("Enter new value for " + var_ + " <" + cur + ">: ");
+}
+
+void LtscaleVarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    double v = 0.0;
+    if (!parse_number(t, v)) {
+        ctx.echo("Requires a numeric value.");
+        return;
+    }
+    if (var_ == "CELTSCALE") {
+        if (!(v > 0.0)) {
+            ctx.echo("Value must be positive.");
+            return;
+        }
+        ctx.submit(core::SetCeltscaleCommand{v});
+    } else if (v != 0.0 && v != 1.0) {
+        ctx.echo("Enter 0 or 1.");
+        return;
+    } else if (var_ == "PSLTSCALE") {
+        ctx.submit(core::SetLtscaleModesCommand{v != 0.0, ctx.msltscale()});
+        ctx.echo("Regenerating model.");
+    } else {
+        ctx.submit(core::SetLtscaleModesCommand{ctx.psltscale(), v != 0.0});
+    }
+    done_ = true;
+}
+
+void LtscaleVarCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

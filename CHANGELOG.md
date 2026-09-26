@@ -15,6 +15,42 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   bevel takes the objects' layer when both share it.
 
 ### Added
+- **AutoCAD's selection conventions** (#46) -- every edit command now starts at `Select
+  objects:` when nothing is selected (MOVE, COPY, MIRROR, ROTATE, SCALE, ALIGN, ARRAY,
+  ERASE, EXPLODE, STRETCH, MATCHPROP's destinations, ISOLATEOBJECTS, SELECT), gathering
+  picks, windows, crossings and lassos until Enter or right-click, with the keywords
+  Window, Crossing, BOX, ALL, Fence, WPolygon, CPolygon, Group, Last, Previous, Add,
+  Remove, Multiple, Undo, AUto and SIngle and AutoCAD's "N found" echoes. Shift + click
+  takes a selected object out (PICKADD), an empty click starts a click-click box
+  (PICKAUTO), press-and-drag draws a lasso with Space cycling window / crossing / fence
+  (PICKDRAG), the box or lasso tints blue or green and highlights what it would select
+  (SELECTIONPREVIEW), a pick over several objects offers the list (SELECTIONCYCLING,
+  Ctrl+W), Ctrl+A selects all. New commands: SELECT, SELECTSIMILAR (with
+  SELECTSIMILARMODE), QSELECT and FILTER (the Quick Select dialog), ISOLATEOBJECTS /
+  HIDEOBJECTS / UNISOLATEOBJECTS, and PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG,
+  HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING as system variables. The idle right-click
+  menu carries Repeat, Recent Input, Clipboard, Isolate, Erase, Select Similar, Quick
+  Select, Deselect All, Undo / Redo and Properties. The ribbon's Move, Copy, Mirror,
+  Rotate, Scale and Array stay enabled, as AutoCAD's do.
+- **ERASE, OOPS, per-pick Undo, MATCHPROP by window, GROUP options, PURGE** (#53) -- ERASE
+  gathers a set (a pre-selection goes at once) and OOPS brings the last erased set back
+  without undoing later work; TRIM and EXTEND make every pick its own undo step and offer
+  Undo; MATCHPROP's destinations are a `Select objects:` step (a window or crossing
+  applies to everything it catches), with AutoCAD's full Property Settings list and the
+  `Current active settings:` line; GROUP `?` lists the groups, `-GROUP` has ?, Order, Add,
+  Remove, Explode, REName, Selectable and Create, GROUPEDIT edits by pick or name, Ctrl+H
+  toggles group selection and PICKSTYLE takes 0 to 3; PURGE is a dialog (categories,
+  names, Confirm each item, zero-length geometry, empty text objects) and -PURGE asks the
+  type, the names with wild cards and Verify each name.
+- **UNITS as a dialog, -UNITS as AutoCAD's numbered prompts, INSUNITS, the linetype-scale
+  variables** (#67) -- the Drawing Units dialog with length and angle types and
+  precisions, clockwise, the insertion scale, a sample output and Direction Control;
+  -UNITS prints the format tables and asks `Enter choice, 1 to 5 <2>:` and the fraction
+  denominator; INSUNITS is kept with the drawing (native and DXF); LTSCALE shows the
+  current value as its default and says `Regenerating model.`; CELTSCALE sets the linetype
+  scale new objects take; PSLTSCALE scales linetypes seen through layout viewports by the
+  viewport scale; MSLTSCALE is recorded.
+- Enter at a point prompt that has no default asks again instead of complaining (#38).
 - **The ribbon laid out as AutoCAD's** -- the Drafting & Annotation tabs (Home, Insert,
   Annotate, Parametric, View, Manage, Output), their panels and groupings: large tools with
   stacked small ones, drop-downs under the labels (Circle ▾ with its six methods, Arc ▾ with

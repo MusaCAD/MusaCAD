@@ -107,6 +107,20 @@ public:
     [[nodiscard]] std::vector<core::TextStyle> text_styles() const override { return text_styles_; }
     [[nodiscard]] std::uint16_t current_text_style() const override { return current_text_style_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
+    void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
+    [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const override { return purge_; }
+    void set_ltscales(double ltscale, double celtscale, bool ps, bool ms) noexcept {
+        ltscale_ = ltscale;
+        celtscale_ = celtscale;
+        psltscale_ = ps;
+        msltscale_ = ms;
+    }
+    [[nodiscard]] double ltscale() const override { return ltscale_; }
+    [[nodiscard]] double current_celtscale() const override { return celtscale_; }
+    [[nodiscard]] bool psltscale() const override { return psltscale_; }
+    [[nodiscard]] bool msltscale() const override { return msltscale_; }
+    void set_pickstyle(std::uint8_t v) noexcept { pickstyle_ = v; }
+    [[nodiscard]] std::uint8_t pickstyle() const override { return pickstyle_; }
     [[nodiscard]] std::vector<std::string> block_names() const override { return block_names_; }
     void set_layouts(std::vector<std::string> names, std::uint8_t active) {
         layout_names_ = std::move(names);
@@ -139,6 +153,12 @@ public:
     [[nodiscard]] bool in_selection_phase() const {
         return active_ != nullptr && active_->in_selection_phase();
     }
+    /// Remove mode at "Select objects:": the viewport's gestures take objects out.
+    [[nodiscard]] bool selection_phase_removing() const {
+        return active_ != nullptr && active_->selection_removing();
+    }
+    /// The viewport finished a selection gesture at "Select objects:".
+    void notify_selection_gesture();
     [[nodiscard]] const std::string& last_command() const noexcept { return last_command_alias_; }
     [[nodiscard]] const CommandRegistry& registry() const noexcept { return registry_; }
     [[nodiscard]] CommandRegistry& registry() noexcept { return registry_; }
@@ -227,6 +247,12 @@ private:
     int selection_count_ = 0;
     std::optional<core::EntityKind> hovered_kind_;
     PreviewSpec preview_;
+    core::RenderSnapshot::PurgeCandidates purge_;
+    double ltscale_ = 1.0;
+    double celtscale_ = 1.0;
+    bool psltscale_ = true;
+    bool msltscale_ = true;
+    std::uint8_t pickstyle_ = 1;
 };
 
 } // namespace musacad::command

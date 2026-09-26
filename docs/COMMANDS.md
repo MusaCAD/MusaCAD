@@ -23,7 +23,13 @@ commands (Ribbon Phase A):
 | PLINE (PL) | Draw a connected sequence of line and arc segments as one object. |
 | ARC (A) | Draw an arc by three points, or from a start, centre or end with an angle, chord, direction or radius. |
 | RECTANGLE (REC) | Draw a rectangle from two opposite corners. |
-| ERASE (E) | Delete selected objects from the drawing. |
+| ERASE (E) | Delete objects: `Select objects:` gathers picks, windows and keywords until Enter (a pre-selection is erased at once); OOPS brings the set back. |
+| OOPS | Bring back the objects the last ERASE removed, keeping everything done since. |
+| SELECT | Select objects with AutoCAD's keywords (Window, Crossing, BOX, ALL, Fence, WPolygon, CPolygon, Group, Last, Previous, Add, Remove, Undo, SIngle); the set stays for the next command. |
+| SELECTSIMILAR | Select every object of the same kind and properties as the selected ones (SELECTSIMILARMODE says which properties count; default layer and name). |
+| QSELECT / FILTER (FI) | The Quick Select dialog: by object type and one property (FILTER: several conditions, all of which must hold). |
+| ISOLATEOBJECTS / HIDEOBJECTS / UNISOLATEOBJECTS | Hide everything but the selection, hide the selection, show everything again. Hidden objects are neither drawn nor pickable; the flag is saved with the drawing. |
+| PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
 | UNDO (U) | Reverse the most recent action. |
 | ZOOM (Z) | Zoom in or out to change the view magnification. |
 | MOVE (M) | Move selected objects a specified distance and direction. |
@@ -41,7 +47,8 @@ commands (Ribbon Phase A):
 | POLYGON (POL) | Draw a regular polygon by centre or by one edge. |
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
-| PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
+| PURGE (PU) | The Purge dialog: the unused blocks, dimension styles, groups, layers, table styles, images and text styles by name, checked off; Confirm each item; zero-length geometry and empty text objects. |
+| -PURGE | Purge from the command line: the type, `Enter name(s) to purge <*>:` (wild cards), `Verify each name to be purged? [Yes/No] <Y>:` and one question per name. |
 | OSNAP (OS, DDOSNAP) / -OSNAP | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE, ALL). |
 | WIPEOUT | Mask polygon from points or a closed polyline ([Polyline], with optional erase); [Frames] ON/OFF shows or hides the boundaries. Hides lines, curves and hatches beneath it; text stays visible. |
 | FIELD | Text carrying %<Date>%, %<Time>%, %<Filename>% or %<Login>%, expanded at layout and refreshed on every regen. |
@@ -69,10 +76,15 @@ commands (Ribbon Phase A):
 | WBLOCK (W) | Write a block (base point at the origin) or the whole drawing to a .musa file. |
 | REGEN (RE) | Rebuild and redraw the scene. |
 | STYLE (ST, -STYLE) | Named text styles: font, fixed height, width factor, obliquing angle; TEXT uses the current style and the palette's Style dropdown changes it. |
-| UNITS (UN, -UNITS) | Length/angle display format and precision, base angle, clockwise; used by the readout and inquiry commands. |
+| UNITS (UN) | The Drawing Units dialog: length and angle type and precision, clockwise, the insertion scale (INSUNITS), the sample output and the Direction Control dialog. |
+| -UNITS | The same from the command line: AutoCAD's numbered format tables, `Enter choice, 1 to 5 <2>:`, the fraction denominator, the angle base and direction, `Do you want angles measured clockwise?`. |
+| INSUNITS | The drawing unit blocks and images are scaled to on insertion (0 unitless ... 4 millimeters, 6 meters). |
+| CELTSCALE / PSLTSCALE / MSLTSCALE | The linetype scale new objects are created with; whether linetypes seen through layout viewports follow the viewport scale (dashes the same length on the sheet); whether model-space linetypes follow the annotation scale (recorded; there is no annotation scale yet). |
 | AUDIT | Validate layer/style/font/block/image references and entity shape; Yes fixes them. |
 | VIEW (V) | Save, Restore, Delete and list (?) named views; Window saves a framed view. |
-| GROUP (G) | Make the selection a named group (Name/Description); picking a member selects the group. |
+| GROUP (G) | Make the selection a named group (Name/Description; `?` lists the groups); picking a member selects the group. |
+| -GROUP (-G) | Group options from the command line: ?, Order, Add, Remove, Explode, REName, Selectable, Create. |
+| GROUPEDIT | Pick a member (or Name) then Add objects, Remove objects or REName. Ctrl+H (Ctrl+Shift+A) toggles group selection. |
 | UNGROUP | Dissolve a group by pick or by name. |
 | PICKSTYLE | 0/1: whether picking a member selects its whole group. |
 | ALIGN (AL) | Move, rotate and optionally scale a selection onto two destination points. |
@@ -139,7 +151,7 @@ commands (Ribbon Phase A):
 
 | Command | Alias | Status |
 |---|---|---|
-| ERASE (Last / All / pick) | E | Implemented |
+| ERASE (`Select objects:` with every keyword; a pre-selection erased at once; OOPS restores the set) | E | Implemented (#53) |
 | UNDO | U | Implemented |
 | REDO | — (Ctrl+Y) | Implemented |
 | MOVE | M | Implemented -- `Specify base point or [Displacement] <Displacement>:`, `Specify second point or <use first point as displacement>:`; the last displacement is the next default |
@@ -160,7 +172,7 @@ commands (Ribbon Phase A):
 | REVCLOUD (Arc length, Object + Reverse direction, Rectangular, Polygonal, Freehand as a clicked path) | REVCLOUD | Implemented (Normal style; Modify not offered) |
 | EXPLODE (polyline -> lines/arcs; block one level; dimension/leader -> lines, solids, text; hatch -> lines or boundary; MTEXT -> TEXT per line; table -> lines + text) | X | Implemented |
 | PURGE (unused layers) | PU | Implemented |
-| PURGE (every table: layers, dimstyles, text styles, blocks, fonts, table styles, images) | PU | Implemented (#30) |
+| PURGE (every table: layers, dimstyles, text styles, blocks, fonts, table styles, images; the dialog with Confirm each item; -PURGE with names, wild cards and Verify; zero-length geometry and empty text objects) | PU / -PURGE | Implemented (#30, #53) |
 | ALIGN (one pair moves; two pairs align with the scale question; `Specify third source point or <continue>:`; rubber lines from each source point) | AL | Implemented |
 | LENGTHEN (DElta / Percent / Total; lines + arcs) | LEN | Implemented |
 | BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |
@@ -170,8 +182,9 @@ commands (Ribbon Phase A):
 | XLINE (Hor / Ver / Ang / Bisect / two-point) | XL | Implemented (Offset deferred) |
 | DONUT | DO | Implemented (as a SOLID two-loop hatch; no polyline width) |
 | VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
-| GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
-| UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
+| GROUP / UNGROUP / PICKSTYLE 0..3 / -GROUP (?, Order, Add, Remove, Explode, REName, Selectable, Create) / GROUPEDIT / Ctrl+H | G | Implemented (#53; group membership persists in .musa; not on the undo stack; PICKSTYLE's hatch bit waits for associative hatches, #41) |
+| UNITS (the Drawing Units dialog; -UNITS with AutoCAD's numbered tables; INSUNITS; degrees/DMS/grads/radians/surveyor) | UN / -UNITS | Implemented (#67; dimension text keeps the dimstyle precision, as DIMLUNIT does) |
+| LTSCALE shows the current value and says `Regenerating model.`; CELTSCALE, PSLTSCALE (viewport dashes follow the viewport scale), MSLTSCALE (recorded) | LTS | Implemented (#67) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented |
 | Block attributes: ATTDEF entities become attributes on BLOCK; INSERT prompts for each value (Constant/Preset skipped); ATTDISP; ATTEDIT; EXPLODE gives the definitions back; native v28 and DXF ATTDEF / INSERT+ATTRIB+SEQEND both ways | ATT / ATTDISP / ATTEDIT | Implemented (multi-line attributes are not) |
@@ -189,7 +202,7 @@ commands (Ribbon Phase A):
 | Properties palette: editable Start/End/Center X-Y, Radius, Position X-Y | PR | Implemented |
 | DXF TOLERANCE: feature control frames both ways (cells joined by %%v, GD&T symbols as {\\Fgdt;x}); datum symbols written as one-cell frames | DXFOUT/DXFIN | Implemented (a datum's leader triangle has no DXF form) |
 | AUDIT | AUDIT | Implemented |
-| PURGE by type (blocks, dimstyles, table styles, image defs, groups, layers) | PU | Implemented (text styles: not a table yet, see #29) |
+| PURGE by type and by name (blocks, dimstyles, table styles, image defs, groups, layers, text styles) | PU | Implemented |
 | RAY (start + through points) | RAY | Implemented |
 | POINT | PO | Implemented |
 | DIVIDE (n equal segments) | DIV | Implemented |
@@ -422,12 +435,19 @@ button dropdown).
 
 ## Selection & live preview
 
+AutoCAD's selection conventions are the base every edit command stands on (issue #46):
+
 | Feature | Status |
 |---|---|
-| Single-click pick (pick-box) | Implemented |
-| Window select (left→right, enclosed) | Implemented |
-| Crossing select (right→left, touched) | Implemented |
-| Shift to add / Esc to clear / Select all | Implemented |
+| **Verb-noun**: MOVE, COPY, MIRROR, ROTATE, SCALE, ALIGN, ARRAY, ERASE, EXPLODE, STRETCH, MATCHPROP's destinations, GROUP, ISOLATEOBJECTS and SELECT prompt `Select objects:` when nothing is selected and gather picks, windows, crossings and lassos until Enter or right-click; a pre-selection (noun-verb) skips the prompt; Enter with nothing chosen ends the command quietly | Implemented |
+| The keywords at every `Select objects:` prompt: **Window, Crossing, BOX** (by direction), **ALL, Fence, WPolygon, CPolygon, Group, Last, Previous, Add, Remove** (`Remove objects:`), **Multiple, Undo, AUto, SIngle**; "N found" / "N found, M total" / "N found, M removed, K total" as AutoCAD echoes them | Implemented |
+| Single-click pick (pick-box, PICKBOX px); **Shift + click removes** a selected object (PICKADD 2; PICKADD 0 = a click replaces) | Implemented |
+| Window select (left→right, enclosed, blue tint); crossing select (right→left, touched, green tint); **click-click boxes** from an empty click (PICKAUTO) | Implemented |
+| **Lasso** by press-and-drag (PICKDRAG 2): leftwards a crossing, rightwards a window; **Space** cycles window / crossing / fence while dragging | Implemented |
+| **SELECTIONPREVIEW**: the objects a box or lasso would select highlight while it is dragged (1 idle, 2 at a prompt, 3 both) | Implemented |
+| **Selection cycling** (SELECTIONCYCLING, Ctrl+W): a pick over several objects offers the list at the cursor | Implemented (the badge is not drawn) |
+| Ctrl+A selects all; Esc clears; **HIGHLIGHT** 0 turns the selection highlight off; PICKFIRST 0 makes idle clicks inert | Implemented |
+| **SELECT, SELECTSIMILAR** (SELECTSIMILARMODE), **QSELECT** and **FILTER** (the Quick Select dialog; FILTER adds several conditions), the idle **right-click menu** (Repeat, Recent Input, Clipboard, Isolate, Erase, Select Similar, Quick Select, Deselect All, Undo / Redo, Properties) | Implemented |
 | Selected-entity highlight (orange) | Implemented |
 | Rollover (hover) highlight (light blue) | Implemented |
 | Live cursor preview (Line/Circle/Rect/PLine/Arc) | Implemented |

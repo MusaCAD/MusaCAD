@@ -219,6 +219,10 @@ struct EntityProps {
     static constexpr std::uint8_t kLineweightByLayer = 1u << 2;
     static constexpr std::uint8_t kAllByLayer =
         kColorByLayer | kLinetypeByLayer | kLineweightByLayer;
+    /// ISOLATEOBJECTS / HIDEOBJECTS: hidden objects are neither drawn nor selectable
+    /// until UNISOLATEOBJECTS. Bit 3, between the ByLayer bits and the space bits, so
+    /// every record, capture and file form carries it unchanged.
+    static constexpr std::uint8_t kHidden = 1u << 3;
 
     std::uint16_t layer = 0; ///< index into the store's layer table
     Rgb color{};             ///< override colour when !color_by_layer()
@@ -236,6 +240,8 @@ struct EntityProps {
     void set_color_by_layer(bool v) noexcept { set_flag(kColorByLayer, v); }
     void set_linetype_by_layer(bool v) noexcept { set_flag(kLinetypeByLayer, v); }
     void set_lineweight_by_layer(bool v) noexcept { set_flag(kLineweightByLayer, v); }
+    [[nodiscard]] bool hidden() const noexcept { return (flags & kHidden) != 0; }
+    void set_hidden(bool v) noexcept { set_flag(kHidden, v); }
 
     /// The space the entity lives in: 0 = model space, otherwise a layout's id (paper
     /// space). Carried in the upper bits of `flags`, so every record, command, capture

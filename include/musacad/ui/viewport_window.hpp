@@ -80,6 +80,47 @@ public:
     void plot_dialog() override;
     [[nodiscard]] core::MatchPropFilter match_filter() const override;
     void match_settings_dialog() override;
+    /// The selection system variables (PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG,
+    /// HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING), kept here: the viewport is what
+    /// they change.
+    [[nodiscard]] int selection_setting(const std::string& name) const override;
+    bool set_selection_setting(const std::string& name, int value) override;
+    bool quick_select_dialog(bool filter) override;
+    bool purge_dialog() override;
+    bool units_dialog() override;
+    void set_quick_select_callback(std::function<void(bool)> cb) { quick_select_callback_ = std::move(cb); }
+    void set_purge_dialog_callback(std::function<void()> cb) { purge_dialog_callback_ = std::move(cb); }
+    void set_units_dialog_callback(std::function<void()> cb) { units_dialog_callback_ = std::move(cb); }
+    /// PURGE's candidates, LTSCALE / CELTSCALE / PSLTSCALE / MSLTSCALE and PICKSTYLE, as
+    /// last published (the host hands them to the processor).
+    [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const {
+        std::scoped_lock lock(layers_mutex_);
+        return purge_;
+    }
+    [[nodiscard]] double ltscale() const {
+        std::scoped_lock lock(layers_mutex_);
+        return ltscale_;
+    }
+    [[nodiscard]] double current_celtscale() const {
+        std::scoped_lock lock(layers_mutex_);
+        return celtscale_;
+    }
+    [[nodiscard]] bool psltscale() const {
+        std::scoped_lock lock(layers_mutex_);
+        return psltscale_;
+    }
+    [[nodiscard]] bool msltscale() const {
+        std::scoped_lock lock(layers_mutex_);
+        return msltscale_;
+    }
+    [[nodiscard]] std::uint8_t pickstyle() const {
+        std::scoped_lock lock(layers_mutex_);
+        return pickstyle_;
+    }
+    [[nodiscard]] bool object_isolation() const {
+        std::scoped_lock lock(layers_mutex_);
+        return object_isolation_;
+    }
     [[nodiscard]] std::uint32_t snap_mask() const override;
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
@@ -146,6 +187,18 @@ public:
 
     /// AutoCAD's multi-functional polyline grip menu (right-click on a grip while idle).
     void show_polyline_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// The idle right-click menu (Repeat, Recent Input, Clipboard, Isolate, Select
+    /// Similar, Quick Select, Deselect All, Undo / Redo, Properties).
+    void show_context_menu(QPoint global, core::Vec2 world);
+    /// Selection cycling: the objects under the last pick, offered as a list at the cursor.
+    void show_cycle_menu();
+    /// A finished selection gesture: the engine command(s), then the running command's
+    /// "Select objects:" step hears about it.
+    void finish_gesture();
+    void submit_selection_preview(bool clear);
+    [[nodiscard]] double pick_aperture(double dpr, double scale) const {
+        return static_cast<double>(pickbox_) * dpr / scale;
+    }
 
     /// Number of currently-selected entities (for enabling Modify buttons).
     [[nodiscard]] int selection_count() const noexcept {
@@ -553,9 +606,38 @@ private:
     // Selection drag state (UI thread).
     bool selecting_ = false;
     bool sel_additive_ = false;
+    bool sel_toggle_ = false; ///< Shift held: a selected object comes out (PICKADD 2)
     core::Vec2 sel_start_screen_{};
     core::Vec2 sel_start_world_{};
     core::Vec2 sel_cur_world_{};
+    /// Click-click box (PICKAUTO): an empty click started a window / crossing box that
+    /// the next click finishes; `box_pending_` while it follows the cursor.
+    bool box_pending_ = false;
+    /// Lasso (PICKDRAG 2): press-and-drag draws a polygon; 1 window, 2 crossing, 3 fence.
+    bool lasso_active_ = false;
+    int lasso_mode_ = 1;
+    std::vector<core::Vec2> lasso_world_;
+    // The selection system variables.
+    int pickbox_ = 10;
+    int pickfirst_ = 1;
+    int pickadd_ = 2;
+    int pickauto_ = 1;
+    int pickdrag_ = 2;
+    int highlight_ = 1;
+    int selectionpreview_ = 3;
+    int selectioncycling_ = 2;
+    std::uint64_t pick_candidates_seen_ = 0;
+    std::vector<core::RenderSnapshot::PickCandidate> pick_candidates_; ///< under layers_mutex_
+    core::RenderSnapshot::PurgeCandidates purge_;                      ///< under layers_mutex_
+    double ltscale_ = 1.0;
+    double celtscale_ = 1.0;
+    bool psltscale_ = true;
+    bool msltscale_ = true;
+    std::uint8_t pickstyle_ = 1;
+    bool object_isolation_ = false;
+    std::function<void(bool)> quick_select_callback_;
+    std::function<void()> purge_dialog_callback_;
+    std::function<void()> units_dialog_callback_;
     std::atomic<int> selection_count_{0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};

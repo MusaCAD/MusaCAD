@@ -65,8 +65,12 @@ struct ExplodeSelectionCommand {
 struct PurgeCommand {
     std::uint64_t group = 0;
     /// What to purge: 0 all, 1 blocks, 2 dimstyles, 3 groups, 4 layers, 5 table styles,
-    /// 6 image definitions.
+    /// 6 image definitions, 7 text styles, 8 zero-length geometry, 9 empty text objects.
     std::uint8_t what = 0;
+    /// A single name (or `*` / a wildcard pattern) within the table; empty = every entry.
+    std::string name = {};
+    /// Report what would go (by name) without purging it.
+    bool list_only = false;
 };
 
 /// UNITS: set how lengths and angles are displayed (stored with the drawing).
@@ -261,9 +265,40 @@ struct UngroupCommand {
     double pick_radius = 0.0;
     bool by_name = false;
 };
-/// PICKSTYLE: whether picking a group member selects the whole group.
+/// PICKSTYLE: whether picking a group member selects the whole group (bit 1) and
+/// whether picking an associative hatch selects its boundary too (bit 2; recorded
+/// for when hatches carry their boundary, issue #41).
 struct SetPickStyleCommand {
     bool group_select = true;
+    bool hatch_assoc = false;
+};
+/// -GROUP / GROUPEDIT (issue #53). `op`: 0 add the selection to the named group, 1
+/// remove the selection from it, 2 rename it to `text`, 3 set its description to
+/// `text`, 4 set whether it is selectable (`flag`), 5 reorder: member `from` moves to
+/// position `to`, 6 explode it (dissolve; the objects stay).
+struct GroupEditCommand {
+    std::string name;
+    std::uint8_t op = 0;
+    std::string text;
+    bool flag = true;
+    int from = 0;
+    int to = 0;
+    /// GROUPEDIT's pick: the group is the one the object under `pick` belongs to.
+    bool by_pick = false;
+    Vec2 pick{};
+    double pick_radius = 0.0;
+};
+/// CELTSCALE: the linetype scale new objects are created with.
+struct SetCeltscaleCommand {
+    double scale = 1.0;
+};
+/// GROUP ?: list the groups with their descriptions and member counts.
+struct ListGroupsCommand {};
+/// PSLTSCALE / MSLTSCALE: whether linetypes in paper space (viewports) and in model
+/// space are scaled by the viewport / annotation scale.
+struct SetLtscaleModesCommand {
+    bool psltscale = true;
+    bool msltscale = true;
 };
 
 /// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
@@ -377,6 +412,13 @@ struct SelectPickCommand {
     /// AutoCAD's "N found" / "N found, M total" through the status channel. Off for idle
     /// selection, where that would be noise.
     bool announce = false;
+    bool remove = false; ///< take the object OUT of the selection (Remove mode)
+    /// Shift + click (PICKADD 2): an object already selected comes out, one that is not
+    /// goes in.
+    bool toggle = false;
+    /// Selection cycling: when several objects lie within the aperture, publish them as
+    /// `pick_candidates` (the UI offers the list) besides picking the nearest.
+    bool cycle = false;
 };
 
 /// Box select. `crossing` false = window (entities fully enclosed), true =
@@ -387,10 +429,96 @@ struct SelectWindowCommand {
     bool crossing = false;
     bool additive = false;
     bool announce = false; ///< see SelectPickCommand::announce
+    bool remove = false;   ///< Remove mode: take the caught objects out instead
 };
 
-struct SelectAllCommand {};
+struct SelectAllCommand {
+    bool announce = false; ///< "N found" at a "Select objects:" prompt
+};
 struct ClearSelectionCommand {};
+
+/// The rest of AutoCAD's "Select objects:" answers (issue #46). Each accumulates into
+/// the selection (or takes out of it with `remove`) and, with `announce`, echoes
+/// "N found" / "N found, M total" the way a pick or window does.
+struct SelectFenceCommand {
+    std::vector<Vec2> points; ///< the fence: every object it crosses is selected
+    bool remove = false;
+    bool announce = true;
+};
+struct SelectPolygonCommand {
+    std::vector<Vec2> points; ///< WPolygon (inside) / CPolygon (inside or crossed); a lasso
+    bool crossing = false;
+    bool remove = false;
+    bool announce = true;
+};
+/// Last: the most recently created object still on screen.
+struct SelectLastCommand {
+    bool remove = false;
+    bool announce = true;
+};
+/// Previous: the selection set the last edit command worked on.
+struct SelectPreviousCommand {
+    bool announce = true;
+};
+/// Group: every member of the named group.
+struct SelectGroupCommand {
+    std::string name;
+    bool remove = false;
+    bool announce = true;
+};
+/// Undo: the selection as it was before the last pick / window / keyword.
+struct SelectUndoCommand {};
+/// One object by handle (the selection-cycling list, a right-click choice).
+struct SelectHandleCommand {
+    EntityHandle handle;
+    bool additive = false;
+    bool announce = false;
+};
+/// What a window, crossing, polygon or fence WOULD select right now, published as
+/// `preview_line_vertices` for the drag highlight (SELECTIONPREVIEW); an empty command
+/// clears it. Read-only.
+struct SelectPreviewCommand {
+    Vec2 min{};
+    Vec2 max{};
+    std::vector<Vec2> polygon; ///< a lasso / polygon (else the box)
+    bool crossing = false;
+    bool fence = false;
+};
+/// SELECTSIMILAR: every object of the same kind as a selected one that also matches it
+/// in the properties `mode` names (SELECTSIMILARMODE bits: 1 colour, 2 layer, 4
+/// linetype, 8 linetype scale, 16 lineweight, 32 plot style, 64 object style (text,
+/// dimension, table style), 128 name (block name)). AutoCAD's default is 130.
+struct SelectSimilarCommand {
+    std::uint32_t mode = 130;
+};
+/// QSELECT / FILTER: choose by object type and one property. `kind` -1 = any type.
+/// `property`: 0 none (the type alone), 1 colour (`text` "ByLayer" or "r,g,b"), 2 layer
+/// name, 3 linetype name, 4 lineweight (hundredths of a mm), 5 linetype scale, 6
+/// radius, 7 length, 8 text contents, 9 block name, 10 text height, 11 area.
+/// `op`: 0 equals, 1 not equal, 2 greater than, 3 less than, 4 wildcard match
+/// (`*` and `?`). `whole_drawing` false looks at the current selection only;
+/// `include` false keeps everything BUT the matches; `append` adds to the selection.
+struct SelectFilterCommand {
+    int kind = -1;
+    std::uint8_t property = 0;
+    std::uint8_t op = 0;
+    double number = 0.0;
+    std::string text;
+    bool whole_drawing = true;
+    bool include = true;
+    bool append = false;
+};
+/// ISOLATEOBJECTS (0: hide everything but the selection), HIDEOBJECTS (1: hide the
+/// selection), UNISOLATEOBJECTS (2: show everything again). Hidden objects are neither
+/// drawn nor selectable until shown; the flag travels with the object (saved).
+struct IsolateObjectsCommand {
+    std::uint8_t mode = 0;
+};
+/// OOPS: bring back the objects the last ERASE removed, without undoing what came
+/// after it. One undo group of its own.
+struct OopsCommand {
+    std::uint64_t group = 0;
+};
 
 /// Erases all currently-selected entities as one undo group (Delete key).
 struct EraseSelectionCommand {
@@ -1285,6 +1413,12 @@ struct MatchPropApplyCommand {
     MatchPropFilter filter{};
     std::uint64_t group = 0;
 };
+/// MATCHPROP onto the whole current selection (a window or crossing of destinations),
+/// one undo group; the selection is cleared afterwards.
+struct MatchPropApplySelectionCommand {
+    MatchPropFilter filter{};
+    std::uint64_t group = 0;
+};
 
 using Command =
     std::variant<AddLineCommand, AddPolylineCommand, AddCircleCommand, AddArcCommand, EraseCommand,
@@ -1328,6 +1462,12 @@ using Command =
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
                  AddDatumCommand, AddImageCommand, AddTableCommand,
                  StretchSelectionCommand, AreaQueryCommand, ListQueryCommand,
+                 SelectFenceCommand, SelectPolygonCommand, SelectLastCommand,
+                 SelectPreviousCommand, SelectGroupCommand, SelectUndoCommand,
+                 SelectHandleCommand, SelectPreviewCommand, SelectSimilarCommand,
+                 SelectFilterCommand, IsolateObjectsCommand, OopsCommand, GroupEditCommand,
+                 ListGroupsCommand, SetLtscaleModesCommand, MatchPropApplySelectionCommand,
+                 SetCeltscaleCommand,
                  ChainDimensionCommand>;
 
 } // namespace musacad::core

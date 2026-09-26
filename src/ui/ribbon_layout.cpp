@@ -405,11 +405,15 @@ void MainWindow::build_ribbon() {
         todo_small(modify, c3, QStringLiteral("Blend Curves"), "blend");
         todo_small(modify, c3, QStringLiteral("Delete Duplicate Objects"), "overkill");
     }
-    // Move / Copy / Mirror / Rotate / Scale / Array work on an existing selection.
-    selection_required_buttons_ = {move_btn, copy_btn, mirror_btn, rotate_btn, scale_btn, array_btn};
-    for (QToolButton* b : selection_required_buttons_) {
-        b->setEnabled(false);
-    }
+    // Move / Copy / Mirror / Rotate / Scale / Array ask "Select objects:" when nothing is
+    // selected (issue #46), so they stay enabled, as AutoCAD's do.
+    (void)move_btn;
+    (void)copy_btn;
+    (void)mirror_btn;
+    (void)rotate_btn;
+    (void)scale_btn;
+    (void)array_btn;
+    selection_required_buttons_.clear();
 
     // --- Annotation: Text and Dimension large; Linear / Leader / Table stacked; the
     // styles behind the launcher and in the slide-out.
@@ -554,7 +558,7 @@ void MainWindow::build_ribbon() {
     {
         QWidget* col = groups->add_column(/*icon_only=*/true);
         small(groups, col, QStringLiteral("Ungroup"), "UNGROUP");
-        todo_small(groups, col, QStringLiteral("Group Edit"), "group");
+        small(groups, col, QStringLiteral("Group Edit"), "GROUPEDIT", "group");
         QToolButton* pick = groups->add_small(col, asset("group-select"), QStringLiteral("Group Selection On/Off"));
         pick->setObjectName(QStringLiteral("ribbon.pickstyle"));
         pick->setToolTip(QStringLiteral("Whether picking one member selects its whole group (PICKSTYLE)."));
@@ -574,7 +578,7 @@ void MainWindow::build_ribbon() {
                 "distance");
     {
         QWidget* col = util->add_column(/*icon_only=*/true);
-        todo_small(util, col, QStringLiteral("Quick Select"), "quick-select");
+        small(util, col, QStringLiteral("Quick Select"), "QSELECT", "quick-select");
         todo_small(util, col, QStringLiteral("Quick Calculator"), "calculator");
         small(util, col, QStringLiteral("ID Point"), "ID", "id-point");
     }

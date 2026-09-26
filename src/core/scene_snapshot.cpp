@@ -77,13 +77,14 @@ bool vp_frozen(std::uint16_t layer) {
 }
 bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && p.space() == t_build_space && !vp_frozen(p.layer);
+    return l != nullptr && l->on && !l->frozen && !p.hidden() && p.space() == t_build_space &&
+           !vp_frozen(p.layer);
 }
 /// Editable = visible and not on a locked layer (locked text can't be edited).
 bool editable(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
-    return l != nullptr && l->on && !l->frozen && !l->locked && p.space() == t_build_space &&
-           !vp_frozen(p.layer);
+    return l != nullptr && l->on && !l->frozen && !l->locked && !p.hidden() &&
+           p.space() == t_build_space && !vp_frozen(p.layer);
 }
 
 // Liang-Barsky: clip the segment a-b to the rectangle; false when nothing remains.
@@ -822,12 +823,17 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             std::vector<Vec2> poly;
             for (const EntityHandle h : vps) {
                 const ViewportData* v = store.viewport(h);
-                // VPLAYER: a viewport with its own frozen layers gets its own model build.
+                // VPLAYER: a viewport with its own frozen layers gets its own model build;
+                // so does one whose scale is not 1:1 when PSLTSCALE is on -- the dashes are
+                // then LTSCALE long on the sheet, which is LTSCALE / scale in the model.
                 RenderSnapshot own;
                 const RenderSnapshot* model_src = &model;
-                if (!v->frozen_layers.empty()) {
-                    t_vp_frozen = &v->frozen_layers;
-                    build_render_snapshot_in(store, kernel, own, tolerance, ltscale, 0, false);
+                const bool ps_scaled = store.psltscale() && v->scale > 0.0 &&
+                                       std::abs(v->scale - 1.0) > 1e-9;
+                if (!v->frozen_layers.empty() || ps_scaled) {
+                    t_vp_frozen = v->frozen_layers.empty() ? nullptr : &v->frozen_layers;
+                    build_render_snapshot_in(store, kernel, own, tolerance,
+                                             ps_scaled ? ltscale / v->scale : ltscale, 0, false);
                     t_vp_frozen = nullptr;
                     t_build_space = space;
                     model_src = &own;

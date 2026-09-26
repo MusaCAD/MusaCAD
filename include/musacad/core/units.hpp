@@ -41,8 +41,27 @@ struct DrawingUnits {
     std::uint8_t angular_precision = 0; ///< 0..8
     bool clockwise = false;             ///< angles measured clockwise
     double base_angle = 0.0;            ///< direction of angle 0, radians CCW from +x
+    /// INSUNITS: the drawing unit blocks and images are scaled to on insertion (0
+    /// unitless, 1 inches, 2 feet, 3 miles, 4 millimetres, 5 centimetres, 6 metres, 7
+    /// kilometres, 8 microinches, 9 mils, 10 yards, 11 angstroms, 12 nanometres, 13
+    /// microns, 14 decimetres, 15 decametres, 16 hectometres, 17 gigametres, 18
+    /// astronomical units, 19 light years, 20 parsecs).
+    std::uint8_t insunits = 0;
     friend bool operator==(const DrawingUnits&, const DrawingUnits&) = default;
 };
+
+namespace units {
+/// The INSUNITS names, in AutoCAD's order (index = the value).
+inline const char* insunits_name(std::uint8_t v) {
+    static constexpr const char* kNames[] = {
+        "Unitless",     "Inches",      "Feet",        "Miles",     "Millimeters", "Centimeters",
+        "Meters",       "Kilometers",  "Microinches", "Mils",      "Yards",       "Angstroms",
+        "Nanometers",   "Microns",     "Decimeters",  "Decameters", "Hectometers", "Gigameters",
+        "Astronomical", "Light years", "Parsecs"};
+    return v < 21 ? kNames[v] : "Unitless";
+}
+inline constexpr int kInsunitsCount = 21;
+} // namespace units
 
 namespace units {
 
