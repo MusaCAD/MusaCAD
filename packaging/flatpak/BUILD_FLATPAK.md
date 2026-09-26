@@ -105,9 +105,8 @@ manifest itself is plain YAML with no comments, as a reviewer expects to see it.
 Flathub then builds the manifest, a reviewer looks at it, and on acceptance the app gets its
 own repository, `github.com/flathub/org.musacad.MusaCAD`, with you as a maintainer.
 
-The manifest pins a commit rather than the v0.4.0 tag: that tag predates the GCC 15 fixes
-the KDE runtime's toolchain needs and the install rules the `cmake-ninja` module builds from,
-and a submission must build. The next release tag replaces the pin (below).
+The manifest pins the release tag (`tag` and `commit` together, v0.5.0 today); each
+release moves it (below).
 
 ### Every release after that (automatic)
 
