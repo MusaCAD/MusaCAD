@@ -74,6 +74,14 @@ struct PolylineData {
     std::uint32_t bulge_offset = kNoBulges; ///< first of `count` bulges, or kNoBulges
     bool closed;
     EntityProps props{};
+    /// Widths (PLINE Width / Halfwidth): the first of 2 * `count` values in the width
+    /// pool, two per vertex (the start and the end width of the segment leaving it), or
+    /// kNoWidths for a plain polyline. See polyline_width.hpp.
+    static constexpr std::uint32_t kNoWidths = 0xFFFFFFFFu;
+    std::uint32_t width_offset = kNoWidths;
+    /// Elevation and thickness (DXF 38 / 39): kept and round-tripped; the view is 2D.
+    double elevation = 0.0;
+    double thickness = 0.0;
 };
 
 struct SplineData {
@@ -402,6 +410,9 @@ struct BlockPolyline {
     std::vector<double> bulges; ///< empty (all straight) or same length as verts
     bool closed = false;
     EntityProps props{};
+    std::vector<double> widths = {}; ///< empty, or two per vertex (polyline_width.hpp)
+    double elevation = 0.0;
+    double thickness = 0.0;
 };
 struct BlockText {
     Vec2 pos;
@@ -475,6 +486,10 @@ public:
     /// must be empty (all straight) or the same length as `vertices`.
     EntityHandle add_polyline(std::span<const Vec2> vertices, std::span<const double> bulges,
                               bool closed, EntityProps props = {});
+    /// ... and with widths (empty, or two per vertex), an elevation and a thickness.
+    EntityHandle add_polyline(std::span<const Vec2> vertices, std::span<const double> bulges,
+                              bool closed, EntityProps props, std::span<const double> widths,
+                              double elevation, double thickness);
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                             EntityProps props = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
@@ -507,6 +522,9 @@ public:
                            Rgb color2 = {});
     /// WIPEOUTFRAME: whether wipeout boundaries are drawn (AutoCAD's default: shown).
     [[nodiscard]] bool wipeout_frames() const noexcept { return wipeout_frames_; }
+    /// FILLMODE: wide polylines and solid hatches are filled (1) or drawn as outlines (0).
+    [[nodiscard]] bool fillmode() const noexcept { return fillmode_; }
+    void set_fillmode(bool on) noexcept { fillmode_ = on; }
     [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
     [[nodiscard]] std::uint8_t image_frame() const noexcept { return image_frame_; }
 
@@ -841,6 +859,8 @@ public:
     /// Per-vertex bulges for a polyline, or an empty span when all segments are
     /// straight. Same length as vertices_of() when non-empty.
     [[nodiscard]] std::span<const double> bulges_of(const PolylineData& pl) const noexcept;
+    /// The widths of a polyline (two per vertex), or an empty span for a plain one.
+    [[nodiscard]] std::span<const double> widths_of(const PolylineData& pl) const noexcept;
     [[nodiscard]] std::span<const Vec2> control_points_of(const SplineData& sp) const noexcept;
 
     void reserve_lines(std::size_t n) { lines_.reserve(n); }
@@ -1133,6 +1153,7 @@ private:
 
     std::vector<Vec2> polyline_pool_;
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
+    std::vector<double> width_pool_; // polyline widths, two per vertex
     std::vector<Vec2> spline_pool_;
     std::vector<char> string_pool_; // text content
     std::vector<Vec2> hatch_vtx_pool_;            // hatch boundary-loop vertices (all loops)
@@ -1157,6 +1178,7 @@ private:
     std::vector<TextStyle> text_styles_{TextStyle{}}; // [0] = Standard
     std::uint16_t current_text_style_ = 0;
     bool wipeout_frames_ = true;
+    bool fillmode_ = true;
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
     std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts_{Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};

@@ -112,7 +112,9 @@ struct RegenCommand {};
 /// PEDIT: one edit on the polyline under `pick` (a line or arc there is turned into a
 /// polyline first, as AutoCAD offers). `op`: 0 Close, 1 Open, 2 Reverse, 3 Decurve,
 /// 4 Spline (a fit spline through the vertices), 5 insert a vertex at p1, 6 delete the
-/// vertex nearest p1, 7 move the vertex nearest p1 to p2. One undo group each.
+/// vertex nearest p1, 7 move the vertex nearest p1 to p2, 8 Width (p1.x is the new width
+/// of every segment), 9 the widths of the segment leaving the vertex nearest p1 (p2.x the
+/// start width, p2.y the end width). One undo group each.
 struct PeditCommand {
     Vec2 pick{};
     double pick_radius = 0.0;
@@ -293,6 +295,10 @@ struct GroupEditCommand {
 struct SetCeltscaleCommand {
     double scale = 1.0;
 };
+/// FILL / FILLMODE: wide polylines and solid fills are filled (on) or outlined (off).
+struct SetFillModeCommand {
+    bool on = true;
+};
 /// GROUP ?: list the groups with their descriptions and member counts.
 struct ListGroupsCommand {};
 /// PSLTSCALE / MSLTSCALE: whether linetypes in paper space (viewports) and in model
@@ -333,6 +339,11 @@ struct AddPolylineCommand {
     /// Per-vertex arc bulges (b = tan(theta/4); 0 = straight). Empty = all straight.
     std::vector<double> bulges = {};
     double celtscale = 1.0;
+    /// Widths: empty, or two per vertex (the start and end width of the segment leaving
+    /// it); a single pair spreads over every segment. See polyline_width.hpp.
+    std::vector<double> widths = {};
+    double elevation = 0.0; ///< DXF 38
+    double thickness = 0.0; ///< DXF 39
 };
 
 struct AddCircleCommand {
@@ -1504,7 +1515,7 @@ using Command =
                  SelectHandleCommand, SelectPreviewCommand, SelectSimilarCommand,
                  SelectFilterCommand, IsolateObjectsCommand, OopsCommand, GroupEditCommand,
                  ListGroupsCommand, SetLtscaleModesCommand, MatchPropApplySelectionCommand,
-                 SetCeltscaleCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
+                 SetCeltscaleCommand, SetFillModeCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
                  StatusQueryCommand, SetDrawingPropsCommand,
                  ChainDimensionCommand>;
 

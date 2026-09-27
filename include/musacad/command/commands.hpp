@@ -71,23 +71,33 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// PLINEWID: the width a new polyline starts with (the last ending width given).
+    inline static double s_width_ = 0.0;
 
 private:
-    /// Line mode (`[Arc/Close/Length/Undo]`) and Arc mode (`[Angle/CEnter/CLose/Direction/
-    /// Line/Radius/Second pt/Undo]`) with AutoCAD's sub-steps; every arc segment is a
-    /// bulge on the vertex it leaves, tangent to the previous segment unless a direction,
-    /// centre, radius or second point says otherwise. Widths wait on the polyline width
-    /// model (#37).
+    /// Line mode (`[Arc/Close/Halfwidth/Length/Undo/Width]`) and Arc mode (`[Angle/CEnter/
+    /// CLose/Direction/Halfwidth/Line/Radius/Second pt/Undo/Width]`) with AutoCAD's
+    /// sub-steps; every arc segment is a bulge on the vertex it leaves, tangent to the
+    /// previous segment unless a direction, centre, radius or second point says
+    /// otherwise. Width / Halfwidth ask for a starting and an ending value: the next
+    /// segment tapers between them and the ending one stays in force after it.
     enum class State : std::uint8_t {
         Start, Next, Length,
         ArcNext, ArcAngle, ArcAngleEnd, ArcAngleRadius, ArcAngleChordDir, ArcCenter, ArcCenterEnd,
         ArcCenterAngle, ArcCenterLength, ArcDirection, ArcDirectionEnd, ArcRadius, ArcRadiusEnd,
         ArcRadiusAngle, ArcRadiusChordDir, ArcSecond, ArcSecondEnd,
+        WidthStart, WidthEnd,
     };
     State state_ = State::Start;
+    State resume_ = State::Next;   ///< the mode the width prompts go back to
     std::vector<core::Vec2> points_;
     std::vector<double> bulges_;   ///< bulges_[i]: the segment points_[i] -> points_[i + 1]
     std::vector<double> tangents_; ///< the heading at the end of each segment
+    std::vector<double> widths_;   ///< two per committed segment: its start and end width
+    double start_w_ = 0.0;         ///< the width the next segment starts with
+    double end_w_ = 0.0;           ///< ... and ends with
+    bool half_ = false;            ///< the width prompt in hand asks for half-widths
+    void begin_width(CommandContext& ctx, bool half);
     double angle_ = 0.0;
     double radius_ = 0.0;
     double direction_ = 0.0;
@@ -160,7 +170,20 @@ private:
         ChamferD1, ///< [Chamfer] first distance (before the first corner, as in AutoCAD)
         ChamferD2, ///< [Chamfer] second distance
         FilletR,   ///< [Fillet] radius
+        LineWidth, ///< [Width]: the polyline width of the rectangle
+        Elevation, ///< [Elevation]
+        Thickness, ///< [Thickness]
     } state_ = State::First;
+    // The line width, elevation and thickness stay in force for later rectangles too.
+    inline static double s_line_width_ = 0.0;
+    inline static double s_elevation_ = 0.0;
+    inline static double s_thickness_ = 0.0;
+    double line_width_ = s_line_width_;
+    double elevation_ = s_elevation_;
+    double thickness_ = s_thickness_;
+    [[nodiscard]] std::string first_prompt() const {
+        return "Specify first corner point or [Chamfer/Elevation/Fillet/Thickness/Width]: ";
+    }
     // Corner treatment. AutoCAD keeps the last chamfer distances / fillet radius as the
     // default for every later rectangle in the session, and setting one clears the
     // other -- both mirrored here through the session-wide statics.
@@ -1088,7 +1111,14 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Select, Option, JoinTargets, Vertex, VInsert, VDelete, VMoveFrom, VMoveTo };
+    enum class State {
+        Select, Option, JoinTargets, Vertex, VInsert, VDelete, VMoveFrom, VMoveTo,
+        WidthVal,    ///< [Width]: one width for every segment
+        VWidthAt,    ///< [Edit vertex] > [Width]: the vertex the segment leaves
+        VWidthStart, ///< ... its starting width
+        VWidthEnd,   ///< ... and its ending width
+    };
+    double vw_start_ = 0.0;
     void prompt_option(CommandContext& ctx) const;
     void prompt_vertex(CommandContext& ctx) const;
     State state_ = State::Select;
@@ -1683,11 +1713,44 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Inner, Outer, Center } state_ = State::Inner;
+    /// A diameter is typed, or shown by two points (InnerSecond / OuterSecond).
+    enum class State { Inner, InnerSecond, Outer, OuterSecond, Center } state_ = State::Inner;
     inline static double s_inner_ = 0.5;
     inline static double s_outer_ = 1.0;
     double inner_ = 0.5;
     double outer_ = 1.0;
+    core::Vec2 first_{};
+    bool done_ = false;
+    void take_inner(CommandContext& ctx, double v);
+    void take_outer(CommandContext& ctx, double v);
+};
+
+/// FILL (`Enter mode [ON/OFF] <ON>:`) and FILLMODE (`Enter new value for FILLMODE <1>:`):
+/// whether wide polylines, solids and hatches are filled.
+class FillCommand final : public ICommand {
+public:
+    explicit FillCommand(bool sysvar) : sysvar_(sysvar) {}
+    std::string name() const override { return sysvar_ ? "FILLMODE" : "FILL"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool sysvar_ = false;
+    bool done_ = false;
+};
+
+/// PLINEWID: `Enter new value for PLINEWID <0.0000>:` -- the width new polylines start with.
+class PlinewidCommand final : public ICommand {
+public:
+    std::string name() const override { return "PLINEWID"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 

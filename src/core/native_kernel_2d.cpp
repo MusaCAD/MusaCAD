@@ -20,6 +20,7 @@
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/polyline_width.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
@@ -857,6 +858,10 @@ static bool offset_polyline(const GeometryStore& store, const PolylineData& p, d
     if (std::any_of(bulges.begin(), bulges.end(), [](double b) { return b != 0.0; })) {
         cmd.bulges = std::move(bulges);
     }
+    // The copy is as wide as its source, segment for segment.
+    pline::inherit_widths(v, bl, store.widths_of(p), closed, cmd.points, cmd.bulges, closed, cmd.widths);
+    cmd.elevation = p.elevation;
+    cmd.thickness = p.thickness;
     out = cmd;
     return true;
 }

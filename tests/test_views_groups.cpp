@@ -93,21 +93,23 @@ struct ProcHarness {
 };
 } // namespace
 
-TEST_CASE("#33 DONUT: two-loop SOLID hatch at each centre; a zero hole is one loop; bad sizes refused") {
+TEST_CASE("#33 DONUT: a wide two-arc polyline at each centre; a zero hole is a disc; bad sizes refused") {
+    // AutoCAD's donut: two half circles on the mean diameter, as wide as the ring.
     ProcHarness h;
     h.proc.submit_line("DO");
-    h.proc.submit_line("");      // inside <0.5000>
-    h.proc.submit_line("");      // outside <1.0000>
+    h.proc.submit_line("0.5");   // inside
+    h.proc.submit_line("1");     // outside
     h.proc.submit_line("10,10");
     h.proc.submit_line("30,10");
     h.proc.submit_line("");      // exit
-    REQUIRE(h.count<AddHatchCommand>() == 2);
-    const auto* d = h.last<AddHatchCommand>();
-    REQUIRE(d->pattern_name == "SOLID");
-    REQUIRE(d->loops.size() == 2);
-    REQUIRE(d->loops[0].size() >= 32);
-    REQUIRE(std::hypot(d->loops[0][0].x - 30.0, d->loops[0][0].y - 10.0) == Approx(0.5));
-    REQUIRE(std::hypot(d->loops[1][0].x - 30.0, d->loops[1][0].y - 10.0) == Approx(0.25));
+    REQUIRE(h.count<AddPolylineCommand>() == 2);
+    REQUIRE(h.count<AddHatchCommand>() == 0);
+    const auto* d = h.last<AddPolylineCommand>();
+    REQUIRE(d->closed);
+    REQUIRE(d->points.size() == 2);
+    REQUIRE(d->bulges == std::vector<double>{1.0, 1.0});
+    REQUIRE(std::hypot(d->points[0].x - 30.0, d->points[0].y - 10.0) == Approx(0.375));
+    REQUIRE(d->widths == std::vector<double>(4, 0.25));
     REQUIRE(!h.proc.has_active_command());
 
     ProcHarness h2;
@@ -116,15 +118,15 @@ TEST_CASE("#33 DONUT: two-loop SOLID hatch at each centre; a zero hole is one lo
     h2.proc.submit_line("4");
     h2.proc.submit_line("0,0");
     h2.proc.submit_line("");
-    REQUIRE(h2.last<AddHatchCommand>()->loops.size() == 1);
-    REQUIRE(std::hypot(h2.last<AddHatchCommand>()->loops[0][0].x, 0.0) == Approx(2.0));
+    REQUIRE(h2.last<AddPolylineCommand>()->widths == std::vector<double>(4, 2.0));
+    REQUIRE(std::hypot(h2.last<AddPolylineCommand>()->points[0].x, 0.0) == Approx(1.0));
 
     ProcHarness h3;
     h3.proc.submit_line("DONUT");
     h3.proc.submit_line("5");
     h3.proc.submit_line("3"); // outside <= inside: refused, still at the prompt
     REQUIRE(h3.proc.has_active_command());
-    REQUIRE(h3.count<AddHatchCommand>() == 0);
+    REQUIRE(h3.count<AddPolylineCommand>() == 0);
 }
 
 TEST_CASE("#33 VIEW: Save reads the camera, Restore sets it, Window frames a box, Delete submits") {

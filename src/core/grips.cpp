@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/grips.hpp"
+#include "musacad/core/polyline_width.hpp"
 
 #include "musacad/core/ellipse.hpp"
 
@@ -36,12 +37,16 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const PolylineData* p = store.polyline(h);
         const auto verts = store.vertices_of(*p);
         const auto bulges = store.bulges_of(*p);
+        const auto widths = store.widths_of(*p);
         return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()),
                                   p->closed,
                                   0,
                                   p->props,
                                   std::vector<double>(bulges.begin(), bulges.end()),
-                                  store.celtscale(h)};
+                                  store.celtscale(h),
+                                  std::vector<double>(widths.begin(), widths.end()),
+                                  p->elevation,
+                                  p->thickness};
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
@@ -243,7 +248,12 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
-                handle = store.add_polyline(c.points, c.bulges, c.closed, props_of(c.props));
+                // An edit may have changed the vertex count: the widths follow (a uniform
+                // width spreads over the new vertices; a taper that no longer fits goes).
+                std::vector<double> widths = c.widths;
+                pline::fit_widths(widths, c.points.size());
+                handle = store.add_polyline(c.points, c.bulges, c.closed, props_of(c.props), widths,
+                                            c.elevation, c.thickness);
                 store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 handle = store.add_circle(c.center, c.radius, props_of(c.props));

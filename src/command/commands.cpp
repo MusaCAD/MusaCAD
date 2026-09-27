@@ -400,13 +400,24 @@ void CircleCommand::cancel(CommandContext& ctx) {
 namespace {
 constexpr const char* kPlineArcPrompt =
     "Specify endpoint of arc (hold Ctrl to switch direction) or "
-    "[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]: ";
+    "[Angle/CEnter/CLose/Direction/Halfwidth/Line/Radius/Second pt/Undo/Width]: ";
 }
 
 void PolylineCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.echo("Current line-width is " + core::units::format_length(0.0, ctx.units()));
+    start_w_ = s_width_;
+    end_w_ = s_width_;
+    ctx.echo("Current line-width is " + core::units::format_length(s_width_, ctx.units()));
     ctx.set_prompt("Specify start point: ");
+}
+
+void PolylineCommand::begin_width(CommandContext& ctx, bool half) {
+    resume_ = state_;
+    half_ = half;
+    state_ = State::WidthStart;
+    refresh_preview(ctx, 0);
+    ctx.set_prompt(std::string("Specify starting ") + (half ? "half-width" : "width") + " <" +
+                   core::units::format_length(half ? end_w_ * 0.5 : end_w_, ctx.units()) + ">: ");
 }
 
 double PolylineCommand::start_tangent(CommandContext& ctx) const {
@@ -426,6 +437,10 @@ void PolylineCommand::refresh_preview(CommandContext& ctx, int arc_mode) {
     pv.kind = PreviewKind::Polyline;
     pv.points = points_;
     pv.bulges = bulges_;
+    pv.widths = widths_;
+    pv.pline_w0 = start_w_;
+    pv.pline_w1 = end_w_;
+    pv.pline_dyn = arc_mode == 0 && state_ == State::Next;
     pv.pline_arc_mode = arc_mode;
     pv.pline_tangent = arc_mode == 4 ? direction_ : start_tangent(ctx);
     pv.pline_angle = angle_;
@@ -443,13 +458,16 @@ void PolylineCommand::prompt_next(CommandContext& ctx) {
     }
     state_ = State::Next;
     refresh_preview(ctx, 0);
-    ctx.set_prompt(points_.size() >= 2 ? "Specify next point or [Arc/Close/Length/Undo]: "
-                                       : "Specify next point or [Arc/Length/Undo]: ");
+    ctx.set_prompt(points_.size() >= 2 ? "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: "
+                                       : "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
 }
 
 void PolylineCommand::add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent) {
     bulges_.push_back(bulge);
     tangents_.push_back(end_tangent);
+    widths_.push_back(start_w_);
+    widths_.push_back(end_w_);
+    start_w_ = end_w_; // the ending width stays in force
     points_.push_back(end);
     ctx.set_last_point(end);
 }
@@ -471,6 +489,9 @@ void PolylineCommand::undo_segment(CommandContext& ctx) {
         points_.pop_back();
         bulges_.pop_back();
         tangents_.pop_back();
+        if (widths_.size() >= 2) {
+            widths_.resize(widths_.size() - 2);
+        }
         ctx.set_last_point(points_.back());
         prompt_next(ctx);
         return;
@@ -478,6 +499,7 @@ void PolylineCommand::undo_segment(CommandContext& ctx) {
     points_.clear();
     bulges_.clear();
     tangents_.clear();
+    widths_.clear();
     state_ = State::Start;
     ctx.clear_last_point();
     ctx.clear_preview();
@@ -500,6 +522,17 @@ void PolylineCommand::finish(CommandContext& ctx, bool closed) {
     if (any_arc) {
         poly.bulges = bulges_;
         poly.bulges.resize(points_.size(), 0.0);
+    }
+    // Two widths per vertex: the closing segment (and the vertex an open polyline ends
+    // on) takes the width in force.
+    std::vector<double> widths = widths_;
+    while (widths.size() < 2 * points_.size()) {
+        widths.push_back(start_w_);
+        widths.push_back(end_w_);
+    }
+    widths.resize(2 * points_.size());
+    if (std::any_of(widths.begin(), widths.end(), [](double w) { return w > 0.0; })) {
+        poly.widths = std::move(widths);
     }
     ctx.submit(std::move(poly));
     ctx.echo(closed ? "Closed polyline created."
@@ -563,11 +596,50 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
             undo_segment(ctx);
             return;
         }
+        if (u == "W" || u == "WIDTH" || u == "H" || u == "HALFWIDTH") {
+            begin_width(ctx, u.front() == 'H');
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             add_segment(ctx, *p, 0.0, std::atan2(p->y - last.y, p->x - last.x));
             prompt_next(ctx);
         }
         return;
+
+    case State::WidthStart:
+    case State::WidthEnd: {
+        // A number, or a point whose distance from the last vertex is the value; Enter
+        // keeps the default (the width in force, then the starting width just given).
+        const bool ending = state_ == State::WidthEnd;
+        double w = ending ? start_w_ : end_w_;
+        if (!t.empty()) {
+            double given = 0.0;
+            if (parse_number(t, given)) {
+                // typed
+            } else if (const auto p = read_point(ctx, text)) {
+                given = core::distance(last, *p);
+            } else {
+                return;
+            }
+            if (given < 0.0) {
+                ctx.echo("Value must be positive or zero.");
+                return;
+            }
+            w = half_ ? given * 2.0 : given;
+        }
+        if (!ending) {
+            start_w_ = w;
+            state_ = State::WidthEnd;
+            ctx.set_prompt(std::string("Specify ending ") + (half_ ? "half-width" : "width") + " <" +
+                           core::units::format_length(half_ ? w * 0.5 : w, ctx.units()) + ">: ");
+            return;
+        }
+        end_w_ = w;
+        s_width_ = w;
+        state_ = resume_;
+        prompt_next(ctx);
+        return;
+    }
 
     case State::Length: {
         // Along the previous segment (tangent to an arc), the length typed or picked.
@@ -643,6 +715,10 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "U" || u == "UNDO") {
             undo_segment(ctx);
+            return;
+        }
+        if (u == "W" || u == "WIDTH" || u == "H" || u == "HALFWIDTH") {
+            begin_width(ctx, u.front() == 'H');
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -1072,16 +1148,28 @@ void ArcCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void RectangleCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    if (fillet_r_ > 0.0) {
-        ctx.echo("Current rectangle modes: Fillet=" + core::units::format_length(fillet_r_, ctx.units()));
-    } else if (chamfer_d1_ > 0.0 || chamfer_d2_ > 0.0) {
-        ctx.echo("Current rectangle modes: Chamfer=" + core::units::format_length(chamfer_d1_, ctx.units()) +
-                 " x " + core::units::format_length(chamfer_d2_, ctx.units()));
+    // The modes in force, in AutoCAD's order; nothing is said when there are none.
+    const auto fmt = [&](double v) { return core::units::format_length(v, ctx.units()); };
+    std::string modes;
+    if (chamfer_d1_ > 0.0 || chamfer_d2_ > 0.0) {
+        modes += "  Chamfer=" + fmt(chamfer_d1_) + " x " + fmt(chamfer_d2_);
     }
-    // Elevation/Thickness are 3D and Width needs polyline width, which this model does
-    // not have yet (#37), so only the two corner treatments are offered -- an option that
-    // cannot work is worse than a shorter prompt.
-    ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
+    if (elevation_ != 0.0) {
+        modes += "  Elevation=" + fmt(elevation_);
+    }
+    if (fillet_r_ > 0.0) {
+        modes += "  Fillet=" + fmt(fillet_r_);
+    }
+    if (thickness_ != 0.0) {
+        modes += "  Thickness=" + fmt(thickness_);
+    }
+    if (line_width_ > 0.0) {
+        modes += "  Width=" + fmt(line_width_);
+    }
+    if (!modes.empty()) {
+        ctx.echo("Current rectangle modes:" + modes.substr(1));
+    }
+    ctx.set_prompt(first_prompt());
 }
 
 void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
@@ -1120,6 +1208,11 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
                          : "Chamfer distances too large for this rectangle: drawn with square corners.");
         }
         core::AddPolylineCommand poly;
+        if (line_width_ > 0.0) {
+            poly.widths.assign(2 * c.size(), line_width_);
+        }
+        poly.elevation = elevation_;
+        poly.thickness = thickness_;
         poly.points = std::move(c);
         poly.closed = true;
         poly.group = ctx.group_id();
@@ -1163,6 +1256,21 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Specify fillet radius for rectangles <" + fmt4(fillet_r_) + ">: ");
             return;
         }
+        if (up == "W" || up == "WIDTH") {
+            state_ = State::LineWidth;
+            ctx.set_prompt("Specify line width for rectangles <" + fmt4(line_width_) + ">: ");
+            return;
+        }
+        if (up == "E" || up == "ELEVATION") {
+            state_ = State::Elevation;
+            ctx.set_prompt("Specify the elevation for rectangles <" + fmt4(elevation_) + ">: ");
+            return;
+        }
+        if (up == "T" || up == "THICKNESS") {
+            state_ = State::Thickness;
+            ctx.set_prompt("Specify thickness for rectangles <" + fmt4(thickness_) + ">: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             first_ = *p;
             ctx.set_last_point(*p);
@@ -1172,6 +1280,42 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
 
+    case State::LineWidth: {
+        double v = line_width_;
+        if (!up.empty() && (!parse_number(text, v) || v < 0.0)) {
+            ctx.echo("Enter a width of zero or more.");
+            return;
+        }
+        line_width_ = v;
+        s_line_width_ = v;
+        state_ = State::First;
+        ctx.set_prompt(first_prompt());
+        return;
+    }
+    case State::Elevation: {
+        double v = elevation_;
+        if (!up.empty() && !parse_number(text, v)) {
+            ctx.echo("Requires numeric distance.");
+            return;
+        }
+        elevation_ = v;
+        s_elevation_ = v;
+        state_ = State::First;
+        ctx.set_prompt(first_prompt());
+        return;
+    }
+    case State::Thickness: {
+        double v = thickness_;
+        if (!up.empty() && !parse_number(text, v)) {
+            ctx.echo("Requires numeric distance.");
+            return;
+        }
+        thickness_ = v;
+        s_thickness_ = v;
+        state_ = State::First;
+        ctx.set_prompt(first_prompt());
+        return;
+    }
     case State::ChamferD1: {
         double v = chamfer_d1_; // Enter keeps the current default
         if (!up.empty() && (!parse_number(text, v) || v < 0.0)) {
@@ -1197,7 +1341,7 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         s_chamfer_d2_ = chamfer_d2_;
         s_fillet_r_ = 0.0;
         state_ = State::First;
-        ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
+        ctx.set_prompt(first_prompt());
         return;
     }
     case State::FilletR: {
@@ -1211,7 +1355,7 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         s_fillet_r_ = fillet_r_;
         s_chamfer_d1_ = s_chamfer_d2_ = 0.0;
         state_ = State::First;
-        ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
+        ctx.set_prompt(first_prompt());
         return;
     }
 
@@ -3756,37 +3900,76 @@ void DonutCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void DonutCommand::take_inner(CommandContext& ctx, double v) {
+    inner_ = v;
+    state_ = State::Outer;
+    ctx.set_prompt("Specify outside diameter of donut <" + fmt4(std::max(outer_, inner_)) + ">: ");
+}
+
+void DonutCommand::take_outer(CommandContext& ctx, double v) {
+    if (v <= inner_) {
+        ctx.echo("Value must be greater than the inside diameter.");
+        state_ = State::Outer;
+        return;
+    }
+    outer_ = v;
+    s_inner_ = inner_;
+    s_outer_ = outer_;
+    state_ = State::Center;
+    ctx.set_prompt("Specify center of donut or <exit>: ");
+}
+
 void DonutCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    double v = 0.0;
     switch (state_) {
-    case State::Inner: {
-        double v = inner_;
-        if (!t.empty() && (!parse_number(t, v) || v < 0.0)) {
-            ctx.echo("Enter a diameter of 0 or more.");
-            return;
+    case State::Inner:
+        // A diameter typed, or shown as the distance between two points.
+        if (t.empty()) {
+            take_inner(ctx, inner_);
+        } else if (parse_number(t, v)) {
+            if (v < 0.0) {
+                ctx.echo("Enter a diameter of 0 or more.");
+                return;
+            }
+            take_inner(ctx, v);
+        } else if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::InnerSecond;
+            ctx.set_preview({PreviewKind::Segment, {first_}});
+            ctx.set_prompt("Specify second point: ");
         }
-        inner_ = v;
-        state_ = State::Outer;
-        ctx.set_prompt("Specify outside diameter of donut <" + fmt4(std::max(outer_, inner_)) + ">: ");
         return;
-    }
-    case State::Outer: {
-        double v = std::max(outer_, inner_);
-        if (!t.empty() && !parse_number(t, v)) {
-            ctx.echo("Enter a diameter.");
-            return;
+    case State::InnerSecond:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.clear_preview();
+            take_inner(ctx, core::distance(first_, *p));
         }
-        if (v <= inner_) {
-            ctx.echo("Value must be greater than the inside diameter.");
-            return;
-        }
-        outer_ = v;
-        s_inner_ = inner_;
-        s_outer_ = outer_;
-        state_ = State::Center;
-        ctx.set_prompt("Specify center of donut or <exit>: ");
         return;
-    }
+    case State::Outer:
+        if (t.empty()) {
+            take_outer(ctx, std::max(outer_, inner_));
+        } else if (parse_number(t, v)) {
+            take_outer(ctx, v);
+        } else if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::OuterSecond;
+            ctx.set_preview({PreviewKind::Segment, {first_}});
+            ctx.set_prompt("Specify second point: ");
+        }
+        return;
+    case State::OuterSecond:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.clear_preview();
+            take_outer(ctx, core::distance(first_, *p));
+            if (state_ == State::Outer) {
+                ctx.set_prompt("Specify outside diameter of donut <" +
+                               fmt4(std::max(outer_, inner_)) + ">: ");
+            }
+        }
+        return;
     case State::Center: {
         if (t.empty()) {
             done_ = true;
@@ -3796,31 +3979,82 @@ void DonutCommand::input(CommandContext& ctx, const std::string& text) {
         if (!p) {
             return;
         }
-        // A filled annulus: SOLID hatch with an outer loop and (when the hole has a size)
-        // an inner loop -- even-odd, so the hole drops out.
-        const auto ring = [&](double radius) {
-            std::vector<core::Vec2> pts;
-            constexpr int kSegs = 96;
-            pts.reserve(kSegs);
-            for (int i = 0; i < kSegs; ++i) {
-                const double a = core::kTwoPi * static_cast<double>(i) / kSegs;
-                pts.push_back({p->x + radius * std::cos(a), p->y + radius * std::sin(a)});
-            }
-            return pts;
-        };
-        core::AddHatchCommand h;
-        h.loops.push_back(ring(outer_ * 0.5));
-        if (inner_ > 0.0) {
-            h.loops.push_back(ring(inner_ * 0.5));
-        }
-        h.pattern_name = "SOLID";
-        h.group = ctx.group_id();
-        ctx.submit(std::move(h));
+        // AutoCAD's donut: a closed polyline of two half-circle arcs on the mean
+        // diameter, as wide as the ring is thick. FILLMODE decides whether it is filled.
+        const double mean_r = (inner_ + outer_) * 0.25;
+        const double width = (outer_ - inner_) * 0.5;
+        core::AddPolylineCommand ring;
+        ring.points = {{p->x - mean_r, p->y}, {p->x + mean_r, p->y}};
+        ring.bulges = {1.0, 1.0};
+        ring.widths = {width, width, width, width};
+        ring.closed = true;
+        ring.group = ctx.group_id();
+        ctx.submit(std::move(ring));
         ctx.set_last_point(*p);
         ctx.set_prompt("Specify center of donut or <exit>: ");
         return;
     }
     }
+}
+
+// ---------------------------------------------------------------------------
+// FILL / FILLMODE / PLINEWID
+// ---------------------------------------------------------------------------
+void FillCommand::start(CommandContext& ctx) {
+    if (sysvar_) {
+        ctx.set_prompt(std::string("Enter new value for FILLMODE <") + (ctx.fillmode() ? "1" : "0") + ">: ");
+    } else {
+        ctx.set_prompt(std::string("Enter mode [ON/OFF] <") + (ctx.fillmode() ? "ON" : "OFF") + ">: ");
+    }
+}
+
+void FillCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
+        done_ = true; // Enter keeps the mode
+        return;
+    }
+    if (sysvar_) {
+        if (u != "0" && u != "1") {
+            ctx.echo("Requires 0 or 1.");
+            return;
+        }
+        ctx.submit(core::SetFillModeCommand{u == "1"});
+    } else {
+        if (u != "ON" && u != "OFF") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        ctx.submit(core::SetFillModeCommand{u == "ON"});
+    }
+    done_ = true;
+}
+
+void FillCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void PlinewidCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for PLINEWID <" + fmt4(PolylineCommand::s_width_) + ">: ");
+}
+
+void PlinewidCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v < 0.0) {
+            ctx.echo("Requires a width of zero or more.");
+            return;
+        }
+        PolylineCommand::s_width_ = v;
+    }
+    done_ = true;
+}
+
+void PlinewidCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -4396,7 +4630,7 @@ void PeditCommand::prompt_option(CommandContext& ctx) const {
 }
 
 void PeditCommand::prompt_vertex(CommandContext& ctx) const {
-    ctx.set_prompt("Enter a vertex editing option [Insert/Delete/Move/eXit] <X>: ");
+    ctx.set_prompt("Enter a vertex editing option [Insert/Delete/Move/Width/eXit] <X>: ");
 }
 
 void PeditCommand::start(CommandContext& ctx) {
@@ -4444,7 +4678,9 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Select objects to join: ");
             return;
         } else if (u == "W" || u == "WIDTH") {
-            ctx.echo("Width is not supported: polylines have no width here yet.");
+            state_ = State::WidthVal;
+            ctx.set_prompt("Specify new width for all segments: ");
+            return;
         } else if (u == "E" || u == "EDIT VERTEX" || u == "EDIT") {
             state_ = State::Vertex;
             prompt_vertex(ctx);
@@ -4464,7 +4700,7 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "U" || u == "UNDO") {
             ctx.submit(core::UndoLastGroupCommand{});
         } else {
-            ctx.echo("Enter Close, Open, Join, Edit vertex, Spline, Decurve, Reverse, Undo or Enter to finish.");
+            ctx.echo("Enter Close, Open, Join, Width, Edit vertex, Spline, Decurve, Reverse, Undo or Enter to finish.");
         }
         prompt_option(ctx);
         return;
@@ -4497,11 +4733,59 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "M" || u == "MOVE") {
             state_ = State::VMoveFrom;
             ctx.set_prompt("Specify vertex to move: ");
+        } else if (u == "W" || u == "WIDTH") {
+            state_ = State::VWidthAt;
+            ctx.set_prompt("Specify the vertex the segment starts at: ");
         } else {
-            ctx.echo("Enter Insert, Delete, Move or eXit.");
+            ctx.echo("Enter Insert, Delete, Move, Width or eXit.");
             prompt_vertex(ctx);
         }
         return;
+    case State::WidthVal: {
+        double w = 0.0;
+        if (t.empty()) {
+            state_ = State::Option;
+            prompt_option(ctx);
+            return;
+        }
+        if (!parse_number(t, w) || w < 0.0) {
+            ctx.echo("Requires a width of zero or more.");
+            return;
+        }
+        op(8, {w, 0.0});
+        state_ = State::Option;
+        prompt_option(ctx);
+        return;
+    }
+    case State::VWidthAt:
+        if (const auto p = read_point(ctx, text)) {
+            vfrom_ = *p;
+            state_ = State::VWidthStart;
+            ctx.set_prompt("Specify starting width for next segment <0.0000>: ");
+        }
+        return;
+    case State::VWidthStart: {
+        double w = 0.0;
+        if (!t.empty() && (!parse_number(t, w) || w < 0.0)) {
+            ctx.echo("Requires a width of zero or more.");
+            return;
+        }
+        vw_start_ = w;
+        state_ = State::VWidthEnd;
+        ctx.set_prompt("Specify ending width for next segment <" + fmt4(w) + ">: ");
+        return;
+    }
+    case State::VWidthEnd: {
+        double w = vw_start_;
+        if (!t.empty() && (!parse_number(t, w) || w < 0.0)) {
+            ctx.echo("Requires a width of zero or more.");
+            return;
+        }
+        op(9, vfrom_, {vw_start_, w});
+        state_ = State::Vertex;
+        prompt_vertex(ctx);
+        return;
+    }
     case State::VInsert:
         if (const auto p = read_point(ctx, text)) {
             op(5, *p);

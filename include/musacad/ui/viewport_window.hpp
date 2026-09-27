@@ -122,6 +122,10 @@ public:
         std::scoped_lock lock(layers_mutex_);
         return psltscale_;
     }
+    [[nodiscard]] bool fillmode() const {
+        std::scoped_lock lock(layers_mutex_);
+        return fillmode_;
+    }
     [[nodiscard]] bool msltscale() const {
         std::scoped_lock lock(layers_mutex_);
         return msltscale_;
@@ -645,6 +649,7 @@ private:
     double ltscale_ = 1.0;
     double celtscale_ = 1.0;
     bool psltscale_ = true;
+    bool fillmode_ = true;
     bool msltscale_ = true;
     std::uint8_t pickstyle_ = 1;
     bool object_isolation_ = false;

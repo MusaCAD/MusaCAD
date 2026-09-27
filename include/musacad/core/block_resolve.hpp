@@ -24,6 +24,15 @@ struct InsertSeg {
     Linetype linetype = Linetype::Continuous;
 };
 
+/// A resolved world-space filled triangle of a block instance (the band of a wide
+/// polyline inside the block).
+struct InsertFill {
+    Vec2 a;
+    Vec2 b;
+    Vec2 c;
+    Rgb color{255, 255, 255};
+};
+
 /// Maximum block-nesting depth resolved (guards cyclic / pathological definitions).
 inline constexpr int kMaxBlockDepth = 16;
 
@@ -34,7 +43,11 @@ inline constexpr int kMaxBlockDepth = 16;
 /// distinct primitives. This is THE single transformed-geometry path: the render
 /// snapshot, entity bounds, pick, window/crossing, hover, and snap all go through it,
 /// so the displayed, picked, and bounded geometry can never diverge.
+///
+/// A wide polyline inside the block contributes its centre line and, when `fills` is
+/// given and FILLMODE is on, its band as triangles there; otherwise the band's outline
+/// joins the segments (so bounds and picking see the width either way).
 void resolve_insert(const GeometryStore& store, const InsertData& ins, double tolerance,
-                    std::vector<InsertSeg>& out);
+                    std::vector<InsertSeg>& out, std::vector<InsertFill>* fills = nullptr);
 
 } // namespace musacad::core

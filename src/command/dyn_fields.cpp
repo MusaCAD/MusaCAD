@@ -17,16 +17,29 @@ double sign_of(double v) {
 std::string num(double v) {
     return std::to_string(v);
 }
+// The point a drag is measured from: the first anchor, or the last vertex of a polyline
+// being drawn.
+core::Vec2 anchor_of(const PreviewSpec& pv) {
+    if (pv.points.empty()) {
+        return {0.0, 0.0};
+    }
+    return pv.kind == PreviewKind::Polyline ? pv.points.back() : pv.points[0];
+}
 } // namespace
+
+bool dyn_segment_like(const PreviewSpec& pv) noexcept {
+    return pv.kind == PreviewKind::Segment ||
+           (pv.kind == PreviewKind::Polyline && pv.pline_dyn && !pv.points.empty());
+}
 
 std::vector<DynField> dyn_fields(const PreviewSpec& pv, core::Vec2 cursor) {
     std::vector<DynField> out;
     if (pv.points.empty()) {
         return out;
     }
-    const core::Vec2 a = pv.points[0];
+    const core::Vec2 a = anchor_of(pv);
 
-    switch (pv.kind) {
+    switch (dyn_segment_like(pv) ? PreviewKind::Segment : pv.kind) {
     case PreviewKind::Segment: {
         const double len = core::distance(a, cursor);
         const double ang = std::atan2(cursor.y - a.y, cursor.x - a.x) * kRadToDeg;
@@ -67,9 +80,9 @@ std::vector<DynField> dyn_fields(const PreviewSpec& pv, core::Vec2 cursor) {
 
 std::string compose_dyn_submit(const PreviewSpec& pv, core::Vec2 cursor,
                                std::optional<double> primary, std::optional<double> secondary) {
-    const core::Vec2 a = pv.points.empty() ? core::Vec2{0, 0} : pv.points[0];
+    const core::Vec2 a = anchor_of(pv);
 
-    switch (pv.kind) {
+    switch (dyn_segment_like(pv) ? PreviewKind::Segment : pv.kind) {
     case PreviewKind::Segment: {
         if (!primary && !secondary) {
             return {}; // need at least one typed value to override the cursor
@@ -112,9 +125,9 @@ core::Vec2 apply_dyn_lock(const PreviewSpec& pv, core::Vec2 cursor, std::optiona
     if (!primary && !secondary) {
         return cursor;
     }
-    const core::Vec2 a = pv.points.empty() ? core::Vec2{0, 0} : pv.points[0];
+    const core::Vec2 a = anchor_of(pv);
 
-    switch (pv.kind) {
+    switch (dyn_segment_like(pv) ? PreviewKind::Segment : pv.kind) {
     case PreviewKind::Segment: {
         const double live_len = core::distance(a, cursor);
         const double live_ang = std::atan2(cursor.y - a.y, cursor.x - a.x) * kRadToDeg;

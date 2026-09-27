@@ -187,6 +187,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
     doc.wipeout_frames = store.wipeout_frames();
+    doc.fillmode = store.fillmode();
     doc.attdisp = store.attdisp();
     doc.image_frame = store.image_frame();
     doc.layouts = store.layouts();
@@ -259,10 +260,12 @@ Document document_from_store(const GeometryStore& store) {
             const PolylineData& p = plines.data()[i];
             const std::span<const Vec2> v = store.vertices_of(p);
             const std::span<const double> b = store.bulges_of(p);
+            const std::span<const double> w = store.widths_of(p);
             doc.polylines.push_back(DocPolyline{
                 std::vector<Vec2>(v.begin(), v.end()), p.closed, p.props,
                 std::vector<double>(b.begin(), b.end()),
-                store.celtscale(EntityHandle{i, plines.generations()[i], EntityKind::Polyline})});
+                store.celtscale(EntityHandle{i, plines.generations()[i], EntityKind::Polyline}),
+                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness});
         }
     }
     const auto& splines = store.splines();
@@ -424,7 +427,8 @@ Document document_from_store(const GeometryStore& store) {
             bd.arcs.push_back(DocArc{a.center, a.radius, a.start_angle, a.end_angle, a.props});
         }
         for (const BlockPolyline& p : b->content.polylines) {
-            bd.polylines.push_back(DocPolyline{p.verts, p.closed, p.props, p.bulges});
+            bd.polylines.push_back(
+                DocPolyline{p.verts, p.closed, p.props, p.bulges, 1.0, p.widths, p.elevation, p.thickness});
         }
         for (const BlockText& t : b->content.texts) {
             bd.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
@@ -465,6 +469,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     store.set_current_text_style(doc.current_text_style);
     store.set_wipeout_frames(doc.wipeout_frames);
+    store.set_fillmode(doc.fillmode);
     store.set_attdisp(doc.attdisp);
     store.set_image_frame(doc.image_frame);
     if (!doc.layouts.empty()) {
@@ -513,7 +518,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
                     ArcData{a.center, a.radius, a.start_angle, a.end_angle, a.props});
             }
             for (const DocPolyline& p : bd.polylines) {
-                cb.content.polylines.push_back(BlockPolyline{p.points, p.bulges, p.closed, p.props});
+                cb.content.polylines.push_back(BlockPolyline{p.points, p.bulges, p.closed, p.props, p.widths,
+                                                             p.elevation, p.thickness});
             }
             for (const DocText& t : bd.texts) {
                 cb.content.texts.push_back(
@@ -659,7 +665,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
                             a.celtscale);
     }
     for (const DocPolyline& p : doc.polylines) {
-        store.set_celtscale(store.add_polyline(p.points, p.bulges, p.closed, p.props), p.celtscale);
+        store.set_celtscale(
+            store.add_polyline(p.points, p.bulges, p.closed, p.props, p.widths, p.elevation, p.thickness),
+            p.celtscale);
     }
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props);

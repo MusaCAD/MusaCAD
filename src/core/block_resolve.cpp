@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/block_resolve.hpp"
+#include "musacad/core/polyline_width.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -86,17 +87,20 @@ void emit_polyline_transformed(const Mat3& m, const std::vector<Vec2>& local_cha
 
 void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& xform,
                 const ResolvedProps& inherited, double tol, int depth,
-                const std::vector<std::string>* values, std::vector<InsertSeg>& out);
+                const std::vector<std::string>* values, std::vector<InsertSeg>& out,
+                std::vector<InsertFill>* fills);
 
 void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& xform,
                 const ResolvedProps& inherited, double tol, int depth,
-                const std::vector<std::string>* values, std::vector<InsertSeg>& out) {
+                const std::vector<std::string>* values, std::vector<InsertSeg>& out,
+                std::vector<InsertFill>* fills) {
     for (const LineData& l : bc.lines) {
         const ResolvedProps rp = member_props(store, l.props, inherited);
         out.push_back(InsertSeg{xform.transform_point(l.a), xform.transform_point(l.b), rp.color,
                                 rp.lineweight, rp.linetype});
     }
     std::vector<Vec2> chain;
+    std::vector<Vec2> band;
     for (const CircleData& c : bc.circles) {
         const ResolvedProps rp = member_props(store, c.props, inherited);
         const std::size_t n = curve_segments(c.radius, kTwoPi, tol);
@@ -164,6 +168,21 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
             chain.back() = p1; // land exactly
         }
         emit_polyline_transformed(xform, chain, rp, out);
+        if (pl.widths.size() == 2 * nv && pline::has_width(pl.widths)) {
+            // The band, built in the block's own coordinates and placed like the rest.
+            band.clear();
+            if (fills != nullptr && store.fillmode()) {
+                pline::band_triangles(pl.verts, pl.bulges, pl.widths, pl.closed, tol, band);
+                for (std::size_t i = 0; i + 2 < band.size(); i += 3) {
+                    fills->push_back(InsertFill{xform.transform_point(band[i]),
+                                                xform.transform_point(band[i + 1]),
+                                                xform.transform_point(band[i + 2]), rp.color});
+                }
+            } else {
+                pline::band_outline(pl.verts, pl.bulges, pl.widths, pl.closed, tol, band);
+                emit_pairs_transformed(xform, band, rp, out);
+            }
+        }
     }
     std::vector<Vec2> tseg;
     for (const BlockText& t : bc.texts) {
@@ -214,14 +233,14 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
         const ResolvedProps inh = member_props(store, nested.props, inherited);
         const std::vector<std::string> nested_values = store.insert_attribs(nested);
         emit_block(store, bd->content, xform * insert_matrix(nested), inh, tol, depth + 1,
-                   &nested_values, out);
+                   &nested_values, out, fills);
     }
 }
 
 } // namespace
 
 void resolve_insert(const GeometryStore& store, const InsertData& ins, double tolerance,
-                    std::vector<InsertSeg>& out) {
+                    std::vector<InsertSeg>& out, std::vector<InsertFill>* fills) {
     const BlockDef* bd = store.block(ins.block);
     if (bd == nullptr) {
         return; // dangling reference -- nothing to draw, store stays consistent
@@ -229,7 +248,7 @@ void resolve_insert(const GeometryStore& store, const InsertData& ins, double to
     const Layer* il = store.layer(ins.props.layer);
     const ResolvedProps inherited = resolve(ins.props, il != nullptr ? *il : Layer{});
     const std::vector<std::string> values = store.insert_attribs(ins);
-    emit_block(store, bd->content, insert_matrix(ins), inherited, tolerance, 0, &values, out);
+    emit_block(store, bd->content, insert_matrix(ins), inherited, tolerance, 0, &values, out, fills);
 }
 
 } // namespace musacad::core

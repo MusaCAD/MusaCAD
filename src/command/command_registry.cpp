@@ -263,6 +263,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Overlapping objects under a pick: 2 offers the list (Ctrl+W toggles), 0 picks the nearest.");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
         "Check the drawing for bad references and structure; optionally fix them.");
+    reg({"FILL"}, [] { return std::make_unique<FillCommand>(false); }, "",
+        "Whether wide polylines, solids and hatches are filled (ON) or outlined (OFF).");
+    reg({"FILLMODE"}, [] { return std::make_unique<FillCommand>(true); }, "",
+        "Whether wide polylines, solids and hatches are filled (1) or outlined (0).");
+    reg({"PLINEWID"}, [] { return std::make_unique<PlinewidCommand>(); }, "",
+        "The width new polylines start with.");
     reg({"DO", "DONUT"}, [] { return std::make_unique<DonutCommand>(); },
         "assets/ribbon/donut.svg", "Draw a filled ring (or disc) from inside/outside diameters.");
     reg({"V", "VIEW", "-VIEW"}, [] { return std::make_unique<ViewCommand>(); },

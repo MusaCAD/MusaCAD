@@ -59,7 +59,7 @@ commands (Ribbon Phase A):
 | OSNAP (OS, DDOSNAP) / -OSNAP | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE, ALL). |
 | WIPEOUT | Mask polygon from points or a closed polyline ([Polyline], with optional erase); [Frames] ON/OFF shows or hides the boundaries. Hides lines, curves and hatches beneath it; text stays visible. |
 | FIELD | Text carrying %<Date>%, %<Time>%, %<Filename>% or %<Login>%, expanded at layout and refreshed on every regen. |
-| PEDIT (PE) | Edit a polyline: Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
+| PEDIT (PE) | Edit a polyline: Close/Open, Join, Width (one width for every segment), Edit vertex (Insert/Delete/Move/Width), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
 | BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
 | INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
 | ATTDEF (ATT, -ATTDEF) | Define a block attribute: modes (Invisible/Constant/Verify/Preset), tag, prompt, default value, then the text placement. Shows its tag until BLOCK folds it into a definition. |
@@ -100,7 +100,9 @@ commands (Ribbon Phase A):
 | BREAKATPOINT | Split a curve at one point, leaving no gap. |
 | ELLIPSE (EL) | Draw an ellipse or elliptical arc (axis endpoints, Center, Rotation, Arc). |
 | SPLINE (SPL) | Draw a spline through fit points (Method Fit, Knots Chord/Square root/Uniform) or by control vertices (Method CV, Degree). Undo, Close. |
-| DONUT (DO) | Filled ring or disc from inside/outside diameters (drawn as a SOLID hatch with two loops). |
+| DONUT (DO) | Filled ring or disc from inside/outside diameters (typed, or shown by two points): a closed polyline of two arcs, as wide as the ring. |
+| FILL / FILLMODE | Whether wide polylines, solids and hatches are filled (ON / 1) or wide polylines outlined and hatches hidden (OFF / 0). Saved with the drawing. |
+| PLINEWID | The width new polylines start with. |
 | XLINE (XL) | Draw an infinite construction line. |
 | RAY | Draw a semi-infinite construction line. |
 | POINT (PO) | Place point objects; Esc ends. |
@@ -136,13 +138,14 @@ commands (Ribbon Phase A):
 | Command | Alias | Status |
 |---|---|---|
 | LINE | L | Implemented -- `Specify next point or [Close/Undo]:`; **Close** joins back to the first point; Enter at the first prompt **continues** from the last line or arc (tangent to an arc: `Specify length of line:`) |
-| PLINE (polyline) | PL | Implemented -- `Specify next point or [Arc/Close/Length/Undo]:`; **Arc** mode `[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]` with each sub-step (an arc is tangent to the previous segment unless told otherwise; Ctrl bends it the other way); **Length** continues along the last segment; the band shows the arc the click will make. Width / Halfwidth wait on the polyline width model (#37) |
+| PLINE (polyline) | PL | Implemented -- `Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]:`; **Arc** mode `[Angle/CEnter/CLose/Direction/Halfwidth/Line/Radius/Second pt/Undo/Width]` with each sub-step (an arc is tangent to the previous segment unless told otherwise; Ctrl bends it the other way); **Length** continues along the last segment; **Width** / **Halfwidth** ask for a starting and an ending value (typed, or a point's distance from the last vertex): the next segment tapers between them and the ending width stays in force, for later polylines too (`PLINEWID`); the band shows the arc and the width the click will make; Dynamic Input offers length and angle fields on a next-point pick |
+| Polyline widths | -- | Two widths per vertex (start and end of the segment leaving it), drawn as filled bands (mitred between straight segments of one width), outlined with FILLMODE 0; picked anywhere on the band. MOVE / COPY / ROTATE / MIRROR / SCALE (the width scales) / STRETCH / ARRAY carry them; TRIM, BREAK, EXTEND, FILLET, CHAMFER and OFFSET hand them to the pieces (a taper keeps its slope); JOIN keeps each source's; EXPLODE drops them and says so. LIST, the Properties palette (Global width, Elevation, Thickness) and MATCHPROP (Polyline) know them. Saved in `.musa` (format 37) and DXF (40 / 41 / 43, 38, 39; the legacy POLYLINE's too); a wide polyline inside a block is filled where the block is inserted |
 | CIRCLE | C | Implemented -- `Specify center point for circle or [3P/2P/Ttr (tan tan radius)]:`; centre + radius / `[Diameter]` with the last radius as the default (CIRCLERAD); **3P** through three points; **2P** by the ends of a diameter; **Ttr** tangent to two objects with a radius; **TTT** tangent to three objects (lines, circles, arcs, construction lines, polyline segments; the branch nearest the picks) |
 | ARC | A | Implemented -- `Specify start point of arc or [Center]:`, `Specify second point of arc or [Center/End]:`; the **Center** branch (end, `[Angle/chord Length]`) and the **End** branch (centre, `[Angle/Direction/Radius]`), the centre first, **Continue** (Enter at the first prompt: tangent from the last line or arc), **Ctrl** at a pick switches the direction; the rubber band shows the arc the click will make |
 | RECTANGLE | REC | Implemented |
 | RECTANG (the command echoes as RECTANG) -- `Specify other corner point or [Area/Dimensions/Rotation]:`; length / width / area remembered as the next defaults; **Rotation** by an angle or `[Pick points]`, in force for later rectangles; `Current rectangle modes: Fillet=…` echoed; Area means the finished shape (corner cut-outs included); the band shows the rounded / chamfered corners | typed mid-command | Implemented |
 | RECTANGLE options: **Dimensions** (`D` → length → width → quadrant-flip placement click), **Area** (`A` → area → `[Length/Width]` → side → placement), **Rotation** (`R` → angle) | typed mid-command | Implemented (option keywords, same state machine as CIRCLE `[Diameter]`) |
-| RECTANGLE first-corner options: Chamfer / Fillet | C / F | Implemented (Elevation / Thickness / Width are not offered: 2D only, no polyline width) |
+| RECTANGLE first-corner options: `[Chamfer/Elevation/Fillet/Thickness/Width]` | C / E / F / T / W | Implemented (Width is the polyline width; Elevation and Thickness are kept and saved, DXF 38 / 39, the view being 2D; all stay in force and are echoed in `Current rectangle modes:`) |
 | SPLINE | SPL | Implemented (#23) -- Fit and CV methods |
 | ELLIPSE | EL | Implemented (#23) -- axis-end, Center, Rotation, Arc |
 | POLYGON (side count and Inscribed / Circumscribed remembered, 3..1024 sides, a typed radius stands the polygon on a flat bottom edge, an Edge-mode band) | POL | Implemented (#23) -- inscribed / circumscribed / Edge |
@@ -175,7 +178,7 @@ commands (Ribbon Phase A):
 | ARRAYEDIT / ARRAYCLOSE | - | Not applicable (arrays are non-associative -- see below) |
 | POLYGON (centre: Inscribed/Circumscribed; Edge) | POL | Implemented |
 | RECTANGLE [Chamfer] / [Fillet] corner options (session defaults, last set wins) | REC | Implemented |
-| RECTANGLE [Width] / [Elevation] / [Thickness] | REC | Not offered (no polyline width; 3D) |
+| RECTANGLE [Width] / [Elevation] / [Thickness] | REC | Implemented |
 | REVCLOUD (Arc length, Object + Reverse direction, Rectangular, Polygonal, Freehand as a clicked path) | REVCLOUD | Implemented (Normal style; Modify not offered) |
 | EXPLODE (polyline -> lines/arcs; block one level; dimension/leader -> lines, solids, text; hatch -> lines or boundary; MTEXT -> TEXT per line; table -> lines + text) | X | Implemented |
 | PURGE (unused layers) | PU | Implemented |
@@ -187,7 +190,8 @@ commands (Ribbon Phase A):
 | ELLIPSE (axis-end / Center / Rotation / Arc by angle, parameter, included) | EL | Implemented |
 | SPLINE (Fit with Knots; CV with Degree; Undo; Close) | SPL | Implemented (Tangency, fit tolerance, Object deferred) |
 | XLINE (Hor / Ver / Ang / Bisect / two-point) | XL | Implemented (Offset deferred) |
-| DONUT | DO | Implemented (as a SOLID two-loop hatch; no polyline width) |
+| DONUT | DO | Implemented (a closed two-arc wide polyline, as AutoCAD makes it; FILLMODE decides the fill) |
+| FILL / FILLMODE / PLINEWID | -- | Implemented |
 | VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
 | GROUP / UNGROUP / PICKSTYLE 0..3 / -GROUP (?, Order, Add, Remove, Explode, REName, Selectable, Create) / GROUPEDIT / Ctrl+H | G | Implemented (#53; group membership persists in .musa; not on the undo stack; PICKSTYLE's hatch bit waits for associative hatches, #41) |
 | UNITS (the Drawing Units dialog; -UNITS with AutoCAD's numbered tables; INSUNITS; degrees/DMS/grads/radians/surveyor) | UN / -UNITS | Implemented (#67; dimension text keeps the dimstyle precision, as DIMLUNIT does) |
@@ -202,7 +206,7 @@ commands (Ribbon Phase A):
 | Tiled model-space viewports (VPORTS): the window split into tiles each with its own camera, the active one outlined, tile-local picking and dynamic input, the wheel on any tile, Join, named configurations, native v35 and the DXF VPORT table (`*Active` entries) both ways | VPORTS | Implemented |
 | Per-viewport layer freezing: a viewport's own frozen-layer list applied when the model is built for it (and while editing through it with MSPACE), the Layer Properties Manager's VP Freeze / New VP Freeze columns, native v34, DXF VIEWPORT 331 + LAYER flag 2 | VPLAYER | Implemented |
 | MSPACE / PSPACE through a viewport: double-click in / out, the camera hand-off keeps the viewport's on-screen size, the view left on PSPACE becomes the viewport's view | MSPACE | Implemented (the sheet is not shown around the model while inside; a tab switch drops the edit without a write-back) |
-| PEDIT (Close/Open/Join/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Width, Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
+| PEDIT (Close/Open/Join/Width/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
 | Object snaps: Insertion, Apparent intersection, Parallel; OSNAP settings dialog; -OSNAP | OS | Implemented (Apparent intersection and Parallel are opt-in, as in AutoCAD) |
 | ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |
 | Properties palette: feature control frame cells and datum letter editable | PR | Implemented |
@@ -357,7 +361,7 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | **DYN canvas command entry** — start typing on an idle canvas and a command-entry box appears at the cursor with the registry autocomplete dropdown (Down/Up/Tab select, Enter runs, Esc clears); routed by the app-wide event filter; bounded glyph batches regardless of suggestion count | — | Implemented (Ph27) |
 | **DYN canvas sub-prompts** — any mid-command value/keyword step (FILLET radius, CHAMFER distances, RECTANGLE Dimensions length/width, Area, Rotation, option keywords) renders as an at-cursor prompt cell; type → Enter commits/advances, Esc cancels. Same primitive as entry + dimension fields | — | Implemented (Ph27) |
 | DYN live dimensional input: type an exact length/angle (line), radius (circle), width/height (rectangle) during the rubber-band; Tab between fields | — | Implemented (Ph25; honors ORTHO/POLAR/snap) |
-| **DYN on-geometry value fields** — value boxes drawn ON the canvas (in the GL viewport overlay, NOT OS windows) anchored to the rubber-band geometry, so they are always glued to it and cannot drift on multi-monitor (length under one edge, width by the other for RECTANGLE; length + angle for LINE; radius for CIRCLE), nudged just outside the edge so they never overlap. Type WITHOUT a click (the viewport captures dimension keystrokes); **Tab/Shift-Tab** switch fields; **Enter/Space** commit; **Esc** cancels; the mouse still drives the rubber-band. A typed value locks that dimension while the cursor drives the other(s) | F12 | Implemented (RECTANGLE/LINE/CIRCLE; other commands staged) |
+| **DYN on-geometry value fields** — value boxes drawn ON the canvas (in the GL viewport overlay, NOT OS windows) anchored to the rubber-band geometry, so they are always glued to it and cannot drift on multi-monitor (length under one edge, width by the other for RECTANGLE; length + angle for LINE and PLINE's next point; radius for CIRCLE), nudged just outside the edge so they never overlap. Type WITHOUT a click (the viewport captures dimension keystrokes); **Tab/Shift-Tab** switch fields; **Enter/Space** commit; **Esc** cancels; the mouse still drives the rubber-band. A typed value locks that dimension while the cursor drives the other(s) | F12 | Implemented (RECTANGLE/LINE/PLINE/CIRCLE; other commands staged) |
 | **DYN command-control keys (Esc / Enter / Space)** — with DYN on, these always reach the command (never swallowed by the on-canvas fields). **Esc** always cancels the active command — even with a half-typed value — clearing the rubber-band and fields. **Enter** / **Space** are AutoCAD's two-step: a pending typed value commits (keep drawing), otherwise the step ends (Enter at a LINE next-point prompt ends LINE). Tab/Shift-Tab still cycle fields. One carve-out in the app-wide event filter; F12-OFF (classic bar) unchanged | Esc / Enter / Space | Implemented |
 | Single input surface per step: every step has exactly ONE place to type — the on-canvas entry (idle), sub-prompt cell (mid-command scalar/keyword), or dimension fields (rubber-band). The legacy cursor box is retired. State lives in the `CommandProcessor` (prompt + history), so hiding the bottom bar loses nothing; everything submits through the same pipeline (`compose_dyn_submit` / `submit_line`) | — | Implemented |
 | **DYN autocomplete**: the Ph6 command-suggestion dropdown anchored at the cursor entry box (one suggestion source: the registry) | — | Implemented (Ph26–27) |

@@ -388,6 +388,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_ltscales(viewport_->ltscale(), viewport_->current_celtscale(), viewport_->psltscale(),
                                  viewport_->msltscale());
         processor_->set_pickstyle(viewport_->pickstyle());
+        processor_->set_fillmode(viewport_->fillmode());
         processor_->set_drawing_props(viewport_->drawing_props());
         {
             std::vector<std::string> lnames;

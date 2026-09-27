@@ -116,6 +116,8 @@ public:
         msltscale_ = ms;
     }
     [[nodiscard]] double ltscale() const override { return ltscale_; }
+    void set_fillmode(bool on) noexcept { fillmode_ = on; }
+    [[nodiscard]] bool fillmode() const override { return fillmode_; }
     [[nodiscard]] double current_celtscale() const override { return celtscale_; }
     [[nodiscard]] bool psltscale() const override { return psltscale_; }
     [[nodiscard]] bool msltscale() const override { return msltscale_; }
@@ -254,6 +256,7 @@ private:
     double ltscale_ = 1.0;
     double celtscale_ = 1.0;
     bool psltscale_ = true;
+    bool fillmode_ = true;
     bool msltscale_ = true;
     std::uint8_t pickstyle_ = 1;
     core::DrawingProps drawing_props_;

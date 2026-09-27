@@ -43,7 +43,7 @@ struct Harness {
 };
 constexpr const char* kArcPrompt =
     "Specify endpoint of arc (hold Ctrl to switch direction) or "
-    "[Angle/CEnter/CLose/Direction/Line/Radius/Second pt/Undo]: ";
+    "[Angle/CEnter/CLose/Direction/Halfwidth/Line/Radius/Second pt/Undo/Width]: ";
 } // namespace
 
 TEST_CASE("PLINE: a tangent arc after a line, then Line mode again, then Close") {
@@ -51,16 +51,16 @@ TEST_CASE("PLINE: a tangent arc after a line, then Line mode again, then Close")
     h.proc.submit_line("PL");
     REQUIRE(h.out.lines.back().rfind("Current line-width is", 0) == 0);
     h.proc.submit_line("0,0");
-    REQUIRE(h.out.prompts.back() == "Specify next point or [Arc/Length/Undo]: ");
+    REQUIRE(h.out.prompts.back() == "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
     h.proc.submit_line("10,0");
-    REQUIRE(h.out.prompts.back() == "Specify next point or [Arc/Close/Length/Undo]: ");
+    REQUIRE(h.out.prompts.back() == "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: ");
     h.proc.submit_line("A");
     REQUIRE(h.out.prompts.back() == kArcPrompt);
     REQUIRE(h.proc.preview().pline_arc_mode == 1);
     h.proc.submit_line("10,10"); // leaving east from (10, 0) and reaching (10, 10): a semicircle
     REQUIRE(h.out.prompts.back() == kArcPrompt);
     h.proc.submit_line("L");
-    REQUIRE(h.out.prompts.back() == "Specify next point or [Arc/Close/Length/Undo]: ");
+    REQUIRE(h.out.prompts.back() == "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: ");
     h.proc.submit_line("0,10");
     h.proc.submit_line("CLOSE");
     const AddPolylineCommand* p = h.poly();

@@ -38,6 +38,7 @@
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
 #include "musacad/core/polyline_ops.hpp"
+#include "musacad/core/polyline_width.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/table.hpp"
@@ -126,8 +127,53 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
     EntityProps fresh = current_props_;
     fresh.layer = store_.current_layer();
     fresh.set_space(store_.active_space()); // a new object belongs to the space being edited
+    if (poly_inherit_) {
+        if (const auto* pc = std::get_if<AddPolylineCommand>(&add_command);
+            pc != nullptr && pc->widths.empty()) {
+            AddPolylineCommand with = *pc;
+            pline::inherit_widths(poly_inherit_->verts, poly_inherit_->bulges, poly_inherit_->widths,
+                                  poly_inherit_->closed, with.points, with.bulges, with.closed,
+                                  with.widths);
+            if (with.elevation == 0.0) {
+                with.elevation = poly_inherit_->elevation;
+            }
+            if (with.thickness == 0.0) {
+                with.thickness = poly_inherit_->thickness;
+            }
+            return add_command_to_store(store_, Command{std::move(with)}, fresh);
+        }
+    }
     return add_command_to_store(store_, add_command, fresh);
 }
+
+void GeometryEngine::inherit_polyline(const Command& original) {
+    poly_inherit_.reset();
+    const auto* pc = std::get_if<AddPolylineCommand>(&original);
+    if (pc == nullptr || (pc->widths.empty() && pc->elevation == 0.0 && pc->thickness == 0.0)) {
+        return;
+    }
+    poly_inherit_ = PolylineInherit{pc->points, pc->bulges, pc->widths,
+                                    pc->closed, pc->elevation, pc->thickness};
+}
+
+namespace {
+// A wide polyline is picked anywhere on its band, not only along its centre line.
+double pick_distance_squared(const GeometryStore& store, EntityHandle h, double d2) {
+    if (h.kind != EntityKind::Polyline) {
+        return d2;
+    }
+    const PolylineData* p = store.polyline(h);
+    if (p == nullptr) {
+        return d2;
+    }
+    const double half = pline::max_width(store.widths_of(*p)) * 0.5;
+    if (!(half > 0.0)) {
+        return d2;
+    }
+    const double d = std::max(0.0, std::sqrt(d2) - half);
+    return d * d;
+}
+} // namespace
 
 EntityHandle GeometryEngine::create_indexed(const Command& add_command) {
     const EntityHandle h = create_entity(add_command);
@@ -181,7 +227,7 @@ EntityHandle GeometryEngine::pick_nearest(Vec2 world, double radius) const {
             continue; // off/frozen aren't drawn; locked is inert
         }
         if (kernel_.closest_point(store_, h, world, cp)) {
-            const double d2 = length_squared(cp - world);
+            const double d2 = pick_distance_squared(store_, h, length_squared(cp - world));
             if (d2 <= best_d2) {
                 best_d2 = d2;
                 best = h;
@@ -256,6 +302,17 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
 void GeometryEngine::push_create_item(std::uint64_t group, EntityHandle handle, Command data) {
     if (undo_.empty() || undo_.back().id != group) {
         undo_.push_back(Group{group, {}});
+    }
+    // A polyline may have taken its widths from the one it replaces (create_entity):
+    // the history keeps what was made, so redo makes the same object again.
+    if (auto* pc = std::get_if<AddPolylineCommand>(&data);
+        pc != nullptr && handle.kind == EntityKind::Polyline) {
+        if (const PolylineData* p = store_.polyline(handle)) {
+            const std::span<const double> w = store_.widths_of(*p);
+            pc->widths.assign(w.begin(), w.end());
+            pc->elevation = p->elevation;
+            pc->thickness = p->thickness;
+        }
     }
     undo_.back().items.push_back(Item{std::move(data), handle, true});
 }
@@ -435,7 +492,7 @@ std::vector<EntityHandle> GeometryEngine::pick_all(Vec2 world, double radius) co
     Vec2 cp;
     for (const EntityHandle h : candidates) {
         if (selectable(h) && kernel_.closest_point(store_, h, world, cp)) {
-            const double d2 = length_squared(cp - world);
+            const double d2 = pick_distance_squared(store_, h, length_squared(cp - world));
             if (d2 <= radius * radius) {
                 hits.emplace_back(d2, h);
             }
@@ -1661,6 +1718,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 for (Vec2& p : x.points) {
                     p = scl(p);
                 }
+                for (double& w : x.widths) {
+                    w *= std::abs(f);
+                }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos = scl(x.text.pos);
                 x.text.height *= f;
@@ -1932,6 +1992,26 @@ std::string GeometryEngine::list_geometry(EntityHandle h) const {
         const PolylineData* p = store_.polyline(h);
         out += ",  " + std::to_string(p->count) + " vertices,  " +
                (p->closed ? "closed" : "open");
+        if (const auto w = store_.widths_of(*p); pline::has_width(w)) {
+            if (const auto u = pline::uniform_width(w)) {
+                out += ",  constant width " + fmt_len(*u);
+            } else {
+                out += ",  widths";
+                const std::size_t nseg = p->closed ? p->count : p->count - 1;
+                for (std::size_t i = 0; i < nseg && i < 8; ++i) {
+                    out += " " + fmt_len(w[2 * i]) + "-" + fmt_len(w[2 * i + 1]);
+                }
+                if (nseg > 8) {
+                    out += " ...";
+                }
+            }
+        }
+        if (p->elevation != 0.0) {
+            out += ",  elevation " + fmt_len(p->elevation);
+        }
+        if (p->thickness != 0.0) {
+            out += ",  thickness " + fmt_len(p->thickness);
+        }
         break;
     }
     case EntityKind::Text: {
@@ -3385,6 +3465,7 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         const Command original = capture_entity(h);
         remove_indexed(h);
         push_erase_item(group, h, original);
+        inherit_polyline(original);
         const Command extended = AddPolylineCommand{v, false, 0, props, b, cts};
         push_create_item(group, create_indexed(extended), extended);
         redo_.clear();
@@ -3751,6 +3832,17 @@ void GeometryEngine::apply_revcloud_object(const RevcloudObjectCommand& c) {
     report("Converted to a revision cloud of " + std::to_string(cloud.points.size()) + " arcs.");
 }
 
+void GeometryEngine::apply_fillmode(bool on) {
+    if (store_.fillmode() != on) {
+        store_.set_fillmode(on);
+        dirty_ = true;
+        geom_dirty_ = true;
+        sel_cache_valid_ = false;
+    }
+    report(on ? "Fill mode on: wide polylines, solids and hatches are filled."
+              : "Fill mode off: wide polylines are outlined and hatches are hidden.");
+}
+
 void GeometryEngine::apply_revcloud_reverse(std::uint64_t group) {
     prune_selection();
     std::vector<EntityHandle> out;
@@ -3832,8 +3924,8 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         tc.font = std::move(font);
         parts.push_back(std::move(tc));
     };
-    // Polyline vertices + bulges -> lines and arcs (width/tangent info, which this model
-    // does not hold anyway, is what AutoCAD discards here).
+    // Polyline vertices + bulges -> lines and arcs along the centre line: the widths are
+    // what AutoCAD discards here (and says so).
     const auto explode_polyline = [&](const std::vector<Vec2>& pts, const std::vector<double>& bulges,
                                       bool closed, const EntityProps& pr) {
         const std::size_t n = pts.size();
@@ -3862,6 +3954,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
 
     std::vector<EntityHandle> exploded;
     int skipped = 0;
+    bool lost_width = false;
     for (const EntityHandle h : selection_) {
         if (!store_.is_valid(h) || !selectable(h)) {
             continue;
@@ -3874,6 +3967,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
             const std::span<const double> bg = store_.bulges_of(*pl);
             explode_polyline(std::vector<Vec2>(v.begin(), v.end()),
                              std::vector<double>(bg.begin(), bg.end()), pl->closed, pl->props);
+            lost_width = lost_width || pline::has_width(store_.widths_of(*pl));
             break;
         }
         case EntityKind::Insert: {
@@ -3947,6 +4041,12 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
                 }
                 pc.closed = bp.closed;
                 pc.props = bp.props;
+                pc.widths = bp.widths;
+                for (double& w : pc.widths) {
+                    w *= (std::abs(in->scale_x) + std::abs(in->scale_y)) * 0.5;
+                }
+                pc.elevation = bp.elevation;
+                pc.thickness = bp.thickness;
                 parts.push_back(std::move(pc));
             }
             for (const BlockText& bt : def.content.texts) {
@@ -4134,6 +4234,9 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
                       std::to_string(parts.size()) + ".";
     if (skipped > 0) {
         msg += " " + std::to_string(skipped) + " could not be exploded.";
+    }
+    if (lost_width) {
+        msg += " Exploding this polyline has lost width information. The UNDO command will restore it.";
     }
     report(msg);
 }
@@ -4436,9 +4539,12 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
             const PolylineData* pl = st.polyline(h);
             const auto v = st.vertices_of(*pl);
             const auto b = st.bulges_of(*pl);
+            const auto w = st.widths_of(*pl);
             content.polylines.push_back(BlockPolyline{std::vector<Vec2>(v.begin(), v.end()),
                                                           std::vector<double>(b.begin(), b.end()),
-                                                          pl->closed, pl->props});
+                                                          pl->closed, pl->props,
+                                                          std::vector<double>(w.begin(), w.end()),
+                                                          pl->elevation, pl->thickness});
             break;
         }
         case EntityKind::Text: {
@@ -4798,6 +4904,14 @@ void GeometryEngine::apply_polyline_vertex(const PolylineVertexCommand& c) {
         pl.points.insert(pl.points.begin() + static_cast<std::ptrdiff_t>(seg) + 1, mid);
         pl.bulges[seg] = half;
         pl.bulges.insert(pl.bulges.begin() + static_cast<std::ptrdiff_t>(seg) + 1, half);
+        if (pl.widths.size() == 2 * n) {
+            // The split segment's taper carries on through the new vertex.
+            const double w1 = pl.widths[2 * seg + 1];
+            const double wm = (pl.widths[2 * seg] + w1) * 0.5;
+            pl.widths[2 * seg + 1] = wm;
+            const auto at = pl.widths.begin() + static_cast<std::ptrdiff_t>(2 * seg) + 2;
+            pl.widths.insert(at, {wm, w1});
+        }
         what = "Vertex added.";
         break;
     }
@@ -4812,6 +4926,15 @@ void GeometryEngine::apply_polyline_vertex(const PolylineVertexCommand& c) {
         }
         pl.points.erase(pl.points.begin() + static_cast<std::ptrdiff_t>(seg));
         pl.bulges.erase(pl.bulges.begin() + static_cast<std::ptrdiff_t>(seg));
+        if (pl.widths.size() == 2 * n) {
+            // The segment bridging the gap ends with the width the removed one ended with.
+            const double w1 = pl.widths[2 * seg + 1];
+            const auto at = pl.widths.begin() + static_cast<std::ptrdiff_t>(2 * seg);
+            pl.widths.erase(at, at + 2);
+            if (seg > 0) {
+                pl.widths[2 * (seg - 1) + 1] = w1;
+            }
+        }
         what = "Vertex removed.";
         break;
     }
@@ -5824,7 +5947,8 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
             for (const Vec2& v : p.verts) {
                 pts.push_back(v - o);
             }
-            doc.polylines.push_back(io::DocPolyline{pts, p.closed, p.props, p.bulges});
+            doc.polylines.push_back(io::DocPolyline{pts, p.closed, p.props, p.bulges, 1.0, p.widths,
+                                                    p.elevation, p.thickness});
         }
         for (const BlockText& t : def->content.texts) {
             doc.texts.push_back(
@@ -6364,6 +6488,7 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(c.group, h, original);
+    inherit_polyline(original);
     std::vector<EntityHandle> made;
     for (const Command& piece : pieces) {
         const EntityHandle nh = create_indexed(piece);
@@ -6702,6 +6827,7 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
         push_erase_item(group, h1, orig);
+        inherit_polyline(orig);
         const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
@@ -6834,6 +6960,7 @@ void GeometryEngine::apply_fillet_polyline(Vec2 pick, double radius, double pick
     const Command orig = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, h, orig);
+    inherit_polyline(orig);
     const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
@@ -6875,6 +7002,7 @@ void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist
     const Command orig = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, h, orig);
+    inherit_polyline(orig);
     const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
@@ -7143,6 +7271,7 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
         push_erase_item(group, h1, orig);
+        inherit_polyline(orig);
         const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
@@ -7534,6 +7663,9 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     }
     std::vector<Vec2> v;
     std::vector<double> b;
+    std::vector<double> w; // two per vertex, zeros for a plain polyline
+    double elevation = 0.0;
+    double thickness = 0.0;
     bool closed = false;
     EntityProps props{};
     double cts = 1.0;
@@ -7542,11 +7674,15 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         const PolylineData* pl = store_.polyline(h);
         const auto vs = store_.vertices_of(*pl);
         const auto bs = store_.bulges_of(*pl);
+        const auto ws = store_.widths_of(*pl);
         v.assign(vs.begin(), vs.end());
         b.assign(v.size(), 0.0);
         if (!bs.empty()) {
             b.assign(bs.begin(), bs.end());
         }
+        w.assign(ws.begin(), ws.end());
+        elevation = pl->elevation;
+        thickness = pl->thickness;
         closed = pl->closed;
         props = pl->props;
         cts = store_.celtscale(h);
@@ -7576,6 +7712,7 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         return;
     }
     const std::size_t n = v.size();
+    w.resize(2 * n, 0.0);
     std::optional<Command> replacement;
     std::string what;
     const auto nearest_vertex = [&](Vec2 p) {
@@ -7606,14 +7743,18 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     case 2: { // Reverse: vertices backwards; each segment's bulge flips sign
         std::vector<Vec2> rv(v.rbegin(), v.rend());
         std::vector<double> rb(n, 0.0);
+        std::vector<double> rw(2 * n, 0.0);
         for (std::size_t i = 0; i < n; ++i) {
             const std::size_t src = (n + n - 2 - i) % n; // old segment now traversed backwards
             if (closed || i + 1 < n) {
                 rb[i] = -b[src];
+                rw[2 * i] = w[2 * src + 1]; // and its taper runs the other way
+                rw[2 * i + 1] = w[2 * src];
             }
         }
         v = std::move(rv);
         b = std::move(rb);
+        w = std::move(rw);
         what = "Reversed.";
         break;
     }
@@ -7649,6 +7790,14 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         if (seg < b.size()) {
             b[seg] = 0.0; // the split segment becomes straight on both sides
         }
+        if (seg < n) {
+            const double w1 = w[2 * seg + 1];
+            const double wm = (w[2 * seg] + w1) * 0.5;
+            w[2 * seg + 1] = wm;
+            w.insert(w.begin() + static_cast<std::ptrdiff_t>(2 * at), {wm, w1});
+        } else {
+            w.insert(w.end(), {0.0, 0.0});
+        }
         what = "Vertex inserted.";
         break;
     }
@@ -7663,6 +7812,14 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         if (i > 0 && i - 1 < b.size()) {
             b[i - 1] = 0.0; // the segment bridging the gap is straight
         }
+        {
+            const double w1 = w[2 * i + 1];
+            w.erase(w.begin() + static_cast<std::ptrdiff_t>(2 * i),
+                    w.begin() + static_cast<std::ptrdiff_t>(2 * i) + 2);
+            if (i > 0) {
+                w[2 * (i - 1) + 1] = w1;
+            }
+        }
         what = "Vertex deleted.";
         break;
     }
@@ -7670,6 +7827,26 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         const std::size_t i = nearest_vertex(c.p1);
         v[i] = c.p2;
         what = "Vertex moved.";
+        break;
+    }
+    case 8: { // Width: one width for every segment
+        if (!(c.p1.x >= 0.0)) {
+            report("PEDIT: the width cannot be negative.");
+            return;
+        }
+        std::fill(w.begin(), w.end(), c.p1.x);
+        what = "Width set to " + fmt_len(c.p1.x) + ".";
+        break;
+    }
+    case 9: { // the widths of the segment leaving the vertex nearest p1
+        if (!(c.p2.x >= 0.0) || !(c.p2.y >= 0.0)) {
+            report("PEDIT: a width cannot be negative.");
+            return;
+        }
+        const std::size_t i = nearest_vertex(c.p1);
+        w[2 * i] = c.p2.x;
+        w[2 * i + 1] = c.p2.y;
+        what = "Segment width set.";
         break;
     }
     default:
@@ -7681,7 +7858,15 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         for (const double bb : b) {
             any_bulge = any_bulge || std::abs(bb) > 1e-12;
         }
-        replacement = AddPolylineCommand{v, closed, 0, props, any_bulge ? b : std::vector<double>{}, cts};
+        replacement = AddPolylineCommand{v,
+                                         closed,
+                                         0,
+                                         props,
+                                         any_bulge ? b : std::vector<double>{},
+                                         cts,
+                                         pline::has_width(w) ? w : std::vector<double>{},
+                                         elevation,
+                                         thickness};
     }
     const Command original = capture_entity(h);
     remove_indexed(h);
@@ -7971,6 +8156,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, h, original);
+    inherit_polyline(original);
     for (const Command& piece : pieces) {
         push_create_item(group, create_indexed(piece), piece);
     }
@@ -8304,11 +8490,33 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
             }
         }
         // Erase the chain's sources and add the merged polyline -- all in one undo group.
+        // A wide source hands its widths to the segments it contributes; lines and arcs
+        // come in with none.
+        std::vector<double> out_widths;
+        double elevation = 0.0;
+        double thickness = 0.0;
         for (const EntityHandle h : chain) {
             if (!store_.is_valid(h)) {
                 continue;
             }
             const Command original = capture_entity(h);
+            if (const auto* pc = std::get_if<AddPolylineCommand>(&original)) {
+                if (!pc->widths.empty()) {
+                    out_widths.resize(2 * cv.size(), 0.0);
+                    std::vector<double> got = out_widths;
+                    pline::inherit_widths(pc->points, pc->bulges, pc->widths, pc->closed, cv, out_bulges,
+                                          closed, got, std::max(tol, 1e-6));
+                    if (got.size() == out_widths.size()) {
+                        out_widths = std::move(got);
+                    }
+                }
+                if (elevation == 0.0) {
+                    elevation = pc->elevation;
+                }
+                if (thickness == 0.0) {
+                    thickness = pc->thickness;
+                }
+            }
             remove_indexed(h);
             push_erase_item(group, h, original);
         }
@@ -8318,6 +8526,9 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
         cmd.group = group;
         cmd.props = segs[seed].props; // result inherits the seed (source) entity's props
         cmd.bulges = out_bulges;
+        cmd.widths = pline::has_width(out_widths) ? out_widths : std::vector<double>{};
+        cmd.elevation = elevation;
+        cmd.thickness = thickness;
         const EntityHandle nh = create_indexed(cmd);
         push_create_item(group, nh, cmd);
         new_sel.push_back(nh);
@@ -8346,6 +8557,7 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
 }
 
 void GeometryEngine::apply(const Command& command) {
+    poly_inherit_.reset();
     // The selection as an edit finds it (cursor updates are too frequent to copy for).
     if (!std::holds_alternative<SetCursorCommand>(command)) {
         selection_before_apply_ = selection_;
@@ -9347,6 +9559,9 @@ void GeometryEngine::apply(const Command& command) {
                 geom_dirty_ = true;
                 report(c.on ? "Wipeout frames on." : "Wipeout frames off.");
             }
+            if constexpr (std::is_same_v<T, SetFillModeCommand>) {
+                apply_fillmode(c.on);
+            }
             if constexpr (std::is_same_v<T, WipeoutFromPolylineCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
                 if (h.is_null() || h.kind != EntityKind::Polyline || !store_.polyline(h)->closed) {
@@ -9764,6 +9979,7 @@ void GeometryEngine::rebuild_and_publish() {
         buf.active_space = geom_cache_.active_space;
         buf.layouts = geom_cache_.layouts;
         buf.wipeout_frames = geom_cache_.wipeout_frames;
+        buf.fillmode = geom_cache_.fillmode;
         buf.line_batches = geom_cache_.line_batches;
         buf.point_batches = geom_cache_.point_batches;
         buf.fill_vertices = geom_cache_.fill_vertices;
@@ -9949,6 +10165,24 @@ void GeometryEngine::rebuild_and_publish() {
                     htris.clear();
                     hatch::triangulate_filled(store_.hatch_loops(*hd), htris);
                     sel_cache_fills_.insert(sel_cache_fills_.end(), htris.begin(), htris.end());
+                }
+            }
+            // ... and a wide polyline its band (the outline of it with FILLMODE off).
+            if (h.kind == EntityKind::Polyline) {
+                const PolylineData* pl = store_.polyline(h);
+                if (pl != nullptr && pline::has_width(store_.widths_of(*pl))) {
+                    htris.clear();
+                    if (store_.fillmode()) {
+                        pline::band_triangles(store_.vertices_of(*pl), store_.bulges_of(*pl),
+                                              store_.widths_of(*pl), pl->closed, kDefaultTessTolerance,
+                                              htris);
+                        sel_cache_fills_.insert(sel_cache_fills_.end(), htris.begin(), htris.end());
+                    } else {
+                        pline::band_outline(store_.vertices_of(*pl), store_.bulges_of(*pl),
+                                            store_.widths_of(*pl), pl->closed, kDefaultTessTolerance,
+                                            htris);
+                        sel_cache_lines_.insert(sel_cache_lines_.end(), htris.begin(), htris.end());
+                    }
                 }
             }
         }

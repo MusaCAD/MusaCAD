@@ -295,6 +295,21 @@ private:
     /// The direction of the straight object (or polyline segment) under a pick.
     [[nodiscard]] bool straight_under_pick(Vec2 pick, double pick_radius, Vec2& a, Vec2& b) const;
     EntityHandle last_offset_ = EntityHandle::null(); ///< the newest offset, for [Multiple]
+    /// The polyline an edit is replacing (TRIM, BREAK, EXTEND, FILLET, CHAMFER): the
+    /// pieces the edit builds from bare vertices take their widths, elevation and
+    /// thickness from it. Set by inherit_polyline(), used by create_entity(), and
+    /// forgotten when the next command starts.
+    struct PolylineInherit {
+        std::vector<Vec2> verts;
+        std::vector<double> bulges;
+        std::vector<double> widths;
+        bool closed = false;
+        double elevation = 0.0;
+        double thickness = 0.0;
+    };
+    std::optional<PolylineInherit> poly_inherit_;
+    void inherit_polyline(const Command& original);
+    void apply_fillmode(bool on);
     bool mirrtext_ = false; ///< MIRRTEXT: 0 keeps mirrored text readable (the default)
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,

@@ -451,6 +451,7 @@ bool is_leader_arrow(EntityKind k) {
     return k == EntityKind::Leader || k == EntityKind::MLeader;
 }
 bool is_hatch(EntityKind k) { return k == EntityKind::Hatch; }
+bool is_polyline(EntityKind k) { return k == EntityKind::Polyline; }
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
 /// Dimensions AND GD&T. These three properties are what "GD&T annotation matches the
 /// drawing's dimensions automatically" actually means: a frame's whole size derives
@@ -1170,6 +1171,50 @@ const Desc kDescs[] = {
          return v;
      },
      nullptr},
+    // -- Polyline: the width every segment has (the first segment's on a tapered one);
+    //    a typed value makes the whole polyline that wide, as AutoCAD's Global width does.
+    {PropertyId::PlineWidth, "Geometry", "Global width", PropEditor::Number, is_polyline,
+     [](const Command& c) {
+         PropertyValue v;
+         if (const auto* p = std::get_if<AddPolylineCommand>(&c); p != nullptr && !p->widths.empty()) {
+             v.num = p->widths.front();
+         }
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         if (auto* p = std::get_if<AddPolylineCommand>(&c); p != nullptr && v.num >= 0.0) {
+             p->widths.clear();
+             if (v.num > 0.0) {
+                 p->widths.assign(2 * p->points.size(), v.num);
+             }
+         }
+     }},
+    {PropertyId::PlineElevation, "Geometry", "Elevation", PropEditor::Number, is_polyline,
+     [](const Command& c) {
+         PropertyValue v;
+         if (const auto* p = std::get_if<AddPolylineCommand>(&c)) {
+             v.num = p->elevation;
+         }
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         if (auto* p = std::get_if<AddPolylineCommand>(&c)) {
+             p->elevation = v.num;
+         }
+     }},
+    {PropertyId::PlineThickness, "Geometry", "Thickness", PropEditor::Number, is_polyline,
+     [](const Command& c) {
+         PropertyValue v;
+         if (const auto* p = std::get_if<AddPolylineCommand>(&c)) {
+             v.num = p->thickness;
+         }
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         if (auto* p = std::get_if<AddPolylineCommand>(&c)) {
+             p->thickness = v.num;
+         }
+     }},
 };
 
 const Desc* find_desc(PropertyId id) {
@@ -1355,6 +1400,8 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::HatchScale:
     case PropertyId::HatchAngle:
         return MatchSlot::Hatch;
+    case PropertyId::PlineWidth:
+        return MatchSlot::Polyline;
     default:
         return MatchSlot::None;
     }
