@@ -118,6 +118,42 @@ void code_d(std::string& s, int c, double v) {
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
     code(s, c, std::string_view(buf, static_cast<std::size_t>(ptr - buf)));
 }
+
+// LWPOLYLINE widths: 43 when every segment has one width, else 40 / 41 per vertex;
+// 38 / 39 carry the elevation and the thickness.
+void emit_polyline_widths_header(std::string& s, const DocPolyline& p) {
+    if (p.widths.size() == 2 * p.points.size() && !p.widths.empty()) {
+        bool uniform = true;
+        for (const double w : p.widths) {
+            uniform = uniform && w == p.widths.front();
+        }
+        if (uniform && p.widths.front() > 0.0) {
+            code_d(s, 43, p.widths.front());
+        }
+    }
+    if (p.elevation != 0.0) {
+        code_d(s, 38, p.elevation);
+    }
+    if (p.thickness != 0.0) {
+        code_d(s, 39, p.thickness);
+    }
+}
+void emit_vertex_widths(std::string& s, const DocPolyline& p, std::size_t i) {
+    if (p.widths.size() != 2 * p.points.size()) {
+        return;
+    }
+    bool uniform = true;
+    for (const double w : p.widths) {
+        uniform = uniform && w == p.widths.front();
+    }
+    if (uniform) {
+        return; // 43 said it
+    }
+    if (p.widths[2 * i] != 0.0 || p.widths[2 * i + 1] != 0.0) {
+        code_d(s, 40, p.widths[2 * i]);
+        code_d(s, 41, p.widths[2 * i + 1]);
+    }
+}
 void code_i(std::string& s, int c, long v) { code(s, c, std::to_string(v)); }
 
 // GD&T symbols: Musa keeps them as \U+XXXX escapes inside a frame cell; AutoCAD's
@@ -642,10 +678,12 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         }
         code_i(s, 90, static_cast<long>(p.points.size()));
         code_i(s, 70, p.closed ? 1 : 0);
+        emit_polyline_widths_header(s, p);
         const bool has_bulge = p.bulges.size() == p.points.size();
         for (std::size_t i = 0; i < p.points.size(); ++i) {
             code_d(s, 10, p.points[i].x);
             code_d(s, 20, p.points[i].y);
+            emit_vertex_widths(s, p, i);
             // Code 42 is the vertex bulge; emit only non-zero ones (DXF convention).
             if (has_bulge && p.bulges[i] != 0.0) {
                 code_d(s, 42, p.bulges[i]);
@@ -1141,10 +1179,12 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                 emit_props(s, doc, p.props);
                 code_i(s, 90, static_cast<long>(p.points.size()));
                 code_i(s, 70, p.closed ? 1 : 0);
+                emit_polyline_widths_header(s, p);
                 const bool hb = p.bulges.size() == p.points.size();
                 for (std::size_t i = 0; i < p.points.size(); ++i) {
                     code_d(s, 10, p.points[i].x);
                     code_d(s, 20, p.points[i].y);
+                    emit_vertex_widths(s, p, i);
                     if (hb && p.bulges[i] != 0.0) {
                         code_d(s, 42, p.bulges[i]);
                     }
@@ -2025,22 +2065,46 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             double x = 0.0;
             bool have_x = false;
             bool any_bulge = false;
+            // Widths: 43 is one width for every segment; 40 / 41 after a vertex are the
+            // start and end width of the segment leaving it (they default to 43's).
+            // A legacy POLYLINE header gives its default start and end width as 40 / 41
+            // ahead of the vertices.
+            const double constant = getd(body, 43, 0.0);
+            double default_start = constant;
+            double default_end = constant;
+            bool any_width = constant > 0.0;
             for (const Pair& p : body) {
                 if (p.code == 10) {
                     x = to_d(p.value);
                     have_x = true;
+                } else if ((p.code == 40 || p.code == 41) && pl.points.empty()) {
+                    (p.code == 40 ? default_start : default_end) = to_d(p.value);
+                    any_width = any_width || to_d(p.value) > 0.0;
                 } else if (p.code == 20 && have_x) {
                     pl.points.push_back({x, to_d(p.value)});
                     pl.bulges.push_back(0.0); // default straight; a code 42 may follow
+                    pl.widths.push_back(default_start);
+                    pl.widths.push_back(default_end);
                     have_x = false;
                 } else if (p.code == 42 && !pl.bulges.empty()) {
                     pl.bulges.back() = to_d(p.value); // bulge of the vertex just read
                     any_bulge = true;
+                } else if (p.code == 40 && !pl.points.empty()) {
+                    pl.widths[pl.widths.size() - 2] = to_d(p.value);
+                    any_width = any_width || to_d(p.value) > 0.0;
+                } else if (p.code == 41 && !pl.points.empty()) {
+                    pl.widths.back() = to_d(p.value);
+                    any_width = any_width || to_d(p.value) > 0.0;
                 }
             }
             if (!any_bulge) {
                 pl.bulges.clear(); // all straight -> store none
             }
+            if (!any_width) {
+                pl.widths.clear();
+            }
+            pl.elevation = getd(body, 38, 0.0);
+            pl.thickness = getd(body, 39, 0.0);
             pl.props = props_of(body);
             pl.celtscale = getd(body, 48, 1.0); // code 48 = CELTSCALE
             sink.polylines->push_back(std::move(pl));
@@ -2231,6 +2295,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 legacy_poly.push_back(Pair{20, py != nullptr ? *py : std::string("0")});
                 if (const std::string* b = find(body, 42)) {
                     legacy_poly.push_back(Pair{42, *b});
+                }
+                if (const std::string* w0 = find(body, 40)) {
+                    legacy_poly.push_back(Pair{40, *w0});
+                }
+                if (const std::string* w1 = find(body, 41)) {
+                    legacy_poly.push_back(Pair{41, *w1});
                 }
             }
             return true;

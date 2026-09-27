@@ -2,9 +2,11 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/ui/viewport_window.hpp"
+#include "musacad/core/polyline_width.hpp"
 
 #include "musacad/core/grips.hpp"
 
+#include <array>
 #include <vector>
 #include <cstring>
 #include <algorithm>
@@ -1047,6 +1049,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             celtscale_ = snap.current_celtscale;
             psltscale_ = snap.psltscale;
             msltscale_ = snap.msltscale;
+            fillmode_ = snap.fillmode;
             pickstyle_ = snap.pickstyle;
             object_isolation_ = snap.object_isolation;
             drawing_props_ = snap.drawing_props;
@@ -1943,11 +1946,34 @@ void ViewportWindow::rebuild_overlay() {
             default:
                 break;
             }
+            // The band of every wide segment, outlined: the committed ones, then the
+            // one the click would add (it tapers from pline_w0 to pline_w1).
+            const auto band = [&](core::Vec2 a, core::Vec2 b, double bulge, double w0, double w1) {
+                if (!(w0 > 0.0) && !(w1 > 0.0)) {
+                    return;
+                }
+                const std::array<core::Vec2, 2> v{a, b};
+                const std::array<double, 2> bl{bulge, 0.0};
+                const std::array<double, 4> w{w0, w1, w0, w1};
+                const double d = core::distance(a, b);
+                const double r = std::abs(bulge) > 1e-12
+                                     ? d * (1.0 + bulge * bulge) / (4.0 * std::abs(bulge))
+                                     : d;
+                core::pline::band_outline(v, bl, w, false, std::max(r * 1e-3, 1e-9), seg);
+            };
+            for (std::size_t i = 1; i < pts.size() && 2 * i - 1 < pv.widths.size(); ++i) {
+                band(pts[i - 1], pts[i], i - 1 < pv.bulges.size() ? pv.bulges[i - 1] : 0.0,
+                     pv.widths[2 * i - 2], pv.widths[2 * i - 1]);
+            }
             if (arc) {
                 append_arc(seg, *arc);
+                band(last, arc->end_point, arc->bulge(), pv.pline_w0, pv.pline_w1);
             } else {
+                // A plain next-point pick follows the Dynamic Input fields when typed.
+                const core::Vec2 to = pv.pline_dyn ? cur_eff : cur;
                 seg.push_back(last);
-                seg.push_back(cur);
+                seg.push_back(to);
+                band(last, to, 0.0, pv.pline_w0, pv.pline_w1);
             }
             break;
         }
@@ -2295,7 +2321,9 @@ void ViewportWindow::rebuild_overlay() {
         // by the renderer with the same camera as the rubber-band, so they never
         // drift). The shown value is the typed buffer if any, else the live value.
         if (dim) {
-            const core::Vec2 a = pts.empty() ? core::Vec2{0, 0} : pts[0];
+            const bool seg_like = command::dyn_segment_like(pv);
+            const core::Vec2 a = pts.empty() ? core::Vec2{0, 0}
+                                 : (pv.kind == command::PreviewKind::Polyline ? pts.back() : pts[0]);
             const core::Vec2 b = cur_eff;
             const auto unit = [](core::Vec2 v) -> core::Vec2 {
                 const double l = core::length(v);
@@ -2309,7 +2337,7 @@ void ViewportWindow::rebuild_overlay() {
                 // Push the box OUTWARD so fields never overlap and sit just off the edge.
                 if (pv.kind == command::PreviewKind::Rectangle) {
                     label.out = unit(f.anchor - rcenter);
-                } else if (pv.kind == command::PreviewKind::Segment) {
+                } else if (seg_like) {
                     label.out = (f.slot == 0) ? unit({-(b.y - a.y), b.x - a.x}) // Length: aside
                                               : unit(b - a);                    // Angle: ahead
                 } else { // Circle radius: beside the radius line
@@ -2388,7 +2416,7 @@ bool ViewportWindow::dyn_dimensional() const {
         return false;
     }
     using command::PreviewKind;
-    return pv.kind == PreviewKind::Segment || pv.kind == PreviewKind::Circle ||
+    return command::dyn_segment_like(pv) || pv.kind == PreviewKind::Circle ||
            pv.kind == PreviewKind::Rectangle;
 }
 
@@ -2397,6 +2425,9 @@ int ViewportWindow::dyn_field_count() const {
         return 0;
     }
     using command::PreviewKind;
+    if (command::dyn_segment_like(processor_->preview())) {
+        return 2;
+    }
     switch (processor_->preview().kind) {
     case PreviewKind::Rectangle:
     case PreviewKind::Segment:

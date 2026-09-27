@@ -6,6 +6,46 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **Polyline widths** (#37) -- a polyline carries a starting and an ending width for every
+  segment and is drawn as a filled band: straight segments as trapezoids mitred where two
+  of one width meet, arcs as ring sectors, tapers running evenly along either. PLINE has
+  AutoCAD's **Width** and **Halfwidth** in line and arc mode (`Specify starting width
+  <0.0000>:`, `Specify ending width <start>:`, a typed value or a point's distance from
+  the last vertex), the ending width staying in force for the segments and the polylines
+  that follow (`PLINEWID`, echoed as `Current line-width is ...`). A wide polyline is
+  picked anywhere on its band; MOVE, COPY, ROTATE, MIRROR, STRETCH and ARRAY carry the
+  widths, SCALE scales them, TRIM / BREAK / EXTEND / FILLET / CHAMFER / OFFSET hand them to
+  what they make (a taper keeps its slope), JOIN keeps each source's and EXPLODE drops
+  them with AutoCAD's notice. LIST reports them, the Properties palette has **Global
+  width**, **Elevation** and **Thickness** rows and MATCHPROP's Polyline setting copies
+  the width. Inside a block a wide polyline is filled where the block is inserted.
+- **FILL / FILLMODE** -- wide polylines are outlined and hatches hidden when it is off;
+  saved with the drawing.
+- **RECTANG** `[Chamfer/Elevation/Fillet/Thickness/Width]` (#36) -- Width draws the
+  rectangle as a wide polyline; Elevation and Thickness are kept on the polyline and saved
+  (DXF 38 / 39). All three stay in force for later rectangles and appear in `Current
+  rectangle modes:`.
+- **PEDIT Width** and the vertex editor's **Width** (#52) -- one width for every segment,
+  or a starting and an ending width for the segment leaving a vertex. Reverse turns a
+  taper round with its segment; inserting or deleting a vertex keeps the widths in step.
+- **Dynamic Input on PLINE** -- the length and angle fields LINE has, measured from the
+  last vertex, on every next-point pick.
+- DONUT diameters can be shown by two points.
+
+### Changed
+- **DONUT** makes what AutoCAD makes: a closed polyline of two half-circle arcs on the
+  mean diameter, as wide as the ring is thick (it was a two-loop solid hatch). It can be
+  edited, offset and exploded as a polyline, and FILLMODE applies to it.
+- The native format is version 37: `POLYLINE` records may end with `W` and two widths per
+  vertex and `Z` with the elevation and thickness; a `FILLMODE` record. Older files open
+  unchanged.
+- DXF: LWPOLYLINE writes and reads the constant width (43), the per-vertex widths (40 /
+  41), the elevation (38) and the thickness (39); the legacy POLYLINE / VERTEX form's
+  widths are read as well.
+
 ## 0.5.0 - 2026-09-26
 
 ### Fixed

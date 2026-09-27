@@ -85,6 +85,10 @@ enum class PropertyId : std::uint16_t {
     HatchScale,
     HatchAngle,  ///< degrees in the PR
     HatchOrigin, ///< read-only display
+    // Polyline (PLINE Width): one width for every segment, the elevation, the thickness.
+    PlineWidth,
+    PlineElevation,
+    PlineThickness,
 };
 
 /// How the UI renders + edits a field. The UI is generic over these.
@@ -141,6 +145,7 @@ enum class MatchSlot : std::uint8_t {
     Text,
     Dimension,
     Hatch,
+    Polyline,
 };
 
 /// True for the universal MATCHPROP slots (copy regardless of entity family).
@@ -164,7 +169,7 @@ struct MatchPropFilter {
     bool text = true;
     bool dimension = true;
     bool hatch = true;     ///< HATCH pattern/scale/angle (family-scoped, hatch<->hatch)
-    bool polyline = true;  ///< reserved (no polyline-specific registry descriptor yet)
+    bool polyline = true;  ///< a polyline's width (family-scoped, polyline<->polyline)
     // AutoCAD's remaining Property Settings. They are kept (and shown in the dialog)
     // so a saved filter reads the same; the ones without a modelled property are
     // inert until it exists: transparency and thickness (issue #68), material and
@@ -197,6 +202,8 @@ struct MatchPropFilter {
             return dimension;
         case MatchSlot::Hatch:
             return hatch;
+        case MatchSlot::Polyline:
+            return polyline;
         case MatchSlot::None:
             return false;
         }

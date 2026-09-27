@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/scene_snapshot.hpp"
+#include "musacad/core/polyline_width.hpp"
 
+#include <optional>
 #include <limits>
 #include <algorithm>
 #include <array>
@@ -215,6 +217,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     out.current_layer = store.current_layer();
     out.page_setups = store.page_setups();
     out.wipeout_frames = store.wipeout_frames();
+    out.fillmode = store.fillmode();
     out.active_space = store.active_space();
     out.layouts.clear();
     for (const Layout& l : store.layouts()) {
@@ -355,8 +358,55 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                   [&](EntityHandle h) { emit_curve(h, store.circle(h)->props); });
     for_each_live(store.arcs(), EntityKind::Arc,
                   [&](EntityHandle h) { emit_curve(h, store.arc(h)->props); });
-    for_each_live(store.polylines(), EntityKind::Polyline,
-                  [&](EntityHandle h) { emit_curve(h, store.polyline(h)->props); });
+    // A polyline with widths draws each wide segment as a filled band centred on it
+    // (its outline with FILLMODE off); a segment of no width stays ordinary line work.
+    // The band is derived here from the vertices and widths, like every other display.
+    std::vector<Vec2> band;
+    for_each_live(store.polylines(), EntityKind::Polyline, [&](EntityHandle h) {
+        const PolylineData* pl = store.polyline(h);
+        const std::span<const double> widths = store.widths_of(*pl);
+        if (!pline::has_width(widths)) {
+            emit_curve(h, pl->props);
+            return;
+        }
+        if (!visible(store, pl->props)) {
+            return;
+        }
+        const ResolvedProps r = entity_resolved(store, pl->props);
+        const std::span<const Vec2> verts = store.vertices_of(*pl);
+        const std::span<const double> bulges = store.bulges_of(*pl);
+        const std::optional<double> uniform = pline::uniform_width(widths);
+        band.clear();
+        if (r.linetype != Linetype::Continuous && uniform) {
+            // A dashed wide polyline: every dash is a piece of the band.
+            kernel.tessellate(store, h, tolerance, tess);
+            dashed.clear();
+            dash_polyline(tess, r.linetype, ltscale * store.celtscale(h), dashed);
+            const std::array<double, 4> ww{*uniform, *uniform, *uniform, *uniform};
+            for (std::size_t i = 0; i + 1 < dashed.size(); i += 2) {
+                const std::array<Vec2, 2> piece{dashed[i], dashed[i + 1]};
+                if (store.fillmode()) {
+                    pline::band_triangles(piece, {}, ww, false, tolerance, band);
+                } else {
+                    pline::band_outline(piece, {}, ww, false, tolerance, band);
+                }
+            }
+        } else if (store.fillmode()) {
+            pline::band_triangles(verts, bulges, widths, pl->closed, tolerance, band);
+        } else {
+            pline::band_outline(verts, bulges, widths, pl->closed, tolerance, band);
+        }
+        if (store.fillmode()) {
+            add_fills(r.color, band);
+        } else {
+            add_lines(r.color, r.lineweight, band);
+        }
+        if (!uniform) {
+            band.clear();
+            pline::plain_segments(verts, bulges, widths, pl->closed, tolerance, band);
+            add_lines(r.color, r.lineweight, band);
+        }
+    });
     for_each_live(store.splines(), EntityKind::Spline,
                   [&](EntityHandle h) { emit_curve(h, store.spline(h)->props); });
     for_each_live(store.ellipses(), EntityKind::Ellipse,
@@ -659,6 +709,9 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         }
         const ResolvedProps r = entity_resolved(store, hd->props);
         const std::string_view pname = store.string_of(*hd);
+        if (!store.fillmode() && pname != "WIPEOUT") {
+            return; // FILLMODE 0 hides hatches and fills
+        }
         if (pname == "SOLID") {
             htris.clear();
             hatch::triangulate_filled(store.hatch_loops(*hd), htris);
@@ -771,15 +824,23 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     // (colour, lineweight) like every other line. Geometry lives once in the definition;
     // nothing is baked into the store per instance (Ph16/23 derived-not-baked).
     std::vector<InsertSeg> isegs;
+    std::vector<InsertFill> ifills;
     for_each_live(store.inserts(), EntityKind::Insert, [&](EntityHandle h) {
         const InsertData* in = store.insert(h);
         if (!visible(store, in->props)) {
             return;
         }
         isegs.clear();
-        resolve_insert(store, *in, tolerance, isegs);
+        ifills.clear();
+        resolve_insert(store, *in, tolerance, isegs, &ifills);
         for (const InsertSeg& s : isegs) {
             add_line(s.color, s.lineweight, s.a, s.b);
+        }
+        for (const InsertFill& f : ifills) {
+            auto& v = fill_groups[pack_rgb(f.color)];
+            v.push_back(f.a);
+            v.push_back(f.b);
+            v.push_back(f.c);
         }
         // A reference with attributes is an editor target (EATTEDIT / double-click): its
         // extent for the hit-test and its values, defaults filled in.

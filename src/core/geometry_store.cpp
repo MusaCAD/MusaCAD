@@ -76,6 +76,26 @@ EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
     return EntityHandle{slot.index, slot.generation, EntityKind::Polyline};
 }
 
+EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
+                                         std::span<const double> bulges, bool closed,
+                                         EntityProps props, std::span<const double> widths,
+                                         double elevation, double thickness) {
+    const EntityHandle h = add_polyline(vertices, bulges, closed, props);
+    PolylineData* p = polylines_.get(h.index, h.generation);
+    if (p == nullptr) {
+        return h;
+    }
+    // Widths only when there are any (plain polylines stay lean), two per vertex.
+    if (widths.size() == 2 * vertices.size() &&
+        std::any_of(widths.begin(), widths.end(), [](double w) { return w > 0.0; })) {
+        p->width_offset = static_cast<std::uint32_t>(width_pool_.size());
+        width_pool_.insert(width_pool_.end(), widths.begin(), widths.end());
+    }
+    p->elevation = elevation;
+    p->thickness = thickness;
+    return h;
+}
+
 EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                                        EntityProps props) {
     const auto offset = static_cast<std::uint32_t>(spline_pool_.size());
@@ -537,6 +557,7 @@ void GeometryStore::clear() noexcept {
     fcf_cell_pool_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
+    width_pool_.clear();
     spline_pool_.clear();
     string_pool_.clear();
     hatch_vtx_pool_.clear();
@@ -558,6 +579,7 @@ void GeometryStore::clear() noexcept {
     groups_.clear();
     units_ = DrawingUnits{};
     wipeout_frames_ = true;
+    fillmode_ = true;
     attdisp_ = 0;
     image_frame_ = 1;
     layouts_ = {Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};
@@ -786,6 +808,12 @@ std::span<const double> GeometryStore::bulges_of(const PolylineData& pl) const n
         return {};
     }
     return std::span<const double>(bulge_pool_).subspan(pl.bulge_offset, pl.count);
+}
+std::span<const double> GeometryStore::widths_of(const PolylineData& pl) const noexcept {
+    if (pl.width_offset == PolylineData::kNoWidths) {
+        return {};
+    }
+    return std::span<const double>(width_pool_).subspan(pl.width_offset, 2u * pl.count);
 }
 std::span<const Vec2> GeometryStore::control_points_of(const SplineData& sp) const noexcept {
     return std::span<const Vec2>(spline_pool_).subspan(sp.offset, sp.count);

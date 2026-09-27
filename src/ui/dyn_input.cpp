@@ -133,13 +133,14 @@ void DynInput::refresh_live() {
     const core::Vec2 cur{cx_, cy_};
     const bool have_anchor = !pts.empty();
     auto length_angle = [&](double& len, double& ang) {
-        const core::Vec2 a = have_anchor ? pts[0] : core::Vec2{0, 0};
+        const core::Vec2 a = !have_anchor ? core::Vec2{0, 0}
+                             : (pv.kind == PreviewKind::Polyline ? pts.back() : pts[0]);
         len = core::distance(a, cur);
         ang = std::atan2(cur.y - a.y, cur.x - a.x) * kRadToDeg;
     };
 
     bool two = false;
-    switch (pv.kind) {
+    switch (command::dyn_segment_like(pv) ? PreviewKind::Segment : pv.kind) {
     case PreviewKind::Segment: {
         double len = 0, ang = 0;
         length_angle(len, ang);
@@ -260,7 +261,7 @@ void DynInput::submit() {
     const core::Vec2 cur{cx_, cy_};
     std::string line;
 
-    if (pv.kind == PreviewKind::Segment || pv.kind == PreviewKind::Circle ||
+    if (command::dyn_segment_like(pv) || pv.kind == PreviewKind::Circle ||
         pv.kind == PreviewKind::Rectangle) {
         // A dimensional drag: compose the same coordinate string the on-geometry
         // field tooltips do (one shared source). A non-empty, parseable field is a

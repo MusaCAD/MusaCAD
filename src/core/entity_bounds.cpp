@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/entity_bounds.hpp"
+#include "musacad/core/polyline_width.hpp"
 
 #include "musacad/core/ellipse.hpp"
 
@@ -110,6 +111,11 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
                             a.center.y + a.radius * std::sin(ang)});
                 }
             }
+        }
+        // A wide polyline reaches half its width beyond the centre line.
+        if (const double half = pline::max_width(store.widths_of(*p)) * 0.5; half > 0.0) {
+            out_min = {out_min.x - half, out_min.y - half};
+            out_max = {out_max.x + half, out_max.y + half};
         }
         return true;
     }

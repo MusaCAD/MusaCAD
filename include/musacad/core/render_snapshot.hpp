@@ -201,6 +201,7 @@ struct RenderSnapshot {
     MspaceInfo mspace;                  // MSPACE: editing model space through a viewport
     std::vector<ViewportRect> viewport_rects; // the active layout's viewports
     bool wipeout_frames = true;         // WIPEOUTFRAME
+    bool fillmode = true;               // FILLMODE
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer

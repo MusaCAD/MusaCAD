@@ -248,6 +248,27 @@ bool parse_overrides(const std::vector<std::string_view>& tok, std::size_t base,
 
 } // namespace
 
+namespace {
+// v37: a polyline's widths ("W" and two per vertex) and its elevation and thickness
+// ("Z" and the two values), written only when there is something to say.
+void append_polyline_extras(std::string& s, const DocPolyline& p) {
+    if (p.widths.size() == 2 * p.points.size() &&
+        std::any_of(p.widths.begin(), p.widths.end(), [](double w) { return w > 0.0; })) {
+        s += " W";
+        for (const double w : p.widths) {
+            s += ' ';
+            append_double(s, w);
+        }
+    }
+    if (p.elevation != 0.0 || p.thickness != 0.0) {
+        s += " Z ";
+        append_double(s, p.elevation);
+        s += ' ';
+        append_double(s, p.thickness);
+    }
+}
+} // namespace
+
 std::string serialize_native(const Document& doc) {
     std::string s;
     s.reserve(128 + doc.entity_count() * 40);
@@ -562,6 +583,7 @@ std::string serialize_native(const Document& doc) {
                 append_double(s, b);
             }
         }
+        append_polyline_extras(s, p);
         s += '\n';
     }
     for (const DocSpline& sp : doc.splines) {
@@ -862,6 +884,7 @@ std::string serialize_native(const Document& doc) {
                     append_double(s, bg);
                 }
             }
+            append_polyline_extras(s, p);
             s += '\n';
         }
         for (const DocText& t : b.texts) {
@@ -985,6 +1008,9 @@ std::string serialize_native(const Document& doc) {
     s += '\n';
     s += "WIPEOUTFRAME ";
     append_uint(s, doc.wipeout_frames ? 1 : 0);
+    s += '\n';
+    s += "FILLMODE ";
+    append_uint(s, doc.fillmode ? 1 : 0);
     s += '\n';
     s += "ATTDISP ";
     append_uint(s, doc.attdisp);
@@ -1453,6 +1479,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed ATTDISP");
             }
             doc.attdisp = static_cast<std::uint8_t>(mode);
+        } else if (key == "FILLMODE") {
+            std::uint64_t on = 1;
+            if (tok.size() != 2 || !to_uint(tok[1], on)) {
+                return fail("malformed FILLMODE");
+            }
+            doc.fillmode = on != 0;
         } else if (key == "WIPEOUTFRAME") {
             std::uint64_t on = 1;
             if (tok.size() != 2 || !to_uint(tok[1], on)) {
@@ -2378,14 +2410,39 @@ IoResult parse_native(std::string_view text, Document& out) {
                     return fail("POLYLINE properties malformed");
                 }
                 const std::size_t after = 3 + n * 2 + 7;
-                if (tok.size() == after + n) {
+                // v37: "W" and 2n widths, "Z" and elevation + thickness may end the record.
+                std::size_t end = tok.size();
+                for (std::size_t k = after; k < tok.size(); ++k) {
+                    if (tok[k] == "W" || tok[k] == "Z") {
+                        end = k;
+                        break;
+                    }
+                }
+                std::size_t k = end;
+                if (k < tok.size() && tok[k] == "W") {
+                    if (!parse_doubles(tok, k + 1, n * 2, pl.widths)) {
+                        return fail("POLYLINE width count mismatch");
+                    }
+                    k += 1 + n * 2;
+                }
+                if (k < tok.size() && tok[k] == "Z") {
+                    if (k + 3 != tok.size() || !to_double(tok[k + 1], pl.elevation) ||
+                        !to_double(tok[k + 2], pl.thickness)) {
+                        return fail("POLYLINE elevation malformed");
+                    }
+                    k += 3;
+                }
+                if (k != tok.size()) {
+                    return fail("POLYLINE record malformed");
+                }
+                if (end == after + n) {
                     // v5: per-vertex bulges follow the properties.
                     std::vector<double> bv;
                     if (!parse_doubles(tok, after, n, bv)) {
                         return fail("POLYLINE bulge count mismatch");
                     }
                     pl.bulges = std::move(bv);
-                } else if (tok.size() != after) {
+                } else if (end != after) {
                     return fail("POLYLINE properties malformed");
                 }
             } else if (tok.size() != 3 + n * 2) {

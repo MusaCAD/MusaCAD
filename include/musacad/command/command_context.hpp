@@ -116,6 +116,14 @@ struct PreviewSpec {
     /// (`pline_tangent`) to the cursor; 5 a fixed radius (`pline_radius`) to the cursor; 6
     /// through a fixed second point (`pline_second`) to the cursor.
     std::vector<double> bulges = {};
+    /// ... the widths of the committed segments (two per segment: start, end; empty =
+    /// none), the widths the next segment will take, and whether the step in hand is a
+    /// plain next-point pick (Dynamic Input then offers its length and angle fields,
+    /// measured from the last vertex).
+    std::vector<double> widths = {};
+    double pline_w0 = 0.0;
+    double pline_w1 = 0.0;
+    bool pline_dyn = false;
     int pline_arc_mode = 0;
     double pline_tangent = 0.0;
     double pline_angle = 0.0;
@@ -305,6 +313,8 @@ public:
     [[nodiscard]] virtual core::RenderSnapshot::PurgeCandidates purge_candidates() const { return {}; }
     /// LTSCALE, CELTSCALE, PSLTSCALE / MSLTSCALE and PICKSTYLE, as last published.
     [[nodiscard]] virtual double ltscale() const { return 1.0; }
+    /// FILLMODE of the drawing in hand.
+    [[nodiscard]] virtual bool fillmode() const { return true; }
     [[nodiscard]] virtual double current_celtscale() const { return 1.0; }
     [[nodiscard]] virtual bool psltscale() const { return true; }
     [[nodiscard]] virtual bool msltscale() const { return true; }

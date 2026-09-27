@@ -68,7 +68,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 36;
+inline constexpr std::uint32_t kFormatVersion = 37;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -133,6 +133,9 @@ struct DocPolyline {
     EntityProps props{};
     std::vector<double> bulges = {}; ///< per-vertex arc bulges (empty = all straight)
     double celtscale = 1.0;          ///< per-entity linetype scale (CELTSCALE; v12+)
+    std::vector<double> widths = {}; ///< empty, or two per vertex (v37)
+    double elevation = 0.0;          ///< DXF 38 (v37)
+    double thickness = 0.0;          ///< DXF 39 (v37)
     friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
 };
 struct DocSpline {
@@ -356,6 +359,7 @@ struct Document {
     std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
     std::uint16_t current_text_style = 0;
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
+    bool fillmode = true;       ///< FILLMODE (v37)
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
     std::uint8_t image_frame = 1; ///< IMAGEFRAME (v29): 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts;  ///< the layout tabs (v30); entities refer to them by EntityProps::space

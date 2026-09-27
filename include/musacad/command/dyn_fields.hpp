@@ -24,6 +24,10 @@ struct DynField {
     int slot = 0;        ///< 0 = primary, 1 = secondary; maps to compose/lock below
 };
 
+/// True when the drag is a length + angle from an anchor: LINE's rubber band, or PLINE's
+/// next-point pick (measured from the last vertex).
+[[nodiscard]] bool dyn_segment_like(const PreviewSpec& pv) noexcept;
+
 /// The DECLARATIVE per-command field schema: one switch over PreviewKind. A command
 /// gains drag-time tooltips by adding a case here -- a row, not new machinery, the
 /// same discipline as the properties and grips registries. Returns the positioned
