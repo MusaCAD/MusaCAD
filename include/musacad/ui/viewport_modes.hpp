@@ -19,7 +19,9 @@ struct ViewportModes {
     std::atomic<bool> ortho{false}; // F8 - ortho constraint
     std::atomic<bool> snap{false};  // F9 - grid snap
     std::atomic<bool> polar{false}; // F10 - polar tracking
-    std::atomic<std::uint32_t> snap_mask{core::kAllSnaps}; // running-osnap type mask
+    std::atomic<bool> otrack{false}; // F11 - object snap tracking
+    // The running snaps, AutoCAD's default set (OSMODE 4133) to begin with.
+    std::atomic<std::uint32_t> snap_mask{core::kDefaultRunningSnaps};
 };
 
 } // namespace musacad::ui

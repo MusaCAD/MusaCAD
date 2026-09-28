@@ -36,12 +36,13 @@ targeting a smooth 144 Hz+ viewport.
   absolute / relative (`@dx,dy`) / polar (`@dist<angle`) coordinate input with
   history, ENTER-repeat, and ESC-cancel.
 - **Snapping & drawing aids** — OSNAP (endpoint, midpoint, center, intersection,
-  nearest) computed geometry-side against a shared spatial index and published
+  extension, nearest and the rest of AutoCAD's modes, running or typed for one pick;
+  FROM, M2P, TT and TK) computed geometry-side against a shared spatial index and published
   through the snapshot; render-side crosshairs; ortho and polar tracking; grid
   snap; cursor-pick selection.
 - **Undo / redo** on the geometry thread, driven by command messages.
 - **Classic shortcuts** — `F3` osnap, `F7` grid, `F8` ortho, `F9` snap,
-  `F10` polar, `F12` dynamic input, `Ctrl+Z` / `Ctrl+Y`.
+  `F10` polar, `F11` object snap tracking, `F12` dynamic input, `Ctrl+Z` / `Ctrl+Y`.
 - **DXF read/write** built in; **DWG import/export** via an external converter (ODA
   File Converter, downloadable from DWG Setup, or LibreDWG) — invoked as a subprocess, never linked,
   so Musa CAD stays LGPL-clean. See [docs/BUILD.md](docs/BUILD.md).

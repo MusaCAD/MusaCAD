@@ -21,6 +21,7 @@
 
 #include <QAbstractButton>
 #include <QGridLayout>
+#include <QActionGroup>
 #include <QAction>
 #include <QApplication>
 #include <QMouseEvent>
@@ -723,7 +724,11 @@ void MainWindow::build_status_bar() {
     snap_action_ = make_mode_action(QStringLiteral("SNAP"), Qt::Key_F9, modes_.snap,
                                     QStringLiteral("Snap the cursor to grid increments."));
     polar_action_ = make_mode_action(QStringLiteral("POLAR"), Qt::Key_F10, modes_.polar,
-                                     QStringLiteral("Snap the cursor to preset polar angles."));
+                                     QStringLiteral("Track the cursor along the polar angles "
+                                                    "(the dropdown sets the increment)."));
+    otrack_action_ = make_mode_action(QStringLiteral("OTRACK"), Qt::Key_F11, modes_.otrack,
+                                      QStringLiteral("Track the cursor along paths through the "
+                                                     "object snap points it has rested on."));
     // Dynamic Input (F12). Persisted across runs (the only persisted UI toggle).
     // Default ON: the app is canvas-only out of the box (on-canvas command entry,
     // sub-prompts and dimension fields). F12 OFF reverts to the classic bottom
@@ -755,6 +760,21 @@ void MainWindow::build_status_bar() {
         }
         processor_->set_polar(on);
     });
+    connect(otrack_action_, &QAction::toggled, this, [this](bool on) {
+        modes_.otrack = on;
+        processor_->set_otrack(on);
+    });
+    viewport_->set_tracking_mode_callbacks(
+        [this](bool on) {
+            if (polar_action_->isChecked() != on) {
+                polar_action_->setChecked(on);
+            }
+        },
+        [this](bool on) {
+            if (otrack_action_->isChecked() != on) {
+                otrack_action_->setChecked(on);
+            }
+        });
 
     const auto add_toggle = [&](QAction* act) {
         auto* b = new QToolButton(this);
@@ -766,8 +786,33 @@ void MainWindow::build_status_bar() {
     add_toggle(grid_action_);
     add_toggle(ortho_action_);
     add_toggle(snap_action_);
-    add_toggle(polar_action_);
+    QToolButton* polar_btn = add_toggle(polar_action_);
+    add_toggle(otrack_action_);
     add_toggle(dyn_action_);
+    // The POLAR dropdown: AutoCAD's increment angles, the one in force ticked.
+    auto* polar_menu = new QMenu(this);
+    auto* increments = new QActionGroup(polar_menu);
+    increments->setExclusive(true);
+    for (const double deg : {90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0}) {
+        QAction* a = polar_menu->addAction(QString::number(deg) + QStringLiteral("\u00B0"));
+        a->setCheckable(true);
+        a->setData(deg);
+        increments->addAction(a);
+        connect(a, &QAction::triggered, this, [this, deg] {
+            command::TrackingSettings t = processor_->tracking_settings();
+            t.polar_increment = core::to_radians(deg);
+            processor_->set_tracking_settings(t);
+            polar_action_->setChecked(true);
+        });
+    }
+    connect(polar_menu, &QMenu::aboutToShow, this, [this, increments] {
+        const double now = core::to_degrees(processor_->tracking_settings().polar_increment);
+        for (QAction* a : increments->actions()) {
+            a->setChecked(std::abs(a->data().toDouble() - now) < 1e-6);
+        }
+    });
+    polar_btn->setMenu(polar_menu);
+    polar_btn->setPopupMode(QToolButton::MenuButtonPopup);
     // Apply the persisted state at startup -- but NOT under the self-test/dump
     // harness, which must run in the canonical default runtime state (DYN off, the
     // command line focused) regardless of a developer's saved preference (Ph9).
@@ -793,8 +838,10 @@ void MainWindow::build_status_bar() {
         {"Center", core::SnapType::Center},         {"Node", core::SnapType::Node},
         {"Quadrant", core::SnapType::Quadrant},     {"Intersection", core::SnapType::Intersection},
         {"Perpendicular", core::SnapType::Perpendicular}, {"Tangent", core::SnapType::Tangent},
-        {"Centroid (Musa)", core::SnapType::Centroid},    {"Insertion", core::SnapType::Insertion},
-        {"Apparent intersection", core::SnapType::ApparentIntersection},
+        {"Geometric Center", core::SnapType::GeometricCenter},
+        {"Insertion", core::SnapType::Insertion},
+        {"Apparent Intersection", core::SnapType::ApparentIntersection},
+        {"Extension", core::SnapType::Extension},
         {"Parallel", core::SnapType::Parallel},           {"Nearest", core::SnapType::Nearest}};
     for (const auto& [label, type] : kSnapTypes) {
         QAction* a = osnap_menu->addAction(QString::fromUtf8(label));
@@ -808,6 +855,13 @@ void MainWindow::build_status_bar() {
         });
         osnap_actions_.push_back({bit, a});
     }
+    connect(osnap_menu, &QMenu::aboutToShow, this, [this] {
+        const std::uint32_t mask = modes_.snap_mask.load();
+        for (const auto& [bit, action] : osnap_actions_) {
+            const QSignalBlocker block(action);
+            action->setChecked((mask & bit) != 0);
+        }
+    });
     osnap_menu->addSeparator();
     osnap_menu->addAction(QStringLiteral("Settings\u2026"), this, [this] { open_osnap_settings_dialog(); });
     viewport_->set_osnap_settings_callback([this] { open_osnap_settings_dialog(); });
@@ -900,6 +954,28 @@ void MainWindow::dump_ui() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) &&
+        viewport_ != nullptr && processor_ != nullptr) {
+        // AutoCAD's temporary override keys, read while a command asks for a point. A
+        // dialog, the Properties palette or any other text field keeps its own keys.
+        auto* ke = static_cast<QKeyEvent*>(event);
+        QWidget* fw = QApplication::focusWidget();
+        const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
+                              properties_dock_->isAncestorOf(fw);
+        const bool in_cmd = command_widget_ != nullptr && fw != nullptr &&
+                            (fw == static_cast<QWidget*>(command_widget_) ||
+                             command_widget_->isAncestorOf(fw));
+        const bool in_dyn = dyn_ != nullptr && fw != nullptr &&
+                            (fw == static_cast<QWidget*>(dyn_) || dyn_->isAncestorOf(fw));
+        const bool in_text_input = !in_cmd && !in_dyn &&
+                                   (qobject_cast<QLineEdit*>(fw) != nullptr ||
+                                    qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+        if (!in_props && !in_text_input &&
+            viewport_->override_key(ke->key(), ke->modifiers(), event->type() == QEvent::KeyPress,
+                                    ke->isAutoRepeat())) {
+            return true;
+        }
+    }
     if (event->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(event);
         // On-canvas command ENTRY (idle, canvas mode): route command keystrokes to the

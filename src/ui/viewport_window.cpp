@@ -32,6 +32,7 @@
 #include "musacad/core/spline_eval.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
+#include <QTimer>
 #include <QCursor>
 #include <QExposeEvent>
 #include <QGuiApplication>
@@ -498,6 +499,257 @@ std::string ViewportWindow::image_file_dialog() {
 
 std::string ViewportWindow::open_file_dialog(const std::string& filter) {
     return open_file_dialog_ ? open_file_dialog_(filter) : std::string();
+}
+
+void ViewportWindow::submit_cursor(core::Vec2 world, double aperture) {
+    last_cursor_world_ = world;
+    last_cursor_aperture_ = aperture;
+    bool osnap = modes_ == nullptr || modes_->osnap.load(std::memory_order_relaxed);
+    std::uint32_t mask =
+        modes_ ? modes_->snap_mask.load(std::memory_order_relaxed) : core::kAllSnaps;
+    if (processor_ != nullptr) {
+        osnap = processor_->effective_osnap(osnap); // Shift + A, Shift + D
+        // A snap typed for the next pick stands in for the running ones (and works with
+        // OSNAP off); NON switches them all off for it.
+        if (const auto once = processor_->snap_override()) {
+            mask = *once;
+            osnap = mask != 0;
+        }
+    }
+    // The pick aperture is always sent (it drives the rollover hover-pick too);
+    // the `osnap` flag gates only the snap-point computation.
+    core::SetCursorCommand cmd{world, aperture, osnap, mask, {}, false};
+    if (processor_ != nullptr) {
+        if (const auto from = processor_->active_from()) {
+            cmd.from = *from;
+            cmd.has_from = true;
+        }
+    }
+    engine_.submit(cmd);
+}
+
+void ViewportWindow::set_polar_mode(bool on) {
+    if (polar_mode_callback_) {
+        polar_mode_callback_(on);
+    }
+}
+
+void ViewportWindow::set_otrack_mode(bool on) {
+    if (otrack_mode_callback_) {
+        otrack_mode_callback_(on);
+    }
+}
+
+void ViewportWindow::note_snap_for_tracking() {
+    if (processor_ == nullptr) {
+        return;
+    }
+    std::optional<core::Vec2> snap;
+    if (snap_has_.load(std::memory_order_relaxed)) {
+        snap = core::Vec2{snap_x_.load(std::memory_order_relaxed), snap_y_.load(std::memory_order_relaxed)};
+    }
+    std::string label;
+    switch (static_cast<core::SnapType>(snap_type_.load(std::memory_order_relaxed))) {
+    case core::SnapType::Endpoint:
+        label = "Endpoint";
+        break;
+    case core::SnapType::Midpoint:
+        label = "Midpoint";
+        break;
+    case core::SnapType::Center:
+        label = "Center";
+        break;
+    case core::SnapType::Node:
+        label = "Node";
+        break;
+    case core::SnapType::Quadrant:
+        label = "Quadrant";
+        break;
+    case core::SnapType::Intersection:
+        label = "Intersection";
+        break;
+    case core::SnapType::GeometricCenter:
+        label = "Geometric Center";
+        break;
+    case core::SnapType::Insertion:
+        label = "Insertion";
+        break;
+    default:
+        snap.reset(); // a point on no object, or relative to the last one: not tracked from
+        break;
+    }
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const std::size_t before = processor_->acquired_points().size();
+    processor_->note_snap(snap, label, now);
+    if (processor_->acquired_points().size() != before) {
+        rebuild_overlay();
+    }
+}
+
+bool ViewportWindow::override_key(int key, Qt::KeyboardModifiers modifiers, bool pressed, bool repeat) {
+    using Override = command::CommandProcessor::Override;
+    if (processor_ == nullptr || repeat) {
+        return false;
+    }
+    // At a point prompt only: Shift is also how objects leave a selection, a name or a
+    // text being typed needs its capitals, and with no command running the keys are
+    // ordinary typing.
+    const bool asking = processor_->asking_for_point();
+    if (key == Qt::Key_Shift) {
+        if (pressed && asking) {
+            processor_->set_override(Override::Ortho, true); // ORTHO the other way while held
+        } else {
+            processor_->clear_overrides(); // Shift up ends every override
+        }
+        rebuild_overlay();
+        return false; // Shift itself is never swallowed
+    }
+    const bool shift_only = (modifiers & Qt::ShiftModifier) != 0 &&
+                            (modifiers & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) == 0;
+    if (!shift_only || !asking) {
+        return false;
+    }
+    Override which = Override::Count;
+    switch (key) {
+    case Qt::Key_A:
+        which = Override::Osnap;
+        break;
+    case Qt::Key_X:
+        which = Override::Polar;
+        break;
+    case Qt::Key_Q:
+        which = Override::Otrack;
+        break;
+    case Qt::Key_D:
+    case Qt::Key_L:
+        which = Override::DisableAll;
+        break;
+    case Qt::Key_E:
+    case Qt::Key_P:
+        which = Override::Endpoint;
+        break;
+    case Qt::Key_V:
+    case Qt::Key_M:
+        which = Override::Midpoint;
+        break;
+    case Qt::Key_C:
+        which = Override::Center;
+        break;
+    default:
+        return false;
+    }
+    // Shift with a letter is that letter's override, not ORTHO's.
+    processor_->set_override(Override::Ortho, false);
+    processor_->set_override(which, pressed);
+    rebuild_overlay();
+    return true;
+}
+
+void ViewportWindow::append_tracking(render::RenderOverlay& ov, core::Vec2 cursor) {
+    if (processor_ == nullptr) {
+        return;
+    }
+    double px = 1.0;       // world units per device pixel
+    double reach = 1000.0; // far enough to leave the window
+    {
+        std::scoped_lock lock(camera_mutex_);
+        const double scale = std::max(camera_.scale(), 1e-12);
+        px = devicePixelRatio() / scale;
+        reach = (static_cast<double>(width()) + static_cast<double>(height())) * devicePixelRatio() / scale;
+    }
+    auto& seg = ov.preview_segments;
+    const auto cross = [&](core::Vec2 at) {
+        const double arm = 4.0 * px;
+        seg.push_back({at.x - arm, at.y});
+        seg.push_back({at.x + arm, at.y});
+        seg.push_back({at.x, at.y - arm});
+        seg.push_back({at.x, at.y + arm});
+    };
+    for (const core::Vec2& tp : processor_->track_points()) {
+        cross(tp);
+    }
+    for (const command::TrackPoint& tp : processor_->acquired_points()) {
+        cross(tp.at);
+    }
+    const command::TrackResult& tracked = processor_->tracked();
+    for (const command::TrackHit& hit : tracked.hits) {
+        // From the point the path runs from, through the cursor, off the window.
+        const core::Vec2 u{std::cos(hit.angle), std::sin(hit.angle)};
+        // Dashed only where the window can show it, however far off the path begins.
+        const double at = core::distance(hit.from, tracked.point);
+        const double len = at + reach;
+        const double step = 10.0 * px;
+        for (double t = std::floor(std::max(0.0, at - reach) / step) * step; t < len; t += step) {
+            seg.push_back(hit.from + u * t);
+            seg.push_back(hit.from + u * std::min(t + 5.0 * px, len));
+        }
+    }
+    const std::string tip = processor_->tracking_tooltip();
+    if (!tip.empty()) {
+        render::DynLabel label;
+        label.anchor = cursor;
+        const double k = std::sqrt(0.5);
+        label.out = {k, -k}; // below and to the right of the cursor
+        label.text = tip;
+        ov.dyn_labels.push_back(std::move(label));
+    }
+}
+
+void ViewportWindow::snap_override_changed() {
+    if (last_cursor_aperture_ > 0.0) {
+        submit_cursor(last_cursor_world_, last_cursor_aperture_);
+    }
+}
+
+void ViewportWindow::show_osnap_menu(QPoint global) {
+    if (processor_ == nullptr) {
+        return;
+    }
+    const bool active = processor_->has_active_command();
+    QMenu menu;
+    menu.setObjectName(QStringLiteral("ObjectSnapMenu"));
+    struct Item {
+        const char* label; // nullptr = separator
+        const char* keyword;
+    };
+    const Item items[] = {
+        {"Temporary track point", "TT"}, {"From", "FROM"}, {"Mid Between 2 Points", "M2P"},
+        {nullptr, nullptr},
+        {"Endpoint", "END"}, {"Midpoint", "MID"}, {"Intersection", "INT"},
+        {"Apparent Intersect", "APP"}, {"Extension", "EXT"},
+        {nullptr, nullptr},
+        {"Center", "CEN"}, {"Geometric Center", "GCEN"}, {"Quadrant", "QUA"}, {"Tangent", "TAN"},
+        {nullptr, nullptr},
+        {"Perpendicular", "PER"}, {"Parallel", "PAR"}, {"Node", "NOD"}, {"Insert", "INS"},
+        {"Nearest", "NEA"}, {"None", "NON"},
+    };
+    std::vector<std::pair<QAction*, std::string>> actions;
+    for (const Item& it : items) {
+        if (it.label == nullptr) {
+            menu.addSeparator();
+            continue;
+        }
+        QAction* a = menu.addAction(QString::fromUtf8(it.label));
+        a->setEnabled(active); // a snap is for a pick a command is asking for
+        actions.emplace_back(a, it.keyword);
+    }
+    menu.addSeparator();
+    QAction* settings = menu.addAction(QStringLiteral("Osnap Settings\u2026"));
+    const QAction* chosen = menu.exec(global);
+    if (chosen == nullptr) {
+        return;
+    }
+    if (chosen == settings) {
+        osnap_settings_dialog();
+        return;
+    }
+    for (const auto& [action, keyword] : actions) {
+        if (action == chosen) {
+            processor_->submit_line(keyword);
+            rebuild_overlay();
+            return;
+        }
+    }
 }
 
 void ViewportWindow::osnap_settings_dialog() {
@@ -977,6 +1229,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         }
         // Share the latest snap point back to the GUI thread for click-time picks.
         snap_has_.store(snap.has_snap, std::memory_order_relaxed);
+        snap_type_.store(static_cast<int>(snap.snap_type), std::memory_order_relaxed);
         if (snap.has_snap) {
             snap_x_.store(snap.snap_point.x, std::memory_order_relaxed);
             snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
@@ -1254,6 +1507,10 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 return;
             }
         }
+    }
+    if (event->button() == Qt::RightButton && (event->modifiers() & Qt::ShiftModifier) != 0) {
+        show_osnap_menu(event->globalPosition().toPoint());
+        return;
     }
     if (event->button() == Qt::RightButton) {
         // AutoCAD: right-click is Enter while a command is running -- it ends "Select
@@ -1541,20 +1798,21 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     // Push the cursor to the geometry thread so it can compute the snap candidate
     // and publish it via the snapshot. Coalesced and non-blocking -- no per-move
     // synchronous query.
-    const bool osnap = modes_ == nullptr || modes_->osnap.load(std::memory_order_relaxed);
     constexpr double kApertonPx = 10.0;
-    const std::uint32_t mask =
-        modes_ ? modes_->snap_mask.load(std::memory_order_relaxed) : core::kAllSnaps;
-    // The pick aperture is always sent (it drives the rollover hover-pick too);
-    // the `osnap` flag gates only the snap-point computation.
-    core::SetCursorCommand cmd{world, kApertonPx * dpr / scale, osnap, mask, {}, false};
     if (processor_ != nullptr) {
-        if (const auto from = processor_->active_from()) {
-            cmd.from = *from;
-            cmd.has_from = true;
-        }
+        processor_->set_pick_radius(kApertonPx * dpr / scale); // tracking paths lock within it
     }
-    engine_.submit(cmd);
+    submit_cursor(world, kApertonPx * dpr / scale);
+    // Object snap tracking: the point under the cursor now, and again in a moment in
+    // case the cursor has come to rest on it (no further move would say so).
+    note_snap_for_tracking();
+    if (rest_timer_ == nullptr) {
+        rest_timer_ = new QTimer(this);
+        rest_timer_->setSingleShot(true);
+        rest_timer_->setInterval(250);
+        connect(rest_timer_, &QTimer::timeout, this, [this] { note_snap_for_tracking(); });
+    }
+    rest_timer_->start(); // restarted by every move: it fires once the cursor rests
 
     if (panning_) {
         const double dx = event->position().x() - last_x_;
@@ -1862,6 +2120,22 @@ void ViewportWindow::rebuild_overlay() {
         if (drag_px < 1.0) {
             ov.rect_mode = 0; // not yet a meaningful box
         }
+    }
+
+    if (processor_ != nullptr && processor_->has_active_command() &&
+        processor_->preview().kind == command::PreviewKind::None && !processor_->in_selection_phase()) {
+        core::Vec2 raw;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            raw = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                     cursor_px_y_.load(std::memory_order_relaxed)});
+        }
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
+                              snap_y_.load(std::memory_order_relaxed)};
+        }
+        append_tracking(ov, processor_->resolve_pick(raw, snap));
     }
 
     if (processor_ != nullptr && processor_->preview().kind != command::PreviewKind::None) {
@@ -2316,6 +2590,9 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::None:
             break;
         }
+
+        // Tracking: the acquired and the temporary points, the paths in hand, the tooltip.
+        append_tracking(ov, cur);
 
         // On-canvas Dynamic Input value fields: anchored to the live geometry (drawn
         // by the renderer with the same camera as the rubber-band, so they never

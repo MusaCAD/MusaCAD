@@ -24,7 +24,7 @@ public:
                    std::vector<Vec2>& out) const override;
 
     bool offset(const GeometryStore& store, EntityHandle entity, double distance, Vec2 side,
-                Command& out) const override;
+                Command& out, int gap_type = 0) const override;
 
     // --- Shared analytic primitives (used by Extend/Trim/Fillet/Chamfer) ---
 

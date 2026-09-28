@@ -131,6 +131,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Whether MIRROR reflects text (1) or keeps it readable (0).");
     reg({"MI", "MIRROR"}, [] { return std::make_unique<MirrorCommand>(); },
         "assets/ribbon/mirror.svg", "Create a mirror-image copy of objects across an axis.");
+    reg({"OFFSETGAPTYPE"}, [] { return std::make_unique<OffsetGapTypeCommand>(); }, "",
+        "What joins a polyline's segments where an offset has parted them: 0 extend, 1 arc, 2 bevel.");
     reg({"O", "OFFSET"}, [] { return std::make_unique<OffsetCommand>(); }, "assets/ribbon/offset.svg",
         "Create a parallel copy of a curve at a specified distance.");
     reg({"TR", "TRIM"}, [] { return std::make_unique<TrimCommand>(); }, "assets/ribbon/trim.svg",
@@ -166,6 +168,23 @@ CommandRegistry CommandRegistry::make_default() {
         "Place text showing the date, time, file name or login, refreshed on regen.");
     reg({"OS", "OSNAP", "DDOSNAP"}, [] { return std::make_unique<OsnapCommand>(); }, "",
         "Open the running object snap settings.");
+    using TrackVar = TrackingVarCommand::Var;
+    reg({"POLARANG"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::PolarAng); }, "",
+        "The polar tracking increment angle, in degrees.");
+    reg({"POLARADDANG"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::PolarAddAng); }, "",
+        "Additional polar tracking angles, separated by semicolons.");
+    reg({"POLARMODE"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::PolarMode); }, "",
+        "Polar tracking: 1 relative angles, 2 object snap tracking along every polar angle, 4 additional angles.");
+    reg({"POLARDIST"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::PolarDist); }, "",
+        "The PolarSnap distance.");
+    reg({"SNAPTYPE"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::SnapType); }, "",
+        "The snap type: 0 the snap grid, 1 PolarSnap.");
+    reg({"AUTOSNAP"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::AutoSnap); }, "",
+        "AutoSnap and AutoTrack: 8 polar tracking, 16 object snap tracking.");
+    reg({"TEMPOVERRIDES"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::TempOverrides); }, "",
+        "Whether the temporary override keys (Shift, Shift + A, ...) are read.");
+    reg({"OSMODE"}, [] { return std::make_unique<OsmodeCommand>(); }, "",
+        "The running object snaps as a bit sum (1 END, 2 MID, 4 CEN, 8 NOD, 16 QUA, 32 INT, ...).");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",

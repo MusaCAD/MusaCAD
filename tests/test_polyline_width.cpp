@@ -28,6 +28,7 @@
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/polyline_width.hpp"
 #include "musacad/core/properties_palette.hpp"
+#include "musacad/core/properties_registry.hpp"
 
 using namespace musacad::core;
 using Catch::Approx;
@@ -742,4 +743,23 @@ TEST_CASE("#37 FILL and FILLMODE: the prompts and what they submit") {
     const int before = h.count<SetFillModeCommand>();
     h.run({"FILL", ""});
     REQUIRE(h.count<SetFillModeCommand>() == before);
+}
+
+TEST_CASE("#37 MATCHPROP copies a polyline's width while its Polyline setting is on") {
+    const Command src = wide({{0, 0}, {10, 0}}, 2.0, 1);
+    Command dst = AddPolylineCommand{{{0, 0}, {5, 0}, {5, 5}}, false, 2};
+    MatchPropFilter filter;
+    REQUIRE(match_properties(src, dst, filter) > 0);
+    REQUIRE(std::get<AddPolylineCommand>(dst).widths == std::vector<double>(6, 2.0));
+
+    Command kept = AddPolylineCommand{{{0, 0}, {5, 0}, {5, 5}}, false, 3};
+    filter.polyline = false;
+    REQUIRE(match_properties(src, kept, filter) >= 0);
+    REQUIRE(std::get<AddPolylineCommand>(kept).widths.empty());
+
+    // A line has no width to take.
+    Command line = AddLineCommand{{0, 0}, {1, 1}, 4};
+    filter.polyline = true;
+    REQUIRE(match_properties(src, line, filter) >= 0);
+    REQUIRE(std::holds_alternative<AddLineCommand>(line));
 }

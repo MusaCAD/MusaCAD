@@ -7598,6 +7598,63 @@ void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec
     apply_offset_cmd(c);
 }
 
+bool GeometryEngine::offset_result(EntityHandle h, double distance, bool through, Vec2 side,
+                                   int gap_type, bool to_current_layer, Command& out,
+                                   std::string* why) const {
+    const auto fail = [&](const char* message) {
+        if (why != nullptr) {
+            *why = message;
+        }
+        return false;
+    };
+    // [Through]: the distance is how far the through point is from the object, and the
+    // point itself names the side.
+    if (through) {
+        Vec2 cp;
+        if (!kernel_.closest_point(store_, h, side, cp)) {
+            return fail("Offset: can't offset that entity.");
+        }
+        distance = length(side - cp);
+        if (distance <= 1e-12) {
+            return fail("Offset: the through point lies on the object.");
+        }
+    }
+    if (!kernel_.offset(store_, h, distance, side, out, gap_type)) {
+        switch (h.kind) {
+        case EntityKind::Polyline:
+            // A valid polyline only fails to offset when the distance collapses/folds it.
+            return fail("Offset distance too large for this polyline.");
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+            // Circle/arc offset only fails when shrinking inward past radius 0.
+            return fail("Offset distance too large (would collapse the curve).");
+        case EntityKind::Ellipse:
+        case EntityKind::Spline:
+            return fail("Offset distance too large for this curve (the offset would cross itself).");
+        default:
+            return fail("Offset: can't offset that entity.");
+        }
+    }
+    // The offset is the source's double: its layer, colour, linetype, lineweight and
+    // linetype scale -- on the current layer instead with Layer = Current.
+    if (const EntityProps* sp = store_.props(h)) {
+        EntityProps src = *sp;
+        if (to_current_layer) {
+            src.layer = store_.current_layer();
+        }
+        modify_cmd_props(out, [src](EntityProps& p) { p = src; });
+    }
+    const double cts = store_.celtscale(h);
+    std::visit(
+        [cts](auto& x) {
+            if constexpr (requires { x.celtscale; }) {
+                x.celtscale = cts;
+            }
+        },
+        out);
+    return true;
+}
+
 void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
     // [Multiple] offsets the newest offset again (AutoCAD steps outwards from it).
     EntityHandle h = (c.from_last && store_.is_valid(last_offset_)) ? last_offset_
@@ -7606,50 +7663,26 @@ void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
         report("Offset: nothing under the pick.");
         return;
     }
-    // [Through]: the distance is how far the through point is from the object, and the
-    // point itself names the side.
-    double distance = c.distance;
-    if (c.through) {
-        Vec2 cp;
-        if (!kernel_.closest_point(store_, h, c.side, cp)) {
-            report("Offset: can't offset that entity.");
-            return;
-        }
-        distance = length(c.side - cp);
-        if (distance <= 1e-12) {
-            report("Offset: the through point lies on the object.");
-            return;
-        }
-    }
     Command add;
-    if (kernel_.offset(store_, h, distance, c.side, add)) {
-        if (c.to_current_layer) {
-            const std::uint16_t cur = store_.current_layer();
-            modify_cmd_props(add, [cur](EntityProps& p) { p.layer = cur; });
-        }
-        const EntityHandle nh = create_indexed(add);
-        push_create_item(c.group, nh, add);
-        if (c.erase_source) {
-            const Command original = capture_entity(h);
-            remove_indexed(h);
-            push_erase_item(c.group, h, original);
-            if (sel_contains(h)) {
-                prune_selection();
-            }
-        }
-        last_offset_ = nh;
-        redo_.clear();
-        geom_dirty_ = true;
-        report("Offset created.");
-    } else if (h.kind == EntityKind::Polyline) {
-        // A valid polyline only fails to offset when the distance collapses/folds it.
-        report("Offset distance too large for this polyline.");
-    } else if (h.kind == EntityKind::Circle || h.kind == EntityKind::Arc) {
-        // Circle/arc offset only fails when shrinking inward past radius 0.
-        report("Offset distance too large (would collapse the curve).");
-    } else {
-        report("Offset: can't offset that entity.");
+    std::string why;
+    if (!offset_result(h, c.distance, c.through, c.side, c.gap_type, c.to_current_layer, add, &why)) {
+        report(why);
+        return;
     }
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    if (c.erase_source) {
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        if (sel_contains(h)) {
+            prune_selection();
+        }
+    }
+    last_offset_ = nh;
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Offset created.");
 }
 
 // PEDIT: every option is "capture the polyline, change the vertex list, re-create it"
@@ -8631,12 +8664,32 @@ void GeometryEngine::apply(const Command& command) {
                 geom_dirty_ = true;
             }
             if constexpr (std::is_same_v<T, SetCursorCommand>) {
+                // A pick moves the command on: what was acquired for it is let go.
+                const bool extending = c.osnap && (c.snap_mask & snap_bit(SnapType::Extension)) != 0;
+                if (!extending || c.has_from != has_from_ ||
+                    (c.has_from && length_squared(c.from - from_) > 1e-24)) {
+                    ext_paths_.clear();
+                }
                 cursor_ = c.world;
                 pick_radius_ = c.pick_radius;
                 osnap_enabled_ = c.osnap;
                 snap_mask_ = c.snap_mask;
                 has_from_ = c.has_from;
                 from_ = c.from;
+                if (extending && c.pick_radius > 0.0) {
+                    if (const auto path = extension_path_at(store_, grid_, c.world, c.pick_radius)) {
+                        const bool known =
+                            std::any_of(ext_paths_.begin(), ext_paths_.end(), [&](const ExtensionPath& e) {
+                                return length_squared(e.from - path->from) < 1e-18 && e.arc == path->arc;
+                            });
+                        if (!known) {
+                            ext_paths_.push_back(*path);
+                            if (ext_paths_.size() > 7) {
+                                ext_paths_.erase(ext_paths_.begin());
+                            }
+                        }
+                    }
+                }
             }
             if constexpr (std::is_same_v<T, EraseSelectionCommand>) {
                 const std::vector<EntityHandle> sel = selection_;
@@ -9562,6 +9615,12 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
             }
+            if constexpr (std::is_same_v<T, OffsetPreviewCommand>) {
+                // Preview only: the object is found once, the side follows the cursor.
+                offset_preview_ = c;
+                offset_preview_active_ = c.active;
+                offset_preview_handle_ = c.active ? pick_nearest(c.pick, c.radius) : EntityHandle::null();
+            }
             if constexpr (std::is_same_v<T, WipeoutFromPolylineCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
                 if (h.is_null() || h.kind != EntityKind::Polyline || !store_.polyline(h)->closed) {
@@ -9628,6 +9687,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, BuildPlotSnapshotCommand> || // read-only plot build
                 std::is_same_v<T, StretchPreviewCommand> || // rubber band only
                 std::is_same_v<T, TransformPreviewCommand> || // rubber band only
+                std::is_same_v<T, OffsetPreviewCommand> || // rubber band only
                 std::is_same_v<T, SetMirrtextCommand> || // a setting, not an edit
                 std::is_same_v<T, SetCurrentPropsCommand> ||
                 std::is_same_v<T, SetCeltscaleCommand> ||
@@ -10272,6 +10332,27 @@ void GeometryEngine::rebuild_and_publish() {
             buf.grip_preview_segments = std::move(tmp.line_vertices);
             buf.grip_preview_fills = std::move(tmp.fill_vertices);
         }
+    } else if (offset_preview_active_) {
+        // OFFSET's side prompt: what a click at the cursor would make, by the code the
+        // click runs, on the scratch store.
+        const OffsetPreviewCommand& o = offset_preview_;
+        const EntityHandle h =
+            (o.from_last && store_.is_valid(last_offset_)) ? last_offset_ : offset_preview_handle_;
+        Command add;
+        if (store_.is_valid(h) &&
+            offset_result(h, o.distance, o.through, cursor_, o.gap_type, false, add)) {
+            grip_preview_store_.clear();
+            grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
+            grip_preview_store_.set_dimstyle_table(store_.dimstyles());
+            const EntityProps* ep = store_.props(h);
+            add_command_to_store(grip_preview_store_, add,
+                                 ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+            RenderSnapshot tmp;
+            build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_,
+                                  store_.ltscale());
+            buf.grip_preview_segments = std::move(tmp.line_vertices);
+            buf.grip_preview_fills = std::move(tmp.fill_vertices);
+        }
     } else if (transform_preview_active_) {
         // Live ROTATE / SCALE (or a client's MOVE / MIRROR band): every selected entity
         // under the transform, through the helpers the commit uses, on the scratch store
@@ -10343,14 +10424,21 @@ void GeometryEngine::rebuild_and_publish() {
 
     buf.has_snap = false;
     buf.snap_type = SnapType::None;
+    buf.snap_has_path = false;
+    buf.snap_acquired.clear();
     if (osnap_enabled_ && pick_radius_ > 0.0) {
         const std::optional<Vec2> from = has_from_ ? std::optional<Vec2>(from_) : std::nullopt;
-        const SnapResult s =
-            compute_snap(store_, kernel_, grid_, cursor_, pick_radius_, snap_mask_, from);
+        const SnapResult s = compute_snap(store_, kernel_, grid_, cursor_, pick_radius_, snap_mask_,
+                                          from, ext_paths_);
         if (s.found) {
             buf.has_snap = true;
             buf.snap_point = s.point;
             buf.snap_type = s.type;
+            buf.snap_has_path = s.has_path;
+            buf.snap_path_from = s.path_from;
+        }
+        for (const ExtensionPath& e : ext_paths_) {
+            buf.snap_acquired.push_back(e.from);
         }
     }
 

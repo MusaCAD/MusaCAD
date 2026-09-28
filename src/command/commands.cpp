@@ -13,6 +13,7 @@
 
 #include "musacad/command/calc.hpp"
 #include "musacad/command/coordinate.hpp"
+#include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
@@ -49,6 +50,10 @@ std::string trimmed(const std::string& s) {
 std::optional<core::Vec2> read_point(CommandContext& ctx, const std::string& text) {
     // Enter at a point prompt with no default: AutoCAD asks again, saying nothing.
     if (trimmed(text).empty()) {
+        return std::nullopt;
+    }
+    // An object snap for this one pick, or FROM / M2P / TT / TK: the point follows.
+    if (ctx.point_modifier(text)) {
         return std::nullopt;
     }
     // Direct distance entry: a bare number goes along the cursor's bearing from the last
@@ -2142,9 +2147,32 @@ void OffsetCommand::prompt_distance(CommandContext& ctx) {
                    ">: ");
 }
 
+void OffsetCommand::show_preview(CommandContext& ctx, bool from_last) {
+    core::OffsetPreviewCommand p;
+    p.pick = object_pick_;
+    p.radius = ctx.pick_radius();
+    p.distance = s_distance_;
+    p.through = s_distance_ <= 0.0;
+    p.from_last = from_last;
+    p.gap_type = static_cast<std::uint8_t>(s_gap_type_);
+    p.active = true;
+    ctx.submit(p);
+    previewing_ = true;
+}
+
+void OffsetCommand::end_preview(CommandContext& ctx) {
+    if (previewing_) {
+        core::OffsetPreviewCommand p;
+        p.active = false;
+        ctx.submit(p);
+        previewing_ = false;
+    }
+}
+
 void OffsetCommand::prompt_object(CommandContext& ctx) {
     state_ = State::Object;
     ctx.clear_preview();
+    end_preview(ctx);
     ctx.set_prompt("Select object to offset or [Exit/Undo] <Exit>: ");
 }
 
@@ -2152,12 +2180,36 @@ void OffsetCommand::prompt_side(CommandContext& ctx) {
     state_ = State::Side;
     ctx.set_prompt(s_distance_ > 0.0 ? "Specify point on side to offset or [Exit/Multiple/Undo] <Exit>: "
                                      : "Specify through point or [Exit/Multiple/Undo] <Exit>: ");
+    show_preview(ctx, false);
 }
 
 void OffsetCommand::start(CommandContext& ctx) {
     ctx.echo(std::string("Current settings: Erase source=") + (s_erase_ ? "Yes" : "No") +
-             "  Layer=" + (s_layer_current_ ? "Current" : "Source") + "  OFFSETGAPTYPE=0");
+             "  Layer=" + (s_layer_current_ ? "Current" : "Source") +
+             "  OFFSETGAPTYPE=" + std::to_string(s_gap_type_));
     prompt_distance(ctx);
+}
+
+void OffsetGapTypeCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for OFFSETGAPTYPE <" + std::to_string(OffsetCommand::s_gap_type_) +
+                   ">: ");
+}
+
+void OffsetGapTypeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1" && t != "2") {
+            ctx.echo("Requires an integer between 0 and 2.");
+            return;
+        }
+        OffsetCommand::s_gap_type_ = t[0] - '0';
+    }
+    done_ = true;
+}
+
+void OffsetGapTypeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
 }
 
 void OffsetCommand::place(CommandContext& ctx, core::Vec2 side, bool from_last) {
@@ -2169,6 +2221,7 @@ void OffsetCommand::place(CommandContext& ctx, core::Vec2 side, bool from_last) 
     c.erase_source = s_erase_;
     c.to_current_layer = s_layer_current_;
     c.from_last = from_last;
+    c.gap_type = static_cast<std::uint8_t>(s_gap_type_);
     ctx.submit(c);
     ++placed_;
 }
@@ -2280,6 +2333,7 @@ void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
                 prompt_object(ctx); // Multiple ends back at the object prompt
                 return;
             }
+            end_preview(ctx);
             done_ = true;
             return;
         }
@@ -2303,6 +2357,7 @@ void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
                 // Each further offset steps out from the one just made.
                 place(ctx, *p, placed_ > 0 && from_last_multiple_);
                 from_last_multiple_ = true;
+                show_preview(ctx, true); // the next one steps out from this one
                 ctx.set_prompt(s_distance_ > 0.0 ? "Specify point on side to offset or [Exit/Undo] <Exit>: "
                                                  : "Specify through point or [Exit/Undo] <Exit>: ");
                 return;
@@ -2315,6 +2370,7 @@ void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void OffsetCommand::cancel(CommandContext& ctx) {
+    end_preview(ctx);
     ctx.echo("*Cancel*");
     done_ = true;
 }
@@ -4325,38 +4381,6 @@ void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
 // ---------------------------------------------------------------------------
 // OSNAP / -OSNAP: running object snaps
 // ---------------------------------------------------------------------------
-namespace {
-struct SnapCode {
-    const char* code;
-    const char* name;
-    core::SnapType type;
-};
-constexpr SnapCode kSnapCodes[] = {
-    {"END", "Endpoint", core::SnapType::Endpoint},
-    {"MID", "Midpoint", core::SnapType::Midpoint},
-    {"CEN", "Center", core::SnapType::Center},
-    {"NOD", "Node", core::SnapType::Node},
-    {"QUA", "Quadrant", core::SnapType::Quadrant},
-    {"INT", "Intersection", core::SnapType::Intersection},
-    {"PER", "Perpendicular", core::SnapType::Perpendicular},
-    {"TAN", "Tangent", core::SnapType::Tangent},
-    {"NEA", "Nearest", core::SnapType::Nearest},
-    {"INS", "Insertion", core::SnapType::Insertion},
-    {"APP", "Apparent intersection", core::SnapType::ApparentIntersection},
-    {"PAR", "Parallel", core::SnapType::Parallel},
-    {"CENTROID", "Centroid", core::SnapType::Centroid},
-};
-std::string snap_list(std::uint32_t mask) {
-    std::string out;
-    for (const SnapCode& c : kSnapCodes) {
-        if ((mask & core::snap_bit(c.type)) != 0) {
-            out += (out.empty() ? "" : ", ") + std::string(c.name);
-        }
-    }
-    return out.empty() ? "none" : out;
-}
-} // namespace
-
 void OsnapCommand::start(CommandContext& ctx) {
     if (ctx.view() != nullptr) {
         ctx.view()->osnap_settings_dialog();
@@ -4373,8 +4397,8 @@ void OsnapCommand::cancel(CommandContext& ctx) {
 
 void OsnapModesCommand::start(CommandContext& ctx) {
     const std::uint32_t cur = ctx.view() != nullptr ? ctx.view()->snap_mask() : 0;
-    ctx.echo("Current object snap modes: " + snap_list(cur));
-    ctx.set_prompt("Enter list of object snap modes: ");
+    ctx.echo("Current osnap modes: " + snap_list(cur));
+    ctx.set_prompt("Enter list of object snap modes <" + snap_codes(cur) + ">: ");
 }
 
 void OsnapModesCommand::cancel(CommandContext& ctx) {
@@ -4383,51 +4407,206 @@ void OsnapModesCommand::cancel(CommandContext& ctx) {
 }
 
 void OsnapModesCommand::input(CommandContext& ctx, const std::string& text) {
-    std::string u = upper(trimmed(text));
-    for (char& ch : u) {
-        if (ch == ',' || ch == ';') {
-            ch = ' ';
-        }
+    if (trimmed(text).empty()) {
+        done_ = true; // Enter keeps the modes
+        return;
     }
     std::uint32_t mask = 0;
-    std::string tok;
-    std::stringstream ss(u);
-    bool any = false;
-    while (ss >> tok) {
-        any = true;
-        if (tok == "NONE" || tok == "OFF") {
-            mask = 0;
-            continue;
-        }
-        if (tok == "ALL") {
-            for (const SnapCode& c : kSnapCodes) {
-                mask |= core::snap_bit(c.type);
-            }
-            continue;
-        }
-        bool known = false;
-        for (const SnapCode& c : kSnapCodes) {
-            const std::string code(c.code);
-            std::string name = upper(c.name);
-            if (tok == code || tok == name || (tok.size() >= 3 && name.rfind(tok, 0) == 0)) {
-                mask |= core::snap_bit(c.type);
-                known = true;
-                break;
-            }
-        }
-        if (!known) {
-            ctx.echo("Unknown object snap mode \"" + tok + "\". Use END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE or ALL.");
-            return;
-        }
-    }
-    if (!any) {
-        done_ = true;
+    std::string unknown;
+    if (!parse_snap_list(text, mask, nullptr, nullptr, &unknown)) {
+        ctx.echo("Invalid object snap mode \"" + unknown +
+                 "\". Use END, MID, CEN, GCEN, NOD, QUA, INT, EXT, INS, PER, TAN, NEA, APP, PAR, NONE or ALL.");
         return;
     }
     if (ctx.view() != nullptr) {
         ctx.view()->set_snap_mask(mask);
     }
     ctx.echo("Object snap modes: " + snap_list(mask));
+    done_ = true;
+}
+
+namespace {
+// An angle in degrees as a system variable shows it: no trailing zeros.
+std::string degrees_text(double radians) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.4f", core::to_degrees(radians));
+    std::string t(buf);
+    while (!t.empty() && t.back() == '0') {
+        t.pop_back();
+    }
+    if (!t.empty() && t.back() == '.') {
+        t.pop_back();
+    }
+    return t;
+}
+} // namespace
+
+std::string TrackingVarCommand::name() const {
+    switch (var_) {
+    case Var::PolarAng:
+        return "POLARANG";
+    case Var::PolarAddAng:
+        return "POLARADDANG";
+    case Var::PolarMode:
+        return "POLARMODE";
+    case Var::PolarDist:
+        return "POLARDIST";
+    case Var::SnapType:
+        return "SNAPTYPE";
+    case Var::AutoSnap:
+        return "AUTOSNAP";
+    case Var::TempOverrides:
+        return "TEMPOVERRIDES";
+    }
+    return "POLARANG";
+}
+
+std::string TrackingVarCommand::current(CommandContext& ctx) const {
+    const TrackingSettings t = ctx.tracking_settings();
+    switch (var_) {
+    case Var::PolarAng:
+        return degrees_text(t.polar_increment);
+    case Var::PolarAddAng: {
+        std::string list;
+        for (const double a : t.additional) {
+            list += (list.empty() ? "" : ";") + degrees_text(a);
+        }
+        return "\"" + list + "\"";
+    }
+    case Var::PolarMode:
+        return std::to_string(t.polarmode());
+    case Var::PolarDist:
+        return fmt4(t.polar_distance);
+    case Var::SnapType:
+        return std::to_string(ctx.snap_type());
+    case Var::AutoSnap:
+        // Marker, tooltips and magnet are always on (1 + 2 + 4 + 32); 8 and 16 are the
+        // two tracking modes.
+        return std::to_string(39 + (ctx.polar_tracking() ? 8 : 0) + (ctx.object_snap_tracking() ? 16 : 0));
+    case Var::TempOverrides:
+        return ctx.temp_overrides() ? "1" : "0";
+    }
+    return {};
+}
+
+void TrackingVarCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for " + name() + (var_ == Var::PolarAddAng ? ", or . for none" : "") +
+                   " <" + current(ctx) + ">: ");
+}
+
+void TrackingVarCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TrackingVarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true; // Enter keeps the value
+        return;
+    }
+    TrackingSettings settings = ctx.tracking_settings();
+    double v = 0.0;
+    const auto whole = [&](double lo, double hi) {
+        return parse_number(t, v) && v >= lo && v <= hi && v == std::floor(v);
+    };
+    switch (var_) {
+    case Var::PolarAng:
+        if (!parse_number(t, v) || !(v > 0.0) || v > 360.0) {
+            ctx.echo("Requires an angle greater than 0, up to 360.");
+            return;
+        }
+        settings.polar_increment = core::to_radians(v);
+        break;
+    case Var::PolarAddAng: {
+        std::vector<double> angles;
+        if (t != ".") {
+            std::string item;
+            std::stringstream list(t);
+            while (std::getline(list, item, ';')) {
+                if (trimmed(item).empty()) {
+                    continue;
+                }
+                double a = 0.0;
+                if (!parse_number(trimmed(item), a)) {
+                    ctx.echo("Requires angles separated by semicolons, or . for none.");
+                    return;
+                }
+                angles.push_back(core::to_radians(a));
+            }
+            if (angles.size() > 10) {
+                ctx.echo("No more than 10 additional angles.");
+                return;
+            }
+        }
+        settings.additional = std::move(angles);
+        break;
+    }
+    case Var::PolarMode:
+        if (!whole(0.0, 15.0)) {
+            ctx.echo("Requires an integer between 0 and 15.");
+            return;
+        }
+        settings.set_polarmode(static_cast<int>(v));
+        break;
+    case Var::PolarDist:
+        if (!parse_number(t, v) || v < 0.0) {
+            ctx.echo("Requires a distance of zero or more.");
+            return;
+        }
+        settings.polar_distance = v;
+        break;
+    case Var::SnapType:
+        if (!whole(0.0, 1.0)) {
+            ctx.echo("Requires 0 or 1.");
+            return;
+        }
+        ctx.set_snap_type(static_cast<int>(v));
+        break;
+    case Var::AutoSnap:
+        if (!whole(0.0, 63.0)) {
+            ctx.echo("Requires an integer between 0 and 63.");
+            return;
+        }
+        ctx.set_polar_tracking((static_cast<int>(v) & 8) != 0);
+        ctx.set_object_snap_tracking((static_cast<int>(v) & 16) != 0);
+        break;
+    case Var::TempOverrides:
+        if (!whole(0.0, 1.0)) {
+            ctx.echo("Requires 0 or 1.");
+            return;
+        }
+        ctx.set_temp_overrides(v == 1.0);
+        break;
+    }
+    ctx.set_tracking_settings(settings);
+    done_ = true;
+}
+
+void OsmodeCommand::start(CommandContext& ctx) {
+    const std::uint32_t cur = ctx.view() != nullptr ? ctx.view()->snap_mask() : 0;
+    ctx.set_prompt("Enter new value for OSMODE <" + std::to_string(osmode_of(cur)) + ">: ");
+}
+
+void OsmodeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void OsmodeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    double v = 0.0;
+    if (!parse_number(t, v) || v < 0.0 || v > 32767.0 || v != std::floor(v)) {
+        ctx.echo("Requires an integer between 0 and 32767.");
+        return;
+    }
+    if (ctx.view() != nullptr) {
+        ctx.view()->set_snap_mask(mask_of_osmode(static_cast<int>(v)));
+    }
     done_ = true;
 }
 

@@ -227,7 +227,14 @@ void append_marker(std::vector<core::Vec2>& seg, core::SnapType type, double cx,
         edge(seg, {cx - s, cy - s}, {cx + s, cy - s});
         break;
     }
-    case core::SnapType::Centroid: { // octagon with a plus
+    case core::SnapType::Extension: { // a dashed run ending in a cross
+        edge(seg, {cx - s, cy + s * 0.5}, {cx - s * 0.45, cy + s * 0.5});
+        edge(seg, {cx - s * 0.1, cy + s * 0.5}, {cx + s * 0.35, cy + s * 0.5});
+        edge(seg, {cx + s * 0.75, cy - s * 0.35}, {cx + s * 0.75, cy + s * 0.35});
+        edge(seg, {cx + s * 0.4, cy}, {cx + s * 1.1, cy});
+        break;
+    }
+    case core::SnapType::GeometricCenter: { // octagon with a plus
         const int n = 8;
         for (int i = 0; i < n; ++i) {
             const double a0 = (static_cast<double>(i) / n) * core::kTwoPi;
@@ -1117,12 +1124,35 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
 
     // Snap marker: from the snapshot (computed geometry-side), drawn in screen
     // space at a constant pixel size.
-    if (snapshot.has_snap) {
+    if (snapshot.has_snap || !snapshot.snap_acquired.empty()) {
         const core::Vec2 sp = camera.world_to_screen(snapshot.snap_point);
         std::vector<core::Vec2> base;
         // Constant physical size: scale by DPR (HiDPI-consistent).
-        append_marker(base, snapshot.snap_type, sp.x, sp.y,
-                      theme::kSnapMarkerHalfPx * device_pixel_ratio_);
+        if (snapshot.has_snap) {
+            append_marker(base, snapshot.snap_type, sp.x, sp.y,
+                          theme::kSnapMarkerHalfPx * device_pixel_ratio_);
+        }
+        // Extension: a small cross on every acquired end, and the dashed path from the
+        // one the snap point is extended from.
+        const double cross = 3.0 * device_pixel_ratio_;
+        for (const core::Vec2& w : snapshot.snap_acquired) {
+            const core::Vec2 a = camera.world_to_screen(w);
+            edge(base, {a.x - cross, a.y}, {a.x + cross, a.y});
+            edge(base, {a.x, a.y - cross}, {a.x, a.y + cross});
+        }
+        if (snapshot.has_snap && snapshot.snap_has_path) {
+            const core::Vec2 a = camera.world_to_screen(snapshot.snap_path_from);
+            const core::Vec2 d = sp - a;
+            const double len = core::length(d);
+            const double on = 6.0 * device_pixel_ratio_;
+            const double off = 4.0 * device_pixel_ratio_;
+            if (len > 1e-9) {
+                const core::Vec2 u = d / len;
+                for (double t = 0.0; t < len; t += on + off) {
+                    edge(base, a + u * t, a + u * std::min(t + on, len));
+                }
+            }
+        }
         // Fake a bold stroke by overdrawing the glyph at small offsets (core-GL
         // line width is unreliable). Keeps it one draw call.
         const double o = theme::kMarkerStrokePx * device_pixel_ratio_;

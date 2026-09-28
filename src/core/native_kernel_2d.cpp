@@ -696,7 +696,7 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
 // (line/line, line/circle). Bulges (arc segments) are preserved. Returns false if the
 // offset collapses/folds (too large for the polyline), leaving the store unchanged.
 static bool offset_polyline(const GeometryStore& store, const PolylineData& p, double distance,
-                            Vec2 side, Command& out) {
+                            Vec2 side, int gap_type, Command& out) {
     const std::span<const Vec2> v = store.vertices_of(p);
     const std::span<const double> bl = store.bulges_of(p);
     const std::size_t n = v.size();
@@ -771,10 +771,13 @@ static bool offset_polyline(const GeometryStore& store, const PolylineData& p, d
         seg[i] = os;
     }
 
-    // Re-miter each corner: vertex j is the intersection of seg[j-1] and seg[j].
-    const std::size_t nv = closed ? nseg : nseg + 1;
-    std::vector<Vec2> pts(nv);
-    std::vector<double> bulges(nv, 0.0);
+    // Each corner is where the two offset curves meet. Where the offset lies on the
+    // outside of a turn they have parted, and OFFSETGAPTYPE says what joins two straight
+    // segments there: 0 carries them on to their crossing, 1 an arc about the vertex,
+    // 2 a straight bevel.
+    std::vector<Vec2> pts;
+    std::vector<double> bulges;
+    std::vector<int> source; // per output vertex, the input segment leaving it (-1: a filler)
 
     const auto corner = [](const OffSeg& A, const OffSeg& B, Vec2 naive, Vec2& res) -> bool {
         if (!A.arc && !B.arc) {
@@ -813,39 +816,72 @@ static bool offset_polyline(const GeometryStore& store, const PolylineData& p, d
         return true;
     };
 
+    const auto parted = [&](const OffSeg& A, const OffSeg& B) {
+        if (gap_type == 0 || A.arc || B.arc) {
+            return false;
+        }
+        const double turn = A.in_dir.x * B.in_dir.y - A.in_dir.y * B.in_dir.x;
+        return sign * turn < -1e-12 && length(A.e - B.s) > kIntersectEps;
+    };
+    const auto put_corner = [&](std::size_t ia, std::size_t ib, Vec2 vertex) {
+        const OffSeg& A = seg[ia];
+        const OffSeg& B = seg[ib];
+        if (parted(A, B)) {
+            double filler = 0.0;
+            if (gap_type == 1) {
+                const Vec2 ra = A.e - vertex;
+                const Vec2 rb = B.s - vertex;
+                const double theta = std::atan2(ra.x * rb.y - ra.y * rb.x, dot(ra, rb));
+                filler = std::tan(theta / 4.0);
+            }
+            pts.push_back(A.e);
+            bulges.push_back(filler);
+            source.push_back(-1);
+            pts.push_back(B.s);
+            bulges.push_back(B.bulge);
+            source.push_back(static_cast<int>(ib));
+            return true;
+        }
+        Vec2 c{};
+        if (!corner(A, B, (A.e + B.s) * 0.5, c)) {
+            return false;
+        }
+        pts.push_back(c);
+        bulges.push_back(B.bulge);
+        source.push_back(static_cast<int>(ib));
+        return true;
+    };
     if (closed) {
         for (std::size_t j = 0; j < nseg; ++j) {
-            const OffSeg& A = seg[(j + nseg - 1) % nseg];
-            const OffSeg& B = seg[j];
-            Vec2 c{};
-            if (!corner(A, B, (A.e + B.s) * 0.5, c)) {
+            if (!put_corner((j + nseg - 1) % nseg, j, v[j])) {
                 return false;
             }
-            pts[j] = c;
-            bulges[j] = B.bulge;
         }
     } else {
-        pts[0] = seg[0].s;
+        pts.push_back(seg[0].s);
+        bulges.push_back(seg[0].bulge);
+        source.push_back(0);
         for (std::size_t j = 1; j < nseg; ++j) {
-            Vec2 c{};
-            if (!corner(seg[j - 1], seg[j], (seg[j - 1].e + seg[j].s) * 0.5, c)) {
+            if (!put_corner(j - 1, j, v[j])) {
                 return false;
             }
-            pts[j] = c;
         }
-        pts[nseg] = seg[nseg - 1].e;
-        for (std::size_t i = 0; i < nseg; ++i) {
-            bulges[i] = seg[i].bulge;
-        }
+        pts.push_back(seg[nseg - 1].e);
+        bulges.push_back(0.0);
+        source.push_back(-1);
     }
 
     // Fold detection: a valid offset keeps each segment's direction. A reversed or
     // zero-length output segment means the offset is too large (it self-intersects).
-    for (std::size_t i = 0; i < nseg; ++i) {
-        const Vec2 a = pts[i];
-        const Vec2 b = pts[(i + 1) % nv];
-        const Vec2 d = b - a;
-        if (length(d) < kIntersectEps || dot(normalized(d), seg[i].in_dir) <= 0.0) {
+    const std::size_t nv = pts.size();
+    const std::size_t nout = closed ? nv : nv - 1;
+    for (std::size_t i = 0; i < nout; ++i) {
+        if (source[i] < 0) {
+            continue; // a gap filler has no input segment to agree with
+        }
+        const Vec2 d = pts[(i + 1) % nv] - pts[i];
+        if (length(d) < kIntersectEps ||
+            dot(normalized(d), seg[static_cast<std::size_t>(source[i])].in_dir) <= 0.0) {
             return false;
         }
     }
@@ -866,16 +902,190 @@ static bool offset_polyline(const GeometryStore& store, const PolylineData& p, d
     return true;
 }
 
+// A curve with no offset of its own kind (an ellipse, a spline): sampled, moved along its
+// normals, and handed back as a spline fitted through the moved points -- what AutoCAD
+// makes of it. `pts` run along the curve, the last repeating the first when `closed`.
+static bool offset_sampled(const std::vector<Vec2>& pts, bool closed, double distance, Vec2 side,
+                           const EntityProps& props, Command& out) {
+    const std::size_t n = pts.size();
+    if (n < 3) {
+        return false;
+    }
+    // Left (+1) or right (-1) of travel, from the chord nearest the side point.
+    double sign = 1.0;
+    double best = std::numeric_limits<double>::max();
+    for (std::size_t i = 0; i + 1 < n; ++i) {
+        const Vec2 cp = closest_on_segment(pts[i], pts[i + 1], side);
+        const double d = length(side - cp);
+        if (d < best && length(pts[i + 1] - pts[i]) > 1e-12) {
+            best = d;
+            const Vec2 dir = normalized(pts[i + 1] - pts[i]);
+            sign = dot(side - cp, Vec2{-dir.y, dir.x}) >= 0.0 ? 1.0 : -1.0;
+        }
+    }
+    std::vector<Vec2> moved(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        // The tangent by central difference; at an open curve's ends, the one-sided
+        // difference of the same order (the ends of the offset are what the eye checks).
+        Vec2 t{};
+        if (!closed && i == 0) {
+            t = pts[1] * 4.0 - pts[0] * 3.0 - pts[2];
+        } else if (!closed && i + 1 == n) {
+            t = pts[n - 1] * 3.0 - pts[n - 2] * 4.0 + pts[n - 3];
+        } else {
+            const Vec2 a = pts[i == 0 ? n - 2 : i - 1];
+            const Vec2 b = pts[i + 1 == n ? 1 : i + 1];
+            t = b - a;
+        }
+        const double len = length(t);
+        if (len < 1e-12) {
+            return false;
+        }
+        moved[i] = pts[i] + Vec2{-t.y, t.x} * (sign * distance / len);
+    }
+    // A moved run that turns back on itself: the distance is more than the curve's
+    // radius there, and the offset would cross itself.
+    for (std::size_t i = 0; i + 1 < n; ++i) {
+        const Vec2 step = pts[i + 1] - pts[i];
+        if (length_squared(step) < 1e-24) {
+            continue; // a repeated sample says nothing either way
+        }
+        if (dot(moved[i + 1] - moved[i], step) <= 0.0) {
+            return false;
+        }
+    }
+    // A point of the moved curve by how far along it lies (0 .. 1 of its length).
+    std::vector<double> along(n, 0.0);
+    for (std::size_t i = 1; i < n; ++i) {
+        along[i] = along[i - 1] + length(moved[i] - moved[i - 1]);
+    }
+    const double total = along.back();
+    if (!(total > 1e-12)) {
+        return false;
+    }
+    const auto at = [&](double fraction) {
+        const double want = total * std::clamp(fraction, 0.0, 1.0);
+        const auto it = std::upper_bound(along.begin(), along.end(), want);
+        const std::size_t hi = std::min(static_cast<std::size_t>(it - along.begin()), n - 1);
+        const std::size_t lo = hi == 0 ? 0 : hi - 1;
+        const double span = along[hi] - along[lo];
+        const double t = span > 1e-18 ? (want - along[lo]) / span : 0.0;
+        return moved[lo] + (moved[hi] - moved[lo]) * t;
+    };
+    // The spline (cubic, clamped, uniform knots) is made to pass through the curve at
+    // the Greville abscissae of its knots: the sites such a spline interpolates stably
+    // at, however many control points it has.
+    constexpr int kDegree = 3;
+    const int count = static_cast<int>(std::clamp<std::size_t>(n / 4, 16, 64));
+    const std::vector<double> knots = spline::clamped_knots(count, kDegree);
+    const auto size = static_cast<std::size_t>(count);
+    std::vector<double> m(size * size, 0.0);
+    std::vector<double> bx(size);
+    std::vector<double> by(size);
+    std::vector<double> basis;
+    for (int j = 0; j < count; ++j) {
+        double site = 0.0;
+        for (int k = 1; k <= kDegree; ++k) {
+            site += knots[static_cast<std::size_t>(j + k)];
+        }
+        site = std::clamp(site / kDegree, 0.0, 1.0);
+        const int span = spline::find_span(count - 1, kDegree, site, knots);
+        spline::basis_functions(span, site, kDegree, knots, basis);
+        for (int k = 0; k <= kDegree; ++k) {
+            m[static_cast<std::size_t>(j) * size + static_cast<std::size_t>(span - kDegree + k)] =
+                basis[static_cast<std::size_t>(k)];
+        }
+        const Vec2 through = at(site);
+        bx[static_cast<std::size_t>(j)] = through.x;
+        by[static_cast<std::size_t>(j)] = through.y;
+    }
+    // Gaussian elimination with partial pivoting on [m | bx by].
+    for (std::size_t c = 0; c < size; ++c) {
+        std::size_t piv = c;
+        for (std::size_t r = c + 1; r < size; ++r) {
+            if (std::abs(m[r * size + c]) > std::abs(m[piv * size + c])) {
+                piv = r;
+            }
+        }
+        if (std::abs(m[piv * size + c]) < 1e-12) {
+            return false;
+        }
+        if (piv != c) {
+            for (std::size_t k = 0; k < size; ++k) {
+                std::swap(m[c * size + k], m[piv * size + k]);
+            }
+            std::swap(bx[c], bx[piv]);
+            std::swap(by[c], by[piv]);
+        }
+        for (std::size_t r = c + 1; r < size; ++r) {
+            const double f = m[r * size + c] / m[c * size + c];
+            if (f == 0.0) {
+                continue;
+            }
+            for (std::size_t k = c; k < size; ++k) {
+                m[r * size + k] -= f * m[c * size + k];
+            }
+            bx[r] -= f * bx[c];
+            by[r] -= f * by[c];
+        }
+    }
+    AddSplineCommand sp;
+    sp.control_points.assign(size, Vec2{});
+    for (std::size_t i = size; i-- > 0;) {
+        double sx = bx[i];
+        double sy = by[i];
+        for (std::size_t k = i + 1; k < size; ++k) {
+            sx -= m[i * size + k] * sp.control_points[k].x;
+            sy -= m[i * size + k] * sp.control_points[k].y;
+        }
+        sp.control_points[i] = {sx / m[i * size + i], sy / m[i * size + i]};
+    }
+    if (closed) {
+        sp.control_points.back() = sp.control_points.front(); // the loop closes exactly
+    }
+    sp.degree = kDegree;
+    sp.props = props;
+    out = sp;
+    return true;
+}
+
 bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, double distance,
-                            Vec2 side, Command& out) const {
+                            Vec2 side, Command& out, int gap_type) const {
     if (!store.is_valid(entity) || distance <= 0.0) {
         return false;
     }
     switch (entity.kind) {
-    case EntityKind::Xline:
-        return false; // offsetting a construction line is not supported
-    case EntityKind::Ellipse:
-        return false; // an offset ellipse is not an ellipse (AutoCAD makes a spline)
+    case EntityKind::Xline: {
+        // A construction line or a ray, the same way on, `distance` to the side.
+        const XlineData* x = store.xline(entity);
+        const Vec2 normal{-x->dir.y, x->dir.x};
+        const double sign = dot(side - x->base, normal) >= 0.0 ? 1.0 : -1.0;
+        out = AddXlineCommand{x->base + normal * (sign * distance), x->dir, x->ray, 0, x->props};
+        return true;
+    }
+    case EntityKind::Ellipse: {
+        // The offset of an ellipse is no ellipse: a spline, as AutoCAD makes it.
+        const EllipseData* e = store.ellipse(entity);
+        const double sw = ellipse::sweep_of(*e);
+        const bool full = ellipse::is_full(*e);
+        const int n = std::max(64, static_cast<int>(std::ceil(sw / (kPi / 180.0))));
+        std::vector<Vec2> pts;
+        pts.reserve(static_cast<std::size_t>(n) + 1);
+        for (int i = 0; i <= n; ++i) {
+            pts.push_back(ellipse::point_at(*e, e->start + sw * static_cast<double>(i) / n));
+        }
+        if (full) {
+            pts.back() = pts.front();
+        }
+        return offset_sampled(pts, full, distance, side, e->props, out);
+    }
+    case EntityKind::Spline: {
+        const SplineData* sp = store.spline(entity);
+        std::vector<Vec2> dense;
+        spline::tessellate(store.control_points_of(*sp), sp->degree, dense);
+        const bool closed = dense.size() > 3 && length(dense.front() - dense.back()) < 1e-9;
+        return offset_sampled(dense, closed, distance, side, sp->props, out);
+    }
     case EntityKind::Line: {
         const LineData* l = store.line(entity);
         const Vec2 dir = normalized(l->b - l->a);
@@ -907,10 +1117,9 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     }
     case EntityKind::Polyline: {
         const PolylineData* p = store.polyline(entity);
-        return offset_polyline(store, *p, distance, side, out);
+        return offset_polyline(store, *p, distance, side, gap_type, out);
     }
     case EntityKind::Point:
-    case EntityKind::Spline:
     case EntityKind::Text:
     case EntityKind::AttDef:
     case EntityKind::Dimension:
