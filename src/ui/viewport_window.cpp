@@ -528,6 +528,32 @@ void ViewportWindow::submit_cursor(core::Vec2 world, double aperture) {
     engine_.submit(cmd);
 }
 
+void ViewportWindow::set_presentation_cursor(core::Vec2 world) {
+    core::Vec2 px;
+    double scale = 1.0;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        px = camera_.world_to_screen(world);
+        scale = camera_.scale();
+    }
+    cursor_px_x_.store(px.x, std::memory_order_relaxed);
+    cursor_px_y_.store(px.y, std::memory_order_relaxed);
+    cursor_inside_.store(true, std::memory_order_relaxed);
+    presentation_cursor_.store(true, std::memory_order_relaxed);
+    constexpr double kApertonPx = 10.0;
+    const double aperture = kApertonPx * devicePixelRatio() / std::max(scale, 1e-12);
+    if (processor_ != nullptr) {
+        processor_->set_pick_radius(aperture);
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed), snap_y_.load(std::memory_order_relaxed)};
+        }
+        processor_->set_cursor_world(processor_->resolve_pick(world, snap));
+    }
+    submit_cursor(world, aperture);
+    rebuild_overlay();
+}
+
 void ViewportWindow::set_polar_mode(bool on) {
     if (polar_mode_callback_) {
         polar_mode_callback_(on);
@@ -691,6 +717,7 @@ void ViewportWindow::append_tracking(render::RenderOverlay& ov, core::Vec2 curso
         const double k = std::sqrt(0.5);
         label.out = {k, -k}; // below and to the right of the cursor
         label.text = tip;
+        label.prose = true;
         ov.dyn_labels.push_back(std::move(label));
     }
 }
@@ -1356,10 +1383,13 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         }
 
         renderer.set_grid_visible(modes_ == nullptr || modes_->grid.load(std::memory_order_relaxed));
-        renderer.set_cursor(cursor_inside_.load(std::memory_order_relaxed),
+        const bool presenting = presentation_.load(std::memory_order_relaxed);
+        renderer.set_cursor(cursor_inside_.load(std::memory_order_relaxed) &&
+                                (!presenting || presentation_cursor_.load(std::memory_order_relaxed)),
                             static_cast<float>(cursor_px_x_.load(std::memory_order_relaxed)),
                             static_cast<float>(cursor_px_y_.load(std::memory_order_relaxed)));
-        renderer.set_overlay_text(overlay_text(stats.fps(), stats.average_frame_ms()));
+        renderer.set_overlay_text(presenting ? std::string{}
+                                             : overlay_text(stats.fps(), stats.average_frame_ms()));
         // AutoCAD-accurate, HiDPI-correct lineweight. physicalDotsPerInch is a
         // *logical* pixel density (Qt derives it from device-independent geometry);
         // the framebuffer is in PHYSICAL pixels, so the renderer multiplies this by
@@ -1764,6 +1794,9 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
+    if (presentation_.load(std::memory_order_relaxed)) {
+        return; // the pointer is not part of the picture: no hover, no snap, no crosshair
+    }
     const double dpr = devicePixelRatio();
     const core::Vec2 screen_px = local_px(event->position(), dpr);
 

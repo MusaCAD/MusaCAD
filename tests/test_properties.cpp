@@ -570,3 +570,24 @@ TEST_CASE("SetCurrentPropsCommand: a fresh object takes the current overrides; a
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty() && s.current_props.color_by_layer(); }));
     engine.stop();
 }
+
+TEST_CASE("Properties: read-only numbers keep their digits and never switch to an exponent") {
+    const Command line = AddLineCommand{{0, -700}, {12345.678, 10150}, 1};
+    const SelectionSummary s = summarize_selection({line});
+    std::string length;
+    std::string start;
+    std::string end;
+    for (const PropertyField& f : s.fields) {
+        if (f.id == PropertyId::GeomLength) {
+            length = f.value.text;
+        } else if (f.id == PropertyId::GeomStart) {
+            start = f.value.text;
+        } else if (f.id == PropertyId::GeomEnd) {
+            end = f.value.text;
+        }
+    }
+    REQUIRE(start == "(0, -700)");
+    REQUIRE(end == "(12345.678, 10150)");
+    REQUIRE(length.find('e') == std::string::npos);
+    REQUIRE(length == "16435.8835");
+}

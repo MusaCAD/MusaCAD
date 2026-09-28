@@ -22,6 +22,9 @@ struct DynLabel {
                           ///< so it sits just OUTSIDE the edge and fields never overlap
     std::string text;     ///< value string (digits / '.' / '-'), drawn by the stroke font
     bool focused = false; ///< the active field: brighter border + a text caret
+    /// Words, not a value (the tracking tooltip "Polar: 12.5 < 45°"): drawn with the
+    /// drawing's stroke font, which has letters and symbols the field digits lack.
+    bool prose = false;
 };
 
 /// The on-canvas command-input surface (idle command entry + autocomplete dropdown,

@@ -214,6 +214,16 @@ public:
     /// itself, not a window grab, which comes back black for a GL surface under some
     /// compositors -- to `png_path`. Thread-safe. (MUSACAD_SCREENSHOT uses it.)
     void request_frame_capture(std::string png_path);
+    /// Presentation (the listing screenshots): no frame-rate counter, no crosshair, and
+    /// the real mouse ignored, so a picture shows the drawing and nothing of where the
+    /// pointer happened to be.
+    void set_presentation(bool on) noexcept {
+        presentation_.store(on, std::memory_order_relaxed);
+        presentation_cursor_.store(false, std::memory_order_relaxed);
+    }
+    /// ... and, in presentation, a pointer resting at `world`: the crosshair, the canvas
+    /// command entry, snaps, tracking and Dynamic Input follow it as they would the mouse.
+    void set_presentation_cursor(core::Vec2 world);
 
     /// AutoCAD's multi-functional polyline grip menu (right-click on a grip while idle).
     void show_polyline_grip_menu(const core::GripInfo& grip, QPoint global);
@@ -797,6 +807,8 @@ private:
 
     // Cursor (device px) shared GUI->render for the crosshair.
     std::atomic<bool> cursor_inside_{false};
+    std::atomic<bool> presentation_{false};
+    std::atomic<bool> presentation_cursor_{false};
     /// steady_clock nanoseconds of the mouse event that last set cursor_px_*: the render
     /// thread reads it when it samples the cursor and, after the swap, reports the
     /// input-to-present latency (MUSACAD_TIMING). Zero-cost otherwise.

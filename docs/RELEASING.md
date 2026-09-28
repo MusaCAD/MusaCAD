@@ -31,6 +31,11 @@ and `packaging/macos/BUILD_MACOS.md`.
    library in the build graph, the binary, or the bundles; the DWG converter stays external.
 4b. Add the version's `<release>` entry to `packaging/flatpak/org.musacad.MusaCAD.metainfo.xml`
    (Flathub reads the metainfo from the tagged source; the entry's date is the tag's).
+4c. If the interface changed, take the screenshots again: `tools/screenshots/capture.sh`
+   (a release build and a desktop session; each picture is made by the app from its own
+   widgets and GL frame, so nothing the desktop shows over the window gets in). The
+   metainfo's `<screenshot>` URLs point at the commit the pictures landed in, as Flathub
+   asks: commit the pictures, then set that commit in the metainfo.
 5. Build once inside the Flatpak SDK before tagging. The KDE runtime ships a newer GCC than the
    desktop distributions, and flatpak-builder adds `_GLIBCXX_ASSERTIONS` / `_FORTIFY_SOURCE`, so
    `-Werror` can fire there on code the host compiler accepts (v0.4.0: two null-dereference
