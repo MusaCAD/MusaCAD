@@ -237,6 +237,13 @@ QStatusBar QToolButton {
     color: #b0b0b0;
 }
 QStatusBar QToolButton:hover { background: #3a3a3a; border-radius: 3px; }
+/* The split buttons (OSNAP, POLAR): the arrow part sits in the button, whatever its state. */
+QStatusBar QToolButton::menu-button {
+    background: transparent;
+    border: none;
+    border-left: 1px solid #3a3a3a;
+    width: 12px;
+}
 QStatusBar QToolButton:checked {
     background: #2f4a66;
     color: #7cc0ff;

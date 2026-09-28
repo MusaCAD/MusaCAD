@@ -133,6 +133,7 @@ int main(int argc, char* argv[]) {
         qEnvironmentVariableIsSet("MUSACAD_LTSCALE_SHOT") || qEnvironmentVariableIsSet("MUSACAD_MLT_SHOT") ||
         qEnvironmentVariableIsSet("MUSACAD_HATCH_SHOT") ||
         qEnvironmentVariableIsSet("MUSACAD_RIBBON_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_LISTING_SHOT") ||
         qEnvironmentVariableIsSet("MUSACAD_CMDCTL_SHOT") ||
         qEnvironmentVariableIsSet("MUSACAD_STRETCH_SHOT") || qEnvironmentVariableIsSet("MUSACAD_SMOKE");
     if (harness) {
@@ -345,6 +346,18 @@ int main(int argc, char* argv[]) {
             const int kind = a.value(0, QStringLiteral("0")).toInt();
             const QString out = a.value(1, QDir::temp().filePath(QStringLiteral("ribbon_shot.png")));
             const bool ok = window.ribbon_shot(kind, out.toStdString());
+            app.exit(ok ? 0 : 1);
+        });
+    }
+
+    // Listing screenshots: MUSACAD_LISTING_SHOT="kind|drawings_dir|out.png" (see
+    // tools/screenshots/capture.sh). Composed from the window's own widgets and GL frame.
+    if (qEnvironmentVariableIsSet("MUSACAD_LISTING_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QStringList a = qEnvironmentVariable("MUSACAD_LISTING_SHOT").split(QLatin1Char('|'));
+            const int kind = a.value(0, QStringLiteral("0")).toInt();
+            const bool ok = window.listing_shot(kind, a.value(1).toStdString(),
+                                                a.value(2, QStringLiteral("listing.png")).toStdString());
             app.exit(ok ? 0 : 1);
         });
     }

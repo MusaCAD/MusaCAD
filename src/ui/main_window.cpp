@@ -76,6 +76,8 @@
 #include <QTabBar>
 #include <QTimer>
 #include <QSettings>
+#include <functional>
+#include <QPainter>
 #include <QToolButton>
 #include <QToolTip>
 #include <QVariant>
@@ -675,6 +677,7 @@ void MainWindow::sync_ribbon_context() {
         return;
     }
     const core::SelectionSummary s = viewport_->selection_summary();
+    fill_contextual_fields(s);
     if (s.count == last_ctx_count_ && s.kind_plus1 == last_ctx_kind1_ &&
         s.family_plus1 == last_ctx_family1_) {
         return; // selection signature unchanged -- nothing to re-evaluate
@@ -688,6 +691,59 @@ void MainWindow::sync_ribbon_context() {
     rs.kind_plus1 = s.kind_plus1;
     rs.family_plus1 = s.family_plus1;
     ribbon_->update_contextual(rs);
+}
+
+// The contextual tabs show the selected object's values (the Hatch Editor its pattern,
+// scale and angle; the Text Editor its font and height), blank when the selection differs.
+// A field being edited is left alone.
+void MainWindow::fill_contextual_fields(const core::SelectionSummary& s) {
+    const auto field = [&s](core::PropertyId id) -> const core::PropertyField* {
+        for (const core::PropertyField& f : s.fields) {
+            if (f.id == id) {
+                return &f;
+            }
+        }
+        return nullptr;
+    };
+    const auto number = [](double v) {
+        QString t = QString::number(v, 'f', 4);
+        while (t.endsWith(QLatin1Char('0'))) {
+            t.chop(1);
+        }
+        if (t.endsWith(QLatin1Char('.'))) {
+            t.chop(1);
+        }
+        return t == QStringLiteral("-0") ? QStringLiteral("0") : t;
+    };
+    const auto set_edit = [&](const char* name, core::PropertyId id) {
+        auto* edit = findChild<QLineEdit*>(QString::fromLatin1(name));
+        if (edit == nullptr || edit->hasFocus()) {
+            return;
+        }
+        const core::PropertyField* f = field(id);
+        const QString text = f == nullptr || f->varies ? QString() : number(f->value.num);
+        if (edit->text() != text) {
+            edit->setText(text);
+        }
+        edit->setPlaceholderText(f != nullptr && f->varies ? QStringLiteral("*VARIES*") : QString());
+    };
+    const auto set_combo = [&](const char* name, core::PropertyId id, const QString& empty_as) {
+        auto* combo = findChild<QComboBox*>(QString::fromLatin1(name));
+        const core::PropertyField* f = field(id);
+        if (combo == nullptr || combo->hasFocus() || f == nullptr || f->varies) {
+            return;
+        }
+        const QString want = f->value.text.empty() ? empty_as : QString::fromStdString(f->value.text);
+        const int at = combo->findText(want, Qt::MatchFixedString);
+        if (at >= 0 && combo->currentIndex() != at) {
+            combo->setCurrentIndex(at);
+        }
+    };
+    set_combo("ctx.hatch.pattern", core::PropertyId::HatchPattern, QStringLiteral("SOLID"));
+    set_edit("ctx.hatch.scale", core::PropertyId::HatchScale);
+    set_edit("ctx.hatch.angle", core::PropertyId::HatchAngle);
+    set_combo("ctx.text.font", core::PropertyId::TextFont, QStringLiteral("Standard"));
+    set_edit("ctx.text.height", core::PropertyId::TextHeight);
 }
 
 QAction* MainWindow::make_mode_action(const QString& text, int func_key, bool initial,
@@ -4510,6 +4566,211 @@ bool MainWindow::hatch_shot(int kind, const std::string& out_png) {
         std::fflush(stdout);
         pump(12000);
     }
+    return ok;
+}
+
+// The listing screenshots. The picture is made from the window's own widgets and the
+// viewport's own GL frame -- never grabbed from the screen -- so nothing the desktop draws
+// over or around the window (a volume or brightness OSD, a notification, the pointer) can
+// end up in it. The window is 1000 x 700, the size Flathub's guidelines ask for, in the
+// state a fresh install starts in (Dynamic Input on, so the command line is on the
+// canvas); the saved Dynamic Input preference is put back afterwards.
+bool MainWindow::listing_shot(int kind, const std::string& dir, const std::string& out_png) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 5; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    };
+    const auto wait_for = [&pump](const std::function<bool()>& done, int ms) {
+        for (int waited = 0; waited < ms; waited += 50) {
+            if (done()) {
+                return true;
+            }
+            pump(50);
+        }
+        return done();
+    };
+    const auto id_of = [this](const std::string& name) -> std::uint64_t {
+        for (const core::DocumentInfo& d : viewport_->documents()) {
+            if (d.name == name) {
+                return d.id;
+            }
+        }
+        return 0;
+    };
+
+    viewport_->set_presentation(true);
+    const QVariant dyn_saved = QSettings().value(QStringLiteral("dyn/enabled"));
+    if (dyn_action_ != nullptr && !dyn_action_->isChecked()) {
+        dyn_action_->setChecked(true);
+    }
+    // A fixed size: a tiling desktop floats such a window rather than resizing it.
+    setFixedSize(1000, 700);
+    show();
+    raise();
+    pump(600);
+    if (width() != 1000 || height() != 700) {
+        std::fprintf(stderr, "listing_shot: the desktop gave the window %dx%d, not 1000x700\n", width(), height());
+        return false;
+    }
+
+    // The three drawings in tabs, the empty Drawing1 closed.
+    std::vector<std::uint64_t> initial;
+    for (const core::DocumentInfo& d : viewport_->documents()) {
+        initial.push_back(d.id);
+    }
+    const QStringList files = {QStringLiteral("residence.dxf"), QStringLiteral("flange.dxf"),
+                               QStringLiteral("footing-detail.dxf")};
+    for (const QString& f : files) {
+        const QString path = QDir(QString::fromStdString(dir)).filePath(f);
+        if (!QFileInfo::exists(path)) {
+            std::fprintf(stderr, "listing_shot: %s is missing (run make_drawings.py)\n",
+                         path.toStdString().c_str());
+            return false;
+        }
+        open_from(path, /*dxf=*/true);
+        pump(200);
+    }
+    const std::size_t want_docs = initial.size() + static_cast<std::size_t>(files.size());
+    if (!wait_for([&] { return viewport_->documents().size() == want_docs; }, 8000)) {
+        std::fprintf(stderr, "listing_shot: the drawings did not open\n");
+        return false;
+    }
+    for (const std::uint64_t id : initial) {
+        engine_->submit(core::CloseDocumentCommand{id});
+    }
+    wait_for([&] { return viewport_->documents().size() == static_cast<std::size_t>(files.size()); }, 4000);
+
+    const std::string active = kind == 2 ? "flange.dxf" : kind == 3 ? "footing-detail.dxf" : "residence.dxf";
+    const std::uint64_t active_id = id_of(active);
+    if (active_id == 0) {
+        std::fprintf(stderr, "listing_shot: no tab named %s\n", active.c_str());
+        return false;
+    }
+    engine_->submit(core::SwitchDocumentCommand{active_id});
+    wait_for([&] { return viewport_->active_document_id() == active_id; }, 4000);
+    engine_->submit(core::ClearSelectionCommand{});
+    pump(400);
+
+    // The house plan framed a little wider than the plan itself (dims, grid bubbles, the
+    // room to its right) for the scenes that work on it.
+    const auto frame_plan = [&](double right) {
+        const double vw = std::max(1, viewport_container_->width());
+        const double vh = std::max(1, viewport_container_->height());
+        const double left = -3700.0;
+        const double bottom = -3800.0;
+        const double top = 11600.0;
+        const double scale = std::min(vw / (right - left), vh / (top - bottom));
+        // Centred on the plan (grid bubbles to the north point); the elevation stands far
+        // enough to the east to stay out of the frame.
+        viewport_->set_view({(left + 16600.0) / 2.0, (bottom + top) / 2.0}, scale);
+        pump(400);
+    };
+    if (kind == 4) {
+        // REC typed at the cursor: the canvas command line and the commands it matches.
+        frame_plan(18500.0);
+        viewport_->set_presentation_cursor({2300.0, 1500.0});
+        pump(300);
+        for (const char c : std::string("rec")) {
+            viewport_->cmd_entry_handle_key(Qt::Key_A + (c - 'a'), QString(QChar(c)));
+        }
+    } else if (kind == 5) {
+        // A 150-wide garden wall drawn out from the house with PLINE: the length and angle
+        // fields at the cursor, POLAR (45-degree increments) holding it to its path, with
+        // the tracking line and tooltip.
+        frame_plan(18500.0);
+        const bool polar_was = polar_action_ != nullptr && polar_action_->isChecked();
+        if (polar_action_ != nullptr) {
+            polar_action_->setChecked(true);
+        }
+        tracking_saved_ = processor_->tracking_settings();
+        tracking_restore_ = true;
+        command::TrackingSettings t = tracking_saved_;
+        t.polar_increment = std::numbers::pi / 4.0;
+        processor_->set_tracking_settings(t);
+        processor_->start_command("PL");
+        for (const char* line : {"14150,1000", "W", "150", "", "16100,1000"}) {
+            processor_->submit_line(line);
+        }
+        viewport_->set_presentation_cursor({17580.0, 2530.0});
+        pump(400);
+        viewport_->set_presentation_cursor({17580.0, 2530.0}); // again, with the snap settled
+        pump(300);
+        if (polar_action_ != nullptr && !polar_was) {
+            polar_restore_ = true;
+        }
+    } else if (kind == 0) {
+        // The plan with an exterior wall selected: its grips on the canvas, its layer,
+        // colour and width in the Properties palette.
+        if (properties_dock_ != nullptr) {
+            properties_dock_->show();
+            properties_dock_->raise();
+        }
+        pump(400);
+        const double vw = std::max(1, viewport_container_->width());
+        const double vh = std::max(1, viewport_container_->height());
+        viewport_->set_view({5600.0, 3600.0}, std::min(vw / 19800.0, vh / 15400.0));
+        pump(300);
+        core::SelectPickCommand pick;
+        pick.world = {100.0, 6500.0}; // on the wall's band, clear of grid line A on its centre line
+        pick.radius = 60.0;
+        engine_->submit(pick);
+    } else {
+        viewport_->zoom_extents();
+        pump(300);
+        if (kind == 3) {
+            // The footing's concrete, picked inside: the Hatch Editor tab comes up for it.
+            core::SelectPickCommand pick;
+            pick.world = {50.0, -800.0};
+            pick.radius = 10.0;
+            engine_->submit(pick);
+        }
+    }
+    // The selection reaches the ribbon and the palette on their poll; the frame settles.
+    pump(1500);
+
+    QPixmap shot = grab();
+    const QString vp_path = QDir::temp().filePath(
+        QStringLiteral("musacad_listing_viewport_%1.png").arg(QCoreApplication::applicationPid()));
+    QFile::remove(vp_path);
+    request_viewport_capture(vp_path.toStdString());
+    QImage frame;
+    wait_for(
+        [&] {
+            frame = QImage(vp_path);
+            return !frame.isNull();
+        },
+        5000);
+    QFile::remove(vp_path);
+
+    bool ok = !frame.isNull() && viewport_container_ != nullptr;
+    if (ok) {
+        QPainter p(&shot);
+        p.drawImage(QRect(viewport_container_->mapTo(this, QPoint(0, 0)), viewport_container_->size()), frame);
+        p.end();
+        ok = shot.save(QString::fromStdString(out_png), "PNG");
+    }
+    std::printf("[listing_shot] kind %d -> %s: %s (%dx%d)\n", kind, out_png.c_str(), ok ? "saved" : "FAILED",
+                shot.width(), shot.height());
+
+    if (polar_restore_ && polar_action_ != nullptr) {
+        polar_action_->setChecked(false);
+        polar_restore_ = false;
+    }
+    if (tracking_restore_) {
+        processor_->set_tracking_settings(tracking_saved_);
+        tracking_restore_ = false;
+    }
+    if (processor_ != nullptr && processor_->has_active_command()) {
+        processor_->cancel();
+    }
+    if (dyn_saved.isValid()) {
+        QSettings().setValue(QStringLiteral("dyn/enabled"), dyn_saved);
+    } else {
+        QSettings().remove(QStringLiteral("dyn/enabled"));
+    }
+    viewport_->set_presentation(false);
     return ok;
 }
 

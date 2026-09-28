@@ -392,10 +392,21 @@ void set_text_style(Command& c, const std::string& name) {
     }
 }
 
+// Up to four decimals, never an exponent: 10850 reads "10850", not "1.085e+04".
 std::string fmt(double v) {
-    char buf[48];
-    std::snprintf(buf, sizeof(buf), "%.4g", v);
-    return buf;
+    if (std::abs(v) < 5e-5) {
+        v = 0.0; // never "-0"
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.4f", v);
+    std::string s(buf);
+    while (!s.empty() && s.back() == '0') {
+        s.pop_back();
+    }
+    if (!s.empty() && s.back() == '.') {
+        s.pop_back();
+    }
+    return s;
 }
 std::string fmt_pt(Vec2 p) {
     return "(" + fmt(p.x) + ", " + fmt(p.y) + ")";

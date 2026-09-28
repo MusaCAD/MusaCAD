@@ -13,6 +13,7 @@
 #include <QString>
 
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/command/tracking.hpp"
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/ui/qt_image_decoder.hpp"
 #include "musacad/ui/plot.hpp"
@@ -171,6 +172,11 @@ public:
     /// Real-window capture for the Ribbon (Phase A). `kind` 0: the ribbon with real SVG
     /// icons; 1: a forced hover tooltip on the LINE button (name + alias + description).
     bool ribbon_shot(int kind, const std::string& out_png);
+    /// The Flathub / README screenshots (tools/screenshots/capture.sh): the drawings in
+    /// `dir` open in tabs, one scene per `kind` (0 overview with the Properties palette,
+    /// 1 architectural, 2 mechanical, 3 the Hatch Editor, 4 a command typed at the
+    /// cursor, 5 PLINE with Dynamic Input and polar tracking), written to `out_png`.
+    bool listing_shot(int kind, const std::string& dir, const std::string& out_png);
     /// Real-window self-test: parametric CIRCLE/RECTANGLE/ROTATE dialogs collect +
     /// submit the existing Command; the typed path converges; undo restores.
     bool selftest_param_dialogs();
@@ -230,6 +236,7 @@ private:
     void refresh_property_combos(bool force = false);
     void build_contextual_tabs();   ///< Hatch/Text/Block editor tabs (shown reactively)
     void sync_ribbon_context();     ///< re-evaluate contextual-tab predicates on selection change
+    void fill_contextual_fields(const core::SelectionSummary& s); ///< the selection's values in them
     QWidget* build_central();
     void build_status_bar();
     QAction* make_mode_action(const QString& text, int func_key, bool initial,
@@ -426,6 +433,9 @@ private:
     QAction* snap_action_ = nullptr;
     QAction* polar_action_ = nullptr;
     QAction* otrack_action_ = nullptr;
+    bool polar_restore_ = false; ///< listing_shot switched POLAR on for its picture
+    bool tracking_restore_ = false; ///< ... and set its own polar increment
+    command::TrackingSettings tracking_saved_{};
 };
 
 } // namespace musacad::ui

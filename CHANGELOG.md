@@ -73,6 +73,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - OFFSET with Layer = Source put the offset of a line, an arc or a circle on the current
   layer with the current colour and linetype. It takes the source's properties, linetype
   scale included.
+- The Hatch Editor and Text Editor tabs showed nothing of the selected object: the
+  pattern read SOLID and Scale, Angle and Height stayed empty. They show its pattern,
+  scale, angle, font and height, and are blank when the selection's values differ.
+- The Properties palette wrote lengths and coordinates past four digits with an exponent
+  (a 10850 mm wall read `1.085e+04`) and dropped their decimals. They read in full now.
+- The POLAR button's dropdown arrow was drawn as a black box while POLAR was off.
+- The tracking tooltip was drawn with the digit font of the Dynamic Input fields and read
+  `P 2600.0000 90` instead of `Polar: 2600.0000 < 90°`.
 
 ### Changed
 - POLAR no longer turns every cursor position to the nearest 45 degrees: it takes the
