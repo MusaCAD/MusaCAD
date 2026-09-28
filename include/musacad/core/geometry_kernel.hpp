@@ -58,8 +58,10 @@ public:
     /// and returns true on success (false if the entity can't be offset, e.g. a
     /// circle whose radius would go non-positive). The OFFSET command (Phase 7)
     /// is the first and only caller -- added per the minimal-interface rule.
+    /// `gap_type` is OFFSETGAPTYPE: what joins a polyline's straight segments where the
+    /// offset has parted them (0 carried on to their crossing, 1 an arc, 2 a bevel).
     virtual bool offset(const GeometryStore& store, EntityHandle entity, double distance, Vec2 side,
-                        Command& out) const = 0;
+                        Command& out, int gap_type = 0) const = 0;
 };
 
 } // namespace musacad::core

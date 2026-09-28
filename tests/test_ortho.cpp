@@ -58,15 +58,18 @@ TEST_CASE("OSNAP point overrides ortho constraint on a pick") {
     REQUIRE(line.b == Vec2{33.0, 77.0});
 }
 
-TEST_CASE("Polar tracking snaps the direction to 45-degree increments") {
+TEST_CASE("Polar tracking takes a cursor near a 45-degree path onto it") {
     Harness h;
     h.proc.set_polar(true);
+    h.proc.set_pick_radius(1.0); // the aperture: how near a path the cursor must be
+    musacad::command::TrackingSettings t = h.proc.tracking_settings();
+    t.polar_increment = musacad::core::kPi / 4.0;
+    h.proc.set_tracking_settings(t);
     h.proc.submit_line("L");
     h.proc.submit_line("0,0");
-    h.proc.pick_point(Vec2{10.0, 9.0}, std::nullopt); // ~42deg -> snaps to 45deg
+    h.proc.pick_point(Vec2{10.0, 9.0}, std::nullopt); // ~42deg, 0.7 off the 45deg path
     const auto& line = std::get<musacad::core::AddLineCommand>(h.cmds.back());
-    const double dist = std::sqrt(10.0 * 10.0 + 9.0 * 9.0);
-    const double expected = dist * std::cos(musacad::core::kPi / 4.0);
-    REQUIRE(line.b.x == Approx(expected));
-    REQUIRE(line.b.y == Approx(expected));
+    // The cursor's foot on the path.
+    REQUIRE(line.b.x == Approx(9.5));
+    REQUIRE(line.b.y == Approx(9.5));
 }

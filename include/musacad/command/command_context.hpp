@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "musacad/command/tracking.hpp"
 #include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
@@ -196,6 +197,13 @@ public:
     /// settings dialog (OSNAP / DDOSNAP).
     [[nodiscard]] virtual std::uint32_t snap_mask() const { return 0; }
     virtual void set_snap_mask(std::uint32_t mask) { (void)mask; }
+    /// A one-time object snap was typed (or given up): the snap under the cursor is to be
+    /// found again with the mask now in force.
+    virtual void snap_override_changed() {}
+    /// POLAR (F10) and OTRACK (F11) as the status bar has them, for the commands that
+    /// switch them.
+    virtual void set_polar_mode(bool on) { (void)on; }
+    virtual void set_otrack_mode(bool on) { (void)on; }
     virtual void osnap_settings_dialog() {}
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
     /// hit-tests the published attribute targets; nothing there = a message).
@@ -254,6 +262,14 @@ public:
     virtual ~CommandContext() = default;
 
     virtual void echo(const std::string& line) = 0;     ///< scrollback message
+    /// What may be typed wherever a point is asked for, instead of the point: an object
+    /// snap for that one pick (END, MID, CEN, GCEN, NOD, QUA, INT, EXT, INS, PER, TAN,
+    /// NEA, APP, PAR, NON) or a point filter (FROM, M2P / MTP, TT, TK). True when `text`
+    /// was one: the prompt has changed and the point is still to come.
+    virtual bool point_modifier(const std::string& text) {
+        (void)text;
+        return false;
+    }
     virtual void set_prompt(const std::string& prompt) = 0;
 
     virtual void submit(core::Command command) = 0;     ///< -> geometry queue
@@ -313,6 +329,20 @@ public:
     [[nodiscard]] virtual core::RenderSnapshot::PurgeCandidates purge_candidates() const { return {}; }
     /// LTSCALE, CELTSCALE, PSLTSCALE / MSLTSCALE and PICKSTYLE, as last published.
     [[nodiscard]] virtual double ltscale() const { return 1.0; }
+    /// Polar and object snap tracking: POLARANG, POLARADDANG, POLARMODE, POLARDIST.
+    [[nodiscard]] virtual TrackingSettings tracking_settings() const { return {}; }
+    virtual void set_tracking_settings(const TrackingSettings& settings) { (void)settings; }
+    /// SNAPTYPE: 0 the snap grid, 1 PolarSnap (steps of POLARDIST along a polar path).
+    [[nodiscard]] virtual int snap_type() const { return 0; }
+    virtual void set_snap_type(int type) { (void)type; }
+    /// AUTOSNAP's tracking bits: 8 polar tracking, 16 object snap tracking.
+    [[nodiscard]] virtual bool polar_tracking() const { return false; }
+    [[nodiscard]] virtual bool object_snap_tracking() const { return false; }
+    virtual void set_polar_tracking(bool on) { (void)on; }
+    virtual void set_object_snap_tracking(bool on) { (void)on; }
+    /// TEMPOVERRIDES: whether the temporary override keys (Shift, Shift + A ...) are read.
+    [[nodiscard]] virtual bool temp_overrides() const { return true; }
+    virtual void set_temp_overrides(bool on) { (void)on; }
     /// FILLMODE of the drawing in hand.
     [[nodiscard]] virtual bool fillmode() const { return true; }
     [[nodiscard]] virtual double current_celtscale() const { return 1.0; }

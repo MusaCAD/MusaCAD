@@ -42,7 +42,8 @@ commands (Ribbon Phase A):
 | MOVE (M) | Move selected objects a specified distance and direction. |
 | COPY (CO) | Duplicate selected objects at a specified offset. |
 | MIRROR (MI) | Create a mirror-image copy of objects across an axis. |
-| OFFSET (O) | Create a parallel copy of a curve at a specified distance. |
+| OFFSET (O) | Create a parallel copy of a curve at a specified distance: lines, arcs, circles, polylines, construction lines and rays; ellipses and splines give a spline. The offset follows the cursor at the side prompt. |
+| OFFSETGAPTYPE | What joins a polyline's straight segments where an offset has parted them: 0 carried on to their crossing, 1 an arc, 2 a bevel. |
 | TRIM (TR) | Trim objects to meet the edges of other objects. |
 | JOIN (J) | Join collinear or connected objects into a single object. |
 | ROTATE (RO) | Rotate selected objects around a base point. |
@@ -56,7 +57,8 @@ commands (Ribbon Phase A):
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | The Purge dialog: the unused blocks, dimension styles, groups, layers, table styles, images and text styles by name, checked off; Confirm each item; zero-length geometry and empty text objects. |
 | -PURGE | Purge from the command line: the type, `Enter name(s) to purge <*>:` (wild cards), `Verify each name to be purged? [Yes/No] <Y>:` and one question per name. |
-| OSNAP (OS, DDOSNAP) / -OSNAP | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE, ALL). |
+| POLARANG / POLARADDANG / POLARMODE / POLARDIST / SNAPTYPE / AUTOSNAP / TEMPOVERRIDES | The tracking settings as system variables: the polar increment angle, the additional angles (`15;75`, `.` for none), relative angles (1) / tracking along every polar angle (2) / additional angles (4), the PolarSnap distance, grid snap (0) or PolarSnap (1), polar (8) and object snap (16) tracking, the temporary override keys. |
+| OSNAP (OS, DDOSNAP) / -OSNAP / OSMODE | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, GCEN, NOD, QUA, INT, EXT, INS, PER, TAN, NEA, APP, PAR, NONE, ALL) and offers the modes in force as its default; OSMODE is their bit sum (4133 to begin with: Endpoint, Center, Intersection, Extension). |
 | WIPEOUT | Mask polygon from points or a closed polyline ([Polyline], with optional erase); [Frames] ON/OFF shows or hides the boundaries. Hides lines, curves and hatches beneath it; text stays visible. |
 | FIELD | Text carrying %<Date>%, %<Time>%, %<Filename>% or %<Login>%, expanded at layout and refreshed on every regen. |
 | PEDIT (PE) | Edit a polyline: Close/Open, Join, Width (one width for every segment), Edit vertex (Insert/Delete/Move/Width), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
@@ -167,7 +169,10 @@ commands (Ribbon Phase A):
 | MOVE | M | Implemented -- `Specify base point or [Displacement] <Displacement>:`, `Specify second point or <use first point as displacement>:`; the last displacement is the next default |
 | COPY | CO / CP | Implemented -- `Current settings: Copy mode = Multiple`, `[Displacement/mOde]`, `Specify second point or [Array] <use first point as displacement>:` then `[Array/Exit/Undo] <Exit>:`; **Array** (`Enter number of items to array:`, `[Fit]`), **Undo** takes the last copy back, every copy its own undo step; **mOde** Single / Multiple kept for the session |
 | MIRROR (mirrored text stays readable, `MIRRTEXT` 0; `MIRRTEXT` 1 reflects it) | MI | Implemented |
-| OFFSET (line/circle/arc) | O | Implemented -- `Current settings: Erase source=No  Layer=Source  OFFSETGAPTYPE=0`, `Specify offset distance or [Through/Erase/Layer] <last>:` (a value, two points, or **Through**), `Select object to offset or [Exit/Undo] <Exit>:`, `Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:`; **Multiple** steps out from the offset just made, **Undo** takes one back, every offset its own undo step; **Erase** removes the source, **Layer** Current / Source; the settings are kept for the session |
+| OFFSET (line/circle/arc) | O | Implemented -- `Current settings: Erase source=No  Layer=Source  OFFSETGAPTYPE=0`, `Specify offset distance or [Through/Erase/Layer] <last>:` (a value, two points, or **Through**), `Select object to offset or [Exit/Undo] <Exit>:`, `Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:`; **Multiple** steps out from the offset just made, **Undo** takes one back, every offset its own undo step; **Erase** removes the source, **Layer** Current / Source; the settings are kept for the session. The offset takes the source's layer, colour, linetype, lineweight and linetype scale (the current layer with Layer = Current), and is shown under the cursor at the side prompt |
+| OFFSET (construction line, ray) -- a parallel one of the same kind | O | Implemented |
+| OFFSET (ellipse, elliptical arc, spline) -- a spline a constant distance from the source, as AutoCAD makes it; a distance past the curve's tightest radius on the inside is refused ("the offset would cross itself") | O | Implemented |
+| OFFSETGAPTYPE 0 / 1 / 2 (extend / fillet / chamfer the gaps at a polyline's outside corners) | OFFSETGAPTYPE | Implemented |
 | OFFSET (polyline, incl. closed rectangles + bulged/filleted corners) — each segment offset (lines parallel, arcs concentric with the bulge preserved) and **corners re-mitered** as the intersection of adjacent offset curves (line/line, line/arc, arc/arc via the shared line_line / line_circle / circle_circle primitives), so edges stay at distance d with clean corners (no trapezoid). Over-large offsets that would fold the shape fail gracefully ("Offset distance too large for this polyline.") leaving the geometry unchanged | O | Implemented |
 | ROTATE | RO | Implemented -- `Specify rotation angle or [Copy/Reference] <0>:`; the selection turns with the cursor (an engine-side band: every kind, at the current zoom) with the live angle shown at the cursor; **Reference** by a value or two points, then `Specify the new angle or [Points] <0>:` |
 | SCALE | SC | Implemented -- `Specify scale factor or [Copy/Reference]:`; dragging scales by the cursor's distance from the base point in drawing units (AutoCAD's rule: one unit away is a factor of 1), previewed by the engine with the live factor at the cursor; **Reference** by a value or two points, then `Specify new length or [Points] <1.0000>:` |
@@ -207,7 +212,8 @@ commands (Ribbon Phase A):
 | Per-viewport layer freezing: a viewport's own frozen-layer list applied when the model is built for it (and while editing through it with MSPACE), the Layer Properties Manager's VP Freeze / New VP Freeze columns, native v34, DXF VIEWPORT 331 + LAYER flag 2 | VPLAYER | Implemented |
 | MSPACE / PSPACE through a viewport: double-click in / out, the camera hand-off keeps the viewport's on-screen size, the view left on PSPACE becomes the viewport's view | MSPACE | Implemented (the sheet is not shown around the model while inside; a tab switch drops the edit without a write-back) |
 | PEDIT (Close/Open/Join/Width/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
-| Object snaps: Insertion, Apparent intersection, Parallel; OSNAP settings dialog; -OSNAP | OS | Implemented (Apparent intersection and Parallel are opt-in, as in AutoCAD) |
+| Object snaps: Insertion, Apparent intersection, Parallel, Extension, Geometric Center; OSNAP settings dialog; -OSNAP; OSMODE | OS | Implemented (the running snaps start as AutoCAD's default set) |
+| One-time object snaps typed at a point prompt (`END MID CEN GCEN NOD QUA INT EXT INS PER TAN NEA APP PAR NON`), `FROM`, `M2P` / `MTP`, `TT`, `TK`; the Shift + right-click object snap menu | typed mid-command | Implemented (#66) |
 | ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |
 | Properties palette: feature control frame cells and datum letter editable | PR | Implemented |
 | Properties palette: editable Start/End/Center X-Y, Radius, Position X-Y | PR | Implemented |
@@ -436,13 +442,35 @@ phase covered **import, display, and selection**; authoring followed under issue
 | Node (Point entities) | Implemented |
 | Perpendicular (deferred; line + circle/arc) | Implemented |
 | Tangent (deferred; circle/arc) | Implemented |
-| Centroid of closed polyline — **Musa extension** (no AutoCAD equivalent) | Implemented |
-| Apparent intersection / Insertion / Parallel | Implemented (issue #32; Apparent intersection and Parallel are opt-in, as in AutoCAD) |
+| Geometric Center (`GCEN`): the centroid of a closed polyline | Implemented |
+| Apparent intersection / Insertion / Parallel | Implemented (issue #32) |
+| Extension (`EXT`): pass the cursor over the end of a line, an arc or an open polyline to acquire it (a small cross marks it), then move along the line carried on past that end, or round the arc's circle; a dashed path runs from the end to the snap point, and two acquired lines give their crossing | Implemented (issue #66) |
+
+A polyline's arc segments snap at their true midpoint and at their centre.
 
 OSNAP precedence (highest→lowest, within the aperture): Endpoint, Midpoint,
-Center, Node, Quadrant, Intersection, Perpendicular, Tangent, Centroid, Nearest.
+Center, Node, Quadrant, Intersection, Perpendicular, Tangent, Geometric Center,
+Insertion, Apparent intersection, Parallel, Extension, Nearest.
 Each type is individually toggleable via the running-osnap mask (OSNAP status-bar
-button dropdown).
+button dropdown, the settings dialog, `-OSNAP`, `OSMODE`). A fresh session runs
+AutoCAD's default set: Endpoint, Center, Intersection and Extension.
+
+### One pick only
+
+At any prompt that asks for a point, a snap mode typed instead of the point holds for
+that one pick, whatever the running snaps are and even with OSNAP off: `END`, `MID`,
+`CEN`, `GCEN`, `NOD`, `QUA`, `INT`, `EXT`, `INS`, `PER`, `TAN`, `NEA`, `APP`, `PAR`
+(several may be given, `END,MID`), and `NON` for no snap at all. The prompt shows it
+(`Specify next point or [Undo]: _end of`). A pick with nothing of the kind under the
+cursor is refused (`No Endpoint found for specified point.`) and the prompt asks again.
+Shift + right-click opens the same list as a menu.
+
+| Typed | What it gives |
+|---|---|
+| `FROM` | `Base point:` then `<Offset>:` -- a point at an offset (`@dx,dy`, `@dist<angle`) from a base point, the base usually taken with a snap |
+| `M2P` / `MTP` | `First point of mid:` / `Second point of mid:` -- the point half way between two points |
+| `TT` | `Specify temporary OTRACK point:` -- the cursor then locks onto the horizontal and the vertical through that point (with ORTHO, where the ortho direction crosses them) until the next point is given |
+| `TK` | `First tracking point:` then `Next point (Press ENTER to end tracking):` -- a chain of moves, each along one axis; Enter gives the point reached |
 
 ## Selection & live preview
 
@@ -534,7 +562,9 @@ and disappear (returning to the last fixed tab) when it doesn't. Mixed selection
 | Grid display | F7 | Implemented |
 | Ortho | F8 | Implemented |
 | Snap (grid snap) | F9 | Implemented |
-| Polar tracking | F10 | Implemented |
+| Polar tracking | F10 | Implemented -- alignment paths at the polar angles from the last point; the cursor locks onto one within the aperture of it (a dashed path and a tooltip, `Polar: 12.3456 < 45°`). Increment angles from the POLAR dropdown or `POLARANG` (90 to begin with), additional angles (`POLARADDANG`, used with `POLARMODE` 4), angles relative to the last segment (`POLARMODE` 1), PolarSnap (`SNAPTYPE` 1 with SNAP on: steps of `POLARDIST` along the path) |
+| Object snap tracking | F11 | Implemented -- rest the cursor on an object snap point to acquire it (a small cross; rest on it again to let it go; seven at most), then track along the horizontal and vertical through it (every polar angle with `POLARMODE` 2), onto the crossing of two paths or of a path and a polar path (`Endpoint: < 90°, Polar: < 0°`). `AUTOSNAP` bits 8 and 16 switch the two tracking modes |
+| Temporary override keys, held at a point prompt | Shift … | Implemented -- Shift: ORTHO the other way; Shift + A: OSNAP; Shift + X: POLAR; Shift + Q: OTRACK; Shift + D (or L): no snapping or tracking; Shift + E (or P) / V (or M) / C: Endpoint / Midpoint / Center alone. `TEMPOVERRIDES` 0 switches them off |
 | Undo / Redo | Ctrl+Z / Ctrl+Y | Implemented |
 | Delete selection | Delete / Backspace | Implemented |
 | Clear selection | Esc | Implemented |

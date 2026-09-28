@@ -35,7 +35,56 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   last vertex, on every next-point pick.
 - DONUT diameters can be shown by two points.
 
+- **Object snaps for one pick** (#66) -- at any prompt that asks for a point, `END`, `MID`,
+  `CEN`, `GCEN`, `NOD`, `QUA`, `INT`, `EXT`, `INS`, `PER`, `TAN`, `NEA`, `APP` or `PAR`
+  typed instead of the point snaps that pick only, whatever the running snaps are, and
+  `NON` switches them off for it. The prompt shows the mode (`_end of`); a pick with no
+  such point under the cursor is refused and asked again. **Shift + right-click** opens
+  the object snap menu.
+- **FROM**, **M2P** / **MTP**, **TT** and **TK** -- a point at an offset from a base
+  point, the middle of two points, a temporary tracking point the cursor locks onto
+  (horizontally and vertically), and a chain of orthogonal moves.
+- **Extension** object snap (`EXT`) -- the end of a line, an arc or an open polyline is
+  acquired by passing the cursor over it; the snap then runs along the line carried on
+  past it (or round the arc's circle), with a dashed path from the end, and finds the
+  crossing of two acquired lines.
+- **OSMODE**; `-OSNAP` offers the modes in force as its default.
+- **OFFSET** (#50) offsets construction lines and rays (to one of the same kind), and
+  ellipses, elliptical arcs and splines (to a spline a constant distance away, as AutoCAD
+  does). The offset a click would make follows the cursor at the side prompt, through
+  the through point with Through. **OFFSETGAPTYPE** 1 and 2 round or bevel the gaps an
+  offset opens at the outside corners of a polyline.
+
+- **Polar tracking as AutoCAD has it** (#64) -- alignment paths at the polar angles from
+  the last point, a cursor that locks onto a path once it is within the aperture of it,
+  the dashed tracking line and the tooltip (`Polar: 12.3456 < 45°`). The increment angle
+  is chosen from the POLAR dropdown (90, 45, 30, 22.5, 18, 15, 10, 5) or `POLARANG`;
+  `POLARADDANG` adds single angles and `POLARMODE` measures from the last segment.
+  **PolarSnap** (`SNAPTYPE` 1, `POLARDIST`) steps along the path.
+- **Object snap tracking** (F11, OTRACK) -- a point the cursor rests on is acquired; the
+  cursor then tracks along the paths through it, onto the crossing of two of them or of
+  one and a polar path. `AUTOSNAP` switches the two tracking modes.
+- **Temporary override keys** while a command asks for a point: Shift (ORTHO the other
+  way), Shift + A (OSNAP), Shift + X (POLAR), Shift + Q (OTRACK), Shift + D (nothing at
+  all), Shift + E / V / C (Endpoint, Midpoint or Center alone). `TEMPOVERRIDES` 0
+  switches them off.
+
+### Fixed
+- OFFSET with Layer = Source put the offset of a line, an arc or a circle on the current
+  layer with the current colour and linetype. It takes the source's properties, linetype
+  scale included.
+
 ### Changed
+- POLAR no longer turns every cursor position to the nearest 45 degrees: it takes the
+  cursor only near a polar path, and the increment starts at 90 degrees, AutoCAD's
+  default. Pick 45 from the POLAR dropdown for the angles it had.
+- The **Centroid** object snap takes AutoCAD's name and keyword: **Geometric Center**,
+  `GCEN`.
+- The running object snaps start as AutoCAD's default set -- Endpoint, Center,
+  Intersection and Extension (OSMODE 4133). The others are a click away in the OSNAP
+  dropdown, or typed for one pick.
+- A polyline's arc segments snap at the middle of the arc (it was the middle of the
+  chord) and at the arc's centre.
 - **DONUT** makes what AutoCAD makes: a closed polyline of two half-circle arcs on the
   mean diameter, as wide as the ring is thick (it was a two-loop solid hatch). It can be
   edited, offset and exploded as a polyline, and FILLMODE applies to it.

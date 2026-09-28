@@ -425,6 +425,7 @@ private:
     QAction* ortho_action_ = nullptr;
     QAction* snap_action_ = nullptr;
     QAction* polar_action_ = nullptr;
+    QAction* otrack_action_ = nullptr;
 };
 
 } // namespace musacad::ui

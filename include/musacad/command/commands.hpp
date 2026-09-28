@@ -400,6 +400,9 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// OFFSETGAPTYPE: what joins a polyline's straight segments where the offset has
+    /// parted them -- 0 carried on to their crossing, 1 an arc, 2 a bevel.
+    inline static int s_gap_type_ = 0;
 
 private:
     /// AutoCAD's flow: `Specify offset distance or [Through/Erase/Layer] <last>:` (a value,
@@ -420,6 +423,23 @@ private:
     void prompt_object(CommandContext& ctx);
     void prompt_side(CommandContext& ctx);
     void place(CommandContext& ctx, core::Vec2 side, bool from_last);
+    /// The offset a click would make follows the cursor at the side prompt.
+    void show_preview(CommandContext& ctx, bool from_last);
+    void end_preview(CommandContext& ctx);
+    bool previewing_ = false;
+};
+
+/// OFFSETGAPTYPE: `Enter new value for OFFSETGAPTYPE <0>:` (0, 1 or 2).
+class OffsetGapTypeCommand final : public ICommand {
+public:
+    std::string name() const override { return "OFFSETGAPTYPE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
 };
 
 // JOIN: pick a source object, then pick lines/arcs/open polylines that share endpoints
@@ -903,8 +923,43 @@ private:
     bool done_ = false;
 };
 
-/// -OSNAP: "Enter list of object snap modes:" (END,MID,CEN,NOD,QUA,INT,PER,TAN,NEA,INS,
-/// APP,PAR,NONE,ALL) -- sets the running snaps from the command line.
+/// The tracking system variables, each `Enter new value for NAME <current>:` --
+/// POLARANG (the increment angle, degrees), POLARADDANG (additional angles, separated by
+/// semicolons; `.` for none), POLARMODE (1 relative, 2 track along every polar angle,
+/// 4 use the additional angles), POLARDIST (the PolarSnap distance), SNAPTYPE (0 grid,
+/// 1 PolarSnap), AUTOSNAP (8 polar tracking, 16 object snap tracking) and TEMPOVERRIDES.
+class TrackingVarCommand final : public ICommand {
+public:
+    enum class Var : std::uint8_t { PolarAng, PolarAddAng, PolarMode, PolarDist, SnapType, AutoSnap, TempOverrides };
+    explicit TrackingVarCommand(Var var) : var_(var) {}
+    std::string name() const override;
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    Var var_;
+    bool done_ = false;
+    [[nodiscard]] std::string current(CommandContext& ctx) const;
+};
+
+/// OSMODE: `Enter new value for OSMODE <4133>:` -- the running snaps as AutoCAD's bit sum.
+class OsmodeCommand final : public ICommand {
+public:
+    std::string name() const override { return "OSMODE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// -OSNAP: `Enter list of object snap modes <End,Cen,Int,Ext>:` (END, MID, CEN, GCEN, NOD,
+/// QUA, INT, EXT, INS, PER, TAN, NEA, APP, PAR, NONE, ALL) -- sets the running snaps
+/// from the command line; Enter keeps them.
 class OsnapModesCommand final : public ICommand {
 public:
     std::string name() const override { return "-OSNAP"; }

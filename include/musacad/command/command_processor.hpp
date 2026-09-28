@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -56,6 +58,39 @@ public:
     /// grid-snap resolution) to the active command.
     void pick_point(core::Vec2 world, std::optional<core::Vec2> snap);
 
+    /// The object snap typed for the next pick, if any: its mask stands in for the
+    /// running snaps for that pick (0 = NON, no snap at all).
+    [[nodiscard]] std::optional<std::uint32_t> snap_override() const noexcept {
+        if (snap_override_) {
+            return snap_override_;
+        }
+        std::uint32_t held = 0;
+        if (override_held(Override::Endpoint)) {
+            held |= core::snap_bit(core::SnapType::Endpoint);
+        }
+        if (override_held(Override::Midpoint)) {
+            held |= core::snap_bit(core::SnapType::Midpoint);
+        }
+        if (override_held(Override::Center)) {
+            held |= core::snap_bit(core::SnapType::Center);
+        }
+        if (held != 0) {
+            return held;
+        }
+        if (override_held(Override::DisableAll)) {
+            return 0u;
+        }
+        return std::nullopt;
+    }
+    /// The temporary tracking points (TT) in force: the cursor locks onto the horizontal
+    /// and the vertical through each.
+    [[nodiscard]] const std::vector<core::Vec2>& track_points() const noexcept { return track_points_; }
+    /// True while FROM, M2P, TT or TK is gathering its points.
+    [[nodiscard]] bool point_filter_active() const noexcept {
+        return filter_.kind != PointFilter::Kind::None;
+    }
+    bool point_modifier(const std::string& text) override;
+
     /// Undo / redo the last command group (Ctrl+Z / Ctrl+Y).
     void undo();
     void redo();
@@ -72,6 +107,73 @@ public:
     // Drawing-aid modes (set from the UI toggles).
     void set_ortho(bool on) { ortho_ = on; }
     void set_polar(bool on) { polar_ = on; }
+    /// Object snap tracking (F11). Switching it off lets the acquired points go.
+    void set_otrack(bool on) {
+        otrack_ = on;
+        if (!on) {
+            acquired_.clear();
+            hover_.reset();
+        }
+    }
+    [[nodiscard]] bool polar_tracking() const override { return polar_; }
+    [[nodiscard]] bool object_snap_tracking() const override { return otrack_; }
+    /// As a command switches them (AUTOSNAP): the status bar follows.
+    void set_polar_tracking(bool on) override {
+        polar_ = on;
+        if (on) {
+            ortho_ = false; // the two exclude each other, as F8 and F10 do
+        }
+        if (view_ != nullptr) {
+            view_->set_polar_mode(on);
+        }
+    }
+    void set_object_snap_tracking(bool on) override {
+        set_otrack(on);
+        if (view_ != nullptr) {
+            view_->set_otrack_mode(on);
+        }
+    }
+    [[nodiscard]] bool temp_overrides() const override { return temp_overrides_; }
+    void set_temp_overrides(bool on) override {
+        temp_overrides_ = on;
+        if (!on) {
+            clear_overrides();
+        }
+    }
+    [[nodiscard]] TrackingSettings tracking_settings() const override { return tracking_; }
+    void set_tracking_settings(const TrackingSettings& settings) override { tracking_ = settings; }
+    [[nodiscard]] int snap_type() const override { return polar_snap_type_ ? 1 : 0; }
+    void set_snap_type(int type) override { polar_snap_type_ = type == 1; }
+
+    /// The keys AutoCAD reads as temporary overrides while they are held: Shift alone
+    /// (ORTHO the other way), Shift + A (OSNAP), Shift + X (POLAR), Shift + Q (OTRACK),
+    /// Shift + D (no snapping or tracking at all), Shift + E / V / C (Endpoint,
+    /// Midpoint or Center alone).
+    enum class Override : std::uint8_t {
+        Ortho, Osnap, Polar, Otrack, DisableAll, Endpoint, Midpoint, Center, Count
+    };
+    /// True while the running command's prompt asks for a point (`Specify next point`,
+    /// `Specify opposite corner`, `... location`): the only time the override keys are
+    /// read, so a name or a text being typed keeps its capitals.
+    [[nodiscard]] bool asking_for_point() const;
+    void set_override(Override which, bool held);
+    [[nodiscard]] bool override_held(Override which) const noexcept {
+        return overrides_[static_cast<std::size_t>(which)];
+    }
+    void clear_overrides();
+    /// OSNAP as the held keys leave it, given the status bar's setting.
+    [[nodiscard]] bool effective_osnap(bool running) const noexcept;
+
+    /// The object snap under the cursor, handed over on every move: a point the cursor
+    /// rests on (a fifth of a second) is acquired for object snap tracking, and let go
+    /// when the cursor comes back to rest on it. `now` is a clock in seconds.
+    void note_snap(std::optional<core::Vec2> snap, const std::string& label, double now);
+    [[nodiscard]] const std::vector<TrackPoint>& acquired_points() const noexcept { return acquired_; }
+    /// What tracking made of the cursor last resolved: the paths in hand (none when the
+    /// cursor is free), for the dashed lines and the tooltip.
+    [[nodiscard]] const TrackResult& tracked() const noexcept { return tracked_; }
+    /// "Polar: 12.3456 < 45°", "Endpoint: < 90°, Polar: < 0°"; empty when free.
+    [[nodiscard]] std::string tracking_tooltip() const;
     void set_grid_snap(bool on) { grid_snap_ = on; }
     void set_grid_spacing(double s) { grid_spacing_ = s; }
     void set_pick_radius(double world_radius) { pick_radius_ = world_radius; }
@@ -187,8 +289,20 @@ public:
     [[nodiscard]] std::uint64_t group_id() const override { return current_group_; }
     [[nodiscard]] std::uint64_t new_group() override { return begin_group(); }
     [[nodiscard]] std::optional<core::Vec2> last_point() const override { return last_point_; }
-    void set_last_point(core::Vec2 p) override { last_point_ = p; }
-    void clear_last_point() override { last_point_.reset(); }
+    void set_last_point(core::Vec2 p) override {
+        if (last_point_ && core::distance(*last_point_, p) > 1e-12) {
+            // The direction just drawn: what relative polar angles are measured from.
+            last_direction_ = std::atan2(p.y - last_point_->y, p.x - last_point_->x);
+        }
+        last_point_ = p;
+        track_points_.clear(); // the points tracked for it have served
+        acquired_.clear();
+        hover_.reset();
+    }
+    void clear_last_point() override {
+        last_point_.reset();
+        last_direction_ = 0.0;
+    }
     [[nodiscard]] std::optional<LastSegment> last_segment() const override { return last_segment_; }
     void set_last_segment(LastSegment segment) override { last_segment_ = segment; }
     [[nodiscard]] bool ctrl_held() const override { return ctrl_held_; }
@@ -211,6 +325,48 @@ public:
 private:
     void finalize_if_done();
     void show_ready();
+
+    /// FROM (a base point, then an offset from it), M2P (the middle of two points), TT
+    /// (a temporary tracking point) and TK (a chain of orthogonal moves): the points a
+    /// filter asks for are taken here, ahead of the command, which then receives the
+    /// one point they make.
+    struct PointFilter {
+        enum class Kind : std::uint8_t { None, From, MidBetween, TempTrack, Track };
+        Kind kind = Kind::None;
+        int stage = 0;
+        core::Vec2 a{};
+        std::string prompt;                   ///< the command's prompt, put back afterwards
+        std::optional<core::Vec2> last_point; ///< ... and its last point
+    };
+    PointFilter filter_;
+    std::optional<std::uint32_t> snap_override_;
+    std::string snap_override_name_;   ///< "Endpoint", for "No Endpoint found ..."
+    std::string snap_override_prompt_; ///< the prompt the override was typed at
+    std::vector<core::Vec2> track_points_;
+    bool feeding_pick_ = false; ///< submit_line() is delivering a viewport pick
+    // Tracking (AutoTrack).
+    TrackingSettings tracking_;
+    bool otrack_ = false;
+    bool polar_snap_type_ = false; ///< SNAPTYPE 1
+    bool temp_overrides_ = true;   ///< TEMPOVERRIDES
+    double last_direction_ = 0.0;  ///< the direction of the segment that reached last_point_
+    std::vector<TrackPoint> acquired_;
+    struct Hover {
+        core::Vec2 at{};
+        std::string label;
+        double since = 0.0;
+        bool taken = false; ///< this rest has been counted already
+    };
+    std::optional<Hover> hover_;
+    mutable TrackResult tracked_;
+    std::array<bool, static_cast<std::size_t>(Override::Count)> overrides_{};
+    bool try_snap_override(const std::string& text);
+    void end_snap_override(bool restore_prompt);
+    void begin_filter(PointFilter::Kind kind);
+    void end_filter();
+    void feed_filter(const std::string& text);
+    void deliver_point(core::Vec2 p);
+    void drop_point_modifiers();
 
     CommandSink sink_;
     ViewControl* view_;

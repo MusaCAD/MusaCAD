@@ -15,6 +15,7 @@
 
 #include <vector>
 
+#include "musacad/core/osnap.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/image_decoder.hpp"
 #include "musacad/core/geometry_store.hpp"
@@ -295,6 +296,15 @@ private:
     /// The direction of the straight object (or polyline segment) under a pick.
     [[nodiscard]] bool straight_under_pick(Vec2 pick, double pick_radius, Vec2& a, Vec2& b) const;
     EntityHandle last_offset_ = EntityHandle::null(); ///< the newest offset, for [Multiple]
+    /// OFFSET's side prompt: the object, the distance, and whether the band is up.
+    OffsetPreviewCommand offset_preview_{};
+    EntityHandle offset_preview_handle_ = EntityHandle::null();
+    bool offset_preview_active_ = false;
+    /// What offsetting `h` towards `side` makes: the distance (or the through point),
+    /// the kernel's offset, and the source's properties on it.
+    [[nodiscard]] bool offset_result(EntityHandle h, double distance, bool through, Vec2 side,
+                                     int gap_type, bool to_current_layer, Command& out,
+                                     std::string* why = nullptr) const;
     /// The polyline an edit is replacing (TRIM, BREAK, EXTEND, FILLET, CHAMFER): the
     /// pieces the edit builds from bare vertices take their widths, elevation and
     /// thickness from it. Set by inherit_polyline(), used by create_entity(), and
@@ -483,6 +493,9 @@ private:
     std::uint32_t snap_mask_ = kAllSnaps;
     Vec2 from_{};
     bool has_from_ = false;
+    /// The ends the cursor has passed over since the last pick (Extension snap): newest
+    /// last, at most seven, as AutoCAD keeps.
+    std::vector<ExtensionPath> ext_paths_;
 
     // Zoom-adaptive tessellation: the view scale (world units / pixel) and the
     // half-octave bucket derived from it. Curves re-tessellate only when the bucket

@@ -79,13 +79,13 @@ TEST_CASE("OSNAP Tangent: tangent point from an external point to a circle") {
     REQUIRE(r.point.y == Approx(4.3301).margin(1e-3));
 }
 
-TEST_CASE("OSNAP Centroid (Musa extension): centre of a closed polyline") {
+TEST_CASE("OSNAP Geometric Center: the centroid of a closed polyline") {
     Scene s;
     const std::array<Vec2, 4> sq{{{0, 0}, {4, 0}, {4, 4}, {0, 4}}};
     s.poly(sq, true);
     const SnapResult r = s.snap({2.1, 2.1}, 1.0);
     REQUIRE(r.found);
-    REQUIRE(r.type == SnapType::Centroid);
+    REQUIRE(r.type == SnapType::GeometricCenter);
     REQUIRE(r.point.x == Approx(2.0));
     REQUIRE(r.point.y == Approx(2.0));
 }

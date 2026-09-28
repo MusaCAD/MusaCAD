@@ -252,6 +252,11 @@ struct RenderSnapshot {
     bool has_snap = false;
     Vec2 snap_point{};
     SnapType snap_type = SnapType::None;
+    /// Extension: the acquired end the snap point is extended from, and every end
+    /// acquired so far (each is marked with a small cross).
+    bool snap_has_path = false;
+    Vec2 snap_path_from{};
+    std::vector<Vec2> snap_acquired;
 
     // Current selection (geometry-side). `selection` is the queryable handle set
     // (API for the command layer / future scripting); `selected_line_vertices`

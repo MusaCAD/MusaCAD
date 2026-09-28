@@ -685,6 +685,20 @@ struct OffsetPickCommand {
     bool erase_source = false;     ///< [Erase]: the source goes once the offset exists
     bool to_current_layer = false; ///< [Layer] Current: the offset lands on the current layer
     bool from_last = false;        ///< [Multiple]: offset the last offset made, not the pick
+    std::uint8_t gap_type = 0;     ///< OFFSETGAPTYPE: 0 extend, 1 fillet, 2 chamfer
+};
+
+/// OFFSET's side prompt: the offset a click at the cursor would make, shown while the
+/// cursor moves (the engine follows its own cursor; this names the object and the
+/// distance). `active` false ends it. A rubber band: no edit, nothing to undo.
+struct OffsetPreviewCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    double distance = 0.0;
+    bool through = false;
+    bool from_last = false;
+    std::uint8_t gap_type = 0;
+    bool active = true;
 };
 
 /// Trim the (line) entity nearest `pick` to its nearest intersections.
@@ -1515,7 +1529,7 @@ using Command =
                  SelectHandleCommand, SelectPreviewCommand, SelectSimilarCommand,
                  SelectFilterCommand, IsolateObjectsCommand, OopsCommand, GroupEditCommand,
                  ListGroupsCommand, SetLtscaleModesCommand, MatchPropApplySelectionCommand,
-                 SetCeltscaleCommand, SetFillModeCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
+                 SetCeltscaleCommand, SetFillModeCommand, OffsetPreviewCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
                  StatusQueryCommand, SetDrawingPropsCommand,
                  ChainDimensionCommand>;
 

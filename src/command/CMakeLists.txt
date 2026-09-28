@@ -3,6 +3,8 @@ add_library(musacad_command STATIC
     coordinate.cpp
     commands.cpp
     dyn_fields.cpp
+    snap_keywords.cpp
+    tracking.cpp
     command_registry.cpp
     command_processor.cpp
     calc.cpp)

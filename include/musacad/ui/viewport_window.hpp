@@ -32,6 +32,8 @@ class QWheelEvent;
 class QResizeEvent;
 class QKeyEvent;
 
+class QTimer;
+
 namespace musacad::core {
 class IFontEngine;
 }
@@ -141,6 +143,17 @@ public:
     [[nodiscard]] std::uint32_t snap_mask() const override;
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
+    void snap_override_changed() override;
+    void set_polar_mode(bool on) override;
+    void set_otrack_mode(bool on) override;
+    /// The status bar's POLAR and OTRACK buttons, for the commands that switch the modes.
+    void set_tracking_mode_callbacks(std::function<void(bool)> polar, std::function<void(bool)> otrack) {
+        polar_mode_callback_ = std::move(polar);
+        otrack_mode_callback_ = std::move(otrack);
+    }
+    /// A temporary override key went down or came up (Shift alone, Shift + A / X / Q / D /
+    /// E / V / C ...). True when the key was one and is not to be typed.
+    bool override_key(int key, Qt::KeyboardModifiers modifiers, bool pressed, bool repeat);
     void attribute_editor_at(core::Vec2 pick, double pick_radius) override;
     void block_attribute_manager() override;
     [[nodiscard]] std::vector<core::TiledViewport> tiled_viewports() const override;
@@ -207,6 +220,21 @@ public:
     /// The idle right-click menu (Repeat, Recent Input, Clipboard, Isolate, Select
     /// Similar, Quick Select, Deselect All, Undo / Redo, Properties).
     void show_context_menu(QPoint global, core::Vec2 world);
+    /// Shift + right-click: AutoCAD's object snap menu (a snap for the next pick, the
+    /// point filters, the settings).
+    void show_osnap_menu(QPoint global);
+    /// Hands the cursor to the geometry thread with the snaps in force for it.
+    void submit_cursor(core::Vec2 world, double aperture);
+    core::Vec2 last_cursor_world_{};
+    double last_cursor_aperture_ = 0.0;
+    std::function<void(bool)> polar_mode_callback_;
+    std::function<void(bool)> otrack_mode_callback_;
+    std::atomic<int> snap_type_{0}; ///< the published snap's type, for the tracking label
+    QTimer* rest_timer_ = nullptr;  ///< fires once the cursor has rested (OTRACK acquires)
+    /// The snap under the cursor goes to the processor: a point rested on is acquired.
+    void note_snap_for_tracking();
+    /// The alignment paths in hand, dashed, the acquired points, and the tooltip.
+    void append_tracking(render::RenderOverlay& ov, core::Vec2 cursor);
     /// Selection cycling: the objects under the last pick, offered as a list at the cursor.
     void show_cycle_menu();
     /// A finished selection gesture: the engine command(s), then the running command's
