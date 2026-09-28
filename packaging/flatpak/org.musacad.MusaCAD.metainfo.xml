@@ -4,7 +4,7 @@
   <id>org.musacad.MusaCAD</id>
 
   <name>Musa CAD</name>
-  <summary>High-performance multi-threaded 2D CAD</summary>
+  <summary>Fast, precise 2D drafting</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>LGPL-3.0-or-later</project_license>
@@ -15,19 +15,21 @@
 
   <description>
     <p>
-      Musa CAD is a fast, modern 2D CAD application. It mirrors AutoCAD's UI layout,
-      command line, and classic shortcuts, on a multi-threaded, GPU-accelerated,
-      data-oriented core targeting a smooth 144 Hz+ viewport.
+      Musa CAD is a 2D drafting application for technical, architectural and engineering
+      drawings. It follows AutoCAD's ribbon, command line, prompts and shortcuts, so a
+      drafter's habits carry over, and its multi-threaded, GPU-accelerated core keeps even
+      large drawings smooth to pan, zoom and edit.
     </p>
     <p>Features:</p>
     <ul>
-      <li>2D drafting: lines, polylines, circles, arcs, rectangles, hatches</li>
-      <li>Full Modify suite: move, copy, rotate, mirror, scale, offset, trim, fillet, array</li>
-      <li>Dimensions, leaders, and text (TrueType and stroke fonts)</li>
-      <li>Blocks, layers, linetypes, and a Properties palette with MATCHPROP</li>
-      <li>Dynamic input on the canvas and multi-document tabs</li>
-      <li>DXF read/write built in; DWG via an external converter</li>
-      <li>PDF / print plotting with true vector output</li>
+      <li>Lines, polylines with widths, arcs, circles, ellipses, splines, hatches and gradients</li>
+      <li>Move, copy, rotate, scale, stretch, trim, extend, fillet, offset and arrays, with grips</li>
+      <li>Object snaps, polar and object snap tracking, and dynamic input at the cursor</li>
+      <li>Dimensions, leaders, text, tables and geometric tolerancing</li>
+      <li>Layers, linetypes, lineweights, blocks with attributes and external references</li>
+      <li>Layouts with viewports, and plotting to PDF or a printer</li>
+      <li>DXF read and write; DWG through the free ODA File Converter</li>
+      <li>Several drawings open at once in tabs</li>
     </ul>
   </description>
 
@@ -39,20 +41,28 @@
 
   <screenshots>
     <screenshot type="default">
-      <caption>The Musa CAD interface: ribbon, multi-document tabs, and the Properties palette</caption>
-      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/overview.png</image>
+      <caption>The ribbon, drawing tabs and Properties palette with a wall of a house plan selected</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/overview.png</image>
     </screenshot>
     <screenshot>
-      <caption>A dense architectural drawing with elevations and a floor plan</caption>
-      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/architectural-plan.png</image>
+      <caption>Commands typed at the cursor, with their matches offered as you type</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/command-entry.png</image>
     </screenshot>
     <screenshot>
-      <caption>A dimensioned mechanical detail with a bolt-circle and section view</caption>
-      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/mechanical-detail.png</image>
+      <caption>Drawing a wide polyline with its length and angle at the cursor and polar tracking</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/dynamic-input.png</image>
     </screenshot>
     <screenshot>
-      <caption>The Hatch Editor over a sectioned detail and title block</caption>
-      <image>https://raw.githubusercontent.com/MusaCAD/MusaCAD/main/assets/screenshots/hatch-section.png</image>
+      <caption>A house plan with its south elevation and room schedule</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/architectural-plan.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A dimensioned flange with a section view and geometric tolerances</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/mechanical-detail.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The Hatch Editor on a wall and footing construction detail</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/hatch-section.png</image>
     </screenshot>
   </screenshots>
 
