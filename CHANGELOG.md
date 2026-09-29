@@ -9,6 +9,17 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **On Flathub** -- `flatpak install flathub org.musacad.MusaCAD` (#1).
+- **Update check** -- once a day, in the background, Musa CAD asks where it was installed
+  from for the latest version: Flathub for the Flatpak, the GitHub release for the AppImage,
+  the Windows installer and the macOS disk image. A newer version appears as a small
+  **Update available** note in the status bar -- no window over the drawing, no focus taken.
+  Clicking it shows what's new and the one step that updates this copy: the
+  `flatpak update org.musacad.MusaCAD` command to copy, or the AppImage / installer / disk
+  image to download. **Skip This Version** silences that release; **Check for Updates** in
+  the application menu asks on demand. Builds from source do not check on their own.
+- **OPTIONS** (`OP`, and **Options** in the application menu) -- the update check and the
+  performance overlay.
 - **Polyline widths** (#37) -- a polyline carries a starting and an ending width for every
   segment and is drawn as a filled band: straight segments as trapezoids mitred where two
   of one width meet, arcs as ring sectors, tapers running evenly along either. PLINE has
@@ -83,6 +94,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `P 2600.0000 90` instead of `Polar: 2600.0000 < 90°`.
 
 ### Changed
+- The frame-rate readout in the drawing area and the frame rate and build date in the title
+  bar are off by default; **Options > Show performance overlay** brings them back. The
+  build date stays in **About**.
 - POLAR no longer turns every cursor position to the nearest 45 degrees: it takes the
   cursor only near a polar path, and the increment starts at 90 degrees, AutoCAD's
   default. Pick 45 from the POLAR dropdown for the angles it had.
