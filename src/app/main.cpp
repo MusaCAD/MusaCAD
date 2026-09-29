@@ -140,6 +140,7 @@ int main(int argc, char* argv[]) {
         window.show();
     } else {
         window.showMaximized();
+        window.start_update_checks();
     }
 
     // `musacad drawing.musa` -- the file argument rides the EXISTING OpenDocumentCommand

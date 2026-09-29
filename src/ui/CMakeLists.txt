@@ -8,6 +8,7 @@ add_library(musacad_ui STATIC
     dyn_input.cpp
     dwg_converter.cpp
     dwg_installer.cpp
+    update_checker.cpp
     qt_font_engine.cpp
     qt_image_decoder.cpp
     plot.cpp
@@ -26,7 +27,8 @@ add_library(musacad_ui STATIC
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/plot_dialog.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/ribbon_bar.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_modes.hpp"
-    "${CMAKE_SOURCE_DIR}/include/musacad/ui/dwg_installer.hpp")
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/dwg_installer.hpp"
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/update_checker.hpp")
 
 add_library(musacad::ui ALIAS musacad_ui)
 

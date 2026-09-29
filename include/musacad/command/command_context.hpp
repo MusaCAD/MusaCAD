@@ -228,6 +228,8 @@ public:
     virtual void export_dwg() {}
     /// Open the PLOT/print dialog (PDF + printer). Default no-op (headless/tests).
     virtual void plot_dialog() {}
+    /// Open the OPTIONS dialog (application settings). Default no-op (headless/tests).
+    virtual void options_dialog() {}
     /// MATCHPROP: the current Settings filter (which categories copy). Default all-on.
     [[nodiscard]] virtual core::MatchPropFilter match_filter() const { return {}; }
     /// MATCHPROP: open the modal Settings dialog (persists the filter). No-op headless.

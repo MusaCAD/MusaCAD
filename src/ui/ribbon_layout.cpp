@@ -71,7 +71,7 @@ void MainWindow::build_ribbon() {
     // ------------------------------------------------------------------ the application menu
     // The Musa mark is the application button (AutoCAD's "A"); its menu holds the file
     // operations that AutoCAD keeps there too: New, Open, Save, Save As, Import, Export,
-    // Plot, the DWG converter setup, About and Exit.
+    // Plot, the DWG converter setup, Options, Check for Updates, About and Exit.
     if (QPushButton* app_btn = ribbon_->app_button()) {
         app_btn->setIcon(QIcon(QStringLiteral(":/branding/musacad_logo.svg")));
         app_btn->setIconSize(QSize(22, 22));
@@ -110,6 +110,11 @@ void MainWindow::build_ribbon() {
             menu.addSeparator();
             file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("DWG Setup…"),
                         &MainWindow::configure_dwg_converter);
+            file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("Options…"),
+                        &MainWindow::open_options_dialog);
+            menu.addSeparator();
+            file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("Check for Updates…"),
+                        &MainWindow::check_for_updates);
             file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("About Musa CAD…"),
                         &MainWindow::show_about);
             menu.addSeparator();

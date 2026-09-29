@@ -80,6 +80,7 @@ public:
     void import_dwg() override;
     void export_dwg() override;
     void plot_dialog() override;
+    void options_dialog() override;
     [[nodiscard]] core::MatchPropFilter match_filter() const override;
     void match_settings_dialog() override;
     /// The selection system variables (PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG,
@@ -425,6 +426,11 @@ public:
     /// PLOT command -> the MainWindow opens the plot dialog. ViewControl::plot_dialog()
     /// forwards here on the GUI thread.
     void set_plot_dialog_callback(std::function<void()> cb) { plot_dialog_callback_ = std::move(cb); }
+    /// OPTIONS command -> the MainWindow opens its Options dialog.
+    void set_options_dialog_callback(std::function<void()> cb) { options_dialog_callback_ = std::move(cb); }
+    /// The frame rate / frame time readout in the viewport corner (off by default; the
+    /// Options dialog turns it on). Thread-safe: the render thread reads it every frame.
+    void set_performance_overlay(bool on) { perf_overlay_.store(on, std::memory_order_relaxed); }
     /// MATCHPROP: the MainWindow supplies the current Settings filter (from QSettings) and
     /// owns the modal Settings dialog. ViewControl::match_filter/match_settings_dialog
     /// forward here on the GUI thread.
@@ -741,6 +747,7 @@ private:
     std::function<void()> dwg_import_callback_;
     std::function<void()> dwg_export_callback_;
     std::function<void()> plot_dialog_callback_;
+    std::function<void()> options_dialog_callback_;
     std::function<core::MatchPropFilter()> match_filter_callback_;
     std::function<void()> match_settings_callback_;
     std::function<void(bool, core::Vec2, core::Vec2)> plot_pick_callback_; // armed window pick
@@ -808,6 +815,7 @@ private:
     // Cursor (device px) shared GUI->render for the crosshair.
     std::atomic<bool> cursor_inside_{false};
     std::atomic<bool> presentation_{false};
+    std::atomic<bool> perf_overlay_{false};
     std::atomic<bool> presentation_cursor_{false};
     /// steady_clock nanoseconds of the mouse event that last set cursor_px_*: the render
     /// thread reads it when it samples the cursor and, after the swap, reports the

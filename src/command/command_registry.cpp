@@ -432,6 +432,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Export the drawing to a DWG file.");
     reg({"PLOT", "PRINT"}, [] { return std::make_unique<PlotCommand>(); }, "assets/ribbon/plot.svg",
         "Plot or print the drawing to paper or PDF.");
+    reg({"OPTIONS", "OP"}, [] { return std::make_unique<OptionsCommand>(); }, "assets/ribbon/settings.svg",
+        "Change application settings: update checks and the performance overlay.");
     reg({"LTSCALE", "LTS"}, [] { return std::make_unique<LtscaleCommand>(); },
         "assets/ribbon/ltscale.svg", "Set the global linetype scale factor.");
     reg({"CELTSCALE"}, [] { return std::make_unique<LtscaleVarCommand>("CELTSCALE"); },

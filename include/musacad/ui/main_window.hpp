@@ -17,6 +17,7 @@
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/ui/qt_image_decoder.hpp"
 #include "musacad/ui/plot.hpp"
+#include "musacad/ui/update_checker.hpp"
 #include "musacad/ui/viewport_modes.hpp"
 
 class QTimer;
@@ -205,6 +206,11 @@ public:
     /// path). Public so `musacad <file>` can hand the CLI's argument straight in.
     void open_from(const QString& path, bool dxf);
 
+    /// Start the background update check (once a day, when the Options allow it) and
+    /// restore an update found earlier. main() calls this for an interactive session only
+    /// -- never under the self-test and capture harnesses.
+    void start_update_checks();
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -354,6 +360,19 @@ private:
     // --- Plot / print (Phase 30) -------------------------------------------
     /// Open the PLOT dialog (PDF + printers). Wired to PLOT/PRINT + Ctrl+P + the ribbon.
     void show_about(); // Help -> About: logo + name + version + build stamp + LGPL
+    /// OPTIONS (OP): the application settings -- the update check and the performance
+    /// overlay. Persisted in QSettings.
+    void open_options_dialog();
+    /// Help -> Check for Updates: a check the user asked for, so it always answers
+    /// (update found, up to date, or why it could not tell).
+    void check_for_updates();
+    /// The status-bar indicator for an update found by a check; hidden when there is none
+    /// or the user skipped that version.
+    void show_update_indicator(const UpdateChecker::Result& result);
+    void on_update_check_finished(const UpdateChecker::Result& result);
+    /// The performance overlay: frame rate + frame time in the viewport corner, and the
+    /// frame rate + build stamp in the title bar. Off by default (a user setting).
+    void set_performance_overlay(bool on);
     void open_plot_dialog();
     void open_plot_dialog_seeded(const PlotSpec& seed); // re-opens after a window pick
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
@@ -401,6 +420,11 @@ private:
     QDockWidget* properties_dock_ = nullptr;
     QLabel* coord_label_ = nullptr;
     QTimer* title_timer_ = nullptr;
+    bool perf_overlay_ = false;                 // Options > Show performance overlay
+    UpdateChecker* updater_ = nullptr;          // created on the first check
+    bool update_check_manual_ = false;          // the check in flight was asked for
+    UpdateChecker::Result pending_update_;      // what the status-bar indicator opens
+    QToolButton* update_button_ = nullptr;      // status-bar "update available" indicator
     std::vector<QToolButton*> selection_required_buttons_;
     std::vector<std::pair<std::uint32_t, QAction*>> osnap_actions_; ///< OSNAP dropdown toggles
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
