@@ -353,6 +353,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_dwg_import_callback([this] { file_import_dwg(); });
     viewport_->set_dwg_export_callback([this] { file_export_dwg(); });
     viewport_->set_plot_dialog_callback([this] { open_plot_dialog(); });
+    viewport_->set_options_dialog_callback([this] { open_options_dialog(); });
+    set_performance_overlay(QSettings().value(QStringLiteral("display/performance_overlay"), false).toBool());
 
     command_widget_->focus_input();
 
@@ -934,6 +936,22 @@ void MainWindow::build_status_bar() {
     });
     osnap_btn->setMenu(osnap_menu);
     osnap_btn->setPopupMode(QToolButton::MenuButtonPopup);
+
+    // An update found by the background check shows here, quietly, until the user opens
+    // it or skips that version -- never as a window over the drawing.
+    update_button_ = new QToolButton(this);
+    update_button_->setObjectName(QStringLiteral("UpdateIndicator"));
+    update_button_->setAutoRaise(true);
+    update_button_->setFocusPolicy(Qt::NoFocus);
+    update_button_->setCursor(Qt::PointingHandCursor);
+    update_button_->setVisible(false);
+    connect(update_button_, &QToolButton::clicked, this, [this] {
+        show_update_dialog(this, pending_update_, UpdateChecker::detect_channel(), [this] {
+            QSettings().setValue(QStringLiteral("updates/skipped"), pending_update_.latest);
+            update_button_->setVisible(false);
+        });
+    });
+    statusBar()->addPermanentWidget(update_button_);
 
     coord_label_ = new QLabel(QStringLiteral("0.000, 0.000"), this);
     coord_label_->setObjectName(QStringLiteral("CoordReadout"));
@@ -6541,8 +6559,13 @@ void MainWindow::update_title() {
     const QString name = active_doc_name(); // the active document's tab name (filename / DrawingN)
     const QString mark = (viewport_ != nullptr && viewport_->dirty()) ? QStringLiteral("*")
                                                                       : QString();
+    if (!perf_overlay_) {
+        setWindowTitle(QStringLiteral("%1%2  —  %3").arg(name, mark, app));
+        return;
+    }
+    // With the performance overlay on: the frame rate and the build stamp, so a stale
+    // binary is obvious at a glance.
     const int fps = viewport_ != nullptr ? static_cast<int>(viewport_->fps() + 0.5) : 0;
-    // Build stamp in the title so "the user ran an old binary" is checkable at a glance.
     setWindowTitle(QStringLiteral("%1%2  —  %3  —  %4 FPS  —  built %5")
                        .arg(name, mark, app)
                        .arg(fps)
@@ -7643,6 +7666,193 @@ void MainWindow::show_about() {
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     lay->addWidget(buttons);
     dlg.exec();
+}
+
+// --- Options and updates ---------------------------------------------------
+
+namespace {
+constexpr int kFirstUpdateCheckDelayMs = 20'000;          // after startup settles
+constexpr int kUpdateRecheckIntervalMs = 6 * 60 * 60'000; // long sessions re-check
+constexpr qint64 kUpdateCheckIntervalSecs = 24 * 60 * 60; // at most once a day
+
+bool auto_update_checks_enabled() {
+    if (qEnvironmentVariableIsSet("MUSACAD_NO_UPDATE_CHECK")) {
+        return false; // packagers and CI switch the automatic check off entirely
+    }
+    return QSettings()
+        .value(QStringLiteral("updates/auto_check"),
+               update::auto_check_default(UpdateChecker::detect_channel()))
+        .toBool();
+}
+
+/// The server both checks ask, named in the Options dialog: the check sends nothing but
+/// the request itself.
+QString update_server_name() {
+    return UpdateChecker::detect_channel() == update::Channel::Flatpak ? QStringLiteral("flathub.org")
+                                                                        : QStringLiteral("github.com");
+}
+} // namespace
+
+void MainWindow::set_performance_overlay(bool on) {
+    perf_overlay_ = on;
+    if (viewport_ != nullptr) {
+        viewport_->set_performance_overlay(on);
+    }
+    update_title();
+}
+
+void MainWindow::start_update_checks() {
+    // An update found by an earlier check shows again at once, without asking the network.
+    QSettings st;
+    UpdateChecker::Result cached;
+    cached.ok = true;
+    cached.latest = st.value(QStringLiteral("updates/latest")).toString();
+    cached.release_page = st.value(QStringLiteral("updates/release_page")).toString();
+    cached.download_url = st.value(QStringLiteral("updates/download_url")).toString();
+    if (!cached.latest.isEmpty()) {
+        show_update_indicator(cached);
+    }
+    const auto maybe_check = [this] {
+        if (!auto_update_checks_enabled()) {
+            return;
+        }
+        const QDateTime last = QSettings().value(QStringLiteral("updates/last_check")).toDateTime();
+        if (last.isValid() && last.secsTo(QDateTime::currentDateTimeUtc()) < kUpdateCheckIntervalSecs) {
+            return;
+        }
+        if (updater_ == nullptr) {
+            updater_ = new UpdateChecker(this);
+            connect(updater_, &UpdateChecker::finished, this, &MainWindow::on_update_check_finished);
+        }
+        update_check_manual_ = false;
+        updater_->check();
+    };
+    QTimer::singleShot(kFirstUpdateCheckDelayMs, this, maybe_check);
+    auto* recheck = new QTimer(this);
+    connect(recheck, &QTimer::timeout, this, maybe_check);
+    recheck->start(kUpdateRecheckIntervalMs);
+}
+
+void MainWindow::check_for_updates() {
+    if (updater_ == nullptr) {
+        updater_ = new UpdateChecker(this);
+        connect(updater_, &UpdateChecker::finished, this, &MainWindow::on_update_check_finished);
+    }
+    update_check_manual_ = true;
+    if (!updater_->busy()) {
+        updater_->check();
+    }
+    command_widget_->append_line("Checking for updates...");
+}
+
+void MainWindow::on_update_check_finished(const UpdateChecker::Result& result) {
+    const bool manual = update_check_manual_;
+    update_check_manual_ = false;
+    if (!result.ok) {
+        if (manual) {
+            QMessageBox::warning(this, QStringLiteral("Check for Updates"),
+                                 QStringLiteral("Musa CAD could not check for updates.\n\n%1").arg(result.error));
+        }
+        return; // an automatic check fails silently and tries again later
+    }
+    QSettings st;
+    st.setValue(QStringLiteral("updates/last_check"), QDateTime::currentDateTimeUtc());
+    const QString current = UpdateChecker::current_version();
+    if (!update::is_newer(result.latest.toStdString(), current.toStdString())) {
+        for (const char* key : {"updates/latest", "updates/release_page", "updates/download_url"}) {
+            st.remove(QString::fromLatin1(key));
+        }
+        update_button_->setVisible(false);
+        if (manual) {
+            QMessageBox::information(this, QStringLiteral("Check for Updates"),
+                                     QStringLiteral("Musa CAD %1 is the latest version.").arg(current));
+        }
+        return;
+    }
+    st.setValue(QStringLiteral("updates/latest"), result.latest);
+    st.setValue(QStringLiteral("updates/release_page"), result.release_page);
+    st.setValue(QStringLiteral("updates/download_url"), result.download_url);
+    if (manual) {
+        // Asked for: open the details now, even for a version skipped before.
+        st.remove(QStringLiteral("updates/skipped"));
+        pending_update_ = result;
+        show_update_indicator(result);
+        update_button_->click();
+        return;
+    }
+    show_update_indicator(result);
+}
+
+void MainWindow::show_update_indicator(const UpdateChecker::Result& result) {
+    const QString skipped = QSettings().value(QStringLiteral("updates/skipped")).toString();
+    const bool newer =
+        update::is_newer(result.latest.toStdString(), UpdateChecker::current_version().toStdString());
+    if (!newer || result.latest == skipped) {
+        update_button_->setVisible(false);
+        return;
+    }
+    pending_update_ = result;
+    update_button_->setText(QStringLiteral("Update available: %1").arg(result.latest));
+    update_button_->setToolTip(
+        QStringLiteral("Musa CAD %1 is available. Click to see what's new and how to update.").arg(result.latest));
+    update_button_->setVisible(true);
+}
+
+void MainWindow::open_options_dialog() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Options"));
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->setContentsMargins(20, 18, 20, 14);
+    lay->setSpacing(10);
+    const auto hint = [&dlg](const QString& text) {
+        auto* l = new QLabel(text, &dlg);
+        l->setWordWrap(true);
+        l->setStyleSheet(QStringLiteral("color:#9aa0a6; font-size:9pt; margin-left:22px;"));
+        return l;
+    };
+
+    auto* updates = new QGroupBox(QStringLiteral("Updates"), &dlg);
+    auto* ul = new QVBoxLayout(updates);
+    auto* auto_check = new QCheckBox(QStringLiteral("Check for updates automatically"), updates);
+    auto_check->setChecked(auto_update_checks_enabled());
+    ul->addWidget(auto_check);
+    ul->addWidget(hint(QStringLiteral("Once a day, in the background. Musa CAD asks %1 for the latest version "
+                                      "number and sends nothing else. A new version shows in the status bar; "
+                                      "it never interrupts your work.")
+                           .arg(update_server_name())));
+    auto* check_now = new QPushButton(QStringLiteral("Check Now"), updates);
+    auto* check_row = new QHBoxLayout;
+    check_row->addWidget(check_now);
+    check_row->addStretch(1);
+    ul->addLayout(check_row);
+    connect(check_now, &QPushButton::clicked, this, [this] { check_for_updates(); });
+    lay->addWidget(updates);
+
+    auto* display = new QGroupBox(QStringLiteral("Display"), &dlg);
+    auto* dl = new QVBoxLayout(display);
+    auto* perf = new QCheckBox(QStringLiteral("Show performance overlay"), display);
+    perf->setChecked(perf_overlay_);
+    dl->addWidget(perf);
+    dl->addWidget(hint(QStringLiteral("The frame rate and frame time in the corner of the drawing area, and the "
+                                      "frame rate and build date in the title bar.")));
+    lay->addWidget(display);
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(bb);
+    // Sized to its contents: the wrapped descriptions get exactly their own height.
+    for (QLabel* l : dlg.findChildren<QLabel*>()) {
+        l->setMinimumWidth(380);
+    }
+    lay->setSizeConstraint(QLayout::SetFixedSize);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    QSettings st;
+    st.setValue(QStringLiteral("updates/auto_check"), auto_check->isChecked());
+    st.setValue(QStringLiteral("display/performance_overlay"), perf->isChecked());
+    set_performance_overlay(perf->isChecked());
 }
 
 // --- Plot / print ----------------------------------------------------------

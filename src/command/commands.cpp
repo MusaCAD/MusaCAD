@@ -9952,6 +9952,13 @@ void PlotCommand::start(CommandContext& ctx) {
     done_ = true;
 }
 
+void OptionsCommand::start(CommandContext& ctx) {
+    if (ViewControl* v = ctx.view(); v != nullptr) {
+        v->options_dialog();
+    }
+    done_ = true;
+}
+
 // ---------------------------------------------------------------------------
 // LTSCALE: prompt for the global linetype scale factor, then apply it.
 // ---------------------------------------------------------------------------

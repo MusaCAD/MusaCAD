@@ -78,6 +78,26 @@ The drawings in these pictures are made by `tools/screenshots/make_drawings.py`,
 
 ---
 
+## Install
+
+**Linux, from Flathub** — updates arrive with the rest of your apps:
+
+<a href="https://flathub.org/apps/org.musacad.MusaCAD"><img width="200" alt="Get it on Flathub" src="https://flathub.org/api/badge?svg&locale=en"></a>
+
+```sh
+flatpak install flathub org.musacad.MusaCAD
+flatpak run org.musacad.MusaCAD
+```
+
+**Linux AppImage, Windows installer, macOS (Apple silicon)** — download from the
+[latest release](https://github.com/MusaCAD/MusaCAD/releases/latest).
+
+Musa CAD checks once a day whether a newer version is out and, when there is one, says so
+quietly in the status bar; clicking it shows how to update your copy. Options (`OP`) turns
+the check off.
+
+---
+
 ## Building
 
 Musa CAD is **clone-and-build**:

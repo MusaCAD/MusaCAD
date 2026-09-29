@@ -133,6 +133,7 @@ commands (Ribbon Phase A):
 | DWGIN | Import geometry from a DWG file. |
 | DWGOUT | Export the drawing to a DWG file. |
 | PLOT | Plot or print the drawing to paper or PDF. |
+| OPTIONS (OP) | Change application settings: update checks and the performance overlay. |
 | LTSCALE (LTS) | Set the global linetype scale factor. |
 
 ## Draw
@@ -426,6 +427,8 @@ phase covered **import, display, and selection**; authoring followed under issue
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
 | Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |
+| **OPTIONS** — Updates: check automatically (once a day; on by default for packaged installs, off for source builds) and Check Now; Display: the performance overlay (frame rate / frame time in the drawing area, frame rate and build date in the title; off by default). Persisted per user | OP / application menu ▸ Options | Implemented |
+| **Update check** — asks Flathub (the Flatpak) or the GitHub release (AppImage, Windows installer, macOS) for the latest version; a newer one shows as a status-bar note that opens the update step for this install (the `flatpak update` command, or the file to download); Skip This Version; `MUSACAD_NO_UPDATE_CHECK=1` turns it off for packagers and CI | application menu ▸ Check for Updates | Implemented |
 | **Command line** — `musacad <drawing>` opens a file (via the existing OpenDocumentCommand); `musacad --check <drawing>` validates it and exits non-zero on a parse error; `--help` / `--version`. Parsed before any Qt object exists, so it needs no display | shell | Implemented (issue #11) |
 | **Headless plot** — `musacad --plot <drawing> <out.pdf> [--paper A4] [--portrait\|--landscape] [--scale 1:5\|--fit] [--window x0,y0,x1,y1\|--extents] [--monochrome]`. Same loaders, snapshot builder, paper table, tessellation rule and PDF writer as the GUI's PLOT; offscreen Qt platform forced, so it runs from cron/CI/ssh. Exit codes 0/1/2/3 | shell | Implemented (issue #11) |
 

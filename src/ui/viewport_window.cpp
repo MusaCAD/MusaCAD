@@ -473,6 +473,12 @@ void ViewportWindow::plot_dialog() {
     }
 }
 
+void ViewportWindow::options_dialog() {
+    if (options_dialog_callback_) {
+        options_dialog_callback_();
+    }
+}
+
 core::MatchPropFilter ViewportWindow::match_filter() const {
     return match_filter_callback_ ? match_filter_callback_() : core::MatchPropFilter{};
 }
@@ -1388,8 +1394,9 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                                 (!presenting || presentation_cursor_.load(std::memory_order_relaxed)),
                             static_cast<float>(cursor_px_x_.load(std::memory_order_relaxed)),
                             static_cast<float>(cursor_px_y_.load(std::memory_order_relaxed)));
-        renderer.set_overlay_text(presenting ? std::string{}
-                                             : overlay_text(stats.fps(), stats.average_frame_ms()));
+        renderer.set_overlay_text(presenting || !perf_overlay_.load(std::memory_order_relaxed)
+                                      ? std::string{}
+                                      : overlay_text(stats.fps(), stats.average_frame_ms()));
         // AutoCAD-accurate, HiDPI-correct lineweight. physicalDotsPerInch is a
         // *logical* pixel density (Qt derives it from device-independent geometry);
         // the framebuffer is in PHYSICAL pixels, so the renderer multiplies this by

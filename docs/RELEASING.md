@@ -111,8 +111,7 @@ Windows asset from the release afterwards.
   `.github/workflows/flathub-release.yml`, which opens the update pull request in
   `flathub/org.musacad.MusaCAD` (needs the `FLATHUB_TOKEN` secret); Flathub's own checker opens
   the same pull request from the manifest's `x-checker-data` if the workflow cannot. Merge it
-  when its build is green. Until the app is on Flathub, the first submission is your pull
-  request: `packaging/flatpak/flathub/submit.sh` and `packaging/flatpak/BUILD_FLATPAK.md`.
+  when its build is green (`packaging/flatpak/BUILD_FLATPAK.md`, "A release on Flathub").
 - File follow-up issues for anything deferred or surfaced during verification.
 
 ## Linux-only releases
