@@ -115,6 +115,7 @@
 #include "musacad/ui/properties_panel.hpp"
 #include "musacad/ui/qt_font_engine.hpp"
 #include "musacad/ui/ribbon_bar.hpp"
+#include "musacad/ui/update_installer.hpp"
 #include "musacad/ui/viewport_window.hpp"
 
 namespace musacad::ui {
@@ -946,10 +947,13 @@ void MainWindow::build_status_bar() {
     update_button_->setCursor(Qt::PointingHandCursor);
     update_button_->setVisible(false);
     connect(update_button_, &QToolButton::clicked, this, [this] {
-        show_update_dialog(this, pending_update_, UpdateChecker::detect_channel(), [this] {
-            QSettings().setValue(QStringLiteral("updates/skipped"), pending_update_.latest);
-            update_button_->setVisible(false);
-        });
+        show_update_dialog(
+            this, pending_update_, UpdateChecker::detect_channel(),
+            [this] {
+                QSettings().setValue(QStringLiteral("updates/skipped"), pending_update_.latest);
+                update_button_->setVisible(false);
+            },
+            [this] { return save_all_before_quit(); }); // before an in-place update replaces the program
     });
     statusBar()->addPermanentWidget(update_button_);
 
@@ -7153,17 +7157,23 @@ void MainWindow::close_document_tab(std::uint64_t id) {
 void MainWindow::closeEvent(QCloseEvent* event) {
     // Quit guard: prompt to save every dirty document, then flush the saves before the
     // window (and engine) tear down so nothing is silently lost.
-    if (viewport_ == nullptr) {
+    if (save_all_before_quit()) {
         event->accept();
-        return;
+    } else {
+        event->ignore(); // a Cancel anywhere aborts the quit
+    }
+}
+
+bool MainWindow::save_all_before_quit() {
+    if (viewport_ == nullptr) {
+        return true;
     }
     const std::vector<core::DocumentInfo> docs = viewport_->documents();
     for (const core::DocumentInfo& d : docs) {
         if (d.dirty &&
             !prompt_save_document(d.id, QString::fromStdString(d.name),
                                   QString::fromStdString(d.path))) {
-            event->ignore(); // a Cancel anywhere aborts the quit
-            return;
+            return false;
         }
     }
     // Let the geometry thread drain the queued saves (per-doc dirty clears) before close.
@@ -7183,7 +7193,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
                            },
                            10'000);
     }
-    event->accept();
+    return true;
 }
 
 void MainWindow::file_import_dxf() {
@@ -7728,9 +7738,13 @@ void MainWindow::start_update_checks() {
     cached.latest = st.value(QStringLiteral("updates/latest")).toString();
     cached.release_page = st.value(QStringLiteral("updates/release_page")).toString();
     cached.download_url = st.value(QStringLiteral("updates/download_url")).toString();
+    cached.download_name = st.value(QStringLiteral("updates/download_name")).toString();
+    cached.download_size = st.value(QStringLiteral("updates/download_size")).toLongLong();
+    cached.checksum_url = st.value(QStringLiteral("updates/checksum_url")).toString();
     if (!cached.latest.isEmpty()) {
         show_update_indicator(cached);
     }
+    UpdateInstaller::remove_stale_downloads(); // an applied update's installer, or an old one
     const auto maybe_check = [this] {
         if (!auto_update_checks_enabled()) {
             return;
@@ -7778,7 +7792,8 @@ void MainWindow::on_update_check_finished(const UpdateChecker::Result& result) {
     st.setValue(QStringLiteral("updates/last_check"), QDateTime::currentDateTimeUtc());
     const QString current = UpdateChecker::current_version();
     if (!update::is_newer(result.latest.toStdString(), current.toStdString())) {
-        for (const char* key : {"updates/latest", "updates/release_page", "updates/download_url"}) {
+        for (const char* key : {"updates/latest", "updates/release_page", "updates/download_url",
+                                "updates/download_name", "updates/download_size", "updates/checksum_url"}) {
             st.remove(QString::fromLatin1(key));
         }
         update_button_->setVisible(false);
@@ -7791,6 +7806,9 @@ void MainWindow::on_update_check_finished(const UpdateChecker::Result& result) {
     st.setValue(QStringLiteral("updates/latest"), result.latest);
     st.setValue(QStringLiteral("updates/release_page"), result.release_page);
     st.setValue(QStringLiteral("updates/download_url"), result.download_url);
+    st.setValue(QStringLiteral("updates/download_name"), result.download_name);
+    st.setValue(QStringLiteral("updates/download_size"), result.download_size);
+    st.setValue(QStringLiteral("updates/checksum_url"), result.checksum_url);
     if (manual) {
         // Asked for: open the details now, even for a version skipped before.
         st.remove(QStringLiteral("updates/skipped"));
@@ -7837,8 +7855,12 @@ void MainWindow::open_options_dialog() {
     ul->addWidget(auto_check);
     ul->addWidget(hint(QStringLiteral("Once a day, in the background. Musa CAD asks %1 for the latest version "
                                       "number and sends nothing else. A new version shows in the status bar; "
-                                      "it never interrupts your work.")
-                           .arg(update_server_name())));
+                                      "it never interrupts your work.%2")
+                           .arg(update_server_name(),
+                                UpdateInstaller::supported()
+                                    ? QStringLiteral(" From there, Musa CAD can download the new installer, "
+                                                     "check it and update this installation in place.")
+                                    : QString())));
     auto* check_now = new QPushButton(QStringLiteral("Check Now"), updates);
     auto* check_row = new QHBoxLayout;
     check_row->addWidget(check_now);

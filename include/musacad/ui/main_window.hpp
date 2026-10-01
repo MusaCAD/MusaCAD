@@ -370,6 +370,9 @@ private:
     /// or the user skipped that version.
     void show_update_indicator(const UpdateChecker::Result& result);
     void on_update_check_finished(const UpdateChecker::Result& result);
+    /// The quit guard: prompt to save every unsaved drawing and flush the saves. False
+    /// when the user cancelled (closeEvent and the in-place update both stop there).
+    bool save_all_before_quit();
     /// The performance overlay: frame rate + frame time in the viewport corner, and the
     /// frame rate + build stamp in the title bar. Off by default (a user setting).
     void set_performance_overlay(bool on);

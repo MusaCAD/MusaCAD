@@ -9,6 +9,7 @@ add_library(musacad_ui STATIC
     dwg_converter.cpp
     dwg_installer.cpp
     update_checker.cpp
+    update_installer.cpp
     qt_font_engine.cpp
     qt_image_decoder.cpp
     plot.cpp
@@ -28,7 +29,8 @@ add_library(musacad_ui STATIC
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/ribbon_bar.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/viewport_modes.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/dwg_installer.hpp"
-    "${CMAKE_SOURCE_DIR}/include/musacad/ui/update_checker.hpp")
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/update_checker.hpp"
+    "${CMAKE_SOURCE_DIR}/include/musacad/ui/update_installer.hpp")
 
 add_library(musacad::ui ALIAS musacad_ui)
 
@@ -50,6 +52,13 @@ target_link_libraries(musacad_ui
     PRIVATE
         Qt6::OpenGL
         Qt6::Network)
+
+# Windows: the in-place updater reads the downloaded installer's version resource
+# (version.lib), checks its Authenticode signature (wintrust.lib) and starts it elevated
+# (shell32.lib).
+if(WIN32)
+    target_link_libraries(musacad_ui PRIVATE version wintrust shell32)
+endif()
 
 musacad_set_warnings(musacad_ui BASELINE)
 musacad_enable_sanitizers(musacad_ui)

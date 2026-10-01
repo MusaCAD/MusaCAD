@@ -24,12 +24,15 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSysInfo>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
 #include "musacad/core/version.hpp"
+#include "musacad/ui/update_installer.hpp"
 
 namespace musacad::ui {
 
@@ -101,6 +104,33 @@ UpdateChecker::Result parse_github(const QJsonObject& root, update::Channel chan
     }
     r.download_url = QString::fromStdString(
         update::pick_asset(assets, channel, QSysInfo::currentCpuArchitecture().toStdString()));
+    if (r.download_url.isEmpty()) {
+        return r;
+    }
+    // The file's name and size, and the SHA-256 published beside it (either its own
+    // "<name>.sha256" or a release-wide SHA256SUMS), for the in-place update to check.
+    QString sums_url;
+    for (const QJsonValue& a : root.value(QStringLiteral("assets")).toArray()) {
+        const QJsonObject o = a.toObject();
+        const QString name = o.value(QStringLiteral("name")).toString();
+        const QString url = o.value(QStringLiteral("browser_download_url")).toString();
+        if (url == r.download_url) {
+            r.download_name = name;
+            r.download_size = static_cast<qint64>(o.value(QStringLiteral("size")).toDouble());
+        } else if (name == QStringLiteral("SHA256SUMS") || name == QStringLiteral("SHA256SUMS.txt")) {
+            sums_url = url;
+        }
+    }
+    const QString own = QString::fromStdString(update::checksum_asset_name(r.download_name.toStdString()));
+    for (const QJsonValue& a : root.value(QStringLiteral("assets")).toArray()) {
+        const QJsonObject o = a.toObject();
+        if (o.value(QStringLiteral("name")).toString() == own) {
+            r.checksum_url = o.value(QStringLiteral("browser_download_url")).toString();
+        }
+    }
+    if (r.checksum_url.isEmpty()) {
+        r.checksum_url = sums_url;
+    }
     return r;
 }
 
@@ -166,7 +196,7 @@ void UpdateChecker::finish(Result result) {
 }
 
 void show_update_dialog(QWidget* parent, const UpdateChecker::Result& result, update::Channel channel,
-                        std::function<void()> on_skip) {
+                        std::function<void()> on_skip, std::function<bool()> prepare_for_install) {
     auto* dlg = new QDialog(parent);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setModal(false);
@@ -257,11 +287,91 @@ void show_update_dialog(QWidget* parent, const UpdateChecker::Result& result, up
         download_button(QStringLiteral("Download AppImage"));
         break;
     }
-    case update::Channel::WindowsInstaller:
-        body(QStringLiteral("Download the new installer and run it. It updates this installation and keeps "
-                            "your settings; save your drawings and close Musa CAD before it starts."));
-        download_button(QStringLiteral("Download Installer"));
+    case update::Channel::WindowsInstaller: {
+        if (download.isEmpty() || !UpdateInstaller::supported()) {
+            body(QStringLiteral("Download the new installer and run it. It updates this installation and keeps "
+                                "your settings; save your drawings and close Musa CAD before it starts."));
+            download_button(QStringLiteral("Download Installer"));
+            break;
+        }
+        // The whole update from here: the installer is downloaded and checked, Musa CAD
+        // saves and closes, the installer runs silently over this installation (Windows
+        // asks once for administrator consent) and starts the new version.
+        body(QStringLiteral("Musa CAD downloads the installer, checks it, and updates this installation in "
+                            "place -- your settings and drawings stay as they are. You will be asked to save "
+                            "any unsaved drawing, and Windows will ask for permission to install. The new "
+                            "version starts when the update is done."));
+        note(QStringLiteral("%1\nDownloads %2")
+                 .arg(QDir::toNativeSeparators(UpdateInstaller::install_dir()),
+                      UpdateInstaller::self_is_signed()
+                          ? QStringLiteral("are accepted only with a valid signature.")
+                          : QStringLiteral("are checked against the release's size, checksum and version.")));
+        auto* status = new QLabel(dlg);
+        status->setWordWrap(true);
+        status->hide();
+        lay->addWidget(status);
+        auto* bar = new QProgressBar(dlg);
+        bar->setRange(0, 0);
+        bar->setTextVisible(true);
+        bar->hide();
+        lay->addWidget(bar);
+        auto* installer = new UpdateInstaller(dlg);
+        primary->setText(QStringLiteral("Download and Install"));
+        QObject::connect(installer, &UpdateInstaller::stage, dlg, [status](const QString& what) {
+            status->setText(what);
+            status->show();
+        });
+        QObject::connect(installer, &UpdateInstaller::progress, dlg, [bar](qint64 done, qint64 total) {
+            if (total > 0) {
+                bar->setRange(0, 1000);
+                bar->setValue(static_cast<int>(done * 1000 / total));
+                bar->setFormat(QStringLiteral("%1 of %2 MB").arg(done / 1'000'000).arg(total / 1'000'000));
+            }
+            bar->show();
+        });
+        QObject::connect(installer, &UpdateInstaller::finished, dlg,
+                         [dlg, status, bar, primary, skip, prepare_for_install](bool ok, const QString& what) {
+                             bar->hide();
+                             if (!ok) {
+                                 status->setText(what);
+                                 primary->setText(QStringLiteral("Try Again"));
+                                 primary->setEnabled(true);
+                                 skip->setEnabled(true);
+                                 return;
+                             }
+                             status->setText(QStringLiteral("Checked. Saving your work and starting the update\u2026"));
+                             // Unsaved drawings first; a Cancel there keeps this version running.
+                             if (prepare_for_install && !prepare_for_install()) {
+                                 status->setText(QStringLiteral("The update was postponed. The installer is ready at "
+                                                                "%1; click Install to continue.")
+                                                     .arg(QDir::toNativeSeparators(what)));
+                                 primary->setText(QStringLiteral("Install"));
+                                 primary->setEnabled(true);
+                                 return;
+                             }
+                             QString err;
+                             if (!UpdateInstaller::launch(what, UpdateInstaller::install_dir(), err)) {
+                                 status->setText(err);
+                                 primary->setText(QStringLiteral("Install"));
+                                 primary->setEnabled(true);
+                                 skip->setEnabled(true);
+                                 return;
+                             }
+                             // The installer is waiting for this program to exit.
+                             dlg->close();
+                             QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+                         });
+        QObject::connect(primary, &QPushButton::clicked, dlg, [installer, result, primary, skip, status] {
+            primary->setEnabled(false);
+            skip->setEnabled(false);
+            status->setText(QStringLiteral("Starting\u2026"));
+            status->show();
+            installer->start(result);
+        });
+        // "Later" stays available while the download runs: it cancels it (and closes).
+        QObject::connect(later, &QPushButton::clicked, installer, &UpdateInstaller::cancel);
         break;
+    }
     case update::Channel::MacDmg:
         body(QStringLiteral("Download the new disk image, then drag Musa CAD into Applications to replace "
                             "this version."));

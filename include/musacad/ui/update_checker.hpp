@@ -28,6 +28,9 @@ public:
         QString latest;       ///< the newest published version, e.g. "0.6.0"
         QString release_page; ///< the release notes on GitHub
         QString download_url; ///< the file that updates this channel; "" when none
+        QString download_name; ///< that file's name, e.g. MusaCAD-0.6.0-x86_64-setup.exe
+        qint64 download_size = 0; ///< its size as the release lists it; 0 when unknown
+        QString checksum_url; ///< the SHA-256 the release publishes beside it; "" when none
     };
 
     explicit UpdateChecker(QObject* parent = nullptr);
@@ -53,9 +56,12 @@ private:
 };
 
 /// The "update available" window: what is new, and the one step that updates this copy
-/// (the Flathub command to copy, or the file to download). Non-modal, so the drawing
-/// stays usable behind it. `on_skip` runs when the user skips this version.
+/// (the Flathub command to copy, the file to download, or -- for the Windows installer --
+/// the download-check-install run done from here). Non-modal, so the drawing stays usable
+/// behind it. `on_skip` runs when the user skips this version; `prepare_for_install` runs
+/// right before an in-place update replaces the program (save the open drawings; false
+/// keeps the current version running).
 void show_update_dialog(QWidget* parent, const UpdateChecker::Result& result, update::Channel channel,
-                        std::function<void()> on_skip);
+                        std::function<void()> on_skip, std::function<bool()> prepare_for_install = {});
 
 } // namespace musacad::ui

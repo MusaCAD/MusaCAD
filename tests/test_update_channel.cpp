@@ -63,3 +63,36 @@ TEST_CASE("Update check: packaged installs check automatically, source builds do
     CHECK(auto_check_default(Channel::MacDmg));
     CHECK_FALSE(auto_check_default(Channel::SourceBuild));
 }
+
+TEST_CASE("Update check: the checksum file beside a download, in the sha256sum forms") {
+    CHECK(checksum_asset_name("MusaCAD-0.6.0-x86_64-setup.exe") == "MusaCAD-0.6.0-x86_64-setup.exe.sha256");
+    const std::string h = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const std::string H = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+    // "<hex>  <name>", "<hex> *<name>" (binary mode), a path before the name, CRLF, and
+    // upper-case hex all resolve to the lower-cased hash of the named file.
+    CHECK(parse_sha256_sums(h + "  MusaCAD-0.6.0-x86_64-setup.exe\n", "MusaCAD-0.6.0-x86_64-setup.exe") == h);
+    CHECK(parse_sha256_sums(h + " *MusaCAD-0.6.0-x86_64-setup.exe\r\n", "MusaCAD-0.6.0-x86_64-setup.exe") == h);
+    CHECK(parse_sha256_sums(H + "  dist/MusaCAD-0.6.0-x86_64-setup.exe", "MusaCAD-0.6.0-x86_64-setup.exe") == h);
+    // A multi-file SHA256SUMS picks the right line.
+    const std::string sums = std::string(64, 'a') + "  MusaCAD-0.6.0-x86_64.AppImage\n" + h +
+                             "  MusaCAD-0.6.0-x86_64-setup.exe\n";
+    CHECK(parse_sha256_sums(sums, "MusaCAD-0.6.0-x86_64-setup.exe") == h);
+    CHECK(parse_sha256_sums(sums, "MusaCAD-0.6.0-arm64.dmg").empty());
+    // A bare hash (a .sha256 file holding only the digest) applies to the one file asked
+    // for; two bare hashes are ambiguous and match nothing.
+    CHECK(parse_sha256_sums(h + "\n", "anything.exe") == h);
+    CHECK(parse_sha256_sums(h + "\n" + std::string(64, 'b') + "\n", "anything.exe").empty());
+    // Not a hash at all.
+    CHECK(parse_sha256_sums("deadbeef  MusaCAD-0.6.0-x86_64-setup.exe", "MusaCAD-0.6.0-x86_64-setup.exe").empty());
+    CHECK(parse_sha256_sums("", "x").empty());
+}
+
+TEST_CASE("Update check: the version in an installer's file name") {
+    CHECK(version_in_asset_name("MusaCAD-0.6.0-x86_64-setup.exe") == "0.6.0");
+    CHECK(version_in_asset_name("MusaCAD-1.2.10-arm64.dmg") == "1.2.10");
+    CHECK(version_in_asset_name("MusaCAD-0.6.0-x86_64-setup.exe.part").empty() == false);
+    CHECK(version_in_asset_name("musacad_app.exe").empty());
+    CHECK(version_in_asset_name("MusaCAD-").empty());
+    CHECK(version_in_asset_name("MusaCAD-abc-x86_64-setup.exe").empty());
+    CHECK(version_in_asset_name("MusaCAD-0.6.0").empty());
+}
