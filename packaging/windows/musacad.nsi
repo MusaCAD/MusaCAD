@@ -2,9 +2,20 @@
 ; Invoked by .github/workflows/build-windows.yml from the repo root:
 ;   makensis /DVERSION=0.1.0 /DSTAGING=staging packaging\windows\musacad.nsi
 ; All relative paths below resolve against the makensis working directory (the repo root).
+;
+; Upgrades. An existing installation (the InstallDir the last setup wrote, holding
+; musacad_app.exe) is updated where it is: the directory page is skipped, the previous
+; version is removed in place first (so files it had and this one has not are gone too),
+; and its file-type registration is kept. The program itself does the same from its
+; Update dialog: it downloads the new setup, checks it, and runs it as
+;   MusaCAD-<ver>-x86_64-setup.exe /S /UPDATE /D=<install dir>
+; -- silent, with /UPDATE the setup waits for the running Musa CAD to exit, updates, and
+; starts the new version as the user (not as the administrator the setup runs as).
 
 Unicode true
 !include "MUI2.nsh"
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 !ifndef VERSION
   !define VERSION "0.1.0"
@@ -28,12 +39,31 @@ InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
 RequestExecutionLevel admin          ; Program Files + HKLM uninstall entry
 SetCompressor /SOLID lzma
 
+; The version resource. The program's in-place update reads ProductVersion from the
+; downloaded setup and refuses to run one that does not say the version the release
+; announced; Windows shows the same fields in the file's Properties and in SmartScreen's
+; prompt, where an unnamed file looks worse than a named one.
+VIProductVersion "${VERSION}.0"
+VIFileVersion "${VERSION}.0"
+VIAddVersionKey "ProductName" "${APPNAME}"
+VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "FileDescription" "${APPNAME} ${VERSION} setup"
+VIAddVersionKey "CompanyName" "${COMPANY}"
+VIAddVersionKey "LegalCopyright" "Copyright (C) 2026 Pranay Kiran and contributors. LGPL-3.0-or-later."
+
+Var UpdateMode    ; 1 when started by the program with /UPDATE
+Var ExistingDir   ; the installation being updated ("" for a fresh install)
+Var WelcomeText
+
 !define MUI_ICON "assets/branding/musacad.ico"
 !define MUI_ABORTWARNING
 
+!define MUI_WELCOMEPAGE_TEXT "$WelcomeText"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "LICENSE"
 !insertmacro MUI_PAGE_COMPONENTS
+!define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPre
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 ; "Run Musa CAD" on the finish page. MUI_FINISHPAGE_RUN would start the program with the
@@ -50,14 +80,6 @@ SetCompressor /SOLID lzma
 
 !insertmacro MUI_LANGUAGE "English"
 
-; The install is machine-wide (Program Files, HKLM, admin), so the Start-menu entry must be
-; too. Without this $SMPROGRAMS is the INSTALLING user's menu: other accounts never see the
-; program, and a standard user who elevated with an administrator's credentials finds the
-; shortcut in the administrator's menu. Set in both halves, so the uninstaller removes what
-; the installer created.
-Function .onInit
-  SetShellVarContext all
-FunctionEnd
 Function un.onInit
   SetShellVarContext all
 FunctionEnd
@@ -66,9 +88,63 @@ Function LaunchAsUser
   Exec '"$WINDIR\explorer.exe" "$INSTDIR\${EXENAME}"'
 FunctionEnd
 
+; An existing installation is updated where it is: no directory to choose.
+Function DirectoryPre
+  ${If} $ExistingDir != ""
+    Abort
+  ${EndIf}
+FunctionEnd
+
+; Musa CAD must not be running while its files are replaced: neither the program nor the
+; console front-end (musacad.exe, alive while a --plot runs). The program that started an
+; update quits right after starting the setup, so this is normally over in a moment; a
+; user running the setup by hand while Musa CAD is open is asked to close it.
+; Call with the file name in $R7.
+Function WaitForFileFree
+  StrCpy $R9 0
+  wait_loop:
+    IfFileExists "$INSTDIR\$R7" 0 wait_done
+    ClearErrors
+    FileOpen $R8 "$INSTDIR\$R7" a          ; write access, which a running program refuses
+    IfErrors wait_busy
+    FileClose $R8
+    Goto wait_done
+  wait_busy:
+    IntOp $R9 $R9 + 1
+    ${If} $R9 >= 120                       ; a minute
+      ${If} $UpdateMode == 1
+        Abort                              ; silent: nothing was changed
+      ${EndIf}
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
+        "${APPNAME} is still running. Close it, then click Retry." IDRETRY wait_retry
+      Abort
+    wait_retry:
+      StrCpy $R9 0
+    ${EndIf}
+    Sleep 500
+    Goto wait_loop
+  wait_done:
+FunctionEnd
+
+Function WaitForAppExit
+  StrCpy $R7 "${EXENAME}"
+  Call WaitForFileFree
+  StrCpy $R7 "musacad.exe"
+  Call WaitForFileFree
+FunctionEnd
+
 ; ---------------------------------------------------------------------------
 Section "Musa CAD (required)" SecCore
   SectionIn RO
+  ${If} $ExistingDir != ""
+    Call WaitForAppExit
+    ; The previous version, removed in place before the new files land, so nothing of
+    ; it lingers. Its uninstaller also drops the Start-menu entry, the registry entries
+    ; and the file types; all of them are written again below.
+    IfFileExists "$INSTDIR\uninstall.exe" 0 +2
+      ExecWait '"$INSTDIR\uninstall.exe" /S _?=$INSTDIR'
+    Delete "$INSTDIR\uninstall.exe"
+  ${EndIf}
   SetOutPath "$INSTDIR"
   File /r "${STAGING}\*.*"        ; the whole windeployqt staging tree (backslash: NSIS /r glob)
   File "assets\branding\musacad.ico"
@@ -98,6 +174,7 @@ Section "Musa CAD (required)" SecCore
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Publisher" "${COMPANY}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayIcon" "$INSTDIR\musacad.ico"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "NoRepair" 1
@@ -106,7 +183,8 @@ SectionEnd
 
 ; Optional, UNCHECKED by default: register file types. The user owns the default-app
 ; choice -- we claim Musa's own .musa, and only ADD Musa to the "Open with" list for the
-; shared .dxf/.dwg (never force-stealing those defaults).
+; shared .dxf/.dwg (never force-stealing those defaults). An upgrade pre-selects it when
+; the previous version had registered them (see .onInit).
 Section /o "Register .musa / .dxf file types" SecAssoc
   WriteRegStr HKLM "Software\Classes\${PROGID}" "" "Musa CAD Drawing"
   WriteRegStr HKLM "Software\Classes\${PROGID}\DefaultIcon" "" "$INSTDIR\musacad.ico"
@@ -121,12 +199,64 @@ Section /o "Register .musa / .dxf file types" SecAssoc
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'  ; SHCNE_ASSOCCHANGED
 SectionEnd
 
+; Last, after everything else in this section ran: an update started by the program
+; brings the new version back up, as the user.
+Section "-Relaunch"
+  ${If} $UpdateMode == 1
+    Call LaunchAsUser
+  ${EndIf}
+SectionEnd
+
 LangString DESC_Core  ${LANG_ENGLISH} "The Musa CAD application and its Qt runtime."
 LangString DESC_Assoc ${LANG_ENGLISH} "Associate .musa (and offer Musa CAD for .dxf/.dwg in Open With)."
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCore}  $(DESC_Core)
   !insertmacro MUI_DESCRIPTION_TEXT ${SecAssoc} $(DESC_Assoc)
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+; The install is machine-wide (Program Files, HKLM, admin), so the Start-menu entry must be
+; too. Without this $SMPROGRAMS is the INSTALLING user's menu: other accounts never see the
+; program, and a standard user who elevated with an administrator's credentials finds the
+; shortcut in the administrator's menu. Set in both halves (see un.onInit), so the
+; uninstaller removes what the installer created.
+;
+; Placed after the sections: it refers to ${SecAssoc}, which exists once that section is
+; declared.
+Function .onInit
+  SetShellVarContext all
+  StrCpy $UpdateMode 0
+  StrCpy $ExistingDir ""
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  ${IfNot} ${Errors}
+    StrCpy $UpdateMode 1
+  ${EndIf}
+  ; $INSTDIR already holds the last setup's InstallDir (InstallDirRegKey), or the /D=
+  ; given on the command line. When Musa CAD is installed there, this is an update.
+  ${If} ${FileExists} "$INSTDIR\${EXENAME}"
+    StrCpy $ExistingDir $INSTDIR
+    ReadRegStr $R2 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayVersion"
+    ${If} $R2 == ""
+      StrCpy $R2 "an earlier version"
+    ${Else}
+      StrCpy $R2 "version $R2"
+    ${EndIf}
+    StrCpy $WelcomeText "Setup found ${APPNAME} $R2 in$\r$\n$INSTDIR$\r$\n$\r$\nand will update it to \
+version ${VERSION} there. Your settings and drawings are not touched.$\r$\n$\r$\nClose ${APPNAME} before \
+you continue, then click Next."
+    ; Keep the file types the previous version registered.
+    ReadRegStr $R3 HKLM "Software\Classes\.musa" ""
+    ${If} $R3 == "${PROGID}"
+      SectionGetFlags ${SecAssoc} $R4
+      IntOp $R4 $R4 | ${SF_SELECTED}
+      SectionSetFlags ${SecAssoc} $R4
+    ${EndIf}
+  ${Else}
+    StrCpy $WelcomeText "Setup will install ${APPNAME} ${VERSION} on your computer.$\r$\n$\r$\nClick Next \
+to continue."
+  ${EndIf}
+FunctionEnd
 
 ; ---------------------------------------------------------------------------
 Section "Uninstall"
