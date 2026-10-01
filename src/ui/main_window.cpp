@@ -5842,16 +5842,31 @@ bool MainWindow::selftest_dwg() {
     // AppImage that unpacks like the real one lands as the managed converter that a blank
     // setting resolves to; Remove clears it.
     {
+        // The page as it is now (no release number in the names) and as it was until
+        // September 2026 (with it): both parse, the number is read when it is there, and
+        // the built-in fallback is the versionless name the current page uses.
         const QByteArray page =
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_11dll.AppImage\">"
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_vc16_amd64dll.msi\">"
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_arm64_15.0dll.dmg\">"
+            "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_x64_15.0dll.dmg\">";
+        const QByteArray old_page =
             "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_27.1.AppImage\">"
             "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_vc16_amd64dll_27.1.msi\">"
             "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_arm64_15.0dll_27.1.dmg\">"
             "<a href=\"/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_x64_15.0dll_27.1.dmg\">";
         const auto rel = OdaInstaller::parse_release(page);
+        const auto old_rel = OdaInstaller::parse_release(old_page);
         const OdaInstaller::Release known = OdaInstaller::fallback_release();
-        const bool parse_ok = known.filename.isEmpty() ? !rel.has_value()
-                                                       : (rel.has_value() && rel->filename == known.filename &&
-                                                          rel->version == QStringLiteral("27.1"));
+        const bool parse_ok =
+            known.filename.isEmpty()
+                ? (!rel.has_value() && !old_rel.has_value())
+                : (rel.has_value() && rel->filename == known.filename && rel->version.isEmpty() &&
+                   old_rel.has_value() && old_rel->version == QStringLiteral("27.1") &&
+                   old_rel->filename.contains(QStringLiteral("_27.1.")) &&
+                   OdaInstaller::version_in_name(QStringLiteral("ODAFileConverter_QT6_vc16_amd64dll_27.9.msi")) ==
+                       QStringLiteral("27.9") &&
+                   OdaInstaller::version_in_name(known.filename).isEmpty());
         const bool url_ok = OdaInstaller::download_url(known.filename).toString().contains(
             QStringLiteral("opendesign.com/guestfiles/get?filename="));
         std::printf("[selftest] ODA download: page parsed to this platform's file + guestfiles link: %s\n",
@@ -7313,8 +7328,12 @@ QString MainWindow::download_dwg_converter() {
         return {};
     }
     QSettings().setValue(QStringLiteral("io/dwg_converter_path"), program);
-    const QString note = QStringLiteral("ODA File Converter %1 is installed at %2. DWG import and export use it from now on.")
-                             .arg(installer.release().version, QDir::toNativeSeparators(program));
+    const QString note =
+        (installer.release().version.isEmpty()
+             ? QStringLiteral("ODA File Converter is installed at %1. DWG import and export use it from now on.")
+                   .arg(QDir::toNativeSeparators(program))
+             : QStringLiteral("ODA File Converter %1 is installed at %2. DWG import and export use it from now on.")
+                   .arg(installer.release().version, QDir::toNativeSeparators(program)));
     command_widget_->append_line(note.toStdString());
     QMessageBox::information(this, QStringLiteral("Download ODA File Converter"), note);
     return program;

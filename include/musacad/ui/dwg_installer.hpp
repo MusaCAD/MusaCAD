@@ -32,8 +32,10 @@ class OdaInstaller : public QObject {
     Q_OBJECT
 public:
     struct Release {
-        QString version;  ///< "27.1"
-        QString filename; ///< the file for this platform, e.g. ODAFileConverter_QT6_lnxX64_8.3dll_27.1.AppImage
+        QString version;  ///< "27.9"; "" until known (the page names the file without it; the
+                          ///< file server's redirect supplies it during the download)
+        QString filename; ///< the file for this platform as the page names it, e.g.
+                          ///< ODAFileConverter_QT6_vc16_amd64dll.msi
         qint64 size_hint = 0; ///< bytes, when known (the acknowledgement quotes it)
     };
 
@@ -48,9 +50,12 @@ public:
     /// The download page, and the file link for a named file.
     [[nodiscard]] static QUrl page_url();
     [[nodiscard]] static QUrl download_url(const QString& filename);
-    /// A regular expression matching this platform's file name on the page (the version
-    /// as group 1), or "" when the Open Design Alliance publishes no build for it.
+    /// A regular expression matching this platform's file name on the page, with or without
+    /// the release number (group 1 when present), or "" when the Open Design Alliance
+    /// publishes no build for it.
     [[nodiscard]] static QString platform_pattern();
+    /// The release number a file name carries ("…_27.9.msi" -> "27.9"), or "".
+    [[nodiscard]] static QString version_in_name(const QString& filename);
     /// The current release for this platform as the page names it, if it does.
     [[nodiscard]] static std::optional<Release> parse_release(const QByteArray& page_html);
     /// The release known at build time (used when the page cannot be read).

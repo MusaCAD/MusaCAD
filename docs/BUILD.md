@@ -91,7 +91,7 @@ boundary, keeping Musa CAD's code and shipped binaries GPL-free.
 The quickest way to get one is the **"Download ODA File Converter…"** button in
 **DWG Setup** (File panel), also offered when Import/Export DWG finds no converter.
 After you accept the Open Design Alliance's terms, Musa CAD downloads the current
-release from opendesign.com (about 85 MB on Linux, 29 MB on Windows, 60 MB on macOS),
+release from opendesign.com (about 100 MB on Linux, 33 MB on Windows, 80 MB on macOS),
 unpacks it into its own data directory (`<app data>/converters/oda`) and uses it from
 then on; **"Remove downloaded"** deletes it again. The converter needs an X11 display on
 Linux (it runs under XWayland on a Wayland session).

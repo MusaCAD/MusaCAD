@@ -121,24 +121,36 @@ QUrl OdaInstaller::download_url(const QString& filename) {
 }
 
 QString OdaInstaller::platform_pattern() {
+    // The page has named the files both ways: with the release number
+    // (ODAFileConverter_QT6_vc16_amd64dll_27.1.msi, until September 2026) and without it
+    // (ODAFileConverter_QT6_vc16_amd64dll.msi, since). Both match; the number is group 1
+    // when it is there. The versionless link redirects to the current build, whose file
+    // name on the file server carries the number again (see fetch_file).
     const QString cpu = QSysInfo::currentCpuArchitecture();
 #if defined(Q_OS_WIN)
     if (cpu == QLatin1String("x86_64")) {
-        return QStringLiteral(R"(ODAFileConverter_QT6_vc16_amd64dll_(\d+\.\d+)\.msi)");
+        return QStringLiteral(R"(ODAFileConverter_QT6_vc16_amd64dll(?:_(\d+\.\d+))?\.msi)");
     }
 #elif defined(Q_OS_MACOS)
     if (cpu == QLatin1String("arm64")) {
-        return QStringLiteral(R"(ODAFileConverter_QT6_macOsX_arm64_[\w.]+?_(\d+\.\d+)\.dmg)");
+        return QStringLiteral(R"(ODAFileConverter_QT6_macOsX_arm64_[\w.]+?(?:_(\d+\.\d+))?\.dmg)");
     }
     if (cpu == QLatin1String("x86_64")) {
-        return QStringLiteral(R"(ODAFileConverter_QT6_macOsX_x64_[\w.]+?_(\d+\.\d+)\.dmg)");
+        return QStringLiteral(R"(ODAFileConverter_QT6_macOsX_x64_[\w.]+?(?:_(\d+\.\d+))?\.dmg)");
     }
 #elif defined(Q_OS_LINUX)
     if (cpu == QLatin1String("x86_64")) {
-        return QStringLiteral(R"(ODAFileConverter_QT6_lnxX64_[\w.]+?_(\d+\.\d+)\.AppImage)");
+        return QStringLiteral(R"(ODAFileConverter_QT6_lnxX64_[\w.]+?(?:_(\d+\.\d+))?\.AppImage)");
     }
 #endif
     return {};
+}
+
+QString OdaInstaller::version_in_name(const QString& filename) {
+    // ODAFileConverter_QT6_vc16_amd64dll_27.9.msi -> "27.9"; "" when the name has none.
+    static const QRegularExpression re(QStringLiteral(R"(_(\d+\.\d+)\.[A-Za-z]+$)"));
+    const QRegularExpressionMatch m = re.match(filename);
+    return m.hasMatch() ? m.captured(1) : QString();
 }
 
 std::optional<OdaInstaller::Release> OdaInstaller::parse_release(const QByteArray& page_html) {
@@ -153,28 +165,30 @@ std::optional<OdaInstaller::Release> OdaInstaller::parse_release(const QByteArra
     }
     Release r;
     r.filename = m.captured(0);
-    r.version = m.captured(1);
+    r.version = m.captured(1); // "" when the page names the file without its number
     return r;
 }
 
 OdaInstaller::Release OdaInstaller::fallback_release() {
-    // The files on the page on 2026-09-23 (sizes as served then).
+    // The files as the page names them since September 2026: no release number in the
+    // name, so these links stay valid across ODA's releases (the server redirects to the
+    // current build). Sizes are the 27.9 files as served on 2026-10-01, for the
+    // acknowledgement's "about N MB"; the download shows the real size as it runs.
     Release r;
-    r.version = QStringLiteral("27.1");
 #if defined(Q_OS_WIN)
-    r.filename = QStringLiteral("ODAFileConverter_QT6_vc16_amd64dll_27.1.msi");
-    r.size_hint = 28'812'288;
+    r.filename = QStringLiteral("ODAFileConverter_QT6_vc16_amd64dll.msi");
+    r.size_hint = 33'331'712;
 #elif defined(Q_OS_MACOS)
     if (QSysInfo::currentCpuArchitecture() == QLatin1String("arm64")) {
-        r.filename = QStringLiteral("ODAFileConverter_QT6_macOsX_arm64_15.0dll_27.1.dmg");
-        r.size_hint = 56'224'716;
+        r.filename = QStringLiteral("ODAFileConverter_QT6_macOsX_arm64_15.0dll.dmg");
+        r.size_hint = 77'282'201;
     } else {
-        r.filename = QStringLiteral("ODAFileConverter_QT6_macOsX_x64_15.0dll_27.1.dmg");
-        r.size_hint = 62'591'966;
+        r.filename = QStringLiteral("ODAFileConverter_QT6_macOsX_x64_15.0dll.dmg");
+        r.size_hint = 81'890'980;
     }
 #else
-    r.filename = QStringLiteral("ODAFileConverter_QT6_lnxX64_8.3dll_27.1.AppImage");
-    r.size_hint = 85'128'384;
+    r.filename = QStringLiteral("ODAFileConverter_QT6_lnxX64_11dll.AppImage");
+    r.size_hint = 101'620'216;
 #endif
     if (platform_pattern().isEmpty()) {
         r.filename.clear(); // no build for this platform
@@ -319,7 +333,7 @@ void OdaInstaller::fetch_page() {
         }
         release_ = rel ? *rel : fallback_release(); // the page unreadable: the known release
         if (rel) {
-            release_.size_hint = fallback_release().version == release_.version
+            release_.size_hint = fallback_release().filename == release_.filename
                                      ? fallback_release().size_hint
                                      : 0;
         }
@@ -339,7 +353,9 @@ void OdaInstaller::fetch_file() {
         fail(QStringLiteral("Could not write %1.").arg(out_->fileName()));
         return;
     }
-    Q_EMIT stage(QStringLiteral("Downloading %1 (%2)…").arg(release_.filename, release_.version));
+    Q_EMIT stage(release_.version.isEmpty()
+                     ? QStringLiteral("Downloading %1…").arg(release_.filename)
+                     : QStringLiteral("Downloading %1 (%2)…").arg(release_.filename, release_.version));
     QNetworkRequest req = request_for(download_url(release_.filename));
     req.setTransferTimeout(0); // a large file on a slow line: no idle timeout
     reply_ = net_->get(req);
@@ -358,14 +374,25 @@ void OdaInstaller::fetch_file() {
             fail(QStringLiteral("Cancelled."));
             return;
         }
+        const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (r->error() == QNetworkReply::ContentNotFoundError || (r->error() == QNetworkReply::NoError && status != 200)) {
+            // Qt reports a 404 as an error before the status is looked at, so both routes
+            // land here: the file is not where the page said. The names have changed
+            // before (September 2026); the page always has the current one.
+            fail(QStringLiteral("The download server answered %1 for %2. The Open Design Alliance may "
+                                "have renamed the file: download it from %3 and Browse to it in DWG Setup.")
+                     .arg(status == 0 ? 404 : status)
+                     .arg(release_.filename, page_url().toString()));
+            return;
+        }
         if (r->error() != QNetworkReply::NoError) {
             fail(QStringLiteral("The download failed: %1").arg(r->errorString()));
             return;
         }
-        const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (status != 200) {
-            fail(QStringLiteral("The download server answered %1 for %2.").arg(status).arg(release_.filename));
-            return;
+        // The link redirects to the file server, where the current build's name carries
+        // its release number (…_27.9.msi): that is the version the page no longer states.
+        if (release_.version.isEmpty()) {
+            release_.version = version_in_name(r->url().fileName());
         }
         if (out_ != nullptr) {
             out_->write(r->readAll());
