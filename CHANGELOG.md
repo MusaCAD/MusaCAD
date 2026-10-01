@@ -18,6 +18,15 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `flatpak update org.musacad.MusaCAD` command to copy, or the AppImage / installer / disk
   image to download. **Skip This Version** silences that release; **Check for Updates** in
   the application menu asks on demand. Builds from source do not check on their own.
+- **Windows updates in place** -- on the installed Windows package the update window has
+  **Download and Install**: Musa CAD downloads the new setup from the release, checks it
+  (the size and SHA-256 the release publishes, and that the file is a Windows program
+  carrying the announced version; a valid signature too once the program is signed), asks
+  to save unsaved drawings, and runs the setup silently over this installation -- Windows
+  asks once for administrator permission. The setup waits for Musa CAD to exit, updates
+  the same folder and starts the new version. A setup run by hand finds an existing
+  installation the same way: it says so on its first page, updates it where it is (no
+  folder to choose), and keeps the file types the previous version registered.
 - **OPTIONS** (`OP`, and **Options** in the application menu) -- the update check and the
   performance overlay.
 - **Polyline widths** (#37) -- a polyline carries a starting and an ending width for every
@@ -116,6 +125,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - DXF: LWPOLYLINE writes and reads the constant width (43), the per-vertex widths (40 /
   41), the elevation (38) and the thickness (39); the legacy POLYLINE / VERTEX form's
   widths are read as well.
+
+### Fixed
+- The ODA File Converter download (DWG Setup) failed with "server replied: Not Found": the
+  Open Design Alliance renamed its files (no release number in the name any more) and the
+  built-in name pointed at the old one. The page's names are read either way now, the link
+  without a number is followed to the current build, and its version is taken from where
+  the file server sends the download.
 
 ## 0.5.0 - 2026-09-26
 
