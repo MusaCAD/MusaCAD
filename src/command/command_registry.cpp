@@ -419,6 +419,14 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/mtext.svg", "Create a multiline (paragraph) text object.");
     reg({"LE", "QLEADER", "QL"}, [] { return std::make_unique<QLeaderCommand>(); },
         "assets/ribbon/leader.svg", "Draw a quick leader with an arrowhead and annotation.");
+    reg({"TEXTEDITMODE"}, [] { return std::make_unique<TextEditModeCommand>(); }, "",
+        "Whether TEXTEDIT repeats (0) or edits one object (1).");
+    reg({"JUSTIFYTEXT"}, [] { return std::make_unique<TextToolCommand>(TextToolCommand::Tool::Justify); }, "",
+        "Change the justification of the selected text without moving it.");
+    reg({"SCALETEXT"}, [] { return std::make_unique<TextToolCommand>(TextToolCommand::Tool::Scale); }, "",
+        "Scale the selected text, each about a point of its own.");
+    reg({"TXT2MTXT"}, [] { return std::make_unique<TextToolCommand>(TextToolCommand::Tool::ToMText); }, "",
+        "Convert the selected single-line text to one multiline text.");
     reg({"ED", "TEXTEDIT", "DDEDIT"}, [] { return std::make_unique<TextEditCommand>(); },
         "assets/ribbon/text.svg", "Edit the contents of an existing text object.");
     reg({"PR", "PROPERTIES", "PROPS", "CH"}, [] { return std::make_unique<PropertiesCommand>(); },

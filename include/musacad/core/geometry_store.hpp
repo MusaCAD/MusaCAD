@@ -97,12 +97,16 @@ struct TextData {
     Vec2 pos;                  ///< insertion point (justification anchor, on the baseline)
     double height = 1.0;
     double rotation = 0.0;     ///< radians, CCW
-    std::uint8_t justify = 0;  ///< 0 = left, 1 = center, 2 = right
+    std::uint8_t justify = 0;  ///< text::TextJustify (0 left, 1 center, 2 right, ... 14)
     std::uint16_t font = 0;    ///< index into the store's font table (0 = Standard/stroke)
     std::uint16_t style = 0;   ///< index into the text-style table (0 = Standard)
     std::uint32_t str_offset = 0;
     std::uint32_t str_len = 0;
     EntityProps props{};
+    /// Aligned and Fit: the second end of the baseline (`pos` is the first).
+    Vec2 align{};
+    /// The text's own width factor (DXF 41), on top of its style's.
+    double width_factor = 1.0;
 };
 
 /// ATTDEF (attribute definition). A text-like entity that shows its TAG in model
@@ -159,7 +163,10 @@ struct DimData {
     Vec2 text_offset{};
     /// One extra datum the newer types need (v23): the ordinate axis (0 = X, 1 = Y), a
     /// jogged dimension's jog position along its line (0..1), or an arc-length
-    /// dimension's end angle in radians. Zero for the classic types.
+    /// dimension's end angle in radians. A LINEAR dimension's line angle (v38, DXF 50),
+    /// kept in (0, pi] -- horizontal is pi -- by linear_dim_aux; 0 there is a linear
+    /// dimension from before v38, measured along the axis its points differ most on.
+    /// Zero for the other classic types.
     double aux = 0.0;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
@@ -421,6 +428,8 @@ struct BlockText {
     std::uint8_t justify = 0;
     std::string content;
     EntityProps props{};
+    Vec2 align{};
+    double width_factor = 1.0;
 };
 struct BlockMText {
     MTextBlock block; ///< str_offset/str_len ignored; content is inline
@@ -747,6 +756,8 @@ public:
     [[nodiscard]] const GenerationalArena<AttDefData>& attdefs() const noexcept { return attdefs_; }
     /// The TextData behind a Text or an AttDef entity (nullptr for anything else): the
     /// two share every geometry path -- bounds, pick, snap, layout.
+    /// A text's (or an attribute definition's) alignment point and own width factor.
+    void set_text_placement(EntityHandle h, Vec2 align, double width_factor) noexcept;
     [[nodiscard]] const TextData* text_like(EntityHandle h) const noexcept {
         if (h.kind == EntityKind::Text) {
             return text(h);

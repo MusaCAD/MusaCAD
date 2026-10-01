@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/properties_registry.hpp"
+#include "musacad/core/text/text_frame.hpp"
 
 #include <algorithm>
 #include <array>
@@ -304,9 +305,31 @@ int get_justify(const Command& c) {
     return v;
 }
 void set_justify(Command& c, int v) {
+    if (v < 0 || v >= text::kTextJustifyCount) {
+        return;
+    }
     std::visit(
         [&](auto& x) {
-            if constexpr (requires { x.justify; }) {
+            if constexpr (requires { x.justify; x.align; x.content; }) {
+                // Aligned and Fit run between two points: a text that had one gets its
+                // second where its baseline ends now (the stroke font's measure).
+                const bool was_two = text::two_point(x.justify);
+                const bool now_two = text::two_point(static_cast<std::uint8_t>(v));
+                if (now_two && !was_two) {
+                    const text::TextFrame f = text::frame_of(x.content, x.justify, x.pos, x.align,
+                                                             x.height, x.rotation, x.width_factor);
+                    x.pos = f.origin;
+                    x.align = {f.origin.x + f.width() * std::cos(f.rotation),
+                               f.origin.y + f.width() * std::sin(f.rotation)};
+                } else if (was_two && !now_two) {
+                    // ... and one that ran between two keeps the direction it had.
+                    const Vec2 d = x.align - x.pos;
+                    if (length(d) > 1e-12) {
+                        x.rotation = std::atan2(d.y, d.x);
+                    }
+                }
+                x.justify = static_cast<std::uint8_t>(v);
+            } else if constexpr (requires { x.justify; }) {
                 x.justify = static_cast<std::uint8_t>(v);
             }
         },

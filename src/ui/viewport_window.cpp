@@ -31,6 +31,8 @@
 #include "musacad/core/polygon.hpp"
 #include "musacad/core/spline_eval.hpp"
 #include "musacad/core/text/stroke_font.hpp"
+#include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/text/text_frame.hpp"
 
 #include <QTimer>
 #include <QCursor>
@@ -505,6 +507,16 @@ std::string ViewportWindow::image_file_dialog() {
 
 std::string ViewportWindow::open_file_dialog(const std::string& filter) {
     return open_file_dialog_ ? open_file_dialog_(filter) : std::string();
+}
+
+void ViewportWindow::set_typed_text(std::string text) {
+    if (text == typed_text_) {
+        return;
+    }
+    typed_text_ = std::move(text);
+    if (processor_ != nullptr && processor_->preview().kind == command::PreviewKind::Text) {
+        rebuild_overlay();
+    }
 }
 
 void ViewportWindow::submit_cursor(core::Vec2 world, double aperture) {
@@ -2398,6 +2410,33 @@ void ViewportWindow::rebuild_overlay() {
                 }
             }
             break;
+        case command::PreviewKind::Text: {
+            // The line being typed, where it will stand: laid out as the text will be
+            // (the stroke font's measure), with a caret where the next letter goes.
+            if (pts.empty()) {
+                break;
+            }
+            const std::string& typed = !sub_entry_.empty() ? sub_entry_ : typed_text_;
+            const core::Vec2 second = pts.size() > 1 ? pts[1] : pts[0];
+            const core::text::TextFrame f = core::text::frame_of(
+                typed.empty() ? std::string_view("M") : std::string_view(typed), pv.text_justify, pts[0],
+                second, pv.text_height, pv.text_rotation, pv.text_width_factor);
+            const core::Vec2 along{std::cos(f.rotation), std::sin(f.rotation)};
+            const core::Vec2 up{-along.y, along.x};
+            double run = 0.0;
+            if (!typed.empty()) {
+                std::vector<core::Vec2> glyphs;
+                core::text::append_text_segments(core::text::substitute_text(typed), f.origin, f.height,
+                                                 f.rotation, core::text::Justify::Left, glyphs);
+                core::text::apply_text_style(glyphs, f.origin, f.rotation, f.width_factor, 0.0);
+                seg.insert(seg.end(), glyphs.begin(), glyphs.end());
+                run = f.width();
+            }
+            const core::Vec2 caret = f.origin + along * run;
+            seg.push_back(caret - up * (f.height * 0.15));
+            seg.push_back(caret + up * (f.height * 1.15));
+            break;
+        }
         case command::PreviewKind::Xline: {
             // The construction line the click would make: through the cursor, or from
             // the first point; drawn far past the view either way (a ray one way only).
@@ -2581,6 +2620,12 @@ void ViewportWindow::rebuild_overlay() {
                 d.a = pts[0];
                 d.b = pts[1];
                 d.line_pt = cur; // placement follows the cursor
+                if (d.type == core::DimType::Linear) {
+                    // Horizontal or vertical as the cursor goes round the points, unless
+                    // the author fixed the angle.
+                    core::orient_linear_dim(d, pv.dim_angle_fixed ? std::optional<double>(pv.dim_angle)
+                                                                  : std::nullopt);
+                }
                 ok = true;
             } else {
                 std::scoped_lock lock(pending_dim_mutex_);
@@ -2618,6 +2663,13 @@ void ViewportWindow::rebuild_overlay() {
                         d.a = pdim_a_;
                         d.b = pdim_b_;
                         d.line_pt = cur;
+                        if (t == core::DimType::Linear) {
+                            // aux -1: a circle, its diameter turning with the dimension.
+                            core::orient_linear_dim(d,
+                                                    pv.dim_angle_fixed ? std::optional<double>(pv.dim_angle)
+                                                                       : std::nullopt,
+                                                    pdim_aux_ < 0.0);
+                        }
                     }
                     ok = true;
                 }
@@ -3103,6 +3155,14 @@ bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
         return true;
     default:
         break;
+    }
+    if (!text.isEmpty() && processor_->wants_free_text()) {
+        if (text.at(0).isPrint()) {
+            sub_entry_ += text.toUtf8().toStdString();
+            rebuild_overlay();
+            return true;
+        }
+        return false;
     }
     if (!text.isEmpty()) {
         const QChar c = text.at(0);

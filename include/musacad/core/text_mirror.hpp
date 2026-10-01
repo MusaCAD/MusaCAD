@@ -17,7 +17,8 @@
 namespace musacad::core {
 
 /// The rotation a mirrored text gets. `axis` is the mirror line's angle (radians);
-/// `justify` (0 left, 1 centre, 2 right) is swapped when the text is turned round.
+/// `justify` (text::TextJustify) changes sides with the text: left and right when it is
+/// turned round, top and bottom when it is not (the box justifications only).
 [[nodiscard]] inline double mirrored_text_rotation(double rotation, double axis, bool mirrtext,
                                                    std::uint8_t& justify) noexcept {
     double r = 2.0 * axis - rotation;
@@ -27,13 +28,26 @@ namespace musacad::core {
     const double c = std::cos(r);
     const double s = std::sin(r);
     // Reading direction pointing left (or straight down): turn round, swap the ends.
-    if (c < -1e-9 || (std::abs(c) <= 1e-9 && s < 0.0)) {
+    const bool turned = c < -1e-9 || (std::abs(c) <= 1e-9 && s < 0.0);
+    if (turned) {
         r += kPi;
-        if (justify == 0) {
-            justify = 2;
-        } else if (justify == 2) {
-            justify = 0;
+    }
+    if (justify <= 2) {
+        if (turned && justify != 1) {
+            justify = static_cast<std::uint8_t>(2 - justify);
         }
+    } else if (justify >= 6 && justify <= 14) {
+        // A corner or an edge of the box (TL .. BR, three to a row): turned round, the
+        // text's left is its right; not turned, its top is its bottom -- either way it
+        // fills the mirrored box and reads the right way.
+        std::uint8_t col = static_cast<std::uint8_t>((justify - 6) % 3);
+        std::uint8_t row = static_cast<std::uint8_t>((justify - 6) / 3);
+        if (turned) {
+            col = static_cast<std::uint8_t>(2 - col);
+        } else {
+            row = static_cast<std::uint8_t>(2 - row);
+        }
+        justify = static_cast<std::uint8_t>(6 + row * 3 + col);
     }
     return r;
 }

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/scene_snapshot.hpp"
+#include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/polyline_width.hpp"
 
 #include <optional>
@@ -255,9 +256,6 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     // differs. An outline (TTF/OTF) font emits FILLED triangles; otherwise the built-in
     // stroke font emits LINE segments. Glyphs are generated here, never baked.
     std::vector<Vec2> trun;
-    const auto font_is_outline = [&](std::uint16_t font_id) {
-        return fonts != nullptr && fonts->is_outline_font(store.font_name(font_id));
-    };
     // `lineweight` is the entity's RESOLVED weight (ByLayer already applied). Stroke
     // glyphs carry it into the line batches exactly like any other stroked geometry, so
     // PLOT prints text at the weight the author set. The viewport is unaffected: it
@@ -420,21 +418,20 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             return;
         }
         const ResolvedProps r = entity_resolved(store, t->props);
-        const TextStyle& tstyle = store.text_style_of(*t);
-        emit_text_run(store.string_of(*t), t->pos, t->height, t->rotation,
-                      static_cast<text::Justify>(t->justify), t->font, r.color, r.lineweight,
-                      &tstyle);
+        // Laid out in the text's own frame (its justification resolved, Aligned's height
+        // and Fit's width factor worked out): the run starts at the frame's origin.
+        const text::TextFrame frame = text::frame_of(store, *t);
+        TextStyle tstyle = store.text_style_of(*t);
+        tstyle.width_factor = frame.width_factor;
+        emit_text_run(store.string_of(*t), frame.origin, frame.height, frame.rotation,
+                      text::Justify::Left, t->font, r.color, r.lineweight, &tstyle);
         if (editable(store, t->props)) {
             // The selection box uses the VISIBLE width (codes expanded); the edit target
             // keeps the RAW string so double-click editing shows %%c50, not the symbol.
-            const std::string vis = text::substitute_text(store.string_of(*t));
-            const double w = (font_is_outline(t->font)
-                                 ? fonts->advance(store.font_name(t->font), vis, t->height)
-                                 : text::text_width(vis, t->height)) *
-                             tstyle.width_factor; // the style's width factor
             out.text_edit_targets.push_back(TextEditTarget{
-                h, t->pos, {t->pos.x, t->pos.y}, {t->pos.x + w, t->pos.y + t->height}, t->height,
-                t->rotation, false, std::string(store.string_of(*t))});
+                h, frame.origin, {frame.origin.x, frame.origin.y},
+                {frame.origin.x + frame.width(), frame.origin.y + frame.height}, frame.height,
+                frame.rotation, false, std::string(store.string_of(*t))});
         }
     });
 
@@ -446,10 +443,11 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             return;
         }
         const ResolvedProps r = entity_resolved(store, a->text.props);
-        const TextStyle& tstyle = store.text_style_of(a->text);
-        emit_text_run(store.string_of(a->text), a->text.pos, a->text.height, a->text.rotation,
-                      static_cast<text::Justify>(a->text.justify), a->text.font, r.color,
-                      r.lineweight, &tstyle);
+        const text::TextFrame frame = text::frame_of(store, a->text);
+        TextStyle tstyle = store.text_style_of(a->text);
+        tstyle.width_factor = frame.width_factor;
+        emit_text_run(store.string_of(a->text), frame.origin, frame.height, frame.rotation,
+                      text::Justify::Left, a->text.font, r.color, r.lineweight, &tstyle);
     });
 
     // Dimensions: per-element colours (ext/dim/arrow/text), filled arrowheads, and

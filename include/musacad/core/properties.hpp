@@ -43,7 +43,7 @@ struct Layer {
 
 /// Dimension subtype. Linear/Aligned are fully implemented; the rest are staged.
 enum class DimType : std::uint8_t {
-    Linear = 0,  ///< horizontal/vertical (dominant axis of the def points)
+    Linear = 0,  ///< horizontal, vertical or rotated: its line's angle is DimData::aux
     Aligned = 1, ///< parallel to the measured segment
     Radius = 2,
     Diameter = 3,

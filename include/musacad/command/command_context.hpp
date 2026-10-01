@@ -41,6 +41,7 @@ enum class PreviewKind {
     Ellipse,    ///< ELLIPSE rubber band: see PreviewSpec's ellipse fields
     Spline,     ///< SPLINE: the curve through/over points + cursor (see spline fields)
     Xline,      ///< XLINE / RAY: the construction line the click would make (xline_mode)
+    Text,       ///< TEXT: the line being typed, where it will stand (see the text fields)
 };
 
 /// The end of the last line or arc drawn and the heading there: what LINE and ARC
@@ -117,6 +118,12 @@ struct PreviewSpec {
     /// (`pline_tangent`) to the cursor; 5 a fixed radius (`pline_radius`) to the cursor; 6
     /// through a fixed second point (`pline_second`) to the cursor.
     std::vector<double> bulges = {};
+    /// TEXT (PreviewKind::Text): points[0] is the text's point and points[1] its second
+    /// (Aligned, Fit); the viewport draws what has been typed so far in this frame.
+    std::uint8_t text_justify = 0;
+    double text_height = 2.5;
+    double text_rotation = 0.0;
+    double text_width_factor = 1.0;
     /// ... the widths of the committed segments (two per segment: start, end; empty =
     /// none), the widths the next segment will take, and whether the step in hand is a
     /// plain next-point pick (Dynamic Input then offers its length and angle fields,
@@ -159,6 +166,10 @@ struct PreviewSpec {
     // at the object pick). The cursor supplies the dimension-line placement.
     int dim_type = -1; ///< -1 = not a dimension preview
     std::uint16_t dim_style = 0;
+    /// A linear dimension's line angle when the author fixed it (Horizontal, Vertical,
+    /// Rotated); otherwise it turns with the cursor (core::orient_linear_dim).
+    bool dim_angle_fixed = false;
+    double dim_angle = 0.0;
 };
 
 /// Sink for command-line text output (scrollback + the active prompt).

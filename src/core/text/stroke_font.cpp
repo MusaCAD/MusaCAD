@@ -210,6 +210,26 @@ Glyph diameter_glyph() {
     g.push_back(parse("1,2 5,8")[0]);                        // slash
     return g;
 }
+// The multiplication sign: a cross on the hyphen's height, smaller than the letter x and
+// standing on neither the baseline nor the x-height ("40 × 30").
+Glyph times_glyph() {
+    return Glyph{Stroke{cell(1.6, 3.6), cell(4.4, 6.4)}, Stroke{cell(1.6, 6.4), cell(4.4, 3.6)}};
+}
+
+/// A smooth arc in GRID coordinates, sampled; defined below with the drafting symbols.
+std::vector<Vec2> arc_stroke(double cx, double cy, double rx, double ry, double a0_deg, double a1_deg,
+                             int steps);
+
+// Capital omega (and the ohm sign, which is drawn the same): a loop open at the bottom,
+// its two ends coming down onto the baseline and turning out into feet.
+Glyph omega_glyph() {
+    Glyph g{arc_stroke(3.0, 5.4, 2.2, 2.6, 235.0, -55.0, 14)};
+    const Vec2 l = g[0].front();
+    const Vec2 r = g[0].back();
+    g.push_back(Stroke{l, cell(2.1, 2.0), cell(0.8, 2.0)});
+    g.push_back(Stroke{r, cell(3.9, 2.0), cell(5.2, 2.0)});
+    return g;
+}
 
 const std::array<Glyph, 128>& ascii_table() {
     static const std::array<Glyph, 128> table = [] {
@@ -239,8 +259,8 @@ constexpr const char* kRing = "2,2 1,3 1,7 2,8 4,8 5,7 5,3 4,2 2,2";
 /// A smooth arc in GRID coordinates (gx 0..6, gy 0..8), sampled to `steps` segments.
 /// The stroke table's parser only takes integers, which is fine for straight-edged
 /// glyphs but turns a profile arc into a visible peak -- these need real curvature.
-Stroke arc_stroke(double cx, double cy, double rx, double ry, double a0_deg, double a1_deg,
-                  int steps) {
+std::vector<Vec2> arc_stroke(double cx, double cy, double rx, double ry, double a0_deg, double a1_deg,
+                             int steps) {
     Stroke s;
     s.reserve(static_cast<std::size_t>(steps) + 1);
     for (int i = 0; i <= steps; ++i) {
@@ -340,6 +360,14 @@ const std::unordered_map<char32_t, Glyph>& symbol_table() {
         t.emplace(0x00B0, degree_glyph());
         t.emplace(0x00B1, plusminus_glyph());
         t.emplace(0x2300, diameter_glyph());
+        t.emplace(0x2014, parse("0,5 6,5"));   // em dash: the hyphen's height, the cell's width
+        t.emplace(0x00D7, times_glyph());      // multiplication sign
+        t.emplace(0x03A9, omega_glyph());      // Greek capital omega ...
+        t.emplace(0x2126, omega_glyph());      // ... and the ohm sign, the same glyph
+        // The micro sign (and Greek small mu, the same glyph): the u with its left stem
+        // carried down to the descender.
+        t.emplace(0x00B5, parse("1,6 1,0|1,3 2,2 4,2 5,3|5,6 5,2"));
+        t.emplace(0x03BC, parse("1,6 1,0|1,3 2,2 4,2 5,3|5,6 5,2"));
         for (const SymbolEntry& e : kSymbols) {
             t.emplace(e.cp, parse(e.strokes));
         }
@@ -414,6 +442,15 @@ const Glyph* glyph_for(char32_t cp, bool& small_cap) {
 bool is_space(char32_t cp) { return cp == ' ' || cp == '\t'; }
 
 } // namespace
+
+bool has_glyph(char32_t cp) {
+    if (is_space(cp) || cp == '\n' || cp == '\r') {
+        return true; // nothing to draw, and nothing missing
+    }
+    bool small_cap = false;
+    const Glyph* g = glyph_for(cp, small_cap);
+    return g != nullptr && !g->empty();
+}
 
 double text_width(std::string_view text, double height) {
     double w = 0.0;

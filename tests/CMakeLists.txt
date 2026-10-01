@@ -110,6 +110,8 @@ add_executable(musacad_tests
     test_spline.cpp
     test_modify_curves.cpp
     test_dim_types.cpp
+    test_dim_linear.cpp
+    test_text_check.cpp
     test_views_groups.cpp
     test_units.cpp
     test_text_style.cpp
@@ -132,6 +134,7 @@ add_executable(musacad_tests
     test_offset_curves.cpp
     test_polyline_width.cpp
     test_snap_overrides.cpp
+    test_text_justify.cpp
     test_tracking.cpp
     test_modify_polyline.cpp
     test_native_roundtrip.cpp

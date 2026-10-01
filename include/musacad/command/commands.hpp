@@ -2245,13 +2245,66 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Point, Height, Rotation, Content } state_ = State::Point;
+    /// AutoCAD's flow: `Specify start point of text or [Justify/Style]:` (a justification
+    /// may be typed here too), the point its justification asks for (two for Align and
+    /// Fit), `Specify height <last>:` and `Specify rotation angle of text <last>:` (a
+    /// value or a point; remembered), then the text line after line -- each Enter starts
+    /// the next line under the last, an empty line ends the command.
+    enum class State { Point, Justify, Style, Second, Height, Rotation, Content } state_ = State::Point;
+    inline static double s_height_ = 2.5;   ///< TEXTSIZE
+    inline static double s_rotation_ = 0.0; ///< the last rotation
+    inline static std::uint8_t s_justify_ = 0;
     core::Vec2 pos_{};
-    double height_ = 2.5;
-    double rotation_ = 0.0;
-    std::string style_;         ///< the current text style's name ("" = Standard)
+    core::Vec2 align_{};
+    std::uint8_t justify_ = s_justify_;
+    double height_ = s_height_;
+    double rotation_ = s_rotation_;
+    std::string style_;         ///< the text style's name ("" = Standard)
+    double style_factor_ = 1.0; ///< its width factor, for the line shown while typed
     bool fixed_height_ = false; ///< the style fixes the height: no height prompt
+    int lines_ = 0;
     bool done_ = false;
+    void read_style(CommandContext& ctx);
+    void prompt_point(CommandContext& ctx);
+    void after_point(CommandContext& ctx);
+    void prompt_height(CommandContext& ctx);
+    void prompt_rotation(CommandContext& ctx);
+    void begin_content(CommandContext& ctx);
+    void show_line(CommandContext& ctx);
+
+public:
+    bool free_text() const override { return !done_ && state_ == State::Content; }
+};
+
+/// JUSTIFYTEXT, SCALETEXT and TXT2MTXT: `Select objects:`, then what the tool asks.
+class TextToolCommand final : public ICommand {
+public:
+    enum class Tool : std::uint8_t { Justify, Scale, ToMText };
+    explicit TextToolCommand(Tool tool) : tool_(tool) {}
+    std::string name() const override {
+        return tool_ == Tool::Justify ? "JUSTIFYTEXT" : tool_ == Tool::Scale ? "SCALETEXT" : "TXT2MTXT";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State { Select, Justify, Base, Height, Match, Factor, RefLength, RefNew } state_ = State::Select;
+    inline static std::uint8_t s_justify_ = 0;
+    inline static double s_height_ = 2.5;
+    inline static double s_factor_ = 2.0;
+    Tool tool_;
+    SelectObjectsPhase select_;
+    std::uint8_t base_ = 0;
+    double ref_ = 1.0;
+    bool done_ = false;
+    void selected(CommandContext& ctx);
+    void prompt_height(CommandContext& ctx);
+    void scale(CommandContext& ctx, std::uint8_t mode, double value, core::Vec2 pick = {});
 };
 
 /// DIMLINEAR / DIMALIGNED share one state machine, parameterised by type/name.
@@ -2266,14 +2319,24 @@ public:
     bool done() const override { return done_; }
 
 private:
-    // Two-point flow: First -> Second -> Place. Object flow (via the [Object]
-    // keyword or an empty first input): SelectObj -> ObjPlace.
-    enum class State { First, Second, Place, SelectObj, ObjPlace } state_ = State::First;
+    // Two points (First -> Second) or an object (Enter at the first prompt, or the
+    // [Object] keyword: SelectObj), then Place with its options: Text asks for the
+    // text, Rotated for the angle (a value, or two points: Rotation -> Rotation2).
+    enum class State { First, Second, SelectObj, Place, Text, Rotation, Rotation2 } state_ = State::First;
+    void enter_place(CommandContext& ctx);
+    void place_prompt(CommandContext& ctx);
+    void show_preview(CommandContext& ctx) const;
+    void place(CommandContext& ctx, core::Vec2 at);
     core::DimType type_;
     std::string name_;
     core::Vec2 a_{};
     core::Vec2 b_{};
     core::Vec2 obj_pick_{};
+    bool object_ = false;      ///< placing a dimension of the selected object
+    bool angle_fixed_ = false; ///< Horizontal / Vertical / Rotated chose the angle
+    double angle_ = 0.0;       ///< ... this one (radians)
+    core::Vec2 angle_from_{};  ///< Rotated by two points: the first
+    std::string text_;         ///< the text typed at Text / Mtext ("" = the measurement)
     bool done_ = false;
 };
 
@@ -2449,9 +2512,30 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Pick, Content } state_ = State::Pick;
+    /// `Select an annotation object or [Undo/Mode]:`, then the new text; with
+    /// TEXTEDITMODE 0 (Multiple) the command asks for the next object until Enter.
+    enum class State { Pick, Mode, Content } state_ = State::Pick;
     core::Vec2 at_{};
     double radius_ = 0.0;
+    int edits_ = 0;
+    bool done_ = false;
+    void prompt_pick(CommandContext& ctx);
+
+public:
+    inline static bool s_single_ = false; ///< TEXTEDITMODE 1
+    bool free_text() const override { return !done_ && state_ == State::Content; }
+};
+
+/// TEXTEDITMODE: 0 TEXTEDIT repeats (Multiple), 1 it edits one object (Single).
+class TextEditModeCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTEDITMODE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 

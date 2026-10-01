@@ -908,6 +908,33 @@ struct AddTextCommand {
     /// Text style NAME ("" = Standard). Resolved to the style table on add; a style
     /// with a font supplies the font when `font` is empty.
     std::string style{};
+    /// Aligned and Fit (justify 3 and 5): the second end of the baseline.
+    Vec2 align{};
+    /// The text's own width factor, on top of its style's.
+    double width_factor = 1.0;
+};
+
+/// JUSTIFYTEXT: every selected text takes `justify` and stays where it is (its
+/// insertion point moves to the new justification's place on the text).
+struct JustifyTextCommand {
+    std::uint8_t justify = 0;
+    std::uint64_t group = 0;
+};
+/// SCALETEXT: every selected text is scaled about a point of its own -- `base` 0 its
+/// insertion point as it stands, else a justification + 1 (the point that justification
+/// names on the text). `mode` 0 sets the height to `value`, 1 multiplies it by `value`,
+/// 2 takes the height of the text under `match_pick`.
+struct ScaleTextCommand {
+    std::uint8_t base = 0;
+    std::uint8_t mode = 0;
+    double value = 1.0;
+    Vec2 match_pick{};
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
+/// TXT2MTXT: the selected single-line texts become one multiline text, top line first.
+struct TextToMTextCommand {
+    std::uint64_t group = 0;
 };
 
 /// A dimension defined by `a`/`b` (def points) placed through `line_pt`, drawn
@@ -957,6 +984,13 @@ struct AddObjectDimensionCommand {
     /// DIMJOGGED only: the centre location override and the jog location.
     Vec2 pick3{};
     Vec2 pick4{};
+    /// DIMLINEAR: the dimension line's angle when the author fixed it (Horizontal,
+    /// Vertical, Rotated); unset, it follows from where `pick2` is (orient_linear_dim).
+    /// (Not `rotation`: the Properties visitors read any member of that name as an
+    /// entity's rotation.)
+    std::optional<double> line_angle{};
+    /// The text typed at the Text / Mtext option (raw; `<>` = the measurement).
+    std::string text_override{};
 };
 
 /// Non-mutating query: resolve the def points of an object-based dimension under
@@ -1529,7 +1563,8 @@ using Command =
                  SelectHandleCommand, SelectPreviewCommand, SelectSimilarCommand,
                  SelectFilterCommand, IsolateObjectsCommand, OopsCommand, GroupEditCommand,
                  ListGroupsCommand, SetLtscaleModesCommand, MatchPropApplySelectionCommand,
-                 SetCeltscaleCommand, SetFillModeCommand, OffsetPreviewCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
+                 SetCeltscaleCommand, SetFillModeCommand, OffsetPreviewCommand, JustifyTextCommand,
+                 ScaleTextCommand, TextToMTextCommand, MeasureQueryCommand, MassPropQueryCommand, TimeCommand,
                  StatusQueryCommand, SetDrawingPropsCommand,
                  ChainDimensionCommand>;
 

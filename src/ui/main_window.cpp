@@ -924,6 +924,8 @@ void MainWindow::build_status_bar() {
     osnap_menu->addSeparator();
     osnap_menu->addAction(QStringLiteral("Settings\u2026"), this, [this] { open_osnap_settings_dialog(); });
     viewport_->set_osnap_settings_callback([this] { open_osnap_settings_dialog(); });
+    connect(command_widget_, &CommandLineWidget::inputTextChanged, this,
+            [this](const QString& text) { viewport_->set_typed_text(text.toStdString()); });
     viewport_->set_open_file_dialog([this](const std::string& filter) {
         return QFileDialog::getOpenFileName(this, QStringLiteral("Open"), QString(),
                                             QString::fromStdString(filter))
@@ -1088,8 +1090,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
         if (viewport_ != nullptr && processor_ != nullptr && processor_->has_active_command() &&
             dyn_action_ != nullptr && dyn_action_->isChecked()) {
             const int k = ke->key();
+            // Space is Enter, except in a line of text being typed.
             if (k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter ||
-                k == Qt::Key_Space) {
+                (k == Qt::Key_Space && !processor_->wants_free_text())) {
                 QWidget* fw = QApplication::focusWidget();
                 const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
                                       properties_dock_->isAncestorOf(fw);
@@ -2643,6 +2646,7 @@ bool MainWindow::selftest_annotation() {
     type("4");
     type("0");
     type("HELLO 12");
+    type(""); // an empty line ends TEXT
     const bool text_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
     std::printf("[selftest] TEXT command renders: %s\n", text_ok ? "PASS" : "FAIL");
     all = all && text_ok;
@@ -2874,6 +2878,7 @@ bool MainWindow::selftest_mtext() {
     type("ED");
     type("1,1"); // pick on the text
     type("AFTER");
+    type(""); // Enter ends TEXTEDIT (it asks for the next object otherwise)
     const bool edit_ok = pump([&] { return has_content("AFTER") && !has_content("BEFORE"); });
     std::printf("[selftest] TEXTEDIT command changes store content (BEFORE->AFTER): %s\n",
                 edit_ok ? "PASS" : "FAIL");

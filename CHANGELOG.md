@@ -89,7 +89,40 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   all), Shift + E / V / C (Endpoint, Midpoint or Center alone). `TEMPOVERRIDES` 0
   switches them off.
 
+- **TEXT as AutoCAD has it** (#42) -- `[Justify/Style]` with the fifteen justifications
+  (`Left Center Right Align Middle Fit TL TC TR ML MC MR BL BC BR`; Align and Fit run the
+  text between two points), the height and the rotation given as a value or a point and
+  remembered, and line after line of text: each Enter starts the next line under the
+  last, an empty line ends the command. The line is drawn on the canvas where it will
+  stand while it is typed.
+- **JUSTIFYTEXT** (the justification changes, the text stays where it is), **SCALETEXT**
+  (each text about a point of its own; a height, a factor or Reference, or another
+  text's height) and **TXT2MTXT**.
+- **TEXTEDIT** asks for one object after another (`[Undo/Mode]`, `TEXTEDITMODE`).
+- **DIMLINEAR as AutoCAD has it** (#56) -- `<select object>` (Enter, then a line, a
+  polyline segment, an arc or a circle) and `[Mtext/Text/Angle/Horizontal/Vertical/Rotated]`;
+  DIMALIGNED takes `<select object>` and `[Mtext/Text/Angle]`. The text typed at Text
+  stands for the value, `<>` for the measurement.
+- **`--check` checks the text** (#80) -- besides reading the drawing, it reports every
+  text whose letters overlap another text's, reach outside the frame (`--window`, or
+  the drawing's largest rectangle) or use a character the font has no glyph for, and
+  with `--lines` every text a line crosses. `--json` prints the report for a program;
+  the exit code is 4 when there is a problem. See docs/CLI.md.
+- The stroke font draws the em dash, the multiplication sign, omega (and the ohm sign)
+  and the micro sign (and mu): "40 × 30 mm", "750 Ω", "35 µm" (#79).
+
 ### Fixed
+- DIMLINEAR chose horizontal or vertical from the axis its two points differ most on, so
+  a vertical dimension of a mostly horizontal pair could not be drawn (#56). As in
+  AutoCAD, where the dimension line is placed decides now -- above or below the points
+  it measures across, beside them up -- and the preview turns with the cursor. The angle
+  is kept with the dimension (`.musa`, DXF 50), so grip edits and DIMCONTINUE /
+  DIMBASELINE keep it. A horizontal dimension of a mostly vertical pair in a DXF from
+  elsewhere was read as vertical.
+- A centred or right-justified text was bounded, picked and given its edit box as if it
+  were left-justified, and one read from a DXF was placed on its first point instead of
+  the point it is justified on. Drawing, bounds, picking, grips and the edit box share
+  one layout now, and DXF text carries 72 / 73, 11 / 21 and 41 both ways.
 - OFFSET with Layer = Source put the offset of a line, an arc or a circle on the current
   layer with the current colour and linetype. It takes the source's properties, linetype
   scale included.
@@ -119,9 +152,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **DONUT** makes what AutoCAD makes: a closed polyline of two half-circle arcs on the
   mean diameter, as wide as the ring is thick (it was a two-loop solid hatch). It can be
   edited, offset and exploded as a polyline, and FILLMODE applies to it.
-- The native format is version 37: `POLYLINE` records may end with `W` and two widths per
-  vertex and `Z` with the elevation and thickness; a `FILLMODE` record. Older files open
-  unchanged.
+- The native format is version 38: `POLYLINE` records may end with `W` and two widths per
+  vertex and `Z` with the elevation and thickness; a `FILLMODE` record; `TEXT` and
+  `ATTDEF` records may carry the alignment point and the text's own width factor. Older
+  files open unchanged.
+- TEXT no longer ends after one line (scripts and macros add an empty line to end it).
 - DXF: LWPOLYLINE writes and reads the constant width (43), the per-vertex widths (40 /
   41), the elevation (38) and the thickness (39); the legacy POLYLINE / VERTEX form's
   widths are read as well.

@@ -21,6 +21,7 @@
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/polyline_width.hpp"
+#include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
@@ -282,17 +283,14 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     case EntityKind::Text:
     case EntityKind::AttDef: {
         // Pick/window-select against the (rotated) bounding box outline.
-        const TextData* t = store.text_like(entity);
-        const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
-                                            store.string_of(*t), t->height);
-        const TextStyle& ts = store.text_style_of(*t);
-        const double cs = std::cos(t->rotation);
-        const double sn = std::sin(t->rotation);
+        const text::TextFrame f = text::frame_of(store, *store.text_like(entity));
+        const double cs = std::cos(f.rotation);
+        const double sn = std::sin(f.rotation);
         Vec2 corners[4];
-        text::text_box_corners(w, t->height, ts.width_factor, ts.oblique, corners);
+        text::text_box_corners(f.advance, f.height, f.width_factor, f.oblique, corners);
         const Vec2 local[5] = {corners[0], corners[1], corners[2], corners[3], corners[0]};
         for (const Vec2& c : local) {
-            out.push_back({t->pos.x + c.x * cs - c.y * sn, t->pos.y + c.x * sn + c.y * cs});
+            out.push_back({f.origin.x + c.x * cs - c.y * sn, f.origin.y + c.x * sn + c.y * cs});
         }
         break;
     }
@@ -471,19 +469,17 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     case EntityKind::Text:
     case EntityKind::AttDef: {
         // Closest point on the text bbox; the query inside the box reads distance 0.
-        const TextData* t = store.text_like(entity);
-        const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
-                                            store.string_of(*t), t->height) *
-                         store.text_style_of(*t).width_factor;
-        const double cs = std::cos(t->rotation);
-        const double sn = std::sin(t->rotation);
-        // Transform the query into text-local space (un-rotate about pos).
-        const Vec2 q = query - t->pos;
+        const text::TextFrame f = text::frame_of(store, *store.text_like(entity));
+        const double w = f.width();
+        const double cs = std::cos(f.rotation);
+        const double sn = std::sin(f.rotation);
+        // Transform the query into text-local space (un-rotate about the frame's origin).
+        const Vec2 q = query - f.origin;
         const double lx = q.x * cs + q.y * sn;
         const double ly = -q.x * sn + q.y * cs;
         const double cx = std::clamp(lx, 0.0, w);
-        const double cy = std::clamp(ly, 0.0, t->height);
-        out_point = {t->pos.x + cx * cs - cy * sn, t->pos.y + cx * sn + cy * cs};
+        const double cy = std::clamp(ly, 0.0, f.height);
+        out_point = {f.origin.x + cx * cs - cy * sn, f.origin.y + cx * sn + cy * cs};
         return true;
     }
     case EntityKind::Dimension: {

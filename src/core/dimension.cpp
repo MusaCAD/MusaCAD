@@ -12,15 +12,11 @@
 
 namespace musacad::core {
 
+Vec2 dim_line_direction(const DimData& d);
+
 namespace {
 
-Vec2 dim_direction(const DimData& d) {
-    if (d.type == DimType::Aligned) {
-        const Vec2 v = d.b - d.a;
-        return length_squared(v) > 1e-18 ? normalized(v) : Vec2{1, 0};
-    }
-    return std::abs(d.b.x - d.a.x) >= std::abs(d.b.y - d.a.y) ? Vec2{1, 0} : Vec2{0, 1};
-}
+Vec2 dim_direction(const DimData& d) { return dim_line_direction(d); }
 Vec2 foot(Vec2 p, Vec2 line_pt, Vec2 dir) { return line_pt + dir * dot(p - line_pt, dir); }
 void seg(std::vector<Vec2>& out, Vec2 a, Vec2 b) {
     out.push_back(a);
@@ -66,6 +62,63 @@ void append_arrowhead(std::vector<Vec2>& fills, std::vector<Vec2>& lines, Vec2 t
         break;
     }
     }
+}
+
+Vec2 dim_line_direction(const DimData& d) {
+    if (d.type == DimType::Aligned) {
+        const Vec2 v = d.b - d.a;
+        return length_squared(v) > 1e-18 ? normalized(v) : Vec2{1, 0};
+    }
+    if (d.aux == 0.0) { // a linear dimension from before v38
+        return std::abs(d.b.x - d.a.x) >= std::abs(d.b.y - d.a.y) ? Vec2{1, 0} : Vec2{0, 1};
+    }
+    // Readable: left to right, or upwards for a vertical one.
+    Vec2 u{std::cos(d.aux), std::sin(d.aux)};
+    if (u.x < -1e-12 || (std::abs(u.x) <= 1e-12 && u.y < 0.0)) {
+        u = u * -1.0;
+    }
+    if (std::abs(u.x) < 1e-15) {
+        u = {0.0, 1.0};
+    } else if (std::abs(u.y) < 1e-15) {
+        u = {1.0, 0.0};
+    }
+    return u;
+}
+
+double linear_dim_auto_angle(Vec2 a, Vec2 b, Vec2 line_pt) {
+    const Vec2 lo{std::min(a.x, b.x), std::min(a.y, b.y)};
+    const Vec2 hi{std::max(a.x, b.x), std::max(a.y, b.y)};
+    const double out_x = line_pt.x < lo.x ? lo.x - line_pt.x : (line_pt.x > hi.x ? line_pt.x - hi.x : 0.0);
+    const double out_y = line_pt.y < lo.y ? lo.y - line_pt.y : (line_pt.y > hi.y ? line_pt.y - hi.y : 0.0);
+    if (out_x > out_y) {
+        return kHalfPi; // to the left or right: the dimension stands up
+    }
+    if (out_y > out_x) {
+        return 0.0; // above or below: it runs across
+    }
+    return hi.x - lo.x >= hi.y - lo.y ? 0.0 : kHalfPi;
+}
+
+double linear_dim_aux(double angle) {
+    double a = std::fmod(angle, kPi);
+    if (a <= 1e-12) {
+        a += kPi;
+    }
+    return a > kPi ? a - kPi : a;
+}
+
+void orient_linear_dim(DimData& d, std::optional<double> fixed, bool circle) {
+    if (circle) {
+        const Vec2 c = (d.a + d.b) * 0.5;
+        const double r = distance(d.a, d.b) * 0.5;
+        const double angle = fixed ? *fixed : linear_dim_auto_angle(c - Vec2{r, r}, c + Vec2{r, r}, d.line_pt);
+        const Vec2 u{std::cos(angle), std::sin(angle)};
+        d.a = c - u * r;
+        d.b = c + u * r;
+        d.aux = linear_dim_aux(angle);
+        return;
+    }
+    d.aux = linear_dim_aux(fixed ? *fixed : linear_dim_auto_angle(d.a, d.b, d.line_pt));
 }
 
 double dim_measure(const DimData& d) {

@@ -249,6 +249,21 @@ bool parse_overrides(const std::vector<std::string_view>& tok, std::size_t base,
 } // namespace
 
 namespace {
+// v38: a text's alignment point and own width factor -- three more tokens, written only
+// when the text has them (Aligned, Fit, a width factor of its own).
+bool has_text_placement(const DocText& t) {
+    return t.justify == 3 || t.justify == 5 || t.width_factor != 1.0;
+}
+void append_text_placement(std::string& s, const DocText& t) {
+    if (!has_text_placement(t)) {
+        return;
+    }
+    s += ' ';
+    append_vec(s, t.align);
+    s += ' ';
+    append_double(s, t.width_factor);
+}
+
 // v37: a polyline's widths ("W" and two per vertex) and its elevation and thickness
 // ("Z" and the two values), written only when there is something to say.
 void append_polyline_extras(std::string& s, const DocPolyline& p) {
@@ -611,6 +626,7 @@ std::string serialize_native(const Document& doc) {
         append_props(s, t.props);
         s += ' ';
         append_uint(s, t.style); // v26: text style index (14th token)
+        append_text_placement(s, t);
         s += '\n';
         s += t.content;
         s += '\n';
@@ -633,6 +649,7 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, a.text.style);
         s += ' ';
         append_uint(s, a.flags);
+        append_text_placement(s, a.text);
         s += '\n';
         s += a.text.content;
         s += '\n';
@@ -897,6 +914,11 @@ std::string serialize_native(const Document& doc) {
             s += ' ';
             append_uint(s, t.justify);
             append_props(s, t.props);
+            if (has_text_placement(t)) {
+                s += ' ';
+                append_uint(s, t.style);
+                append_text_placement(s, t);
+            }
             s += '\n';
             s += t.content;
             s += '\n';
@@ -919,6 +941,7 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, a.text.style);
             s += ' ';
             append_uint(s, a.flags);
+            append_text_placement(s, a.text);
             s += '\n';
             s += a.text.content;
             s += '\n';
@@ -1810,6 +1833,12 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (tok.size() >= 14 && !to_uint(tok[13], tstyle)) {
                 return fail("TEXT style malformed");
             }
+            // v38: the alignment point and the text's own width factor.
+            std::vector<double> place;
+            if (tok.size() != 13 && tok.size() != 14 &&
+                (tok.size() != 17 || !parse_doubles(tok, 14, 3, place) || !(place[2] > 0.0))) {
+                return fail("TEXT placement malformed");
+            }
             std::string content;
             if (!std::getline(in, content)) {
                 return fail("TEXT missing content line");
@@ -1830,6 +1859,10 @@ IoResult parse_native(std::string_view text, Document& out) {
                                         props,
                                         std::move(tfont),
                                         static_cast<std::uint16_t>(tstyle)});
+            if (place.size() == 3) {
+                t_texts->back().align = {place[0], place[1]};
+                t_texts->back().width_factor = place[2];
+            }
         } else if (key == "ATTDEF") {
             // ATTDEF px py height rot justify <props7> style flags; then the tag line, the
             // font line, the prompt line and the default line (v28).
@@ -1838,8 +1871,11 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::uint64_t justify = 0;
             std::uint64_t astyle = 0;
             std::uint64_t aflags = 0;
-            if (tok.size() != 15 || !parse_doubles(tok, 1, 4, vals) || !to_uint(tok[5], justify) ||
-                !parse_props(tok, 6, props) || !to_uint(tok[13], astyle) || !to_uint(tok[14], aflags)) {
+            std::vector<double> place;
+            if ((tok.size() != 15 && tok.size() != 18) || !parse_doubles(tok, 1, 4, vals) ||
+                !to_uint(tok[5], justify) || !parse_props(tok, 6, props) || !to_uint(tok[13], astyle) ||
+                !to_uint(tok[14], aflags) ||
+                (tok.size() == 18 && (!parse_doubles(tok, 15, 3, place) || !(place[2] > 0.0)))) {
                 return fail("ATTDEF record malformed");
             }
             std::string lines[4];
@@ -1863,6 +1899,10 @@ IoResult parse_native(std::string_view text, Document& out) {
                                            std::move(lines[2]),
                                            std::move(lines[3]),
                                            static_cast<std::uint8_t>(aflags)});
+            if (place.size() == 3) {
+                t_attdefs->back().text.align = {place[0], place[1]};
+                t_attdefs->back().text.width_factor = place[2];
+            }
         } else if (key == "DIM") {
             // DIM type ax ay bx by lx ly style <props7> [override] [tolmode up lo]
             // Token count is the version discriminator, as everywhere else in this

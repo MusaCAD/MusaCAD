@@ -8,7 +8,8 @@ opened, validated or plotted from a script without a GUI session and a human.
 
 ```
 musacad [<drawing>]              open a drawing in the GUI
-musacad --check <drawing>        parse a drawing, report errors, exit
+musacad --check <drawing> [--window x0,y0,x1,y1] [--lines] [--json]
+                                 read a drawing, check its text, report, exit
 musacad --plot <drawing> <out.pdf> [plot options]
 musacad --help
 musacad --version
@@ -27,6 +28,7 @@ Scripts depend on these, so they are part of the interface:
 | `1` | usage error (bad command line) |
 | `2` | the drawing could not be read or parsed |
 | `3` | the output could not be written |
+| `4` | `--check`: the drawing opened, and its text has problems (see below) |
 
 ## Opening a drawing
 
@@ -57,6 +59,79 @@ musacad: broken.musa: LINE record malformed (line 2).
 $ echo $?
 2
 ```
+
+### Checking the text
+
+A drawing that opens is then checked the way a person checks a sheet before it goes
+out. `--check` reports every text whose letters
+
+- **overlap** the letters of another text;
+- reach **outside the frame** -- the window given with `--window x0,y0,x1,y1` (as for
+  `--plot`), or else the drawing's largest rectangle (a closed polyline with four
+  square corners, such as a border drawn with RECTANG); a drawing with neither has no
+  frame to leave;
+- use a character the font has **no glyph** for, which the plot would leave blank
+  (each such character once, with its code point);
+- with `--lines`, are **crossed by a line**: a line, polyline, arc, circle, ellipse,
+  spline, or a line of a block reference (a title block's cell lines). A dimension's own
+  lines and a leader's line do not count, so a value standing on its dimension line is
+  fine.
+
+Text means TEXT, attribute definitions, each line of an MTEXT and of a multileader's
+text, dimension values and leader labels, on layers that are on and thawed. The box of
+a text is the box of its letters as the plot draws them -- the strokes, at the text's
+height, width factor, obliquing and rotation, with its justification -- so a short word
+in a wide cell is not reported for the cell's empty part, and a turned text is checked
+along its own direction. The lines of one MTEXT never count as overlapping each other.
+
+`--check` has no Qt and no fonts of its own: text in a TrueType font is measured as the
+stroke font draws it, and only the stroke font's missing characters are reported.
+
+```sh
+$ musacad --check board.musa
+board.musa: Opened 214 entities.
+board.musa: overlap: TEXT "R1 750 Ω" (layer NOTES, at 10.2,10) and TEXT "C3" (layer NOTES, at 14.2,10.5)
+board.musa: outside the frame: TEXT "REV B" (layer TITLE, at 410.4,6)
+board.musa: 38 texts checked, 2 problems
+$ echo $?
+4
+```
+
+With `--json` the report goes to stdout as one JSON object, for a pipeline to read:
+
+```json
+{
+  "file": "board.musa",
+  "texts": 38,
+  "problems_found": 2,
+  "frames": [
+    {"space": 0, "from": "rectangle", "min": [0, 0], "max": [420, 297]}
+  ],
+  "problems": [
+    {"kind": "overlap",
+     "text": {"index": 3, "type": "TEXT", "layer": "NOTES", "text": "R1 750 Ω", "font": "",
+              "space": 0, "entity": 3,
+              "box": [[10.2, 10], [21.1, 10], [21.1, 12.5], [10.2, 12.5]],
+              "bounds": [10.2, 10, 21.1, 12.5]},
+     "with": {"index": 4, "type": "TEXT", "text": "C3", ...}},
+    {"kind": "outside-frame", "text": {...}, "frame": {"min": [0, 0], "max": [420, 297]}}
+  ]
+}
+```
+
+| `kind` | Also has |
+|---|---|
+| `overlap` | `with`: the other text |
+| `outside-frame` | `frame`: the rectangle it leaves |
+| `crosses-line` | `line`: `type`, `layer`, and the crossing segment's `from` / `to` |
+| `missing-glyph` | `missing`: a list of `{"character", "code"}` |
+
+`box` is the letters' box in drawing units, corner by corner from the left end of the
+baseline (baseline-left, baseline-right, top-right, top-left), so it is exact for a
+rotated text; `bounds` is `[xmin, ymin, xmax, ymax]`. `space` is 0 for model space, else
+a layout's number; texts are compared with texts and lines of their own space. `entity`
+numbers the text-bearing entities, so two runs with the same number are lines of one
+MTEXT. The exit code is `4` whenever `problems` is not empty, `0` when it is.
 
 ## Plotting headlessly
 

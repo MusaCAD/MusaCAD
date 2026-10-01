@@ -127,13 +127,14 @@ session:
 
 ```sh
 musacad drawing.musa                       # open in the GUI
-musacad --check drawing.musa               # parse it; exit non-zero on a bad file
+musacad --check drawing.musa               # open it and check its text; --json for a report
 musacad --plot drawing.musa out.pdf \      # headless, no display needed
         --paper A4 --portrait --scale 1:5
 ```
 
-Exit codes are `0` ok, `1` usage, `2` load/parse, `3` output — so it works as a
-validator and a batch plotter in CI. `--plot` uses the same loaders, snapshot builder
+Exit codes are `0` ok, `1` usage, `2` load/parse, `3` output, `4` text problems
+(letters over letters, outside the frame, missing glyphs) — so it works as a validator
+and a batch plotter in CI. `--plot` uses the same loaders, snapshot builder
 and plot renderer as `PLOT`/`Ctrl+P` in the GUI. Full grammar in
 [docs/CLI.md](docs/CLI.md).
 

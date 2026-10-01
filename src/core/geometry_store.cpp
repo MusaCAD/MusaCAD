@@ -105,6 +105,21 @@ EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std
     return EntityHandle{slot.index, slot.generation, EntityKind::Spline};
 }
 
+void GeometryStore::set_text_placement(EntityHandle h, Vec2 align, double width_factor) noexcept {
+    TextData* t = nullptr;
+    if (h.kind == EntityKind::Text) {
+        t = texts_.get(h.index, h.generation);
+    } else if (h.kind == EntityKind::AttDef) {
+        if (AttDefData* a = attdefs_.get(h.index, h.generation)) {
+            t = &a->text;
+        }
+    }
+    if (t != nullptr) {
+        t->align = align;
+        t->width_factor = width_factor > 0.0 ? width_factor : 1.0;
+    }
+}
+
 EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                                      std::string_view content, EntityProps props,
                                      std::uint16_t font, std::uint16_t style) {

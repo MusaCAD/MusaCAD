@@ -59,6 +59,10 @@ public:
     void append_line(const std::string& line) override;
     void set_prompt(const std::string& prompt) override;
 
+Q_SIGNALS:
+    /// The input field's text, as it is typed (TEXT shows its line on the canvas).
+    void inputTextChanged(const QString& text);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
