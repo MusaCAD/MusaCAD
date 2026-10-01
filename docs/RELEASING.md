@@ -105,6 +105,21 @@ and the `v<version>` tag is visible. A tag pushed before the Windows build has b
 on real hardware still publishes both installers, so verify first (see above) or delete the
 Windows asset from the release afterwards.
 
+**The Windows installer's checksum.** The Windows workflow publishes
+`MusaCAD-<version>-x86_64-setup.exe.sha256` beside the installer, and the in-place update
+inside Musa CAD (Windows, the Update dialog's **Download and Install**) refuses a download
+whose SHA-256 differs from it. An installer attached by hand needs the same file beside it:
+
+```sh
+sha256sum MusaCAD-<version>-x86_64-setup.exe > MusaCAD-<version>-x86_64-setup.exe.sha256
+gh release upload v<version> MusaCAD-<version>-x86_64-setup.exe MusaCAD-<version>-x86_64-setup.exe.sha256
+```
+
+The updater also requires the setup's version resource to say `<version>` (the NSIS script
+stamps it from `/DVERSION`), so a setup built with a different version number than the tag
+is refused on the user's machine. Without the `.sha256` the updater still checks the size
+the release lists and the version resource, and says so in its dialog.
+
 ## Post-release
 
 - Flathub: nothing by hand once the app is on Flathub. The tag push runs

@@ -55,6 +55,7 @@ packaging/flatpak/build/
 
 # Local NSIS test output
 *-setup.exe
+*-setup.exe.sha256
 staging_test/
 
 # ---- Internal working notes (assistant session logs/reports; never published) ----

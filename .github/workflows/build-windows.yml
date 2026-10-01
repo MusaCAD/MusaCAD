@@ -86,17 +86,28 @@ jobs:
           /DSTAGING=staging
           packaging\windows\musacad.nsi
 
+      - name: Checksum
+        shell: bash
+        # <installer>.sha256 in sha256sum's format, published beside the installer. The
+        # in-place update inside Musa CAD refuses a download whose SHA-256 differs from it.
+        run: |
+          cd packaging/windows
+          sha256sum MusaCAD-*-x86_64-setup.exe > "MusaCAD-${{ steps.ver.outputs.version }}-x86_64-setup.exe.sha256"
+          cat *.sha256
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: MusaCAD-${{ steps.ver.outputs.version }}-x86_64-setup
-          path: packaging/windows/MusaCAD-*-x86_64-setup.exe
+          path: |
+            packaging/windows/MusaCAD-*-x86_64-setup.exe
+            packaging/windows/MusaCAD-*-x86_64-setup.exe.sha256
           if-no-files-found: error
 
   # Tag pushes also publish: create the GitHub release for the tag (once -- whichever
   # platform's job gets there first creates it, the other attaches to it) and upload
-  # the artifact. Manual runs (workflow_dispatch) only build. The Flatpak is still built
-  # locally and attached by hand (docs/RELEASING.md).
+  # the artifact and its checksum. Manual runs (workflow_dispatch) only build. The Flatpak
+  # is still built locally and attached by hand (docs/RELEASING.md).
   publish:
     needs: windows-installer
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
