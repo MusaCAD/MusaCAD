@@ -344,7 +344,8 @@ void CommandProcessor::cancel() {
 }
 
 bool CommandProcessor::asking_for_point() const {
-    if (!active_ || !temp_overrides_ || active_->in_selection_phase() || active_->wants_selection()) {
+    if (!active_ || !temp_overrides_ || active_->in_selection_phase() || active_->wants_selection() ||
+        active_->free_text()) {
         return false;
     }
     const std::string prompt = lower(current_prompt_);

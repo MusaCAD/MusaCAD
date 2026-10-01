@@ -151,13 +151,14 @@ TEST_CASE("#29 STYLE command flow and TEXT following the current style") {
     h.proc.submit_line("0,0");
     h.proc.submit_line("0");      // rotation
     h.proc.submit_line("hello");
+    h.proc.submit_line("");       // an empty line ends TEXT
     const auto* t = h.last<AddTextCommand>();
     REQUIRE(t != nullptr);
     REQUIRE(t->height == Approx(5.0));
     REQUIRE(t->style == "Title");
     bool asked_height = false;
     for (const std::string& p : h.out.prompts) {
-        asked_height = asked_height || p.find("text height") != std::string::npos;
+        asked_height = asked_height || p.find("Specify height") != std::string::npos;
     }
     REQUIRE(!asked_height);
 
@@ -169,6 +170,7 @@ TEST_CASE("#29 STYLE command flow and TEXT following the current style") {
     h.proc.submit_line("3");
     h.proc.submit_line("0");
     h.proc.submit_line("plain");
+    h.proc.submit_line("");
     REQUIRE(h.last<AddTextCommand>()->height == Approx(3.0));
     REQUIRE(h.last<AddTextCommand>()->style.empty());
 }

@@ -181,6 +181,9 @@ public:
     void set_open_file_dialog(std::function<std::string(const std::string&)> cb) { open_file_dialog_ = std::move(cb); }
     void set_image_file_dialog(std::function<std::string()> cb) { image_file_dialog_ = std::move(cb); }
     void set_osnap_settings_callback(std::function<void()> cb) { osnap_settings_callback_ = std::move(cb); }
+    /// What stands in the command line's input field (TEXT draws its line from it; the
+    /// canvas prompt's own buffer takes its place in canvas mode).
+    void set_typed_text(std::string text);
     /// A dialog-driven ghost of the selection (Rotate/Scale dialogs): mode 3 rotates
     /// about `a` by `param` radians, 4 scales about `a` by `param`; 0 clears.
     void set_dialog_ghost(int mode, core::Vec2 a, double param);
@@ -662,6 +665,7 @@ private:
     // keywords): the prompt label + an editable value/keyword field at the cursor,
     // shown whenever a command is active but NOT in a dimensional rubber-band.
     std::string sub_entry_; // typed value/keyword for the current sub-prompt
+    std::string typed_text_; // the command line's input field, as typed
     void build_sub_prompt_ui(render::CanvasCommandUI& ui);
 
     // Selection drag state (UI thread).

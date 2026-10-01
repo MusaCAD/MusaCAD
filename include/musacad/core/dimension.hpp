@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -76,6 +77,29 @@ struct DimLabel {
 
 /// The measured value of a dimension (computed from def points -- never baked).
 [[nodiscard]] double dim_measure(const DimData& d);
+
+/// The unit direction a linear or aligned dimension measures along: an aligned one from
+/// `a` to `b`; a linear one at its line's angle (DimData::aux), turned to read left to
+/// right or upwards. A linear dimension from before v38 (aux 0) measures along the axis
+/// its points differ most on, as it always did.
+[[nodiscard]] Vec2 dim_line_direction(const DimData& d);
+
+/// DIMLINEAR's automatic orientation, AutoCAD's: a dimension line placed above or below
+/// what is measured -- the box with corners `a` and `b` -- measures across it (0,
+/// horizontal); one placed to its left or right measures up it (pi/2, vertical). Off a
+/// corner, the side `line_pt` stands further out on decides; inside the box, its longer
+/// side is measured.
+[[nodiscard]] double linear_dim_auto_angle(Vec2 a, Vec2 b, Vec2 line_pt);
+
+/// The DimData::aux a linear dimension whose line runs at `angle` (radians) keeps: the
+/// angle taken into (0, pi], so a horizontal dimension is pi (0 means "from before v38").
+[[nodiscard]] double linear_dim_aux(double angle);
+
+/// Sets a linear dimension's angle for a dimension line through `d.line_pt`: `fixed`
+/// when the author chose one (Horizontal, Vertical, Rotated), else the automatic one.
+/// `circle`: `a` and `b` are the ends of a circle's horizontal diameter (DIMLINEAR of a
+/// circle) -- the box is the circle's, and they turn to the diameter the angle measures.
+void orient_linear_dim(DimData& d, std::optional<double> fixed, bool circle = false);
 
 /// Formats a measurement with `precision` decimal places.
 [[nodiscard]] std::string format_measurement(double value, std::uint8_t precision);

@@ -9,7 +9,11 @@
 
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/geometry_store.hpp"
 #include "musacad/core/io/native_format.hpp"
+#include "musacad/core/native_kernel_2d.hpp"
+#include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/text_check.hpp"
 #include "musacad/core/version.hpp"
 
 namespace musacad::app {
@@ -23,7 +27,7 @@ bool is_ours(std::string_view a) {
     return a == "--help" || a == "-h" || a == "--version" || a == "-v" || a == "--check" ||
            a == "--plot" || a == "--paper" || a == "--portrait" || a == "--landscape" ||
            a == "--scale" || a == "--fit" || a == "--window" || a == "--extents" ||
-           a == "--monochrome";
+           a == "--monochrome" || a == "--json" || a == "--lines";
 }
 
 /// Parses "1:5" (or "1/5", or a bare "0.2") into plotted-mm per drawing-unit.
@@ -154,6 +158,14 @@ CliOptions parse_cli(int argc, const char* const* argv) {
             o.plot.monochrome = true;
             continue;
         }
+        if (a == "--json") {
+            o.check_json = true;
+            continue;
+        }
+        if (a == "--lines") {
+            o.check_lines = true;
+            continue;
+        }
         if (a == "--paper") {
             std::string_view v;
             if (!need_value(i, a, v)) {
@@ -217,6 +229,10 @@ CliOptions parse_cli(int argc, const char* const* argv) {
         o.error = "--check and --plot are mutually exclusive";
         return o;
     }
+    if ((o.check_json || o.check_lines) && !want_check) {
+        o.error = std::string(o.check_json ? "--json" : "--lines") + " goes with --check";
+        return o;
+    }
     if (want_check) {
         if (!have_input) {
             o.error = "--check needs a drawing file";
@@ -240,7 +256,8 @@ std::string help_text() {
            "\n"
            "Usage:\n"
            "  musacad [<drawing>]              open a drawing in the GUI\n"
-           "  musacad --check <drawing>        parse a drawing and report errors, then exit\n"
+           "  musacad --check <drawing> [check options]\n"
+           "                                   read a drawing, check its text, report, exit\n"
            "  musacad --plot <drawing> <out.pdf> [plot options]\n"
            "                                   plot to PDF headlessly (no display needed)\n"
            "  musacad --help                   show this help\n"
@@ -258,11 +275,19 @@ std::string help_text() {
            "  --scale <n:m>     plot n mm per m drawing units, e.g. 1:5\n"
            "  --monochrome      plot everything black (the mono CTB style)\n"
            "\n"
+           "Check options:\n"
+           "  --window x0,y0,x1,y1   the frame text must stay inside (default: the\n"
+           "                    drawing's largest rectangle)\n"
+           "  --lines           also report text that a line crosses\n"
+           "  --json            print the report as JSON\n"
+           "\n"
            "Exit codes:\n"
            "  0  success\n"
            "  1  usage error (bad command line)\n"
            "  2  the drawing could not be read or parsed\n"
            "  3  the output could not be written\n"
+           "  4  --check: text overlaps text, leaves the frame, crosses a line (--lines)\n"
+           "     or uses a character the font has no glyph for\n"
            "\n"
            "Single-dash options are passed through to Qt (e.g. -platform offscreen).\n";
 }
@@ -279,6 +304,39 @@ int check_drawing(const std::string& path, bool dxf, std::string& message) {
         dxf ? core::io::load_dxf(path, doc) : core::io::load_native(path, doc);
     message = r.message;
     return r.ok ? kExitOk : kExitLoad;
+}
+
+int check_drawing(const CliOptions& o, std::string& out, std::string& err) {
+    core::io::Document doc;
+    const core::io::IoResult r = o.input_is_dxf ? core::io::load_dxf(o.input, doc) : core::io::load_native(o.input, doc);
+    if (!r.ok) {
+        err = o.input + ": " + r.message + "\n";
+        return kExitLoad;
+    }
+    // The store as --plot builds it (with no font engine: the command line has no Qt, so
+    // letters are measured with the stroke font), FIELD values resolved for this file.
+    core::GeometryStore store;
+    core::io::populate_store(store, doc);
+    core::text::set_field_context(core::text::make_field_context(o.input));
+    core::NativeKernel2D kernel;
+    core::TextCheckOptions options;
+    options.lines = o.check_lines;
+    if (o.plot.area == PlotRequest::Area::Window) {
+        options.window = std::pair<core::Vec2, core::Vec2>{{o.plot.win[0], o.plot.win[1]}, {o.plot.win[2], o.plot.win[3]}};
+    }
+    const core::TextCheckReport report = core::check_text(store, kernel, options);
+    if (o.check_json) {
+        out = core::text_check_json(report, o.input);
+    } else {
+        out = o.input + ": " + r.message + "\n" + core::text_check_text(report, o.input);
+        out += o.input + ": " + std::to_string(report.runs.size()) + (report.runs.size() == 1 ? " text" : " texts") +
+               " checked, " +
+               (report.problems.empty() ? std::string("no problems")
+                                        : std::to_string(report.problems.size()) +
+                                              (report.problems.size() == 1 ? " problem" : " problems")) +
+               "\n";
+    }
+    return report.problems.empty() ? kExitOk : kExitProblems;
 }
 
 } // namespace musacad::app

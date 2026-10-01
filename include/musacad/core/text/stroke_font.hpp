@@ -26,6 +26,8 @@ enum class Justify { Left, Center, Right };
 /// Coverage:
 /// * ASCII 0x20-0x7E.
 /// * Engineering symbols: U+00B0 degree, U+00B1 plus-minus, U+2300 diameter.
+/// * Typographic and units: U+2014 em dash, U+00D7 multiplication sign, U+03A9 omega
+///   (U+2126 ohm sign, the same glyph), U+00B5 micro sign (U+03BC mu, the same glyph).
 /// * Hole callouts: U+2334 counterbore/spotface, U+21A7 depth, U+2335 countersink.
 /// * GD&T characteristics: U+23E4 straightness, U+23E5 flatness, U+25CB circularity,
 ///   U+232D cylindricity, U+2312 profile of a line, U+2313 profile of a surface,
@@ -49,6 +51,11 @@ void append_text_segments(std::string_view text, Vec2 origin, double height, dou
 /// Total advance width of `text` at `height` (world units). Used for justification
 /// and pick bounds.
 [[nodiscard]] double text_width(std::string_view text, double height);
+
+/// True when the font draws `cp` (a space, a tab or a line break counts: there is nothing
+/// to draw). False for a code point it has no glyph for, which it draws blank -- what
+/// `musacad_app --check` reports as a missing character.
+[[nodiscard]] bool has_glyph(char32_t cp);
 
 /// Applies a text STYLE's width factor and obliquing angle to already laid-out world
 /// points: in the text's own frame (un-rotated about `anchor`, the justification

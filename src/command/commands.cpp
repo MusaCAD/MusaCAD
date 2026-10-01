@@ -15,10 +15,12 @@
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/dimension.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
 #include "musacad/core/spline_eval.hpp"
 #include "musacad/core/math/tangent_circle.hpp"
+#include "musacad/core/text/justify.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/polyline_ops.hpp"
 
@@ -8195,66 +8197,430 @@ void ChamferCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // TEXT (single-line): point -> height -> rotation -> content
 // ---------------------------------------------------------------------------
+namespace {
+constexpr const char* kJustifyList = "[Left/Center/Right/Align/Middle/Fit/TL/TC/TR/ML/MC/MR/BL/BC/BR]";
+// The line under a line: AutoCAD's single-line spacing, 5 / 3 of the height.
+constexpr double kTextLineSpacing = 5.0 / 3.0;
+} // namespace
+
+void TextCommand::read_style(CommandContext& ctx) {
+    const std::vector<core::TextStyle> styles = ctx.text_styles();
+    const std::uint16_t cur = ctx.current_text_style();
+    style_.clear();
+    style_factor_ = 1.0;
+    fixed_height_ = false;
+    if (cur > 0 && cur < styles.size()) {
+        style_ = styles[cur].name;
+        style_factor_ = styles[cur].width_factor;
+        if (styles[cur].height > 0.0) {
+            height_ = styles[cur].height; // a style with a height fixes it: no prompt
+            fixed_height_ = true;
+        }
+    }
+}
+
+void TextCommand::prompt_point(CommandContext& ctx) {
+    state_ = State::Point;
+    ctx.clear_preview();
+    ctx.set_prompt(justify_ == 0 ? std::string("Specify start point of text or [Justify/Style]: ")
+                                 : std::string(core::text::kJustifyInfo[justify_].prompt));
+}
+
 void TextCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify start point: ");
+    read_style(ctx);
+    ctx.echo("Current text style: \"" + (style_.empty() ? std::string("Standard") : style_) +
+             "\"  Text height: " + core::units::format_length(height_, ctx.units()) +
+             "  Annotative: No  Justify: " + core::text::kJustifyInfo[justify_].name);
+    // The remembered justification is said, but each run starts at the start point
+    // prompt, as AutoCAD's does.
+    ctx.set_prompt("Specify start point of text or [Justify/Style]: ");
+}
+
+void TextCommand::prompt_height(CommandContext& ctx) {
+    state_ = State::Height;
+    ctx.set_preview({PreviewKind::Segment, {pos_}});
+    ctx.set_prompt("Specify height <" + core::units::format_length(height_, ctx.units()) + ">: ");
+}
+
+void TextCommand::prompt_rotation(CommandContext& ctx) {
+    state_ = State::Rotation;
+    ctx.set_preview({PreviewKind::Segment, {pos_}});
+    ctx.set_prompt("Specify rotation angle of text <" + core::units::format_angle(rotation_, ctx.units()) +
+                   ">: ");
+}
+
+void TextCommand::show_line(CommandContext& ctx) {
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Text;
+    pv.points = {pos_, align_};
+    pv.text_justify = justify_;
+    pv.text_height = height_;
+    pv.text_rotation = rotation_;
+    pv.text_width_factor = style_factor_;
+    ctx.set_preview(pv);
+}
+
+void TextCommand::begin_content(CommandContext& ctx) {
+    state_ = State::Content;
+    s_height_ = height_;
+    s_rotation_ = rotation_;
+    s_justify_ = justify_;
+    show_line(ctx);
+    ctx.set_prompt("Enter text: ");
+}
+
+void TextCommand::after_point(CommandContext& ctx) {
+    // Aligned takes its height and its direction from its two points, Fit its direction.
+    if (justify_ == 3) {
+        begin_content(ctx);
+    } else if (justify_ == 5) {
+        if (fixed_height_) {
+            begin_content(ctx);
+        } else {
+            prompt_height(ctx);
+        }
+    } else if (fixed_height_) {
+        prompt_rotation(ctx);
+    } else {
+        prompt_height(ctx);
+    }
 }
 
 void TextCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
     switch (state_) {
-    case State::Point:
+    case State::Point: {
+        if (u == "J" || u == "JUSTIFY") {
+            state_ = State::Justify;
+            ctx.set_prompt(std::string("Enter an option ") + kJustifyList + ": ");
+            return;
+        }
+        if (u == "S" || u == "STYLE") {
+            state_ = State::Style;
+            ctx.set_prompt("Enter style name or [?] <" + (style_.empty() ? std::string("Standard") : style_) +
+                           ">: ");
+            return;
+        }
+        // A justification may be given here without going through Justify.
+        if (const int j = core::text::justify_of_keyword(u); j >= 0 && !t.empty()) {
+            justify_ = static_cast<std::uint8_t>(j);
+            prompt_point(ctx);
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             pos_ = *p;
+            align_ = *p;
             ctx.set_last_point(*p);
-            // The current text STYLE: a fixed height skips the height prompt (AutoCAD).
-            const std::vector<core::TextStyle> styles = ctx.text_styles();
-            const std::uint16_t cur = ctx.current_text_style();
-            style_.clear();
-            fixed_height_ = false;
-            if (cur > 0 && cur < styles.size()) {
-                style_ = styles[cur].name;
-                if (styles[cur].height > 0.0) {
-                    height_ = styles[cur].height;
-                    fixed_height_ = true;
+            if (core::text::two_point(justify_)) {
+                state_ = State::Second;
+                ctx.set_preview({PreviewKind::Segment, {pos_}});
+                ctx.set_prompt("Specify second endpoint of text baseline: ");
+                return;
+            }
+            after_point(ctx);
+        }
+        return;
+    }
+    case State::Justify: {
+        if (t.empty()) {
+            prompt_point(ctx);
+            return;
+        }
+        const int j = core::text::justify_of_keyword(u);
+        if (j < 0) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        justify_ = static_cast<std::uint8_t>(j);
+        prompt_point(ctx);
+        return;
+    }
+    case State::Style: {
+        const std::vector<core::TextStyle> styles = ctx.text_styles();
+        if (u == "?") {
+            ctx.echo("Text styles:");
+            ctx.echo("  Standard");
+            for (std::size_t i = 1; i < styles.size(); ++i) {
+                ctx.echo("  " + styles[i].name);
+            }
+            return;
+        }
+        if (!t.empty()) {
+            bool found = u == "STANDARD";
+            std::string name;
+            double factor = 1.0;
+            double fixed = 0.0;
+            for (std::size_t i = 1; i < styles.size() && !found; ++i) {
+                if (upper(styles[i].name) == u) {
+                    found = true;
+                    name = styles[i].name;
+                    factor = styles[i].width_factor;
+                    fixed = styles[i].height;
                 }
             }
+            if (!found) {
+                ctx.echo("Cannot find text style \"" + t + "\".");
+                return;
+            }
+            style_ = name;
+            style_factor_ = factor;
+            fixed_height_ = fixed > 0.0;
             if (fixed_height_) {
-                state_ = State::Rotation;
-                ctx.set_prompt("Specify rotation angle <0>: ");
-            } else {
-                state_ = State::Height;
-                ctx.set_prompt("Specify text height <2.5>: ");
+                height_ = fixed;
             }
+            ctx.submit(core::SetCurrentTextStyleCommand{name.empty() ? std::string("Standard") : name});
+        }
+        prompt_point(ctx);
+        return;
+    }
+    case State::Second:
+        if (const auto p = read_point(ctx, text)) {
+            if (core::distance(pos_, *p) < 1e-12) {
+                ctx.echo("The two endpoints must differ.");
+                return;
+            }
+            align_ = *p;
+            rotation_ = std::atan2(p->y - pos_.y, p->x - pos_.x);
+            after_point(ctx);
         }
         return;
-    case State::Height:
+    case State::Height: {
         if (!t.empty()) {
-            double h = 2.5;
-            if (parse_number(t, h) && h > 0.0) {
-                height_ = h;
+            double h = 0.0;
+            if (parse_number(t, h)) {
+                // typed
+            } else if (const auto p = read_point(ctx, text)) {
+                h = core::distance(pos_, *p);
+            } else {
+                return;
+            }
+            if (!(h > 0.0)) {
+                ctx.echo("Value must be positive and nonzero.");
+                return;
+            }
+            height_ = h;
+        }
+        if (justify_ == 5) {
+            begin_content(ctx); // Fit's direction is its two points'
+        } else {
+            prompt_rotation(ctx);
+        }
+        return;
+    }
+    case State::Rotation: {
+        if (!t.empty()) {
+            double deg = 0.0;
+            if (parse_number(t, deg)) {
+                rotation_ = core::to_radians(deg);
+            } else if (const auto p = read_point(ctx, text)) {
+                if (core::distance(pos_, *p) > 1e-12) {
+                    rotation_ = std::atan2(p->y - pos_.y, p->x - pos_.x);
+                }
+            } else {
+                return;
             }
         }
-        state_ = State::Rotation;
-        ctx.set_prompt("Specify rotation angle <0>: ");
-        return;
-    case State::Rotation: {
-        double deg = 0.0;
-        if (!t.empty() && parse_number(t, deg)) {
-            rotation_ = core::to_radians(deg);
-        }
-        state_ = State::Content;
-        ctx.set_prompt("Enter text: ");
+        begin_content(ctx);
         return;
     }
     case State::Content: {
-        core::AddTextCommand cmd{pos_, height_, rotation_, 0, text, ctx.group_id()};
-        cmd.style = style_; // the current text style (its font applies)
+        if (t.empty()) {
+            // An empty line ends the command.
+            ctx.clear_preview();
+            if (lines_ > 0) {
+                ctx.echo(std::to_string(lines_) + (lines_ == 1 ? " line of text placed." : " lines of text placed."));
+            }
+            done_ = true;
+            return;
+        }
+        core::AddTextCommand cmd{pos_, height_, rotation_, justify_, text, ctx.group_id()};
+        cmd.style = style_; // the text style (its font applies)
+        cmd.align = align_;
         ctx.submit(std::move(cmd));
-        ctx.echo("Text placed.");
+        ++lines_;
+        // The next line stands under this one: down the page in the text's own frame.
+        const double drop = height_ * kTextLineSpacing;
+        const core::Vec2 down{std::sin(rotation_) * drop, -std::cos(rotation_) * drop};
+        pos_ = pos_ + down;
+        align_ = align_ + down;
+        (void)ctx.new_group(); // every line its own undo step
+        show_line(ctx);
+        ctx.set_prompt("Enter text: ");
+        return;
+    }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JUSTIFYTEXT / SCALETEXT / TXT2MTXT
+// ---------------------------------------------------------------------------
+void TextToolCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        selected(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void TextToolCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextToolCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        selected(ctx);
+    }
+}
+
+void TextToolCommand::selected(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
         done_ = true;
         return;
     }
+    switch (tool_) {
+    case Tool::Justify:
+        state_ = State::Justify;
+        ctx.set_prompt(std::string("Enter a justification option "
+                                   "[Left/Align/Fit/Center/Middle/Right/TL/TC/TR/ML/MC/MR/BL/BC/BR] <") +
+                       core::text::kJustifyInfo[s_justify_].name + ">: ");
+        return;
+    case Tool::Scale:
+        state_ = State::Base;
+        ctx.set_prompt("Enter a base point option for scaling "
+                       "[Existing/Left/Center/Middle/Right/TL/TC/TR/ML/MC/MR/BL/BC/BR] <Existing>: ");
+        return;
+    case Tool::ToMText:
+        ctx.submit(core::TextToMTextCommand{ctx.group_id()});
+        done_ = true;
+        return;
+    }
+}
+
+void TextToolCommand::prompt_height(CommandContext& ctx) {
+    state_ = State::Height;
+    ctx.set_prompt("Specify new model height or [Paper height/Match object/Scale factor] <" +
+                   core::units::format_length(s_height_, ctx.units()) + ">: ");
+}
+
+void TextToolCommand::scale(CommandContext& ctx, std::uint8_t mode, double value, core::Vec2 pick) {
+    core::ScaleTextCommand c;
+    c.base = base_;
+    c.mode = mode;
+    c.value = value;
+    c.match_pick = pick;
+    c.pick_radius = ctx.pick_radius();
+    c.group = ctx.group_id();
+    ctx.submit(c);
+    done_ = true;
+}
+
+void TextToolCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            selected(ctx);
+        }
+        return;
+    case State::Justify: {
+        int j = s_justify_;
+        if (!t.empty()) {
+            j = core::text::justify_of_keyword(u);
+            if (j < 0) {
+                ctx.echo("Invalid option keyword.");
+                return;
+            }
+        }
+        s_justify_ = static_cast<std::uint8_t>(j);
+        ctx.submit(core::JustifyTextCommand{s_justify_, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    case State::Base: {
+        base_ = 0;
+        if (!t.empty() && u != "E" && u != "EXISTING") {
+            const int j = core::text::justify_of_keyword(u);
+            if (j < 0 || core::text::two_point(static_cast<std::uint8_t>(j))) {
+                ctx.echo("Invalid option keyword.");
+                return;
+            }
+            base_ = static_cast<std::uint8_t>(j + 1);
+        }
+        prompt_height(ctx);
+        return;
+    }
+    case State::Height:
+        if (t.empty()) {
+            scale(ctx, 0, s_height_);
+            return;
+        }
+        if (u == "P" || u == "PAPER" || u == "PAPER HEIGHT") {
+            ctx.echo("Paper height applies to annotative objects; none are selected.");
+            return;
+        }
+        if (u == "M" || u == "MATCH" || u == "MATCH OBJECT") {
+            state_ = State::Match;
+            ctx.set_prompt("Select a text object with the desired height: ");
+            return;
+        }
+        if (u == "S" || u == "SCALE" || u == "SCALE FACTOR") {
+            state_ = State::Factor;
+            ctx.set_prompt("Specify scale factor or [Reference] <" + fmt4(s_factor_) + ">: ");
+            return;
+        }
+        if (!parse_number(t, v) || !(v > 0.0)) {
+            ctx.echo("Value must be positive and nonzero.");
+            return;
+        }
+        s_height_ = v;
+        scale(ctx, 0, v);
+        return;
+    case State::Match:
+        if (const auto p = read_point(ctx, text)) {
+            scale(ctx, 2, 0.0, *p);
+        }
+        return;
+    case State::Factor:
+        if (t.empty()) {
+            scale(ctx, 1, s_factor_);
+            return;
+        }
+        if (u == "R" || u == "REFERENCE") {
+            state_ = State::RefLength;
+            ctx.set_prompt("Specify reference length <1>: ");
+            return;
+        }
+        if (!parse_number(t, v) || !(v > 0.0)) {
+            ctx.echo("Value must be positive and nonzero.");
+            return;
+        }
+        s_factor_ = v;
+        scale(ctx, 1, v);
+        return;
+    case State::RefLength:
+        ref_ = 1.0;
+        if (!t.empty() && (!parse_number(t, ref_) || !(ref_ > 0.0))) {
+            ctx.echo("Value must be positive and nonzero.");
+            ref_ = 1.0;
+            return;
+        }
+        state_ = State::RefNew;
+        ctx.set_prompt("Specify new length: ");
+        return;
+    case State::RefNew:
+        if (!parse_number(t, v) || !(v > 0.0)) {
+            ctx.echo("Value must be positive and nonzero.");
+            return;
+        }
+        s_factor_ = v / ref_;
+        scale(ctx, 1, s_factor_);
+        return;
     }
 }
 
@@ -8264,6 +8630,24 @@ void TextCommand::cancel(CommandContext& ctx) {
 }
 
 namespace {
+/// A plain number ("30", "-12.5"), or nothing: what an angle prompt takes as a value
+/// before it tries the text as a point.
+std::optional<double> parse_number(const std::string& t) {
+    if (t.empty()) {
+        return std::nullopt;
+    }
+    std::size_t used = 0;
+    double v = 0.0;
+    try {
+        v = std::stod(t, &used);
+    } catch (...) {
+        return std::nullopt;
+    }
+    if (used != t.size() || !std::isfinite(v)) {
+        return std::nullopt;
+    }
+    return v;
+}
 bool is_object_keyword(const std::string& text) {
     std::string u;
     for (const char c : text) {
@@ -8318,15 +8702,165 @@ void preview_object_dim(CommandContext& ctx, core::DimType t) {
 // ---------------------------------------------------------------------------
 void LinearDimensionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify first extension line origin or [Object]: ");
+    ctx.set_prompt("Specify first extension line origin or <select object>: ");
+}
+
+void LinearDimensionCommand::show_preview(CommandContext& ctx) const {
+    PreviewSpec s;
+    s.kind = PreviewKind::Dimension;
+    s.dim_type = static_cast<int>(type_);
+    if (!object_) {
+        s.points = {a_, b_}; // an object's def points come from the snapshot's pending_dim
+    }
+    s.dim_angle_fixed = angle_fixed_;
+    s.dim_angle = angle_;
+    ctx.set_preview(std::move(s));
+}
+
+void LinearDimensionCommand::place_prompt(CommandContext& ctx) {
+    state_ = State::Place;
+    ctx.set_prompt(type_ == core::DimType::Linear && !angle_fixed_
+                       ? "Specify dimension line location or [Mtext/Text/Angle/Horizontal/Vertical/Rotated]: "
+                       : "Specify dimension line location or [Mtext/Text/Angle]: ");
+}
+
+void LinearDimensionCommand::enter_place(CommandContext& ctx) {
+    show_preview(ctx); // rubber-band to the cursor
+    place_prompt(ctx);
+}
+
+void LinearDimensionCommand::place(CommandContext& ctx, core::Vec2 at) {
+    const std::optional<double> fixed = angle_fixed_ ? std::optional<double>(angle_) : std::nullopt;
+    if (object_) {
+        core::AddObjectDimensionCommand c;
+        c.type = static_cast<std::uint8_t>(type_);
+        c.pick1 = obj_pick_;
+        c.pick2 = at;
+        c.pick_radius = ctx.pick_radius();
+        c.group = ctx.group_id();
+        if (type_ == core::DimType::Linear) {
+            c.line_angle = fixed;
+        }
+        c.text_override = text_;
+        ctx.submit(std::move(c));
+        ctx.echo("Dimension placed from object.");
+    } else {
+        core::DimData d;
+        d.type = type_;
+        d.a = a_;
+        d.b = b_;
+        d.line_pt = at;
+        if (type_ == core::DimType::Linear) {
+            core::orient_linear_dim(d, fixed);
+        }
+        ctx.submit(core::AddDimensionCommand{.type = static_cast<std::uint8_t>(type_),
+                                             .a = a_,
+                                             .b = b_,
+                                             .line_pt = at,
+                                             .style = 0,
+                                             .group = ctx.group_id(),
+                                             .text_override = text_,
+                                             .aux = d.aux});
+        ctx.echo("Dimension placed.");
+    }
+    ctx.set_preview({});
+    done_ = true;
 }
 
 void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text) {
-    // Object mode is entered from the first prompt via the [Object] keyword.
-    if (state_ == State::First && is_object_keyword(text)) {
-        state_ = State::SelectObj;
-        ctx.set_prompt("Select line or polyline segment: ");
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        // Enter selects the object to dimension (AutoCAD's <select object>); [Object] is
+        // kept for the scripts that type it.
+        if (t.empty() || is_object_keyword(t)) {
+            state_ = State::SelectObj;
+            ctx.set_prompt("Select object to dimension: ");
+            return;
+        }
+        break;
+    case State::Text:
+        // The text as typed; `<>` stands for the measurement, and an empty answer keeps
+        // the measurement alone.
+        text_ = t;
+        show_preview(ctx);
+        place_prompt(ctx);
         return;
+    case State::Rotation:
+        if (t.empty()) {
+            angle_ = 0.0;
+        } else if (const std::optional<double> deg = parse_number(t)) {
+            angle_ = core::to_radians(*deg);
+        } else if (const auto p = read_point(ctx, text)) {
+            angle_from_ = *p;
+            state_ = State::Rotation2;
+            ctx.set_prompt("Specify second point: ");
+            return;
+        } else {
+            return;
+        }
+        angle_fixed_ = true;
+        show_preview(ctx);
+        place_prompt(ctx);
+        return;
+    case State::Rotation2:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 d = *p - angle_from_;
+            if (core::length_squared(d) < 1e-18) {
+                ctx.echo("The two points are the same; specify a second point.");
+                return;
+            }
+            angle_ = std::atan2(d.y, d.x);
+            angle_fixed_ = true;
+            show_preview(ctx);
+            place_prompt(ctx);
+        }
+        return;
+    case State::Place:
+        if (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT") {
+            state_ = State::Text;
+            // What Enter keeps: the text typed before, else the measurement -- shown when
+            // the points are known (an object's are on the geometry side).
+            std::string keep = text_;
+            if (keep.empty() && !object_) {
+                core::DimData d;
+                d.type = type_;
+                d.a = a_;
+                d.b = b_;
+                d.line_pt = ctx.cursor_world().value_or((a_ + b_) * 0.5);
+                if (type_ == core::DimType::Linear) {
+                    core::orient_linear_dim(d, angle_fixed_ ? std::optional<double>(angle_) : std::nullopt);
+                }
+                keep = core::units::format_length(core::dim_measure(d), ctx.units());
+            }
+            ctx.set_prompt(keep.empty() ? "Enter dimension text (<> for the measurement): "
+                                        : "Enter dimension text <" + keep + ">: ");
+            return;
+        }
+        if (u == "A" || u == "ANGLE") {
+            ctx.echo("The text angle is not supported yet; the text runs along the dimension line.");
+            place_prompt(ctx);
+            return;
+        }
+        if (type_ == core::DimType::Linear && !angle_fixed_) {
+            if (u == "H" || u == "HORIZONTAL" || u == "V" || u == "VERTICAL") {
+                angle_fixed_ = true;
+                angle_ = u[0] == 'H' ? 0.0 : core::kHalfPi;
+                show_preview(ctx);
+                place_prompt(ctx);
+                return;
+            }
+            if (u == "R" || u == "ROTATED") {
+                state_ = State::Rotation;
+                ctx.set_prompt("Specify angle of dimension line <0>: ");
+                return;
+            }
+        }
+        break;
+    case State::Second:
+    case State::SelectObj:
+        break;
     }
     const auto p = read_point(ctx, text);
     if (!p) {
@@ -8342,41 +8876,30 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
     case State::Second:
         b_ = *p;
         ctx.set_last_point(*p);
-        state_ = State::Place;
-        preview_two_point_dim(ctx, type_, a_, b_); // rubber-band to the cursor
-        ctx.set_prompt("Specify dimension line location: ");
-        return;
-    case State::Place:
-        ctx.submit(core::AddDimensionCommand{.type = static_cast<std::uint8_t>(type_),
-                                             .a = a_,
-                                             .b = b_,
-                                             .line_pt = *p,
-                                             .style = 0,
-                                             .group = ctx.group_id()});
-        ctx.echo("Dimension placed.");
-        done_ = true;
+        enter_place(ctx);
         return;
     case State::SelectObj:
         obj_pick_ = *p;
         ctx.set_last_point(*p);
-        state_ = State::ObjPlace;
-        // Resolve the selected segment's def points once for the placement preview.
+        object_ = true;
+        // Resolve the object's def points once for the placement preview.
         ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(type_), obj_pick_,
                                                  obj_pick_, ctx.pick_radius()});
-        preview_object_dim(ctx, type_);
-        ctx.set_prompt("Specify dimension line location: ");
+        enter_place(ctx);
         return;
-    case State::ObjPlace:
-        ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(type_), obj_pick_, *p,
-                                                   ctx.pick_radius(), 0, ctx.group_id()});
-        ctx.echo("Dimension placed from object.");
-        done_ = true;
+    case State::Place:
+        place(ctx, *p);
+        return;
+    case State::Text:
+    case State::Rotation:
+    case State::Rotation2:
         return;
     }
 }
 
 void LinearDimensionCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.set_preview({});
     done_ = true;
 }
 
@@ -9893,26 +10416,93 @@ void QLeaderCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // TEXTEDIT / DDEDIT: pick a text entity, then type its new content.
 // ---------------------------------------------------------------------------
+void TextEditCommand::prompt_pick(CommandContext& ctx) {
+    state_ = State::Pick;
+    ctx.set_prompt("Select an annotation object or [Undo/Mode]: ");
+}
+
 void TextEditCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Select text/MText/leader-label to edit: ");
+    ctx.echo(std::string("Current settings: Edit mode = ") + (s_single_ ? "Single" : "Multiple"));
+    prompt_pick(ctx);
 }
 
 void TextEditCommand::input(CommandContext& ctx, const std::string& text) {
-    if (state_ == State::Content) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Content:
         ctx.submit(core::EditTextContentCommand{at_, radius_, text, ctx.group_id()});
         ctx.echo("Text edited.");
-        done_ = true;
+        ++edits_;
+        if (s_single_) {
+            done_ = true;
+            return;
+        }
+        (void)ctx.new_group(); // every edit its own undo step
+        prompt_pick(ctx);
+        return;
+    case State::Mode:
+        if (u == "S" || u == "SINGLE") {
+            s_single_ = true;
+        } else if (u == "M" || u == "MULTIPLE") {
+            s_single_ = false;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        prompt_pick(ctx);
+        return;
+    case State::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (edits_ == 0) {
+                ctx.echo("Nothing to undo.");
+                return;
+            }
+            ctx.submit(core::UndoLastGroupCommand{});
+            --edits_;
+            return;
+        }
+        if (u == "M" || u == "MODE") {
+            state_ = State::Mode;
+            ctx.set_prompt(std::string("Enter a text edit mode option [Single/Multiple] <") +
+                           (s_single_ ? "Single" : "Multiple") + ">: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            at_ = *p;
+            radius_ = ctx.pick_radius();
+            state_ = State::Content;
+            ctx.set_prompt("Enter new text: ");
+        }
         return;
     }
-    const auto p = read_point(ctx, text);
-    if (!p) {
-        return;
+}
+
+void TextEditModeCommand::start(CommandContext& ctx) {
+    ctx.set_prompt(std::string("Enter new value for TEXTEDITMODE <") + (TextEditCommand::s_single_ ? "1" : "0") +
+                   ">: ");
+}
+
+void TextEditModeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1") {
+            ctx.echo("Requires 0 or 1.");
+            return;
+        }
+        TextEditCommand::s_single_ = t == "1";
     }
-    at_ = *p;
-    radius_ = ctx.pick_radius();
-    state_ = State::Content;
-    ctx.set_prompt("Enter new text: ");
+    done_ = true;
+}
+
+void TextEditModeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
 }
 
 void TextEditCommand::cancel(CommandContext& ctx) {

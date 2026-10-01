@@ -20,6 +20,7 @@ enum ExitCode : int {
     kExitUsage = 1,  ///< malformed command line
     kExitLoad = 2,   ///< the drawing could not be read or parsed
     kExitOutput = 3, ///< the output could not be written
+    kExitProblems = 4, ///< --check: the drawing opened, and its text has problems
 };
 
 /// A headless plot request (`--plot`). Mirrors the PLOT dialog's fields; the
@@ -47,7 +48,9 @@ struct CliOptions {
     Mode mode = Mode::Gui;
     std::string input;         ///< drawing to open (Gui), validate (Check) or plot (Plot)
     bool input_is_dxf = false; ///< derived from the input's extension
-    PlotRequest plot;          ///< meaningful when mode == Plot
+    PlotRequest plot;          ///< meaningful when mode == Plot (--window also for Check)
+    bool check_json = false;   ///< --check --json: the report as JSON on stdout
+    bool check_lines = false;  ///< --check --lines: lines through letters are problems too
     std::string error;         ///< non-empty => usage error
 
     /// Arguments we did not claim, forwarded verbatim to Qt (single-dash options
@@ -76,6 +79,13 @@ struct CliOptions {
 /// Parses `path` through the SAME core loader the engine uses and returns
 /// kExitOk, or kExitLoad with the parser's message in `message`. No Qt.
 [[nodiscard]] int check_drawing(const std::string& path, bool dxf, std::string& message);
+
+/// `--check`: opens the drawing as check_drawing does, then checks its text
+/// (core::check_text) -- letters over letters, letters outside the frame (`--window`, or
+/// the drawing's largest rectangle), characters the font draws blank, with `--lines`
+/// lines through letters. `out` is what goes to stdout (the report, as JSON with
+/// `--json`), `err` what goes to stderr. kExitOk, kExitLoad, or kExitProblems.
+[[nodiscard]] int check_drawing(const CliOptions& o, std::string& out, std::string& err);
 
 /// True when `path` ends in ".dxf" (case-insensitive) -- the one place the CLI
 /// decides which loader a path implies.

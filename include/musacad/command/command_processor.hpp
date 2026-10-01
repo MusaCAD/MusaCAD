@@ -253,6 +253,8 @@ public:
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
 
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
+    /// True while the running command is taking text as typed (see ICommand::free_text).
+    [[nodiscard]] bool wants_free_text() const { return active_ != nullptr && active_->free_text(); }
 
     /// True while the active command is at its "Select objects:" prompt (see
     /// ICommand::in_selection_phase). The viewport then treats presses and drags as

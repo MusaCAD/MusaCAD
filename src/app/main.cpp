@@ -52,12 +52,12 @@ int main(int argc, char* argv[]) {
         std::printf("%s\n", version_text().c_str());
         return kExitOk;
     case CliOptions::Mode::Check: {
-        std::string message;
-        const int rc = check_drawing(opts.input, opts.input_is_dxf, message);
-        if (rc == kExitOk) {
-            std::printf("%s: %s\n", opts.input.c_str(), message.c_str());
-        } else {
-            std::fprintf(stderr, "musacad: %s: %s\n", opts.input.c_str(), message.c_str());
+        std::string out;
+        std::string err;
+        const int rc = check_drawing(opts, out, err);
+        std::fputs(out.c_str(), stdout);
+        if (!err.empty()) {
+            std::fprintf(stderr, "musacad: %s", err.c_str());
         }
         return rc;
     }

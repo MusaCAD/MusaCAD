@@ -3,6 +3,7 @@
 
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/polyline_width.hpp"
+#include "musacad/core/text/text_frame.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -187,12 +188,14 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
     std::vector<Vec2> tseg;
     for (const BlockText& t : bc.texts) {
         const ResolvedProps rp = member_props(store, t.props, inherited);
-        const auto j = static_cast<text::Justify>(t.justify <= 2 ? t.justify : 0);
+        const text::TextFrame f = text::frame_of(t.content, t.justify, t.pos, t.align, t.height,
+                                                 t.rotation, t.width_factor);
         tseg.clear();
         // Expand control codes at render time, like the top-level TEXT path (block MTEXT goes
         // through layout_mtext, which already substitutes).
-        text::append_text_segments(text::substitute_text(t.content), t.pos, t.height, t.rotation, j,
-                                   tseg);
+        text::append_text_segments(text::substitute_text(t.content), f.origin, f.height, f.rotation,
+                                   text::Justify::Left, tseg);
+        text::apply_text_style(tseg, f.origin, f.rotation, f.width_factor, 0.0);
         emit_pairs_transformed(xform, tseg, rp, out);
     }
     // Attributes: the insert's value (or the definition's default) drawn where the
@@ -211,10 +214,13 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
             continue;
         }
         const ResolvedProps rp = member_props(store, a.text.props, inherited);
-        const auto j = static_cast<text::Justify>(a.text.justify <= 2 ? a.text.justify : 0);
+        // The value is what is justified, where the definition's tag was.
+        const text::TextFrame f = text::frame_of(value, a.text.justify, a.text.pos, a.text.align,
+                                                 a.text.height, a.text.rotation, a.text.width_factor);
         tseg.clear();
-        text::append_text_segments(text::substitute_text(value), a.text.pos, a.text.height,
-                                   a.text.rotation, j, tseg);
+        text::append_text_segments(text::substitute_text(value), f.origin, f.height, f.rotation,
+                                   text::Justify::Left, tseg);
+        text::apply_text_style(tseg, f.origin, f.rotation, f.width_factor, 0.0);
         emit_pairs_transformed(xform, tseg, rp, out);
     }
     for (const BlockMText& mt : bc.mtexts) {

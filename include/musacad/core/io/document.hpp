@@ -68,7 +68,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 37;
+inline constexpr std::uint32_t kFormatVersion = 38;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -153,6 +153,8 @@ struct DocText {
     EntityProps props{};
     std::string font{}; ///< font name ("" = stroke "Standard")
     std::uint16_t style = 0; ///< text style index (v26)
+    Vec2 align{};              ///< Aligned / Fit: the second end of the baseline (v38)
+    double width_factor = 1.0; ///< the text's own width factor (v38)
     friend bool operator==(const DocText&, const DocText&) = default;
 };
 /// ATTDEF (v28): a text-like definition showing its tag; prompt/default/modes ride along.

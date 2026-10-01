@@ -39,6 +39,7 @@
 #include "musacad/core/scene_snapshot.hpp"
 #include "musacad/core/polyline_ops.hpp"
 #include "musacad/core/polyline_width.hpp"
+#include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/table.hpp"
@@ -1401,8 +1402,10 @@ void translate_cmd(Command& c, Vec2 d) {
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos += d;
+                x.text.align += d;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos += d;
+                x.align += d;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 x.a += d;
                 x.b += d;
@@ -1441,6 +1444,22 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
         return proj * 2.0 - p;
     };
     const auto refl_ang = [&](double th) { return 2.0 * axis - th; };
+    // A text's two ends are both reflected. Text kept readable (MIRRTEXT 0) and running
+    // between two points reads from the end that is now on the left.
+    const auto mirror_text = [&](AddTextCommand& t) {
+        const bool two = t.justify == 3 || t.justify == 5;
+        t.pos = refl(t.pos);
+        t.align = refl(t.align);
+        t.rotation = mirrored_text_rotation(t.rotation, axis, mirrtext, t.justify);
+        if (two && !mirrtext) {
+            // Reading direction pointing left (or straight down): the ends change places.
+            const Vec2 now = t.align - t.pos;
+            const double len = length(now);
+            if (len > 1e-12 && (now.x < -1e-9 * len || (std::abs(now.x) <= 1e-9 * len && now.y < 0.0))) {
+                std::swap(t.pos, t.align);
+            }
+        }
+    };
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
@@ -1495,11 +1514,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                     b = -b; // reflection flips arc orientation
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
-                x.text.pos = refl(x.text.pos);
-                x.text.rotation = mirrored_text_rotation(x.text.rotation, axis, mirrtext, x.text.justify);
+                mirror_text(x.text);
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
-                x.pos = refl(x.pos);
-                x.rotation = mirrored_text_rotation(x.rotation, axis, mirrtext, x.justify);
+                mirror_text(x);
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
@@ -1579,9 +1596,11 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos = rot(x.text.pos);
+                x.text.align = rot(x.text.align);
                 x.text.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = rot(x.pos);
+                x.align = rot(x.align);
                 x.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 x.a = rot(x.a);
@@ -1723,9 +1742,11 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos = scl(x.text.pos);
+                x.text.align = scl(x.text.align);
                 x.text.height *= f;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = scl(x.pos);
+                x.align = scl(x.align);
                 x.height *= f;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 x.a = scl(x.a);
@@ -1848,10 +1869,7 @@ void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t
 
     // The previous dimension's line direction and which way its dim line sits relative to
     // the def points -- both derived, so a chain follows a dimension that was later moved.
-    const Vec2 dir = p->type == DimType::Aligned && length_squared(p->b - p->a) > 1e-18
-                         ? normalized(p->b - p->a)
-                         : (std::abs(p->b.x - p->a.x) >= std::abs(p->b.y - p->a.y) ? Vec2{1, 0}
-                                                                                   : Vec2{0, 1});
+    const Vec2 dir = dim_line_direction(*p);
     // Which side of the def points the dimension line sits on. This must be measured
     // along the PERPENDICULAR: `line_pt - foot_of_a` is parallel to `dir` by construction
     // (the foot IS the projection of `a` onto the line through `line_pt` along `dir`), so
@@ -1875,6 +1893,11 @@ void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t
     d.style = p->style;
     d.props = p->props;
     d.overrides = p->overrides; // the chain inherits the previous dimension's look
+    // ... and a linear one its angle: the next dimension of a vertical chain is vertical,
+    // whatever its two points differ most on.
+    if (p->type == DimType::Linear) {
+        d.aux = p->aux != 0.0 ? p->aux : linear_dim_aux(std::atan2(dir.y, dir.x));
+    }
 
     AddDimensionCommand cmd;
     cmd.type = static_cast<std::uint8_t>(d.type);
@@ -1885,6 +1908,7 @@ void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t
     cmd.group = group;
     cmd.props = d.props;
     cmd.overrides = d.overrides;
+    cmd.aux = d.aux;
     const Command command = cmd;
     const EntityHandle nh = create_indexed(command);
     push_create_item(group, nh, command);
@@ -3771,7 +3795,23 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
         out.line_pt = ray_pt(a2, b2, pick2);
         return true;
     }
-    // Linear / Aligned.
+    // Linear / Aligned: a line or a polyline segment, an arc's two ends, or (DIMLINEAR)
+    // a circle's diameter -- the ends of its horizontal one, aux -1 saying so, turned to
+    // the dimension's angle when it is placed (orient_linear_dim).
+    out.line_pt = pick2;
+    if (h1.kind == EntityKind::Arc) {
+        const ArcData* arc = store_.arc(h1);
+        out.a = arc->center + Vec2{std::cos(arc->start_angle), std::sin(arc->start_angle)} * arc->radius;
+        out.b = arc->center + Vec2{std::cos(arc->end_angle), std::sin(arc->end_angle)} * arc->radius;
+        return true;
+    }
+    if (h1.kind == EntityKind::Circle && dt == DimType::Linear) {
+        const CircleData* circle = store_.circle(h1);
+        out.a = circle->center - Vec2{circle->radius, 0.0};
+        out.b = circle->center + Vec2{circle->radius, 0.0};
+        out.aux = -1.0;
+        return true;
+    }
     Vec2 a{};
     Vec2 b{};
     if (!segment_endpoints(store_, h1, pick1, a, b)) {
@@ -3779,7 +3819,6 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     }
     out.a = a;
     out.b = b;
-    out.line_pt = pick2;
     return true;
 }
 
@@ -3830,6 +3869,188 @@ void GeometryEngine::apply_revcloud_object(const RevcloudObjectCommand& c) {
     geom_dirty_ = true;
     dirty_ = true;
     report("Converted to a revision cloud of " + std::to_string(cloud.points.size()) + " arcs.");
+}
+
+// JUSTIFYTEXT: the justification changes, the text stays where it is -- its insertion
+// point goes to the place the new justification names on it.
+void GeometryEngine::apply_justify_text(const JustifyTextCommand& c) {
+    prune_selection();
+    if (c.justify >= text::kTextJustifyCount) {
+        report("JUSTIFYTEXT: no such justification.");
+        return;
+    }
+    std::vector<EntityHandle> out;
+    int changed = 0;
+    for (const EntityHandle h : selection_) {
+        if ((h.kind != EntityKind::Text && h.kind != EntityKind::AttDef) || !editable_entity(h)) {
+            out.push_back(h);
+            continue;
+        }
+        const text::TextFrame f = text::frame_of(store_, *store_.text_like(h));
+        Command edited = capture_entity(h);
+        const auto rejustify = [&](AddTextCommand& t) {
+            text::justify_points(c.justify, f.justify_frame(), f.width(), t.pos, t.align);
+            // What Aligned scaled and Fit squeezed is kept as the text's own.
+            const TextStyle& style = store_.text_style_of(*store_.text_like(h));
+            t.height = f.height;
+            t.rotation = f.rotation;
+            t.width_factor = c.justify == 5 || style.width_factor <= 0.0
+                                 ? 1.0
+                                 : f.width_factor / style.width_factor;
+            t.justify = c.justify;
+        };
+        if (auto* t = std::get_if<AddTextCommand>(&edited)) {
+            rejustify(*t);
+        } else if (auto* a = std::get_if<AddAttDefCommand>(&edited)) {
+            rejustify(a->text);
+        }
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        out.push_back(nh);
+        ++changed;
+    }
+    selection_ = out;
+    if (changed == 0) {
+        report("JUSTIFYTEXT: no text in the selection.");
+        return;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(changed) + (changed == 1 ? " text" : " texts") + " justified " +
+           text::kJustifyInfo[c.justify].name + ".");
+}
+
+// SCALETEXT: each text about a point of its own, so a drawing's texts change size where
+// they stand.
+void GeometryEngine::apply_scale_text(const ScaleTextCommand& c) {
+    prune_selection();
+    double match = 0.0;
+    if (c.mode == 2) {
+        const EntityHandle m = pick_nearest(c.match_pick, c.pick_radius);
+        if (m.is_null() || (m.kind != EntityKind::Text && m.kind != EntityKind::AttDef)) {
+            report("SCALETEXT: pick a text to match.");
+            return;
+        }
+        match = text::frame_of(store_, *store_.text_like(m)).height;
+    }
+    if ((c.mode != 2 && !(c.value > 0.0)) || c.base > text::kTextJustifyCount) {
+        report("SCALETEXT: the height and the scale factor must be greater than zero.");
+        return;
+    }
+    std::vector<EntityHandle> out;
+    int changed = 0;
+    for (const EntityHandle h : selection_) {
+        if ((h.kind != EntityKind::Text && h.kind != EntityKind::AttDef) || !editable_entity(h)) {
+            out.push_back(h);
+            continue;
+        }
+        const TextData& td = *store_.text_like(h);
+        const text::TextFrame f = text::frame_of(store_, td);
+        const double factor = c.mode == 1 ? c.value : (c.mode == 2 ? match : c.value) / f.height;
+        if (!(factor > 0.0)) {
+            out.push_back(h);
+            continue;
+        }
+        // The point that stays: the insertion point as it is, or the one a justification
+        // names on the text.
+        Vec2 base = td.pos;
+        if (c.base != 0) {
+            Vec2 second{};
+            text::justify_points(static_cast<std::uint8_t>(c.base - 1), f.justify_frame(), f.width(), base,
+                                 second);
+        }
+        Command edited = capture_entity(h);
+        scale_cmd(edited, base, factor);
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        out.push_back(nh);
+        ++changed;
+    }
+    selection_ = out;
+    if (changed == 0) {
+        report("SCALETEXT: no text in the selection.");
+        return;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(changed) + (changed == 1 ? " text scaled." : " texts scaled."));
+}
+
+// TXT2MTXT: the selected lines, top one first (left one first on a level), become the
+// paragraphs of one multiline text standing where the top line stood.
+void GeometryEngine::apply_text_to_mtext(const TextToMTextCommand& c) {
+    prune_selection();
+    struct Line {
+        EntityHandle h;
+        text::TextFrame f;
+        std::string content;
+    };
+    std::vector<Line> lines;
+    std::vector<EntityHandle> kept;
+    for (const EntityHandle h : selection_) {
+        if (h.kind == EntityKind::Text && editable_entity(h)) {
+            const TextData* t = store_.text(h);
+            lines.push_back(Line{h, text::frame_of(store_, *t), std::string(store_.string_of(*t))});
+        } else {
+            kept.push_back(h);
+        }
+    }
+    if (lines.empty()) {
+        report("TXT2MTXT: no single-line text in the selection.");
+        return;
+    }
+    // Down the page in the first line's own frame.
+    const double rot = lines.front().f.rotation;
+    const Vec2 up{-std::sin(rot), std::cos(rot)};
+    const Vec2 along{std::cos(rot), std::sin(rot)};
+    std::stable_sort(lines.begin(), lines.end(), [&](const Line& a, const Line& b) {
+        const double ya = dot(a.f.origin, up);
+        const double yb = dot(b.f.origin, up);
+        if (std::abs(ya - yb) > 1e-9) {
+            return ya > yb;
+        }
+        return dot(a.f.origin, along) < dot(b.f.origin, along);
+    });
+    const Line& top = lines.front();
+    const TextData top_data = *store_.text(top.h);
+    AddMTextCommand m;
+    double widest = 0.0;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        m.content += (i == 0 ? "" : "\n") + lines[i].content;
+        widest = std::max(widest, lines[i].f.width());
+    }
+    m.block.height = top.f.height;
+    m.block.rotation = top.f.rotation;
+    m.block.width_factor = top.f.width_factor;
+    m.block.width = widest;
+    m.block.attach = 0; // top left: the top of the first line
+    m.block.pos = top.f.origin + up * top.f.height;
+    m.props = top_data.props;
+    m.font = std::string(store_.font_name(top_data.font));
+    m.group = c.group;
+    for (const Line& l : lines) {
+        const Command original = capture_entity(l.h);
+        remove_indexed(l.h);
+        push_erase_item(c.group, l.h, original);
+    }
+    const Command add = m;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    kept.push_back(nh);
+    selection_ = kept;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(lines.size()) + (lines.size() == 1 ? " text" : " texts") +
+           " converted to 1 multiline text.");
 }
 
 void GeometryEngine::apply_fillmode(bool on) {
@@ -3910,7 +4131,8 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         }
     };
     const auto text = [&](std::string content, Vec2 pos, double h, double rot, std::uint8_t just,
-                          std::string font, const EntityProps& pr) {
+                          std::string font, const EntityProps& pr, Vec2 align = {},
+                          double width_factor = 1.0) {
         if (content.empty()) {
             return;
         }
@@ -3922,6 +4144,8 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         tc.content = std::move(content);
         tc.props = pr;
         tc.font = std::move(font);
+        tc.align = align;
+        tc.width_factor = width_factor;
         parts.push_back(std::move(tc));
     };
     // Polyline vertices + bulges -> lines and arcs along the centre line: the widths are
@@ -4051,7 +4275,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
             }
             for (const BlockText& bt : def.content.texts) {
                 text(bt.content, xf(bt.pos), bt.height * us, bt.rotation + in->rotation, bt.justify,
-                     std::string{}, bt.props);
+                     std::string{}, bt.props, xf(bt.align), bt.width_factor);
             }
             for (const BlockAttDef& ba : def.content.attdefs) {
                 // As in AutoCAD, an exploded attribute is its definition again (the tag
@@ -4060,6 +4284,8 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
                 ac.text = AddTextCommand{xf(ba.text.pos), ba.text.height * us,
                                          ba.text.rotation + in->rotation, ba.text.justify, ba.tag, 0,
                                          ba.text.props};
+                ac.text.align = xf(ba.text.align);
+                ac.text.width_factor = ba.text.width_factor;
                 ac.prompt = ba.prompt;
                 ac.def = ba.def;
                 ac.flags = ba.flags;
@@ -4550,7 +4776,8 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
         case EntityKind::Text: {
             const TextData* t = st.text(h);
             content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
-                                                  std::string(st.string_of(*t)), t->props});
+                                                  std::string(st.string_of(*t)), t->props, t->align,
+                                                  t->width_factor});
             break;
         }
         case EntityKind::AttDef: {
@@ -4558,7 +4785,8 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
             const AttDefData* a = st.attdef(h);
             content.attdefs.push_back(
                 BlockAttDef{BlockText{a->text.pos, a->text.height, a->text.rotation, a->text.justify,
-                                      std::string(), a->text.props},
+                                      std::string(), a->text.props, a->text.align,
+                                      a->text.width_factor},
                             std::string(st.string_of(a->text)),
                             std::string(st.attdef_prompt(*a)),
                             std::string(st.attdef_default(*a)), a->flags});
@@ -5952,7 +6180,8 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
         }
         for (const BlockText& t : def->content.texts) {
             doc.texts.push_back(
-                io::DocText{t.pos - o, t.height, t.rotation, t.justify, t.content, t.props});
+                io::DocText{t.pos - o, t.height, t.rotation, t.justify, t.content, t.props, {}, 0,
+                            t.align - o, t.width_factor});
         }
         for (const BlockMText& m : def->content.mtexts) {
             io::DocMText dm{m.block, m.content, m.props};
@@ -6503,22 +6732,27 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
                     : "Broke 1 object into " + std::to_string(pieces.size()) + ".");
 }
 
-void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2, Vec2 pick3,
-                                            Vec2 pick4, double radius, std::uint16_t style,
-                                            std::uint64_t group) {
+void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) {
     DimData d;
-    if (!resolve_dim_defs(type, pick1, pick2, radius, d, pick3, pick4)) {
+    if (!resolve_dim_defs(c.type, c.pick1, c.pick2, c.pick_radius, d, c.pick3, c.pick4)) {
         report("Could not dimension that object -- select a line, circle, or arc.");
         return;
     }
+    if (static_cast<DimType>(c.type) == DimType::Linear) {
+        const bool circle = d.aux < 0.0;
+        d.aux = 0.0;
+        orient_linear_dim(d, c.line_angle, circle);
+    }
     AddDimensionCommand dim;
-    dim.type = type;
+    dim.type = c.type;
     dim.a = d.a;
     dim.b = d.b;
     dim.line_pt = d.line_pt;
     dim.aux = d.aux;
-    dim.style = style;
-    dim.group = group;
+    dim.style = c.style;
+    dim.group = c.group;
+    dim.text_override = c.text_override;
+    const std::uint64_t group = c.group;
     const Command add = dim;
     const EntityHandle nh = create_indexed(add);
     push_create_item(group, nh, add);
@@ -9043,8 +9277,7 @@ void GeometryEngine::apply(const Command& command) {
                 apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group);
             }
             if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
-                apply_object_dimension(c.type, c.pick1, c.pick2, c.pick3, c.pick4, c.pick_radius,
-                                       c.style, c.group);
+                apply_object_dimension(c);
             }
             if constexpr (std::is_same_v<T, ResolveDimObjectCommand>) {
                 // Non-mutating: resolve def points for the UI placement preview.
@@ -9614,6 +9847,15 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
+            }
+            if constexpr (std::is_same_v<T, JustifyTextCommand>) {
+                apply_justify_text(c);
+            }
+            if constexpr (std::is_same_v<T, ScaleTextCommand>) {
+                apply_scale_text(c);
+            }
+            if constexpr (std::is_same_v<T, TextToMTextCommand>) {
+                apply_text_to_mtext(c);
             }
             if constexpr (std::is_same_v<T, OffsetPreviewCommand>) {
                 // Preview only: the object is found once, the side follows the cursor.

@@ -127,6 +127,58 @@ TEST_CASE("help/version text is non-empty and names the exit codes") {
     REQUIRE(app::version_text().find("Musa CAD") == 0);
 }
 
+TEST_CASE("parse_cli: --check takes --json, --lines and --window (#80)") {
+    const CliOptions o = parse({"musacad", "--check", "--json", "--lines", "--window", "0,0,420,297", "a.musa"});
+    REQUIRE(o.error.empty());
+    REQUIRE(o.mode == CliOptions::Mode::Check);
+    REQUIRE(o.check_json);
+    REQUIRE(o.check_lines);
+    REQUIRE(o.plot.area == musacad::app::PlotRequest::Area::Window);
+    REQUIRE(o.plot.win[2] == 420.0);
+    // They mean nothing without --check.
+    REQUIRE_FALSE(parse({"musacad", "--json", "a.musa"}).error.empty());
+    REQUIRE_FALSE(parse({"musacad", "--plot", "a.musa", "o.pdf", "--lines"}).error.empty());
+}
+
+TEST_CASE("check_drawing reports text problems and exits 4; a clean drawing exits 0 (#80)") {
+    core::io::Document doc;
+    doc.layers.push_back(core::Layer{"0", {255, 255, 255}, core::Linetype::Continuous, 25, true, false, false});
+    core::io::DocText a;
+    a.pos = {0, 0};
+    a.height = 2.5;
+    a.content = "R1 750";
+    core::io::DocText b = a;
+    b.pos = {4, 0.5};
+    b.content = "C3";
+    doc.texts = {a, b};
+    const std::filesystem::path bad = temp_file("musacad_cli_text_overlap.musa");
+    REQUIRE(core::io::save_native(doc, bad.string()).ok);
+    CliOptions o = parse({"musacad", "--check", bad.string().c_str()});
+    REQUIRE(o.error.empty());
+    std::string out;
+    std::string err;
+    REQUIRE(app::check_drawing(o, out, err) == app::kExitProblems);
+    REQUIRE(out.find("overlap: TEXT \"R1 750\"") != std::string::npos);
+    REQUIRE(out.find("2 texts checked, 1 problem") != std::string::npos);
+    o.check_json = true;
+    REQUIRE(app::check_drawing(o, out, err) == app::kExitProblems);
+    REQUIRE(out.find("\"kind\": \"overlap\"") != std::string::npos);
+
+    doc.texts = {a};
+    const std::filesystem::path good = temp_file("musacad_cli_text_clean.musa");
+    REQUIRE(core::io::save_native(doc, good.string()).ok);
+    const CliOptions g = parse({"musacad", "--check", good.string().c_str()});
+    REQUIRE(app::check_drawing(g, out, err) == app::kExitOk);
+    REQUIRE(out.find("no problems") != std::string::npos);
+
+    const CliOptions missing = parse({"musacad", "--check", temp_file("musacad_cli_absent2.musa").string().c_str()});
+    REQUIRE(app::check_drawing(missing, out, err) == app::kExitLoad);
+    REQUIRE_FALSE(err.empty());
+    std::error_code ec;
+    std::filesystem::remove(bad, ec);
+    std::filesystem::remove(good, ec);
+}
+
 TEST_CASE("check_drawing accepts a real serialized drawing and rejects a broken one") {
     // A genuine document through the real writer -- not a hand-typed fixture, so this
     // cannot rot when the format version bumps.

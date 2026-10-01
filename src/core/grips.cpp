@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/grips.hpp"
+#include "musacad/core/text/justify.hpp"
 #include "musacad/core/polyline_width.hpp"
 
 #include "musacad/core/ellipse.hpp"
@@ -59,7 +60,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                               0,
                               t->props,
                               std::string(store.font_name(t->font)),
-                              t->style == 0 ? std::string{} : ts.name};
+                              t->style == 0 ? std::string{} : ts.name,
+                              t->align,
+                              t->width_factor};
     }
     case EntityKind::AttDef: {
         const AttDefData* a = store.attdef(h);
@@ -73,7 +76,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                 0,
                                 a->text.props,
                                 std::string(store.font_name(a->text.font)),
-                                a->text.style == 0 ? std::string{} : ts.name};
+                                a->text.style == 0 ? std::string{} : ts.name,
+                                a->text.align,
+                                a->text.width_factor};
         c.prompt = std::string(store.attdef_prompt(*a));
         c.def = std::string(store.attdef_default(*a));
         c.flags = a->flags;
@@ -292,6 +297,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                     handle = store.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
 
                                             props_of(c.props), store.add_font(font), style);
+                    store.set_text_placement(handle, c.align, c.width_factor);
 
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
@@ -309,6 +315,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_attdef(c.text.pos, c.text.height, c.text.rotation, c.text.justify,
                                           c.text.content, c.prompt, c.def, c.flags,
                                           props_of(c.text.props), store.add_font(font), style);
+                store.set_text_placement(handle, c.text.align, c.text.width_factor);
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                              c.style, props_of(c.props), c.overrides, c.prefix,
@@ -476,10 +483,17 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     case EntityKind::Text: {
         const TextData* t = store.text(h);
         push(out, t->pos, GripKind::Move, 0);
+        if (text::two_point(t->justify)) {
+            push(out, t->align, GripKind::Endpoint, 1); // the other end of the baseline
+        }
         break;
     }
     case EntityKind::AttDef: {
-        push(out, store.attdef(h)->text.pos, GripKind::Move, 0);
+        const TextData& t = store.attdef(h)->text;
+        push(out, t.pos, GripKind::Move, 0);
+        if (text::two_point(t.justify)) {
+            push(out, t.align, GripKind::Endpoint, 1);
+        }
         break;
     }
     case EntityKind::Dimension: {
@@ -747,9 +761,21 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.points[grip_index] = newpos;
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
-                x.text.pos = newpos;
+                // Grip 0 carries the text (both ends of an aligned one); grip 1 is the
+                // second end alone.
+                if (grip_index == 1) {
+                    x.text.align = newpos;
+                } else {
+                    x.text.align = x.text.align + (newpos - x.text.pos);
+                    x.text.pos = newpos;
+                }
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
-                x.pos = newpos;
+                if (grip_index == 1) {
+                    x.align = newpos;
+                } else {
+                    x.align = x.align + (newpos - x.pos);
+                    x.pos = newpos;
+                }
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 const auto t = static_cast<DimType>(x.type);
                 if (grip_index == DimData::kTextGripIndex) {

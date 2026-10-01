@@ -284,7 +284,8 @@ Document document_from_store(const GeometryStore& store) {
             const TextData& t = texts.data()[i];
             doc.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify,
                                         std::string(store.string_of(t)), t.props,
-                                        std::string(store.font_name(t.font)), t.style});
+                                        std::string(store.font_name(t.font)), t.style, t.align,
+                                        t.width_factor});
         }
     }
     const auto& adefs = store.attdefs();
@@ -294,7 +295,8 @@ Document document_from_store(const GeometryStore& store) {
             doc.attdefs.push_back(DocAttDef{
                 DocText{a.text.pos, a.text.height, a.text.rotation, a.text.justify,
                         std::string(store.string_of(a.text)), a.text.props,
-                        std::string(store.font_name(a.text.font)), a.text.style},
+                        std::string(store.font_name(a.text.font)), a.text.style, a.text.align,
+                        a.text.width_factor},
                 std::string(store.attdef_prompt(a)), std::string(store.attdef_default(a)), a.flags});
         }
     }
@@ -431,11 +433,13 @@ Document document_from_store(const GeometryStore& store) {
                 DocPolyline{p.verts, p.closed, p.props, p.bulges, 1.0, p.widths, p.elevation, p.thickness});
         }
         for (const BlockText& t : b->content.texts) {
-            bd.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
+            bd.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify, t.content, t.props, {},
+                                       0, t.align, t.width_factor});
         }
         for (const BlockAttDef& a : b->content.attdefs) {
             bd.attdefs.push_back(DocAttDef{DocText{a.text.pos, a.text.height, a.text.rotation,
-                                                   a.text.justify, a.tag, a.text.props},
+                                                   a.text.justify, a.tag, a.text.props, {}, 0,
+                                                   a.text.align, a.text.width_factor},
                                            a.prompt, a.def, a.flags});
         }
         for (const BlockMText& m : b->content.mtexts) {
@@ -523,12 +527,14 @@ void populate_store(GeometryStore& store, const Document& doc) {
             }
             for (const DocText& t : bd.texts) {
                 cb.content.texts.push_back(
-                    BlockText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
+                    BlockText{t.pos, t.height, t.rotation, t.justify, t.content, t.props, t.align,
+                              t.width_factor});
             }
             for (const DocAttDef& a : bd.attdefs) {
                 cb.content.attdefs.push_back(
                     BlockAttDef{BlockText{a.text.pos, a.text.height, a.text.rotation, a.text.justify,
-                                          a.text.content, a.text.props},
+                                          a.text.content, a.text.props, a.text.align,
+                                          a.text.width_factor},
                                 a.text.content, a.prompt, a.def, a.flags});
             }
             for (const DocMText& m : bd.mtexts) {
@@ -565,14 +571,16 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.add_insert(bi, di.pos, di.scale_x, di.scale_y, di.rotation, di.props, values);
     }
     for (const DocText& t : doc.texts) {
-        store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props,
+        const EntityHandle th = store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props,
 
                        store.add_font(t.font), t.style);
+        store.set_text_placement(th, t.align, t.width_factor);
     }
     for (const DocAttDef& a : doc.attdefs) {
-        store.add_attdef(a.text.pos, a.text.height, a.text.rotation, a.text.justify, a.text.content,
+        const EntityHandle ah = store.add_attdef(a.text.pos, a.text.height, a.text.rotation, a.text.justify, a.text.content,
                          a.prompt, a.def, a.flags, a.text.props, store.add_font(a.text.font),
                          a.text.style);
+        store.set_text_placement(ah, a.text.align, a.text.width_factor);
     }
     for (const DocDim& d : doc.dims) {
         const EntityHandle dh = store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,

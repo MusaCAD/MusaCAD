@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/entity_bounds.hpp"
+#include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/polyline_width.hpp"
 
 #include "musacad/core/ellipse.hpp"
@@ -134,17 +135,14 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     }
     case EntityKind::Text:
     case EntityKind::AttDef: {
-        const TextData* t = store.text_like(h);
-        const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
-                                            store.string_of(*t), t->height);
-        const TextStyle& ts = store.text_style_of(*t);
-        const double cs = std::cos(t->rotation);
-        const double sn = std::sin(t->rotation);
+        const text::TextFrame f = text::frame_of(store, *store.text_like(h));
+        const double cs = std::cos(f.rotation);
+        const double sn = std::sin(f.rotation);
         Vec2 corners[4];
-        text::text_box_corners(w, t->height, ts.width_factor, ts.oblique, corners);
+        text::text_box_corners(f.advance, f.height, f.width_factor, f.oblique, corners);
         bool first = true;
         for (const Vec2& c : corners) {
-            const Vec2 p{t->pos.x + c.x * cs - c.y * sn, t->pos.y + c.x * sn + c.y * cs};
+            const Vec2 p{f.origin.x + c.x * cs - c.y * sn, f.origin.y + c.x * sn + c.y * cs};
             if (first) {
                 out_min = out_max = p;
                 first = false;

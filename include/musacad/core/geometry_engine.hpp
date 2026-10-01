@@ -320,6 +320,11 @@ private:
     std::optional<PolylineInherit> poly_inherit_;
     void inherit_polyline(const Command& original);
     void apply_fillmode(bool on);
+    void apply_justify_text(const JustifyTextCommand& c);
+    void apply_scale_text(const ScaleTextCommand& c);
+    void apply_text_to_mtext(const TextToMTextCommand& c);
+    /// An edit may touch it: valid, on a layer that is on, thawed and unlocked.
+    [[nodiscard]] bool editable_entity(EntityHandle h) const { return store_.is_valid(h) && selectable(h); }
     bool mirrtext_ = false; ///< MIRRTEXT: 0 keeps mirrored text readable (the default)
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
@@ -419,8 +424,7 @@ private:
     // spatial index + selectable() gate and build the matching dimension from their
     // intrinsic geometry. The dimension captures DEF POINTS only (no entity ref), so
     // later deleting the source entity leaves it intact (no dangling reference).
-    void apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2, Vec2 pick3, Vec2 pick4, double radius,
-                                std::uint16_t style, std::uint64_t group);
+    void apply_object_dimension(const AddObjectDimensionCommand& c);
     // Shared resolution: the entity(ies) under the pick(s) -> a dimension's def
     // points (a, b, line_pt). Used by both apply_object_dimension (create) and the
     // ResolveDimObjectCommand preview query, so there is one resolution path.

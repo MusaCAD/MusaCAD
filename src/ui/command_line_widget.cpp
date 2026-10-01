@@ -44,6 +44,7 @@ CommandLineWidget::CommandLineWidget(QWidget* parent) : QWidget(parent) {
     input_->installEventFilter(this);
     connect(input_, &QLineEdit::returnPressed, this, &CommandLineWidget::on_return);
     connect(input_, &QLineEdit::textChanged, this, [this] { update_suggestions(); });
+    connect(input_, &QLineEdit::textChanged, this, &CommandLineWidget::inputTextChanged);
 
     const QFont mono(QStringLiteral("monospace"));
     scrollback_->setFont(mono);

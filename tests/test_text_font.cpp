@@ -125,6 +125,71 @@ TEST_CASE("Drafting symbols honour the monospace advance and the 6x8 cell") {
     }
 }
 
+TEST_CASE("Units and typography: em dash, multiplication sign, omega, micro (#79)") {
+    // "test_pcb — LED test board", "40 × 30 mm", "750 Ω", "35 µm": each one a glyph of
+    // its own, at the one advance, inside the letters' cell.
+    std::vector<Vec2> ref;
+    append_text_segments("Ag", {0, 0}, 2.5, 0.0, Justify::Left, ref);
+    double ymin = 1e9;
+    double ymax = -1e9;
+    for (const Vec2& v : ref) {
+        ymin = std::min(ymin, v.y);
+        ymax = std::max(ymax, v.y);
+    }
+    const double one = text_width("A", 2.5);
+    for (const char32_t cp : {char32_t{0x2014}, char32_t{0x00D7}, char32_t{0x03A9}, char32_t{0x2126},
+                              char32_t{0x00B5}, char32_t{0x03BC}}) {
+        INFO("code point: U+" << std::hex << static_cast<std::uint32_t>(cp));
+        REQUIRE(has_glyph(cp));
+        std::vector<Vec2> segs;
+        append_text_segments(utf8(cp), {0, 0}, 2.5, 0.0, Justify::Left, segs);
+        REQUIRE(segs.size() >= 2);
+        REQUIRE(segs.size() % 2 == 0);
+        REQUIRE(text_width(utf8(cp), 2.5) == Approx(one));
+        for (const Vec2& v : segs) {
+            REQUIRE(v.x >= -1e-9);
+            REQUIRE(v.x <= one + 1e-9);
+            REQUIRE(v.y >= ymin - 1e-9);
+            REQUIRE(v.y <= ymax + 1e-9);
+        }
+    }
+    // The ohm sign is omega, and mu is the micro sign: the same strokes.
+    const auto strokes = [](char32_t cp) {
+        std::vector<Vec2> s;
+        append_text_segments(utf8(cp), {0, 0}, 2.5, 0.0, Justify::Left, s);
+        return s;
+    };
+    REQUIRE(strokes(0x2126).size() == strokes(0x03A9).size());
+    REQUIRE(strokes(0x03BC).size() == strokes(0x00B5).size());
+    // The multiplication sign is not the letter x: smaller, and off the baseline.
+    double times_low = 1e9;
+    for (const Vec2& v : strokes(0x00D7)) {
+        times_low = std::min(times_low, v.y);
+    }
+    REQUIRE(times_low > 0.1);
+    // The micro sign reaches below the baseline (its descender); the em dash is one
+    // stroke wider than the hyphen.
+    double micro_low = 1e9;
+    for (const Vec2& v : strokes(0x00B5)) {
+        micro_low = std::min(micro_low, v.y);
+    }
+    REQUIRE(micro_low < -0.5);
+    const std::vector<Vec2> dash = strokes(0x2014);
+    const std::vector<Vec2> hyphen = strokes('-');
+    REQUIRE(std::abs(dash[1].x - dash[0].x) > std::abs(hyphen[1].x - hyphen[0].x));
+}
+
+TEST_CASE("has_glyph: what the font draws, and what it would leave blank") {
+    for (char c = 0x21; c <= 0x7E; ++c) {
+        REQUIRE(has_glyph(static_cast<char32_t>(c)));
+    }
+    REQUIRE(has_glyph(U' '));
+    REQUIRE(has_glyph(0x00B0));
+    REQUIRE(has_glyph(0x2300));
+    REQUIRE_FALSE(has_glyph(0x2603)); // a snowman
+    REQUIRE_FALSE(has_glyph(0x4E2D)); // a CJK ideograph
+}
+
 TEST_CASE("An unmapped code point is blank, never a wrong glyph") {
     std::vector<Vec2> segs;
     append_text_segments(utf8(0x2603), {0, 0}, 2.5, 0.0, Justify::Left, segs); // a snowman

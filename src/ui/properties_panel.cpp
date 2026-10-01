@@ -476,7 +476,13 @@ void PropertiesPanel::rebuild() {
         }
         case PropEditor::JustifyCombo: {
             auto* e = new QComboBox();
-            e->addItems({QStringLiteral("Left"), QStringLiteral("Center"), QStringLiteral("Right")});
+            e->addItems({QStringLiteral("Left"), QStringLiteral("Center"), QStringLiteral("Right"),
+                         QStringLiteral("Aligned"), QStringLiteral("Middle"), QStringLiteral("Fit"),
+                         QStringLiteral("Top left"), QStringLiteral("Top center"),
+                         QStringLiteral("Top right"), QStringLiteral("Middle left"),
+                         QStringLiteral("Middle center"), QStringLiteral("Middle right"),
+                         QStringLiteral("Bottom left"), QStringLiteral("Bottom center"),
+                         QStringLiteral("Bottom right")});
             if (varies) {
                 e->addItem(QString::fromLatin1(kVaries));
                 e->setCurrentIndex(e->count() - 1);

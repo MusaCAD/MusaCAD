@@ -64,7 +64,9 @@ TEST_CASE("text entity + font field stay compact") {
     // alignment slot (64->72) -- still small. Leader/MLeader are annotation entities (few per
     // drawing, NOT hot like Line/Circle), so they carry the per-leader arrow override
     // (DimOverrides, ~40 B) inline -- the same way DimData carries its overrides.
-    REQUIRE(sizeof(TextData) <= 56);
+    // TextData grew by its second point and width factor (#42: Align / Fit, 24 B) -- a
+    // text is one per string, not a per-vertex struct.
+    REQUIRE(sizeof(TextData) <= 80);
     REQUIRE(sizeof(MTextBlock) <= 72);
     REQUIRE(sizeof(LeaderData) <= 112);
     REQUIRE(sizeof(MLeaderData) <= 152);

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/text/text_frame.hpp"
 
 #include "musacad/core/text/parse_double.hpp"
 
@@ -117,6 +118,41 @@ void code_d(std::string& s, int c, double v) {
     char buf[40];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
     code(s, c, std::string_view(buf, static_cast<std::size_t>(ptr - buf)));
+}
+
+// A text as DXF places it: 10 is where its baseline starts, 11 the point it is justified
+// on (the second end of the baseline for Aligned and Fit), 72 / 73 name the
+// justification, 40 / 50 / 41 are the height, the rotation and the width factor as drawn.
+// `measured` is the string whose width justifies the text (an attribute definition is
+// justified by its tag).
+void emit_text_place(std::string& s, const Document& doc, const DocText& t, std::string_view measured) {
+    const double style_factor =
+        (t.style != 0 && t.style < doc.text_styles.size()) ? doc.text_styles[t.style].width_factor : 1.0;
+    const text::TextFrame f = text::frame_of(measured, t.justify, t.pos, t.align, t.height, t.rotation,
+                                             style_factor * t.width_factor);
+    const bool two = text::two_point(t.justify);
+    const Vec2 first = two ? t.pos : f.origin;
+    code_d(s, 10, first.x);
+    code_d(s, 20, first.y);
+    code_d(s, 30, 0.0);
+    code_d(s, 40, f.height);
+    code_d(s, 50, to_degrees(f.rotation));
+    if (std::abs(f.width_factor - 1.0) > 1e-12) {
+        code_d(s, 41, f.width_factor);
+    }
+    int horizontal = 0;
+    int vertical = 0;
+    text::justify_to_dxf(t.justify, horizontal, vertical);
+    code(s, 72, std::to_string(horizontal));
+    if (t.justify != 0) {
+        const Vec2 second = two ? t.align : t.pos;
+        code_d(s, 11, second.x);
+        code_d(s, 21, second.y);
+        code_d(s, 31, 0.0);
+    }
+    if (vertical != 0) {
+        code(s, 73, std::to_string(vertical));
+    }
 }
 
 // LWPOLYLINE widths: 43 when every segment has one width, else 40 / 41 per vertex;
@@ -693,13 +729,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocText& t : doc.texts) {
         code(s, 0, "TEXT");
         emit_props(s, doc, t.props);
-        code_d(s, 10, t.pos.x);
-        code_d(s, 20, t.pos.y);
-        code_d(s, 30, 0.0);
-        code_d(s, 40, t.height);
+        emit_text_place(s, doc, t, t.content);
         code(s, 1, t.content);
-        code_d(s, 50, to_degrees(t.rotation));
-        code_i(s, 72, t.justify); // 0 left, 1 centre, 2 right
         if (t.style != 0 && t.style < doc.text_styles.size()) {
             code(s, 7, doc.text_styles[t.style].name); // the STYLE table entry
         } else if (!t.font.empty()) {
@@ -709,13 +740,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocAttDef& a : doc.attdefs) {
         code(s, 0, "ATTDEF");
         emit_props(s, doc, a.text.props);
-        code_d(s, 10, a.text.pos.x);
-        code_d(s, 20, a.text.pos.y);
-        code_d(s, 30, 0.0);
-        code_d(s, 40, a.text.height);
+        emit_text_place(s, doc, a.text, a.text.content);
         code(s, 1, a.def);            // default value
-        code_d(s, 50, to_degrees(a.text.rotation));
-        code_i(s, 72, a.text.justify);
         if (a.text.style != 0 && a.text.style < doc.text_styles.size()) {
             code(s, 7, doc.text_styles[a.text.style].name);
         } else if (!a.text.font.empty()) {
@@ -769,6 +795,16 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             break;
         }
         code_i(s, 70, dimtype);
+        if (static_cast<DimType>(d.type) == DimType::Linear) {
+            // 50: the angle of a rotated (horizontal, vertical, rotated) dimension's line.
+            DimData dl;
+            dl.type = DimType::Linear;
+            dl.a = d.a;
+            dl.b = d.b;
+            dl.aux = d.aux;
+            const Vec2 u = dim_line_direction(dl);
+            code_d(s, 50, to_degrees(std::atan2(u.y, u.x)));
+        }
         Vec2 pa = d.a;
         Vec2 pb = d.b;
         if (static_cast<DimType>(d.type) == DimType::ArcLength) {
@@ -1193,12 +1229,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const DocText& t : b.texts) {
                 code(s, 0, "TEXT");
                 emit_props(s, doc, t.props);
-                code_d(s, 10, t.pos.x);
-                code_d(s, 20, t.pos.y);
-                code_d(s, 40, t.height);
+                emit_text_place(s, doc, t, t.content);
                 code(s, 1, t.content);
-                code_d(s, 50, to_degrees(t.rotation));
-                code_i(s, 72, t.justify);
             }
             for (const DocMText& m : b.mtexts) {
                 emit_mtext(m.block, m.content, m.props);
@@ -1206,13 +1238,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const DocAttDef& a : b.attdefs) {
                 code(s, 0, "ATTDEF");
                 emit_props(s, doc, a.text.props);
-                code_d(s, 10, a.text.pos.x);
-                code_d(s, 20, a.text.pos.y);
-                code_d(s, 30, 0.0);
-                code_d(s, 40, a.text.height);
+                emit_text_place(s, doc, a.text, a.text.content);
                 code(s, 1, a.def);            // default value
-                code_d(s, 50, to_degrees(a.text.rotation));
-                code_i(s, 72, a.text.justify);
                 if (a.text.style != 0 && a.text.style < doc.text_styles.size()) {
                     code(s, 7, doc.text_styles[a.text.style].name);
                 } else if (!a.text.font.empty()) {
@@ -1682,6 +1709,37 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<std::vector<Pair>>* images = nullptr; ///< IMAGE bodies, resolved at the end
     };
 
+    // A text's justification (72 / 73), the point it is justified on (11 / 21) and its
+    // width factor (41). `t.pos` holds 10 / 20 and `t.style` the STYLE entry on entry.
+    const auto read_text_place = [&](const std::vector<Pair>& body, DocText& t) {
+        const std::string* h72 = find(body, 72);
+        const std::string* v73 = find(body, 73);
+        t.justify = text::justify_from_dxf(h72 != nullptr ? static_cast<int>(to_l(*h72)) : 0,
+                                           v73 != nullptr ? static_cast<int>(to_l(*v73)) : 0);
+        const std::string* x11 = find(body, 11);
+        const std::string* y21 = find(body, 21);
+        if (text::two_point(t.justify)) {
+            if (x11 != nullptr && y21 != nullptr) {
+                t.align = {to_d(*x11), to_d(*y21)};
+            } else {
+                t.justify = 0; // no second point to run to: a plain text at its start
+            }
+        } else if (t.justify != 0 && x11 != nullptr && y21 != nullptr) {
+            t.pos = {to_d(*x11), to_d(*y21)}; // the point the text is justified on
+        }
+        // 41 is the factor as drawn: the style's share comes off, and Fit works its own
+        // out from its two points.
+        const double drawn = getd(body, 41, 0.0);
+        const double style_factor =
+            (t.style != 0 && t.style < doc.text_styles.size()) ? doc.text_styles[t.style].width_factor : 1.0;
+        if (drawn > 0.0 && style_factor > 0.0 && t.justify != 5) {
+            t.width_factor = drawn / style_factor;
+            if (std::abs(t.width_factor - 1.0) < 1e-9) {
+                t.width_factor = 1.0;
+            }
+        }
+    };
+
     const auto build_entity = [&](Sink& sink, const std::string& type,
                                   const std::vector<Pair>& body) {
         if (type == "INSERT") {
@@ -1749,15 +1807,13 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* c = find(body, 1)) {
                 t.content = *c; // keep the RAW %%-codes; they expand at render time
             }
-            if (const std::string* j = find(body, 72)) {
-                t.justify = static_cast<std::uint8_t>(to_l(*j));
-            }
             t.font = font_of_entity(body);
             if (const std::string* st = find(body, 7)) {
                 if (const auto it = text_style_index.find(*st); it != text_style_index.end()) {
                     t.style = it->second; // model-space text references the STYLE entry
                 }
             }
+            read_text_place(body, t);
             sink.texts->push_back(std::move(t));
             return;
         }
@@ -1819,9 +1875,6 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* dv = find(body, 1)) {
                 a.def = dv->substr(0, 256);
             }
-            if (const std::string* j = find(body, 72)) {
-                a.text.justify = static_cast<std::uint8_t>(to_l(*j));
-            }
             if (const std::string* f = find(body, 70)) {
                 a.flags = static_cast<std::uint8_t>(to_l(*f) & 15);
             }
@@ -1831,6 +1884,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     a.text.style = it->second;
                 }
             }
+            read_text_place(body, a.text);
             sink.attdefs->push_back(std::move(a));
             return;
         }
@@ -1883,6 +1937,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             default:
                 dt = DimType::Linear;
                 break;
+            }
+            // A rotated dimension's line angle (50); without one, the axis its points
+            // differ most on (what this reader always did, and what older files mean).
+            if (dt == DimType::Linear && find(body, 50) != nullptr) {
+                d.aux = linear_dim_aux(to_radians(getd(body, 50)));
             }
             // Radius/diameter store the edge point in line_pt (code 15) on export.
             if ((dt == DimType::Radius || dt == DimType::Diameter) && find(body, 15) != nullptr) {

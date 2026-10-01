@@ -115,9 +115,12 @@ commands (Ribbon Phase A):
 | CHAMFER (CHA) | Bevel corners between two intersecting lines. |
 | MATCHPROP (MA) | Copy properties from a source object to one or more target objects. |
 | HATCH (H) | Fill an enclosed area with a pattern or solid color; [Gradient] blends the entity colour into a second colour along an angle. |
-| TEXT (DT) | Create a single-line text object. |
-| DIMLINEAR (DLI) | Create a horizontal or vertical linear dimension. |
-| DIMALIGNED (DAL) | Create a dimension aligned with two points. |
+| TEXT (DT) | Single-line text, line after line: `[Justify/Style]`, AutoCAD's fifteen justifications (Align and Fit between two points), the height and rotation remembered; an empty line ends it. |
+| JUSTIFYTEXT | Change the justification of the selected text without moving it. |
+| SCALETEXT | Scale the selected text, each about a point of its own (its insertion point, or a justification's point): a new height, a scale factor (or Reference), or the height of another text. |
+| TXT2MTXT | Convert the selected single-line text to one multiline text, top line first. |
+| DIMLINEAR (DLI) | A horizontal, vertical or rotated linear dimension: two points or Enter to select an object; `[Mtext/Text/Angle/Horizontal/Vertical/Rotated]`. |
+| DIMALIGNED (DAL) | A dimension aligned with two points or a selected object; `[Mtext/Text/Angle]`. |
 | DIMRADIUS (DRA) | Create a radius dimension for a circle or arc. |
 | DIMDIAMETER (DDI) | Create a diameter dimension for a circle or arc. |
 | DIMANGULAR (DAN) | Create an angular dimension between two lines. |
@@ -128,7 +131,7 @@ commands (Ribbon Phase A):
 | LEADER | Draw a leader line with an arrowhead and annotation. |
 | MTEXT (MT) | Create a multiline (paragraph) text object. |
 | QLEADER (LE) | Draw a quick leader with an arrowhead and annotation. |
-| TEXTEDIT (ED) | Edit the contents of an existing text object. |
+| TEXTEDIT (ED) | Edit the contents of text objects, one after another (`[Undo/Mode]`; `TEXTEDITMODE` 1 edits one and ends). |
 | PROPERTIES (PR) | Open the Properties palette to view and edit object properties. |
 | DWGIN | Import geometry from a DWG file. |
 | DWGOUT | Export the drawing to a DWG file. |
@@ -284,14 +287,16 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 
 | Command | Alias | Status |
 |---|---|---|
-| TEXT (single-line) | DT / TEXT | Implemented |
+| TEXT (single-line) | DT / TEXT | Implemented -- `Current text style: "Standard"  Text height: 2.5000  Annotative: No  Justify: Left`; `Specify start point of text or [Justify/Style]:` (a justification may be typed there too); **Justify** `[Left/Center/Right/Align/Middle/Fit/TL/TC/TR/ML/MC/MR/BL/BC/BR]`, each asking for its own point, Align and Fit for the two ends of the baseline (Align scales the height to reach, Fit keeps it and squeezes the width); **Style** by name (`?` lists); `Specify height <last>:` and `Specify rotation angle of text <last>:` take a value or a point and are remembered, with the justification; then the text line after line, each Enter starting the next line under the last (its own undo step), an empty line ending the command. The line shows on the canvas where it will stand while it is typed (spaces and capitals as typed) |
+| Text justification | -- | The text entity keeps AutoCAD's fifteen justifications, the second point of Aligned / Fit and a width factor of its own; drawing, bounds, picking, grips (both ends of an aligned text) and the edit box share one layout. Saved in `.musa` (format 38) and DXF (72 / 73, 11 / 21, 41); a text justified on its second point in a DXF from elsewhere is read where it stands |
+| JUSTIFYTEXT / SCALETEXT / TXT2MTXT / TEXTEDITMODE | -- | Implemented |
 | **MTEXT (paragraph text; two-corner box → wraps within the width)** | MT / MTEXT / T | Implemented (multi-line + paragraph fields; inline per-char formatting Planned) |
 | MTEXT fields: defined width, height, width factor, line spacing, attachment (TL..BR), rotation, ByLayer/override colour | — | Implemented (discrete, queryable — Properties palette ready) |
 | MTEXT grips: insertion (move) + width (re-wraps live) | — | Implemented |
 | **QLEADER (arrow → leader vertices → attached MTEXT label)** | LE / QLEADER / QL | Implemented (label is owned → moves with the leader) |
 | QLEADER grips: arrow tip + each vertex + text position | — | Implemented |
 | **Double-click a TEXT / MTEXT / QLEADER label → edit its content** (dark modal editor, pre-filled) | (double-click) | Implemented (Ph21) |
-| **TEXTEDIT / DDEDIT** (pick text → type new content; scriptable path) | ED / TEXTEDIT / DDEDIT | Implemented (Ph21) |
+| **TEXTEDIT / DDEDIT** (`Select an annotation object or [Undo/Mode]:` → type new content; repeats until Enter, each edit its own undo step; Mode Single / Multiple) | ED / TEXTEDIT / DDEDIT | Implemented |
 | Text edit = one undo group, preserves layer/properties/position (not delete+recreate) | — | Implemented (Ph21) |
 | **AutoCAD control codes in TEXT & MTEXT** — `%%d`→°, `%%p`→±, `%%c`→⌀, `%%b`→⌴ counterbore, `%%h`→↧ depth, `%%v`→⌵ countersink, `%%%`→literal %, `%%nnn`→char by code, `%%o`/`%%u`→overline/underline toggles, `\U+XXXX`→any Unicode code point (**universal**, not MTEXT-only). Codes are **stored raw and expanded at render time** (editing shows the raw codes; save/load + DXF round-trip them). Shared with the Leader/MLeader labels | (type in any text) | Implemented |
 | **Drafting symbols in the stroke font** — hole callouts (⌴ counterbore/spotface, ↧ depth, ⌵ countersink), the 14 GD&T characteristics (straightness, flatness, circularity, cylindricity, profile of a line/surface, angularity, perpendicularity, parallelism, position, concentricity, symmetry, circular/total runout), the 7 material-condition modifiers (Ⓜ Ⓛ Ⓢ Ⓟ Ⓕ Ⓣ Ⓤ), plus □ square, conical taper and slope. Same 6×8 cell and **same monospace advance** as the letters, so layout/bounds/pick are unchanged; works in TEXT, MTEXT, LEADER and dimension text alike. Hand-authored, not traced from any font | `%%b`/`%%h`/`%%v` or `\U+XXXX` | Implemented (issue #9) |
@@ -317,8 +322,8 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | PR numeric **geometry editing** — the Geometry group's Start/End, Center/Radius and Position fields edit the entity | — | Implemented (issue #32) |
 | LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
-| DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |
-| DIMALIGNED (two-point, or `[Object]` → segment's true length) | DAL | Implemented |
+| DIMLINEAR -- `Specify first extension line origin or <select object>:` (Enter: `Select object to dimension:` a line, a polyline segment, an arc's two ends or a circle's diameter; `O` / `Object` still works), then `Specify dimension line location or [Mtext/Text/Angle/Horizontal/Vertical/Rotated]:`. As in AutoCAD the line's position decides: above or below the points it measures across, beside them it measures up, so a vertical dimension of a mostly horizontal pair is a drag away; the preview turns as the cursor goes round. **Horizontal** / **Vertical** fix it, **Rotated** takes an angle (`Specify angle of dimension line <0>:`, a value or two points). **Text** / **Mtext** `Enter dimension text <measured>:` (`<>` stands for the measurement, Enter keeps it). The angle is the dimension's own, kept in `.musa` and DXF (50), so grip edits and DIMCONTINUE / DIMBASELINE follow it | DLI | Implemented (Angle: the text runs along the line) |
+| DIMALIGNED -- the same two prompts (`<select object>`, `[Mtext/Text/Angle]`) | DAL | Implemented (Angle: the text runs along the line) |
 | DIMRADIUS (**select a circle/arc**, or a filleted polyline arc segment → R) | DRA | Implemented |
 | DIMDIAMETER (**select a circle/arc** → ⌀ from its own geometry) | DDI | Implemented |
 | DIMANGULAR (**select two lines/edges** → angle from their directions) | DAN | Implemented |

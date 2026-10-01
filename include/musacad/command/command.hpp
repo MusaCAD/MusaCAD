@@ -37,6 +37,9 @@ public:
     /// True if the command consumes cursor picks as object selection (e.g.
     /// ERASE) rather than as coordinate input.
     [[nodiscard]] virtual bool wants_selection() const { return false; }
+    /// True while the command is taking a line of text as it is typed (TEXT's content):
+    /// Space is a space then, not Enter, and capitals are capitals.
+    [[nodiscard]] virtual bool free_text() const { return false; }
 
     /// True while the command sits at AutoCAD's "Select objects:" prompt. The viewport
     /// then runs its ordinary selection gestures -- a pick, a window (left-to-right) or a
