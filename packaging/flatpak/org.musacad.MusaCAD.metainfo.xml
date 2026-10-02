@@ -69,6 +69,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.6.0" date="2026-10-02">
+      <description>
+        <p>Text and dimensions as AutoCAD has them: TEXT with its fifteen justifications and
+        line after line of entry, the Dimension Style Manager with a live preview and named
+        styles, dimension text that moves with its dimension line, DIMLINEAR and DIMANGULAR
+        with every option, polyline widths, one-pick object snaps, polar and object snap
+        tracking, and an update check that says when a new version is out.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-26">
       <description>
         <p>AutoCAD's conventions: the ribbon laid out as AutoCAD's, every edit command
