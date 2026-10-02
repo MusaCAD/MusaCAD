@@ -15,14 +15,18 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/grips.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 using namespace musacad::core;
 using Catch::Approx;
@@ -242,4 +246,47 @@ TEST_CASE("DIMTMOVE: a dimension variable, kept in .musa and DXF") {
     REQUIRE(found);
     std::filesystem::remove(p);
     std::filesystem::remove(q);
+}
+
+TEST_CASE("A selected dimension is highlighted along its own lines, with no connectors between them") {
+    // The highlight used to join a dimension's separate lines into one polyline: a radius
+    // dimension placed outside its circle showed a line from the centre mark to its arrow.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{.type = static_cast<std::uint8_t>(DimType::Radius),
+                                      .a = {0, 0},
+                                      .b = {10 / std::sqrt(2.0), 10 / std::sqrt(2.0)},
+                                      .line_pt = {20, 20},
+                                      .group = 1});
+    engine.submit(SelectAllCommand{});
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool lit = false;
+    while (!lit && std::chrono::steady_clock::now() < deadline) {
+        engine.consume_snapshot();
+        lit = !engine.snapshot().selected_line_vertices.empty();
+        if (!lit) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    REQUIRE(lit);
+    DimData d;
+    d.type = DimType::Radius;
+    d.a = {0, 0};
+    d.b = {10 / std::sqrt(2.0), 10 / std::sqrt(2.0)};
+    d.line_pt = {20, 20};
+    const DimGeometry g = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    const std::vector<Vec2>& lit_pts = engine.snapshot().selected_line_vertices;
+    REQUIRE(lit_pts.size() % 2 == 0);
+    for (std::size_t i = 0; i + 1 < lit_pts.size(); i += 2) {
+        bool drawn = false;
+        for (std::size_t k = 0; k + 1 < g.dim_lines.size(); k += 2) {
+            const bool same = distance(lit_pts[i], g.dim_lines[k]) < 1e-9 && distance(lit_pts[i + 1], g.dim_lines[k + 1]) < 1e-9;
+            const bool flipped = distance(lit_pts[i], g.dim_lines[k + 1]) < 1e-9 && distance(lit_pts[i + 1], g.dim_lines[k]) < 1e-9;
+            drawn = drawn || same || flipped;
+        }
+        INFO("segment " << i / 2 << ": (" << lit_pts[i].x << ", " << lit_pts[i].y << ") - (" << lit_pts[i + 1].x << ", "
+                        << lit_pts[i + 1].y << ")");
+        REQUIRE(drawn);
+    }
+    engine.stop();
 }

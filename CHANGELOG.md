@@ -158,6 +158,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   rather than the style's own, so pressing OK put back whatever had been changed.
 - A dimension's text dragged away from its line hung on a diagonal leader, and a radius or
   diameter dimension's text stayed at the circle wherever the dimension had been placed.
+- A selected or hovered dimension was highlighted with lines it does not have, joining its
+  separate pieces: a radius dimension showed one from the centre to the circle.
 - A centred or right-justified text was bounded, picked and given its edit box as if it
   were left-justified, and one read from a DXF was placed on its first point instead of
   the point it is justified on. Drawing, bounds, picking, grips and the edit box share
