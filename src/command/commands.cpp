@@ -8704,16 +8704,10 @@ const char* dim_type_word(core::DimType t) {
 } // namespace
 
 namespace {
-// Rubber-band the full dimension at the cursor (Phase 16 Part C). Two-point dims
-// pass their def points (a, b); object dims pass none and the UI uses the snapshot's
-// resolved pending_dim_* (set by ResolveDimObjectCommand at the object pick).
-void preview_two_point_dim(CommandContext& ctx, core::DimType t, core::Vec2 a, core::Vec2 b) {
-    PreviewSpec s;
-    s.kind = PreviewKind::Dimension;
-    s.dim_type = static_cast<int>(t);
-    s.points = {a, b};
-    ctx.set_preview(std::move(s));
-}
+// Rubber-band the full dimension at the cursor (Phase 16 Part C). Object dims pass no
+// points: the UI uses the snapshot's resolved pending_dim_* (set by
+// ResolveDimObjectCommand at the object pick). DIMLINEAR / DIMALIGNED / DIMANGULAR
+// build their own (with the angle or the three points).
 void preview_object_dim(CommandContext& ctx, core::DimType t) {
     PreviewSpec s;
     s.kind = PreviewKind::Dimension;
