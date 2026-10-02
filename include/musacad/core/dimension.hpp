@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "musacad/core/geometry_store.hpp"
@@ -95,6 +96,23 @@ struct DimLabel {
 /// angle taken into (0, pi], so a horizontal dimension is pi (0 means "from before v38").
 [[nodiscard]] double linear_dim_aux(double angle);
 
+/// What an angular dimension was made from, for AutoCAD's placement rule.
+enum class AngularFrom : std::uint8_t {
+    Lines,  ///< two lines: the four angles their rays make
+    Arc,    ///< an arc: its own angle (b its start, line_pt its end, counter-clockwise)
+    Points, ///< three points or a circle: from the first endpoint to the second, or the rest
+};
+
+/// Puts an angular dimension's arc through `at` (`Specify dimension arc line location`):
+/// its radius, and -- from `quadrant` when given (the Quadrant option), else from `at` --
+/// the angle it stands in: for two lines the one of their four between the rays around
+/// it (a ray turned through the vertex keeps its point's distance), for three points the
+/// angle from the first endpoint to the second or the rest of the turn. Sets `d.aux`.
+void place_angular_dim(DimData& d, Vec2 at, AngularFrom from, std::optional<Vec2> quadrant = std::nullopt);
+
+/// The counter-clockwise turn from the direction of `from` to that of `to`, in (0, 2 pi].
+[[nodiscard]] double ccw_sweep(Vec2 from, Vec2 to);
+
 /// Sets a linear dimension's angle for a dimension line through `d.line_pt`: `fixed`
 /// when the author chose one (Horizontal, Vertical, Rotated), else the automatic one.
 /// `circle`: `a` and `b` are the ends of a circle's horizontal diameter (DIMLINEAR of a
@@ -103,6 +121,30 @@ void orient_linear_dim(DimData& d, std::optional<double> fixed, bool circle = fa
 
 /// Formats a measurement with `precision` decimal places.
 [[nodiscard]] std::string format_measurement(double value, std::uint8_t precision);
+
+/// Formats a dimension's value as its style writes it: the style's precision, its
+/// decimal separator, and its zero suppression (leading, trailing).
+[[nodiscard]] std::string format_dim_value(double value, const DimStyle& style);
+
+/// The dimension variables a style answers to, AutoCAD's names: DIMTXT (text height),
+/// DIMASZ (arrow size), DIMBLK (arrowhead: 0 filled, 1 tick, 2 open, 3 dot), DIMDEC
+/// (decimal places, 0..8), DIMDSEP (the separator's character code, '.' or ','),
+/// DIMZIN (4 leading, 8 trailing zeros suppressed), DIMEXO / DIMEXE (extension line
+/// offset and extension), DIMTAD (1 text above the line, 0 centred), DIMATFIT here as
+/// the text fit (0 auto, 1 inside, 2 outside), DIMLWD (lineweight, 1/100 mm), DIMCLRD /
+/// DIMCLRE / DIMCLRT (dimension line and arrowheads, extension lines, text: an ACI
+/// colour, 256 or 0 ByLayer).
+inline constexpr const char* kDimVars[] = {"DIMTXT", "DIMASZ", "DIMBLK", "DIMDEC", "DIMDSEP", "DIMZIN",
+                                           "DIMEXO", "DIMEXE", "DIMTAD", "DIMATFIT", "DIMLWD", "DIMCLRD",
+                                           "DIMCLRE", "DIMCLRT"};
+
+/// Sets `var` (one of kDimVars, any case) on `style`; false for an unknown variable or a
+/// value out of its range, `style` then unchanged.
+bool apply_dim_var(DimStyle& style, std::string_view var, double value);
+
+/// The value `var` has in `style` (a colour as its ACI, 256 = ByLayer, -1 = a true colour
+/// with no ACI); nullopt for an unknown variable.
+[[nodiscard]] std::optional<double> dim_var_value(const DimStyle& style, std::string_view var);
 
 /// Computes a dimension's drawable geometry under a style. `base_color` is the
 /// entity's ByLayer-resolved colour, used for any element whose style colour is

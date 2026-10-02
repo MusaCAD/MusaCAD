@@ -1518,9 +1518,31 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 mirror_text(x);
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                // The angle datum is reflected with the points: a linear dimension's line,
+                // and an arc length's arc -- whose turn reverses, so its two ends swap.
+                const auto type = static_cast<DimType>(x.type);
+                const Vec2 arc_end = x.a + Vec2{std::cos(x.aux), std::sin(x.aux)} * distance(x.a, x.b);
+                const Vec2 arc_start = x.b;
+                if (type == DimType::Linear) {
+                    DimData d;
+                    d.type = DimType::Linear;
+                    d.a = x.a;
+                    d.b = x.b;
+                    d.aux = x.aux;
+                    const Vec2 u = dim_line_direction(d);
+                    x.aux = linear_dim_aux(refl_ang(std::atan2(u.y, u.x)));
+                }
                 x.a = refl(x.a);
                 x.b = refl(x.b);
                 x.line_pt = refl(x.line_pt);
+                if (type == DimType::ArcLength) {
+                    x.b = refl(arc_end);
+                    const Vec2 s = refl(arc_start) - x.a;
+                    x.aux = std::atan2(s.y, s.x);
+                }
+                if (type == DimType::Angular && x.aux > 0.0) {
+                    std::swap(x.b, x.line_pt); // the counter-clockwise turn is now clockwise
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip = refl(x.tip);
                 x.knee = refl(x.knee);
@@ -1603,6 +1625,19 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.align = rot(x.align);
                 x.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                // A linear dimension's line turns with it (one from before v38 takes the
+                // angle it was drawn at); an arc length's end angle too.
+                if (x.type == static_cast<std::uint8_t>(DimType::Linear)) {
+                    DimData d;
+                    d.type = DimType::Linear;
+                    d.a = x.a;
+                    d.b = x.b;
+                    d.aux = x.aux;
+                    const Vec2 u = dim_line_direction(d);
+                    x.aux = linear_dim_aux(std::atan2(u.y, u.x) + ang);
+                } else if (x.type == static_cast<std::uint8_t>(DimType::ArcLength)) {
+                    x.aux += ang;
+                }
                 x.a = rot(x.a);
                 x.b = rot(x.b);
                 x.line_pt = rot(x.line_pt);
@@ -1752,6 +1787,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
                 x.line_pt = scl(x.line_pt);
+                if (x.type == static_cast<std::uint8_t>(DimType::Angular) && x.aux > 0.0) {
+                    x.aux *= std::abs(f); // the arc's radius
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip = scl(x.tip);
                 x.knee = scl(x.knee);
@@ -3756,6 +3794,27 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
         }
         return true;
     }
+    if (dt == DimType::Angular && h1.kind == EntityKind::Arc) {
+        // An arc: its centre and its two ends, its own angle (aux -1 says so until it is
+        // placed, see apply_object_dimension).
+        const ArcData* arc = store_.arc(h1);
+        out.a = arc->center;
+        out.b = arc->center + Vec2{std::cos(arc->start_angle), std::sin(arc->start_angle)} * arc->radius;
+        out.line_pt = arc->center + Vec2{std::cos(arc->end_angle), std::sin(arc->end_angle)} * arc->radius;
+        out.aux = -1.0;
+        return true;
+    }
+    if (dt == DimType::Angular && h1.kind == EntityKind::Circle) {
+        // A circle: its centre, the picked point on it, and the second angle endpoint
+        // (aux -2: the angle from the one to the other, or the rest of the turn).
+        const CircleData* c = store_.circle(h1);
+        const Vec2 u = length_squared(pick1 - c->center) > 1e-18 ? normalized(pick1 - c->center) : Vec2{1.0, 0.0};
+        out.a = c->center;
+        out.b = c->center + u * c->radius;
+        out.line_pt = pick2;
+        out.aux = -2.0;
+        return true;
+    }
     if (dt == DimType::Angular) {
         const EntityHandle h2 = pick_nearest(pick2, radius);
         if (h2.is_null()) {
@@ -4483,7 +4542,7 @@ void GeometryEngine::collect_purge_candidates(RenderSnapshot::PurgeCandidates& o
         }
     }
     for (std::size_t i = 1; i < store_.dimstyles().size(); ++i) {
-        if (!store_.dimstyle_in_use(static_cast<std::uint16_t>(i))) {
+        if (!store_.dimstyle_in_use(static_cast<std::uint16_t>(i)) && i != store_.current_dimstyle()) {
             out.dimstyles.push_back(store_.dimstyles()[i].name);
         }
     }
@@ -6742,6 +6801,15 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
         const bool circle = d.aux < 0.0;
         d.aux = 0.0;
         orient_linear_dim(d, c.line_angle, circle);
+    }
+    if (static_cast<DimType>(c.type) == DimType::Angular) {
+        const AngularFrom from = d.aux == -1.0 ? AngularFrom::Arc : d.aux == -2.0 ? AngularFrom::Points : AngularFrom::Lines;
+        d.aux = 0.0;
+        if (c.arc_at) {
+            place_angular_dim(d, *c.arc_at, from, c.quadrant);
+        } else if (from != AngularFrom::Lines) {
+            place_angular_dim(d, d.b, from); // no location: the arc at the arc / circle itself
+        }
     }
     AddDimensionCommand dim;
     dim.type = c.type;
@@ -9421,13 +9489,81 @@ void GeometryEngine::apply(const Command& command) {
                 apply_entity_color(c.by_layer, c.color, c.group);
             }
             if constexpr (std::is_same_v<T, AddDimStyleCommand>) {
-                store_.add_dimstyle(c.style);
-                geom_dirty_ = true;
-                report("Dimension style \"" + c.style.name + "\" added.");
+                if (store_.dimstyle_index(c.style.name) != 0xFFFF) {
+                    report("Dimension style \"" + c.style.name + "\" already exists.");
+                } else {
+                    store_.add_dimstyle(c.style);
+                    purge_cache_valid_ = false;
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    report("Dimension style \"" + c.style.name + "\" added.");
+                }
             }
             if constexpr (std::is_same_v<T, SetDimStyleCommand>) {
-                store_.set_dimstyle(c.index, c.style);
+                if (store_.set_dimstyle(c.index, c.style)) {
+                    dirty_ = true;
+                }
                 geom_dirty_ = true; // dims using this style recompute on rebuild
+            }
+            if constexpr (std::is_same_v<T, SetCurrentDimStyleCommand>) {
+                std::uint16_t i = store_.dimstyle_index(c.name);
+                if (c.save && !c.name.empty()) {
+                    DimStyle st = store_.dimstyles()[store_.current_dimstyle()];
+                    st.name = c.name;
+                    if (i == 0xFFFF) {
+                        i = store_.add_dimstyle(st);
+                    } else {
+                        store_.set_dimstyle(i, st);
+                    }
+                }
+                if (i == 0xFFFF) {
+                    report("Dimension style \"" + c.name + "\" not found.");
+                } else {
+                    store_.set_current_dimstyle(i);
+                    purge_cache_valid_ = false; // the current style is never a purge candidate
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    report("\"" + store_.dimstyles()[i].name + "\" is now the current dimension style.");
+                }
+            }
+            if constexpr (std::is_same_v<T, RenameDimStyleCommand>) {
+                const std::uint16_t i = store_.dimstyle_index(c.from);
+                if (i == 0 || i == 0xFFFF) {
+                    report(i == 0 ? std::string("Standard keeps its name.") : "Dimension style \"" + c.from + "\" not found.");
+                } else if (c.to.empty() || store_.dimstyle_index(c.to) != 0xFFFF) {
+                    report("There is already a dimension style called \"" + c.to + "\".");
+                } else {
+                    DimStyle st = store_.dimstyles()[i];
+                    st.name = c.to;
+                    store_.set_dimstyle(i, st);
+                    purge_cache_valid_ = false;
+                    dirty_ = true;
+                    report("Dimension style \"" + c.from + "\" renamed to \"" + c.to + "\".");
+                }
+            }
+            if constexpr (std::is_same_v<T, DeleteDimStyleCommand>) {
+                const std::uint16_t i = store_.dimstyle_index(c.name);
+                if (i != 0xFFFF && store_.remove_dimstyle(i)) {
+                    purge_cache_valid_ = false;
+                    dirty_ = true;
+                    geom_dirty_ = true; // the indices of the styles after it moved
+                    report("Dimension style \"" + c.name + "\" deleted.");
+                } else {
+                    report("Dimension style \"" + c.name + "\" was not deleted: Standard, the current style and a "
+                           "style in use stay.");
+                }
+            }
+            if constexpr (std::is_same_v<T, SetDimVarCommand>) {
+                const std::uint16_t i = store_.current_dimstyle();
+                DimStyle st = store_.dimstyles()[i];
+                if (apply_dim_var(st, c.dimvar, c.setting)) {
+                    store_.set_dimstyle(i, st);
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    report(c.dimvar + " set in \"" + st.name + "\".");
+                } else {
+                    report(c.dimvar + ": that value is not valid.");
+                }
             }
             if constexpr (std::is_same_v<T, SetLineweightDisplayCommand>) {
                 lineweight_display_ = c.on;
@@ -10312,6 +10448,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.units = store_.units();
     buf.text_styles = store_.text_styles();
     buf.current_text_style = store_.current_text_style();
+    buf.current_dimstyle = store_.current_dimstyle();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {
         buf.group_names.push_back(g.name); // GROUP names (feedback / ?)

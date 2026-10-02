@@ -208,6 +208,12 @@ public:
     }
     [[nodiscard]] std::vector<core::TextStyle> text_styles() const override { return text_styles_; }
     [[nodiscard]] std::uint16_t current_text_style() const override { return current_text_style_; }
+    void set_dim_styles(std::vector<core::DimStyle> v, std::uint16_t current) {
+        dim_styles_ = std::move(v);
+        current_dim_style_ = current < dim_styles_.size() ? current : 0;
+    }
+    [[nodiscard]] std::vector<core::DimStyle> dim_styles() const override { return dim_styles_; }
+    [[nodiscard]] std::uint16_t current_dim_style() const override { return current_dim_style_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
     void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
     [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const override { return purge_; }
@@ -376,6 +382,8 @@ private:
     core::DrawingUnits units_{};
     std::vector<core::TextStyle> text_styles_;
     std::uint16_t current_text_style_ = 0;
+    std::vector<core::DimStyle> dim_styles_;
+    std::uint16_t current_dim_style_ = 0;
     std::vector<std::string> block_names_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;

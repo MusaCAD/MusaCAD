@@ -99,6 +99,7 @@
 #include "musacad/ui/command_line_widget.hpp"
 #include "musacad/ui/layer_dialog.hpp"
 #include "musacad/ui/parameter_dialog.hpp"
+#include "musacad/ui/dimstyle_dialog.hpp"
 #include <QImage>
 #include <QLabel>
 #include <QPageSize>
@@ -168,48 +169,6 @@ DialogSpec array_dialog_spec() {
 }
 
 
-/// The "Standard" dimension-style editor (minimal; full multi-style manager is
-/// staged). All fields always visible.
-// Colour-choice palette shared by the dimstyle dialog (index 0 = ByLayer).
-const std::array<core::Rgb, 7> kDimColorPalette = {{
-    core::Rgb{255, 255, 255}, // 0 ByLayer placeholder (value unused)
-    core::Rgb{255, 0, 0},     // Red
-    core::Rgb{255, 255, 0},   // Yellow
-    core::Rgb{0, 255, 0},     // Green
-    core::Rgb{0, 255, 255},   // Cyan
-    core::Rgb{0, 128, 255},   // Blue
-    core::Rgb{255, 255, 255}, // White
-}};
-core::ElementColor color_from_choice(int idx) {
-    if (idx <= 0) {
-        return core::ElementColor{true, {}}; // ByLayer
-    }
-    const auto i = static_cast<std::size_t>(idx);
-    return core::ElementColor{false, i < kDimColorPalette.size() ? kDimColorPalette[i]
-                                                                 : core::Rgb{255, 255, 255}};
-}
-
-DialogSpec dimstyle_dialog_spec() {
-    DialogSpec spec;
-    spec.title = "Dimension Style: Standard";
-    const std::vector<std::string> colors = {"ByLayer", "Red",  "Yellow", "Green",
-                                             "Cyan",    "Blue", "White"};
-    spec.fields = {
-        {"text_height", "Text height", FieldType::Number, 2.5, {}, 0, false, ""},
-        {"arrow_size", "Arrow size", FieldType::Number, 2.5, {}, 0, false, ""},
-        {"arrow_type", "Arrow type", FieldType::Choice, 0,
-         {"Filled triangle", "Tick", "Open", "Dot"}, 0, false, ""},
-        {"precision", "Decimal precision", FieldType::Integer, 2, {}, 0, false, ""},
-        {"ext_offset", "Extension offset", FieldType::Number, 0.6, {}, 0, false, ""},
-        {"ext_extension", "Extension beyond", FieldType::Number, 1.25, {}, 0, false, ""},
-        {"dim_lineweight", "Dim line weight (1/100 mm)", FieldType::Integer, 25, {}, 0, false, ""},
-        {"dim_color", "Dimension-line colour", FieldType::Choice, 0, colors, 0, false, ""},
-        {"ext_color", "Extension-line colour", FieldType::Choice, 0, colors, 0, false, ""},
-        {"text_color", "Text colour", FieldType::Choice, 0, colors, 0, false, ""},
-        {"arrow_color", "Arrowhead colour", FieldType::Choice, 0, colors, 0, false, ""},
-    };
-    return spec;
-}
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -355,6 +314,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_dwg_export_callback([this] { file_export_dwg(); });
     viewport_->set_plot_dialog_callback([this] { open_plot_dialog(); });
     viewport_->set_options_dialog_callback([this] { open_options_dialog(); });
+    viewport_->set_dimstyle_dialog_callback([this] { open_dimstyle_dialog(); });
     set_performance_overlay(QSettings().value(QStringLiteral("display/performance_overlay"), false).toBool());
 
     command_widget_->focus_input();
@@ -388,6 +348,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             }
             processor_->set_text_styles(std::move(tstyles), cur);
         }
+        processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_purge_candidates(viewport_->purge_candidates());
@@ -2599,28 +2560,12 @@ void MainWindow::set_selection_color() {
         g});
 }
 
-void MainWindow::submit_dimstyle_from_dialog(const ParameterDialog& dlg) {
-    core::DimStyle s;
-    s.name = "Standard";
-    s.text_height = dlg.number("text_height");
-    s.arrow_size = dlg.number("arrow_size");
-    s.arrow_type = static_cast<std::uint8_t>(dlg.choice_index("arrow_type"));
-    s.precision = static_cast<std::uint8_t>(dlg.integer("precision"));
-    s.ext_offset = dlg.number("ext_offset");
-    s.ext_extension = dlg.number("ext_extension");
-    s.dim_lineweight = static_cast<std::uint8_t>(dlg.integer("dim_lineweight"));
-    s.dim_color = color_from_choice(dlg.choice_index("dim_color"));
-    s.ext_color = color_from_choice(dlg.choice_index("ext_color"));
-    s.text_color = color_from_choice(dlg.choice_index("text_color"));
-    s.arrow_color = color_from_choice(dlg.choice_index("arrow_color"));
-    engine_->submit(core::SetDimStyleCommand{0, s});
-}
-
 void MainWindow::open_dimstyle_dialog() {
-    auto* dlg = new ParameterDialog(dimstyle_dialog_spec(), this);
-    connect(dlg, &QDialog::accepted, this, [this, dlg] { submit_dimstyle_from_dialog(*dlg); });
-    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
-    dlg->show();
+    auto* dlg = new DimStyleManager(viewport_->dim_styles(), viewport_->current_dim_style(),
+                                    viewport_->purge_candidates().dimstyles,
+                                    [this](core::Command c) { engine_->submit(std::move(c)); }, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->open();
 }
 
 bool MainWindow::selftest_annotation() {
@@ -2721,9 +2666,11 @@ bool MainWindow::selftest_annotation() {
     std::printf("[selftest] LWDISPLAY toggle accepted: %s\n", lwt_ok ? "PASS" : "FAIL");
     all = all && lwt_ok;
 
-    // The DIMSTYLE dialog (dark) now exposes per-element colour fields.
-    ParameterDialog dlg(dimstyle_dialog_spec(), this);
-    const bool dark = dlg.palette().color(QPalette::Window).lightness() < 90;
+    // The Dimension Style Manager and its editor follow the dark theme.
+    DimStyleManager dlg({core::DimStyle{"Standard"}}, 0, {}, [](core::Command) {}, this);
+    DimStyleEditor editor(core::DimStyle{"Standard"}, QStringLiteral("Modify Dimension Style"), this);
+    const bool dark = dlg.palette().color(QPalette::Window).lightness() < 90 &&
+                      editor.palette().color(QPalette::Window).lightness() < 90;
     std::printf("[selftest] DIMSTYLE dialog dark palette: %s\n", dark ? "PASS" : "FAIL");
     all = all && dark;
 

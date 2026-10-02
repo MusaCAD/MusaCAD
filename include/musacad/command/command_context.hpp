@@ -170,6 +170,10 @@ struct PreviewSpec {
     /// Rotated); otherwise it turns with the cursor (core::orient_linear_dim).
     bool dim_angle_fixed = false;
     double dim_angle = 0.0;
+    /// DIMANGULAR's Quadrant point: the angle it stands in is dimensioned, wherever the
+    /// arc is then placed. (Three points: `points` holds the vertex and both endpoints.)
+    bool dim_has_quadrant = false;
+    core::Vec2 dim_quadrant{};
 };
 
 /// Sink for command-line text output (scrollback + the active prompt).
@@ -241,6 +245,9 @@ public:
     virtual void plot_dialog() {}
     /// Open the OPTIONS dialog (application settings). Default no-op (headless/tests).
     virtual void options_dialog() {}
+    /// DIMSTYLE: the Dimension Style Manager. False when there is none (no window, a
+    /// test): the command then asks at the command line.
+    [[nodiscard]] virtual bool dimstyle_dialog() { return false; }
     /// MATCHPROP: the current Settings filter (which categories copy). Default all-on.
     [[nodiscard]] virtual core::MatchPropFilter match_filter() const { return {}; }
     /// MATCHPROP: open the modal Settings dialog (persists the filter). No-op headless.
@@ -327,6 +334,10 @@ public:
     /// The drawing's text styles (STYLE table) and the current one, as last published.
     [[nodiscard]] virtual std::vector<core::TextStyle> text_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }
+    /// The drawing's dimension styles and the current one (DIMSTYLE), which every new
+    /// dimension, leader and GD&T frame is drawn in.
+    [[nodiscard]] virtual std::vector<core::DimStyle> dim_styles() const { return {}; }
+    [[nodiscard]] virtual std::uint16_t current_dim_style() const { return 0; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).

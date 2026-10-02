@@ -220,6 +220,7 @@ struct RenderSnapshot {
     DrawingProps drawing_props;     ///< DWGPROPS
     DrawingTimes times;             ///< TIME: created, last saved, total editing time so far
     std::vector<DimStyle> dimstyles; // for the UI dimension-placement preview
+    std::uint16_t current_dimstyle = 0; // DIMSTYLE's current style
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
     std::vector<TiledViewport> vports;  // VPORTS: the model window's tiles (fewer than two = one)

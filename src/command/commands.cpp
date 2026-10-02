@@ -8648,6 +8648,31 @@ std::optional<double> parse_number(const std::string& t) {
     }
     return v;
 }
+/// Mtext / Text at a dimension's placement prompt: true when `u` asked for it (the next
+/// input is then the text, see take_dim_text); Angle is said to be missing.
+bool dim_text_option(CommandContext& ctx, const std::string& u, bool& typing) {
+    if (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT") {
+        typing = true;
+        ctx.set_prompt("Enter dimension text (<> for the measurement): ");
+        return true;
+    }
+    if (u == "A" || u == "ANGLE") {
+        ctx.echo("The text angle is not supported yet; the text runs as the dimension draws it.");
+        return true;
+    }
+    return false;
+}
+
+/// The current dimension style, as the command layer last heard of it (Standard's
+/// defaults when it has not yet).
+core::DimStyle current_dim_style_of(const CommandContext& ctx) {
+    const std::vector<core::DimStyle> styles = ctx.dim_styles();
+    const std::uint16_t i = ctx.current_dim_style();
+    return i < styles.size() ? styles[i] : core::DimStyle{"Standard"};
+}
+/// A leader's text stands at its dimension style's text height.
+double current_dim_text_height(const CommandContext& ctx) { return current_dim_style_of(ctx).text_height; }
+
 bool is_object_keyword(const std::string& text) {
     std::string u;
     for (const char c : text) {
@@ -8737,6 +8762,7 @@ void LinearDimensionCommand::place(CommandContext& ctx, core::Vec2 at) {
         c.pick1 = obj_pick_;
         c.pick2 = at;
         c.pick_radius = ctx.pick_radius();
+        c.style = ctx.current_dim_style();
         c.group = ctx.group_id();
         if (type_ == core::DimType::Linear) {
             c.line_angle = fixed;
@@ -8757,7 +8783,7 @@ void LinearDimensionCommand::place(CommandContext& ctx, core::Vec2 at) {
                                              .a = a_,
                                              .b = b_,
                                              .line_pt = at,
-                                             .style = 0,
+                                             .style = ctx.current_dim_style(),
                                              .group = ctx.group_id(),
                                              .text_override = text_,
                                              .aux = d.aux});
@@ -8909,10 +8935,21 @@ void LinearDimensionCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void RadialDimensionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Select circle or arc: ");
+    ctx.set_prompt("Select arc or circle: ");
 }
 
 void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    if (state_ == State::Place) {
+        if (typing_) {
+            typing_ = false;
+            text_ = trimmed(text);
+            ctx.set_prompt("Specify dimension line location or [Mtext/Text/Angle]: ");
+            return;
+        }
+        if (dim_text_option(ctx, upper(trimmed(text)), typing_)) {
+            return;
+        }
+    }
     const auto p = read_point(ctx, text);
     if (!p) {
         return;
@@ -8925,11 +8962,13 @@ void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text)
         ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(type_), obj_pick_,
                                                  obj_pick_, ctx.pick_radius()});
         preview_object_dim(ctx, type_);
-        ctx.set_prompt("Specify dimension line location: ");
+        ctx.set_prompt("Specify dimension line location or [Mtext/Text/Angle]: ");
         return;
     }
-    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(type_), obj_pick_, *p,
-                                               ctx.pick_radius(), 0, ctx.group_id()});
+    core::AddObjectDimensionCommand c{static_cast<std::uint8_t>(type_), obj_pick_, *p,
+                                      ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
+    c.text_override = text_;
+    ctx.submit(std::move(c));
     ctx.echo("Dimension placed.");
     done_ = true;
 }
@@ -8971,8 +9010,13 @@ void OrdinateDimensionCommand::input(CommandContext& ctx, const std::string& tex
         ctx.set_prompt("Specify leader endpoint or [Xdatum/Ydatum/Mtext/Text/Angle]: ");
         return;
     }
-    if (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT" || u == "A" || u == "ANGLE") {
-        ctx.echo("That option is not supported yet; the measured value is used.");
+    if (typing_) {
+        typing_ = false;
+        text_ = trimmed(text);
+        ctx.set_prompt("Specify leader endpoint or [Xdatum/Ydatum/Mtext/Text/Angle]: ");
+        return;
+    }
+    if (dim_text_option(ctx, u, typing_)) {
         return;
     }
     if (const auto p = read_point(ctx, text)) {
@@ -8986,6 +9030,8 @@ void OrdinateDimensionCommand::input(CommandContext& ctx, const std::string& tex
         dim.b = *p;
         dim.line_pt = *p;
         dim.group = ctx.group_id();
+        dim.style = ctx.current_dim_style();
+        dim.text_override = text_;
         dim.aux = aux;
         ctx.submit(std::move(dim));
         ctx.set_preview({});
@@ -9011,10 +9057,16 @@ void JoggedDimensionCommand::start(CommandContext& ctx) {
 
 void JoggedDimensionCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
-    if (state_ == State::Place && (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT" ||
-                                   u == "A" || u == "ANGLE")) {
-        ctx.echo("That option is not supported yet; the measured value is used.");
-        return;
+    if (state_ == State::Place) {
+        if (typing_) {
+            typing_ = false;
+            text_ = trimmed(text);
+            ctx.set_prompt("Specify dimension line location or [Mtext/Text/Angle]: ");
+            return;
+        }
+        if (dim_text_option(ctx, u, typing_)) {
+            return;
+        }
     }
     const auto p = read_point(ctx, text);
     if (!p) {
@@ -9042,9 +9094,11 @@ void JoggedDimensionCommand::input(CommandContext& ctx, const std::string& text)
         ctx.set_prompt("Specify jog location: ");
         return;
     case State::Jog:
-        ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(core::DimType::Jogged),
-                                                   obj_pick_, place_, ctx.pick_radius(), 0,
-                                                   ctx.group_id(), override_, *p});
+        core::AddObjectDimensionCommand c{static_cast<std::uint8_t>(core::DimType::Jogged),
+                                          obj_pick_, place_, ctx.pick_radius(), ctx.current_dim_style(),
+                                          ctx.group_id(), override_, *p};
+        c.text_override = text_;
+        ctx.submit(std::move(c));
         ctx.set_preview({});
         ctx.echo("Dimension placed.");
         done_ = true;
@@ -9069,11 +9123,20 @@ void ArcLengthDimensionCommand::start(CommandContext& ctx) {
 
 void ArcLengthDimensionCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
-    if (state_ == State::Place && (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT" ||
-                                   u == "A" || u == "ANGLE" || u == "P" || u == "PARTIAL" ||
-                                   u == "L" || u == "LEADER")) {
-        ctx.echo("That option is not supported yet; the whole arc's length is dimensioned.");
-        return;
+    if (state_ == State::Place) {
+        if (typing_) {
+            typing_ = false;
+            text_ = trimmed(text);
+            ctx.set_prompt("Specify arc length dimension location, or [Mtext/Text/Angle/Partial/Leader]: ");
+            return;
+        }
+        if (dim_text_option(ctx, u, typing_)) {
+            return;
+        }
+        if (u == "P" || u == "PARTIAL" || u == "L" || u == "LEADER") {
+            ctx.echo("That option is not supported yet; the whole arc's length is dimensioned.");
+            return;
+        }
     }
     const auto p = read_point(ctx, text);
     if (!p) {
@@ -9089,8 +9152,10 @@ void ArcLengthDimensionCommand::input(CommandContext& ctx, const std::string& te
         ctx.set_prompt("Specify arc length dimension location, or [Mtext/Text/Angle/Partial/Leader]: ");
         return;
     }
-    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(core::DimType::ArcLength),
-                                               obj_pick_, *p, ctx.pick_radius(), 0, ctx.group_id()});
+    core::AddObjectDimensionCommand c{static_cast<std::uint8_t>(core::DimType::ArcLength),
+                                      obj_pick_, *p, ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
+    c.text_override = text_;
+    ctx.submit(std::move(c));
     ctx.set_preview({});
     ctx.echo("Dimension placed.");
     done_ = true;
@@ -9107,44 +9172,145 @@ void ArcLengthDimensionCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void AngularDimensionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Select first line: ");
+    state_ = State::Select;
+    ctx.set_prompt("Select arc, circle, line, or <specify vertex>: ");
+}
+
+void AngularDimensionCommand::show_preview(CommandContext& ctx) const {
+    PreviewSpec s;
+    s.kind = PreviewKind::Dimension;
+    s.dim_type = static_cast<int>(core::DimType::Angular);
+    if (points_) {
+        s.points = {vertex_, end1_, end2_};
+    }
+    s.dim_has_quadrant = quadrant_.has_value();
+    s.dim_quadrant = quadrant_.value_or(core::Vec2{});
+    ctx.set_preview(std::move(s));
+}
+
+void AngularDimensionCommand::place_prompt(CommandContext& ctx) {
+    state_ = State::Place;
+    show_preview(ctx);
+    ctx.set_prompt("Specify dimension arc line location or [Mtext/Text/Angle/Quadrant]: ");
 }
 
 void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (state_ == State::Select && t.empty()) {
+        state_ = State::Vertex;
+        ctx.set_prompt("Specify angle vertex: ");
+        return;
+    }
+    if (state_ == State::Text) {
+        text_ = t; // `<>` stands for the measurement; empty keeps it alone
+        place_prompt(ctx);
+        return;
+    }
+    if (state_ == State::Place) {
+        if (u == "Q" || u == "QUADRANT") {
+            state_ = State::Quadrant;
+            ctx.set_prompt("Specify quadrant: ");
+            return;
+        }
+        bool typing = false;
+        if (dim_text_option(ctx, u, typing)) {
+            if (typing) {
+                state_ = State::Text;
+            }
+            return;
+        }
+    }
     const auto p = read_point(ctx, text);
     if (!p) {
         return;
     }
     switch (state_) {
-    case State::Line1:
+    case State::Select: {
         pick1_ = *p;
         ctx.set_last_point(*p);
-        state_ = State::Line2;
-        ctx.set_prompt("Select second line: ");
+        // What is under the pick decides the next prompt (as the smart DIM reads it);
+        // typed coordinates with nothing hovered are taken as a line.
+        const std::optional<core::EntityKind> k = ctx.hovered_kind();
+        if (k == core::EntityKind::Arc) {
+            ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(core::DimType::Angular), pick1_,
+                                                     pick1_, ctx.pick_radius()});
+            place_prompt(ctx);
+        } else if (k == core::EntityKind::Circle) {
+            state_ = State::CircleEnd;
+            ctx.set_prompt("Specify second angle endpoint: ");
+        } else {
+            state_ = State::Line2;
+            ctx.set_prompt("Select second line: ");
+        }
         return;
+    }
     case State::Line2:
+    case State::CircleEnd:
         pick2_ = *p;
-        state_ = State::Place;
-        // The angle is fully determined by the two lines; resolve it so the preview
-        // shows the full dimension. (The arc position has no free placement DOF, so
-        // the preview is shown for confirmation rather than cursor-tracking.)
-        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(core::DimType::Angular),
-                                                 pick1_, pick2_, ctx.pick_radius()});
-        preview_object_dim(ctx, core::DimType::Angular);
-        ctx.set_prompt("Specify dimension arc location (or click to place): ");
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(core::DimType::Angular), pick1_, pick2_,
+                                                 ctx.pick_radius()});
+        place_prompt(ctx);
+        return;
+    case State::Vertex:
+        vertex_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::First;
+        ctx.set_prompt("Specify first angle endpoint: ");
+        return;
+    case State::First:
+        end1_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Second;
+        ctx.set_prompt("Specify second angle endpoint: ");
+        return;
+    case State::Second:
+        end2_ = *p;
+        points_ = true;
+        place_prompt(ctx);
+        return;
+    case State::Quadrant:
+        quadrant_ = *p;
+        place_prompt(ctx);
         return;
     case State::Place:
-        ctx.submit(core::AddObjectDimensionCommand{
-            static_cast<std::uint8_t>(core::DimType::Angular), pick1_, pick2_, ctx.pick_radius(), 0,
-            ctx.group_id()});
+        if (points_) {
+            core::DimData d;
+            d.type = core::DimType::Angular;
+            d.a = vertex_;
+            d.b = end1_;
+            d.line_pt = end2_;
+            core::place_angular_dim(d, *p, core::AngularFrom::Points, quadrant_);
+            core::AddDimensionCommand c;
+            c.type = static_cast<std::uint8_t>(core::DimType::Angular);
+            c.a = d.a;
+            c.b = d.b;
+            c.line_pt = d.line_pt;
+            c.aux = d.aux;
+            c.style = ctx.current_dim_style();
+            c.group = ctx.group_id();
+            c.text_override = text_;
+            ctx.submit(std::move(c));
+        } else {
+            core::AddObjectDimensionCommand c{static_cast<std::uint8_t>(core::DimType::Angular), pick1_, pick2_,
+                                              ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
+            c.arc_at = *p;
+            c.quadrant = quadrant_;
+            c.text_override = text_;
+            ctx.submit(std::move(c));
+        }
+        ctx.set_preview({});
         ctx.echo("Angular dimension placed.");
         done_ = true;
+        return;
+    case State::Text:
         return;
     }
 }
 
 void AngularDimensionCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.set_preview({});
     done_ = true;
 }
 
@@ -9210,7 +9376,7 @@ void DimCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(type_), obj_pick_, *p,
-                                               ctx.pick_radius(), 0, ctx.group_id()});
+                                               ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()});
     ctx.echo(std::string(dim_type_word(type_)) + " dimension placed.");
     done_ = true;
 }
@@ -10221,6 +10387,7 @@ void ToleranceCommand::input(CommandContext& ctx, const std::string& text) {
         core::AddFcfCommand cmd;
         cmd.cells = cells_;
         cmd.pos = *p;
+        cmd.style = ctx.current_dim_style();
         cmd.group = ctx.group_id();
         ctx.submit(std::move(cmd));
         ctx.echo("Feature control frame placed.");
@@ -10267,6 +10434,7 @@ void DatumCommand::input(CommandContext& ctx, const std::string& text) {
             cmd.letter = letter_;
             cmd.tip = tip_;
             cmd.pos = *p;
+            cmd.style = ctx.current_dim_style();
             cmd.group = ctx.group_id();
             ctx.submit(std::move(cmd));
             ctx.echo("Datum feature symbol placed.");
@@ -10308,7 +10476,8 @@ void LeaderCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
     case State::Content:
-        ctx.submit(core::AddLeaderCommand{tip_, knee_, 2.5, 0, text, ctx.group_id()});
+        ctx.submit(core::AddLeaderCommand{tip_, knee_, current_dim_text_height(ctx), ctx.current_dim_style(), text,
+                                          ctx.group_id()});
         ctx.echo("Leader placed.");
         done_ = true;
         return;
@@ -10379,9 +10548,9 @@ void QLeaderCommand::input(CommandContext& ctx, const std::string& text) {
     if (state_ == State::Content) {
         core::MTextBlock b;
         b.pos = verts_.empty() ? core::Vec2{} : verts_.back(); // landing = text anchor
-        b.height = 2.5;
+        b.height = current_dim_text_height(ctx);
         b.attach = 0;
-        ctx.submit(core::AddMLeaderCommand{verts_, 0, b, text, ctx.group_id()});
+        ctx.submit(core::AddMLeaderCommand{verts_, ctx.current_dim_style(), b, text, ctx.group_id()});
         ctx.echo("Leader placed.");
         ctx.clear_preview();
         done_ = true;
@@ -11029,6 +11198,202 @@ void LtscaleVarCommand::input(CommandContext& ctx, const std::string& text) {
 
 void LtscaleVarCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIMSTYLE / -DIMSTYLE, and the dimension variables.
+// ---------------------------------------------------------------------------
+namespace {
+std::string dim_value_text(std::string_view var, double v) {
+    const std::string u = upper(std::string(var));
+    if (u == "DIMTXT" || u == "DIMASZ" || u == "DIMEXO" || u == "DIMEXE") {
+        return fmt4(v);
+    }
+    if (u == "DIMDSEP") {
+        return std::string(1, v == 44.0 ? ',' : '.');
+    }
+    if (u == "DIMCLRD" || u == "DIMCLRE" || u == "DIMCLRT") {
+        return v >= 256.0 ? std::string("BYLAYER") : (v < 0.0 ? std::string("(true colour)") : std::to_string(static_cast<int>(v)));
+    }
+    return std::to_string(static_cast<int>(v));
+}
+void dim_styles_list(CommandContext& ctx) {
+    const std::vector<core::DimStyle> styles = ctx.dim_styles();
+    std::string line = "Named dimension styles:";
+    if (styles.empty()) {
+        line += " Standard";
+    }
+    for (const core::DimStyle& st : styles) {
+        line += " " + st.name;
+    }
+    ctx.echo(line);
+}
+const char* dim_var_meaning(std::string_view var) {
+    const std::string u = upper(std::string(var));
+    if (u == "DIMTXT") return "Text height";
+    if (u == "DIMASZ") return "Arrow size";
+    if (u == "DIMBLK") return "Arrowhead: 0 filled, 1 tick, 2 open, 3 dot";
+    if (u == "DIMDEC") return "Decimal places";
+    if (u == "DIMDSEP") return "Decimal separator";
+    if (u == "DIMZIN") return "Zero suppression: 4 leading, 8 trailing";
+    if (u == "DIMEXO") return "Extension line offset";
+    if (u == "DIMEXE") return "Extension beyond the dimension line";
+    if (u == "DIMTAD") return "Text above the dimension line (0 centred)";
+    if (u == "DIMATFIT") return "Text fit: 0 automatic, 1 inside, 2 outside";
+    if (u == "DIMLWD") return "Dimension lineweight (1/100 mm)";
+    if (u == "DIMCLRD") return "Dimension line and arrowhead colour (ACI, 256 BYLAYER)";
+    if (u == "DIMCLRE") return "Extension line colour";
+    return "Text colour";
+}
+} // namespace
+
+void DimStyleCommand::option_prompt(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.set_prompt("Enter a dimension style option [Save/Restore/STatus/?] <Restore>: ");
+}
+
+void DimStyleCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->dimstyle_dialog()) {
+        done_ = true; // the Dimension Style Manager does the rest
+        return;
+    }
+    ctx.echo("Current dimension style: " + current_dim_style_of(ctx).name);
+    option_prompt(ctx);
+}
+
+void DimStyleCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimStyleCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const std::vector<core::DimStyle> styles = ctx.dim_styles();
+    const auto exists = [&](const std::string& name) {
+        for (const core::DimStyle& st : styles) {
+            if (st.name == name) {
+                return true;
+            }
+        }
+        return name == "Standard";
+    };
+    switch (state_) {
+    case State::Option:
+        if (u == "?") {
+            dim_styles_list(ctx);
+            option_prompt(ctx);
+            return;
+        }
+        if (u.empty() || u == "R" || u == "RESTORE") {
+            state_ = State::Restore;
+            ctx.set_prompt("Enter a dimension style name or [?] <" + current_dim_style_of(ctx).name + ">: ");
+            return;
+        }
+        if (u == "S" || u == "SAVE") {
+            state_ = State::Save;
+            ctx.set_prompt("Enter name for new dimension style or [?]: ");
+            return;
+        }
+        if (u == "ST" || u == "STATUS") {
+            const core::DimStyle cur = current_dim_style_of(ctx);
+            ctx.echo("DIMSTYLE  " + cur.name + "  Current dimension style");
+            for (const char* var : core::kDimVars) {
+                if (const std::optional<double> v = core::dim_var_value(cur, var)) {
+                    std::string row = var;
+                    row.resize(10, ' ');
+                    std::string val = dim_value_text(var, *v);
+                    val.resize(10, ' ');
+                    ctx.echo(row + val + dim_var_meaning(var));
+                }
+            }
+            done_ = true;
+            return;
+        }
+        ctx.echo("Enter Save, Restore, STatus or ?.");
+        option_prompt(ctx);
+        return;
+    case State::Restore:
+        if (u == "?") {
+            dim_styles_list(ctx);
+            return;
+        }
+        if (t.empty()) {
+            done_ = true; // the current style stays
+            return;
+        }
+        if (!exists(t)) {
+            ctx.echo("Dimension style \"" + t + "\" not found.");
+            return;
+        }
+        ctx.submit(core::SetCurrentDimStyleCommand{t, false});
+        done_ = true;
+        return;
+    case State::Save:
+        if (u == "?") {
+            dim_styles_list(ctx);
+            return;
+        }
+        if (t.empty()) {
+            ctx.echo("Enter a name for the new dimension style.");
+            return;
+        }
+        if (exists(t)) {
+            save_name_ = t;
+            state_ = State::Redefine;
+            ctx.set_prompt("That name is already in use, redefine it? [Yes/No] <N>: ");
+            return;
+        }
+        ctx.submit(core::SetCurrentDimStyleCommand{t, true});
+        done_ = true;
+        return;
+    case State::Redefine:
+        if (u == "Y" || u == "YES") {
+            ctx.submit(core::SetCurrentDimStyleCommand{save_name_, true});
+        } else {
+            ctx.echo("Dimension style \"" + save_name_ + "\" left as it was.");
+        }
+        done_ = true;
+        return;
+    }
+}
+
+void DimVarCommand::start(CommandContext& ctx) {
+    const core::DimStyle cur = current_dim_style_of(ctx);
+    const std::optional<double> v = core::dim_var_value(cur, var_);
+    ctx.set_prompt("Enter new value for " + var_ + " <" + (v ? dim_value_text(var_, *v) : std::string()) + ">: ");
+}
+
+void DimVarCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimVarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (t.empty()) {
+        done_ = true; // the value stays
+        return;
+    }
+    double v = 0.0;
+    if (var_ == "DIMDSEP" && t.size() == 1 && (t[0] == '.' || t[0] == ',')) {
+        v = t[0] == ',' ? 44.0 : 46.0;
+    } else if ((var_ == "DIMCLRD" || var_ == "DIMCLRE" || var_ == "DIMCLRT") && (u == "BYLAYER" || u == "BYBLOCK")) {
+        v = 256.0;
+    } else if (const std::optional<double> n = parse_number(t)) {
+        v = *n;
+    } else {
+        ctx.echo("Enter a number.");
+        return;
+    }
+    core::DimStyle probe = current_dim_style_of(ctx);
+    if (!core::apply_dim_var(probe, var_, v)) {
+        ctx.echo(std::string(dim_var_meaning(var_)) + ": that value is out of range.");
+        return;
+    }
+    ctx.submit(core::SetDimVarCommand{var_, v});
     done_ = true;
 }
 

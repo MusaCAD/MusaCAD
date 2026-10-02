@@ -3,6 +3,7 @@ add_library(musacad_ui STATIC
     viewport_window.cpp
     command_line_widget.cpp
     parameter_dialog.cpp
+    dimstyle_dialog.cpp
     layer_dialog.cpp
     properties_panel.cpp
     dyn_input.cpp

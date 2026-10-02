@@ -514,6 +514,10 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
             push(out, d->a, GripKind::DimDef, 0);  // vertex
             push(out, d->b, GripKind::DimDef, 1);  // ray 1
             push(out, d->line_pt, GripKind::DimDef, 2); // ray 2
+            if (d->aux > 0.0) { // the arc, at its middle: drags its radius
+                const double am = std::atan2(d->b.y - d->a.y, d->b.x - d->a.x) + ccw_sweep(d->b - d->a, d->line_pt - d->a) * 0.5;
+                push(out, d->a + Vec2{std::cos(am), std::sin(am)} * d->aux, GripKind::DimLine, 3);
+            }
         } else { // Linear / Aligned
             // Full grip set: both extension-line origins (def points, re-measure),
             // both dim-line ends (feet), and the offset midpoint. Indices >= 2 all
@@ -790,6 +794,7 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.line_pt = x.line_pt;
                     probe.overrides = x.overrides;
                     probe.tol = x.tol;
+                    probe.aux = x.aux; // a linear one's angle, an angular one's radius ...
                     const DimGeometry base = compute_dim_geometry(
                         probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
                     Vec2 q[4];
@@ -808,6 +813,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.a = x.a + d;
                     x.b = x.b + d;
                     x.line_pt = x.line_pt + d;
+                } else if (t == DimType::Angular && grip_index == 3) {
+                    x.aux = std::max(distance(x.a, newpos), 1e-9); // the arc's radius
                 } else if (grip_index == 0) {
                     x.a = newpos;
                 } else if (grip_index == 1) {

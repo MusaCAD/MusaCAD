@@ -186,6 +186,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.display_units = store.units();
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
+    doc.current_dimstyle = store.current_dimstyle();
     doc.wipeout_frames = store.wipeout_frames();
     doc.fillmode = store.fillmode();
     doc.attdisp = store.attdisp();
@@ -482,6 +483,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_active_space(doc.active_space);
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
+    store.set_current_dimstyle(doc.current_dimstyle);
     store.set_ltscale(doc.ltscale);
     store.set_psltscale(doc.psltscale);
     store.set_msltscale(doc.msltscale);

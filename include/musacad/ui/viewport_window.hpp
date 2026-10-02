@@ -67,6 +67,8 @@ public:
     core::DrawingUnits units();
     std::vector<core::TextStyle> text_styles();
     std::uint16_t current_text_style();
+    std::vector<core::DimStyle> dim_styles();
+    std::uint16_t current_dim_style();
     std::vector<std::string> block_names();
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
     std::vector<core::LayoutInfo> layouts();
@@ -81,6 +83,8 @@ public:
     void export_dwg() override;
     void plot_dialog() override;
     void options_dialog() override;
+    bool dimstyle_dialog() override;
+    void set_dimstyle_dialog_callback(std::function<void()> cb) { dimstyle_dialog_callback_ = std::move(cb); }
     [[nodiscard]] core::MatchPropFilter match_filter() const override;
     void match_settings_dialog() override;
     /// The selection system variables (PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG,
@@ -752,6 +756,7 @@ private:
     std::function<void()> dwg_export_callback_;
     std::function<void()> plot_dialog_callback_;
     std::function<void()> options_dialog_callback_;
+    std::function<void()> dimstyle_dialog_callback_;
     std::function<core::MatchPropFilter()> match_filter_callback_;
     std::function<void()> match_settings_callback_;
     std::function<void(bool, core::Vec2, core::Vec2)> plot_pick_callback_; // armed window pick
@@ -795,6 +800,8 @@ private:
     core::DrawingUnits units_{};                ///< under layers_mutex_
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
+    std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_
+    std::uint16_t current_dim_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
     std::vector<core::LayoutInfo> layouts_;   ///< under layers_mutex_

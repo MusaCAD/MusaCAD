@@ -112,6 +112,8 @@ add_executable(musacad_tests
     test_dim_types.cpp
     test_dim_linear.cpp
     test_text_check.cpp
+    test_dimstyle.cpp
+    test_dim_angular.cpp
     test_views_groups.cpp
     test_units.cpp
     test_text_style.cpp

@@ -99,10 +99,28 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (each text about a point of its own; a height, a factor or Reference, or another
   text's height) and **TXT2MTXT**.
 - **TEXTEDIT** asks for one object after another (`[Undo/Mode]`, `TEXTEDITMODE`).
+- **DIMSTYLE** -- the Dimension Style Manager: the drawing's dimension styles, **Set
+  Current**, **New** and **Modify**, each style on four tabs (lines, symbols and arrows,
+  text, primary units) loaded with its own values: text height and colour, arrowheads
+  (leaders take theirs from the style too), decimal places, the decimal separator,
+  leading and trailing zero suppression, extension lines, lineweight and colours. New
+  dimensions, leaders and GD&T frames are drawn in the current style, which is saved
+  with the drawing (and as DXF `$DIMSTYLE`). **-DIMSTYLE** does the same at the command
+  line (`[Save/Restore/STatus/?]`), and the dimension variables -- `DIMTXT`, `DIMASZ`,
+  `DIMBLK`, `DIMDEC`, `DIMDSEP`, `DIMZIN`, `DIMEXO`, `DIMEXE`, `DIMTAD`, `DIMATFIT`,
+  `DIMLWD`, `DIMCLRD`, `DIMCLRE`, `DIMCLRT` -- set the current style's values one by one,
+  so a script can set up a drawing's dimensions at once.
 - **DIMLINEAR as AutoCAD has it** (#56) -- `<select object>` (Enter, then a line, a
   polyline segment, an arc or a circle) and `[Mtext/Text/Angle/Horizontal/Vertical/Rotated]`;
   DIMALIGNED takes `<select object>` and `[Mtext/Text/Angle]`. The text typed at Text
-  stands for the value, `<>` for the measurement.
+  stands for the value, `<>` for the measurement. DIMRADIUS, DIMDIAMETER, DIMJOGGED,
+  DIMORDINATE and DIMARC take Mtext / Text too.
+- **DIMANGULAR as AutoCAD has it** (#56) -- `Select arc, circle, line, or <specify
+  vertex>:` (an arc's own angle, a circle's between two points, three points with Enter)
+  and `[Mtext/Text/Angle/Quadrant]`: the dimension arc goes where it is clicked, in the
+  angle that point stands in -- one of the four two lines make, or the rest of the turn,
+  so reflex angles can be dimensioned -- with extension lines out to it; Quadrant picks
+  the angle apart from the arc's place. The arc has a grip for its radius.
 - **`--check` checks the text** (#80) -- besides reading the drawing, it reports every
   text whose letters overlap another text's, reach outside the frame (`--window`, or
   the drawing's largest rectangle) or use a character the font has no glyph for, and
@@ -119,6 +137,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   is kept with the dimension (`.musa`, DXF 50), so grip edits and DIMCONTINUE /
   DIMBASELINE keep it. A horizontal dimension of a mostly vertical pair in a DXF from
   elsewhere was read as vertical.
+- ROTATE and MIRROR (and ALIGN and polar ARRAY with them) left a linear dimension's
+  line and an arc length dimension's arc where they were while the points moved: a
+  rotated DIMARC dimensioned the wrong part of its arc. Both turn with the dimension now.
+- DIMANGULAR threw away the click that placed the arc and always dimensioned the smaller
+  angle at a fixed distance.
+- The Dimension Style button's form edited Standard only and opened on the default values
+  rather than the style's own, so pressing OK put back whatever had been changed.
 - A centred or right-justified text was bounded, picked and given its edit box as if it
   were left-justified, and one read from a DXF was placed on its first point instead of
   the point it is justified on. Drawing, bounds, picking, grips and the edit box share
@@ -154,7 +179,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   edited, offset and exploded as a polyline, and FILLMODE applies to it.
 - The native format is version 38: `POLYLINE` records may end with `W` and two widths per
   vertex and `Z` with the elevation and thickness; a `FILLMODE` record; `TEXT` and
-  `ATTDEF` records may carry the alignment point and the text's own width factor. Older
+  `ATTDEF` records may carry the alignment point and the text's own width factor;
+  `DIMSTYLE` records the decimal separator and zero suppression; a `CURDIMSTYLE` record. Older
   files open unchanged.
 - TEXT no longer ends after one line (scripts and macros add an empty line to end it).
 - DXF: LWPOLYLINE writes and reads the constant width (43), the per-vertex widths (40 /

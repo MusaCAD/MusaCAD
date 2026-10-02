@@ -2357,12 +2357,14 @@ private:
     core::DimType type_;
     std::string name_;
     core::Vec2 obj_pick_{};
+    std::string text_;   ///< typed at Mtext / Text ("" = the measurement)
+    bool typing_ = false; ///< the next input is that text
     bool done_ = false;
 };
 
 /// DIMORDINATE (DOR): a feature point, then the leader endpoint; the datum axis is
 /// chosen from the leader's direction (a mostly vertical leader measures X), or forced
-/// with [Xdatum/Ydatum]. Mtext/Text/Angle are reported as not supported.
+/// with [Xdatum/Ydatum]; Mtext / Text type the text (Angle is not there yet).
 class OrdinateDimensionCommand final : public ICommand {
 public:
     std::string name() const override { return "DIMORDINATE"; }
@@ -2375,6 +2377,8 @@ private:
     enum class State { Feature, End } state_ = State::Feature;
     core::Vec2 feature_{};
     int forced_ = -1; ///< -1 auto, 0 X datum, 1 Y datum
+    std::string text_;
+    bool typing_ = false;
     bool done_ = false;
 };
 
@@ -2393,12 +2397,14 @@ private:
     core::Vec2 obj_pick_{};
     core::Vec2 override_{};
     core::Vec2 place_{};
+    std::string text_;
+    bool typing_ = false;
     bool done_ = false;
 };
 
 /// DIMARC (DAR): select an arc or a polyline arc segment, then place the dimension
-/// arc; the value is the true arc length. Partial/Leader/Mtext/Text/Angle are
-/// reported as not supported.
+/// arc; the value is the true arc length. Mtext / Text type the text; Partial, Leader
+/// and Angle are not there yet.
 class ArcLengthDimensionCommand final : public ICommand {
 public:
     std::string name() const override { return "DIMARC"; }
@@ -2410,6 +2416,8 @@ public:
 private:
     enum class State { Select, Place } state_ = State::Select;
     core::Vec2 obj_pick_{};
+    std::string text_;
+    bool typing_ = false;
     bool done_ = false;
 };
 
@@ -2424,9 +2432,19 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Line1, Line2, Place } state_ = State::Line1;
+    // Select (an arc, a circle, a line, or Enter for the vertex) -> Line2 / CircleEnd, or
+    // Vertex -> First -> Second; then Place, with Text and Quadrant on the way.
+    enum class State { Select, Line2, CircleEnd, Vertex, First, Second, Place, Text, Quadrant } state_ = State::Select;
+    void place_prompt(CommandContext& ctx);
+    void show_preview(CommandContext& ctx) const;
     core::Vec2 pick1_{};
     core::Vec2 pick2_{};
+    bool points_ = false;     ///< three points (vertex, endpoints) rather than an object
+    core::Vec2 vertex_{};
+    core::Vec2 end1_{};
+    core::Vec2 end2_{};
+    std::optional<core::Vec2> quadrant_{};
+    std::string text_;
     bool done_ = false;
 };
 
@@ -2590,6 +2608,43 @@ public:
     bool done() const override { return done_; }
 
 private:
+    bool done_ = false;
+};
+
+/// DIMSTYLE (D, DST, DDIM): the Dimension Style Manager -- the drawing's styles, Set
+/// Current, New, Modify. -DIMSTYLE (and DIMSTYLE with no window) at the command line:
+/// `Enter a dimension style option [Save/Restore/STatus/?] <Restore>:`.
+class DimStyleCommand final : public ICommand {
+public:
+    explicit DimStyleCommand(bool dialog) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "DIMSTYLE" : "-DIMSTYLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Option, Restore, Save, Redefine } state_ = State::Option;
+    void option_prompt(CommandContext& ctx);
+    bool dialog_ = true;
+    std::string save_name_;
+    bool done_ = false;
+};
+
+/// A dimension variable (DIMTXT, DIMASZ, DIMBLK, DIMDEC, DIMDSEP, DIMZIN, DIMEXO, DIMEXE,
+/// DIMTAD, DIMATFIT, DIMLWD, DIMCLRD, DIMCLRE, DIMCLRT): `Enter new value for DIMTXT
+/// <2.5000>:` sets it in the current dimension style.
+class DimVarCommand final : public ICommand {
+public:
+    explicit DimVarCommand(std::string var) : var_(std::move(var)) {}
+    std::string name() const override { return var_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::string var_;
     bool done_ = false;
 };
 

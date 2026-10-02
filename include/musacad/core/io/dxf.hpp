@@ -10,6 +10,9 @@
 
 namespace musacad::core::io {
 
+/// The AutoCAD Color Index palette: the colour of ACI 1..255 (white outside it).
+[[nodiscard]] Rgb dxf_aci_to_rgb(long aci);
+
 // ASCII DXF (AC1015 / AutoCAD R2000 baseline) import/export, scoped to the
 // entity families Musa CAD models: LINE, LWPOLYLINE/POLYLINE, CIRCLE, ARC,
 // POINT. Unsupported entities are skipped on import and summarized, never fatal.
