@@ -11235,6 +11235,7 @@ const char* dim_var_meaning(std::string_view var) {
     if (u == "DIMEXE") return "Extension beyond the dimension line";
     if (u == "DIMTAD") return "Text above the dimension line (0 centred)";
     if (u == "DIMATFIT") return "Text fit: 0 automatic, 1 inside, 2 outside";
+    if (u == "DIMTMOVE") return "Moved text: 0 with its dimension line, 1 with a leader, 2 alone";
     if (u == "DIMLWD") return "Dimension lineweight (1/100 mm)";
     if (u == "DIMCLRD") return "Dimension line and arrowhead colour (ACI, 256 BYLAYER)";
     if (u == "DIMCLRE") return "Extension line colour";

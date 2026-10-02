@@ -281,6 +281,8 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.text_above = v != 0.0;
     } else if (same_var(var, "DIMATFIT") && whole(0, 2)) {
         s.text_fit = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMTMOVE") && whole(0, 2)) {
+        s.text_move = static_cast<std::uint8_t>(v);
     } else if (same_var(var, "DIMLWD") && whole(0, 211)) {
         s.dim_lineweight = static_cast<std::uint8_t>(v);
     } else if (same_var(var, "DIMCLRD") && whole(0, 256)) {
@@ -329,6 +331,9 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
     }
     if (same_var(var, "DIMLWD")) {
         return s.dim_lineweight;
+    }
+    if (same_var(var, "DIMTMOVE")) {
+        return s.text_move;
     }
     if (same_var(var, "DIMCLRD")) {
         return aci_of(s.dim_color);
@@ -535,6 +540,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const DimLabel label = compose_dim_label(d, style, parts);
     g.label = label.line1;
     g.label2 = label.line2;
+    bool arc_slid = false; // an angular label already slid along its arc (DIMTMOVE 0)
 
     /// Finishes the label once text_pos / rotation / justify are final: places the
     /// second line (Limits mode) and, for a basic dimension, draws the ASME Y14.5
@@ -551,7 +557,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         // place text_pos becomes final for every dimension type -- so all five get the
         // grip from a single edit, and the automatic ISO 129-1 fit (#12) still ran above
         // to choose the derived position this offset is measured from.
-        if (d.text_offset.x != 0.0 || d.text_offset.y != 0.0) {
+        if (!arc_slid && (d.text_offset.x != 0.0 || d.text_offset.y != 0.0)) {
             g.derived_text_pos = g.text_pos; // remember where it would have sat
             g.text_moved = true;
             g.text_pos = g.text_pos + ax * d.text_offset.x + ay * d.text_offset.y;
@@ -590,7 +596,10 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     /// text has actually cleared the line (a nudge of less than one text height is still
     /// "next to" it), so small tidying drags stay clean.
     const auto connect_moved_label = [&]() {
-        if (!g.text_moved) {
+        // DIMTMOVE 2: moved text stands alone. 0: text moved with its dimension line
+        // never leaves it -- only an offset off the line (from an older drawing, or one
+        // made with another setting) still gets its connector.
+        if (!g.text_moved || style.text_move == 2 || (style.text_move == 0 && std::abs(d.text_offset.y) < 1e-9)) {
             return;
         }
         const double h = g.text_height;
@@ -615,6 +624,84 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         seg(g.dim_lines, g.derived_text_pos, land);
         seg(g.dim_lines, land, land + (land.x >= g.derived_text_pos.x ? ax : ax * -1.0) * (h * 0.6));
     };
+
+    if ((d.type == DimType::Radius || d.type == DimType::Diameter) &&
+        std::abs(distance(d.line_pt, d.a) - distance(d.b, d.a)) > style.text_height * 0.5) {
+        // The text where the dimension was placed (line_pt). Outside the circle: the
+        // arrow on it, a leader out to the text and a short horizontal landing, the text
+        // reading away from the circle. Inside: the line from the centre (a diameter's
+        // through it) to the arrow, broken around the horizontal text.
+        const Vec2 c = d.a;
+        const double r = distance(c, d.b);
+        const Vec2 u = r > 1e-12 ? (d.b - c) / r : Vec2{1.0, 0.0};
+        const Vec2 t = d.line_pt;
+        const double h = style.text_height;
+        const double gap = h * 0.4;
+        const double w = std::max(text::text_width(g.label, h), text::text_width(g.label2, h));
+        g.text_rotation = 0.0;
+        if (distance(c, t) > r) {
+            const double side = (t.x - c.x) >= 0.0 ? 1.0 : -1.0;
+            const Vec2 land_end = t + Vec2{side * style.arrow_size, 0.0};
+            seg(g.dim_lines, d.b, t);
+            seg(g.dim_lines, t, land_end);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u, style.arrow_size, atype);
+            // With the dimension line outside, the centre gets its mark (AutoCAD's DIMCEN
+            // rule for DIMRADIUS / DIMDIAMETER), as large as an arrowhead.
+            const double m = style.arrow_size * 0.5;
+            for (const Vec2 arm : {Vec2{m, 0.0}, Vec2{-m, 0.0}, Vec2{0.0, m}, Vec2{0.0, -m}}) {
+                seg(g.dim_lines, c, c + arm); // out from the centre, so the centre is a vertex
+            }
+            g.text_justify = side > 0.0 ? text::Justify::Left : text::Justify::Right;
+            const double up = style.text_above ? gap : -h * 0.5;
+            g.text_pos = land_end + Vec2{side * gap, up};
+        } else {
+            const Vec2 from = d.type == DimType::Diameter ? c - u * r : c;
+            // The text box around t, padded; the line is drawn up to it from both sides.
+            const Vec2 lo{t.x - w * 0.5 - gap, t.y - h * 0.5 - gap};
+            const Vec2 hi{t.x + w * 0.5 + gap, t.y + h * 0.5 + gap};
+            const Vec2 dv = d.b - from;
+            double t0 = 0.0;
+            double t1 = 1.0;
+            bool hit = true;
+            for (int axis = 0; axis < 2 && hit; ++axis) {
+                const double p0 = axis == 0 ? from.x : from.y;
+                const double dp = axis == 0 ? dv.x : dv.y;
+                const double mn = axis == 0 ? lo.x : lo.y;
+                const double mx = axis == 0 ? hi.x : hi.y;
+                if (std::abs(dp) < 1e-15) {
+                    hit = p0 >= mn && p0 <= mx;
+                    continue;
+                }
+                double a0 = (mn - p0) / dp;
+                double a1 = (mx - p0) / dp;
+                if (a0 > a1) {
+                    std::swap(a0, a1);
+                }
+                t0 = std::max(t0, a0);
+                t1 = std::min(t1, a1);
+                hit = t0 < t1;
+            }
+            if (hit) {
+                if (t0 > 1e-9) {
+                    seg(g.dim_lines, from, from + dv * t0);
+                }
+                if (t1 < 1.0 - 1e-9) {
+                    seg(g.dim_lines, from + dv * t1, d.b);
+                }
+            } else {
+                seg(g.dim_lines, from, d.b);
+            }
+            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * -1.0, style.arrow_size, atype);
+            if (d.type == DimType::Diameter) {
+                append_arrowhead(g.arrow_fills, g.arrow_lines, c - u * r, u, style.arrow_size, atype);
+            }
+            g.text_justify = text::Justify::Center;
+            g.text_pos = t + Vec2{0.0, -h * 0.5};
+        }
+        finish_label();
+        connect_moved_label();
+        return g;
+    }
 
     if (d.type == DimType::Radius || d.type == DimType::Diameter) {
         const Vec2 center = d.a;
@@ -783,10 +870,40 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                          atype);
         append_arrowhead(g.arrow_fills, g.arrow_lines, on(a1, r), Vec2{std::sin(a1), -std::cos(a1)}, style.arrow_size,
                          atype);
-        const double am = a0 + sweep * 0.5;
-        g.text_pos = on(am, r + style.text_height * 0.6);
+        // The text at the middle of the arc, or -- moved with the arc (DIMTMOVE 0) --
+        // slid along it by text_offset.x (an arc length); past either ray the arc goes
+        // on round to it.
+        double at = a0 + sweep * 0.5;
+        const bool slide = style.text_move == 0 && std::abs(d.text_offset.y) < 1e-9 && d.text_offset.x != 0.0;
+        if (slide) {
+            at += d.text_offset.x / r;
+            const double over = at - a1;
+            const double under = a0 - at;
+            const double reach = style.text_height / r; // the arc runs on past the text's middle
+            const auto extra = [&](double from, double to) {
+                const int n = std::max(4, static_cast<int>(std::ceil(std::abs(to - from) / 0.05)));
+                Vec2 q = on(from, r);
+                for (int i = 1; i <= n; ++i) {
+                    const Vec2 p = on(from + (to - from) * (static_cast<double>(i) / n), r);
+                    seg(g.dim_lines, q, p);
+                    q = p;
+                }
+            };
+            if (over > 0.0) {
+                extra(a1, at + reach);
+            } else if (under > 0.0) {
+                extra(a0, at - reach);
+            }
+        }
+        g.text_pos = on(at, r + style.text_height * 0.6);
         g.text_rotation = 0.0;
         g.text_justify = text::Justify::Center;
+        if (slide) {
+            // Applied here, along the arc: finish_label must not move it a second time.
+            g.derived_text_pos = on(a0 + sweep * 0.5, r + style.text_height * 0.6);
+            g.text_moved = true;
+            arc_slid = true;
+        }
         finish_label();
         connect_moved_label();
         return g;
@@ -923,6 +1040,27 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     }
     finish_label();
     connect_moved_label();
+    // Text slid along its dimension line (DIMTMOVE 0) past an extension line: the line
+    // goes on to it -- under the text when the text stands above it, up to it when the
+    // text is centred on it.
+    if (g.text_moved && style.text_move == 0 && std::abs(d.text_offset.y) < 1e-9 && span > 1e-9) {
+        Vec2 q[4];
+        if (dim_label_quad(g, false, q)) {
+            double s0 = 1e300;
+            double s1 = -1e300;
+            for (const Vec2& p : q) {
+                const double sp = dot(p - fa, u);
+                s0 = std::min(s0, sp);
+                s1 = std::max(s1, sp);
+            }
+            const bool under = style.text_above;
+            if (s1 > span + stub) {
+                seg(g.dim_lines, fb + u * stub, fa + u * (under ? s1 : s0 - gap));
+            } else if (s0 < -stub) {
+                seg(g.dim_lines, fa - u * stub, fa + u * (under ? s0 : s1 + gap));
+            }
+        }
+    }
     return g;
 }
 

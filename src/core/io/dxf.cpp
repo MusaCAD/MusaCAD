@@ -540,6 +540,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_i(s, 78, ds.zero_suppression);   // DIMZIN
         code_i(s, 271, ds.precision);   // DIMDEC
         code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
+        code_i(s, 279, ds.text_move);         // DIMTMOVE
         code_i(s, 371, ds.dim_lineweight);    // DIMLWD
     }
     code(s, 0, "ENDTAB");
@@ -1708,6 +1709,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         if (const std::string* v = find(body, 278)) {
             ds.decimal_separator = to_l(*v) == ',' ? ',' : '.';
+        }
+        if (const std::string* v = find(body, 279)) {
+            const long m = to_l(*v);
+            ds.text_move = static_cast<std::uint8_t>(m >= 0 && m <= 2 ? m : 0);
         }
         if (const std::string* v = find(body, 371)) {
             if (const long w = to_l(*v); w >= 0 && w <= 211) {

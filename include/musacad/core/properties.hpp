@@ -141,6 +141,10 @@ struct DimStyle {
     // Primary units (v38): how the value is written.
     char decimal_separator = '.';      ///< DIMDSEP: '.' or ','
     std::uint8_t zero_suppression = 0; ///< DIMZIN's decimal bits: 4 leading zeros, 8 trailing
+    /// DIMTMOVE: where moved text takes the dimension. 0 the dimension line moves with the
+    /// text (it slides along the line, which extends under it beside the extension lines),
+    /// 1 the text moves alone with a leader back to the line, 2 alone without one.
+    std::uint8_t text_move = 0;
 
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };
