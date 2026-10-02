@@ -274,7 +274,6 @@ private:
 
     // Annotation (UI side: dimension-style dialog).
     void open_dimstyle_dialog();
-    void submit_dimstyle_from_dialog(const ParameterDialog& dlg);
 
     // MATCHPROP Settings: modal category dialog (dark palette) opened via "S" at the
     // destination prompt; choices persist in QSettings for the session. read_match_filter

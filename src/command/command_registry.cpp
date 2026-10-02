@@ -7,6 +7,7 @@
 #include <cctype>
 
 #include "musacad/command/commands.hpp"
+#include "musacad/core/dimension.hpp"
 
 namespace musacad::command {
 
@@ -240,6 +241,14 @@ CommandRegistry CommandRegistry::make_default() {
         "Rebuild and redraw the scene.");
     reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
         "Create or change a named text style and make it current.");
+    reg({"D", "DST", "DDIM", "DIMSTYLE"}, [] { return std::make_unique<DimStyleCommand>(true); }, "",
+        "Create and change dimension styles: text, arrows, units and colours, and the current style.");
+    reg({"-DIMSTYLE"}, [] { return std::make_unique<DimStyleCommand>(false); }, "",
+        "Save, restore or list dimension styles at the command line.");
+    for (const char* var : core::kDimVars) {
+        reg({var}, [var] { return std::make_unique<DimVarCommand>(var); }, "",
+            "Set a dimension variable of the current dimension style.");
+    }
     reg({"UN", "UNITS"}, [] { return std::make_unique<UnitsCommand>(true); }, "",
         "Set the display format and precision of lengths and angles (the Drawing Units dialog).");
     reg({"-UNITS"}, [] { return std::make_unique<UnitsCommand>(false); }, "",

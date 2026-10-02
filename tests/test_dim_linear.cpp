@@ -81,6 +81,13 @@ DimData linear(Vec2 a, Vec2 b, Vec2 at, double aux = 0.0) {
     return d;
 }
 
+/// Waits until the engine has done everything submitted so far: a query that always
+/// reports, answered after them (the queue is first in, first out).
+void sync(GeometryEngine& engine) {
+    engine.submit(AreaQueryCommand{{1e9, 1e9}, 1e-6});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("AREA:", 0) == 0; }));
+}
+
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
     engine.submit(SaveDocumentCommand{p.string(), false});
@@ -317,6 +324,60 @@ TEST_CASE("#56 engine: a circle, an arc, and the chain that follows a rotated di
     next.aux = doc.dims[1].aux;
     REQUIRE(next.aux == Approx(kPi));
     REQUIRE(dim_measure(next) == Approx(20.0)); // across, not the 30 it rises
+    engine.stop();
+}
+
+TEST_CASE("#56 ROTATE and MIRROR turn a linear dimension's line, and an arc length's arc") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{.type = static_cast<std::uint8_t>(DimType::Linear),
+                                      .a = {0, 0},
+                                      .b = {40, 0},
+                                      .line_pt = {20, 10},
+                                      .group = 1,
+                                      .aux = kPi});
+    engine.submit(SelectAllCommand{});
+    engine.submit(RotateSelectionCommand{{0, 0}, to_radians(30.0), 2});
+    sync(engine);
+    io::Document doc = dump(engine, "musacad_dim_rotate.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].aux == Approx(to_radians(30.0)));
+    DimData d = linear(doc.dims[0].a, doc.dims[0].b, doc.dims[0].line_pt, doc.dims[0].aux);
+    REQUIRE(dim_measure(d) == Approx(40.0)); // still the 40 it measured
+
+    // Mirrored in the x axis: the 30-degree line becomes a 150-degree one (-30).
+    engine.submit(SelectAllCommand{});
+    engine.submit(MirrorSelectionCommand{{0, 0}, {10, 0}, true, 3});
+    sync(engine);
+    doc = dump(engine, "musacad_dim_mirror.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].aux == Approx(to_radians(150.0)));
+    d = linear(doc.dims[0].a, doc.dims[0].b, doc.dims[0].line_pt, doc.dims[0].aux);
+    REQUIRE(dim_measure(d) == Approx(40.0));
+
+    // An arc length dimension of the quarter from 0 to 90 degrees, mirrored in the x
+    // axis: the quarter from -90 to 0.
+    engine.submit(NewDocumentCommand{});
+    engine.submit(AddDimensionCommand{.type = static_cast<std::uint8_t>(DimType::ArcLength),
+                                      .a = {0, 0},
+                                      .b = {10, 0},
+                                      .line_pt = {12, 12},
+                                      .group = 4,
+                                      .aux = kHalfPi});
+    engine.submit(SelectAllCommand{});
+    engine.submit(MirrorSelectionCommand{{0, 0}, {10, 0}, true, 5});
+    sync(engine);
+    doc = dump(engine, "musacad_dimarc_mirror.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].b.x == Approx(0.0).margin(1e-9));
+    REQUIRE(doc.dims[0].b.y == Approx(-10.0));
+    REQUIRE(doc.dims[0].aux == Approx(0.0).margin(1e-9));
+    DimData arc;
+    arc.type = DimType::ArcLength;
+    arc.a = doc.dims[0].a;
+    arc.b = doc.dims[0].b;
+    arc.aux = doc.dims[0].aux;
+    REQUIRE(dim_measure(arc) == Approx(10.0 * kHalfPi));
     engine.stop();
 }
 

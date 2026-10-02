@@ -991,6 +991,10 @@ struct AddObjectDimensionCommand {
     std::optional<double> line_angle{};
     /// The text typed at the Text / Mtext option (raw; `<>` = the measurement).
     std::string text_override{};
+    /// DIMANGULAR: where the dimension arc goes, and the Quadrant point when one was given
+    /// (place_angular_dim). Unset: a dimension from before, the smaller angle.
+    std::optional<Vec2> arc_at{};
+    std::optional<Vec2> quadrant{};
 };
 
 /// Non-mutating query: resolve the def points of an object-based dimension under
@@ -1456,6 +1460,28 @@ struct SetDimStyleCommand {
     std::uint16_t index = 0;
     DimStyle style;
 };
+/// DIMSTYLE Set Current / -DIMSTYLE Restore: the style new dimensions are drawn in.
+/// `save` (-DIMSTYLE Save) first copies the current style under `name` -- a new style,
+/// or the one of that name redefined.
+struct SetCurrentDimStyleCommand {
+    std::string name;
+    bool save = false;
+};
+/// The Dimension Style Manager's Rename and Delete. Standard keeps its name and stays;
+/// a style in use or the current one is not deleted (said in the status line).
+struct RenameDimStyleCommand {
+    std::string from;
+    std::string to;
+};
+struct DeleteDimStyleCommand {
+    std::string name;
+};
+/// A dimension variable typed at the command line (DIMTXT 3.5, DIMDEC 1, DIMCLRD 1 ...):
+/// sets that value of the current dimension style (apply_dim_var).
+struct SetDimVarCommand {
+    std::string dimvar;
+    double setting = 0.0;
+};
 
 // --- Layers & properties (geometry-thread) ---------------------------------
 
@@ -1527,7 +1553,9 @@ using Command =
                  OpenDocumentCommand, NewDocumentCommand, AddLayerCommand, SetLayerCommand,
                  RemoveLayerCommand, SetCurrentLayerCommand, SetEntityLayerCommand,
                  SetEntityColorCommand, AddTextCommand, AddDimensionCommand, AddDimStyleCommand,
-                 SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
+                 SetDimStyleCommand, SetCurrentDimStyleCommand, SetDimVarCommand, RenameDimStyleCommand,
+                 DeleteDimStyleCommand, SetLineweightDisplayCommand,
+                 AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,

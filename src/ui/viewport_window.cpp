@@ -186,6 +186,16 @@ std::uint16_t ViewportWindow::current_text_style() {
     return current_text_style_;
 }
 
+std::vector<core::DimStyle> ViewportWindow::dim_styles() {
+    std::scoped_lock lock(layers_mutex_);
+    return dim_styles_;
+}
+
+std::uint16_t ViewportWindow::current_dim_style() {
+    std::scoped_lock lock(layers_mutex_);
+    return current_dim_style_;
+}
+
 std::vector<std::string> ViewportWindow::block_names() {
     std::scoped_lock lock(layers_mutex_);
     return block_names_;
@@ -473,6 +483,14 @@ void ViewportWindow::plot_dialog() {
     if (plot_dialog_callback_) {
         plot_dialog_callback_();
     }
+}
+
+bool ViewportWindow::dimstyle_dialog() {
+    if (!dimstyle_dialog_callback_) {
+        return false;
+    }
+    dimstyle_dialog_callback_();
+    return true;
 }
 
 void ViewportWindow::options_dialog() {
@@ -1310,7 +1328,10 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             pdim_line_pt_ = snap.pending_dim_line_pt;
             pdim_type_ = snap.pending_dim_type;
             pdim_aux_ = snap.pending_dim_aux;
-            pdim_style_ = snap.dimstyles.empty() ? core::DimStyle{} : snap.dimstyles[0];
+            // The placement preview draws in the style the dimension will have: the current one.
+            pdim_style_ = snap.current_dimstyle < snap.dimstyles.size() ? snap.dimstyles[snap.current_dimstyle]
+                          : snap.dimstyles.empty()                       ? core::DimStyle{}
+                                                                         : snap.dimstyles[0];
         }
         {
             // Cache grips for GUI-thread hit-testing (grab on press).
@@ -1339,6 +1360,8 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             units_ = snap.units;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
+            dim_styles_ = snap.dimstyles;
+            current_dim_style_ = snap.current_dimstyle;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
             layouts_ = snap.layouts;
@@ -2615,8 +2638,22 @@ void ViewportWindow::rebuild_overlay() {
             d.type = static_cast<core::DimType>(pv.dim_type);
             d.style = pv.dim_style;
             core::DimStyle style;
+            {
+                std::scoped_lock lock(pending_dim_mutex_);
+                style = pdim_style_;
+            }
             bool ok = false;
-            if (pts.size() >= 2) {
+            const std::optional<core::Vec2> quadrant =
+                pv.dim_has_quadrant ? std::optional<core::Vec2>(pv.dim_quadrant) : std::nullopt;
+            if (pts.size() == 3 && d.type == core::DimType::Angular) {
+                // DIMANGULAR by three points: the arc through the cursor, in the angle it
+                // stands in (or the Quadrant's).
+                d.a = pts[0];
+                d.b = pts[1];
+                d.line_pt = pts[2];
+                core::place_angular_dim(d, cur, core::AngularFrom::Points, quadrant);
+                ok = true;
+            } else if (pts.size() >= 2) {
                 d.a = pts[0];
                 d.b = pts[1];
                 d.line_pt = cur; // placement follows the cursor
@@ -2656,9 +2693,16 @@ void ViewportWindow::rebuild_overlay() {
                         d.line_pt = pdim_a_ + dir * (r * 0.4); // a stand-in centre override
                         d.aux = 0.5;
                     } else if (t == core::DimType::Angular) {
-                        d.a = pdim_a_; // geometry fixed by the two lines
+                        // The arc through the cursor: two lines (aux 0), an arc (-1), a
+                        // circle (-2), each by its own rule.
+                        d.a = pdim_a_;
                         d.b = pdim_b_;
                         d.line_pt = pdim_line_pt_;
+                        core::place_angular_dim(d, cur,
+                                                pdim_aux_ == -1.0   ? core::AngularFrom::Arc
+                                                : pdim_aux_ == -2.0 ? core::AngularFrom::Points
+                                                                    : core::AngularFrom::Lines,
+                                                quadrant);
                     } else { // Linear / Aligned: endpoints fixed, placement follows cursor
                         d.a = pdim_a_;
                         d.b = pdim_b_;

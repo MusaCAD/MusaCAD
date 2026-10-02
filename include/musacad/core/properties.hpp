@@ -47,7 +47,7 @@ enum class DimType : std::uint8_t {
     Aligned = 1, ///< parallel to the measured segment
     Radius = 2,
     Diameter = 3,
-    Angular = 4,
+    Angular = 4,   ///< a = vertex, b = on ray 1, line_pt = on ray 2; aux = the arc's radius (v38)
     Ordinate = 5,  ///< a = feature, b = leader end; aux 0 = X datum, 1 = Y datum
     Jogged = 6,    ///< a = true centre, b = point on the arc, line_pt = centre override; aux = jog position 0..1
     ArcLength = 7, ///< a = centre, b = arc start point, line_pt = placement; aux = end angle (rad)
@@ -138,8 +138,16 @@ struct DimStyle {
     ElementColor text_color{};
     ElementColor arrow_color{};
 
+    // Primary units (v38): how the value is written.
+    char decimal_separator = '.';      ///< DIMDSEP: '.' or ','
+    std::uint8_t zero_suppression = 0; ///< DIMZIN's decimal bits: 4 leading zeros, 8 trailing
+
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };
+
+/// DIMZIN's two decimal bits.
+inline constexpr std::uint8_t kDimZinLeading = 4;  ///< "0.50" is written ".50"
+inline constexpr std::uint8_t kDimZinTrailing = 8; ///< "12.50" is written "12.5", "12.00" "12"
 
 /// Per-dimension property overrides (AutoCAD's PR "this dimension only"). Mirrors
 /// the ByLayer/override pattern: a bit in `mask` means "this field is overridden;

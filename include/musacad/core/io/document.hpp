@@ -360,6 +360,7 @@ struct Document {
     DrawingUnits display_units{}; ///< UNITS: display formats (v25)
     std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
     std::uint16_t current_text_style = 0;
+    std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool fillmode = true;       ///< FILLMODE (v37)
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF

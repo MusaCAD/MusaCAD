@@ -395,6 +395,9 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code(s, 5, handle_hex(handseed));
     code(s, 9, "$LTSCALE");
     code_d(s, 40, doc.ltscale); // global linetype scale
+    code(s, 9, "$DIMSTYLE"); // the current dimension style
+    code(s, 2, doc.current_dimstyle < doc.dimstyles.size() ? doc.dimstyles[doc.current_dimstyle].name
+                                                            : std::string("Standard"));
     code(s, 0, "ENDSEC");
 }
 
@@ -531,7 +534,13 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code(s, 2, ds.name);
         code_d(s, 140, ds.text_height); // DIMTXT
         code_d(s, 41, ds.arrow_size);   // DIMASZ
+        code_d(s, 42, ds.ext_offset);   // DIMEXO
+        code_d(s, 44, ds.ext_extension); // DIMEXE
+        code_i(s, 77, ds.text_above ? 1 : 0); // DIMTAD
+        code_i(s, 78, ds.zero_suppression);   // DIMZIN
         code_i(s, 271, ds.precision);   // DIMDEC
+        code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
+        code_i(s, 371, ds.dim_lineweight);    // DIMLWD
     }
     code(s, 0, "ENDTAB");
     // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
@@ -1685,6 +1694,26 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (const std::string* v = find(body, 271)) {
             ds.precision = static_cast<std::uint8_t>(to_l(*v));
         }
+        if (const std::string* v = find(body, 42)) {
+            ds.ext_offset = to_d(*v);
+        }
+        if (const std::string* v = find(body, 44)) {
+            ds.ext_extension = to_d(*v);
+        }
+        if (const std::string* v = find(body, 77)) {
+            ds.text_above = to_l(*v) != 0;
+        }
+        if (const std::string* v = find(body, 78)) {
+            ds.zero_suppression = static_cast<std::uint8_t>(to_l(*v) & (kDimZinLeading | kDimZinTrailing));
+        }
+        if (const std::string* v = find(body, 278)) {
+            ds.decimal_separator = to_l(*v) == ',' ? ',' : '.';
+        }
+        if (const std::string* v = find(body, 371)) {
+            if (const long w = to_l(*v); w >= 0 && w <= 211) {
+                ds.dim_lineweight = static_cast<std::uint8_t>(w);
+            }
+        }
     };
 
     // An entity destination: model space (all targets) or a block definition (the
@@ -2399,6 +2428,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     nullptr,       nullptr,        nullptr,     nullptr,          nullptr,
                     &block.attdefs, nullptr}; // hatches / images not held inside block definitions
     bool in_block = false;
+    std::string current_dimstyle_name; // $DIMSTYLE
 
     while (i < n) {
         const Pair& p = pairs[i];
@@ -2406,6 +2436,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (section == "HEADER" && p.code == 9 && p.value == "$LTSCALE") {
             if (i + 1 < n && pairs[i + 1].code == 40) {
                 doc.ltscale = to_d(pairs[i + 1].value);
+                i += 2;
+                continue;
+            }
+        }
+        // $DIMSTYLE <2 name>: resolved against the DIMSTYLE table once it has been read.
+        if (section == "HEADER" && p.code == 9 && p.value == "$DIMSTYLE") {
+            if (i + 1 < n && pairs[i + 1].code == 2) {
+                current_dimstyle_name = pairs[i + 1].value;
                 i += 2;
                 continue;
             }
@@ -2630,6 +2668,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         doc.images.push_back(std::move(im));
     }
+    for (std::size_t k = 0; k < doc.dimstyles.size(); ++k) {
+        if (!current_dimstyle_name.empty() && doc.dimstyles[k].name == current_dimstyle_name) {
+            doc.current_dimstyle = static_cast<std::uint16_t>(k);
+        }
+    }
     std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities on " +
                       std::to_string(doc.layers.size()) + " layers";
     if (!doc.block_defs.empty()) {
@@ -2745,5 +2788,7 @@ IoResult load_dxf(const std::string& path, Document& out) {
     }
     return r;
 }
+
+Rgb dxf_aci_to_rgb(long aci) { return aci_to_rgb(aci); }
 
 } // namespace musacad::core::io

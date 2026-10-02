@@ -166,7 +166,9 @@ struct DimData {
     /// dimension's end angle in radians. A LINEAR dimension's line angle (v38, DXF 50),
     /// kept in (0, pi] -- horizontal is pi -- by linear_dim_aux; 0 there is a linear
     /// dimension from before v38, measured along the axis its points differ most on.
-    /// Zero for the other classic types.
+    /// An ANGULAR dimension's arc radius (v38): the angle is then the counter-clockwise
+    /// sweep from ray 1 (b) to ray 2 (line_pt), up to a full turn; 0 there is one from
+    /// before, the smaller angle between the rays. Zero for the other classic types.
     double aux = 0.0;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
@@ -817,6 +819,23 @@ public:
     [[nodiscard]] const DimStyle* dimstyle(std::uint16_t index) const noexcept;
     std::uint16_t add_dimstyle(const DimStyle& style);
     bool set_dimstyle(std::uint16_t index, const DimStyle& style);
+    /// The style new dimensions, leaders and GD&T frames are drawn in (DIMSTYLE's Set
+    /// Current; DXF $DIMSTYLE). Always a valid index.
+    [[nodiscard]] std::uint16_t current_dimstyle() const noexcept { return current_dimstyle_; }
+    void set_current_dimstyle(std::uint16_t i) noexcept {
+        if (i < dimstyles_.size()) {
+            current_dimstyle_ = i;
+        }
+    }
+    /// The index of the style called `name`, or 0xFFFF.
+    [[nodiscard]] std::uint16_t dimstyle_index(std::string_view name) const noexcept {
+        for (std::size_t i = 0; i < dimstyles_.size(); ++i) {
+            if (dimstyles_[i].name == name) {
+                return static_cast<std::uint16_t>(i);
+            }
+        }
+        return 0xFFFF;
+    }
     /// Replaces the dimstyle table (Open/Import); ensures "Standard" at index 0.
     void set_dimstyle_table(std::vector<DimStyle> styles);
 
@@ -1188,6 +1207,7 @@ private:
     DrawingUnits units_;
     std::vector<TextStyle> text_styles_{TextStyle{}}; // [0] = Standard
     std::uint16_t current_text_style_ = 0;
+    std::uint16_t current_dimstyle_ = 0;
     bool wipeout_frames_ = true;
     bool fillmode_ = true;
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF

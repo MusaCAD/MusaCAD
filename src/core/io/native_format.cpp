@@ -415,6 +415,11 @@ std::string serialize_native(const Document& doc) {
         // token (it may contain spaces), so a trailing field would be unreadable.
         append_uint(s, ds.text_fit);
         s += ' ';
+        // v38: the decimal separator (its character code) and DIMZIN, before the name.
+        append_uint(s, static_cast<unsigned char>(ds.decimal_separator));
+        s += ' ';
+        append_uint(s, ds.zero_suppression);
+        s += ' ';
         s += ds.name;
         s += '\n';
     }
@@ -1029,6 +1034,9 @@ std::string serialize_native(const Document& doc) {
     s += "CURTEXTSTYLE ";
     append_uint(s, doc.current_text_style);
     s += '\n';
+    s += "CURDIMSTYLE ";
+    append_uint(s, doc.current_dimstyle);
+    s += '\n';
     s += "WIPEOUTFRAME ";
     append_uint(s, doc.wipeout_frames ? 1 : 0);
     s += '\n';
@@ -1514,6 +1522,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed WIPEOUTFRAME");
             }
             doc.wipeout_frames = on != 0;
+        } else if (key == "CURDIMSTYLE") {
+            std::uint64_t i = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], i)) {
+                return fail("malformed CURDIMSTYLE");
+            }
+            doc.current_dimstyle = static_cast<std::uint16_t>(i);
         } else if (key == "CURTEXTSTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {
@@ -1809,6 +1823,16 @@ IoResult parse_native(std::string_view text, Document& out) {
                     to_uint(tok[25], tf);
                     ds.text_fit = static_cast<std::uint8_t>(std::min<std::uint64_t>(tf, 2));
                     name_at = 26;
+                }
+                // v38: the decimal separator and DIMZIN.
+                if (version >= 38 && tok.size() >= 29) {
+                    std::uint64_t sep = '.';
+                    std::uint64_t zin = 0;
+                    to_uint(tok[26], sep);
+                    to_uint(tok[27], zin);
+                    ds.decimal_separator = sep == ',' ? ',' : '.';
+                    ds.zero_suppression = static_cast<std::uint8_t>(zin & (kDimZinLeading | kDimZinTrailing));
+                    name_at = 28;
                 }
             }
             std::string name(tok[name_at]);

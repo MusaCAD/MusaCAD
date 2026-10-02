@@ -581,6 +581,7 @@ void GeometryStore::clear() noexcept {
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
     current_layer_ = 0;
     dimstyles_.assign(1, DimStyle{"Standard"});
+    current_dimstyle_ = 0;
     // Every table a fresh store starts with, restored here too: a store that was moved
     // out of (a document parked behind another tab) and then cleared must be a fresh
     // store again, Standard text style included.
@@ -801,6 +802,9 @@ void GeometryStore::set_dimstyle_table(std::vector<DimStyle> styles) {
         dimstyles_.push_back(DimStyle{"Standard"});
     }
     dimstyles_[0].name = "Standard";
+    if (current_dimstyle_ >= dimstyles_.size()) {
+        current_dimstyle_ = 0;
+    }
 }
 
 bool GeometryStore::set_dimstyle(std::uint16_t index, const DimStyle& style) {
@@ -1285,10 +1289,13 @@ bool GeometryStore::dimstyle_in_use(std::uint16_t index) const noexcept {
 }
 
 bool GeometryStore::remove_dimstyle(std::uint16_t index) {
-    if (index == 0 || index >= dimstyles_.size() || dimstyle_in_use(index)) {
-        return false; // style 0 is the default and stays; a used style stays
+    if (index == 0 || index >= dimstyles_.size() || index == current_dimstyle_ || dimstyle_in_use(index)) {
+        return false; // style 0 is the default and stays; a used or the current style stays
     }
     dimstyles_.erase(dimstyles_.begin() + index);
+    if (current_dimstyle_ > index) {
+        --current_dimstyle_;
+    }
     const auto fix = [&](auto& d) {
         if (d.style > index) {
             --d.style;

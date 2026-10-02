@@ -7,7 +7,9 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <utility>
 
+#include "musacad/core/io/dxf.hpp"
 #include "musacad/core/text/text_codes.hpp"
 
 namespace musacad::core {
@@ -85,6 +87,60 @@ Vec2 dim_line_direction(const DimData& d) {
     return u;
 }
 
+double ccw_sweep(Vec2 from, Vec2 to) {
+    double s = std::atan2(to.y, to.x) - std::atan2(from.y, from.x);
+    while (s <= 1e-12) {
+        s += kTwoPi;
+    }
+    while (s > kTwoPi + 1e-12) {
+        s -= kTwoPi;
+    }
+    return s;
+}
+
+void place_angular_dim(DimData& d, Vec2 at, AngularFrom from, std::optional<Vec2> quadrant) {
+    const Vec2 v = d.a;
+    const Vec2 q = quadrant.value_or(at) - v;
+    const double r = distance(v, at);
+    d.aux = r > 1e-12 ? r : std::max(distance(v, d.b), distance(v, d.line_pt)) * 0.8;
+    if (from == AngularFrom::Arc) {
+        return;
+    }
+    const auto inside = [&](Vec2 s, Vec2 e) { // q within the counter-clockwise turn s -> e
+        return ccw_sweep(s, q) <= ccw_sweep(s, e) + 1e-12;
+    };
+    if (from == AngularFrom::Points) {
+        if (!inside(d.b - v, d.line_pt - v)) {
+            std::swap(d.b, d.line_pt);
+        }
+        return;
+    }
+    // Two lines: the rays both ways along each, around the vertex in turn; the one q
+    // stands between, starting where the turn starts.
+    const Vec2 p1 = d.b;
+    const Vec2 p2 = d.line_pt;
+    const Vec2 rays[4] = {p1 - v, p2 - v, v - p1, v - p2};
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if ((i % 2) == (j % 2)) {
+                continue; // one ray of each line
+            }
+            // The turn i -> j must hold no other ray, and q.
+            bool clear = true;
+            for (int k = 0; k < 4 && clear; ++k) {
+                if (k != i && k != j && ccw_sweep(rays[i], rays[k]) < ccw_sweep(rays[i], rays[j]) - 1e-12) {
+                    clear = false;
+                }
+            }
+            if (clear && inside(rays[i], rays[j])) {
+                d.b = v + rays[i];
+                d.line_pt = v + rays[j];
+                return;
+            }
+        }
+    }
+}
+
 double linear_dim_auto_angle(Vec2 a, Vec2 b, Vec2 line_pt) {
     const Vec2 lo{std::min(a.x, b.x), std::min(a.y, b.y)};
     const Vec2 hi{std::max(a.x, b.x), std::max(a.y, b.y)};
@@ -131,6 +187,9 @@ double dim_measure(const DimData& d) {
         return 2.0 * distance(d.a, d.b);
     case DimType::Angular: {
         // a = vertex, b = point on ray 1, line_pt = point on ray 2.
+        if (d.aux > 0.0) {
+            return to_degrees(ccw_sweep(d.b - d.a, d.line_pt - d.a));
+        }
         const Vec2 u1 = normalized(d.b - d.a);
         const Vec2 u2 = normalized(d.line_pt - d.a);
         const double c = std::clamp(dot(u1, u2), -1.0, 1.0);
@@ -165,13 +224,162 @@ std::string format_measurement(double value, std::uint8_t precision) {
 }
 
 namespace {
+bool same_var(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const char x = a[i] >= 'a' && a[i] <= 'z' ? static_cast<char>(a[i] - 32) : a[i];
+        if (x != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+ElementColor color_of_aci(double v) {
+    const long aci = std::lround(v);
+    if (aci <= 0 || aci >= 256) {
+        return ElementColor{}; // ByLayer (ByBlock reads as ByLayer outside a block)
+    }
+    return ElementColor{false, io::dxf_aci_to_rgb(aci)};
+}
+double aci_of(const ElementColor& c) {
+    if (c.by_layer) {
+        return 256.0;
+    }
+    for (long i = 1; i < 256; ++i) {
+        if (io::dxf_aci_to_rgb(i) == c.color) {
+            return static_cast<double>(i);
+        }
+    }
+    return -1.0;
+}
+} // namespace
+
+bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
+    if (!std::isfinite(v)) {
+        return false;
+    }
+    const auto whole = [&](double lo, double hi) { return v >= lo && v <= hi && v == std::floor(v); };
+    if (same_var(var, "DIMTXT") && v > 0.0) {
+        s.text_height = v;
+    } else if (same_var(var, "DIMASZ") && v >= 0.0) {
+        s.arrow_size = v;
+    } else if (same_var(var, "DIMBLK") && whole(0, 3)) {
+        s.arrow_type = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMDEC") && whole(0, 8)) {
+        s.precision = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMDSEP") && (v == 46.0 || v == 44.0)) {
+        s.decimal_separator = v == 44.0 ? ',' : '.';
+    } else if (same_var(var, "DIMZIN") && whole(0, 15)) {
+        s.zero_suppression = static_cast<std::uint8_t>(static_cast<int>(v) & (kDimZinLeading | kDimZinTrailing));
+    } else if (same_var(var, "DIMEXO") && v >= 0.0) {
+        s.ext_offset = v;
+    } else if (same_var(var, "DIMEXE") && v >= 0.0) {
+        s.ext_extension = v;
+    } else if (same_var(var, "DIMTAD") && whole(0, 1)) {
+        s.text_above = v != 0.0;
+    } else if (same_var(var, "DIMATFIT") && whole(0, 2)) {
+        s.text_fit = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMLWD") && whole(0, 211)) {
+        s.dim_lineweight = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMCLRD") && whole(0, 256)) {
+        s.dim_color = color_of_aci(v);
+        s.arrow_color = s.dim_color; // arrowheads take the dimension line's colour
+    } else if (same_var(var, "DIMCLRE") && whole(0, 256)) {
+        s.ext_color = color_of_aci(v);
+    } else if (same_var(var, "DIMCLRT") && whole(0, 256)) {
+        s.text_color = color_of_aci(v);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
+    if (same_var(var, "DIMTXT")) {
+        return s.text_height;
+    }
+    if (same_var(var, "DIMASZ")) {
+        return s.arrow_size;
+    }
+    if (same_var(var, "DIMBLK")) {
+        return s.arrow_type;
+    }
+    if (same_var(var, "DIMDEC")) {
+        return s.precision;
+    }
+    if (same_var(var, "DIMDSEP")) {
+        return s.decimal_separator == ',' ? 44.0 : 46.0;
+    }
+    if (same_var(var, "DIMZIN")) {
+        return s.zero_suppression;
+    }
+    if (same_var(var, "DIMEXO")) {
+        return s.ext_offset;
+    }
+    if (same_var(var, "DIMEXE")) {
+        return s.ext_extension;
+    }
+    if (same_var(var, "DIMTAD")) {
+        return s.text_above ? 1.0 : 0.0;
+    }
+    if (same_var(var, "DIMATFIT")) {
+        return s.text_fit;
+    }
+    if (same_var(var, "DIMLWD")) {
+        return s.dim_lineweight;
+    }
+    if (same_var(var, "DIMCLRD")) {
+        return aci_of(s.dim_color);
+    }
+    if (same_var(var, "DIMCLRE")) {
+        return aci_of(s.ext_color);
+    }
+    if (same_var(var, "DIMCLRT")) {
+        return aci_of(s.text_color);
+    }
+    return std::nullopt;
+}
+
+std::string format_dim_value(double value, const DimStyle& style) {
+    std::string s = format_measurement(value, style.precision);
+    if (s.find_first_of("123456789") == std::string::npos && !s.empty() && s[0] == '-') {
+        s.erase(0, 1); // a value that rounds to nothing is 0, not -0
+    }
+    const std::size_t dot = s.find('.');
+    if ((style.zero_suppression & kDimZinTrailing) != 0 && dot != std::string::npos) {
+        while (s.size() > dot + 1 && s.back() == '0') {
+            s.pop_back();
+        }
+        if (s.size() == dot + 1) {
+            s.pop_back();
+        }
+    }
+    if ((style.zero_suppression & kDimZinLeading) != 0 && s.find('.') != std::string::npos) {
+        const std::size_t at = s[0] == '-' ? 1 : 0;
+        if (s.compare(at, 2, "0.") == 0) {
+            s.erase(at, 1);
+        }
+    }
+    if (style.decimal_separator != '.' && style.decimal_separator != '\0') {
+        for (char& c : s) {
+            if (c == '.') {
+                c = style.decimal_separator;
+            }
+        }
+    }
+    return s;
+}
+
+namespace {
 
 /// The type-specific decoration the measured value always carries (R, the diameter
 /// sign, the degree sign). Independent of the AUTHORED decoration below. `value` is
 /// passed in rather than measured here so the Limits mode can format its two limits
 /// through exactly the same per-type rule.
 std::string measured_text_for(DimType type, const DimStyle& style, double value) {
-    const std::string v = format_measurement(value, style.precision);
+    const std::string v = format_dim_value(value, style);
     switch (type) {
     case DimType::Radius:
     case DimType::Jogged:
@@ -272,8 +480,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
     case TolMode::Symmetric:
         // One line: the value, then the deviation. ISO 129-1 writes a single
         // deviation as value ± tol.
-        out.line1 = wrap(measured_text(d, style) + " ±" +
-                         format_measurement(std::abs(d.tol.upper), style.precision));
+        out.line1 = wrap(measured_text(d, style) + " ±" + format_dim_value(std::abs(d.tol.upper), style));
         break;
     case TolMode::Limits: {
         // Two lines: the actual limit VALUES, upper over lower -- not the deviations.
@@ -540,6 +747,44 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                          style.arrow_size, atype);
         const double am = a0 + sweep * 0.5;
         g.text_pos = on(am, rd + style.text_height * 0.7);
+        g.text_rotation = 0.0;
+        g.text_justify = text::Justify::Center;
+        finish_label();
+        connect_moved_label();
+        return g;
+    }
+
+    if (d.type == DimType::Angular && d.aux > 0.0) {
+        // The arc where it was placed, from ray 1 counter-clockwise to ray 2; extension
+        // lines carry each ray out to it when its point stops short.
+        const Vec2 v = d.a;
+        const double r = d.aux;
+        const double a0 = std::atan2(d.b.y - v.y, d.b.x - v.x);
+        const double sweep = ccw_sweep(d.b - v, d.line_pt - v);
+        const double a1 = a0 + sweep;
+        const auto on = [&](double ang, double rad) { return Vec2{v.x + rad * std::cos(ang), v.y + rad * std::sin(ang)}; };
+        for (const auto& [ang, p] : {std::pair<double, Vec2>{a0, d.b}, std::pair<double, Vec2>{a1, d.line_pt}}) {
+            const double reach = distance(v, p);
+            if (r > reach + style.ext_offset) {
+                seg(g.ext_lines, on(ang, reach + style.ext_offset), on(ang, r + style.ext_extension));
+            }
+        }
+        const int steps = std::max(24, static_cast<int>(std::ceil(sweep / 0.05)));
+        Vec2 prev{};
+        for (int i = 0; i <= steps; ++i) {
+            const Vec2 p = on(a0 + sweep * (static_cast<double>(i) / steps), r);
+            if (i > 0) {
+                seg(g.dim_lines, prev, p);
+            }
+            prev = p;
+        }
+        // Arrowheads at both ends, lying along the arc inside it.
+        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a0, r), Vec2{-std::sin(a0), std::cos(a0)}, style.arrow_size,
+                         atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a1, r), Vec2{std::sin(a1), -std::cos(a1)}, style.arrow_size,
+                         atype);
+        const double am = a0 + sweep * 0.5;
+        g.text_pos = on(am, r + style.text_height * 0.6);
         g.text_rotation = 0.0;
         g.text_justify = text::Justify::Center;
         finish_label();

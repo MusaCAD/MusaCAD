@@ -123,11 +123,14 @@ commands (Ribbon Phase A):
 | DIMALIGNED (DAL) | A dimension aligned with two points or a selected object; `[Mtext/Text/Angle]`. |
 | DIMRADIUS (DRA) | Create a radius dimension for a circle or arc. |
 | DIMDIAMETER (DDI) | Create a diameter dimension for a circle or arc. |
-| DIMANGULAR (DAN) | Create an angular dimension between two lines. |
+| DIMANGULAR (DAN) | An angular dimension of two lines, an arc, a circle or three points, its arc placed where you click; `[Mtext/Text/Angle/Quadrant]`. |
 | DIMORDINATE (DOR) | Ordinate (X or Y datum) dimension with a leader; Xdatum/Ydatum or automatic from the leader direction. |
 | DIMJOGGED (DJO) | Jogged radius dimension: arc or circle, centre location override, dimension line location, jog location. |
 | DIMARC (DAR) | Arc length dimension of an arc or a polyline arc segment. |
 | DIM | Create a dimension suited to the selected object. |
+| DIMSTYLE (D, DST, DDIM) | The Dimension Style Manager: the drawing's dimension styles, Set Current, New and Modify (lines, arrows, text, primary units). |
+| -DIMSTYLE | Dimension styles at the command line: `[Save/Restore/STatus/?]`. |
+| DIMTXT, DIMASZ, DIMBLK, DIMDEC, DIMDSEP, DIMZIN, DIMEXO, DIMEXE, DIMTAD, DIMATFIT, DIMLWD, DIMCLRD, DIMCLRE, DIMCLRT | Set one value of the current dimension style (`Enter new value for DIMTXT <2.5000>:`). |
 | LEADER | Draw a leader line with an arrowhead and annotation. |
 | MTEXT (MT) | Create a multiline (paragraph) text object. |
 | QLEADER (LE) | Draw a quick leader with an arrowhead and annotation. |
@@ -326,13 +329,14 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | DIMALIGNED -- the same two prompts (`<select object>`, `[Mtext/Text/Angle]`) | DAL | Implemented (Angle: the text runs along the line) |
 | DIMRADIUS (**select a circle/arc**, or a filleted polyline arc segment → R) | DRA | Implemented |
 | DIMDIAMETER (**select a circle/arc** → ⌀ from its own geometry) | DDI | Implemented |
-| DIMANGULAR (**select two lines/edges** → angle from their directions) | DAN | Implemented |
+| DIMANGULAR -- `Select arc, circle, line, or <specify vertex>:`: two lines (`Select second line:`), an arc (its own angle), a circle (the picked point, then `Specify second angle endpoint:`) or, with Enter, three points (`Specify angle vertex:`, the two endpoints). Then `Specify dimension arc line location or [Mtext/Text/Angle/Quadrant]:` -- the arc goes where it is clicked and, as in AutoCAD, the angle is the one that point stands in: one of the four two lines make, or for three points and a circle the angle or the rest of the turn (a reflex angle can be dimensioned). Extension lines carry the rays out to the arc. **Quadrant** chooses the angle with a point of its own, the arc then going anywhere. The arc has a grip for its radius; ROTATE, MIRROR and SCALE keep it. DXF: written as before, without the arc's radius (read back as the smaller angle) | DAN | Implemented (Angle: the text stands upright) |
 | DIMORDINATE (X/Y datum, leader dogleg) | DOR | Implemented (Mtext/Text/Angle deferred) |
 | DIMJOGGED (centre override + jog) | DJO | Implemented (exports to DXF as a radius dimension) |
 | DIMARC (arc or polyline arc segment) | DAR | Implemented (Partial/Leader deferred; exports to DXF as an aligned dimension carrying the arc-length text) |
 | Arrowheads: filled / open / tick / dot (solid filled geometry) | DIMSTYLE | Implemented |
-| DIMSTYLE: text height / arrow type+size / precision / ext lines | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
-| DIMSTYLE per-element colours (dim / ext / text / arrow) + dim lineweight | Dim Style btn | Implemented |
+| **DIMSTYLE** -- the Dimension Style Manager: the drawing's styles (the current one in bold), **Set Current**, **New...** (a name, starting from the selected style) and **Modify...**, each on four tabs loaded with the style's own values: **Lines** (dimension and extension line colours, lineweight, extend beyond, offset from origin), **Symbols and Arrows** (arrowhead, size, colour -- leaders use them too), **Text** (height, colour, above or centred, narrow-dimension fit), **Primary Units** (decimal places, decimal separator, leading / trailing zero suppression, with a sample). Every dimension in a style follows a change at once; new dimensions, leaders and GD&T frames are drawn in the current style | D / DST / DDIM / DIMSTYLE, Dimension Style buttons | Implemented |
+| **-DIMSTYLE** -- `Enter a dimension style option [Save/Restore/STatus/?] <Restore>:`: Restore makes a style current, Save copies the current one under a new name (or redefines one, `redefine it? <N>`) and makes it current, STatus lists the current style's values, ? the styles | -DIMSTYLE | Implemented |
+| Dimension variables -- DIMTXT, DIMASZ, DIMBLK (0 filled, 1 tick, 2 open, 3 dot), DIMDEC, DIMDSEP (`.` or `,`), DIMZIN (4 leading, 8 trailing), DIMEXO, DIMEXE, DIMTAD, DIMATFIT (0 auto, 1 inside, 2 outside), DIMLWD, DIMCLRD / DIMCLRE / DIMCLRT (ACI, BYLAYER): each sets the current style's value, so a script can set up a drawing's dimensions in one go. (AutoCAD keeps such changes as an override of the style; here they change the style itself.) Kept in `.musa`; DXF writes DIMEXO, DIMEXE, DIMTAD, DIMZIN, DIMDSEP, DIMLWD and `$DIMSTYLE` too | DIMTXT ... | Implemented |
 | Object-aware dims capture **def points** at creation (no entity ref) | — | Implemented (deleting the source entity never dangles the dim) |
 | Placement preview: the full dimension (with live value) rubber-bands to the cursor, commits on click | — | Implemented (all dim types + DIM; angular arc is fixed by its two lines) |
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
