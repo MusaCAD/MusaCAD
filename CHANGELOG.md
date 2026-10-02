@@ -99,9 +99,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (each text about a point of its own; a height, a factor or Reference, or another
   text's height) and **TXT2MTXT**.
 - **TEXTEDIT** asks for one object after another (`[Undo/Mode]`, `TEXTEDITMODE`).
-- **DIMSTYLE** -- the Dimension Style Manager: the drawing's dimension styles, **Set
-  Current**, **New** and **Modify**, each style on four tabs (lines, symbols and arrows,
-  text, primary units) loaded with its own values: text height and colour, arrowheads
+- **DIMSTYLE** -- the Dimension Style Manager: the drawing's dimension styles (all, or those
+  in use), a live **preview** of the selected one -- a sample part dimensioned with it, drawn
+  by the same dimension code as the drawing -- and its description; **Set Current**, **New**,
+  **Modify**, **Rename** and **Delete** (also on the list's right-click menu). Each style
+  opens on AutoCAD's tabs (Lines, Symbols and Arrows, Text, Fit, Primary Units) loaded
+  with its own values, the preview beside them following every change: text height and colour, arrowheads
   (leaders take theirs from the style too), decimal places, the decimal separator,
   leading and trailing zero suppression, extension lines, lineweight and colours. New
   dimensions, leaders and GD&T frames are drawn in the current style, which is saved
@@ -110,6 +113,15 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `DIMBLK`, `DIMDEC`, `DIMDSEP`, `DIMZIN`, `DIMEXO`, `DIMEXE`, `DIMTAD`, `DIMATFIT`,
   `DIMLWD`, `DIMCLRD`, `DIMCLRE`, `DIMCLRT` -- set the current style's values one by one,
   so a script can set up a drawing's dimensions at once.
+- **Dimension text moves as AutoCAD moves it.** Drag a linear or aligned dimension's text
+  and its dimension line comes with it: the text slides along the line, between the
+  extension lines or out beside them, and the line extends under it. Radius and diameter
+  text stands where the dimension is placed -- outside the circle on a leader with a short
+  landing and a centre mark at the centre, inside it on the line, which breaks around the
+  text -- and dragging it swings the leader round the circle. Angular text slides along its arc, which follows it out and
+  grows to reach it. A style's **Fit** tab chooses what moved text does (`DIMTMOVE`): take
+  its dimension line along (the default), or move alone, with a leader back to the line or
+  without one.
 - **DIMLINEAR as AutoCAD has it** (#56) -- `<select object>` (Enter, then a line, a
   polyline segment, an arc or a circle) and `[Mtext/Text/Angle/Horizontal/Vertical/Rotated]`;
   DIMALIGNED takes `<select object>` and `[Mtext/Text/Angle]`. The text typed at Text
@@ -144,6 +156,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   angle at a fixed distance.
 - The Dimension Style button's form edited Standard only and opened on the default values
   rather than the style's own, so pressing OK put back whatever had been changed.
+- A dimension's text dragged away from its line hung on a diagonal leader, and a radius or
+  diameter dimension's text stayed at the circle wherever the dimension had been placed.
 - A centred or right-justified text was bounded, picked and given its edit box as if it
   were left-justified, and one read from a DXF was placed on its first point instead of
   the point it is justified on. Drawing, bounds, picking, grips and the edit box share

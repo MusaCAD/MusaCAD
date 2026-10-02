@@ -131,12 +131,13 @@ void orient_linear_dim(DimData& d, std::optional<double> fixed, bool circle = fa
 /// (decimal places, 0..8), DIMDSEP (the separator's character code, '.' or ','),
 /// DIMZIN (4 leading, 8 trailing zeros suppressed), DIMEXO / DIMEXE (extension line
 /// offset and extension), DIMTAD (1 text above the line, 0 centred), DIMATFIT here as
-/// the text fit (0 auto, 1 inside, 2 outside), DIMLWD (lineweight, 1/100 mm), DIMCLRD /
+/// the text fit (0 auto, 1 inside, 2 outside), DIMTMOVE (moved text: 0 with the dimension
+/// line, 1 alone with a leader, 2 alone), DIMLWD (lineweight, 1/100 mm), DIMCLRD /
 /// DIMCLRE / DIMCLRT (dimension line and arrowheads, extension lines, text: an ACI
 /// colour, 256 or 0 ByLayer).
-inline constexpr const char* kDimVars[] = {"DIMTXT", "DIMASZ", "DIMBLK", "DIMDEC", "DIMDSEP", "DIMZIN",
-                                           "DIMEXO", "DIMEXE", "DIMTAD", "DIMATFIT", "DIMLWD", "DIMCLRD",
-                                           "DIMCLRE", "DIMCLRT"};
+inline constexpr const char* kDimVars[] = {"DIMTXT", "DIMASZ", "DIMBLK", "DIMDEC",  "DIMDSEP",  "DIMZIN",
+                                           "DIMEXO", "DIMEXE", "DIMTAD", "DIMATFIT", "DIMTMOVE", "DIMLWD",
+                                           "DIMCLRD", "DIMCLRE", "DIMCLRT"};
 
 /// Sets `var` (one of kDimVars, any case) on `style`; false for an unknown variable or a
 /// value out of its range, `style` then unchanged.

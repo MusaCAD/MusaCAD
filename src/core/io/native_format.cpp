@@ -420,6 +420,8 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, ds.zero_suppression);
         s += ' ';
+        append_uint(s, ds.text_move);
+        s += ' ';
         s += ds.name;
         s += '\n';
     }
@@ -1824,15 +1826,18 @@ IoResult parse_native(std::string_view text, Document& out) {
                     ds.text_fit = static_cast<std::uint8_t>(std::min<std::uint64_t>(tf, 2));
                     name_at = 26;
                 }
-                // v38: the decimal separator and DIMZIN.
-                if (version >= 38 && tok.size() >= 29) {
+                // v38: the decimal separator, DIMZIN and DIMTMOVE.
+                if (version >= 38 && tok.size() >= 30) {
                     std::uint64_t sep = '.';
                     std::uint64_t zin = 0;
+                    std::uint64_t tmove = 0;
                     to_uint(tok[26], sep);
                     to_uint(tok[27], zin);
+                    to_uint(tok[28], tmove);
                     ds.decimal_separator = sep == ',' ? ',' : '.';
                     ds.zero_suppression = static_cast<std::uint8_t>(zin & (kDimZinLeading | kDimZinTrailing));
-                    name_at = 28;
+                    ds.text_move = static_cast<std::uint8_t>(std::min<std::uint64_t>(tmove, 2));
+                    name_at = 29;
                 }
             }
             std::string name(tok[name_at]);

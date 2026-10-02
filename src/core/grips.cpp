@@ -782,6 +782,60 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                 }
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 const auto t = static_cast<DimType>(x.type);
+                const std::uint8_t move = apply_dim_overrides(x.dim_style, x.overrides).text_move;
+                if ((t == DimType::Radius || t == DimType::Diameter) && move == 0 &&
+                    (grip_index == DimData::kTextGripIndex || grip_index == 2)) {
+                    // The text goes where it is dragged and the leader swings round to it:
+                    // the arrow's point on the circle follows the drag's direction.
+                    const double r = distance(x.a, x.b);
+                    const Vec2 v = newpos - x.a;
+                    if (length_squared(v) > 1e-18) {
+                        x.b = x.a + normalized(v) * r;
+                    }
+                    x.line_pt = newpos;
+                    x.text_offset = {};
+                    return;
+                }
+                if (grip_index == DimData::kTextGripIndex && move == 0 &&
+                    (t == DimType::Linear || t == DimType::Aligned || (t == DimType::Angular && x.aux > 0.0))) {
+                    // DIMTMOVE 0: the dimension line moves with the text. Its offset from
+                    // what it measures follows the drag across; along it, the text slides
+                    // (between the extension lines or out beside them).
+                    DimData probe;
+                    probe.type = t;
+                    probe.a = x.a;
+                    probe.b = x.b;
+                    probe.line_pt = x.line_pt;
+                    probe.overrides = x.overrides;
+                    probe.tol = x.tol;
+                    probe.aux = x.aux;
+                    if (t == DimType::Angular) {
+                        const double r = std::max(distance(x.a, newpos), 1e-9);
+                        const double a0 = std::atan2(x.b.y - x.a.y, x.b.x - x.a.x);
+                        const double mid = a0 + ccw_sweep(x.b - x.a, x.line_pt - x.a) * 0.5;
+                        double da = std::atan2(newpos.y - x.a.y, newpos.x - x.a.x) - mid;
+                        while (da > kPi) {
+                            da -= kTwoPi;
+                        }
+                        while (da <= -kPi) {
+                            da += kTwoPi;
+                        }
+                        x.aux = r;
+                        x.text_offset = {da * r, 0.0};
+                        return;
+                    }
+                    const DimGeometry base = compute_dim_geometry(
+                        probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
+                    Vec2 q[4];
+                    const Vec2 anchor = dim_label_quad(base, false, q) ? (q[0] + q[2]) * 0.5 : base.text_pos;
+                    const Vec2 dir = dim_line_direction(probe);
+                    const Vec2 across{-dir.y, dir.x};
+                    const Vec2 delta = newpos - anchor;
+                    x.line_pt = x.line_pt + across * dot(delta, across);
+                    const Vec2 ax{std::cos(base.text_rotation), std::sin(base.text_rotation)};
+                    x.text_offset = {dot(delta, ax), 0.0};
+                    return;
+                }
                 if (grip_index == DimData::kTextGripIndex) {
                     // Displacement is stored in the TEXT's own frame, so a rotated
                     // (e.g. vertical) dimension's label moves along its own baseline
