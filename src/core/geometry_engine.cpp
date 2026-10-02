@@ -10584,7 +10584,10 @@ void GeometryEngine::rebuild_and_publish() {
         std::vector<Vec2> htris;
         for (const EntityHandle h : selection_) {
             kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
-            if (h.kind == EntityKind::Insert) { // disjoint pairs: no phantom connectors
+            // A block reference's and a dimension's lines come as disjoint pairs: joined up
+            // they would draw phantom connectors (a radius dimension's centre mark to its
+            // arrow, say).
+            if (h.kind == EntityKind::Insert || h.kind == EntityKind::Dimension) {
                 for (std::size_t t = 0; t + 1 < tess.size(); t += 2) {
                     sel_cache_lines_.push_back(tess[t]);
                     sel_cache_lines_.push_back(tess[t + 1]);
@@ -10787,7 +10790,7 @@ void GeometryEngine::rebuild_and_publish() {
             buf.has_hover = true;
             std::vector<Vec2> tess;
             kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
-            if (hv.kind == EntityKind::Insert) { // disjoint pairs: no phantom connectors
+            if (hv.kind == EntityKind::Insert || hv.kind == EntityKind::Dimension) { // disjoint pairs
                 for (std::size_t s = 0; s + 1 < tess.size(); s += 2) {
                     buf.hover_line_vertices.push_back(tess[s]);
                     buf.hover_line_vertices.push_back(tess[s + 1]);

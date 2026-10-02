@@ -6,7 +6,7 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.6.0 - 2026-10-02
 
 ### Added
 - **On Flathub** -- `flatpak install flathub org.musacad.MusaCAD` (#1).
@@ -102,24 +102,24 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **DIMSTYLE** -- the Dimension Style Manager: the drawing's dimension styles (all, or those
   in use), a live **preview** of the selected one -- a sample part dimensioned with it, drawn
   by the same dimension code as the drawing -- and its description; **Set Current**, **New**,
-  **Modify**, **Rename** and **Delete** (also on the list's right-click menu). Each style
-  opens on AutoCAD's tabs (Lines, Symbols and Arrows, Text, Fit, Primary Units) loaded
-  with its own values, the preview beside them following every change: text height and colour, arrowheads
-  (leaders take theirs from the style too), decimal places, the decimal separator,
-  leading and trailing zero suppression, extension lines, lineweight and colours. New
-  dimensions, leaders and GD&T frames are drawn in the current style, which is saved
+  **Modify**, **Rename** and **Delete** (also on the list's right-click menu). A style opens
+  on AutoCAD's tabs -- Lines, Symbols and Arrows, Text, Fit, Primary Units -- loaded with its
+  own values, the preview beside them following every change: text height and colour,
+  arrowheads (leaders take theirs from the style too), decimal places, the decimal
+  separator, leading and trailing zero suppression, extension lines, lineweight and colours.
+  New dimensions, leaders and GD&T frames are drawn in the current style, which is saved
   with the drawing (and as DXF `$DIMSTYLE`). **-DIMSTYLE** does the same at the command
   line (`[Save/Restore/STatus/?]`), and the dimension variables -- `DIMTXT`, `DIMASZ`,
   `DIMBLK`, `DIMDEC`, `DIMDSEP`, `DIMZIN`, `DIMEXO`, `DIMEXE`, `DIMTAD`, `DIMATFIT`,
-  `DIMLWD`, `DIMCLRD`, `DIMCLRE`, `DIMCLRT` -- set the current style's values one by one,
-  so a script can set up a drawing's dimensions at once.
+  `DIMTMOVE`, `DIMLWD`, `DIMCLRD`, `DIMCLRE`, `DIMCLRT` -- set the current style's values
+  one by one, so a script can set up a drawing's dimensions at once.
 - **Dimension text moves as AutoCAD moves it.** Drag a linear or aligned dimension's text
   and its dimension line comes with it: the text slides along the line, between the
   extension lines or out beside them, and the line extends under it. Radius and diameter
   text stands where the dimension is placed -- outside the circle on a leader with a short
   landing and a centre mark at the centre, inside it on the line, which breaks around the
-  text -- and dragging it swings the leader round the circle. Angular text slides along its arc, which follows it out and
-  grows to reach it. A style's **Fit** tab chooses what moved text does (`DIMTMOVE`): take
+  text -- and dragging it swings the leader round the circle. Angular text slides along its
+  arc, which follows it out and grows to reach it. A style's **Fit** tab chooses what moved text does (`DIMTMOVE`): take
   its dimension line along (the default), or move alone, with a leader back to the line or
   without one.
 - **DIMLINEAR as AutoCAD has it** (#56) -- `<select object>` (Enter, then a line, a
@@ -158,6 +158,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   rather than the style's own, so pressing OK put back whatever had been changed.
 - A dimension's text dragged away from its line hung on a diagonal leader, and a radius or
   diameter dimension's text stayed at the circle wherever the dimension had been placed.
+- A selected or hovered dimension was highlighted with lines it does not have, joining its
+  separate pieces: a radius dimension showed one from the centre to the circle.
 - A centred or right-justified text was bounded, picked and given its edit box as if it
   were left-justified, and one read from a DXF was placed on its first point instead of
   the point it is justified on. Drawing, bounds, picking, grips and the edit box share
@@ -194,8 +196,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - The native format is version 38: `POLYLINE` records may end with `W` and two widths per
   vertex and `Z` with the elevation and thickness; a `FILLMODE` record; `TEXT` and
   `ATTDEF` records may carry the alignment point and the text's own width factor;
-  `DIMSTYLE` records the decimal separator and zero suppression; a `CURDIMSTYLE` record. Older
-  files open unchanged.
+  `DIMSTYLE` records the decimal separator, zero suppression and where moved text goes;
+  a `CURDIMSTYLE` record. Older files open unchanged.
 - TEXT no longer ends after one line (scripts and macros add an empty line to end it).
 - DXF: LWPOLYLINE writes and reads the constant width (43), the per-vertex widths (40 /
   41), the elevation (38) and the thickness (39); the legacy POLYLINE / VERTEX form's
