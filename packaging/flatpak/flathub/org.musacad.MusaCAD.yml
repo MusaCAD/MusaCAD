@@ -15,8 +15,10 @@ modules:
   - name: musa-cad
     buildsystem: cmake-ninja
     builddir: true
+    no-parallel-make: true
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG
       - -DMUSACAD_BUILD_DEV_TOOLS=OFF
     sources:
       - type: git
