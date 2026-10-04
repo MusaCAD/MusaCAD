@@ -35,6 +35,31 @@
 
   <launchable type="desktop-id">org.musacad.MusaCAD.desktop</launchable>
 
+  <categories>
+    <category>Graphics</category>
+    <category>Engineering</category>
+    <category>2DGraphics</category>
+  </categories>
+
+  <keywords>
+    <keyword>CAD</keyword>
+    <keyword>2D</keyword>
+    <keyword>drafting</keyword>
+    <keyword>technical drawing</keyword>
+    <keyword>engineering</keyword>
+    <keyword>architecture</keyword>
+    <keyword>mechanical</keyword>
+    <keyword>floor plan</keyword>
+    <keyword>blueprint</keyword>
+    <keyword>DXF</keyword>
+    <keyword>DWG</keyword>
+  </keywords>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#c8dcf3</color>
+    <color type="primary" scheme_preference="dark">#125b56</color>
+  </branding>
+
   <url type="homepage">https://musacad.org/</url>
   <url type="bugtracker">https://github.com/MusaCAD/MusaCAD/issues</url>
   <url type="vcs-browser">https://github.com/MusaCAD/MusaCAD</url>

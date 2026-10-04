@@ -6,6 +6,14 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+- The Flathub listing and the desktop's own search know Musa CAD by what it does: keywords
+  (CAD, 2D, drafting, technical drawing, engineering, architecture, mechanical, floor plan,
+  blueprint, DXF, DWG) in the desktop file and the metainfo, and the brand colours Flathub
+  shows behind the icon (a pale blue in light mode, a deep teal in dark).
+
 ## 0.6.0 - 2026-10-02
 
 ### Added
