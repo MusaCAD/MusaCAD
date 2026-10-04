@@ -8,5 +8,6 @@ Exec=musacad_app %F
 Icon=org.musacad.MusaCAD
 Terminal=false
 Categories=Graphics;Engineering;2DGraphics;
+Keywords=CAD;2D;drafting;technical drawing;engineering;architecture;mechanical;floor plan;blueprint;DXF;DWG;
 StartupNotify=true
 StartupWMClass=musacad_app
