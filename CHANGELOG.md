@@ -75,6 +75,18 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   centre of an arc or circle, with centre lines if asked. **DIMOVERRIDE** gives the selected
   dimensions values of their own for DIMTXT, DIMASZ, DIMBLK, DIMDEC, DIMTAD, DIMATFIT and the
   three colours, or clears theirs.
+- **Modify tools** (#55) -- **REVERSE** turns lines, polylines and splines round.
+  **OVERKILL** deletes duplicate objects and makes collinear lines that overlap (or, if asked,
+  meet end to end) one line. **COPYTOLAYER** copies objects to a layer, picked or named
+  (made if there is none), in place or moved; **LAYMCH** moves them to one. **CHPROP**
+  changes colour, layer, linetype, linetype scale and lineweight at the command line, in
+  one undo step. **BLEND** joins the ends of two objects with a spline, Tangent or Smooth.
+  **REDO** and **MREDO** are commands as well as Ctrl+Y.
+- **Draw tools** (#45) -- **TRACE** draws wide segments (one polyline of the width);
+  **SOLID** draws filled triangles and quadrilaterals; **BOUNDARY** makes closed polylines
+  round the area HATCH's pick point would fill and round its islands; **CENTERMARK** marks
+  centres with centre lines, and **CENTERLINE** draws the centre line between two lines,
+  in the Center linetype.
 - **The layer tools** (#55) -- **LAYOFF** and **LAYFRZ** turn off or freeze the layer of
   each object picked (Undo takes the last back; the current layer is never frozen),
   **LAYLCK** / **LAYULK** lock and unlock the picked object's layer, **LAYMCUR** makes it

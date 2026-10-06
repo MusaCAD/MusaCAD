@@ -358,6 +358,20 @@ private:
     void apply_dim_edit(const DimEditCommand& c);
     void apply_set_dim_override(const SetDimOverrideCommand& c);
     void apply_center_mark(const AddCenterMarkCommand& c);
+    void apply_reverse(const ReverseSelectionCommand& c);
+    void apply_copy_to_layer(const CopyToLayerCommand& c);
+    void apply_change_props(const ChangePropsCommand& c);
+    void apply_overkill(const OverkillCommand& c);
+    void apply_blend(const BlendCommand& c);
+    void apply_boundary(const BoundaryCommand& c);
+    void apply_centerline(const CenterlineCommand& c);
+    /// The area round `p` as HATCH's pick point and BOUNDARY find it: the outer loop, then
+    /// the islands inside it; nothing when no closed boundary encloses `p`.
+    std::optional<std::vector<std::vector<Vec2>>> boundary_loops(Vec2 p);
+    /// The layer of that name, any case.
+    [[nodiscard]] std::optional<std::uint16_t> layer_named(std::string_view name) const;
+    /// A new line's properties: the current ones, on the current layer and space.
+    [[nodiscard]] EntityProps fresh_props() const;
     /// A dimension re-created from `edited` in `group` in place of `h` (one change).
     EntityHandle replace_dimension(EntityHandle h, Command original, Command edited, std::uint64_t group);
     /// DIMLAYER: the layer new dimensions go on (unset = the current layer).

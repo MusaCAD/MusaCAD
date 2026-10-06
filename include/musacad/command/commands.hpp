@@ -741,6 +741,164 @@ private:
     bool done_ = false;
 };
 
+/// REVERSE: `Select objects:`, then the lines, polylines and splines run the other way.
+/// OVERKILL: `Select objects:`, then its settings, then duplicates go and overlapping
+/// collinear lines become one.
+class SelectThenCommand final : public ICommand {
+public:
+    enum class Tool : std::uint8_t { Reverse, Overkill };
+    explicit SelectThenCommand(Tool t) : tool_(t) {}
+    std::string name() const override { return tool_ == Tool::Reverse ? "REVERSE" : "OVERKILL"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State : std::uint8_t { Select, Option, Tolerance };
+    void selected(CommandContext& ctx);
+    void option_prompt(CommandContext& ctx);
+    Tool tool_;
+    State state_ = State::Select;
+    static inline core::OverkillCommand s_overkill_{};
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// COPYTOLAYER: the objects, the destination layer (an object on it, or Name), then a
+/// base point and second point (or Displacement) the copies move by.
+/// LAYMCH: the objects, then an object on the destination layer (or Name).
+class LayerCopyCommand final : public ICommand {
+public:
+    explicit LayerCopyCommand(bool copy) : copy_(copy) {}
+    std::string name() const override { return copy_ ? "COPYTOLAYER" : "LAYMCH"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State : std::uint8_t { Select, Layer, Name, Base, Second, Displacement };
+    void to_layer(CommandContext& ctx);
+    void to_base(CommandContext& ctx);
+    void finish(CommandContext& ctx, core::Vec2 offset);
+    bool copy_;
+    State state_ = State::Select;
+    core::CopyToLayerCommand c_{};
+    core::Vec2 base_{};
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// CHPROP: the objects, then `Enter property to change [Color/LAyer/LType/ltScale/LWeight]:`
+/// as often as you like; Enter makes the changes, one undo step.
+class ChPropCommand final : public ICommand {
+public:
+    std::string name() const override { return "CHPROP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State : std::uint8_t { Select, Property, Color, TrueColor, Layer, Linetype, Ltscale, Lineweight };
+    void property_prompt(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    State state_ = State::Select;
+    core::ChangePropsCommand c_{};
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// BLEND: `Select first object or [CONtinuity]:`, `Select second object:` -- a spline
+/// between the two ends picked.
+class BlendCurvesCommand final : public ICommand {
+public:
+    std::string name() const override { return "BLEND"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State : std::uint8_t { First, Continuity, Second };
+    void first_prompt(CommandContext& ctx);
+    static inline bool s_smooth_ = false;
+    State state_ = State::First;
+    core::Vec2 first_{};
+    double radius_ = 0.0;
+    bool done_ = false;
+};
+
+/// REDO (one undone step back) and MREDO (`Enter number of actions or [All/Last]:`).
+class RedoStepsCommand final : public ICommand {
+public:
+    explicit RedoStepsCommand(bool many) : many_(many) {}
+    std::string name() const override { return many_ ? "MREDO" : "REDO"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool many_;
+    bool done_ = false;
+};
+
+/// TRACE: a width, then point after point -- a wide polyline of straight segments.
+/// SOLID: points in threes and fours -- filled triangles and quadrilaterals, the third
+/// and fourth points of one the first and second of the next.
+class TraceSolidCommand final : public ICommand {
+public:
+    explicit TraceSolidCommand(bool solid) : solid_(solid) {}
+    std::string name() const override { return solid_ ? "SOLID" : "TRACE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    void prompt(CommandContext& ctx);
+    void finish_trace(CommandContext& ctx);
+    static inline double s_width_ = 1.0; ///< TRACEWID
+    bool solid_;
+    bool width_asked_ = false;
+    std::vector<core::Vec2> pts_;
+    bool done_ = false;
+};
+
+/// CENTERMARK: a centre mark with centre lines on each circle or arc picked, until Enter.
+/// CENTERLINE: two lines, then the centre line between them.
+/// BOUNDARY: `Pick internal point:` until Enter -- closed polylines round each area.
+class CenterBoundaryCommand final : public ICommand {
+public:
+    enum class Tool : std::uint8_t { CenterMark, CenterLine, Boundary };
+    explicit CenterBoundaryCommand(Tool t) : tool_(t) {}
+    std::string name() const override {
+        return tool_ == Tool::CenterMark ? "CENTERMARK" : tool_ == Tool::CenterLine ? "CENTERLINE" : "BOUNDARY";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    Tool tool_;
+    std::optional<core::Vec2> first_;
+    double radius_ = 0.0;
+    int made_ = 0;
+    bool done_ = false;
+};
+
 /// DIST: two points, or `[Multiple points]` with a running total; AutoCAD's full readout.
 class DistCommand final : public ICommand {
 public:

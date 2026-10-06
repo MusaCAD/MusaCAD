@@ -124,6 +124,70 @@ struct PeditCommand {
     std::uint64_t group = 0;
 };
 
+/// REVERSE: the selected lines, polylines and splines run the other way (a polyline's
+/// bulges and widths with it). One undo group.
+struct ReverseSelectionCommand {
+    std::uint64_t group = 0;
+};
+/// COPYTOLAYER: copies of the selected objects on another layer -- the layer named (made
+/// when there is none of that name) or the layer of the object at `pick` -- moved by
+/// `offset`. One undo group; the copies are selected.
+struct CopyToLayerCommand {
+    std::string name;
+    std::optional<Vec2> pick{};
+    double radius = 0.0;
+    Vec2 offset{};
+    std::uint64_t group = 0;
+};
+/// CHPROP: the selected objects' colour, layer (by name), linetype, linetype scale and
+/// lineweight -- those given here; the rest stay. Each pair is (ByLayer, the value).
+/// One undo group.
+struct ChangePropsCommand {
+    std::optional<std::pair<bool, Rgb>> color{};
+    std::string layer;    ///< empty: unchanged
+    std::optional<std::pair<bool, Linetype>> linetype{};
+    double celtscale = 0.0; ///< 0: unchanged
+    std::optional<std::pair<bool, std::uint8_t>> lineweight{}; ///< 1/100 mm
+    std::uint64_t group = 0;
+};
+/// OVERKILL: duplicates among the selected objects deleted -- the same kind, properties
+/// and geometry within `tolerance` -- and, with `combine`, collinear lines that overlap
+/// (with `end_to_end`, that meet too) made one line. One undo group.
+struct OverkillCommand {
+    double tolerance = 1e-6;
+    bool combine = true;
+    bool end_to_end = false;
+    std::uint64_t group = 0;
+};
+/// BLEND: a spline between the ends of the objects at `pick1` and `pick2` (the end nearer
+/// each pick), leaving each end along the object's own direction: Tangent a cubic, Smooth
+/// a quintic that is also straight where it leaves (the curvature of a line). One undo
+/// group.
+struct BlendCommand {
+    Vec2 pick1{};
+    Vec2 pick2{};
+    double radius = 0.0;
+    bool smooth = false;
+    std::uint64_t group = 0;
+};
+/// BOUNDARY: closed polylines round the area enclosing `point`, as HATCH's pick point
+/// finds it -- its outer boundary and, with `islands`, the islands inside. One undo group.
+struct BoundaryCommand {
+    Vec2 point{};
+    bool islands = true;
+    std::uint64_t group = 0;
+};
+/// CENTERLINE: a centre line between the lines at `pick1` and `pick2`, from the midpoint
+/// of their starts to the midpoint of their ends (the second taken the way the first
+/// runs), `extension` past each end, in the Center linetype.
+struct CenterlineCommand {
+    Vec2 pick1{};
+    Vec2 pick2{};
+    double radius = 0.0;
+    double extension = 3.5;
+    std::uint64_t group = 0;
+};
+
 /// STYLE: add or replace a text style; optionally make it current.
 struct SetTextStyleCommand {
     TextStyle style;
@@ -393,7 +457,9 @@ struct EraseCommand {
 struct UndoLastGroupCommand {};
 
 /// Redo the most recently undone command group (Ctrl+Y).
-struct RedoLastGroupCommand {};
+struct RedoLastGroupCommand {
+    std::uint32_t count = 1; ///< MREDO: this many undone steps (or as many as there are)
+};
 
 /// Undo a single most-recent op (a command's in-progress `[Undo]` option).
 struct UndoLastOpCommand {};
@@ -623,6 +689,7 @@ struct AddCenterMarkCommand {
     double size = 0.0;
     bool lines = false;
     std::uint64_t group = 0;
+    bool center_linetype = false; ///< CENTERMARK: the centre lines in the Center linetype
 };
 
 /// Inquiry (issue #30). Read-only queries resolved on the geometry thread and reported
@@ -1666,7 +1733,8 @@ struct SetCurrentLayerCommand {
 /// names the layer in its report.
 struct LayerToolCommand {
     enum class Op : std::uint8_t {
-        Off, Freeze, Lock, Unlock, MakeCurrent, ToCurrent, Isolate, Unisolate, AllOn, AllThaw, UndoLast
+        Off, Freeze, Lock, Unlock, MakeCurrent, ToCurrent, Isolate, Unisolate, AllOn, AllThaw, UndoLast,
+        Match ///< LAYMCH: the selection to the layer of the object at `pick`
     };
     Op op = Op::Off;
     Vec2 pick{};
@@ -1753,6 +1821,8 @@ using Command =
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
                  DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
+                 ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
+                 BlendCommand, BoundaryCommand, CenterlineCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
