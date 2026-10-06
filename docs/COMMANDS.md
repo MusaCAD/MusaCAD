@@ -44,7 +44,7 @@ commands (Ribbon Phase A):
 | MIRROR (MI) | Create a mirror-image copy of objects across an axis. |
 | OFFSET (O) | Create a parallel copy of a curve at a specified distance: lines, arcs, circles, polylines, construction lines and rays; ellipses and splines give a spline. The offset follows the cursor at the side prompt. |
 | OFFSETGAPTYPE | What joins a polyline's straight segments where an offset has parted them: 0 carried on to their crossing, 1 an arc, 2 a bevel. |
-| TRIM (TR) | Trim objects to meet the edges of other objects. |
+| TRIM (TR) | Trim objects to meet the edges of other objects: pick the part to remove, or drag a path across many and each is trimmed where the path crosses it. Shift extends instead. |
 | JOIN (J) | Join collinear or connected objects into a single object. |
 | ROTATE (RO) | Rotate selected objects around a base point. |
 | SCALE (SC) | Resize selected objects uniformly about a base point. |
@@ -110,7 +110,7 @@ commands (Ribbon Phase A):
 | POINT (PO) | Place point objects; Esc ends. |
 | DIVIDE (DIV) | Mark a curve into a number of equal segments with points. |
 | MEASURE (ME) | Mark a curve at set intervals with points. |
-| EXTEND (EX) | Extend objects to meet the edges of other objects. |
+| EXTEND (EX) | Extend objects to meet the edges of other objects; a dragged path extends every object it crosses. Shift trims instead. |
 | FILLET (F) | Round corners between two intersecting lines, arcs, or polylines. |
 | CHAMFER (CHA) | Bevel corners between two intersecting lines. |
 | MATCHPROP (MA) | Copy properties from a source object to one or more target objects. |
@@ -237,6 +237,7 @@ commands (Ribbon Phase A):
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
 | EXTEND an arc *entity* | EX | Implemented |
 | EXTEND an open polyline *entity* (straight end segment; polylines also act as boundaries) | EX | Implemented (an arc end segment is refused) |
+| TRIM / EXTEND Quick mode: every object is a cutting edge or boundary; `Select object to trim or shift-select to extend or [Fence/Undo]:` | TR / EX | Implemented -- press on empty space and drag: the freehand path trims (or extends) everything it crosses, where it crosses, as one undo step; two clicks on empty space draw a straight fence; **Fence** takes typed points until Enter; an object with nothing to trim it to is deleted, as in AutoCAD; **Shift** swaps trim and extend for that pick or path; **Undo** takes the last one back |
 | FILLET (line/line; radius 0 or tangent arc) | F | Implemented -- `Current settings: Mode = TRIM, Radius = …`, `Select first object or [Undo/Polyline/Radius/Trim/Multiple]:`, `Select second object or shift-select to apply corner or [Radius]:`; the radius and Trim mode are remembered; **Multiple** repeats with one undo step per corner, **Undo** takes the last one back, **No trim** adds only the arc, **Polyline** rounds every corner, **Shift** at the second pick makes a sharp corner; the trimmed objects keep their layer, colour and linetype |
 | FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented (incl. RECTANGLE corners — a rectangle IS a closed polyline; verified end-to-end through the full F-command path, including the closing-edge wrap corner) |
 | Polyline arc segments (per-vertex bulge, AutoCAD LWPOLYLINE) | — | Implemented |
@@ -429,7 +430,10 @@ phase covered **import, display, and selection**; authoring followed under issue
 | **Close tab** — the × on each tab, or Ctrl+W. A dirty tab prompts Save / Discard / Cancel; closing the last tab leaves one empty "DrawingN" (never zero tabs) | × / Ctrl+W | Implemented |
 | **Undo/redo is per document** — Ctrl+Z on tab A rewinds tab A's last op even after edits in tab B | Ctrl+Z / Ctrl+Y | Implemented |
 | **Quit guard** — closing the window prompts to save every dirty document (Cancel aborts the quit) | — | Implemented |
-| **Cross-document copy/paste** — Ctrl+C / Ctrl+X copy/cut the selection to an in-process clipboard; Ctrl+V pastes into the ACTIVE document at the cursor, remapping layer/dimstyle/block references by NAME (creating any missing in the target). One undo group; the clipboard survives switching/closing the source | Ctrl+C / Ctrl+X / Ctrl+V | Implemented (Phase B) |
+| **COPYCLIP / CUTCLIP** — copy / cut the selection (asked for when nothing is selected). The objects go to the system clipboard too: as Musa CAD objects another Musa CAD window pastes, and as a picture on white (white lines drawn black, as on paper) for documents, mail and image editors | Ctrl+C / Ctrl+X | Implemented |
+| **COPYBASE / CUTBASE** — the same with a base point first: the point a paste puts on the insertion point | COPYBASE / CUTBASE | Implemented |
+| **PASTECLIP** — `Specify insertion point:` with the copied objects following the cursor; layers, dimension styles, blocks, fonts and images are matched by name in the target drawing (created where missing); one undo step. From another program: an **image** is embedded with its lower-left corner at the point (a pixel to a drawing unit), **text** becomes a multiline text at the current text style's height | Ctrl+V / PASTECLIP | Implemented |
+| **PASTEORIG** — the copied objects at their own coordinates, nothing asked (into another tab or another window) | PASTEORIG | Implemented |
 | **Tab-to-tab drag** — drag a selection onto another document's tab to transfer it there (copy → switch → paste, original coordinates) | drag to tab | Implemented (Phase B) |
 | DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
 | DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
@@ -437,6 +441,7 @@ phase covered **import, display, and selection**; authoring followed under issue
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
 | Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |
+| **Crash reports** — if Musa CAD stops unexpectedly it writes a report (version, system, graphics driver, the drawing's file name, the last 96 command-line lines, the call stack); the next start shows it with **Save Report As…**, **Copy** and **Open Folder** to attach to an issue. **Save Bug Report…** in the application menu writes the same report on demand | application menu ▸ Save Bug Report… | Implemented |
 | **OPTIONS** — Updates: check automatically (once a day; on by default for packaged installs, off for source builds) and Check Now; Display: the performance overlay (frame rate / frame time in the drawing area, frame rate and build date in the title; off by default). Persisted per user | OP / application menu ▸ Options | Implemented |
 | **Update check** — asks Flathub (the Flatpak) or the GitHub release (AppImage, Windows installer, macOS) for the latest version; a newer one shows as a status-bar note that opens the update step for this install (the `flatpak update` command, or the file to download); Skip This Version; `MUSACAD_NO_UPDATE_CHECK=1` turns it off for packagers and CI | application menu ▸ Check for Updates | Implemented |
 | **Command line** — `musacad <drawing>` opens a file (via the existing OpenDocumentCommand); `musacad --check <drawing>` validates it and exits non-zero on a parse error; `--help` / `--version`. Parsed before any Qt object exists, so it needs no display | shell | Implemented (issue #11) |

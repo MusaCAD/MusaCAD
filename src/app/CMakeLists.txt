@@ -20,6 +20,12 @@ add_executable(musacad_app
     ${CMAKE_SOURCE_DIR}/assets/ribbon/ribbon.qrc)
 set_target_properties(musacad_app PROPERTIES AUTORCC ON)
 
+# Linux: the program's own functions go in the dynamic symbol table, which is all a crash
+# report's call stack can name them from (backtrace_symbols); stripping a release keeps it.
+if(UNIX AND NOT APPLE)
+    set_target_properties(musacad_app PROPERTIES ENABLE_EXPORTS ON)
+endif()
+
 # Windows.
 if(WIN32)
     target_sources(musacad_app PRIVATE

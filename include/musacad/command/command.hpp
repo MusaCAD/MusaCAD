@@ -37,6 +37,13 @@ public:
     /// True if the command consumes cursor picks as object selection (e.g.
     /// ERASE) rather than as coordinate input.
     [[nodiscard]] virtual bool wants_selection() const { return false; }
+    /// True while a press-and-drag on empty canvas draws a freehand path for the command
+    /// (TRIM / EXTEND Quick mode); the path arrives through freehand().
+    [[nodiscard]] virtual bool wants_freehand() const { return false; }
+    virtual void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) {
+        (void)ctx;
+        (void)path;
+    }
     /// True while the command is taking a line of text as it is typed (TEXT's content):
     /// Space is a space then, not Enter, and capitals are capitals.
     [[nodiscard]] virtual bool free_text() const { return false; }

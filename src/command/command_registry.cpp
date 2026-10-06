@@ -241,6 +241,18 @@ CommandRegistry CommandRegistry::make_default() {
         "Rebuild and redraw the scene.");
     reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
         "Create or change a named text style and make it current.");
+    reg({"COPYCLIP"}, [] { return std::make_unique<ClipCopyCommand>(false, false); }, "",
+        "Copy the selected objects to the clipboard (Ctrl+C), for this drawing, another one, or another program as a picture.");
+    reg({"CUTCLIP"}, [] { return std::make_unique<ClipCopyCommand>(true, false); }, "",
+        "Cut the selected objects to the clipboard (Ctrl+X).");
+    reg({"COPYBASE"}, [] { return std::make_unique<ClipCopyCommand>(false, true); }, "",
+        "Copy the selected objects to the clipboard with a base point to paste them by.");
+    reg({"CUTBASE"}, [] { return std::make_unique<ClipCopyCommand>(true, true); }, "",
+        "Cut the selected objects to the clipboard with a base point to paste them by.");
+    reg({"PASTECLIP"}, [] { return std::make_unique<PasteClipCommand>(false); }, "",
+        "Paste the clipboard (Ctrl+V): drawing objects, an image, or text as multiline text.");
+    reg({"PASTEORIG"}, [] { return std::make_unique<PasteClipCommand>(true); }, "",
+        "Paste copied objects at the coordinates they had.");
     reg({"D", "DST", "DDIM", "DIMSTYLE"}, [] { return std::make_unique<DimStyleCommand>(true); }, "",
         "Create and change dimension styles: text, arrows, units and colours, and the current style.");
     reg({"-DIMSTYLE"}, [] { return std::make_unique<DimStyleCommand>(false); }, "",
@@ -337,7 +349,7 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/array.svg", "Create a circular pattern of copies about a centre point.");
     reg({"ARRAYPATH"}, [] { return std::make_unique<ArrayCommand>(ArrayCommand::Type::Path); },
         "assets/ribbon/array.svg", "Distribute copies evenly along a path curve.");
-    reg({"EX", "EXTEND"}, [] { return std::make_unique<ExtendCommand>(); },
+    reg({"EX", "EXTEND"}, [] { return std::make_unique<TrimCommand>(true); },
         "assets/ribbon/extend.svg", "Extend objects to meet the edges of other objects.");
     reg({"F", "FILLET"}, [] { return std::make_unique<FilletCommand>(); }, "assets/ribbon/fillet.svg",
         "Round corners between two intersecting lines, arcs, or polylines.");

@@ -115,6 +115,8 @@ void MainWindow::build_ribbon() {
             menu.addSeparator();
             file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("Check for Updates…"),
                         &MainWindow::check_for_updates);
+            file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("Save Bug Report…"),
+                        &MainWindow::save_bug_report);
             file_action(&menu, QStringLiteral("assets/ribbon/settings.svg"), QStringLiteral("About Musa CAD…"),
                         &MainWindow::show_about);
             menu.addSeparator();
@@ -161,19 +163,11 @@ void MainWindow::build_ribbon() {
         connect(act, &QAction::triggered, this, slot);
         addAction(act);
     };
-    const auto clip_copy = [this] {
-        if (viewport_ != nullptr && viewport_->selection_count() > 0) {
-            engine_->submit(core::CopyClipboardCommand{});
-        }
-    };
-    const auto clip_cut = [this] {
-        if (viewport_ != nullptr && viewport_->selection_count() > 0) {
-            engine_->submit(core::CutClipboardCommand{processor_->begin_group()});
-        }
-    };
-    const auto clip_paste = [this] {
-        engine_->submit(core::PasteClipboardCommand{last_cursor_world_, processor_->begin_group()});
-    };
+    // As AutoCAD has them: Ctrl+C / Ctrl+X ask for objects when none are selected, Ctrl+V
+    // asks where, the pasted objects following the cursor.
+    const auto clip_copy = [this] { processor_->start_command("COPYCLIP"); };
+    const auto clip_cut = [this] { processor_->start_command("CUTCLIP"); };
+    const auto clip_paste = [this] { processor_->start_command("PASTECLIP"); };
     add_app_shortcut(QKeySequence::Copy, clip_copy);
     add_app_shortcut(QKeySequence::Cut, clip_cut);
     add_app_shortcut(QKeySequence::Paste, clip_paste);
@@ -594,7 +588,8 @@ void MainWindow::build_ribbon() {
     {
         QToolButton* paste = clip->add_button(asset("paste"), QStringLiteral("Paste"));
         paste->setObjectName(QStringLiteral("ribbon.paste"));
-        paste->setToolTip(QStringLiteral("<b>PASTE (Ctrl+V)</b><br>Paste the clipboard's objects at the cursor."));
+        paste->setToolTip(QStringLiteral("<b>PASTECLIP (Ctrl+V)</b><br>Paste what the clipboard holds at a point: "
+                                         "objects from any Musa CAD window, an image, or text."));
         connect(paste, &QToolButton::clicked, this, clip_paste);
         QWidget* col = clip->add_column(/*icon_only=*/true);
         QToolButton* cut = clip->add_small(col, asset("cut"), QStringLiteral("Cut"));
@@ -603,9 +598,14 @@ void MainWindow::build_ribbon() {
         connect(cut, &QToolButton::clicked, this, clip_cut);
         QToolButton* copyc = clip->add_small(col, asset("copyclip"), QStringLiteral("Copy Clip"));
         copyc->setObjectName(QStringLiteral("ribbon.copyclip"));
-        copyc->setToolTip(QStringLiteral("<b>COPYCLIP (Ctrl+C)</b><br>Copy the selection to the clipboard."));
+        copyc->setToolTip(QStringLiteral("<b>COPYCLIP (Ctrl+C)</b><br>Copy the selection to the clipboard, as "
+                                         "objects for Musa CAD and a picture for other programs."));
         connect(copyc, &QToolButton::clicked, this, clip_copy);
-        todo_small(clip, col, QStringLiteral("Copy with Base Point"), "copybase");
+        QToolButton* copyb = clip->add_small(col, asset("copybase"), QStringLiteral("Copy with Base Point"));
+        copyb->setObjectName(QStringLiteral("ribbon.copybase"));
+        copyb->setToolTip(QStringLiteral("<b>COPYBASE</b><br>Copy with a base point: the point a paste puts on "
+                                         "the insertion point."));
+        connect(copyb, &QToolButton::clicked, this, [this] { processor_->start_command("COPYBASE"); });
         selection_required_buttons_.push_back(cut);
         selection_required_buttons_.push_back(copyc);
         cut->setEnabled(false);

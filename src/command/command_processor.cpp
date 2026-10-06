@@ -12,6 +12,7 @@
 #include "musacad/command/command.hpp"
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
+#include "musacad/core/crash_report.hpp"
 #include "musacad/core/units.hpp"
 
 namespace musacad::command {
@@ -88,6 +89,7 @@ void CommandProcessor::run_macro() {
 }
 
 void CommandProcessor::submit_line(const std::string& text) {
+    core::crash::note((feeding_pick_ ? "pick " : "> ") + text);
     // History: record every non-empty submitted line (newest last) so the bottom bar
     // AND the on-canvas command-entry box recall from one place. Reset the recall
     // cursor to the newest on each new submission.
@@ -500,6 +502,15 @@ core::Vec2 CommandProcessor::resolve_pick(core::Vec2 world, std::optional<core::
         return *snap;
     }
     return resolve_constraints(world);
+}
+
+void CommandProcessor::submit_freehand(const std::vector<core::Vec2>& path) {
+    if (active_ == nullptr || !active_->wants_freehand() || path.size() < 2) {
+        return;
+    }
+    core::crash::note("freehand path of " + std::to_string(path.size()) + " points");
+    active_->freehand(*this, path);
+    finalize_if_done();
 }
 
 void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> snap) {

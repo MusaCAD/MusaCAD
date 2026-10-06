@@ -85,6 +85,12 @@ public:
     void options_dialog() override;
     bool dimstyle_dialog() override;
     void set_dimstyle_dialog_callback(std::function<void()> cb) { dimstyle_dialog_callback_ = std::move(cb); }
+    std::string prepare_paste() override { return prepare_paste_ ? prepare_paste_() : std::string(); }
+    bool paste_at(core::Vec2 at, bool original) override { return paste_at_ ? paste_at_(at, original) : false; }
+    void set_paste_callbacks(std::function<std::string()> prepare, std::function<bool(core::Vec2, bool)> paste) {
+        prepare_paste_ = std::move(prepare);
+        paste_at_ = std::move(paste);
+    }
     [[nodiscard]] core::MatchPropFilter match_filter() const override;
     void match_settings_dialog() override;
     /// The selection system variables (PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG,
@@ -757,6 +763,16 @@ private:
     std::function<void()> plot_dialog_callback_;
     std::function<void()> options_dialog_callback_;
     std::function<void()> dimstyle_dialog_callback_;
+    std::function<std::string()> prepare_paste_;
+    std::function<bool(core::Vec2, bool)> paste_at_;
+    // PASTECLIP's band (the clip at the cursor), streamed only on change.
+    bool paste_preview_sent_ = false;
+    core::Vec2 last_paste_at_{};
+    // TRIM / EXTEND Quick mode: a press on empty canvas, a drag from it the freehand path.
+    bool freehand_pending_ = false;
+    bool freehand_active_ = false;
+    core::Vec2 freehand_start_screen_{};
+    std::vector<core::Vec2> freehand_world_;
     std::function<core::MatchPropFilter()> match_filter_callback_;
     std::function<void()> match_settings_callback_;
     std::function<void(bool, core::Vec2, core::Vec2)> plot_pick_callback_; // armed window pick

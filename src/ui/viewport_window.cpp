@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/ui/viewport_window.hpp"
+#include "musacad/core/crash_report.hpp"
 #include "musacad/core/polyline_width.hpp"
 
 #include "musacad/core/grips.hpp"
@@ -378,7 +379,7 @@ void ViewportWindow::show_cycle_menu() {
     rebuild_overlay();
 }
 
-void ViewportWindow::show_context_menu(QPoint global, core::Vec2 world) {
+void ViewportWindow::show_context_menu(QPoint global, core::Vec2 /*world*/) {
     if (processor_ == nullptr) {
         return;
     }
@@ -431,11 +432,11 @@ void ViewportWindow::show_context_menu(QPoint global, core::Vec2 world) {
     if (chosen == repeat) {
         run(last.c_str());
     } else if (chosen == cut) {
-        engine_.submit(core::CutClipboardCommand{processor_->begin_group()});
+        run("CUTCLIP");
     } else if (chosen == copy) {
-        engine_.submit(core::CopyClipboardCommand{});
+        run("COPYCLIP");
     } else if (chosen == paste) {
-        engine_.submit(core::PasteClipboardCommand{world, processor_->begin_group()});
+        run("PASTECLIP");
     } else if (chosen == isolate) {
         run("ISOLATEOBJECTS");
     } else if (chosen == hide) {
@@ -1167,6 +1168,8 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         std::fprintf(stderr, "[musacad_ui] GL renderer: %s | %s\n",
                      r != nullptr ? reinterpret_cast<const char*>(r) : "?",
                      v != nullptr ? reinterpret_cast<const char*>(v) : "?");
+        core::crash::set_graphics(std::string(r != nullptr ? reinterpret_cast<const char*>(r) : "?") + " | " +
+                                  (v != nullptr ? reinterpret_cast<const char*>(v) : "?"));
     }
 
     const bool smoke = std::getenv("MUSACAD_SMOKE") != nullptr;
@@ -1676,6 +1679,14 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             lasso_active_ = false;
             lasso_mode_ = 1;
             had_selection_at_press_ = false;
+        } else if (processor_->has_active_command() && processor_->wants_freehand() && !hovered_kind().has_value()) {
+            // TRIM / EXTEND Quick mode on empty canvas: a drag draws the freehand path; a
+            // click (no drag) is delivered on release, where it starts a fence.
+            processor_->set_pick_radius(pick_aperture(dpr, scale));
+            freehand_pending_ = true;
+            freehand_active_ = false;
+            freehand_start_screen_ = screen_px;
+            freehand_world_ = {world};
         } else if (processor_->has_active_command()) {
             std::optional<core::Vec2> snap;
             if (snap_has_.load(std::memory_order_relaxed)) {
@@ -1909,6 +1920,14 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         engine_.submit(
             core::GripDragCommand{core::GripDragCommand::Phase::Move, {}, 0, target, 0});
     }
+    if (freehand_pending_) {
+        if (!freehand_active_ && core::length(screen_px - freehand_start_screen_) >= 4.0 * dpr) {
+            freehand_active_ = true;
+        }
+        if (freehand_active_ && core::length(world - freehand_world_.back()) * scale >= 2.0 * dpr) {
+            freehand_world_.push_back(world);
+        }
+    }
     if (selecting_ || box_pending_) {
         sel_cur_world_ = world;
         if (selecting_ && !plot_picking_ && pickdrag_ == 2 &&
@@ -1934,6 +1953,33 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
 void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         panning_ = false;
+        return;
+    }
+    if (event->button() == Qt::LeftButton && freehand_pending_ && processor_ != nullptr) {
+        freehand_pending_ = false;
+        const double dpr = devicePixelRatio();
+        const core::Vec2 rel_screen = local_px(event->position(), dpr);
+        core::Vec2 world;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            world = camera_.screen_to_world(rel_screen);
+        }
+        processor_->set_shift_held((event->modifiers() & Qt::ShiftModifier) != 0);
+        if (freehand_active_) {
+            freehand_active_ = false;
+            std::vector<core::Vec2> path = std::move(freehand_world_);
+            freehand_world_.clear();
+            if (core::length(world - path.back()) > 0.0) {
+                path.push_back(world);
+            }
+            processor_->submit_freehand(path);
+        } else {
+            freehand_world_.clear();
+            processor_->pick_point(world, std::nullopt); // a click on empty space
+        }
+        processor_->set_shift_held(false);
+        rebuild_overlay();
+        Q_EMIT pickerInteracted();
         return;
     }
     if (event->button() == Qt::LeftButton && dragging_grip_ && processor_ != nullptr) {
@@ -2182,7 +2228,10 @@ void ViewportWindow::rebuild_overlay() {
     }
 
     ov.hide_selection = highlight_ == 0;
-    if (lasso_active_) {
+    if (freehand_active_) {
+        ov.lasso = freehand_world_;
+        ov.lasso_mode = 3; // drawn as a fence: an open path
+    } else if (lasso_active_) {
         ov.lasso = lasso_world_;
         ov.lasso.push_back(sel_cur_world_);
         ov.lasso_mode = lasso_mode_;
@@ -2812,6 +2861,29 @@ void ViewportWindow::rebuild_overlay() {
         last_transform_.active = false;
         engine_.submit(last_transform_);
         transform_preview_sent_ = false;
+    }
+    // PASTECLIP: the clip follows the (snapped) cursor until it is placed, and goes when
+    // the prompt does.
+    if (processor_ != nullptr && processor_->has_active_command() && processor_->preview().paste_band) {
+        core::Vec2 raw;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            raw = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                     cursor_px_y_.load(std::memory_order_relaxed)});
+        }
+        std::optional<core::Vec2> snap;
+        if (snap_has_.load(std::memory_order_relaxed)) {
+            snap = core::Vec2{snap_x_.load(std::memory_order_relaxed), snap_y_.load(std::memory_order_relaxed)};
+        }
+        const core::Vec2 at = processor_->resolve_pick(raw, snap);
+        if (!paste_preview_sent_ || core::length(at - last_paste_at_) > 1e-12) {
+            engine_.submit(core::PastePreviewCommand{at, true});
+            last_paste_at_ = at;
+            paste_preview_sent_ = true;
+        }
+    } else if (paste_preview_sent_) {
+        engine_.submit(core::PastePreviewCommand{{}, false});
+        paste_preview_sent_ = false;
     }
 }
 

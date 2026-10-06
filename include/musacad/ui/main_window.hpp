@@ -10,7 +10,10 @@
 
 #include <QVariant>
 #include <QMainWindow>
+#include <QImage>
+#include <QByteArray>
 #include <QString>
+#include <QStringList>
 
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/command/tracking.hpp"
@@ -210,6 +213,14 @@ public:
     /// restore an update found earlier. main() calls this for an interactive session only
     /// -- never under the self-test and capture harnesses.
     void start_update_checks();
+    /// Where crash reports are kept, and the lines that open every report (version,
+    /// installation, system, Qt, display).
+    [[nodiscard]] static QString crash_report_dir();
+    [[nodiscard]] static std::string crash_report_about();
+    /// The reports a crash left (paths): offered to save and send, on start.
+    void offer_crash_reports(const QStringList& paths);
+    /// The application menu's "Save Bug Report…": a report now, with nothing crashed.
+    void save_bug_report();
 
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
@@ -274,6 +285,14 @@ private:
 
     // Annotation (UI side: dimension-style dialog).
     void open_dimstyle_dialog();
+    // The system clipboard: a copy goes out as Musa CAD objects and a picture; a paste
+    // takes what is there (objects from any Musa CAD window, an image, text).
+    void export_to_system_clipboard(const core::ClipboardExport& e);
+    std::string prepare_paste();
+    bool paste_at(core::Vec2 at, bool original);
+    QByteArray last_clipboard_token_;
+    QImage pending_paste_image_;
+    QString pending_paste_text_;
 
     // MATCHPROP Settings: modal category dialog (dark palette) opened via "S" at the
     // destination prompt; choices persist in QSettings for the session. read_match_filter

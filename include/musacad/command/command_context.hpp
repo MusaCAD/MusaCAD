@@ -174,6 +174,8 @@ struct PreviewSpec {
     /// arc is then placed. (Three points: `points` holds the vertex and both endpoints.)
     bool dim_has_quadrant = false;
     core::Vec2 dim_quadrant{};
+    /// PASTECLIP: the clip's objects follow the cursor (the engine draws them).
+    bool paste_band = false;
 };
 
 /// Sink for command-line text output (scrollback + the active prompt).
@@ -248,6 +250,17 @@ public:
     /// DIMSTYLE: the Dimension Style Manager. False when there is none (no window, a
     /// test): the command then asks at the command line.
     [[nodiscard]] virtual bool dimstyle_dialog() { return false; }
+    /// PASTECLIP: looks at the system clipboard and gets it ready to paste -- "objects"
+    /// (Musa CAD objects, from this window or another), "image", "text", or "" (nothing a
+    /// drawing can take; the engine's own clip is then pasted if it has one).
+    [[nodiscard]] virtual std::string prepare_paste() { return {}; }
+    /// ... and pastes it at `at` (objects by their base; PASTEORIG's `original` keeps their
+    /// coordinates). False when there is no window to do it (a script, a test).
+    [[nodiscard]] virtual bool paste_at(core::Vec2 at, bool original) {
+        (void)at;
+        (void)original;
+        return false;
+    }
     /// MATCHPROP: the current Settings filter (which categories copy). Default all-on.
     [[nodiscard]] virtual core::MatchPropFilter match_filter() const { return {}; }
     /// MATCHPROP: open the modal Settings dialog (persists the filter). No-op headless.
@@ -331,6 +344,8 @@ public:
     [[nodiscard]] virtual bool shift_held() const { return false; }
     /// The live cursor (ortho / polar / snap applied), for direct distance entry.
     [[nodiscard]] virtual std::optional<core::Vec2> cursor_world() const { return std::nullopt; }
+    /// True while the input being handled is a click on the canvas, not typed.
+    [[nodiscard]] virtual bool input_is_pick() const { return false; }
     /// The drawing's text styles (STYLE table) and the current one, as last published.
     [[nodiscard]] virtual std::vector<core::TextStyle> text_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }

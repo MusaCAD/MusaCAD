@@ -37,6 +37,20 @@ class IFontEngine;
 /// consume_snapshot()/snapshot(). The worker runs on a std::jthread and is
 /// stopped cleanly via its stop_token; no detached threads, no manual join
 /// races (the destructor stops and joins).
+/// A copy as it goes to the system clipboard (COPYCLIP / CUTCLIP / COPYBASE): the copied
+/// objects as a native drawing (another Musa CAD window pastes them from it), their drawn
+/// geometry for a picture (other applications paste that), and their bounds. `serial`
+/// counts copies.
+struct ClipboardExport {
+    std::uint64_t serial = 0;
+    std::string native_text;
+    RenderSnapshot drawing;
+    Vec2 lo{};
+    Vec2 hi{};
+    Vec2 base{}; ///< where a paste puts the point it lands on (COPYBASE's, else `lo`)
+    std::size_t count = 0;
+};
+
 class GeometryEngine {
 public:
     GeometryEngine() = default;
@@ -56,6 +70,11 @@ public:
     void set_image_decoder(const IImageDecoder* decoder) noexcept {
         image_decoder_ = decoder;
         store_.set_image_decoder(decoder);
+    }
+    /// Called on the geometry thread after every copy to the clipboard (the host puts it on
+    /// the system clipboard). Set before start().
+    void set_clipboard_listener(std::function<void(const ClipboardExport&)> listener) {
+        clipboard_listener_ = std::move(listener);
     }
     void set_font_engine(const IFontEngine* engine) noexcept {
         font_engine_ = engine;       // remembered so every NEW document's store gets it too
@@ -205,6 +224,8 @@ private:
     [[nodiscard]] Command capture_entity(EntityHandle handle) const;
     [[nodiscard]] EntityHandle most_recent_live() const;
     [[nodiscard]] std::vector<EntityHandle> all_live() const;
+    /// Every live entity of `store`, in the order all_live() lists them.
+    [[nodiscard]] static std::vector<EntityHandle> all_live_in(const GeometryStore& store);
     [[nodiscard]] EntityHandle pick_nearest(Vec2 world, double radius) const;
     /// True if the entity may be picked/selected/modified: its layer is on, not
     /// frozen, and not locked. Off/frozen aren't drawn; locked is drawn but inert.
@@ -266,10 +287,22 @@ private:
         std::vector<DimStyle> src_dimstyles;
         std::vector<BlockDef> src_blocks;
         std::vector<std::string> src_fonts; // source font table (index -> name)
-        Vec2 base{};                       // reference point (selection AABB min)
+        std::vector<ImageDef> src_image_defs; // source raster definitions (index -> def)
+        Vec2 base{};                       // reference point (selection AABB min, or COPYBASE's)
         bool has = false;
     };
     Clipboard clipboard_;
+    /// The clip's objects in a scratch store of their own, on their source tables, moved by
+    /// `offset`: what the system clipboard and the paste preview are made from.
+    void fill_store_from_clipboard(GeometryStore& out, Vec2 offset) const;
+    void apply_paste_document(const PasteDocumentCommand& c);
+    void apply_trim_path(const TrimPathCommand& c);
+    bool paste_preview_active_ = false;
+    Vec2 paste_preview_at_{};
+    /// What the last TRIM pick did, for Quick mode (an untrimmable pick deletes the object).
+    enum class TrimOutcome : std::uint8_t { None, Trimmed, NoEdge, Whole };
+    TrimOutcome trim_outcome_ = TrimOutcome::None;
+    std::function<void(const ClipboardExport&)> clipboard_listener_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;
     void apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group);
     void apply_area_query(const AreaQueryCommand& c);
@@ -338,8 +371,8 @@ private:
     /// with its edited form. Used by the commit AND by the live preview, so the rubber
     /// band cannot show something different from what the click will produce.
     [[nodiscard]] std::vector<StretchEdit> stretched_commands(Vec2 delta) const;
-    void apply_copy_clipboard();
-    void apply_cut_clipboard(std::uint64_t group);
+    void apply_copy_clipboard(std::optional<Vec2> base = std::nullopt);
+    void apply_cut_clipboard(std::uint64_t group, std::optional<Vec2> base = std::nullopt);
     void apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at_cursor);
 
     // --- modify (operate on the selection / a pick) ---
