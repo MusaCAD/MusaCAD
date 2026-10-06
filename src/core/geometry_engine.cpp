@@ -3539,6 +3539,38 @@ void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
         return;
     }
 
+    // MEASURE goes from the end nearer the pick (on a closed curve, from its start).
+    if (!divide && !sampler.closed) {
+        Vec2 p0;
+        Vec2 p1;
+        double unused = 0.0;
+        sampler.at(0.0, p0, unused);
+        sampler.at(sampler.total, p1, unused);
+        if (length_squared(c.pick - p1) < length_squared(c.pick - p0)) {
+            for (double& st : stations) {
+                st = sampler.total - st;
+            }
+        }
+    }
+    // [Block]: references of a block at the marks, turned to the curve when aligned.
+    std::optional<std::uint16_t> block;
+    if (!c.block.empty()) {
+        const auto upper_of = [](std::string x) {
+            std::transform(x.begin(), x.end(), x.begin(), [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+            return x;
+        };
+        const std::string want = upper_of(c.block);
+        const auto& defs = store_.blocks();
+        for (std::size_t i = 0; i < defs.size() && !block; ++i) {
+            if (upper_of(defs[i].name) == want) {
+                block = static_cast<std::uint16_t>(i);
+            }
+        }
+        if (!block) {
+            report("Block \"" + c.block + "\" not found.");
+            return;
+        }
+    }
     // The marks are ordinary POINT entities, exactly as in AutoCAD: they snap with
     // Node, they select, they erase, and the curve itself is left alone. Props are left
     // unset so each mark lands on the CURRENT layer, like any other fresh draw.
@@ -3546,7 +3578,8 @@ void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
         Vec2 p;
         double ang = 0.0;
         sampler.at(st, p, ang);
-        Command mark = AddPointCommand{p, c.group, {}};
+        Command mark = block ? Command{AddInsertCommand{*block, p, 1.0, 1.0, c.align ? ang : 0.0, c.group, {}, {}}}
+                             : Command{AddPointCommand{p, c.group, {}}};
         const EntityHandle nh = create_indexed(mark);
         push_create_item(c.group, nh, mark);
     }
@@ -3554,7 +3587,7 @@ void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
     geom_dirty_ = true;
     dirty_ = true;
     report((divide ? "Divided: " : "Measured: ") + std::to_string(stations.size()) +
-           " points placed.");
+           (block ? " blocks placed." : " points placed."));
 }
 
 void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
@@ -3605,6 +3638,27 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
 
 // The nearest boundary hit strictly forward of the moving end `mov` along fix->mov.
 // Boundaries can be anywhere, so scan live entities (EXTEND is interactive/infrequent).
+namespace {
+/// Where the infinite line through `base` along `dir` -- a ray when `ray`, from `base` on
+/// -- crosses the chain `poly`.
+void line_cross_poly(Vec2 base, Vec2 dir, bool ray, const std::vector<Vec2>& poly, std::vector<Vec2>& out) {
+    for (std::size_t i = 1; i < poly.size(); ++i) {
+        const Vec2 p0 = poly[i - 1];
+        const Vec2 d = poly[i] - p0;
+        const double den = dir.x * d.y - dir.y * d.x;
+        if (std::abs(den) < 1e-18) {
+            continue; // parallel
+        }
+        const Vec2 w = p0 - base;
+        const double t = (w.x * d.y - w.y * d.x) / den;     // along the line
+        const double u = (w.x * dir.y - w.y * dir.x) / den; // along the segment
+        if (u >= -1e-9 && u <= 1.0 + 1e-9 && (!ray || t >= -1e-9)) {
+            out.push_back(base + dir * t);
+        }
+    }
+}
+} // namespace
+
 bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mov,
                                             Vec2& target) const {
     const Vec2 dir = normalized(mov - fix);
@@ -3656,10 +3710,55 @@ bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mo
             if (n == 2 && (trim_edge_extend_ || angle_on_arc(*arc, p1))) {
                 consider(p1);
             }
+        } else if (c.kind == EntityKind::Xline) {
+            const XlineData* x = store_.xline(c);
+            Vec2 p{};
+            if (NativeKernel2D::line_line_intersection(fix, mov, x->base, x->base + x->dir, p) &&
+                (!x->ray || dot(p - x->base, x->dir) >= -1e-9)) {
+                consider(p);
+            }
+        } else if (c.kind == EntityKind::Ellipse || c.kind == EntityKind::Spline) {
+            // Along their tessellation.
+            std::vector<Vec2> poly;
+            std::vector<Vec2> at;
+            kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
+            line_cross_poly(mov, dir, true, poly, at);
+            for (const Vec2& p : at) {
+                consider(p);
+            }
         } else if (c.kind == EntityKind::Polyline) {
-            // Each segment of a polyline boundary (straight ones exactly; arc segments
-            // through their chord tessellation from the kernel would be approximate, so
-            // only straight segments count here).
+            // Each segment of a polyline boundary: straight ones exactly, arc segments
+            // round their circle (where the ray meets the arc).
+            {
+                const PolylineData* pa = store_.polyline(c);
+                const std::span<const Vec2> av = store_.vertices_of(*pa);
+                const std::span<const double> ab = store_.bulges_of(*pa);
+                const std::size_t an = av.size();
+                const std::size_t am = pa->closed ? an : (an > 0 ? an - 1 : 0);
+                for (std::size_t i = 0; i < am && !ab.empty(); ++i) {
+                    if (std::abs(ab[i]) <= 1e-12) {
+                        continue;
+                    }
+                    const BulgeArc ba = arc_from_bulge(av[i], av[(i + 1) % an], ab[i]);
+                    Vec2 p0{};
+                    Vec2 p1{};
+                    const int n = NativeKernel2D::line_circle_intersection(fix, mov, ba.center, ba.radius, p0, p1);
+                    for (int k = 0; k < n; ++k) {
+                        const Vec2 p = k == 0 ? p0 : p1;
+                        double d = std::atan2(p.y - ba.center.y, p.x - ba.center.x) - ba.a0;
+                        if (ba.sweep < 0.0) {
+                            d = -d;
+                        }
+                        d = std::fmod(d, kTwoPi);
+                        if (d < 0.0) {
+                            d += kTwoPi;
+                        }
+                        if (d <= std::abs(ba.sweep) + 1e-9) {
+                            consider(p);
+                        }
+                    }
+                }
+            }
             const PolylineData* pl = store_.polyline(c);
             const std::span<const Vec2> pv = store_.vertices_of(*pl);
             const std::span<const double> pb = store_.bulges_of(*pl);
@@ -3728,93 +3827,27 @@ void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t g
                       centre.y + r * std::sin(arc->end_angle)};
     const bool grow_end = length_squared(pick - end_pt) <= length_squared(pick - start_pt);
 
-    // Candidates near the arc's FULL circle, since the extension leaves the arc's own box;
-    // with Edge=Extend an edge from anywhere may reach it.
-    std::vector<EntityHandle> cand;
-    if (trim_edge_extend_) {
-        cand = trim_edge_list();
-    } else {
-        grid_.query(Vec2{centre.x - r, centre.y - r}, Vec2{centre.x + r, centre.y + r}, cand);
-    }
-
-    // The nearest crossing strictly beyond the growing end, measured as extra sweep.
+    // The nearest crossing strictly beyond the growing end, measured as extra sweep, on
+    // the arc's FULL circle -- a boundary the arc does not reach yet is exactly what it is
+    // being extended to, so its own sweep must not filter.
+    std::vector<Vec2> hits;
+    circle_boundary_hits(h, centre, r, hits);
     double best = 0.0;
     bool found = false;
-    std::vector<Vec2> hits;
-    for (const EntityHandle c : cand) {
-        if (c == h || !is_trim_edge(c)) {
+    for (const Vec2& p : hits) {
+        // Extra sweep beyond the growing end, always positive going the growth way.
+        double extra = grow_end ? std::atan2(p.y - centre.y, p.x - centre.x) - arc->end_angle
+                                : start - std::atan2(p.y - centre.y, p.x - centre.x);
+        while (extra <= 1e-9) {
+            extra += kTwoPi;
+        }
+        // Never wrap all the way round onto the arc itself.
+        if (extra + total >= kTwoPi - 1e-9) {
             continue;
         }
-        // Intersect the FULL circle the arc lies on: a boundary the arc does not reach
-        // yet is exactly what we are extending to, so the arc's own sweep must not filter.
-        hits.clear();
-        if (c.kind == EntityKind::Line) {
-            const LineData* m = store_.line(c);
-            Vec2 p0{};
-            Vec2 p1{};
-            const int n =
-                NativeKernel2D::line_circle_intersection(m->a, m->b, centre, r, p0, p1);
-            // On the boundary line itself, unless Edge=Extend lets the whole line count.
-            const Vec2 md = m->b - m->a;
-            const auto on_line = [&](Vec2 p) {
-                const double u = dot(p - m->a, md) / std::max(length_squared(md), 1e-18);
-                return trim_edge_extend_ || (u >= -1e-9 && u <= 1.0 + 1e-9);
-            };
-            if (n >= 1 && on_line(p0)) {
-                hits.push_back(p0);
-            }
-            if (n == 2 && on_line(p1)) {
-                hits.push_back(p1);
-            }
-        } else if (c.kind == EntityKind::Arc && trim_edge_extend_) {
-            // Edge=Extend: the boundary arc's whole circle.
-            const ArcData* ba = store_.arc(c);
-            Vec2 p0{};
-            Vec2 p1{};
-            const int n = circle_circle_intersection(centre, r, ba->center, ba->radius, p0, p1);
-            if (n >= 1) {
-                hits.push_back(p0);
-            }
-            if (n == 2) {
-                hits.push_back(p1);
-            }
-        } else if (c.kind == EntityKind::Circle || c.kind == EntityKind::Arc) {
-            // Curve-vs-curve: tessellate the other entity and cross each of its segments
-            // with this arc's circle. Accurate to the tessellation, which is the same
-            // guarantee the kernel's own curve-curve fallback gives.
-            std::vector<Vec2> poly;
-            kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
-            for (std::size_t i = 1; i < poly.size(); ++i) {
-                Vec2 p0{};
-                Vec2 p1{};
-                const int n = NativeKernel2D::line_circle_intersection(poly[i - 1], poly[i], centre,
-                                                                       r, p0, p1);
-                if (n >= 1) {
-                    hits.push_back(p0);
-                }
-                if (n == 2) {
-                    hits.push_back(p1);
-                }
-            }
-        } else {
-            continue;
-        }
-        for (const Vec2& p : hits) {
-            // Extra sweep beyond the growing end, always positive going the growth way.
-            double extra = grow_end
-                               ? std::atan2(p.y - centre.y, p.x - centre.x) - arc->end_angle
-                               : start - std::atan2(p.y - centre.y, p.x - centre.x);
-            while (extra <= 1e-9) {
-                extra += kTwoPi;
-            }
-            // Never wrap all the way round onto the arc itself.
-            if (extra + total >= kTwoPi - 1e-9) {
-                continue;
-            }
-            if (!found || extra < best) {
-                best = extra;
-                found = true;
-            }
+        if (!found || extra < best) {
+            best = extra;
+            found = true;
         }
     }
     if (!found) {
@@ -3834,6 +3867,144 @@ void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t g
     geom_dirty_ = true;
     dirty_ = true;
     report("Extended.");
+}
+
+bool GeometryEngine::plan_extend_preview(Vec2 pick, double radius, std::vector<Vec2>& added) const {
+    // The same choices as apply_extend (the end nearer the pick, the first boundary ahead),
+    // drawn instead of made.
+    const EntityHandle h = pick_nearest(pick, radius);
+    if (h.is_null()) {
+        return false;
+    }
+    const auto arc_band = [&](Vec2 c, double r, double from, double sweep) {
+        for (int k = 0; k <= 32; ++k) {
+            const double ang = from + sweep * static_cast<double>(k) / 32.0;
+            added.push_back(Vec2{c.x + r * std::cos(ang), c.y + r * std::sin(ang)});
+        }
+    };
+    if (h.kind == EntityKind::Line) {
+        const LineData* l = store_.line(h);
+        const bool at_b = length_squared(pick - l->b) < length_squared(pick - l->a);
+        const Vec2 mov = at_b ? l->b : l->a;
+        Vec2 target{};
+        if (!nearest_boundary_ahead(h, at_b ? l->a : l->b, mov, target)) {
+            return false;
+        }
+        added = {mov, target};
+        return true;
+    }
+    if (h.kind == EntityKind::Arc) {
+        const ArcData* arc = store_.arc(h);
+        double total = arc->end_angle - arc->start_angle;
+        while (total <= 0.0) {
+            total += kTwoPi;
+        }
+        const Vec2 c = arc->center;
+        const double r = arc->radius;
+        const Vec2 sp{c.x + r * std::cos(arc->start_angle), c.y + r * std::sin(arc->start_angle)};
+        const Vec2 ep{c.x + r * std::cos(arc->end_angle), c.y + r * std::sin(arc->end_angle)};
+        const bool grow_end = length_squared(pick - ep) <= length_squared(pick - sp);
+        std::vector<Vec2> hits;
+        circle_boundary_hits(h, c, r, hits);
+        double best = 0.0;
+        bool found = false;
+        for (const Vec2& p : hits) {
+            double extra = grow_end ? std::atan2(p.y - c.y, p.x - c.x) - arc->end_angle
+                                    : arc->start_angle - std::atan2(p.y - c.y, p.x - c.x);
+            while (extra <= 1e-9) {
+                extra += kTwoPi;
+            }
+            if (extra + total < kTwoPi - 1e-9 && (!found || extra < best)) {
+                best = extra;
+                found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+        arc_band(c, r, grow_end ? arc->end_angle : arc->start_angle, grow_end ? best : -best);
+        return true;
+    }
+    if (h.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store_.polyline(h);
+        const std::span<const Vec2> vs = store_.vertices_of(*pl);
+        const std::span<const double> bs = store_.bulges_of(*pl);
+        if (pl->closed || vs.size() < 2) {
+            return false;
+        }
+        const bool at_end = length_squared(pick - vs.back()) <= length_squared(pick - vs.front());
+        const std::size_t mov_i = at_end ? vs.size() - 1 : 0;
+        const std::size_t fix_i = at_end ? vs.size() - 2 : 1;
+        const std::size_t seg_i = at_end ? vs.size() - 2 : 0;
+        const double bg = bs.empty() ? 0.0 : bs[seg_i];
+        if (std::abs(bg) <= 1e-12) {
+            Vec2 target{};
+            if (!nearest_boundary_ahead(h, vs[fix_i], vs[mov_i], target)) {
+                return false;
+            }
+            added = {vs[mov_i], target};
+            return true;
+        }
+        const BulgeArc ba = arc_from_bulge(vs[seg_i], vs[seg_i + 1], bg);
+        const double s = (at_end ? 1.0 : -1.0) * (ba.sweep >= 0.0 ? 1.0 : -1.0);
+        const double am = std::atan2(vs[mov_i].y - ba.center.y, vs[mov_i].x - ba.center.x);
+        std::vector<Vec2> hits;
+        circle_boundary_hits(h, ba.center, ba.radius, hits);
+        double best = 0.0;
+        bool found = false;
+        for (const Vec2& p : hits) {
+            double extra = std::fmod((std::atan2(p.y - ba.center.y, p.x - ba.center.x) - am) * s, kTwoPi);
+            if (extra < 0.0) {
+                extra += kTwoPi;
+            }
+            if (extra > 1e-9 && extra + std::abs(ba.sweep) < kTwoPi - 1e-9 && (!found || extra < best)) {
+                best = extra;
+                found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+        arc_band(ba.center, ba.radius, am, s * best);
+        return true;
+    }
+    if (h.kind == EntityKind::Ellipse) {
+        const EllipseData e = *store_.ellipse(h);
+        if (ellipse::is_full(e)) {
+            return false;
+        }
+        const double total = ellipse::sweep_of(e);
+        const bool grow_end = length_squared(pick - ellipse::point_at(e, e.start + total)) <=
+                              length_squared(pick - ellipse::point_at(e, e.start));
+        EllipseData whole = e;
+        whole.start = 0.0;
+        whole.end = kTwoPi;
+        std::vector<Vec2> hits;
+        ellipse_boundary_hits(h, whole, hits);
+        double best = 0.0;
+        bool found = false;
+        for (const Vec2& p : hits) {
+            const double t = ellipse::param_of(e, p);
+            double extra = std::fmod(grow_end ? t - (e.start + total) : e.start - t, kTwoPi);
+            if (extra < 0.0) {
+                extra += kTwoPi;
+            }
+            if (extra > 1e-9 && extra + total < kTwoPi - 1e-9 && (!found || extra < best)) {
+                best = extra;
+                found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+        const double t0 = grow_end ? e.start + total : e.start;
+        const double t1 = grow_end ? t0 + best : t0 - best;
+        for (int k = 0; k <= 32; ++k) {
+            added.push_back(ellipse::point_at(e, t0 + (t1 - t0) * static_cast<double>(k) / 32.0));
+        }
+        return true;
+    }
+    return false;
 }
 
 void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group) {
@@ -3868,7 +4039,48 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         const std::size_t fix_i = at_end ? v.size() - 2 : 1;
         const std::size_t seg_i = at_end ? v.size() - 2 : 0;
         if (std::abs(b[seg_i]) > 1e-12) {
-            report("Extend: extending an arc segment of a polyline is not supported yet.");
+            // The end segment is an arc: it grows round its own circle to the first boundary.
+            const BulgeArc ba = arc_from_bulge(v[seg_i], v[seg_i + 1], b[seg_i]);
+            const double s = (at_end ? 1.0 : -1.0) * (ba.sweep >= 0.0 ? 1.0 : -1.0); // growth direction
+            const double am = std::atan2(v[mov_i].y - ba.center.y, v[mov_i].x - ba.center.x);
+            std::vector<Vec2> hits;
+            circle_boundary_hits(h, ba.center, ba.radius, hits);
+            double best = 0.0;
+            bool found = false;
+            for (const Vec2& p : hits) {
+                double extra = std::fmod((std::atan2(p.y - ba.center.y, p.x - ba.center.x) - am) * s, kTwoPi);
+                if (extra < 0.0) {
+                    extra += kTwoPi;
+                }
+                if (extra <= 1e-9 || extra + std::abs(ba.sweep) >= kTwoPi - 1e-9) {
+                    continue;
+                }
+                if (!found || extra < best) {
+                    best = extra;
+                    found = true;
+                }
+            }
+            if (!found) {
+                report("Extend: no boundary ahead of that end.");
+                return;
+            }
+            const double a_new = am + s * best;
+            v[mov_i] = Vec2{ba.center.x + ba.radius * std::cos(a_new), ba.center.y + ba.radius * std::sin(a_new)};
+            const double sweep_new = ba.sweep + (ba.sweep >= 0.0 ? best : -best);
+            b[seg_i] = std::tan(sweep_new / 4.0);
+            const EntityProps aprops = pl->props;
+            const double acts = store_.celtscale(h);
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(group, h, original);
+            inherit_polyline(original);
+            const Command extended = AddPolylineCommand{v, false, 0, aprops, b, acts};
+            const EntityHandle nh = create_indexed(extended);
+            push_create_item(group, nh, extended);
+            note_trim_pieces(h, {nh});
+            redo_.clear();
+            geom_dirty_ = true;
+            report("Extended.");
             return;
         }
         Vec2 target{};
@@ -3892,8 +4104,60 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         report("Extended.");
         return;
     }
+    if (h.kind == EntityKind::Ellipse) {
+        // An elliptical arc grows round its ellipse, the end nearer the pick, to the first
+        // boundary its whole ellipse meets beyond that end.
+        const EllipseData e = *store_.ellipse(h);
+        if (ellipse::is_full(e)) {
+            report("Extend: a whole ellipse has no end to extend.");
+            return;
+        }
+        const double total = ellipse::sweep_of(e);
+        const bool grow_end = length_squared(pick - ellipse::point_at(e, e.start + total)) <=
+                              length_squared(pick - ellipse::point_at(e, e.start));
+        EllipseData whole = e;
+        whole.start = 0.0;
+        whole.end = kTwoPi;
+        std::vector<Vec2> hits;
+        ellipse_boundary_hits(h, whole, hits);
+        double best = 0.0;
+        bool found = false;
+        for (const Vec2& p : hits) {
+            const double t = ellipse::param_of(e, p);
+            double extra = std::fmod(grow_end ? t - (e.start + total) : e.start - t, kTwoPi);
+            if (extra < 0.0) {
+                extra += kTwoPi;
+            }
+            if (extra <= 1e-9 || extra + total >= kTwoPi - 1e-9) {
+                continue;
+            }
+            if (!found || extra < best) {
+                best = extra;
+                found = true;
+            }
+        }
+        if (!found) {
+            report("Extend: no boundary ahead of that end.");
+            return;
+        }
+        const Command extended = grow_end ? Command{AddEllipseCommand{e.center, e.major, e.ratio, e.start,
+                                                                      e.start + total + best, 0, e.props}}
+                                          : Command{AddEllipseCommand{e.center, e.major, e.ratio, e.start - best,
+                                                                      e.start + total, 0, e.props}};
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const EntityHandle nh = create_indexed(extended);
+        push_create_item(group, nh, extended);
+        note_trim_pieces(h, {nh});
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Extended.");
+        return;
+    }
     if (h.kind != EntityKind::Line) {
-        report("Extend: only lines, arcs and open polylines can be extended.");
+        report("Extend: only lines, arcs, elliptical arcs and open polylines can be extended.");
         return;
     }
     const LineData* l = store_.line(h);
@@ -6863,7 +7127,23 @@ void GeometryEngine::apply_align(const AlignSelectionCommand& c) {
            (out.size() == 1 ? " object." : " objects."));
 }
 
+namespace {
+/// The length of an ellipse between two parameters (t1 > t0), by Simpson's rule.
+double ellipse_length(const EllipseData& e, double t0, double t1) {
+    const int n = 256; // even
+    const Vec2 nrm = ellipse::minor_axis(e);
+    const auto speed = [&](double t) { return length(e.major * -std::sin(t) + nrm * std::cos(t)); };
+    const double h = (t1 - t0) / n;
+    double sum = speed(t0) + speed(t1);
+    for (int i = 1; i < n; ++i) {
+        sum += speed(t0 + h * i) * (i % 2 == 1 ? 4.0 : 2.0);
+    }
+    return sum * h / 3.0;
+}
+} // namespace
+
 void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
+    using Mode = LengthenCommand::Mode;
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     if (h.is_null()) {
         report("Lengthen: no curve under the pick.");
@@ -6872,14 +7152,22 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
     // What the new length should be, given the current one.
     const auto resolve = [&](double current) {
         switch (c.mode) {
-        case LengthenCommand::Mode::Delta:
+        case Mode::Delta:
             return current + c.value;
-        case LengthenCommand::Mode::Percent:
+        case Mode::Percent:
             return current * c.value / 100.0;
-        case LengthenCommand::Mode::Total:
+        default:
             break;
         }
         return c.value;
+    };
+    const bool angle_mode = c.mode == Mode::DeltaAngle || c.mode == Mode::TotalAngle;
+    const auto say_length = [&](double len, std::optional<double> angle) {
+        std::string m = "Current length: " + units::format_length(len, store_.units());
+        if (angle) {
+            m += ", included angle: " + units::format_angle(*angle, store_.units());
+        }
+        report(m);
     };
 
     Command edited;
@@ -6889,25 +7177,30 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
     case EntityKind::Xline:
         report("Lengthen: a construction line is already infinite.");
         return;
-    case EntityKind::Ellipse:
-        report("Lengthen: ellipses are not supported yet (lines, arcs and polylines are).");
-        return;
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         before = length(l->b - l->a);
-        if (before <= 1e-12) {
-            report("Lengthen: that line has no length.");
+        if (c.mode == Mode::Measure) {
+            say_length(before, std::nullopt);
             return;
         }
-        after = resolve(before);
-        if (after <= 1e-9) {
-            report("Lengthen: that would leave nothing of the object.");
+        if (angle_mode) {
+            report("Lengthen: Angle is for arcs; a line has a length.");
+            return;
+        }
+        if (before <= 1e-12) {
+            report("Lengthen: that line has no length.");
             return;
         }
         // AutoCAD moves the end NEARER the pick and anchors the other.
         const bool move_b = length(c.pick - l->b) <= length(c.pick - l->a);
         const Vec2 anchor = move_b ? l->a : l->b;
         const Vec2 dir = (move_b ? l->b - l->a : l->a - l->b) / before;
+        after = c.mode == Mode::Dynamic ? dot(c.to - anchor, dir) : resolve(before);
+        if (after <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
         const Vec2 moved = anchor + dir * after;
         edited = AddLineCommand{move_b ? anchor : moved, move_b ? moved : anchor, 0, l->props};
         break;
@@ -6919,32 +7212,189 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
             sweep += kTwoPi;
         }
         before = sweep * a->radius; // arc LENGTH, so Delta/Total are in drawing units
+        if (c.mode == Mode::Measure) {
+            say_length(before, sweep);
+            return;
+        }
         if (before <= 1e-12 || a->radius <= 1e-12) {
             report("Lengthen: that arc has no length.");
             return;
         }
-        after = resolve(before);
-        if (after <= 1e-9) {
-            report("Lengthen: that would leave nothing of the object.");
-            return;
-        }
-        const double new_sweep = std::min(after / a->radius, kTwoPi);
         const Vec2 start_pt{a->center.x + a->radius * std::cos(a->start_angle),
                             a->center.y + a->radius * std::sin(a->start_angle)};
         const Vec2 end_pt{a->center.x + a->radius * std::cos(a->end_angle),
                           a->center.y + a->radius * std::sin(a->end_angle)};
-        // Grow or shrink from whichever end the pick is nearer, keeping the other fixed.
-        if (length(c.pick - end_pt) <= length(c.pick - start_pt)) {
-            edited = AddArcCommand{a->center, a->radius, a->start_angle,
-                                   a->start_angle + new_sweep, 0, a->props};
+        const bool move_end = length(c.pick - end_pt) <= length(c.pick - start_pt);
+        double new_sweep = 0.0;
+        if (c.mode == Mode::DeltaAngle) {
+            new_sweep = sweep + c.value;
+        } else if (c.mode == Mode::TotalAngle) {
+            new_sweep = c.value;
+        } else if (c.mode == Mode::Dynamic) {
+            const double at = std::atan2(c.to.y - a->center.y, c.to.x - a->center.x);
+            new_sweep = std::fmod(move_end ? at - a->start_angle : a->end_angle - at, kTwoPi);
+            if (new_sweep <= 1e-9) {
+                new_sweep += kTwoPi;
+            }
         } else {
-            edited = AddArcCommand{a->center, a->radius, a->end_angle - new_sweep, a->end_angle,
-                                   0, a->props};
+            new_sweep = resolve(before) / a->radius;
+        }
+        if (new_sweep <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        new_sweep = std::min(new_sweep, kTwoPi);
+        after = new_sweep * a->radius;
+        // Grow or shrink from whichever end the pick is nearer, keeping the other fixed.
+        if (move_end) {
+            edited = AddArcCommand{a->center, a->radius, a->start_angle, a->start_angle + new_sweep, 0, a->props};
+        } else {
+            edited = AddArcCommand{a->center, a->radius, a->end_angle - new_sweep, a->end_angle, 0, a->props};
         }
         break;
     }
+    case EntityKind::Polyline: {
+        // An open polyline's end segment, nearer the pick, takes up the change: straight
+        // along itself, an arc round its circle.
+        const PolylineData* pl = store_.polyline(h);
+        const std::span<const Vec2> vs = store_.vertices_of(*pl);
+        const std::span<const double> bs = store_.bulges_of(*pl);
+        std::vector<Vec2> v(vs.begin(), vs.end());
+        std::vector<double> bg(v.size(), 0.0);
+        if (!bs.empty()) {
+            std::copy(bs.begin(), bs.begin() + static_cast<std::ptrdiff_t>(std::min(bs.size(), v.size())), bg.begin());
+        }
+        const std::size_t n = v.size();
+        for (std::size_t i = 0; i + 1 < n || (pl->closed && i < n); ++i) {
+            const Vec2 p0 = v[i];
+            const Vec2 p1 = v[(i + 1) % n];
+            const BulgeArc ba = arc_from_bulge(p0, p1, bg[i]);
+            before += std::abs(bg[i]) > 1e-12 ? ba.radius * std::abs(ba.sweep) : length(p1 - p0);
+        }
+        if (c.mode == Mode::Measure) {
+            say_length(before, std::nullopt);
+            return;
+        }
+        if (pl->closed || n < 2) {
+            report("Lengthen: a closed polyline has no end to move.");
+            return;
+        }
+        const bool at_end = length_squared(c.pick - v.back()) <= length_squared(c.pick - v.front());
+        const std::size_t mov = at_end ? n - 1 : 0;
+        const std::size_t fix = at_end ? n - 2 : 1;
+        const std::size_t seg = at_end ? n - 2 : 0;
+        if (std::abs(bg[seg]) <= 1e-12) {
+            if (angle_mode) {
+                report("Lengthen: Angle is for arcs; that end segment is straight.");
+                return;
+            }
+            const double sl = length(v[mov] - v[fix]);
+            if (sl <= 1e-12) {
+                report("Lengthen: that end segment has no length.");
+                return;
+            }
+            const Vec2 dir = (v[mov] - v[fix]) / sl;
+            const double new_sl = c.mode == Mode::Dynamic ? dot(c.to - v[fix], dir) : sl + (resolve(before) - before);
+            if (new_sl <= 1e-9) {
+                report("Lengthen: that would leave nothing of the end segment.");
+                return;
+            }
+            v[mov] = v[fix] + dir * new_sl;
+            after = before - sl + new_sl;
+        } else {
+            const BulgeArc ba = arc_from_bulge(v[seg], v[seg + 1], bg[seg]);
+            const double sw = std::abs(ba.sweep);
+            const double sgn = ba.sweep >= 0.0 ? 1.0 : -1.0;
+            double new_sw = 0.0;
+            if (c.mode == Mode::DeltaAngle) {
+                new_sw = sw + c.value;
+            } else if (c.mode == Mode::TotalAngle) {
+                new_sw = c.value;
+            } else if (c.mode == Mode::Dynamic) {
+                // Round the circle from the fixed end to where `to` is, the way the arc goes.
+                const double af = std::atan2(v[fix].y - ba.center.y, v[fix].x - ba.center.x);
+                const double at = std::atan2(c.to.y - ba.center.y, c.to.x - ba.center.x);
+                const double dir = at_end ? sgn : -sgn;
+                new_sw = std::fmod((at - af) * dir, kTwoPi);
+                if (new_sw <= 1e-9) {
+                    new_sw += kTwoPi;
+                }
+            } else {
+                new_sw = sw + (resolve(before) - before) / ba.radius;
+            }
+            if (new_sw <= 1e-9 || new_sw >= kTwoPi - 1e-9) {
+                report("Lengthen: that would leave nothing of the end segment, or close it on itself.");
+                return;
+            }
+            const double af = std::atan2(v[fix].y - ba.center.y, v[fix].x - ba.center.x);
+            const double dir = at_end ? sgn : -sgn;
+            const double am = af + dir * new_sw;
+            v[mov] = Vec2{ba.center.x + ba.radius * std::cos(am), ba.center.y + ba.radius * std::sin(am)};
+            bg[seg] = std::tan(sgn * new_sw / 4.0);
+            after = before + (new_sw - sw) * ba.radius;
+        }
+        edited = AddPolylineCommand{v, false, 0, pl->props, bg, store_.celtscale(h)};
+        inherit_polyline(capture_entity(h));
+        break;
+    }
+    case EntityKind::Ellipse: {
+        const EllipseData e = *store_.ellipse(h);
+        const double total = ellipse::sweep_of(e);
+        before = ellipse_length(e, e.start, e.start + total);
+        if (c.mode == Mode::Measure) {
+            say_length(before, std::nullopt);
+            return;
+        }
+        if (ellipse::is_full(e)) {
+            report("Lengthen: a whole ellipse has no end to move.");
+            return;
+        }
+        if (angle_mode) {
+            report("Lengthen: Angle is for arcs; an elliptical arc has a length.");
+            return;
+        }
+        const bool move_end = length_squared(c.pick - ellipse::point_at(e, e.start + total)) <=
+                              length_squared(c.pick - ellipse::point_at(e, e.start));
+        double new_total = 0.0;
+        if (c.mode == Mode::Dynamic) {
+            const double t = ellipse::param_of(e, c.to);
+            new_total = std::fmod(move_end ? t - e.start : e.start + total - t, kTwoPi);
+            if (new_total <= 1e-9) {
+                new_total += kTwoPi;
+            }
+        } else {
+            const double target = resolve(before);
+            if (target <= 1e-9 || target >= ellipse_length(e, 0.0, kTwoPi)) {
+                report("Lengthen: that length does not fit the ellipse.");
+                return;
+            }
+            // The sweep whose length is the target, by bisection.
+            double lo = 0.0;
+            double hi = kTwoPi;
+            for (int it = 0; it < 60; ++it) {
+                const double mid = (lo + hi) * 0.5;
+                const double len = move_end ? ellipse_length(e, e.start, e.start + mid)
+                                            : ellipse_length(e, e.start + total - mid, e.start + total);
+                (len < target ? lo : hi) = mid;
+            }
+            new_total = (lo + hi) * 0.5;
+        }
+        if (new_total <= 1e-9 || new_total >= kTwoPi - 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        edited = move_end ? Command{AddEllipseCommand{e.center, e.major, e.ratio, e.start, e.start + new_total, 0, e.props}}
+                          : Command{AddEllipseCommand{e.center, e.major, e.ratio, e.start + total - new_total,
+                                                      e.start + total, 0, e.props}};
+        after = move_end ? ellipse_length(e, e.start, e.start + new_total)
+                         : ellipse_length(e, e.start + total - new_total, e.start + total);
+        break;
+    }
+    case EntityKind::Spline:
+        report("Lengthen: splines are not lengthened yet (lines, arcs, polylines and elliptical arcs are).");
+        return;
     default:
-        report("Lengthen: only lines and arcs have an end to move.");
+        report("Lengthen: only lines, arcs, polylines and elliptical arcs have an end to move.");
         return;
     }
 
@@ -6957,9 +7407,8 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), "Length changed from %.4g to %.4g.", before, after);
-    report(buf);
+    report("Length changed from " + units::format_length(before, store_.units()) + " to " +
+           units::format_length(after, store_.units()) + ".");
 }
 
 void GeometryEngine::apply_break(const BreakCommand& c) {
@@ -7453,6 +7902,26 @@ void polyline_sub(const std::vector<Vec2>& v, const std::vector<double>& b, doub
     bulges.push_back(0.0);
 }
 
+/// A vertex chain with bulges as points, arc segments sampled (a preview's line).
+void chain_points(const std::vector<Vec2>& pts, const std::vector<double>& bulges, std::vector<Vec2>& out) {
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        if (i == 0) {
+            out.push_back(pts[0]);
+            continue;
+        }
+        const double bg = i - 1 < bulges.size() ? bulges[i - 1] : 0.0;
+        if (std::abs(bg) <= 1e-12) {
+            out.push_back(pts[i]);
+            continue;
+        }
+        const BulgeArc ba = arc_from_bulge(pts[i - 1], pts[i], bg);
+        for (int k = 1; k <= 16; ++k) {
+            const double ang = ba.a0 + ba.sweep * static_cast<double>(k) / 16.0;
+            out.push_back(Vec2{ba.center.x + ba.radius * std::cos(ang), ba.center.y + ba.radius * std::sin(ang)});
+        }
+    }
+}
+
 /// The two intersections of two circles (0, 1 or 2).
 int circle_circle_hits(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0, Vec2& p1) {
     const Vec2 d = c1 - c0;
@@ -7540,16 +8009,87 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         return;
     }
 
-    // Case 3: two distinct lines.
-    if (h1 == h2 || h1.kind != EntityKind::Line || h2.kind != EntityKind::Line) {
+    // Case 2b: a line with an open polyline's end segment, or two open polylines' end
+    // segments: one polyline afterwards, as AutoCAD makes it.
+    const auto linear = [](EntityKind k) { return k == EntityKind::Line || k == EntityKind::Polyline; };
+    if (h1 != h2 && linear(h1.kind) && linear(h2.kind) &&
+        (h1.kind == EntityKind::Polyline || h2.kind == EntityKind::Polyline)) {
+        apply_fillet_join(h1, h2, pick1, pick2, radius, group, trim);
+        return;
+    }
+
+    // Case 3: two distinct lines -- construction lines and rays as the lines they run along.
+    constexpr double kFar = 1e7; // a construction line's endless side
+    const auto as_line = [&](EntityHandle h, LineData& out) {
+        if (h.kind == EntityKind::Line) {
+            out = *store_.line(h);
+            return true;
+        }
+        if (h.kind == EntityKind::Xline) {
+            const XlineData* x = store_.xline(h);
+            out.a = x->ray ? x->base : x->base - x->dir * kFar;
+            out.b = x->base + x->dir * kFar;
+            out.props = x->props;
+            return true;
+        }
+        return false;
+    };
+    LineData l1{};
+    LineData l2{};
+    if (h1 == h2 || !as_line(h1, l1) || !as_line(h2, l2)) {
         report("Fillet: pick two lines, arcs or circles, or two adjacent edges of one polyline.");
         return;
     }
-    const LineData l1 = *store_.line(h1);
-    const LineData l2 = *store_.line(h2);
     Vec2 P{};
     if (!NativeKernel2D::line_line_intersection(l1.a, l1.b, l2.a, l2.b, P)) {
-        report("Fillet: the two lines are parallel.");
+        if (h1.kind != EntityKind::Line || h2.kind != EntityKind::Line) {
+            report("Fillet: the two lines are parallel.");
+            return;
+        }
+        // Parallel lines: AutoCAD joins them with a half circle as wide as the gap, at the
+        // end of the first line nearer its pick; the second is trimmed or extended to meet
+        // it. The fillet radius does not apply.
+        const Vec2 d1 = l1.b - l1.a;
+        const double len1 = length(d1);
+        if (len1 < 1e-12) {
+            report("Fillet: pick two lines.");
+            return;
+        }
+        const Vec2 u = d1 * (1.0 / len1);
+        const Vec2 nrm{-u.y, u.x};
+        const double gap = dot(l2.a - l1.a, nrm);
+        if (std::abs(gap) < 1e-9) {
+            report("Fillet: the two lines are collinear.");
+            return;
+        }
+        const bool at_b1 = length_squared(pick1 - l1.b) < length_squared(pick1 - l1.a);
+        const Vec2 e1p = at_b1 ? l1.b : l1.a;
+        const Vec2 out_dir = at_b1 ? u : u * -1.0; // the half circle bulges past the end
+        const Vec2 e2p = e1p + nrm * gap;
+        const Vec2 c = (e1p + e2p) * 0.5;
+        const double r = std::abs(gap) * 0.5;
+        const double a1 = std::atan2(e1p.y - c.y, e1p.x - c.x);
+        double dm = std::fmod(std::atan2(out_dir.y, out_dir.x) - a1, kTwoPi);
+        if (dm < 0.0) {
+            dm += kTwoPi;
+        }
+        const double s0 = dm < kPi ? a1 : a1 + kPi;
+        const Command half = AddArcCommand{c, r, s0, s0 + kPi, 0, joining_props(store_, h1, h2)};
+        if (trim) {
+            // The second line's end nearer the half circle moves onto it.
+            const bool b_near = length_squared(l2.b - e2p) < length_squared(l2.a - e2p);
+            const Command moved = b_near ? AddLineCommand{l2.a, e2p, 0, l2.props, store_.celtscale(h2)}
+                                         : AddLineCommand{e2p, l2.b, 0, l2.props, store_.celtscale(h2)};
+            const Command o2 = capture_entity(h2);
+            remove_indexed(h2);
+            push_erase_item(group, h2, o2);
+            push_create_item(group, create_indexed(moved), moved);
+        }
+        push_create_item(group, create_indexed(half), half);
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Filleted.");
         return;
     }
     Vec2 u1{};
@@ -7600,22 +8140,185 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         report("Filleted.");
         return;
     }
-    // The trimmed lines keep their own properties (layer, colour, linetype, scale).
+    // The trimmed lines keep their own properties (layer, colour, linetype, scale). What
+    // stays of a construction line is a ray; of a ray, a ray or (kept from its base) a line.
+    const auto piece_of = [&](EntityHandle h, const LineData& l, Vec2 k, Vec2 t) -> Command {
+        if (h.kind == EntityKind::Xline) {
+            const XlineData* x = store_.xline(h);
+            if (x->ray && distance(k, x->base) < 1e-9) {
+                return AddLineCommand{x->base, t, 0, l.props};
+            }
+            return AddXlineCommand{t, normalized(k - t), true, 0, l.props};
+        }
+        return AddLineCommand{k, t, 0, l.props, store_.celtscale(h)};
+    };
+    const Command e1 = piece_of(h1, l1, k1, t1);
+    const Command e2 = piece_of(h2, l2, k2, t2);
     const Command o1 = capture_entity(h1);
     const Command o2 = capture_entity(h2);
     remove_indexed(h1);
     push_erase_item(group, h1, o1);
     remove_indexed(h2);
     push_erase_item(group, h2, o2);
-    const Command e1 = AddLineCommand{k1, t1, 0, l1.props, store_.celtscale(h1)};
     push_create_item(group, create_indexed(e1), e1);
-    const Command e2 = AddLineCommand{k2, t2, 0, l2.props, store_.celtscale(h2)};
     push_create_item(group, create_indexed(e2), e2);
     if (arc) {
         push_create_item(group, create_indexed(*arc), *arc);
     }
     redo_.clear();
     geom_dirty_ = true;
+    report("Filleted.");
+}
+
+void GeometryEngine::apply_fillet_join(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
+                                       std::uint64_t group, bool trim) {
+    // Each object's picked end segment as a line: a line itself, or an open polyline's
+    // first or last segment (straight).
+    struct Side {
+        EntityHandle h;
+        Vec2 pick;
+        std::vector<Vec2> v;
+        std::vector<double> b; // per vertex, segment i -> i+1
+        Vec2 s0{};
+        Vec2 s1{};
+        int seg = 0;
+    };
+    Side sides[2] = {{h1, pick1, {}, {}}, {h2, pick2, {}, {}}};
+    for (Side& sd : sides) {
+        if (sd.h.kind == EntityKind::Line) {
+            const LineData* l = store_.line(sd.h);
+            sd.v = {l->a, l->b};
+            sd.b = {0.0, 0.0};
+        } else {
+            const PolylineData* pl = store_.polyline(sd.h);
+            if (pl->closed) {
+                report("Fillet: pick an end segment of an open polyline.");
+                return;
+            }
+            const std::span<const Vec2> vs = store_.vertices_of(*pl);
+            const std::span<const double> bs = store_.bulges_of(*pl);
+            sd.v.assign(vs.begin(), vs.end());
+            sd.b.assign(sd.v.size(), 0.0);
+            if (!bs.empty()) {
+                std::copy(bs.begin(), bs.begin() + static_cast<std::ptrdiff_t>(std::min(bs.size(), sd.v.size())), sd.b.begin());
+            }
+        }
+        const int n = static_cast<int>(sd.v.size());
+        if (n < 2) {
+            report("Fillet: pick an end segment of an open polyline.");
+            return;
+        }
+        sd.seg = sd.h.kind == EntityKind::Line ? 0 : nearest_pl_segment(sd.v, false, sd.pick);
+        if (sd.seg != 0 && sd.seg != n - 2) {
+            report("Fillet: pick an end segment of the polyline.");
+            return;
+        }
+        if (std::abs(sd.b[static_cast<std::size_t>(sd.seg)]) > 1e-12) {
+            report("Fillet: the polyline's end segment is an arc; pick a straight one.");
+            return;
+        }
+        sd.s0 = sd.v[static_cast<std::size_t>(sd.seg)];
+        sd.s1 = sd.v[static_cast<std::size_t>(sd.seg) + 1];
+    }
+    Vec2 P{};
+    if (!NativeKernel2D::line_line_intersection(sides[0].s0, sides[0].s1, sides[1].s0, sides[1].s1, P)) {
+        report("Fillet: the two segments are parallel.");
+        return;
+    }
+    // Each side as a chain that ends at the corner: the end of the picked segment on the
+    // pick's side stays, the other runs to the corner.
+    std::vector<Vec2> chain[2];
+    std::vector<double> bul[2];
+    for (int i = 0; i < 2; ++i) {
+        Side& sd = sides[i];
+        const int n = static_cast<int>(sd.v.size());
+        const LineData seg{sd.s0, sd.s1};
+        Vec2 u{};
+        const Vec2 keep = kept_endpoint(seg, P, sd.pick, u);
+        // The corner end is the segment's other end; it must be an end of the object.
+        const bool corner_at_start = distance(keep, sd.s1) < 1e-12; // keep is the segment's far end
+        std::vector<Vec2> pts;
+        std::vector<double> bs;
+        if (n == 2) {
+            pts = {keep, P};
+            bs = {0.0, 0.0};
+        } else if (corner_at_start) {
+            if (sd.seg != 0) {
+                report("Fillet: pick the polyline's segment nearer the corner end.");
+                return;
+            }
+            // Reversed: from the far end back to vertex 1, then the corner.
+            for (int k = n - 1; k >= 1; --k) {
+                pts.push_back(sd.v[static_cast<std::size_t>(k)]);
+                bs.push_back(k >= 1 ? -sd.b[static_cast<std::size_t>(k - 1)] : 0.0);
+            }
+            pts.push_back(P);
+            bs.back() = 0.0; // vertex 1 -> corner: the picked segment, straight
+            bs.push_back(0.0);
+        } else {
+            if (sd.seg != n - 2) {
+                report("Fillet: pick the polyline's segment nearer the corner end.");
+                return;
+            }
+            for (int k = 0; k <= n - 2; ++k) {
+                pts.push_back(sd.v[static_cast<std::size_t>(k)]);
+                bs.push_back(sd.b[static_cast<std::size_t>(k)]);
+            }
+            bs.back() = 0.0;
+            pts.push_back(P);
+            bs.push_back(0.0);
+        }
+        chain[i] = std::move(pts);
+        bul[i] = std::move(bs);
+    }
+    // One chain: the first to the corner, then the second from the corner back out.
+    std::vector<Vec2> pts = chain[0];
+    std::vector<double> bs = bul[0];
+    bs.pop_back(); // the corner's own (re-set below)
+    const std::vector<Vec2>& c2 = chain[1];
+    const std::vector<double>& b2 = bul[1];
+    bs.push_back(-b2[c2.size() - 2]);
+    for (std::size_t k = c2.size() - 1; k-- > 0;) {
+        pts.push_back(c2[k]);
+        bs.push_back(k >= 1 ? -b2[k - 1] : 0.0);
+    }
+    const int corner = static_cast<int>(chain[0].size()) - 1;
+    if (radius > 0.0 && !polyline_ops::fillet_corner(pts, bs, false, corner, radius)) {
+        report("Fillet: radius too large for these segments.");
+        return;
+    }
+    const EntityHandle ph = h1.kind == EntityKind::Polyline ? h1 : h2; // the result takes the polyline's look
+    const PolylineData* pl = store_.polyline(ph);
+    const EntityProps props = pl->props;
+    const double cts = store_.celtscale(ph);
+    if (!trim) {
+        // No trim: the objects stay; only the rounding arc is added.
+        if (radius <= 0.0) {
+            report("Fillet: nothing to add with radius 0 in No trim mode.");
+            return;
+        }
+        const std::size_t c = static_cast<std::size_t>(corner);
+        const BulgeArc ba = arc_from_bulge(pts[c], pts[c + 1], bs[c]);
+        const double a0 = ba.sweep >= 0.0 ? ba.a0 : ba.a0 + ba.sweep;
+        const Command arc = AddArcCommand{ba.center, ba.radius, a0, a0 + std::abs(ba.sweep), 0, joining_props(store_, h1, h2)};
+        push_create_item(group, create_indexed(arc), arc);
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Filleted.");
+        return;
+    }
+    const Command joined = AddPolylineCommand{pts, false, 0, props, bs, cts};
+    const Command o1 = capture_entity(h1);
+    const Command o2 = capture_entity(h2);
+    remove_indexed(h1);
+    push_erase_item(group, h1, o1);
+    remove_indexed(h2);
+    push_erase_item(group, h2, o2);
+    push_create_item(group, create_indexed(joined), joined);
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
     report("Filleted.");
 }
 
@@ -8625,6 +9328,220 @@ std::vector<Vec2> clockwise_window(Vec2 first, Vec2 opposite) {
 }
 } // namespace
 
+
+void GeometryEngine::xline_crossings(EntityHandle h, std::vector<Vec2>& out) const {
+    const auto& xl = store_.xlines();
+    std::vector<Vec2> poly;
+    const auto chain_of = [&](EntityHandle e, std::vector<Vec2>& pts) {
+        pts.clear();
+        kernel_.tessellate(store_, e, kDefaultTessTolerance, pts);
+        if (e.kind == EntityKind::Polyline && store_.polyline(e)->closed && pts.size() > 2) {
+            pts.push_back(pts.front());
+        }
+    };
+    if (h.kind == EntityKind::Xline) {
+        const XlineData* me = store_.xline(h);
+        // Everything it crosses: other construction lines and rays exactly, the rest along
+        // their tessellation.
+        for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+            if (!xl.alive(i)) {
+                continue;
+            }
+            const EntityHandle o{i, xl.generations()[i], EntityKind::Xline};
+            if (o == h || !is_trim_edge(o)) {
+                continue;
+            }
+            const XlineData* x = store_.xline(o);
+            Vec2 p{};
+            if (NativeKernel2D::line_line_intersection(me->base, me->base + me->dir, x->base, x->base + x->dir, p) &&
+                (!me->ray || dot(p - me->base, me->dir) >= -1e-9) && (!x->ray || dot(p - x->base, x->dir) >= -1e-9)) {
+                out.push_back(p);
+            }
+        }
+        for (const EntityHandle c : all_live()) {
+            if (c.kind == EntityKind::Xline || !is_trim_edge(c) || !selectable(c)) {
+                continue;
+            }
+            chain_of(c, poly);
+            line_cross_poly(me->base, me->dir, me->ray, poly, out);
+        }
+        return;
+    }
+    chain_of(h, poly);
+    for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+        if (!xl.alive(i)) {
+            continue;
+        }
+        const EntityHandle o{i, xl.generations()[i], EntityKind::Xline};
+        if (!is_trim_edge(o) || !selectable(o)) {
+            continue;
+        }
+        const XlineData* x = store_.xline(o);
+        line_cross_poly(x->base, x->dir, x->ray, poly, out);
+    }
+}
+
+namespace {
+/// Where the segment a0-a1 crosses the circle (centre, r): the line's crossings that lie
+/// on the segment.
+void seg_circle(Vec2 a0, Vec2 a1, Vec2 centre, double r, std::vector<Vec2>& out) {
+    Vec2 p0{};
+    Vec2 p1{};
+    const int n = NativeKernel2D::line_circle_intersection(a0, a1, centre, r, p0, p1);
+    const Vec2 d = a1 - a0;
+    const double len2 = std::max(length_squared(d), 1e-18);
+    const auto on = [&](Vec2 p) {
+        const double u = dot(p - a0, d) / len2;
+        return u >= -1e-9 && u <= 1.0 + 1e-9;
+    };
+    if (n >= 1 && on(p0)) {
+        out.push_back(p0);
+    }
+    if (n == 2 && on(p1)) {
+        out.push_back(p1);
+    }
+}
+
+/// Where the segments a0-a1 and b0-b1 cross.
+bool seg_seg(Vec2 a0, Vec2 a1, Vec2 b0, Vec2 b1, Vec2& out) {
+    const Vec2 d = a1 - a0;
+    const Vec2 e = b1 - b0;
+    const double den = d.x * e.y - d.y * e.x;
+    if (std::abs(den) < 1e-18) {
+        return false;
+    }
+    const Vec2 w = b0 - a0;
+    const double t = (w.x * e.y - w.y * e.x) / den;
+    const double u = (w.x * d.y - w.y * d.x) / den;
+    if (t < -1e-9 || t > 1.0 + 1e-9 || u < -1e-9 || u > 1.0 + 1e-9) {
+        return false;
+    }
+    out = a0 + d * t;
+    return true;
+}
+} // namespace
+
+void GeometryEngine::circle_boundary_hits(EntityHandle self, Vec2 centre, double r, std::vector<Vec2>& out) const {
+    std::vector<EntityHandle> cand;
+    if (trim_edge_extend_) {
+        cand = trim_edge_list(); // Edge=Extend: an edge from anywhere may reach it
+    } else {
+        grid_.query(Vec2{centre.x - r, centre.y - r}, Vec2{centre.x + r, centre.y + r}, cand);
+    }
+    std::vector<Vec2> poly;
+    for (const EntityHandle c : cand) {
+        if (c == self || !is_trim_edge(c) || c.kind == EntityKind::Xline) {
+            continue;
+        }
+        if (c.kind == EntityKind::Line) {
+            const LineData* m = store_.line(c);
+            if (trim_edge_extend_) {
+                Vec2 p0{};
+                Vec2 p1{};
+                const int n = NativeKernel2D::line_circle_intersection(m->a, m->b, centre, r, p0, p1);
+                if (n >= 1) {
+                    out.push_back(p0);
+                }
+                if (n == 2) {
+                    out.push_back(p1);
+                }
+            } else {
+                seg_circle(m->a, m->b, centre, r, out); // on the boundary line itself
+            }
+            continue;
+        }
+        if (c.kind == EntityKind::Arc && trim_edge_extend_) {
+            const ArcData* ba = store_.arc(c); // Edge=Extend: the boundary arc's whole circle
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n = circle_circle_intersection(centre, r, ba->center, ba->radius, p0, p1);
+            if (n >= 1) {
+                out.push_back(p0);
+            }
+            if (n == 2) {
+                out.push_back(p1);
+            }
+            continue;
+        }
+        // Circles, arcs, ellipses, splines, polylines: along their tessellation (the same
+        // guarantee the kernel's own curve-curve fallback gives).
+        poly.clear();
+        kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
+        if (c.kind == EntityKind::Polyline && store_.polyline(c)->closed && poly.size() > 2) {
+            poly.push_back(poly.front());
+        }
+        for (std::size_t i = 1; i < poly.size(); ++i) {
+            seg_circle(poly[i - 1], poly[i], centre, r, out);
+        }
+    }
+    // Construction lines and rays.
+    const auto& xl = store_.xlines();
+    for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+        if (!xl.alive(i)) {
+            continue;
+        }
+        const EntityHandle o{i, xl.generations()[i], EntityKind::Xline};
+        if (o == self || !is_trim_edge(o) || !selectable(o)) {
+            continue;
+        }
+        const XlineData* x = store_.xline(o);
+        Vec2 p0{};
+        Vec2 p1{};
+        const int n = NativeKernel2D::line_circle_intersection(x->base, x->base + x->dir, centre, r, p0, p1);
+        for (int k = 0; k < n; ++k) {
+            const Vec2 p = k == 0 ? p0 : p1;
+            if (!x->ray || dot(p - x->base, x->dir) >= -1e-9) {
+                out.push_back(p);
+            }
+        }
+    }
+}
+
+void GeometryEngine::ellipse_boundary_hits(EntityHandle self, const EllipseData& whole, std::vector<Vec2>& out) const {
+    std::vector<Vec2> ring;
+    ellipse::tessellate(whole, std::max(tess_tolerance_, 1e-6) * 0.25, ring);
+    Vec2 lo;
+    Vec2 hi;
+    ellipse::bounds(whole, lo, hi);
+    std::vector<EntityHandle> cand;
+    if (trim_edge_extend_) {
+        cand = trim_edge_list();
+    } else {
+        grid_.query(lo, hi, cand);
+    }
+    std::vector<Vec2> poly;
+    Vec2 p{};
+    for (const EntityHandle c : cand) {
+        if (c == self || !is_trim_edge(c) || c.kind == EntityKind::Xline) {
+            continue;
+        }
+        poly.clear();
+        kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
+        if (c.kind == EntityKind::Polyline && store_.polyline(c)->closed && poly.size() > 2) {
+            poly.push_back(poly.front());
+        }
+        for (std::size_t i = 1; i < poly.size(); ++i) {
+            for (std::size_t j = 1; j < ring.size(); ++j) {
+                if (seg_seg(poly[i - 1], poly[i], ring[j - 1], ring[j], p)) {
+                    out.push_back(p);
+                }
+            }
+        }
+    }
+    const auto& xl = store_.xlines();
+    for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+        if (!xl.alive(i)) {
+            continue;
+        }
+        const EntityHandle o{i, xl.generations()[i], EntityKind::Xline};
+        if (o == self || !is_trim_edge(o) || !selectable(o)) {
+            continue;
+        }
+        const XlineData* x = store_.xline(o);
+        line_cross_poly(x->base, x->dir, x->ray, ring, out);
+    }
+}
+
 bool GeometryEngine::is_trim_edge(EntityHandle c) const {
     return !trim_edges_set_ || std::find(trim_edges_.begin(), trim_edges_.end(), c) != trim_edges_.end();
 }
@@ -8908,7 +9825,7 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
     for (const EntityHandle h : cand) {
         if (!store_.is_valid(h) || !selectable(h) ||
             (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
-             h.kind != EntityKind::Polyline)) {
+             h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse)) {
             continue;
         }
         tess.clear();
@@ -8961,6 +9878,30 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
                     half -= seg;
                 }
                 hits.push_back(Hit{total + 1.0, at, h});
+            }
+        }
+    }
+    // Construction lines and rays (not in the spatial index): where the path crosses them.
+    {
+        const auto& xl = store_.xlines();
+        for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+            if (!xl.alive(i)) {
+                continue;
+            }
+            const EntityHandle o{i, xl.generations()[i], EntityKind::Xline};
+            if (!selectable(o)) {
+                continue;
+            }
+            const XlineData* x = store_.xline(o);
+            double along = 0.0;
+            std::vector<Vec2> at;
+            for (std::size_t k = 1; k < path.size(); ++k) {
+                at.clear();
+                line_cross_poly(x->base, x->dir, x->ray, {path[k - 1], path[k]}, at);
+                for (const Vec2& p : at) {
+                    hits.push_back(Hit{along + distance(path[k - 1], p), p, o});
+                }
+                along += distance(path[k - 1], path[k]);
             }
         }
     }
@@ -9019,48 +9960,59 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
     }
 }
 
-void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
-    trim_outcome_ = TrimOutcome::None;
+bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
+    out = TrimPlan{};
+    const auto fail = [&out](TrimOutcome o, std::string m) {
+        out.outcome = o;
+        out.message = std::move(m);
+        return false;
+    };
     const EntityHandle h = pick_nearest(pick, radius);
     if (h.is_null()) {
-        report("Trim: nothing under the pick.");
-        return;
+        return fail(TrimOutcome::None, "Trim: nothing under the pick.");
     }
+    out.h = h;
     if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
-        h.kind != EntityKind::Polyline) {
-        report("Trim: only lines, arcs, circles and polylines can be trimmed.");
-        return;
+        h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse && h.kind != EntityKind::Xline) {
+        return fail(TrimOutcome::None, "Trim: only lines, arcs, circles, ellipses, polylines, construction lines and rays can be trimmed.");
     }
 
     // Every crossing with a nearby entity, whatever both kinds are. The kernel already
     // resolves line-vs-curve exactly and falls back to tessellation for curve-vs-curve,
     // so the cutting side has never been the limitation -- only the trimmed side was.
-    Vec2 lo_box;
-    Vec2 hi_box;
-    entity_aabb(store_, h, lo_box, hi_box);
-    std::vector<EntityHandle> cand;
-    grid_.query(lo_box, hi_box, cand);
     std::vector<Vec2> crossings;
     std::vector<Vec2> hits;
-    for (const EntityHandle c : cand) {
-        if (c == h || !is_trim_edge(c)) {
-            continue;
+    Vec2 lo_box;
+    Vec2 hi_box;
+    if (h.kind != EntityKind::Xline && entity_aabb(store_, h, lo_box, hi_box)) {
+        std::vector<EntityHandle> cand;
+        grid_.query(lo_box, hi_box, cand);
+        for (const EntityHandle c : cand) {
+            if (c == h || !is_trim_edge(c)) {
+                continue;
+            }
+            hits.clear();
+            kernel_.intersect(store_, h, c, hits);
+            crossings.insert(crossings.end(), hits.begin(), hits.end());
         }
-        hits.clear();
-        kernel_.intersect(store_, h, c, hits);
-        crossings.insert(crossings.end(), hits.begin(), hits.end());
     }
+    xline_crossings(h, crossings); // construction lines and rays, which have no box
     if (trim_edge_extend_) {
         implied_crossings(h, crossings);
     }
     if (crossings.empty()) {
-        trim_outcome_ = TrimOutcome::NoEdge;
-        report("Trim: no crossing edge found.");
-        return;
+        return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
     }
 
     // The surviving pieces, built per kind; the shared tail commits them as one group.
-    std::vector<Command> pieces;
+    std::vector<Command>& pieces = out.pieces;
+    // The part that goes, sampled along a parameter (for the preview).
+    const auto sample = [&out](auto&& at, double t0, double t1) {
+        const int n = 48;
+        for (int k = 0; k <= n; ++k) {
+            out.removed.push_back(at(t0 + (t1 - t0) * static_cast<double>(k) / n));
+        }
+    };
 
     if (h.kind == EntityKind::Line) {
         const LineData* l = store_.line(h);
@@ -9069,7 +10021,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         const Vec2 ab = b - a;
         const double len2 = length_squared(ab);
         if (len2 <= 0.0) {
-            return;
+            return fail(TrimOutcome::None, "");
         }
         const EntityProps props = l->props;
         const double cts = store_.celtscale(h);
@@ -9081,9 +10033,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
             }
         }
         if (ts.empty()) {
-            trim_outcome_ = TrimOutcome::NoEdge;
-            report("Trim: no crossing edge found.");
-            return;
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
         }
         std::sort(ts.begin(), ts.end());
         const double tp = std::clamp(dot(pick - a, ab) / len2, 0.0, 1.0);
@@ -9107,6 +10057,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         if (hi_t < 1.0 - 1e-6) {
             pieces.push_back(AddLineCommand{a + ab * hi_t, b, 0, props, cts});
         }
+        out.removed = {a + ab * lo_t, a + ab * hi_t};
     } else if (h.kind == EntityKind::Arc) {
         const ArcData* arc = store_.arc(h);
         const Vec2 centre = arc->center;
@@ -9135,9 +10086,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
             }
         }
         if (ss.empty()) {
-            trim_outcome_ = TrimOutcome::NoEdge;
-            report("Trim: no crossing edge found.");
-            return;
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
         }
         std::sort(ss.begin(), ss.end());
         const double sp = std::clamp(sweep_of(pick), 0.0, total);
@@ -9158,6 +10107,8 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         if (hi_s < total - 1e-6) {
             pieces.push_back(AddArcCommand{centre, r, start + hi_s, start + total, 0, props, cts});
         }
+        sample([&](double ang) { return Vec2{centre.x + r * std::cos(ang), centre.y + r * std::sin(ang)}; },
+               start + lo_s, start + hi_s);
     } else if (h.kind == EntityKind::Polyline) {
         // The polyline in its own parameter space: segment index + fraction along it
         // (by sweep on a bulged segment). Crossings and the pick become numbers on one
@@ -9176,7 +10127,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         const double cts = store_.celtscale(h);
         const std::size_t n = v.size();
         if (n < 2) {
-            return;
+            return fail(TrimOutcome::None, "");
         }
         const double m = static_cast<double>(closed ? n : n - 1);
         std::vector<double> qs;
@@ -9197,9 +10148,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
                              [](double x, double y) { return std::abs(x - y) < 1e-9; }),
                  qs.end());
         if (qs.empty()) {
-            trim_outcome_ = TrimOutcome::NoEdge;
-            report("Trim: no crossing edge found.");
-            return;
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
         }
         double qp = 0.0;
         double dp = 0.0;
@@ -9226,12 +10175,13 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
                 polyline_sub(v, b, hi, m, pts, bulges);
                 pieces.push_back(AddPolylineCommand{pts, false, 0, props, bulges, cts});
             }
+            polyline_sub(v, b, lo, hi, pts, bulges);
+            chain_points(pts, bulges, out.removed);
         } else {
             // Closed: the crossings bracket the removed span going round, and what is
             // kept is the rest -- one OPEN polyline (the circle rule, on a polyline).
             if (qs.size() < 2) {
-                report("Trim: a closed polyline needs two crossing edges to trim between.");
-                return;
+                return fail(TrimOutcome::None, "Trim: a closed polyline needs two crossing edges to trim between.");
             }
             double from = qs.back();
             double to = qs.front() + m;
@@ -9249,7 +10199,110 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
             if (pts.size() >= 2) {
                 pieces.push_back(AddPolylineCommand{pts, false, 0, props, bulges, cts});
             }
+            polyline_sub(v, b, from, to, pts, bulges);
+            chain_points(pts, bulges, out.removed);
         }
+    } else if (h.kind == EntityKind::Ellipse) {
+        // The ellipse in its own parameter, measured from its start: the same shape as the
+        // arc case, and as the circle case when it is whole.
+        const EllipseData e = *store_.ellipse(h);
+        const EntityProps props = e.props;
+        const bool full = ellipse::is_full(e);
+        const double total = ellipse::sweep_of(e);
+        const auto along = [&](Vec2 p) {
+            double d = std::fmod(ellipse::param_of(e, p) - e.start, kTwoPi);
+            if (d < 0.0) {
+                d += kTwoPi;
+            }
+            return d;
+        };
+        std::vector<double> ss;
+        for (const Vec2& p : crossings) {
+            const double d = along(p);
+            if (full || (d > 1e-6 && d < total - 1e-6)) {
+                ss.push_back(d);
+            }
+        }
+        std::sort(ss.begin(), ss.end());
+        ss.erase(std::unique(ss.begin(), ss.end(), [](double x, double y) { return std::abs(x - y) < 1e-9; }), ss.end());
+        if (ss.empty() || (full && ss.size() < 2)) {
+            return fail(TrimOutcome::NoEdge, full ? "Trim: an ellipse needs two crossing edges to trim between." : "Trim: no crossing edge found.");
+        }
+        const double sp = along(pick);
+        if (full) {
+            // The two crossings either side of the pick, going round; one elliptical arc stays.
+            double from = ss.back();
+            double to = ss.front() + kTwoPi;
+            for (std::size_t i = 0; i + 1 < ss.size(); ++i) {
+                if (sp >= ss[i] && sp <= ss[i + 1]) {
+                    from = ss[i];
+                    to = ss[i + 1];
+                }
+            }
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start + to, e.start + from + kTwoPi, 0, props});
+            sample([&](double t) { return ellipse::point_at(e, t); }, e.start + from, e.start + to);
+        } else {
+            const double spc = std::clamp(sp, 0.0, total);
+            double lo_s = 0.0;
+            double hi_s = total;
+            for (const double d : ss) {
+                if (d <= spc) {
+                    lo_s = d;
+                }
+                if (d >= spc) {
+                    hi_s = d;
+                    break;
+                }
+            }
+            if (lo_s > 1e-6) {
+                pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start, e.start + lo_s, 0, props});
+            }
+            if (hi_s < total - 1e-6) {
+                pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start + hi_s, e.start + total, 0, props});
+            }
+            sample([&](double t) { return ellipse::point_at(e, t); }, e.start + lo_s, e.start + hi_s);
+        }
+    } else if (h.kind == EntityKind::Xline) {
+        // A construction line runs both ways, a ray one way from its base. What goes is
+        // the stretch between the crossings either side of the pick; a construction line
+        // leaves two rays, a ray a line (to its base) and a ray.
+        const XlineData x = *store_.xline(h);
+        const EntityProps props = x.props;
+        std::vector<double> ts;
+        for (const Vec2& p : crossings) {
+            const double t = dot(p - x.base, x.dir);
+            if (!x.ray || t > 1e-6) {
+                ts.push_back(t);
+            }
+        }
+        if (ts.empty()) {
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
+        }
+        std::sort(ts.begin(), ts.end());
+        const double tp = x.ray ? std::max(dot(pick - x.base, x.dir), 0.0) : dot(pick - x.base, x.dir);
+        std::optional<double> lo_t;
+        std::optional<double> hi_t;
+        for (const double t : ts) {
+            if (t <= tp) {
+                lo_t = t;
+            }
+            if (t >= tp && !hi_t) {
+                hi_t = t;
+            }
+        }
+        if (lo_t) {
+            const Vec2 at = x.base + x.dir * *lo_t;
+            if (x.ray) {
+                pieces.push_back(AddLineCommand{x.base, at, 0, props});
+            } else {
+                pieces.push_back(AddXlineCommand{at, x.dir * -1.0, true, 0, props});
+            }
+        }
+        if (hi_t) {
+            pieces.push_back(AddXlineCommand{x.base + x.dir * *hi_t, x.dir, true, 0, props});
+        }
+        const double far = 1e6; // a construction line's endless side, for the preview
+        out.removed = {x.base + x.dir * lo_t.value_or(x.ray ? 0.0 : -far), x.base + x.dir * hi_t.value_or(far)};
     } else { // Circle
         const CircleData* ci = store_.circle(h);
         const Vec2 centre = ci->center;
@@ -9272,8 +10325,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
                              [](double x, double y) { return std::abs(x - y) < 1e-9; }),
                  as.end());
         if (as.size() < 2) {
-            report("Trim: a circle needs two crossing edges to trim between.");
-            return;
+            return fail(TrimOutcome::None, "Trim: a circle needs two crossing edges to trim between.");
         }
         double pa = std::atan2(pick.y - centre.y, pick.x - centre.x);
         while (pa < 0.0) {
@@ -9294,14 +10346,28 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         }
         // Keep the complement: from the end of the removed span round to its start.
         pieces.push_back(AddArcCommand{centre, r, to, from + kTwoPi, 0, props, cts});
+        sample([&](double ang) { return Vec2{centre.x + r * std::cos(ang), centre.y + r * std::sin(ang)}; }, from, to);
     }
 
     if (pieces.empty()) {
-        trim_outcome_ = TrimOutcome::Whole;
-        report("Trim: that would remove the whole object -- use ERASE.");
+        return fail(TrimOutcome::Whole, "Trim: that would remove the whole object -- use ERASE.");
+    }
+    out.outcome = TrimOutcome::Trimmed;
+    return true;
+}
+
+void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
+    TrimPlan plan;
+    if (!plan_trim(pick, radius, plan)) {
+        trim_outcome_ = plan.outcome;
+        if (!plan.message.empty()) {
+            report(plan.message);
+        }
         return;
     }
     trim_outcome_ = TrimOutcome::Trimmed;
+    const EntityHandle h = plan.h;
+    const std::vector<Command>& pieces = plan.pieces;
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, h, original);
@@ -9416,6 +10482,136 @@ void GeometryEngine::apply_join(const std::vector<Vec2>& picks, double radius,
         }
     }
     join_entities(ents, radius, group);
+}
+
+bool GeometryEngine::join_same_kind(const std::vector<EntityHandle>& ents, double tol, std::uint64_t group) {
+    std::vector<EntityHandle> hs;
+    for (const EntityHandle h : ents) {
+        if (store_.is_valid(h) && std::find(hs.begin(), hs.end(), h) == hs.end()) {
+            hs.push_back(h);
+        }
+    }
+    if (hs.size() < 2) {
+        return false;
+    }
+    const EntityKind kind = hs.front().kind;
+    for (const EntityHandle h : hs) {
+        if (h.kind != kind) {
+            return false;
+        }
+    }
+    Command joined;
+    std::string what;
+    if (kind == EntityKind::Line) {
+        // Along one line: from the furthest end to the furthest end, gaps and all.
+        const LineData* s = store_.line(hs.front());
+        const Vec2 d = s->b - s->a;
+        const double len = length(d);
+        if (len <= 1e-12) {
+            return false;
+        }
+        const Vec2 u = d * (1.0 / len);
+        const Vec2 nrm{-u.y, u.x};
+        double lo = 0.0;
+        double hi = len;
+        for (const EntityHandle h : hs) {
+            const LineData* l = store_.line(h);
+            for (const Vec2 p : {l->a, l->b}) {
+                if (std::abs(dot(p - s->a, nrm)) > tol) {
+                    return false; // not along the source's line: a polyline instead
+                }
+                lo = std::min(lo, dot(p - s->a, u));
+                hi = std::max(hi, dot(p - s->a, u));
+            }
+        }
+        joined = AddLineCommand{s->a + u * lo, s->a + u * hi, 0, s->props, store_.celtscale(hs.front())};
+        what = "lines into one line";
+    } else if (kind == EntityKind::Arc) {
+        // On one circle: counter-clockwise from the source's start to the furthest end;
+        // round the whole circle, a circle.
+        const ArcData* s = store_.arc(hs.front());
+        double reach = 0.0;
+        for (const EntityHandle h : hs) {
+            const ArcData* a = store_.arc(h);
+            if (distance(a->center, s->center) > tol || std::abs(a->radius - s->radius) > tol) {
+                return false;
+            }
+            double from = std::fmod(a->start_angle - s->start_angle, kTwoPi);
+            if (from < -1e-9) {
+                from += kTwoPi;
+            }
+            double sw = a->end_angle - a->start_angle;
+            while (sw <= 0.0) {
+                sw += kTwoPi;
+            }
+            reach = std::max(reach, from + sw);
+        }
+        if (reach >= kTwoPi - 1e-9) {
+            joined = AddCircleCommand{s->center, s->radius, 0, s->props, store_.celtscale(hs.front())};
+            what = "arcs into a circle";
+        } else {
+            joined = AddArcCommand{s->center, s->radius, s->start_angle, s->start_angle + reach, 0, s->props,
+                                   store_.celtscale(hs.front())};
+            what = "arcs into one arc";
+        }
+    } else if (kind == EntityKind::Ellipse) {
+        const EllipseData s = *store_.ellipse(hs.front());
+        double reach = 0.0;
+        for (const EntityHandle h : hs) {
+            const EllipseData* e = store_.ellipse(h);
+            if (distance(e->center, s.center) > tol || length(e->major - s.major) > tol ||
+                std::abs(e->ratio - s.ratio) > 1e-9) {
+                return false;
+            }
+            double from = std::fmod(e->start - s.start, kTwoPi);
+            if (from < -1e-9) {
+                from += kTwoPi;
+            }
+            reach = std::max(reach, from + ellipse::sweep_of(*e));
+        }
+        joined = AddEllipseCommand{s.center, s.major, s.ratio, s.start,
+                                   reach >= kTwoPi - 1e-9 ? s.start + kTwoPi : s.start + reach, 0, s.props};
+        what = reach >= kTwoPi - 1e-9 ? "elliptical arcs into an ellipse" : "elliptical arcs into one";
+    } else {
+        return false;
+    }
+    for (const EntityHandle h : hs) {
+        const Command o = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, h, o);
+    }
+    const EntityHandle nh = create_indexed(joined);
+    push_create_item(group, nh, joined);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Joined " + std::to_string(hs.size()) + " " + what + ".");
+    return true;
+}
+
+void GeometryEngine::join_close(EntityHandle h, std::uint64_t group) {
+    Command whole;
+    if (h.kind == EntityKind::Arc) {
+        const ArcData* a = store_.arc(h);
+        whole = AddCircleCommand{a->center, a->radius, 0, a->props, store_.celtscale(h)};
+    } else if (h.kind == EntityKind::Ellipse) {
+        const EllipseData* e = store_.ellipse(h);
+        whole = AddEllipseCommand{e->center, e->major, e->ratio, 0.0, kTwoPi, 0, e->props};
+    } else {
+        report("JOIN: cLose makes a circle of an arc, or an ellipse of an elliptical arc.");
+        return;
+    }
+    const Command o = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(group, h, o);
+    const EntityHandle nh = create_indexed(whole);
+    push_create_item(group, nh, whole);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(h.kind == EntityKind::Arc ? "Arc converted to a circle." : "Elliptical arc converted to an ellipse.");
 }
 
 void GeometryEngine::apply_join_selection(double radius, std::uint64_t group) {
@@ -9554,6 +10750,9 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
 
 void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double radius,
                                    std::uint64_t group) {
+    if (join_same_kind(ents, radius > 0.0 ? radius : 1e-6, group)) {
+        return;
+    }
     // Convert every joinable input to a uniform vertex+bulge segment. Closed polylines
     // (no free endpoints) and non-curves are not joinable -- left untouched.
     std::vector<JoinSeg> segs;
@@ -10093,7 +11292,11 @@ void GeometryEngine::apply(const Command& command) {
                 }
             }
             if constexpr (std::is_same_v<T, JoinPickCommand>) {
-                apply_join(c.picks, c.radius, c.group);
+                if (c.close && !c.picks.empty()) {
+                    join_close(pick_nearest(c.picks.front(), c.radius), c.group);
+                } else {
+                    apply_join(c.picks, c.radius, c.group);
+                }
             }
             if constexpr (std::is_same_v<T, JoinSelectionCommand>) {
                 apply_join_selection(c.radius, c.group);
@@ -10336,6 +11539,16 @@ void GeometryEngine::apply(const Command& command) {
                     report(layer ? "New dimensions go on layer \"" + store_.layers()[*layer].name + "\"."
                                  : std::string("New dimensions go on the current layer."));
                 }
+            }
+            if constexpr (std::is_same_v<T, FilletPreviewCommand>) {
+                fillet_preview_active_ = c.active;
+                fillet_preview_ = c;
+                geom_dirty_ = true;
+            }
+            if constexpr (std::is_same_v<T, TrimPreviewCommand>) {
+                trim_preview_active_ = c.active;
+                trim_preview_ = c;
+                geom_dirty_ = true; // republish with (or without) the band
             }
             if constexpr (std::is_same_v<T, SetTrimEdgesCommand>) {
                 trim_edge_extend_ = c.edge_extend;
@@ -10957,6 +12170,8 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, CopyClipboardCommand> || // read-only (snapshots selection)
                 std::is_same_v<T, PastePreviewCommand> ||   // rubber band only
                 std::is_same_v<T, SetTrimEdgesCommand> ||   // a setting, not an edit
+                std::is_same_v<T, TrimPreviewCommand> ||    // rubber band only
+                std::is_same_v<T, FilletPreviewCommand> ||  // rubber band only
                 std::is_same_v<T, SetDimLayerCommand> ||    // a setting, not an edit
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
@@ -11652,6 +12867,57 @@ void GeometryEngine::rebuild_and_publish() {
                                   store_.ltscale());
             buf.grip_preview_segments = std::move(tmp.line_vertices);
             buf.grip_preview_fills = std::move(tmp.fill_vertices);
+        }
+    } else if (fillet_preview_active_) {
+        // FILLET / CHAMFER at the second object: what a pick at the cursor would make, made
+        // by the very code the pick runs -- on copies of the two objects in an engine of
+        // their own, so nothing here changes.
+        const FilletPreviewCommand& fp = fillet_preview_;
+        const EntityHandle h1 = pick_nearest(fp.first, fp.pick_radius);
+        const EntityHandle h2 = pick_nearest(fp.at, fp.pick_radius);
+        if (!h1.is_null() && !h2.is_null()) {
+            GeometryEngine sim;
+            sim.store_.set_layer_table(store_.layers(), store_.current_layer());
+            (void)sim.create_indexed(capture_entity(h1));
+            if (h2 != h1) {
+                (void)sim.create_indexed(capture_entity(h2));
+            }
+            if (fp.chamfer) {
+                sim.apply_chamfer(fp.first, fp.at, fp.d1, fp.d2, fp.pick_radius, 1, fp.trim);
+            } else {
+                sim.apply_fillet(fp.first, fp.at, fp.radius, fp.pick_radius, 1, fp.trim);
+            }
+            if (sim.status_ == "Filleted." || sim.status_ == "Chamfered.") {
+                RenderSnapshot tmp;
+                build_render_snapshot(sim.store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
+                buf.grip_preview_segments = std::move(tmp.line_vertices);
+                buf.grip_preview_fills = std::move(tmp.fill_vertices);
+            }
+        }
+    } else if (trim_preview_active_) {
+        // TRIM / EXTEND at the cursor: the part a pick there would trim away, or the
+        // extension it would add (Quick mode: an object with nothing to trim it to whole).
+        std::vector<Vec2> chain;
+        const TrimPreviewCommand& tp = trim_preview_;
+        if (tp.extend) {
+            plan_extend_preview(tp.at, tp.radius, chain);
+        } else {
+            TrimPlan plan;
+            if (plan_trim(tp.at, tp.radius, plan)) {
+                chain = std::move(plan.removed);
+            } else if (tp.quick && (plan.outcome == TrimOutcome::NoEdge || plan.outcome == TrimOutcome::Whole) &&
+                       store_.is_valid(plan.h)) {
+                if (plan.h.kind == EntityKind::Xline) {
+                    const XlineData* x = store_.xline(plan.h);
+                    chain = {x->ray ? x->base : x->base - x->dir * 1e6, x->base + x->dir * 1e6};
+                } else {
+                    kernel_.tessellate(store_, plan.h, tess_tolerance_, chain);
+                }
+            }
+        }
+        for (std::size_t i = 1; i < chain.size(); ++i) {
+            buf.grip_preview_segments.push_back(chain[i - 1]);
+            buf.grip_preview_segments.push_back(chain[i]);
         }
     } else if (paste_preview_active_ && clipboard_.has) {
         // PASTECLIP's placement: the clip at the cursor, by its base.

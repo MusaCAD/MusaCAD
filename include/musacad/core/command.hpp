@@ -152,12 +152,16 @@ struct AlignSelectionCommand {
 /// `value` means: Delta adds to the current length, Percent sets it to a percentage of
 /// it, Total sets it outright.
 struct LengthenCommand {
-    enum class Mode : std::uint8_t { Delta = 0, Percent = 1, Total = 2 };
+    /// Delta / Percent / Total by length; DeltaAngle / TotalAngle (an arc's, radians);
+    /// Dynamic moves the end nearer `pick` to where `to` is along the object; Measure only
+    /// reports the length (and an arc's included angle).
+    enum class Mode : std::uint8_t { Delta = 0, Percent = 1, Total = 2, Measure = 3, DeltaAngle = 4, TotalAngle = 5, Dynamic = 6 };
     Vec2 pick;
     double pick_radius = 0.0;
     Mode mode = Mode::Total;
     double value = 0.0;
     std::uint64_t group = 0;
+    Vec2 to{};
 };
 
 /// BREAK (AutoCAD BR): remove the piece of the curve under `pick` that lies between
@@ -181,6 +185,10 @@ struct DividePathCommand {
     int segments = 0;
     double distance = 0.0;
     std::uint64_t group = 0;
+    /// [Block]: references of this block at the marks instead of points, turned to the
+    /// curve's direction when `align`.
+    std::string block{};
+    bool align = true;
 };
 
 /// A construction line (AutoCAD XLINE / RAY): base point, unit direction, and whether
@@ -751,6 +759,30 @@ struct TrimPathCommand {
     /// Quick mode: an object with nothing to trim it to is deleted.
     bool quick = true;
 };
+/// TRIM / EXTEND's hover preview: the part a pick at `at` would trim away (or, with
+/// `extend`, the extension it would add) drawn as a rubber band; Quick mode shows an object
+/// with nothing to trim it to as going whole. `active` false ends it.
+struct TrimPreviewCommand {
+    Vec2 at{};
+    double radius = 0.0;
+    bool extend = false;
+    bool quick = true;
+    bool active = false;
+};
+/// FILLET / CHAMFER's hover preview: what a second pick at `at` would make with the first
+/// object (picked at `first`) -- the objects as they would be and the arc or bevel -- made by
+/// the same code on copies. `active` false ends it.
+struct FilletPreviewCommand {
+    Vec2 first{};
+    Vec2 at{};
+    double radius = 0.0;
+    double pick_radius = 0.0;
+    bool trim = true;
+    bool chamfer = false;
+    double d1 = 0.0;
+    double d2 = 0.0;
+    bool active = false;
+};
 /// TRIM / EXTEND's cutting (boundary) edges: every object (Quick mode, or Enter at
 /// `Select objects or <select all>:`), or the current selection (Standard mode's chosen
 /// edges; it stays selected, so it shows, until the edges go back to All). `edge_extend`
@@ -770,6 +802,8 @@ struct JoinPickCommand {
     std::vector<Vec2> picks;
     double radius = 0.0;
     std::uint64_t group = 0;
+    /// JOIN cLose: the arc (elliptical arc) at the first pick made whole -- a circle (ellipse).
+    bool close = false;
 };
 
 /// Join every currently-selected line/arc/open polyline that shares endpoints (within
@@ -1681,7 +1715,7 @@ using Command =
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
-                 PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
+                 PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

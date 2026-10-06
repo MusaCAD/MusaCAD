@@ -765,6 +765,14 @@ private:
     std::function<void()> dimstyle_dialog_callback_;
     std::function<std::string()> prepare_paste_;
     std::function<bool(core::Vec2, bool)> paste_at_;
+    // FILLET / CHAMFER's hover band, streamed only on change.
+    bool fillet_preview_sent_ = false;
+    core::Vec2 last_fillet_at_{};
+    bool last_fillet_sharp_ = false;
+    // TRIM / EXTEND's hover band, streamed only on change.
+    bool trim_preview_sent_ = false;
+    core::Vec2 last_trim_at_{};
+    bool last_trim_extend_ = false;
     // PASTECLIP's band (the clip at the cursor), streamed only on change.
     bool paste_preview_sent_ = false;
     core::Vec2 last_paste_at_{};

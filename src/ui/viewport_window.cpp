@@ -2862,6 +2862,64 @@ void ViewportWindow::rebuild_overlay() {
         engine_.submit(last_transform_);
         transform_preview_sent_ = false;
     }
+    // FILLET / CHAMFER: what a second pick here would make -- over an object only, Shift
+    // for a sharp corner.
+    if (processor_ != nullptr && processor_->has_active_command() && processor_->preview().fillet_hover &&
+        hovered_kind().has_value()) {
+        const command::PreviewSpec& pv = processor_->preview();
+        core::Vec2 at;
+        double ap = 0.0;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            at = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                    cursor_px_y_.load(std::memory_order_relaxed)});
+            ap = pick_aperture(devicePixelRatio(), camera_.scale());
+        }
+        const bool sharp = (QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier) != 0;
+        if (!fillet_preview_sent_ || core::length(at - last_fillet_at_) > 1e-12 || sharp != last_fillet_sharp_) {
+            core::FilletPreviewCommand c;
+            c.first = pv.fillet_first;
+            c.at = at;
+            c.radius = sharp ? 0.0 : pv.fillet_radius;
+            c.pick_radius = ap;
+            c.trim = pv.fillet_trim;
+            c.chamfer = pv.fillet_chamfer;
+            c.d1 = sharp ? 0.0 : pv.chamfer_d1;
+            c.d2 = sharp ? 0.0 : pv.chamfer_d2;
+            c.active = true;
+            engine_.submit(c);
+            last_fillet_at_ = at;
+            last_fillet_sharp_ = sharp;
+            fillet_preview_sent_ = true;
+        }
+    } else if (fillet_preview_sent_) {
+        engine_.submit(core::FilletPreviewCommand{});
+        fillet_preview_sent_ = false;
+    }
+    // TRIM / EXTEND: the part a pick here would trim away (or add) -- over an object only,
+    // Shift for the other one.
+    if (processor_ != nullptr && processor_->has_active_command() && processor_->preview().trim_hover &&
+        hovered_kind().has_value()) {
+        core::Vec2 at;
+        double ap = 0.0;
+        {
+            std::scoped_lock lock(camera_mutex_);
+            at = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                    cursor_px_y_.load(std::memory_order_relaxed)});
+            ap = pick_aperture(devicePixelRatio(), camera_.scale());
+        }
+        const bool shift = (QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier) != 0;
+        const bool extend = processor_->preview().trim_extend != shift;
+        if (!trim_preview_sent_ || core::length(at - last_trim_at_) > 1e-12 || extend != last_trim_extend_) {
+            engine_.submit(core::TrimPreviewCommand{at, ap, extend, processor_->preview().trim_quick, true});
+            last_trim_at_ = at;
+            last_trim_extend_ = extend;
+            trim_preview_sent_ = true;
+        }
+    } else if (trim_preview_sent_) {
+        engine_.submit(core::TrimPreviewCommand{});
+        trim_preview_sent_ = false;
+    }
     // PASTECLIP: the clip follows the (snapped) cursor until it is placed, and goes when
     // the prompt does.
     if (processor_ != nullptr && processor_->has_active_command() && processor_->preview().paste_band) {

@@ -2388,34 +2388,47 @@ void JoinCommand::start(CommandContext& ctx) {
         done_ = true;
         return;
     }
-    ctx.set_prompt("Select source object: ");
+    ctx.set_prompt("Select source object or multiple objects to join at once: ");
+}
+
+void JoinCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        ctx.submit(core::JoinSelectionCommand{ctx.pick_radius(), ctx.group_id()});
+        done_ = true;
+    }
 }
 
 void JoinCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
     if (state_ == State::Source) {
         const auto p = read_point(ctx, text);
         if (!p) {
             return;
         }
-        picks_.push_back(*p);
+        source_ = *p;
+        const std::optional<core::EntityKind> k = ctx.input_is_pick() ? ctx.hovered_kind() : std::nullopt;
+        closable_ = k == core::EntityKind::Arc || k == core::EntityKind::Ellipse;
         state_ = State::Targets;
-        ctx.set_prompt("Select objects to join to source: ");
+        // The source first in the selection, then whatever is picked or windowed.
+        ctx.submit(core::ClearSelectionCommand{});
+        ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, false});
+        select_.begin(ctx, closable_ ? (k == core::EntityKind::Arc ? "Select arcs to join to source or [cLose]: "
+                                                                   : "Select elliptical arcs to join to source or [cLose]: ")
+                                     : "Select objects to join: ");
         return;
     }
-    // Targets: pick more objects; Enter commits the join (the engine resolves entities,
-    // walks the connected chain, and reports how many joined / were skipped).
-    if (t.empty()) {
-        if (picks_.size() >= 2) {
-            ctx.submit(core::JoinPickCommand{picks_, ctx.pick_radius(), ctx.group_id()});
-        } else {
-            ctx.echo("JOIN: select at least one object to join to the source.");
-        }
+    if (closable_ && (u == "L" || u == "CLOSE")) {
+        core::JoinPickCommand c{{source_}, ctx.pick_radius(), ctx.group_id()};
+        c.close = true;
+        ctx.submit(std::move(c));
         done_ = true;
         return;
     }
-    if (const auto p = read_point(ctx, text)) {
-        picks_.push_back(*p);
+    // Enter commits the join (the engine joins what is selected and reports).
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        ctx.submit(core::JoinSelectionCommand{ctx.pick_radius(), ctx.group_id()});
+        done_ = true;
     }
 }
 
@@ -2681,6 +2694,7 @@ void TrimCommand::start(CommandContext& ctx) {
 }
 
 void TrimCommand::begin_edges(CommandContext& ctx) {
+    ctx.set_preview({});
     ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::All, false});
     ctx.submit(core::ClearSelectionCommand{});
     state_ = State::Edges;
@@ -2746,6 +2760,12 @@ void TrimCommand::prompt(CommandContext& ctx) {
     case State::Objects:
         break;
     }
+    // The part a pick would trim away (or add) shows under the cursor.
+    PreviewSpec band;
+    band.trim_hover = true;
+    band.trim_extend = extend_;
+    band.trim_quick = s_mode_ == 1;
+    ctx.set_preview(std::move(band));
     std::string opts = extend_ ? ((s_mode_ == 1) ? "Boundary edges/Crossing/mOde/Project"
                                            : "Boundary edges/Fence/Crossing/mOde/Project/Edge")
                                : ((s_mode_ == 1) ? "cuTting edges/Crossing/mOde/Project/eRase"
@@ -2938,6 +2958,7 @@ void TrimCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (u == "F" || u == "FENCE") {
+        ctx.set_preview({}); // the hover band goes while the fence is drawn
         fence_.clear();
         fence_open_ = true;
         state_ = State::Fence;
@@ -2945,27 +2966,32 @@ void TrimCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (u == "C" || u == "CROSSING") {
+        ctx.set_preview({});
         corner_.reset();
         state_ = State::Corner;
         prompt(ctx);
         return;
     }
     if (u == "O" || u == "MODE") {
+        ctx.set_preview({});
         state_ = State::Mode;
         prompt(ctx);
         return;
     }
     if (u == "P" || u == "PROJECT") {
+        ctx.set_preview({});
         state_ = State::Project;
         prompt(ctx);
         return;
     }
     if (u == "E" || u == "EDGE") {
+        ctx.set_preview({});
         state_ = State::Edge;
         prompt(ctx);
         return;
     }
     if (!extend_ && (u == "R" || u == "ERASE")) {
+        ctx.set_preview({});
         ctx.submit(core::ClearSelectionCommand{});
         state_ = State::Erase;
         select_.begin(ctx, "Select objects to erase or <exit>: ");
@@ -3913,53 +3939,175 @@ void AlignCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void LengthenCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    state_ = State::Mode;
-    ctx.set_prompt("Enter an option [DElta/Percent/Total] <Total>: ");
+    state_ = State::Measure;
+    changed_ = 0;
+    prompt_measure(ctx);
+}
+
+void LengthenCommand::prompt_measure(CommandContext& ctx) {
+    using Mode = core::LengthenCommand::Mode;
+    const char* def = s_mode_ == Mode::Delta || s_mode_ == Mode::DeltaAngle ? "DElta"
+                      : s_mode_ == Mode::Percent                            ? "Percent"
+                      : s_mode_ == Mode::Dynamic                            ? "DYnamic"
+                                                                            : "Total";
+    ctx.set_prompt(std::string("Select an object to measure or [DElta/Percent/Total/DYnamic] <") + def + ">: ");
 }
 
 void LengthenCommand::input(CommandContext& ctx, const std::string& text) {
+    using Mode = core::LengthenCommand::Mode;
     const std::string t = trimmed(text);
-    switch (state_) {
-    case State::Mode: {
-        const std::string u = upper(t);
-        if (u == "DE" || u == "DELTA") {
-            mode_ = core::LengthenCommand::Mode::Delta;
-            ctx.set_prompt("Enter delta length: ");
-        } else if (u == "P" || u == "PERCENT") {
-            mode_ = core::LengthenCommand::Mode::Percent;
-            ctx.set_prompt("Enter percentage length: ");
-        } else {
-            mode_ = core::LengthenCommand::Mode::Total;
-            ctx.set_prompt("Specify total length: ");
-        }
+    const std::string u = upper(t);
+    const auto ask_change = [&] {
+        state_ = State::Pick;
+        ctx.set_prompt(changed_ > 0 ? "Select an object to change or [Undo]: " : "Select an object to change: ");
+    };
+    const auto ask_amount = [&](Mode m) {
+        s_mode_ = m;
+        asking_angle_ = false;
         state_ = State::Amount;
+        if (m == Mode::Delta) {
+            ctx.set_prompt("Enter delta length or [Angle] <" + core::units::format_length(s_delta_, ctx.units()) + ">: ");
+        } else if (m == Mode::Percent) {
+            ctx.set_prompt("Enter percentage length <" + core::units::format_length(s_percent_, ctx.units()) + ">: ");
+        } else {
+            ctx.set_prompt("Specify total length or [Angle] <" + core::units::format_length(s_total_, ctx.units()) + ">: ");
+        }
+    };
+    switch (state_) {
+    case State::Measure:
+        if (t.empty()) {
+            // Enter takes the default option.
+            if (s_mode_ == Mode::Dynamic) {
+                ask_change();
+            } else {
+                ask_amount(s_mode_ == Mode::DeltaAngle ? Mode::Delta : s_mode_ == Mode::TotalAngle ? Mode::Total : s_mode_);
+            }
+            return;
+        }
+        if (u == "DE" || u == "DELTA") {
+            ask_amount(Mode::Delta);
+            return;
+        }
+        if (u == "P" || u == "PERCENT") {
+            ask_amount(Mode::Percent);
+            return;
+        }
+        if (u == "T" || u == "TOTAL") {
+            ask_amount(Mode::Total);
+            return;
+        }
+        if (u == "DY" || u == "DYNAMIC") {
+            s_mode_ = Mode::Dynamic;
+            ask_change();
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            core::LengthenCommand q;
+            q.pick = *p;
+            q.pick_radius = ctx.pick_radius();
+            q.mode = Mode::Measure;
+            ctx.submit(q); // the engine reports `Current length: ...`
+            prompt_measure(ctx);
+        }
         return;
-    }
     case State::Amount: {
-        if (!parse_number(t, value_)) {
+        if (!asking_angle_ && (u == "A" || u == "ANGLE") && s_mode_ != Mode::Percent) {
+            asking_angle_ = true;
+            const bool delta = s_mode_ == Mode::Delta;
+            s_mode_ = delta ? Mode::DeltaAngle : Mode::TotalAngle;
+            ctx.set_prompt(std::string(delta ? "Enter delta angle <" : "Specify total angle <") +
+                           core::units::format_angle(s_angle_, ctx.units()) + ">: ");
+            return;
+        }
+        double v = 0.0;
+        if (!t.empty() && !parse_number(t, v)) {
             ctx.echo("Enter a number.");
             return;
         }
-        if (mode_ != core::LengthenCommand::Mode::Delta && value_ <= 0.0) {
-            ctx.echo("Enter a value greater than zero.");
-            return;
+        if (asking_angle_) {
+            if (!t.empty()) {
+                s_angle_ = core::to_radians(v);
+            }
+        } else if (s_mode_ == Mode::Delta) {
+            if (!t.empty()) {
+                s_delta_ = v;
+            }
+        } else if (s_mode_ == Mode::Percent) {
+            if (!t.empty()) {
+                if (v <= 0.0) {
+                    ctx.echo("Enter a value greater than zero.");
+                    return;
+                }
+                s_percent_ = v;
+            }
+        } else if (!t.empty()) {
+            if (v <= 0.0) {
+                ctx.echo("Enter a value greater than zero.");
+                return;
+            }
+            s_total_ = v;
         }
-        state_ = State::Pick;
-        // The pick does double duty: it chooses the object AND, by which end it is
-        // nearer, which end moves. That is AutoCAD's behaviour and worth saying.
-        ctx.set_prompt("Select an object to change (pick near the end to move): ");
+        ask_change();
         return;
     }
-    case State::Pick:
+    case State::Pick: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (changed_ == 0) {
+                ctx.echo("Nothing to undo.");
+            } else {
+                ctx.submit(core::UndoLastGroupCommand{});
+                --changed_;
+            }
+            ask_change();
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (s_mode_ == Mode::Dynamic) {
+            dyn_pick_ = *p;
+            state_ = State::DynEnd;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify new end point: ");
+            return;
+        }
+        if (changed_ > 0) {
+            (void)ctx.new_group(); // every change its own undo step
+        }
+        core::LengthenCommand cmd;
+        cmd.pick = *p;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.mode = s_mode_;
+        cmd.value = s_mode_ == Mode::Delta     ? s_delta_
+                    : s_mode_ == Mode::Percent ? s_percent_
+                    : (s_mode_ == Mode::DeltaAngle || s_mode_ == Mode::TotalAngle) ? s_angle_
+                                                                                   : s_total_;
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        ++changed_;
+        ask_change();
+        return;
+    }
+    case State::DynEnd:
         if (const auto p = read_point(ctx, text)) {
+            if (changed_ > 0) {
+                (void)ctx.new_group();
+            }
             core::LengthenCommand cmd;
-            cmd.pick = *p;
+            cmd.pick = dyn_pick_;
             cmd.pick_radius = ctx.pick_radius();
-            cmd.mode = mode_;
-            cmd.value = value_;
+            cmd.mode = Mode::Dynamic;
+            cmd.to = *p;
             cmd.group = ctx.group_id();
             ctx.submit(cmd);
-            done_ = true;
+            ++changed_;
+            ctx.set_preview({});
+            ask_change();
         }
         return;
     }
@@ -8098,25 +8246,61 @@ void PointCommand::cancel(CommandContext& ctx) {
 void DivideCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Pick;
+    block_.clear();
     ctx.set_prompt(measure_ ? "Select object to measure: " : "Select object to divide: ");
 }
 
+void DivideCommand::amount_prompt(CommandContext& ctx) {
+    state_ = State::Amount;
+    if (block_.empty()) {
+        ctx.set_prompt(measure_ ? "Specify length of segment or [Block]: " : "Enter the number of segments or [Block]: ");
+    } else {
+        ctx.set_prompt(measure_ ? "Specify length of segment: " : "Enter the number of segments: ");
+    }
+}
+
 void DivideCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
     switch (state_) {
     case State::Pick:
         if (const auto p = read_point(ctx, text)) {
             pick_ = *p;
-            state_ = State::Amount;
-            ctx.set_prompt(measure_ ? "Specify length of segment: "
-                                    : "Enter the number of segments: ");
+            amount_prompt(ctx);
         }
         return;
+    case State::BlockName:
+        if (t.empty()) {
+            ctx.echo("Enter the name of a block.");
+            return;
+        }
+        block_ = t;
+        state_ = State::BlockAlign;
+        ctx.set_prompt("Align block with object? [Yes/No] <Y>: ");
+        return;
+    case State::BlockAlign:
+        if (t.empty() || u == "Y" || u == "YES") {
+            align_ = true;
+        } else if (u == "N" || u == "NO") {
+            align_ = false;
+        } else {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        amount_prompt(ctx);
+        return;
     case State::Amount: {
-        const std::string t = trimmed(text);
+        if (block_.empty() && (u == "B" || u == "BLOCK")) {
+            state_ = State::BlockName;
+            ctx.set_prompt("Enter name of block to insert: ");
+            return;
+        }
         core::DividePathCommand cmd;
         cmd.pick = pick_;
         cmd.pick_radius = ctx.pick_radius();
         cmd.group = ctx.group_id();
+        cmd.block = block_;
+        cmd.align = align_;
         if (measure_) {
             double d = 0.0;
             if (!parse_number(t, d) || d <= 0.0) {
@@ -8383,6 +8567,22 @@ void FilletCommand::prompt_first(CommandContext& ctx) {
     ctx.set_prompt("Select first object or [Undo/Polyline/Radius/Trim/Multiple]: ");
 }
 
+namespace {
+/// FILLET / CHAMFER's second-object prompt: what a pick there would make shows under the
+/// cursor.
+void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim, bool chamfer, double d1, double d2) {
+    PreviewSpec pv;
+    pv.fillet_hover = true;
+    pv.fillet_first = first;
+    pv.fillet_radius = radius;
+    pv.fillet_trim = trim;
+    pv.fillet_chamfer = chamfer;
+    pv.chamfer_d1 = d1;
+    pv.chamfer_d2 = d2;
+    ctx.set_preview(std::move(pv));
+}
+} // namespace
+
 void FilletCommand::start(CommandContext& ctx) {
     ctx.echo(std::string("Current settings: Mode = ") + (s_trim_ ? "TRIM" : "NOTRIM") +
              ", Radius = " + core::units::format_length(s_radius_, ctx.units()));
@@ -8441,11 +8641,13 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick1_ = *p;
             state_ = State::Second;
+            fillet_band(ctx, pick1_, s_radius_, s_trim_, false, 0.0, 0.0);
             ctx.set_prompt("Select second object or shift-select to apply corner or [Radius]: ");
         }
         return;
     case State::Second:
         if (u == "R" || u == "RADIUS") {
+            ctx.set_preview({});
             return_ = State::Second;
             state_ = State::Radius;
             ctx.set_prompt("Specify fillet radius <" + core::units::format_length(s_radius_, ctx.units()) + ">: ");
@@ -8454,6 +8656,7 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             // Shift at the pick: a sharp corner (radius 0) this once.
             const double r = ctx.shift_held() ? 0.0 : s_radius_;
+            ctx.set_preview({});
             last_group_ = ctx.group_id();
             ctx.submit(core::FilletPickCommand{pick1_, *p, r, ctx.pick_radius(), last_group_, s_trim_});
             after_fillet(ctx);
@@ -8474,6 +8677,7 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
         if (state_ == State::First) {
             prompt_first(ctx);
         } else if (state_ == State::Second) {
+            fillet_band(ctx, pick1_, s_radius_, s_trim_, false, 0.0, 0.0);
             ctx.set_prompt("Select second object or shift-select to apply corner or [Radius]: ");
         } else {
             ctx.set_prompt("Select 2D polyline or [Radius]: ");
@@ -8556,6 +8760,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (state_ == State::First) {
             prompt_first(ctx);
         } else if (state_ == State::Second) {
+            fillet_band(ctx, pick1_, 0.0, s_trim_, true, dist1(), dist2());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         } else {
             ctx.set_prompt("Select 2D polyline or [Distance/Angle/mEthod]: ");
@@ -8623,10 +8828,14 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick1_ = *p;
             state_ = State::Second;
+            fillet_band(ctx, pick1_, 0.0, s_trim_, true, dist1(), dist2());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         }
         return;
     case State::Second:
+        if (u == "D" || u == "DISTANCE" || u == "A" || u == "ANGLE" || u == "M" || u == "METHOD") {
+            ctx.set_preview({});
+        }
         if (u == "D" || u == "DISTANCE") {
             ask_distance(State::Second);
             return;
@@ -8641,6 +8850,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (const auto p = read_point(ctx, text)) {
             const bool sharp = ctx.shift_held(); // a clean corner this once
+            ctx.set_preview({});
             last_group_ = ctx.group_id();
             ctx.submit(core::ChamferPickCommand{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
                                                 ctx.pick_radius(), last_group_, s_trim_});
@@ -9208,6 +9418,7 @@ std::optional<double> parse_number(const std::string& t) {
     }
     return v;
 }
+
 /// Mtext / Text / Angle at a dimension's placement prompt: true when `u` asked for one
 /// (the next input is then the text, or the text's angle -- see read_dim_text_angle).
 bool dim_text_option(CommandContext& ctx, const std::string& u, bool& typing, bool& angling) {

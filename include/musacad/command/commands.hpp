@@ -454,9 +454,18 @@ public:
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
 private:
+    /// `Select source object or multiple objects to join at once:` (a pick: the source),
+    /// then `Select objects to join:` with picks and windows -- for an arc or elliptical
+    /// arc source `[cLose]` makes it whole.
     enum class State { Source, Targets } state_ = State::Source;
-    std::vector<core::Vec2> picks_;
+    core::Vec2 source_{};
+    bool closable_ = false;
+    SelectObjectsPhase select_;
     bool done_ = false;
 };
 
@@ -1190,10 +1199,21 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Mode, Amount, Pick };
-    State state_ = State::Mode;
-    core::LengthenCommand::Mode mode_ = core::LengthenCommand::Mode::Total;
-    double value_ = 0.0;
+    /// AutoCAD's flow: `Select an object to measure or [DElta/Percent/Total/DYnamic]:` --
+    /// a pick there reports the length -- then the amount (Angle for an arc's), then
+    /// `Select an object to change or [Undo]:` one object after another; DYnamic asks where
+    /// the end goes. The mode and the amounts are kept for the session.
+    enum class State { Measure, Amount, Pick, DynEnd };
+    void prompt_measure(CommandContext& ctx);
+    State state_ = State::Measure;
+    inline static core::LengthenCommand::Mode s_mode_ = core::LengthenCommand::Mode::Total;
+    inline static double s_delta_ = 0.0;
+    inline static double s_percent_ = 100.0;
+    inline static double s_total_ = 1.0;
+    inline static double s_angle_ = 0.0; ///< DeltaAngle / TotalAngle, radians
+    bool asking_angle_ = false;
+    int changed_ = 0;
+    core::Vec2 dyn_pick_{};
     bool done_ = false;
 };
 
@@ -2217,10 +2237,13 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Pick, Amount };
+    enum class State { Pick, Amount, BlockName, BlockAlign };
     bool measure_ = false;
     State state_ = State::Pick;
     core::Vec2 pick_{};
+    std::string block_; ///< [Block]
+    bool align_ = true;
+    void amount_prompt(CommandContext& ctx);
     bool done_ = false;
 };
 
