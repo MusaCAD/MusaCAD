@@ -228,7 +228,8 @@ TEST_CASE("TRIM: two picks on empty space are a fence between them") {
     REQUIRE(p != nullptr);
     REQUIRE(p->path.size() == 2);
     REQUIRE(std::abs(p->path[1].x - 10.0) < 1e-12);
-    REQUIRE(h.out.prompt == "Select object to trim or shift-select to extend or [Fence/Undo]: ");
+    REQUIRE(h.out.prompt ==
+            "Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/Project/eRase/Undo]: ");
 
     // On an object, a pick is a pick.
     h.proc.set_hovered_kind(EntityKind::Line);
@@ -240,7 +241,7 @@ TEST_CASE("TRIM: two picks on empty space are a fence between them") {
 TEST_CASE("TRIM Fence: typed points until Enter; EXTEND takes the same path") {
     H h;
     h.proc.submit_line("EXTEND");
-    REQUIRE(h.out.prompt == "Select object to extend or shift-select to trim or [Fence/Undo]: ");
+    REQUIRE(h.out.prompt == "Select object to extend or shift-select to trim or [Boundary edges/Crossing/mOde/Project]: ");
     h.proc.submit_line("F");
     REQUIRE(h.out.prompt == "Specify first fence point: ");
     h.proc.submit_line("0,0");

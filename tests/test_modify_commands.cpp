@@ -131,8 +131,10 @@ TEST_CASE("EXTEND flow emits ExtendPickCommand per pick") {
     Harness h;
     h.proc.submit_line("EX");
     h.proc.submit_line("5,0");
-    REQUIRE(h.cmds.size() == 1);
-    REQUIRE(std::holds_alternative<musacad::core::ExtendPickCommand>(h.cmds[0]));
+    // After the edges are set (every object, Quick mode), the pick.
+    REQUIRE(h.cmds.size() == 2);
+    REQUIRE(std::holds_alternative<musacad::core::SetTrimEdgesCommand>(h.cmds[0]));
+    REQUIRE(std::holds_alternative<musacad::core::ExtendPickCommand>(h.cmds[1]));
 }
 
 // ---------------------------------------------------------------------------

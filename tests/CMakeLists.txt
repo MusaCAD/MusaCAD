@@ -124,6 +124,8 @@ add_executable(musacad_tests
     test_inquiry.cpp
     test_multidoc.cpp
     test_trim_paths_clipboard.cpp
+    test_trim_modes.cpp
+    test_layer_tools.cpp
     test_crash_report.cpp
     test_kernel_offset.cpp
     test_osnap_types.cpp

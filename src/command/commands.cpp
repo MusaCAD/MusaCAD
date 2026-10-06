@@ -2656,36 +2656,123 @@ void MatchPropCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// TRIM (line subset; repeats)
+// TRIM / EXTEND
 // ---------------------------------------------------------------------------
 void TrimCommand::start(CommandContext& ctx) {
     picks_ = 0;
     fence_.clear();
     fence_open_ = false;
+    corner_.reset();
+    static constexpr const char* kProj[] = {"None", "UCS", "View"};
+    ctx.echo(std::string("Current settings: Projection=") + kProj[std::clamp(s_projmode_, 0, 2)] +
+             ", Edge=" + ((s_edgemode_ == 1) ? "Extend" : "None") + ", Mode=" + ((s_mode_ == 1) ? "Quick" : "Standard"));
+    if (s_mode_ == 1) {
+        ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::All, false});
+        state_ = State::Objects;
+        prompt(ctx);
+    } else if (ctx.has_selection()) {
+        // Standard mode: objects selected before the command are the cutting edges.
+        ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::FromSelection, (s_edgemode_ == 1)});
+        state_ = State::Objects;
+        prompt(ctx);
+    } else {
+        begin_edges(ctx);
+    }
+}
+
+void TrimCommand::begin_edges(CommandContext& ctx) {
+    ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::All, false});
+    ctx.submit(core::ClearSelectionCommand{});
+    state_ = State::Edges;
+    ctx.echo(extend_ ? "Select boundary edges ..." : "Select cutting edges ...");
+    select_.begin(ctx, "Select objects or <select all>: ");
+}
+
+void TrimCommand::end_edges(CommandContext& ctx) {
+    // Nothing selected is every object (the engine decides on what it holds).
+    ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::FromSelection,
+                                         s_mode_ == 0 && s_edgemode_ == 1});
+    state_ = State::Objects;
     prompt(ctx);
 }
 
-void TrimCommand::prompt(CommandContext& ctx) {
-    if (fence_open_) {
-        ctx.set_prompt(fence_.empty() ? "Specify first fence point: " : "Specify next fence point or [Undo]: ");
-        return;
+void TrimCommand::end_erase(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        step(ctx);
+        ctx.submit(core::EraseSelectionCommand{ctx.group_id()});
+        ++picks_;
     }
-    if (!fence_.empty()) {
-        ctx.set_prompt("Specify second fence point: ");
-        return;
-    }
-    ctx.set_prompt(extend_ ? "Select object to extend or shift-select to trim or [Fence/Undo]: "
-                           : "Select object to trim or shift-select to extend or [Fence/Undo]: ");
+    state_ = State::Objects;
+    prompt(ctx);
 }
 
-void TrimCommand::path(CommandContext& ctx, std::vector<core::Vec2> points, bool extend) {
+void TrimCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (state_ == State::Edges) {
+            end_edges(ctx);
+        } else if (state_ == State::Erase) {
+            end_erase(ctx);
+        }
+    }
+}
+
+void TrimCommand::prompt(CommandContext& ctx) {
+    switch (state_) {
+    case State::Fence:
+        if (fence_open_) {
+            ctx.set_prompt(fence_.empty() ? "Specify first fence point: " : "Specify next fence point or [Undo]: ");
+        } else {
+            ctx.set_prompt("Specify second fence point: ");
+        }
+        return;
+    case State::Corner:
+        ctx.set_prompt(corner_ ? "Specify opposite corner: " : "Specify first corner: ");
+        return;
+    case State::Mode:
+        ctx.set_prompt(std::string(extend_ ? "Enter an extend mode option" : "Enter a trim mode option") +
+                       " [Quick/Standard] <" + ((s_mode_ == 1) ? "Quick" : "Standard") + ">: ");
+        return;
+    case State::Project:
+        ctx.set_prompt(std::string("Enter a projection option [None/Ucs/View] <") +
+                       (s_projmode_ == 0 ? "None" : s_projmode_ == 2 ? "View" : "Ucs") + ">: ");
+        return;
+    case State::Edge:
+        ctx.set_prompt(std::string("Enter an implied edge extension mode [Extend/No extend] <") +
+                       ((s_edgemode_ == 1) ? "Extend" : "No extend") + ">: ");
+        return;
+    case State::Edges:
+    case State::Erase:
+        return; // the selection step prompts
+    case State::Objects:
+        break;
+    }
+    std::string opts = extend_ ? ((s_mode_ == 1) ? "Boundary edges/Crossing/mOde/Project"
+                                           : "Boundary edges/Fence/Crossing/mOde/Project/Edge")
+                               : ((s_mode_ == 1) ? "cuTting edges/Crossing/mOde/Project/eRase"
+                                           : "cuTting edges/Fence/Crossing/mOde/Project/Edge/eRase");
+    if (picks_ > 0) {
+        opts += "/Undo";
+    }
+    ctx.set_prompt(std::string(extend_ ? "Select object to extend or shift-select to trim or ["
+                                       : "Select object to trim or shift-select to extend or [") +
+                   opts + "]: ");
+}
+
+void TrimCommand::step(CommandContext& ctx) {
+    if (picks_ > 0) {
+        (void)ctx.new_group(); // every pick, path or erase its own undo step
+    }
+}
+
+void TrimCommand::path(CommandContext& ctx, std::vector<core::Vec2> points, bool extend, bool window) {
     if (points.size() < 2) {
         return;
     }
-    if (picks_ > 0) {
-        (void)ctx.new_group(); // the whole path is one undo step
-    }
-    ctx.submit(core::TrimPathCommand{std::move(points), extend, ctx.pick_radius(), ctx.group_id()});
+    step(ctx);
+    core::TrimPathCommand c{std::move(points), extend, ctx.pick_radius(), ctx.group_id()};
+    c.window = window;
+    c.quick = (s_mode_ == 1);
+    ctx.submit(std::move(c));
     ++picks_;
 }
 
@@ -2694,30 +2781,149 @@ void TrimCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& p
     fence_open_ = false;
     ctx.set_preview({});
     path(ctx, points, extend_ != ctx.shift_held());
+    state_ = State::Objects;
     prompt(ctx);
+}
+
+void TrimCommand::finish(CommandContext& ctx) {
+    ctx.set_preview({});
+    ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::All, false}); // the edges let go
+    done_ = true;
 }
 
 void TrimCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
-    if (u.empty()) {
-        if (fence_open_ && fence_.size() >= 2) {
-            path(ctx, fence_, extend_);
+    switch (state_) {
+    case State::Edges:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            end_edges(ctx);
         }
-        if (fence_open_ || !fence_.empty()) {
-            fence_.clear();
-            fence_open_ = false;
-            ctx.set_preview({});
+        return;
+    case State::Erase:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            end_erase(ctx);
+        }
+        return;
+    case State::Mode:
+        if (u == "Q" || u == "QUICK") {
+            s_mode_ = 1;
+            ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::All, false});
+        } else if (u == "S" || u == "STANDARD") {
+            s_mode_ = 0;
+            begin_edges(ctx);
+            return;
+        } else if (!u.empty()) {
+            ctx.echo("Invalid option keyword.");
             prompt(ctx);
             return;
         }
-        done_ = true;
+        state_ = State::Objects;
+        prompt(ctx);
+        return;
+    case State::Project:
+        if (u == "N" || u == "NONE") {
+            s_projmode_ = 0;
+        } else if (u == "U" || u == "UCS") {
+            s_projmode_ = 1;
+        } else if (u == "V" || u == "VIEW") {
+            s_projmode_ = 2;
+        } else if (!u.empty()) {
+            ctx.echo("Invalid option keyword.");
+            prompt(ctx);
+            return;
+        }
+        state_ = State::Objects;
+        prompt(ctx);
+        return;
+    case State::Edge:
+        if (u == "E" || u == "EXTEND") {
+            s_edgemode_ = 1;
+        } else if (u == "N" || u == "NO" || u == "NO EXTEND" || u == "NOEXTEND") {
+            s_edgemode_ = 0;
+        } else if (!u.empty()) {
+            ctx.echo("Invalid option keyword.");
+            prompt(ctx);
+            return;
+        }
+        ctx.submit(core::SetTrimEdgesCommand{core::SetTrimEdgesCommand::Op::EdgeMode, s_mode_ == 0 && s_edgemode_ == 1});
+        state_ = State::Objects;
+        prompt(ctx);
+        return;
+    case State::Corner: {
+        if (u.empty()) {
+            corner_.reset();
+            ctx.set_preview({});
+            state_ = State::Objects;
+            prompt(ctx);
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (!corner_) {
+            corner_ = *p;
+            ctx.set_preview({PreviewKind::Rectangle, {*p}});
+            prompt(ctx);
+            return;
+        }
+        const core::Vec2 first = *corner_;
+        corner_.reset();
+        ctx.set_preview({});
+        path(ctx, {first, *p}, extend_ != ctx.shift_held(), true);
+        state_ = State::Objects;
+        prompt(ctx);
+        return;
+    }
+    case State::Fence: {
+        if (u.empty()) {
+            if (fence_open_ && fence_.size() >= 2) {
+                path(ctx, fence_, extend_);
+            }
+            fence_.clear();
+            fence_open_ = false;
+            ctx.set_preview({});
+            state_ = State::Objects;
+            prompt(ctx);
+            return;
+        }
+        if (fence_open_ && (u == "U" || u == "UNDO")) {
+            if (!fence_.empty()) {
+                fence_.pop_back();
+            }
+            ctx.set_preview(fence_.empty() ? PreviewSpec{} : PreviewSpec{PreviewKind::Polyline, fence_});
+            prompt(ctx);
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (fence_open_) {
+            fence_.push_back(*p);
+            ctx.set_preview({PreviewKind::Polyline, fence_});
+            prompt(ctx);
+            return;
+        }
+        // The second of two picks on empty space.
+        std::vector<core::Vec2> f{fence_.front(), *p};
+        fence_.clear();
+        ctx.set_preview({});
+        path(ctx, std::move(f), extend_ != ctx.shift_held());
+        state_ = State::Objects;
+        prompt(ctx);
+        return;
+    }
+    case State::Objects:
+        break;
+    }
+
+    if (u.empty()) {
+        finish(ctx);
         return;
     }
     if (u == "U" || u == "UNDO") {
-        if (!fence_.empty()) {
-            fence_.pop_back();
-            ctx.set_preview(fence_.empty() ? PreviewSpec{} : PreviewSpec{PreviewKind::Polyline, fence_});
-        } else if (picks_ == 0) {
+        if (picks_ == 0) {
             ctx.echo("Nothing to undo.");
         } else {
             ctx.submit(core::UndoLastGroupCommand{}); // the last pick is its own step
@@ -2726,9 +2932,222 @@ void TrimCommand::input(CommandContext& ctx, const std::string& text) {
         prompt(ctx);
         return;
     }
+    if ((!extend_ && (u == "T" || u == "CUTTING" || u == "CUTTINGEDGES")) ||
+        (extend_ && (u == "B" || u == "BOUNDARY" || u == "BOUNDARYEDGES"))) {
+        begin_edges(ctx);
+        return;
+    }
     if (u == "F" || u == "FENCE") {
         fence_.clear();
         fence_open_ = true;
+        state_ = State::Fence;
+        prompt(ctx);
+        return;
+    }
+    if (u == "C" || u == "CROSSING") {
+        corner_.reset();
+        state_ = State::Corner;
+        prompt(ctx);
+        return;
+    }
+    if (u == "O" || u == "MODE") {
+        state_ = State::Mode;
+        prompt(ctx);
+        return;
+    }
+    if (u == "P" || u == "PROJECT") {
+        state_ = State::Project;
+        prompt(ctx);
+        return;
+    }
+    if (u == "E" || u == "EDGE") {
+        state_ = State::Edge;
+        prompt(ctx);
+        return;
+    }
+    if (!extend_ && (u == "R" || u == "ERASE")) {
+        ctx.submit(core::ClearSelectionCommand{});
+        state_ = State::Erase;
+        select_.begin(ctx, "Select objects to erase or <exit>: ");
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (ctx.input_is_pick() && !ctx.hovered_kind().has_value()) {
+        // A click on empty space: in Quick mode the first point of a fence, in Standard
+        // mode the first corner of a crossing window -- as AutoCAD has them.
+        if (s_mode_ == 1) {
+            fence_ = {*p};
+            fence_open_ = false;
+            state_ = State::Fence;
+            ctx.set_preview({PreviewKind::Segment, fence_});
+        } else {
+            corner_ = *p;
+            state_ = State::Corner;
+            ctx.set_preview({PreviewKind::Rectangle, {*p}});
+        }
+        prompt(ctx);
+        return;
+    }
+    step(ctx);
+    if (extend_ != ctx.shift_held()) {
+        ctx.submit(core::ExtendPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+    } else {
+        ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id(), (s_mode_ == 1)});
+    }
+    ++picks_;
+    prompt(ctx); // Undo appears after the first
+    // The result is echoed by the engine (honest status), not assumed here.
+}
+
+void TrimCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    finish(ctx);
+}
+
+// ---------------------------------------------------------------------------
+// The layer tools: LAYOFF, LAYFRZ, LAYLCK, LAYULK, LAYMCUR, LAYCUR, LAYISO, LAYUNISO,
+// LAYON, LAYTHW
+// ---------------------------------------------------------------------------
+namespace {
+core::LayerToolCommand::Op lay_op(LayToolCommand::Kind k) {
+    using K = LayToolCommand::Kind;
+    using Op = core::LayerToolCommand::Op;
+    switch (k) {
+    case K::Off:
+        return Op::Off;
+    case K::Freeze:
+        return Op::Freeze;
+    case K::Lock:
+        return Op::Lock;
+    case K::Unlock:
+        return Op::Unlock;
+    case K::MakeCurrent:
+        return Op::MakeCurrent;
+    case K::ToCurrent:
+        return Op::ToCurrent;
+    case K::Isolate:
+        return Op::Isolate;
+    case K::Unisolate:
+        return Op::Unisolate;
+    case K::AllOn:
+        return Op::AllOn;
+    case K::AllThaw:
+        return Op::AllThaw;
+    }
+    return Op::Off;
+}
+} // namespace
+
+std::string LayToolCommand::name() const {
+    switch (kind_) {
+    case Kind::Off:
+        return "LAYOFF";
+    case Kind::Freeze:
+        return "LAYFRZ";
+    case Kind::Lock:
+        return "LAYLCK";
+    case Kind::Unlock:
+        return "LAYULK";
+    case Kind::MakeCurrent:
+        return "LAYMCUR";
+    case Kind::ToCurrent:
+        return "LAYCUR";
+    case Kind::Isolate:
+        return "LAYISO";
+    case Kind::Unisolate:
+        return "LAYUNISO";
+    case Kind::AllOn:
+        return "LAYON";
+    case Kind::AllThaw:
+        return "LAYTHW";
+    }
+    return "LAYOFF";
+}
+
+void LayToolCommand::prompt(CommandContext& ctx) {
+    switch (kind_) {
+    case Kind::Off:
+        ctx.set_prompt(changed_ > 0 ? "Select an object on the layer to be turned off or [Undo]: "
+                                    : "Select an object on the layer to be turned off: ");
+        return;
+    case Kind::Freeze:
+        ctx.set_prompt(changed_ > 0 ? "Select an object on the layer to be frozen or [Undo]: "
+                                    : "Select an object on the layer to be frozen: ");
+        return;
+    case Kind::Lock:
+        ctx.set_prompt("Select an object on the layer to be locked: ");
+        return;
+    case Kind::Unlock:
+        ctx.set_prompt("Select an object on the layer to be unlocked: ");
+        return;
+    case Kind::MakeCurrent:
+        ctx.set_prompt("Select object whose layer will become current: ");
+        return;
+    default:
+        return;
+    }
+}
+
+void LayToolCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    switch (kind_) {
+    case Kind::Unisolate:
+    case Kind::AllOn:
+    case Kind::AllThaw:
+        ctx.submit(core::LayerToolCommand{lay_op(kind_), {}, 0.0, ctx.group_id()});
+        done_ = true;
+        return;
+    case Kind::ToCurrent:
+    case Kind::Isolate:
+        if (ctx.has_selection()) {
+            finish_selection(ctx);
+            return;
+        }
+        select_.begin(ctx, kind_ == Kind::ToCurrent ? "Select objects to be changed to the current layer: "
+                                                    : "Select objects on the layer(s) to be isolated: ");
+        return;
+    default:
+        prompt(ctx);
+        return;
+    }
+}
+
+void LayToolCommand::finish_selection(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::LayerToolCommand{lay_op(kind_), {}, 0.0, ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void LayToolCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish_selection(ctx);
+    }
+}
+
+void LayToolCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.active()) {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            finish_selection(ctx);
+        }
+        return;
+    }
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
+        done_ = true;
+        return;
+    }
+    const bool repeats = kind_ == Kind::Off || kind_ == Kind::Freeze;
+    if (repeats && (u == "U" || u == "UNDO")) {
+        if (changed_ == 0) {
+            ctx.echo("Nothing to undo.");
+        } else {
+            ctx.submit(core::LayerToolCommand{core::LayerToolCommand::Op::UndoLast, {}, 0.0, ctx.group_id()});
+            --changed_;
+        }
         prompt(ctx);
         return;
     }
@@ -2736,42 +3155,39 @@ void TrimCommand::input(CommandContext& ctx, const std::string& text) {
     if (!p) {
         return;
     }
-    if (fence_open_) {
-        fence_.push_back(*p);
-        ctx.set_preview({PreviewKind::Polyline, fence_});
-        prompt(ctx);
+    ctx.submit(core::LayerToolCommand{lay_op(kind_), *p, ctx.pick_radius(), ctx.group_id()});
+    if (!repeats) {
+        done_ = true;
         return;
     }
-    if (!fence_.empty()) { // the second of two picks on empty space
-        std::vector<core::Vec2> f{fence_.front(), *p};
-        fence_.clear();
-        ctx.set_preview({});
-        path(ctx, std::move(f), extend_ != ctx.shift_held());
-        prompt(ctx);
-        return;
-    }
-    if (ctx.input_is_pick() && !ctx.hovered_kind().has_value()) {
-        // A click on empty space starts a fence, as AutoCAD's Quick mode has it.
-        fence_ = {*p};
-        ctx.set_preview({PreviewKind::Segment, fence_});
-        prompt(ctx);
-        return;
-    }
-    if (picks_ > 0) {
-        (void)ctx.new_group(); // every pick its own undo step
-    }
-    if (extend_ != ctx.shift_held()) {
-        ctx.submit(core::ExtendPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
-    } else {
-        ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
-    }
-    ++picks_;
-    // Result is echoed by the engine (honest status), not assumed here.
+    ++changed_;
+    prompt(ctx);
 }
 
-void TrimCommand::cancel(CommandContext& ctx) {
+void LayToolCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
-    ctx.set_preview({});
+    done_ = true;
+}
+
+void IntVarCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for " + var_ + " <" + std::to_string(*value_) + ">: ");
+}
+
+void IntVarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v != std::floor(v) || v < lo_ || v > hi_) {
+            ctx.echo("Requires an integer between " + std::to_string(lo_) + " and " + std::to_string(hi_) + ".");
+            return;
+        }
+        *value_ = static_cast<int>(v);
+    }
+    done_ = true;
+}
+
+void IntVarCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
     done_ = true;
 }
 

@@ -38,11 +38,14 @@ modules:
   - name: musa-cad
     # The project's install() rules place the binary, the desktop entry, the icon and the
     # AppStream metadata. flatpak-builder sets no build type, so it is given here; the
-    # developer tools in tests/ are not shipped, so they are not built.
+    # developer tools in tests/ are not shipped, so they are not built. As on Flathub, the
+    # runtime's -O2 applies (Release would add -O3, and geometry_engine.cpp at -O3 -g
+    # takes some 15 GB to compile).
     buildsystem: cmake-ninja
     builddir: true
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG
       - -DMUSACAD_BUILD_DEV_TOOLS=OFF
     sources:
       - type: dir

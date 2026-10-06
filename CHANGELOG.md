@@ -14,16 +14,37 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   space draw a straight fence, and **Fence** takes typed points. As in AutoCAD's Quick mode,
   an object with nothing to trim it to is deleted, and **Shift** swaps trim and extend for
   that pick or path. EXTEND works the same way.
+- **TRIM and EXTEND's modes and options, as AutoCAD has them** (#48) -- `Current settings:
+  Projection=UCS, Edge=None, Mode=Quick` and `[cuTting edges/Crossing/mOde/Project/eRase]`
+  (EXTEND: `[Boundary edges/Crossing/mOde/Project]`). **mOde Standard** asks for the cutting
+  edges first (Enter takes every object; objects selected beforehand are taken as they are)
+  and deletes nothing it cannot trim; there two clicks on empty space draw a crossing
+  window. **Edge Extend** lets a chosen edge cut along its extension -- a line along its
+  whole length, an arc round its whole circle. **Crossing** trims each object crossing a
+  window once and removes what lies wholly inside; **eRase** erases without leaving the
+  command. A cutting edge that is itself trimmed stays an edge. TRIMEXTENDMODE, EDGEMODE
+  and PROJMODE are kept for the session.
 - **The system clipboard** -- Ctrl+C / Ctrl+X (COPYCLIP / CUTCLIP) put the objects on the
   system clipboard as Musa CAD objects and as a picture, so they paste into another Musa CAD
   window, a document, an email or an image editor. Ctrl+V (PASTECLIP) asks for the insertion
   point while the objects follow the cursor. It also pastes what other programs copy: an
   image is embedded in the drawing, and text becomes a multiline text. **COPYBASE** /
   **CUTBASE** take a base point first, and **PASTEORIG** pastes at the original coordinates.
+- **The layer tools** (#55) -- **LAYOFF** and **LAYFRZ** turn off or freeze the layer of
+  each object picked (Undo takes the last back; the current layer is never frozen),
+  **LAYLCK** / **LAYULK** lock and unlock the picked object's layer, **LAYMCUR** makes it
+  current, **LAYCUR** moves the selected objects to the current layer, **LAYISO** turns off
+  every layer but the selected objects' and **LAYUNISO** turns them back on, **LAYON** and
+  **LAYTHW** turn on and thaw every layer. Off, Isolate, Freeze and Make Current are live on
+  the Home tab's Layers panel, the rest in its slide-out.
 - **Crash reports** -- if Musa CAD stops unexpectedly it writes a report: the version and
   system, the graphics driver, the drawing's file name, the last commands and the call stack.
   The next start shows it, ready to save or copy and attach to an issue. **Save Bug
   Report…** in the application menu writes the same report at any time.
+
+### Fixed
+- EXTEND on an arc no longer stops at the extension of a line the arc never meets; it stops
+  where the line is (or along its extension with Edge Extend).
 
 ### Changed
 - The Flathub listing and the desktop's own search know Musa CAD by what it does: keywords

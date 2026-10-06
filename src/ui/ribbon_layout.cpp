@@ -449,7 +449,7 @@ void MainWindow::build_ribbon() {
     annot->set_dialog_launcher(QStringLiteral("Dimension Style"), [this] { open_dimstyle_dialog(); });
 
     // --- Layers: Layer Properties large, the current-layer control, and the layer tools
-    // (the tools AutoCAD keeps here -- Off, Isolate, Freeze, Make Current -- are #69).
+    // (Off, Isolate, Freeze, Make Current; the slide-out holds the rest).
     RibbonPanel* layers = ribbon_->add_panel(home, QStringLiteral("Layers"), 55);
     layers->set_representative_icon(asset("layers"));
     QToolButton* layer_btn = layers->add_button(asset("layer-props"), QStringLiteral("Layer\nProperties"));
@@ -474,11 +474,22 @@ void MainWindow::build_ribbon() {
         rl->setSpacing(1);
         col->layout()->addWidget(row);
         QWidget* c2 = layers->add_column_to(row, /*icon_only=*/true);
-        todo_small(layers, c2, QStringLiteral("Off"), "layer-off");
-        todo_small(layers, c2, QStringLiteral("Isolate"), "layer-iso");
+        small(layers, c2, QStringLiteral("Off"), "LAYOFF", "layer-off");
+        small(layers, c2, QStringLiteral("Isolate"), "LAYISO", "layer-iso");
         QWidget* c3 = layers->add_column_to(row, /*icon_only=*/true);
-        todo_small(layers, c3, QStringLiteral("Freeze"), "layer-freeze");
-        todo_small(layers, c3, QStringLiteral("Make Current"), "layer-current");
+        small(layers, c3, QStringLiteral("Freeze"), "LAYFRZ", "layer-freeze");
+        small(layers, c3, QStringLiteral("Make Current"), "LAYMCUR", "layer-current");
+    }
+    {
+        QWidget* out = layers->expander();
+        QWidget* c1 = layers->add_column_to(out);
+        small(layers, c1, QStringLiteral("Turn All Layers On"), "LAYON", "layer-off");
+        small(layers, c1, QStringLiteral("Thaw All Layers"), "LAYTHW", "layer-freeze");
+        small(layers, c1, QStringLiteral("Unisolate"), "LAYUNISO", "layer-iso");
+        QWidget* c2 = layers->add_column_to(out);
+        small(layers, c2, QStringLiteral("Lock"), "LAYLCK", "layer-props");
+        small(layers, c2, QStringLiteral("Unlock"), "LAYULK", "layer-props");
+        small(layers, c2, QStringLiteral("Change to Current Layer"), "LAYCUR", "layer-current");
     }
 
     // --- Block: Insert large; Create / Edit / Define Attributes stacked.

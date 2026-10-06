@@ -259,14 +259,20 @@ TEST_CASE("#53 ERASE gathers then erases; a pre-selection is erased at once; OOP
 TEST_CASE("#53 TRIM and EXTEND: every pick is its own undo step and Undo takes the last back") {
     H h;
     h.proc.submit_line("TR");
-    REQUIRE(h.out.prompt == "Select object to trim or shift-select to extend or [Fence/Undo]: ");
+    REQUIRE(h.out.prompt == "Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/Project/eRase]: ");
     h.proc.submit_line("U");
     REQUIRE(h.out.any_contains("Nothing to undo"));
     h.proc.submit_line("1,1");
     h.proc.submit_line("2,2");
-    const auto& picks = h.cmds;
-    const auto* p1 = std::get_if<TrimPickCommand>(&picks[0]);
-    const auto* p2 = std::get_if<TrimPickCommand>(&picks[1]);
+    std::vector<const TrimPickCommand*> picks;
+    for (const auto& c : h.cmds) {
+        if (const auto* t = std::get_if<TrimPickCommand>(&c)) {
+            picks.push_back(t);
+        }
+    }
+    REQUIRE(picks.size() == 2);
+    const auto* p1 = picks[0];
+    const auto* p2 = picks[1];
     REQUIRE(p1 != nullptr);
     REQUIRE(p2 != nullptr);
     REQUIRE(p1->group != p2->group); // separate undo groups
