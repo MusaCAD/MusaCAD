@@ -116,6 +116,9 @@ ViewportWindow::ViewportWindow(core::GeometryEngine& engine, QWindow* parent)
     : QWindow(parent), engine_(engine) {
     setSurfaceType(QWindow::OpenGLSurface);
     QSurfaceFormat fmt;
+    // Desktop OpenGL, said outright: left to its default, Qt asks NVIDIA's EGL (Wayland) for
+    // OpenGL ES (QTBUG-105921), and there is no ES 4.5 to be had (#82).
+    fmt.setRenderableType(QSurfaceFormat::OpenGL);
     fmt.setVersion(4, 5);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setSwapInterval(1); // vsync

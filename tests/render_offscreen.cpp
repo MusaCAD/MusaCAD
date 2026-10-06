@@ -48,6 +48,7 @@ int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
 
     QSurfaceFormat fmt;
+    fmt.setRenderableType(QSurfaceFormat::OpenGL); // not ES on NVIDIA's EGL (#82)
     fmt.setVersion(4, 5);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     QSurfaceFormat::setDefaultFormat(fmt);
