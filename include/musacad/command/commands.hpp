@@ -638,6 +638,109 @@ private:
     bool done_ = false;
 };
 
+/// DIMEDIT: Home, New, Rotate or Oblique, then `Select objects:` (a pre-selection is
+/// edited at once).
+class DimEditTextCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State : std::uint8_t { Type, Text, Angle, Select };
+    void to_select(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    State state_ = State::Type;
+    core::DimEditCommand edit_{};
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// DIMTEDIT: a dimension, then where its text goes, or Left / Right / Center / Home /
+/// Angle.
+class DimTextEditCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMTEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State : std::uint8_t { Pick, Where, Angle };
+    void submit(CommandContext& ctx, core::DimEditCommand::Op op);
+    State state_ = State::Pick;
+    core::Vec2 pick_{};
+    double radius_ = 0.0;
+    bool done_ = false;
+};
+
+/// DIMSPACE: a base dimension, the dimensions to space from it, then the spacing --
+/// Auto (twice the text height), a distance, or 0 to line them up with the base.
+class DimSpaceCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMSPACE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State : std::uint8_t { Base, Select, Value };
+    State state_ = State::Base;
+    core::Vec2 base_{};
+    double radius_ = 0.0;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// DIMCENTER: a centre mark on the arc or circle picked; Lines adds centre lines.
+class DimCenterCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMCENTER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    static inline bool s_lines_ = false;
+    bool done_ = false;
+};
+
+/// DIMOVERRIDE: dimension variables and their values (or Clear overrides), then
+/// `Select objects:` -- the dimensions take them as their own.
+class DimOverrideCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMOVERRIDE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State : std::uint8_t { Name, Value, Select };
+    void prompt(CommandContext& ctx);
+    void to_select(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    State state_ = State::Name;
+    std::string var_;
+    core::SetDimOverrideCommand set_{};
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// DIST: two points, or `[Multiple points]` with a running total; AutoCAD's full readout.
 class DistCommand final : public ICommand {
 public:

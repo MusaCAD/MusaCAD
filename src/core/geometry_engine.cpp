@@ -2150,7 +2150,11 @@ void GeometryEngine::apply_dim_arrange(const DimArrangeCommand& c) {
                 ++moved;
             }
         } else {
-            const double step = c.offset > 0.0 ? c.offset : 3.75;
+            // No offset: twice the base dimension's text height (DIMSPACE Auto).
+            const DimStyle* st = store_.dimstyle(first.style);
+            const double step = c.offset > 0.0
+                                    ? c.offset
+                                    : 2.0 * apply_dim_overrides(st != nullptr ? *st : DimStyle{}, first.overrides).text_height;
             for (std::size_t i = 0; i < order.size(); ++i) {
                 DimData d = *store_.dimension(order[i].second);
                 const double want = step * static_cast<double>(i + 1);
@@ -2169,6 +2173,193 @@ void GeometryEngine::apply_dim_arrange(const DimArrangeCommand& c) {
     report(std::to_string(moved) + (moved == 1 ? " dimension " : " dimensions ") +
            (c.op == Op::Align ? "aligned" : "distributed") +
            (skipped > 0 ? "; " + std::to_string(skipped) + " left as they were (not parallel, concentric or on the same datum)." : "."));
+}
+
+EntityHandle GeometryEngine::replace_dimension(EntityHandle h, Command original, Command edited,
+                                               std::uint64_t group) {
+    if (auto* a = std::get_if<AddDimensionCommand>(&edited)) {
+        a->group = group;
+    }
+    remove_indexed(h);
+    push_erase_item(group, h, std::move(original));
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(group, nh, std::move(edited));
+    return nh;
+}
+
+void GeometryEngine::apply_dim_edit(const DimEditCommand& c) {
+    using Op = DimEditCommand::Op;
+    std::vector<EntityHandle> dims;
+    if (c.pick) {
+        const EntityHandle h = pick_nearest(*c.pick, c.radius);
+        if (h.kind == EntityKind::Dimension) {
+            dims.push_back(h);
+        }
+    } else {
+        for (const EntityHandle h : selection_) {
+            if (h.kind == EntityKind::Dimension && store_.is_valid(h)) {
+                dims.push_back(h);
+            }
+        }
+    }
+    if (dims.empty()) {
+        report(c.pick ? "No dimension found." : "No dimensions selected.");
+        return;
+    }
+    std::vector<EntityHandle> made;
+    int skipped = 0;
+    for (const EntityHandle h : dims) {
+        const DimData d = *store_.dimension(h);
+        const bool line_dim = d.type == DimType::Linear || d.type == DimType::Aligned;
+        const bool line_only = c.op == Op::Oblique || c.op == Op::Left || c.op == Op::Right || c.op == Op::Center;
+        if (line_only && !line_dim) {
+            ++skipped;
+            continue;
+        }
+        Command original = capture_entity(h);
+        Command edited = c.op == Op::Move ? edit_for_grip_drag(store_, h, DimData::kTextGripIndex, c.to) : original;
+        auto* a = std::get_if<AddDimensionCommand>(&edited);
+        if (a == nullptr) {
+            continue;
+        }
+        switch (c.op) {
+        case Op::Home:
+            a->text_offset = {};
+            a->text_angle = 0.0;
+            break;
+        case Op::New:
+            a->text_override = c.text;
+            break;
+        case Op::Rotate:
+            a->text_angle = c.angle;
+            break;
+        case Op::Oblique:
+            a->oblique = c.angle;
+            break;
+        case Op::Move:
+            break;
+        case Op::Left:
+        case Op::Right:
+        case Op::Center: {
+            // Along the line, the label's near edge an arrow's length in from the
+            // extension line; centred when there is no room for that.
+            double x = 0.0;
+            if (c.op != Op::Center) {
+                DimData home = d;
+                home.text_offset = {};
+                const DimStyle* st = store_.dimstyle(d.style);
+                const DimStyle base = st != nullptr ? *st : DimStyle{};
+                const DimGeometry g = compute_dim_geometry(home, base, Rgb{}, store_.dim_text_parts(d));
+                const Vec2 ax{std::cos(g.text_rotation), std::sin(g.text_rotation)};
+                Vec2 q[4];
+                double w = 0.0;
+                if (dim_label_quad(g, false, q)) {
+                    double lo = dot(q[0], ax);
+                    double hi = lo;
+                    for (const Vec2 p : q) {
+                        lo = std::min(lo, dot(p, ax));
+                        hi = std::max(hi, dot(p, ax));
+                    }
+                    w = hi - lo;
+                }
+                const double span = std::abs(dot(d.b - d.a, dim_line_direction(d)));
+                const double room = span * 0.5 - w * 0.5 - apply_dim_overrides(base, d.overrides).arrow_size;
+                x = room > 0.0 ? (c.op == Op::Left ? -room : room) : 0.0;
+            }
+            a->text_offset = {x, 0.0};
+            break;
+        }
+        }
+        made.push_back(replace_dimension(h, std::move(original), std::move(edited), c.group));
+    }
+    if (!c.pick) {
+        selection_ = made;
+    }
+    if (!made.empty()) {
+        redo_.clear();
+        dirty_ = true;
+        geom_dirty_ = true;
+    }
+    const std::size_t n = made.size();
+    report(std::to_string(n) + (n == 1 ? " dimension edited" : " dimensions edited") +
+           (skipped > 0 ? "; " + std::to_string(skipped) + " left as they were (" +
+                              (c.op == Op::Oblique ? "Oblique" : "Left, Right and Center") +
+                              " work on linear and aligned dimensions)."
+                        : "."));
+}
+
+void GeometryEngine::apply_set_dim_override(const SetDimOverrideCommand& c) {
+    std::vector<EntityHandle> dims;
+    for (const EntityHandle h : selection_) {
+        if (h.kind == EntityKind::Dimension && store_.is_valid(h)) {
+            dims.push_back(h);
+        }
+    }
+    if (dims.empty()) {
+        report("No dimensions selected.");
+        return;
+    }
+    DimOverrides probe;
+    for (const auto& [var, v] : c.vars) {
+        if (!apply_dim_override(probe, var, v)) {
+            report(var + " is not a dimension variable a dimension can have of its own at that value.");
+            return;
+        }
+    }
+    std::vector<EntityHandle> made;
+    for (const EntityHandle h : dims) {
+        Command original = capture_entity(h);
+        Command edited = original;
+        if (auto* a = std::get_if<AddDimensionCommand>(&edited)) {
+            if (c.clear) {
+                a->overrides = {};
+            } else {
+                for (const auto& [var, v] : c.vars) {
+                    (void)apply_dim_override(a->overrides, var, v);
+                }
+            }
+            made.push_back(replace_dimension(h, std::move(original), std::move(edited), c.group));
+        }
+    }
+    selection_ = made;
+    redo_.clear();
+    dirty_ = true;
+    geom_dirty_ = true;
+    const std::size_t n = made.size();
+    report((c.clear ? "Overrides cleared on " : "Overrides set on ") + std::to_string(n) +
+           (n == 1 ? " dimension." : " dimensions."));
+}
+
+void GeometryEngine::apply_center_mark(const AddCenterMarkCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.radius);
+    Vec2 ctr;
+    double r = 0.0;
+    if (const CircleData* ci = h.kind == EntityKind::Circle ? store_.circle(h) : nullptr) {
+        ctr = ci->center;
+        r = ci->radius;
+    } else if (const ArcData* ar = h.kind == EntityKind::Arc ? store_.arc(h) : nullptr) {
+        ctr = ar->center;
+        r = ar->radius;
+    } else {
+        report("Select an arc or a circle.");
+        return;
+    }
+    const DimStyle* st = store_.dimstyle(store_.current_dimstyle());
+    const double m = c.size > 0.0 ? c.size : (st != nullptr ? st->arrow_size : 2.5) * 0.5;
+    std::vector<std::pair<Vec2, Vec2>> segs{{ctr - Vec2{m, 0.0}, ctr + Vec2{m, 0.0}},
+                                            {ctr - Vec2{0.0, m}, ctr + Vec2{0.0, m}}};
+    if (c.lines && r + m > 2.0 * m) {
+        for (const Vec2 u : {Vec2{1.0, 0.0}, Vec2{-1.0, 0.0}, Vec2{0.0, 1.0}, Vec2{0.0, -1.0}}) {
+            segs.emplace_back(ctr + u * (2.0 * m), ctr + u * (r + m));
+        }
+    }
+    for (const auto& [a, b] : segs) {
+        const AddLineCommand l{a, b, c.group};
+        push_create_item(c.group, create_indexed(l), l);
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    report(c.lines ? "Center mark and center lines added." : "Center mark added.");
 }
 
 void GeometryEngine::apply_area_query(const AreaQueryCommand& c) {
@@ -11505,6 +11696,15 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, DimArrangeCommand>) {
                 apply_dim_arrange(c);
+            }
+            if constexpr (std::is_same_v<T, DimEditCommand>) {
+                apply_dim_edit(c);
+            }
+            if constexpr (std::is_same_v<T, SetDimOverrideCommand>) {
+                apply_set_dim_override(c);
+            }
+            if constexpr (std::is_same_v<T, AddCenterMarkCommand>) {
+                apply_center_mark(c);
             }
             if constexpr (std::is_same_v<T, SetDimLayerCommand>) {
                 std::optional<std::uint16_t> layer;

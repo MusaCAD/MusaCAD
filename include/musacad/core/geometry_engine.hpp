@@ -355,6 +355,11 @@ private:
     std::optional<bool> chain_from_a_{};
     std::vector<std::pair<EntityHandle, std::optional<bool>>> chain_stack_;
     void apply_dim_arrange(const DimArrangeCommand& c);
+    void apply_dim_edit(const DimEditCommand& c);
+    void apply_set_dim_override(const SetDimOverrideCommand& c);
+    void apply_center_mark(const AddCenterMarkCommand& c);
+    /// A dimension re-created from `edited` in `group` in place of `h` (one change).
+    EntityHandle replace_dimension(EntityHandle h, Command original, Command edited, std::uint64_t group);
     /// DIMLAYER: the layer new dimensions go on (unset = the current layer).
     std::optional<std::uint16_t> dim_layer_{};
     void apply_area_query(const AreaQueryCommand& c);

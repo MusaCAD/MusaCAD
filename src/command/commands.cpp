@@ -12558,4 +12558,367 @@ void DimVarCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+
+// ---------------------------------------------------------------------------
+// Dimension editing (issue #60): DIMEDIT / DIMTEDIT / DIMSPACE / DIMCENTER / DIMOVERRIDE
+// ---------------------------------------------------------------------------
+void DimEditTextCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter type of dimension editing [Home/New/Rotate/Oblique] <Home>: ");
+}
+
+void DimEditTextCommand::to_select(CommandContext& ctx) {
+    state_ = State::Select;
+    if (ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void DimEditTextCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        edit_.group = ctx.group_id();
+        ctx.submit(edit_);
+    }
+    done_ = true;
+}
+
+void DimEditTextCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void DimEditTextCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::DimEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Type:
+        if (t.empty() || u == "H" || u == "HOME") {
+            edit_.op = Op::Home;
+            to_select(ctx);
+        } else if (u == "N" || u == "NEW") {
+            edit_.op = Op::New;
+            state_ = State::Text;
+            ctx.set_prompt("Enter dimension text (<> for the measurement) <<>>: ");
+        } else if (u == "R" || u == "ROTATE") {
+            edit_.op = Op::Rotate;
+            state_ = State::Angle;
+            ctx.set_prompt("Specify angle for dimension text: ");
+        } else if (u == "O" || u == "OBLIQUE") {
+            edit_.op = Op::Oblique;
+            state_ = State::Angle;
+            ctx.set_prompt("Enter obliquing angle (press ENTER for none): ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+            start(ctx);
+        }
+        return;
+    case State::Text:
+        edit_.text = t == "<>" ? std::string() : t;
+        to_select(ctx);
+        return;
+    case State::Angle:
+        if (const std::optional<double> a = read_dim_text_angle(ctx, text)) {
+            edit_.angle = *a;
+            to_select(ctx);
+        }
+        return;
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            finish(ctx);
+        }
+        return;
+    }
+}
+
+void DimEditTextCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimTextEditCommand::start(CommandContext& ctx) { ctx.set_prompt("Select dimension: "); }
+
+void DimTextEditCommand::submit(CommandContext& ctx, core::DimEditCommand::Op op) {
+    core::DimEditCommand c;
+    c.op = op;
+    c.pick = pick_;
+    c.radius = radius_;
+    c.group = ctx.group_id();
+    ctx.submit(c);
+    done_ = true;
+}
+
+void DimTextEditCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::DimEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Pick: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (ctx.input_is_pick() && ctx.hovered_kind() != core::EntityKind::Dimension) {
+            ctx.echo("Select a dimension.");
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        pick_ = *p;
+        radius_ = ctx.pick_radius();
+        state_ = State::Where;
+        ctx.set_prompt("Specify new location for dimension text or [Left/Right/Center/Home/Angle]: ");
+        return;
+    }
+    case State::Where:
+        if (u == "L" || u == "LEFT") {
+            submit(ctx, Op::Left);
+        } else if (u == "R" || u == "RIGHT") {
+            submit(ctx, Op::Right);
+        } else if (u == "C" || u == "CENTER") {
+            submit(ctx, Op::Center);
+        } else if (u == "H" || u == "HOME") {
+            submit(ctx, Op::Home);
+        } else if (u == "A" || u == "ANGLE") {
+            state_ = State::Angle;
+            ctx.set_prompt("Specify angle for dimension text: ");
+        } else if (t.empty()) {
+            done_ = true;
+        } else if (const auto p = read_point(ctx, text)) {
+            core::DimEditCommand c;
+            c.op = Op::Move;
+            c.pick = pick_;
+            c.radius = radius_;
+            c.to = *p;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+            done_ = true;
+        }
+        return;
+    case State::Angle:
+        if (const std::optional<double> a = read_dim_text_angle(ctx, text)) {
+            core::DimEditCommand c;
+            c.op = Op::Rotate;
+            c.angle = *a;
+            c.pick = pick_;
+            c.radius = radius_;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void DimTextEditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimSpaceCommand::start(CommandContext& ctx) { ctx.set_prompt("Select base dimension: "); }
+
+void DimSpaceCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        state_ = State::Value;
+        ctx.set_prompt("Enter value or [Auto] <Auto>: ");
+    }
+}
+
+void DimSpaceCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Base: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (ctx.input_is_pick() && ctx.hovered_kind() != core::EntityKind::Dimension) {
+            ctx.echo("Select a dimension.");
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        base_ = *p;
+        radius_ = ctx.pick_radius();
+        state_ = State::Select;
+        ctx.submit(core::ClearSelectionCommand{});
+        select_.begin(ctx, "Select dimensions to space: ");
+        return;
+    }
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter value or [Auto] <Auto>: ");
+        }
+        return;
+    case State::Value: {
+        double offset = -1.0; // Auto
+        if (!t.empty() && u != "A" && u != "AUTO") {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a distance of 0 or more, or Auto.");
+                return;
+            }
+            offset = *v;
+        }
+        if (ctx.has_selection()) {
+            core::DimArrangeCommand c;
+            c.op = offset == 0.0 ? core::DimArrangeCommand::Op::Align : core::DimArrangeCommand::Op::DistributeOffset;
+            c.base_pick = base_;
+            c.radius = radius_;
+            c.offset = offset;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+        }
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void DimSpaceCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimCenterCommand::start(CommandContext& ctx) {
+    ctx.set_prompt(s_lines_ ? "Select arc or circle or [Lines] <with center lines>: "
+                            : "Select arc or circle or [Lines] <mark only>: ");
+}
+
+void DimCenterCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    if (u == "L" || u == "LINES") {
+        s_lines_ = !s_lines_;
+        ctx.echo(s_lines_ ? "Center lines on." : "Center lines off.");
+        start(ctx);
+        return;
+    }
+    if (ctx.input_is_pick() && ctx.hovered_kind() != core::EntityKind::Circle &&
+        ctx.hovered_kind() != core::EntityKind::Arc) {
+        ctx.echo("Select an arc or a circle.");
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        core::AddCenterMarkCommand c;
+        c.pick = *p;
+        c.radius = ctx.pick_radius();
+        c.lines = s_lines_;
+        c.group = ctx.group_id();
+        ctx.submit(c);
+        done_ = true;
+    }
+}
+
+void DimCenterCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimOverrideCommand::start(CommandContext& ctx) { prompt(ctx); }
+
+void DimOverrideCommand::prompt(CommandContext& ctx) {
+    state_ = State::Name;
+    ctx.set_prompt(set_.vars.empty() ? "Enter dimension variable name to override or [Clear overrides]: "
+                                     : "Enter dimension variable name to override: ");
+}
+
+void DimOverrideCommand::to_select(CommandContext& ctx) {
+    state_ = State::Select;
+    if (ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void DimOverrideCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        set_.group = ctx.group_id();
+        ctx.submit(set_);
+    }
+    done_ = true;
+}
+
+void DimOverrideCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void DimOverrideCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Name: {
+        if (t.empty()) {
+            if (set_.vars.empty()) {
+                done_ = true;
+            } else {
+                to_select(ctx);
+            }
+            return;
+        }
+        if (set_.vars.empty() && (u == "C" || u == "CLEAR")) {
+            set_.clear = true;
+            to_select(ctx);
+            return;
+        }
+        const auto is = [&](const auto& names) {
+            return std::any_of(std::begin(names), std::end(names), [&](const char* n) { return u == n; });
+        };
+        if (is(core::kDimOverrideVars)) {
+            var_ = u;
+            const std::optional<double> v = core::dim_var_value(current_dim_style_of(ctx), var_);
+            state_ = State::Value;
+            ctx.set_prompt("Enter new value for dimension variable <" + (v ? dim_value_text(var_, *v) : std::string()) +
+                           ">: ");
+        } else if (is(core::kDimVars)) {
+            ctx.echo(u + " is a style setting; a dimension cannot have its own.");
+            prompt(ctx);
+        } else {
+            ctx.echo("Unknown dimension variable.");
+            prompt(ctx);
+        }
+        return;
+    }
+    case State::Value: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            core::DimOverrides probe;
+            if (!v || !core::apply_dim_override(probe, var_, *v)) {
+                ctx.echo(std::string(dim_var_meaning(var_)) + ": that value is out of range" +
+                         (var_.starts_with("DIMCLR") ? " (an ACI colour, 1 to 255)." : "."));
+                return;
+            }
+            set_.vars.emplace_back(var_, *v);
+        }
+        prompt(ctx);
+        return;
+    }
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            finish(ctx);
+        }
+        return;
+    }
+}
+
+void DimOverrideCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

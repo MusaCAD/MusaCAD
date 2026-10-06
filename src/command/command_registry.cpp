@@ -422,6 +422,16 @@ CommandRegistry CommandRegistry::make_default() {
         "Continue a dimension chain from the last dimension's second extension line.");
     reg({"DIMLAYER"}, [] { return std::make_unique<DimLayerCommand>(); }, "",
         "The layer new dimensions go on; . for the current layer.");
+    reg({"DED", "DIMEDIT"}, [] { return std::make_unique<DimEditTextCommand>(); }, "",
+        "Put dimensions' text home, replace or rotate it, or slant their extension lines (Oblique).");
+    reg({"DIMTED", "DIMTEDIT"}, [] { return std::make_unique<DimTextEditCommand>(); }, "",
+        "Move or rotate a dimension's text, or slide it Left, Right or to the Center.");
+    reg({"DIMSPACE"}, [] { return std::make_unique<DimSpaceCommand>(); }, "",
+        "Space parallel dimensions evenly from a base dimension, or line them up with it.");
+    reg({"DCE", "DIMCENTER"}, [] { return std::make_unique<DimCenterCommand>(); }, "",
+        "Mark the centre of an arc or circle, with centre lines if asked.");
+    reg({"DOV", "DIMOVERRIDE"}, [] { return std::make_unique<DimOverrideCommand>(); }, "",
+        "Give dimensions settings of their own (DIMTXT, DIMASZ ...), or clear theirs.");
     reg({"DBA", "DIMBASELINE"}, [] { return std::make_unique<ChainDimCommand>(true); },
         "assets/ribbon/dimbaseline.svg",
         "Stack dimensions from a common first extension line.");

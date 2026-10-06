@@ -192,6 +192,7 @@ struct DocDim {
     double aux = 0.0; ///< v23: the extra datum of ordinate / jogged / arc-length dims
     double text_angle = 0.0;  ///< v39: the label's angle (DimData::text_angle)
     bool arc_leader = false;  ///< v39: an arc-length dimension's leader
+    double oblique = 0.0;     ///< v39: the extension lines' angle (DimData::oblique)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

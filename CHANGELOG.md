@@ -65,6 +65,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **Distribute** arrange dimensions already drawn, **Layer** sets **DIMLAYER**, the layer new
   dimensions go on. Files keep the text angle and the leader: the format is now v39, and
   DXF carries the angle (code 53).
+- **Editing dimensions already drawn** (#60) -- **DIMEDIT** `[Home/New/Rotate/Oblique]` puts
+  the selected dimensions' text home, replaces it (`<>` for the measurement), rotates it, or
+  slants a linear or aligned dimension's extension lines (**Oblique**; kept in the drawing and
+  in DXF, code 52). **DIMTEDIT** moves one dimension's text to a point, or slides it
+  **Left**, **Right** or to the **Center** of its line, or puts it **Home** or at an
+  **Angle**. **DIMSPACE** stacks parallel dimensions out from a base dimension at a spacing --
+  Auto is twice the text height -- or at 0 lines them up with it. **DIMCENTER** marks the
+  centre of an arc or circle, with centre lines if asked. **DIMOVERRIDE** gives the selected
+  dimensions values of their own for DIMTXT, DIMASZ, DIMBLK, DIMDEC, DIMTAD, DIMATFIT and the
+  three colours, or clears theirs.
 - **The layer tools** (#55) -- **LAYOFF** and **LAYFRZ** turn off or freeze the layer of
   each object picked (Undo takes the last back; the current layer is never frozen),
   **LAYLCK** / **LAYULK** lock and unlock the picked object's layer, **LAYMCUR** makes it

@@ -589,6 +589,41 @@ struct SetDimLayerCommand {
     std::optional<Vec2> pick{};
     double radius = 0.0;
 };
+/// DIMEDIT and DIMTEDIT, on the dimension at `pick` (unset: the selected dimensions).
+/// Home puts the text back where it is laid out, at its own angle; New replaces the text
+/// (`text`, "<>" the measurement, empty the measurement alone); Rotate sets the text's
+/// angle (`angle`); Oblique sets a linear or aligned dimension's extension lines at
+/// `angle` (0 square); Move puts the text at `to`, as dragging its grip does; Left, Right
+/// and Center slide a linear or aligned dimension's text along its line to the first
+/// extension line, the second, or the middle. One undo step.
+struct DimEditCommand {
+    enum class Op : std::uint8_t { Home, New, Rotate, Oblique, Move, Left, Right, Center };
+    Op op = Op::Home;
+    std::string text;
+    double angle = 0.0;
+    std::optional<Vec2> pick{};
+    double radius = 0.0;
+    Vec2 to{};
+    std::uint64_t group = 0;
+};
+/// DIMOVERRIDE: the selected dimensions take these dimension variables as their own
+/// (apply_dim_override), or with `clear` drop all of theirs. One undo step.
+struct SetDimOverrideCommand {
+    std::vector<std::pair<std::string, double>> vars;
+    bool clear = false;
+    std::uint64_t group = 0;
+};
+/// DIMCENTER: a centre mark on the circle or arc at `pick` -- a cross of lines `size`
+/// out from the centre each way (0: half the current style's arrow size, the mark a
+/// radius dimension draws); with `lines` also centre lines from a gap past the mark to
+/// `size` beyond the circle. One undo step.
+struct AddCenterMarkCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    double size = 0.0;
+    bool lines = false;
+    std::uint64_t group = 0;
+};
 
 /// Inquiry (issue #30). Read-only queries resolved on the geometry thread and reported
 /// through the existing status channel -- the UI never touches the store, and no data
@@ -1078,6 +1113,7 @@ struct AddDimensionCommand {
     /// DimData::arc_leader).
     double text_angle = 0.0;
     bool arc_leader = false;
+    double oblique = 0.0; ///< DimData::oblique
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1716,6 +1752,7 @@ using Command =
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
+                 DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
