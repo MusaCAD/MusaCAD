@@ -78,6 +78,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Report…** in the application menu writes the same report at any time.
 
 ### Fixed
+- Picking an ellipse or elliptical arc no longer misses it near half of its outline: the
+  nearest point was looked for on every other chord of the curve only, so a pick close to
+  the curve, or to an arc's end, could find nothing under it.
 - EXTEND on an arc no longer stops where the chord of a curved boundary would meet it, only
   where the boundary itself does; polylines and ellipses bound an extending arc too.
 - EXTEND on an arc no longer stops at the extension of a line the arc never meets; it stops
