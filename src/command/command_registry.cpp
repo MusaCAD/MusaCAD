@@ -128,6 +128,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Move selected objects a specified distance and direction.");
     reg({"CO", "CP", "COPY"}, [] { return std::make_unique<CopyCommand>(); },
         "assets/ribbon/copy.svg", "Duplicate selected objects at a specified offset.");
+    reg({"PELLIPSE"}, [] { return std::make_unique<PellipseCommand>(); }, "",
+        "1 makes ELLIPSE draw a polyline of arcs, 0 a true ellipse.");
     reg({"MIRRTEXT"}, [] { return std::make_unique<MirrtextCommand>(); }, "",
         "Whether MIRROR reflects text (1) or keeps it readable (0).");
     reg({"MI", "MIRROR"}, [] { return std::make_unique<MirrorCommand>(); },
@@ -215,7 +217,7 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
-        "Edit a polyline: close/open, join, vertices, spline, decurve, reverse.");
+        "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
     reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); },

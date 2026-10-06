@@ -262,4 +262,109 @@ inline void revcloud_from_path(std::span<const Vec2> path, bool closed, double a
     }
 }
 
+/// REVCLOUD's Calligraphy style: each lobe drawn as with a broad pen, from nothing at its
+/// start to a fifth of its chord at its end -- two widths per vertex, as polylines keep them.
+inline std::vector<double> calligraphy_widths(const std::vector<Vec2>& verts, bool closed) {
+    const std::size_t n = verts.size();
+    std::vector<double> w(2 * n, 0.0);
+    for (std::size_t i = 0; i < n && (closed || i + 1 < n); ++i) {
+        const Vec2 d = verts[(i + 1) % n] - verts[i];
+        w[2 * i + 1] = 0.2 * std::sqrt(dot(d, d));
+    }
+    return w;
+}
+
+/// Two arcs from `p0`, leaving along `t0`, to `p1`, arriving along `t1` (unit tangents),
+/// tangent to each other at `joint`: the pair PEDIT Fit puts on every segment and
+/// PELLIPSE builds an ellipse from. The bulges are the two arcs' (positive CCW).
+struct Biarc {
+    Vec2 joint;
+    double bulge0 = 0.0;
+    double bulge1 = 0.0;
+};
+inline Biarc biarc(Vec2 p0, Vec2 t0, Vec2 p1, Vec2 t1) {
+    const Vec2 d = p1 - p0;
+    const Vec2 tt = t0 + t1;
+    const double denom = 2.0 * (1.0 - dot(t0, t1));
+    Biarc out;
+    if (denom < 1e-12) {
+        out.joint = (p0 + p1) * 0.5; // parallel tangents: the two arcs meet half way
+    } else {
+        // Both arcs' tangent lengths equal: |p1 - p0 - h (t0 + t1)|^2 = (2h)^2.
+        const double dt = dot(d, tt);
+        const double h = (-dt + std::sqrt(dt * dt + denom * dot(d, d))) / denom;
+        out.joint = (p0 + t0 * h + p1 - t1 * h) * 0.5;
+    }
+    const Vec2 c0 = out.joint - p0;
+    const Vec2 c1 = p1 - out.joint;
+    // An arc's bulge is tan(sweep / 4), and its chord turns half the sweep from the tangent.
+    out.bulge0 = std::tan(std::atan2(cross(t0, c0), dot(t0, c0)) * 0.5);
+    out.bulge1 = std::tan(std::atan2(cross(c1, t1), dot(c1, t1)) * 0.5);
+    return out;
+}
+
+/// PEDIT Fit: every segment of the chain becomes a biarc through the vertices, tangent at
+/// each vertex along the bisector of its two segments (an open end's tangent mirrors its
+/// neighbour's across the end segment), so the curve passes every vertex smoothly. A joint
+/// vertex goes in on each segment; `widths` (two per vertex) taper half way at it. False
+/// for a chain too short to fit (an open one needs three vertices).
+inline bool fit_arcs(std::vector<Vec2>& pts, std::vector<double>& bulges, std::vector<double>& widths, bool closed) {
+    const std::size_t n = pts.size();
+    if (n < 3) {
+        return false;
+    }
+    widths.resize(2 * n, 0.0);
+    const auto unit = [](Vec2 v) {
+        const double l = std::sqrt(dot(v, v));
+        return l > 1e-12 ? v * (1.0 / l) : Vec2{1.0, 0.0};
+    };
+    std::vector<Vec2> tan(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!closed && (i == 0 || i + 1 == n)) {
+            continue;
+        }
+        const Vec2 in = unit(pts[i] - pts[(i + n - 1) % n]);
+        const Vec2 out = unit(pts[(i + 1) % n] - pts[i]);
+        const Vec2 t = in + out;
+        tan[i] = dot(t, t) > 1e-18 ? unit(t) : out;
+    }
+    if (!closed) {
+        const Vec2 c0 = unit(pts[1] - pts[0]);
+        tan[0] = c0 * (2.0 * dot(tan[1], c0)) - tan[1];
+        const Vec2 c1 = unit(pts[n - 1] - pts[n - 2]);
+        tan[n - 1] = c1 * (2.0 * dot(tan[n - 2], c1)) - tan[n - 2];
+    }
+    std::vector<Vec2> nv;
+    std::vector<double> nb;
+    std::vector<double> nw;
+    const std::size_t segs = closed ? n : n - 1;
+    for (std::size_t s = 0; s < segs; ++s) {
+        const std::size_t e = (s + 1) % n;
+        const double w0 = widths[2 * s];
+        const double w1 = widths[2 * s + 1];
+        nv.push_back(pts[s]);
+        if (dot(pts[e] - pts[s], pts[e] - pts[s]) < 1e-24) {
+            nb.push_back(0.0); // a zero-length segment stays as it is
+            nw.insert(nw.end(), {w0, w1});
+            continue;
+        }
+        const Biarc a = biarc(pts[s], tan[s], pts[e], tan[e]);
+        const double wm = (w0 + w1) * 0.5;
+        nb.push_back(a.bulge0);
+        nw.insert(nw.end(), {w0, wm});
+        nv.push_back(a.joint);
+        nb.push_back(a.bulge1);
+        nw.insert(nw.end(), {wm, w1});
+    }
+    if (!closed) {
+        nv.push_back(pts[n - 1]);
+        nb.push_back(0.0);
+        nw.insert(nw.end(), {widths[2 * (n - 1)], widths[2 * (n - 1) + 1]});
+    }
+    pts = std::move(nv);
+    bulges = std::move(nb);
+    widths = std::move(nw);
+    return true;
+}
+
 } // namespace musacad::core::polyline_ops

@@ -61,7 +61,8 @@ commands (Ribbon Phase A):
 | OSNAP (OS, DDOSNAP) / -OSNAP / OSMODE | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, GCEN, NOD, QUA, INT, EXT, INS, PER, TAN, NEA, APP, PAR, NONE, ALL) and offers the modes in force as its default; OSMODE is their bit sum (4133 to begin with: Endpoint, Center, Intersection, Extension). |
 | WIPEOUT | Mask polygon from points or a closed polyline ([Polyline], with optional erase); [Frames] ON/OFF shows or hides the boundaries. Hides lines, curves and hatches beneath it; text stays visible. |
 | FIELD | Text carrying %<Date>%, %<Time>%, %<Filename>% or %<Login>%, expanded at layout and refreshed on every regen. |
-| PEDIT (PE) | Edit a polyline: Close/Open, Join, Width (one width for every segment), Edit vertex (Insert/Delete/Move/Width), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
+| PEDIT (PE) | Edit a polyline, or several (Multiple): Close/Open, Join, Width (one width for every segment), Edit vertex (Insert/Delete/Move/Width), Fit (arcs through the vertices), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is turned into a polyline first, if you say so. |
+| PELLIPSE | 1 makes ELLIPSE draw a polyline of arcs, 0 a true ellipse. |
 | BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
 | INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
 | ATTDEF (ATT, -ATTDEF) | Define a block attribute: modes (Invisible/Constant/Verify/Preset), tag, prompt, default value, then the text placement. Shows its tag until BLOCK folds it into a definition. |
@@ -219,7 +220,7 @@ commands (Ribbon Phase A):
 | POLYGON (centre: Inscribed/Circumscribed; Edge) | POL | Implemented |
 | RECTANGLE [Chamfer] / [Fillet] corner options (session defaults, last set wins) | REC | Implemented |
 | RECTANGLE [Width] / [Elevation] / [Thickness] | REC | Implemented |
-| REVCLOUD (Arc length, Object + Reverse direction, Rectangular, Polygonal, Freehand as a clicked path) | REVCLOUD | Implemented (Normal style; Modify not offered) |
+| REVCLOUD (Arc length, Object + Reverse direction, Rectangular, Polygonal, Freehand as a clicked path) -- `Minimum arc length: ...   Style: Normal   Type: Freehand`; the type is remembered and the prompt follows it (`Specify first corner point` / `Specify start point` / `Specify first point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] <Object>:`); **Style** Calligraphy draws each lobe from nothing to a fifth of its chord wide | REVCLOUD | Implemented (Modify not offered; Freehand does not follow a drag) |
 | EXPLODE (polyline -> lines/arcs; block one level; dimension/leader -> lines, solids, text; hatch -> lines or boundary; MTEXT -> TEXT per line; table -> lines + text) | X | Implemented |
 | PURGE (unused layers) | PU | Implemented |
 | PURGE (every table: layers, dimstyles, text styles, blocks, fonts, table styles, images; the dialog with Confirm each item; -PURGE with names, wild cards and Verify; zero-length geometry and empty text objects) | PU / -PURGE | Implemented (#30, #53) |
@@ -227,7 +228,7 @@ commands (Ribbon Phase A):
 | LENGTHEN -- `Select an object to measure or [DElta/Percent/Total/DYnamic] <Total>:` (a pick reports `Current length: ...`, and an arc's included angle); **DElta** / **Total** take a length or **Angle** (an arc's), **Percent** a percentage, **DYnamic** `Specify new end point:`; then `Select an object to change or [Undo]:` one object after another, the end nearer the pick moving. Lines, arcs, open polylines (the end segment takes the change, straight or round its arc) and elliptical arcs; the mode and amounts are kept for the session | LEN | Implemented (splines not yet) |
 | BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |
 | BREAKATPOINT (split, no gap) | BREAKATPOINT | Implemented |
-| ELLIPSE (axis-end / Center / Rotation / Arc by angle, parameter, included) | EL | Implemented |
+| ELLIPSE (axis-end / Center / Rotation / Arc by angle, parameter, included) | EL | Implemented; the Rotation step previews the ellipse turned by the cursor's angle. **PELLIPSE** 1 makes it a closed polyline of 32 arcs (an elliptical arc an open one), tangent to the ellipse at 16 points |
 | SPLINE (Fit with Knots; CV with Degree; Undo; Close) | SPL | Implemented (Tangency, fit tolerance, Object deferred) |
 | XLINE (Hor / Ver / Ang / Bisect / two-point) | XL | Implemented (Offset deferred) |
 | DONUT | DO | Implemented (a closed two-arc wide polyline, as AutoCAD makes it; FILLMODE decides the fill) |
@@ -246,7 +247,7 @@ commands (Ribbon Phase A):
 | Tiled model-space viewports (VPORTS): the window split into tiles each with its own camera, the active one outlined, tile-local picking and dynamic input, the wheel on any tile, Join, named configurations, native v35 and the DXF VPORT table (`*Active` entries) both ways | VPORTS | Implemented |
 | Per-viewport layer freezing: a viewport's own frozen-layer list applied when the model is built for it (and while editing through it with MSPACE), the Layer Properties Manager's VP Freeze / New VP Freeze columns, native v34, DXF VIEWPORT 331 + LAYER flag 2 | VPLAYER | Implemented |
 | MSPACE / PSPACE through a viewport: double-click in / out, the camera hand-off keeps the viewport's on-screen size, the view left on PSPACE becomes the viewport's view | MSPACE | Implemented (the sheet is not shown around the model while inside; a tab switch drops the edit without a write-back) |
-| PEDIT (Close/Open/Join/Width/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
+| PEDIT (Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Reverse/Undo) -- a line or arc picked asks `Object selected is not a polyline` / `Do you want to turn it into one? <Y>`; **Fit** puts two arcs on each segment, through every vertex and smooth at each (Decurve straightens them, keeping the vertices Fit added); **Multiple** (`Select objects:`) applies Close, Open, Width, Fit, Spline, Decurve and Reverse to every polyline selected, lines and arcs made polylines without asking, and its **Join** asks `Enter fuzz distance <0.0000>:` | PE | Implemented (Ltype gen and the vertex editor's Next/Previous marker not yet; Spline yields a SPLINE entity) |
 | Object snaps: Insertion, Apparent intersection, Parallel, Extension, Geometric Center; OSNAP settings dialog; -OSNAP; OSMODE | OS | Implemented (the running snaps start as AutoCAD's default set) |
 | One-time object snaps typed at a point prompt (`END MID CEN GCEN NOD QUA INT EXT INS PER TAN NEA APP PAR NON`), `FROM`, `M2P` / `MTP`, `TT`, `TK`; the Shift + right-click object snap menu | typed mid-command | Implemented (#66) |
 | ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |

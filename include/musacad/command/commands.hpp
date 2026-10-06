@@ -1549,6 +1549,23 @@ private:
     double start_ = 0.0;
     double end_ = 0.0;
     bool done_ = false;
+
+public:
+    /// PELLIPSE 1: ELLIPSE draws a polyline of arcs (two per sixteenth of a turn) instead.
+    inline static bool s_pellipse_ = false;
+};
+
+/// PELLIPSE: `Enter new value for PELLIPSE <0>:` -- 1 makes ELLIPSE draw polylines.
+class PellipseCommand final : public ICommand {
+public:
+    std::string name() const override { return "PELLIPSE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
 };
 
 /// SPLINE (AutoCAD SPL). Method Fit (the curve passes through the picked points; the
@@ -1593,16 +1610,24 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
     enum class State {
         Select, Option, JoinTargets, Vertex, VInsert, VDelete, VMoveFrom, VMoveTo,
+        Accept,      ///< a line or arc picked: `Do you want to turn it into one? <Y>`
+        MultiSelect, ///< [Multiple]: `Select objects:`
+        Fuzz,        ///< [Multiple] > [Join]: the fuzz distance
         WidthVal,    ///< [Width]: one width for every segment
         VWidthAt,    ///< [Edit vertex] > [Width]: the vertex the segment leaves
         VWidthStart, ///< ... its starting width
         VWidthEnd,   ///< ... and its ending width
     };
     double vw_start_ = 0.0;
+    bool multiple_ = false;
+    SelectObjectsPhase select_;
     void prompt_option(CommandContext& ctx) const;
     void prompt_vertex(CommandContext& ctx) const;
     State state_ = State::Select;
@@ -2415,6 +2440,8 @@ private:
 
     inline static double s_min_arc_ = 0.5; ///< session defaults, as AutoCAD keeps them
     inline static double s_max_arc_ = 0.5;
+    inline static int s_type_ = 2;            ///< 0 Rectangular, 1 Polygonal, 2 Freehand
+    inline static bool s_calligraphy_ = false; ///< the Calligraphy style
     double min_arc_ = s_min_arc_;
     double max_arc_ = s_max_arc_;
     State state_ = State::Main;

@@ -358,6 +358,9 @@ private:
     void apply_dim_edit(const DimEditCommand& c);
     void apply_set_dim_override(const SetDimOverrideCommand& c);
     void apply_center_mark(const AddCenterMarkCommand& c);
+    /// One PEDIT edit on `h`; the polyline it became (null when it could not be done,
+    /// the reason reported unless `quiet`).
+    EntityHandle pedit_one(EntityHandle h, const PeditCommand& c, bool quiet);
     void apply_reverse(const ReverseSelectionCommand& c);
     void apply_copy_to_layer(const CopyToLayerCommand& c);
     void apply_change_props(const ChangePropsCommand& c);

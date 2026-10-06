@@ -82,6 +82,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   changes colour, layer, linetype, linetype scale and lineweight at the command line, in
   one undo step. **BLEND** joins the ends of two objects with a spline, Tangent or Smooth.
   **REDO** and **MREDO** are commands as well as Ctrl+Y.
+- **PEDIT Fit and Multiple** (#52) -- **Fit** puts two arcs on each segment, through every
+  vertex and smooth at each. **Multiple** applies Close, Open, Width, Fit, Spline, Decurve
+  and Reverse to every polyline selected (lines and arcs become polylines), and its Join
+  takes a fuzz distance. Picking a line or arc asks whether to turn it into a polyline.
+- **REVCLOUD** (#40) draws the **Calligraphy** style (each lobe tapered, as with a broad
+  pen), remembers the cloud type, and its prompt follows the type: `Specify first corner
+  point` for Rectangular, `Specify start point` for Polygonal, `Specify first point` for
+  Freehand.
+- **ELLIPSE** (#39) previews the ellipse at the Rotation step, and **PELLIPSE** 1 makes it a
+  polyline of arcs. SPLINE asks `Enter degree of spline <3>:`.
 - **Draw tools** (#45) -- **TRACE** draws wide segments (one polyline of the width);
   **SOLID** draws filled triangles and quadrilaterals; **BOUNDARY** makes closed polylines
   round the area HATCH's pick point would fill and round its islands; **CENTERMARK** marks
