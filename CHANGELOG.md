@@ -8,6 +8,23 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 ## Unreleased
 
+### Added
+- **TRIM and EXTEND by a path** -- press on empty space and drag across the objects: each one
+  the path crosses is trimmed where it is crossed, all in one undo step. Two clicks on empty
+  space draw a straight fence, and **Fence** takes typed points. As in AutoCAD's Quick mode,
+  an object with nothing to trim it to is deleted, and **Shift** swaps trim and extend for
+  that pick or path. EXTEND works the same way.
+- **The system clipboard** -- Ctrl+C / Ctrl+X (COPYCLIP / CUTCLIP) put the objects on the
+  system clipboard as Musa CAD objects and as a picture, so they paste into another Musa CAD
+  window, a document, an email or an image editor. Ctrl+V (PASTECLIP) asks for the insertion
+  point while the objects follow the cursor. It also pastes what other programs copy: an
+  image is embedded in the drawing, and text becomes a multiline text. **COPYBASE** /
+  **CUTBASE** take a base point first, and **PASTEORIG** pastes at the original coordinates.
+- **Crash reports** -- if Musa CAD stops unexpectedly it writes a report: the version and
+  system, the graphics driver, the drawing's file name, the last commands and the call stack.
+  The next start shows it, ready to save or copy and attach to an issue. **Save Bug
+  Report…** in the application menu writes the same report at any time.
+
 ### Changed
 - The Flathub listing and the desktop's own search know Musa CAD by what it does: keywords
   (CAD, 2D, drafting, technical drawing, engineering, architecture, mechanical, floor plan,

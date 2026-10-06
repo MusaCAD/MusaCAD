@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include "musacad/command/command_processor.hpp"
+#include "musacad/core/crash_report.hpp"
 
 namespace musacad::ui {
 
@@ -83,6 +84,7 @@ void CommandLineWidget::debug_set_input(const QString& text) {
 }
 
 void CommandLineWidget::append_line(const std::string& line) {
+    core::crash::note(line);
     scrollback_->appendPlainText(QString::fromStdString(line));
 }
 

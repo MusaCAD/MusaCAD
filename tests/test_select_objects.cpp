@@ -259,7 +259,7 @@ TEST_CASE("#53 ERASE gathers then erases; a pre-selection is erased at once; OOP
 TEST_CASE("#53 TRIM and EXTEND: every pick is its own undo step and Undo takes the last back") {
     H h;
     h.proc.submit_line("TR");
-    REQUIRE(h.out.prompt == "Select object to trim or [Undo]: ");
+    REQUIRE(h.out.prompt == "Select object to trim or shift-select to extend or [Fence/Undo]: ");
     h.proc.submit_line("U");
     REQUIRE(h.out.any_contains("Nothing to undo"));
     h.proc.submit_line("1,1");

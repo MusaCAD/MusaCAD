@@ -259,6 +259,10 @@ public:
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
 
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
+    /// A press-and-drag on empty canvas draws a freehand path for the running command.
+    [[nodiscard]] bool wants_freehand() const { return active_ != nullptr && active_->wants_freehand(); }
+    void submit_freehand(const std::vector<core::Vec2>& path);
+    [[nodiscard]] bool input_is_pick() const override { return feeding_pick_; }
     /// True while the running command is taking text as typed (see ICommand::free_text).
     [[nodiscard]] bool wants_free_text() const { return active_ != nullptr && active_->free_text(); }
 

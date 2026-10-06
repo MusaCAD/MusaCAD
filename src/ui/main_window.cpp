@@ -51,6 +51,11 @@
 #include <QTreeWidget>
 #include <QTabWidget>
 #include <QClipboard>
+#include <QFontDatabase>
+#include <QMetaObject>
+#include <QGuiApplication>
+#include <QStandardPaths>
+#include <QMimeData>
 #include <QDateTime>
 #include <QPointer>
 #include <QListWidget>
@@ -112,6 +117,7 @@
 #include "musacad/ui/dwg_installer.hpp"
 #include "musacad/ui/dyn_input.hpp"
 #include "musacad/ui/plot.hpp"
+#include "musacad/core/crash_report.hpp"
 #include "musacad/ui/plot_dialog.hpp"
 #include "musacad/ui/properties_panel.hpp"
 #include "musacad/ui/qt_font_engine.hpp"
@@ -188,6 +194,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // engine's instance is used on the geometry thread; a font face is not shared across
     // threads).
     ui_font_engine_ = std::make_unique<QtFontEngine>();
+    // A copy also goes to the system clipboard; the engine reports it from its own thread.
+    engine_->set_clipboard_listener([this](const core::ClipboardExport& e) {
+        QMetaObject::invokeMethod(this, [this, e] { export_to_system_clipboard(e); }, Qt::QueuedConnection);
+    });
     engine_->start();
     // Normal launch opens an empty Model space. The demo/benchmark scene is only
     // seeded when MUSACAD_DEMO is set (perf harnesses build their own scenes).
@@ -315,6 +325,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_plot_dialog_callback([this] { open_plot_dialog(); });
     viewport_->set_options_dialog_callback([this] { open_options_dialog(); });
     viewport_->set_dimstyle_dialog_callback([this] { open_dimstyle_dialog(); });
+    viewport_->set_paste_callbacks([this] { return prepare_paste(); },
+                                   [this](core::Vec2 at, bool original) { return paste_at(at, original); });
     set_performance_overlay(QSettings().value(QStringLiteral("display/performance_overlay"), false).toBool());
 
     command_widget_->focus_input();
@@ -2558,6 +2570,151 @@ void MainWindow::set_selection_color() {
         core::Rgb{static_cast<std::uint8_t>(c.red()), static_cast<std::uint8_t>(c.green()),
                   static_cast<std::uint8_t>(c.blue())},
         g});
+}
+
+namespace {
+const QString kMimeDrawing = QStringLiteral("application/x-musacad-drawing");
+const QString kMimeOwner = QStringLiteral("application/x-musacad-owner");
+const QString kMimeBase = QStringLiteral("application/x-musacad-base"); // "x y": COPYBASE's point
+
+/// The copied objects drawn for another program to paste: on white (white lines drawn
+/// black, as on paper), fitted with a margin, the longer side 1600 pixels.
+QImage clip_picture(const core::ClipboardExport& e) {
+    const double w = e.hi.x - e.lo.x;
+    const double h = e.hi.y - e.lo.y;
+    const double longer = std::max(w, h);
+    if (!(longer > 0.0) || e.count == 0) {
+        return {};
+    }
+    constexpr int kLonger = 1600;
+    constexpr int kMargin = 24;
+    const double px = kLonger / longer;
+    const int iw = std::max(32, static_cast<int>(std::lround(w * px))) + 2 * kMargin;
+    const int ih = std::max(32, static_cast<int>(std::lround(h * px))) + 2 * kMargin;
+    QImage img(iw, ih, QImage::Format_RGB32);
+    img.fill(Qt::white);
+    PlotSpec spec;
+    spec.area = PlotSpec::Area::Window;
+    spec.fit = true;
+    spec.center = true;
+    spec.plot_lineweights = false;
+    const double pad = kMargin / px;
+    const core::Vec2 amin{e.lo.x - pad, e.lo.y - pad};
+    const core::Vec2 amax{e.hi.x + pad, e.hi.y + pad};
+    spec.win_min = amin;
+    spec.win_max = amax;
+    paint_plot(img, e.drawing, spec, amin, amax);
+    return img;
+}
+} // namespace
+
+void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
+    auto* md = new QMimeData;
+    md->setData(kMimeDrawing, QByteArray::fromStdString(e.native_text));
+    last_clipboard_token_ =
+        QByteArray::number(QCoreApplication::applicationPid()) + ':' + QByteArray::number(e.serial);
+    md->setData(kMimeOwner, last_clipboard_token_);
+    md->setData(kMimeBase, QByteArray::number(e.base.x, 'g', 17) + ' ' + QByteArray::number(e.base.y, 'g', 17));
+    const QImage pic = clip_picture(e);
+    if (!pic.isNull()) {
+        md->setImageData(pic);
+    }
+    QGuiApplication::clipboard()->setMimeData(md);
+}
+
+std::string MainWindow::prepare_paste() {
+    pending_paste_image_ = QImage();
+    pending_paste_text_.clear();
+    const QMimeData* md = QGuiApplication::clipboard()->mimeData();
+    if (md == nullptr) {
+        return {};
+    }
+    if (md->hasFormat(kMimeDrawing)) {
+        // Musa CAD objects. Copied here, the engine already holds them; copied in another
+        // window, they are read in as the clip first, and follow the cursor from there.
+        if (md->data(kMimeOwner) != last_clipboard_token_) {
+            core::PasteDocumentCommand load;
+            load.native_text = md->data(kMimeDrawing).toStdString();
+            load.load_only = true;
+            const QList<QByteArray> xy = md->data(kMimeBase).split(' ');
+            bool okx = false;
+            bool oky = false;
+            if (xy.size() == 2) {
+                const double x = xy[0].toDouble(&okx);
+                const double y = xy[1].toDouble(&oky);
+                if (okx && oky) {
+                    load.base = core::Vec2{x, y};
+                }
+            }
+            engine_->submit(std::move(load));
+        }
+        return "objects";
+    }
+    if (md->hasImage()) {
+        pending_paste_image_ = qvariant_cast<QImage>(md->imageData());
+        if (!pending_paste_image_.isNull()) {
+            return "image";
+        }
+    }
+    if (md->hasText() && !md->text().trimmed().isEmpty()) {
+        pending_paste_text_ = md->text();
+        return "text";
+    }
+    return {};
+}
+
+bool MainWindow::paste_at(core::Vec2 at, bool original) {
+    const std::uint64_t group = processor_->begin_group();
+    if (!pending_paste_image_.isNull()) {
+        // An image is embedded in the drawing (the file under the cache folder only carries
+        // the pixels across), its lower-left corner at the point, a pixel to a drawing unit.
+        const QString dir =
+            QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/pasted");
+        QDir().mkpath(dir);
+        const QString path = dir + QStringLiteral("/Pasted image ") +
+                             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH-mm-ss-zzz")) +
+                             QStringLiteral(".png");
+        const bool saved = pending_paste_image_.save(path, "PNG");
+        pending_paste_image_ = QImage();
+        if (!saved) {
+            command_widget_->append_line(QStringLiteral("The pasted image could not be stored in %1.").arg(dir).toStdString());
+            return true;
+        }
+        core::AttachImageCommand img;
+        img.path = path.toStdString();
+        img.embed = true;
+        img.pos = at;
+        img.scale = 1.0;
+        img.group = group;
+        engine_->submit(std::move(img));
+        return true;
+    }
+    if (!pending_paste_text_.isEmpty()) {
+        // Text becomes a multiline text with its top-left corner at the point, at the
+        // current text style's height (2.5 when the style has none).
+        QString text = pending_paste_text_;
+        pending_paste_text_.clear();
+        text.replace(QStringLiteral("\r\n"), QStringLiteral("\n")).replace(QLatin1Char('\r'), QLatin1Char('\n'));
+        text.replace(QLatin1Char('\t'), QStringLiteral("    "));
+        while (text.endsWith(QLatin1Char('\n'))) {
+            text.chop(1);
+        }
+        double height = 2.5;
+        const std::vector<core::TextStyle> styles = viewport_->text_styles();
+        const std::uint16_t cur = viewport_->current_text_style();
+        if (cur < styles.size() && styles[cur].height > 0.0) {
+            height = styles[cur].height;
+        }
+        core::AddMTextCommand m;
+        m.block.pos = at;
+        m.block.height = height;
+        m.content = text.toStdString();
+        m.group = group;
+        engine_->submit(std::move(m));
+        return true;
+    }
+    engine_->submit(core::PasteClipboardCommand{at, group, !original});
+    return true;
 }
 
 void MainWindow::open_dimstyle_dialog() {
@@ -6992,6 +7149,13 @@ void MainWindow::sync_document_tabs() {
     if (active_idx >= 0 && file_tabs_->currentIndex() != active_idx) {
         file_tabs_->setCurrentIndex(active_idx);
     }
+    for (const core::DocumentInfo& d : docs) {
+        if (d.id == active) {
+            core::crash::set_document((d.path.empty() ? d.name + " (not saved yet)" : d.path) + ", " +
+                                      std::to_string(docs.size()) + (docs.size() == 1 ? " drawing" : " drawings") +
+                                      " open");
+        }
+    }
 }
 
 void MainWindow::switch_to_document(std::uint64_t id) {
@@ -7611,6 +7775,160 @@ void MainWindow::file_export_dwg() {
     }
     QFile::remove(tmp);
     command_widget_->append_line("Exported DWG: " + dwg.toStdString());
+}
+
+// --- Crash and bug reports ---------------------------------------------------
+
+QString MainWindow::crash_report_dir() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/crash-reports");
+}
+
+std::string MainWindow::crash_report_about() {
+    const auto sv = [](std::string_view s) { return QString::fromUtf8(s.data(), static_cast<int>(s.size())); };
+    const char* channel = "built from source or a distribution package";
+    switch (UpdateChecker::detect_channel()) {
+    case update::Channel::Flatpak:
+        channel = "Flatpak";
+        break;
+    case update::Channel::AppImage:
+        channel = "AppImage";
+        break;
+    case update::Channel::WindowsInstaller:
+        channel = "Windows installer";
+        break;
+    case update::Channel::MacDmg:
+        channel = "macOS disk image";
+        break;
+    case update::Channel::SourceBuild:
+        break;
+    }
+    QString about = QStringLiteral("Musa CAD %1 (built %2), installed as: %3\n")
+                        .arg(sv(core::version_string()), QStringLiteral(__DATE__ " " __TIME__), QLatin1String(channel));
+    about += QStringLiteral("System: %1 (%2 %3, %4)\n")
+                 .arg(QSysInfo::prettyProductName(), QSysInfo::kernelType(), QSysInfo::kernelVersion(),
+                      QSysInfo::currentCpuArchitecture());
+    about += QStringLiteral("Qt: %1 (built with %2), platform %3\n")
+                 .arg(QLatin1String(qVersion()), QStringLiteral(QT_VERSION_STR), QGuiApplication::platformName());
+    QStringList screens;
+    for (const QScreen* s : QGuiApplication::screens()) {
+        screens << QStringLiteral("%1x%2 at %3x").arg(s->size().width()).arg(s->size().height()).arg(s->devicePixelRatio());
+    }
+    if (!screens.isEmpty()) {
+        about += QStringLiteral("Screens: %1\n").arg(screens.join(QStringLiteral(", ")));
+    }
+    return about.toStdString();
+}
+
+namespace {
+/// The report window: what happened in a sentence, the report itself, and the ways to
+/// hand it over.
+void show_report_dialog(QWidget* parent, const QString& title, const QString& lead, const QString& path,
+                        const QString& text) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(title);
+    dlg.resize(760, 560);
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->setContentsMargins(24, 20, 24, 18);
+    lay->setSpacing(12);
+    auto* head = new QLabel(QStringLiteral("<span style='font-size:13pt; font-weight:600'>%1</span>").arg(title), &dlg);
+    lay->addWidget(head);
+    auto* body = new QLabel(lead, &dlg);
+    body->setWordWrap(true);
+    body->setTextFormat(Qt::RichText);
+    body->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    body->setOpenExternalLinks(true);
+    lay->addWidget(body);
+    auto* view = new QPlainTextEdit(&dlg);
+    view->setReadOnly(true);
+    view->setLineWrapMode(QPlainTextEdit::NoWrap);
+    view->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    view->setPlainText(text);
+    lay->addWidget(view, 1);
+    auto* where = new QLabel(QStringLiteral("Saved as %1").arg(QDir::toNativeSeparators(path)), &dlg);
+    where->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    where->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    lay->addWidget(where);
+
+    auto* row = new QHBoxLayout;
+    row->setSpacing(8);
+    auto* open_folder = new QPushButton(QStringLiteral("Open Folder"), &dlg);
+    auto* copy = new QPushButton(QStringLiteral("Copy"), &dlg);
+    auto* save_as = new QPushButton(QStringLiteral("Save Report As…"), &dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), &dlg);
+    save_as->setDefault(true);
+    row->addWidget(open_folder);
+    row->addWidget(copy);
+    row->addStretch(1);
+    row->addWidget(save_as);
+    row->addWidget(close);
+    lay->addLayout(row);
+
+    QObject::connect(open_folder, &QPushButton::clicked, &dlg, [path] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+    });
+    QObject::connect(copy, &QPushButton::clicked, &dlg, [text, copy] {
+        QGuiApplication::clipboard()->setText(text);
+        copy->setText(QStringLiteral("Copied"));
+    });
+    QObject::connect(save_as, &QPushButton::clicked, &dlg, [&dlg, path, text] {
+        const QString dest = QFileDialog::getSaveFileName(
+            &dlg, QStringLiteral("Save Report As"),
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QLatin1Char('/') +
+                QFileInfo(path).fileName(),
+            QStringLiteral("Text files (*.txt)"));
+        if (dest.isEmpty()) {
+            return;
+        }
+        QFile f(dest);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate) || f.write(text.toUtf8()) < 0) {
+            QMessageBox::warning(&dlg, QStringLiteral("Save Report As"),
+                                 QStringLiteral("The report could not be written to %1.").arg(QDir::toNativeSeparators(dest)));
+            return;
+        }
+        dlg.accept();
+    });
+    QObject::connect(close, &QPushButton::clicked, &dlg, &QDialog::reject);
+    dlg.exec();
+}
+
+const QString kIssueLink = QStringLiteral("<a href='https://github.com/MusaCAD/MusaCAD/issues/new'>a new issue</a>");
+} // namespace
+
+void MainWindow::offer_crash_reports(const QStringList& paths) {
+    if (paths.isEmpty()) {
+        return;
+    }
+    const QString path = paths.back(); // the latest; older ones stay in the folder
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return;
+    }
+    const QString text = QString::fromUtf8(f.readAll());
+    QString lead = QStringLiteral(
+        "Musa CAD stopped unexpectedly the last time it ran. A report of what happened was saved: the "
+        "version and system, the last commands, and where in the program it stopped. It holds no drawing "
+        "contents, only the drawing's file name. Attaching it to %1 helps find and fix the cause.").arg(kIssueLink);
+    if (paths.size() > 1) {
+        lead += QStringLiteral(" (%1 reports in all; the others are in the same folder.)").arg(paths.size());
+    }
+    show_report_dialog(this, QStringLiteral("Musa CAD closed unexpectedly"), lead, path, text);
+}
+
+void MainWindow::save_bug_report() {
+    const std::string text = core::crash::live_report(crash_report_about());
+    const QString dir = crash_report_dir();
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/musacad-report-") +
+                         QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd-HHmmss")) +
+                         QStringLiteral(".txt");
+    QFile f(path);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        f.write(QByteArray::fromStdString(text));
+    }
+    show_report_dialog(this, QStringLiteral("Bug Report"),
+                       QStringLiteral("The version and system and the last commands, to attach to %1 with a few "
+                                      "words on what went wrong. It holds no drawing contents.").arg(kIssueLink),
+                       path, QString::fromStdString(text));
 }
 
 void MainWindow::show_about() {

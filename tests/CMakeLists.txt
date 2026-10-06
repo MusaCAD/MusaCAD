@@ -123,6 +123,8 @@ add_executable(musacad_tests
     test_align_lengthen.cpp
     test_inquiry.cpp
     test_multidoc.cpp
+    test_trim_paths_clipboard.cpp
+    test_crash_report.cpp
     test_kernel_offset.cpp
     test_osnap_types.cpp
     test_delete_selection.cpp

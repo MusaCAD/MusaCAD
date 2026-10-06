@@ -706,6 +706,16 @@ struct TrimPickCommand {
     Vec2 pick;
     double radius = 0.0;
     std::uint64_t group = 0;
+    /// Quick mode (AutoCAD's default): an object with nothing to trim it to is deleted.
+    bool quick = true;
+};
+/// TRIM / EXTEND Quick mode: every object a freehand path or a fence crosses is trimmed
+/// (or extended) as if picked where it is crossed -- one undo step for the whole path.
+struct TrimPathCommand {
+    std::vector<Vec2> path;
+    bool extend = false;
+    double radius = 0.0;
+    std::uint64_t group = 0;
 };
 
 /// Join the picked lines/arcs/open polylines into a single polyline. `picks[0]` is the
@@ -875,10 +885,32 @@ struct CloseDocumentCommand {
 /// Copy the current selection into the engine's in-process clipboard (snapshots the
 /// entities + the source document's layer/dimstyle/block tables, so paste works even
 /// after switching or closing the source). Read-only; does not modify any document.
-struct CopyClipboardCommand {};
+struct CopyClipboardCommand {
+    /// COPYBASE: the point the clip is placed by when pasted (else its lower-left corner).
+    std::optional<Vec2> base{};
+};
 /// Cut = copy the selection to the clipboard, then erase it (one undo group).
 struct CutClipboardCommand {
     std::uint64_t group = 0;
+    std::optional<Vec2> base{}; ///< CUTBASE
+};
+/// Musa CAD objects copied in another window (the system clipboard's native drawing text):
+/// pasted as PasteClipboardCommand pastes the engine's own clip.
+struct PasteDocumentCommand {
+    std::string native_text;
+    Vec2 at{};
+    std::uint64_t group = 0;
+    bool at_cursor = true;
+    /// Only take it as the clip (PASTECLIP's preview follows it; the paste comes after).
+    bool load_only = false;
+    /// The base point it was copied with (COPYBASE); none = its lower-left corner.
+    std::optional<Vec2> base{};
+};
+/// PASTECLIP's placement: the clip's objects drawn at `at` (by its base) until the paste,
+/// or no longer (`active` false). A rubber band only; the drawing is not touched.
+struct PastePreviewCommand {
+    Vec2 at{};
+    bool active = false;
 };
 /// Paste the clipboard into the ACTIVE document at `at` (the clip's reference point lands
 /// there), remapping layer/dimstyle/block references by NAME into the active document's
@@ -1580,7 +1612,8 @@ using Command =
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
-                 CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand,
+                 CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
+                 PastePreviewCommand, TrimPathCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

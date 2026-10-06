@@ -13,6 +13,8 @@
 #include <QStringList>
 #include <QTimer>
 
+#include "musacad/core/crash_report.hpp"
+
 #include "musacad/app/cli.hpp"
 #include "musacad/app/plot_cli.hpp"
 #include "musacad/app/win_console.hpp"
@@ -20,6 +22,19 @@
 #include "musacad/ui/theme.hpp"
 
 namespace {
+QtMessageHandler g_previous_message_handler = nullptr;
+
+/// Qt's warnings go into the crash report's recent activity as well as where they went.
+void note_qt_message(QtMsgType type, const QMessageLogContext& context, const QString& message) {
+    if (type != QtDebugMsg && type != QtInfoMsg) {
+        const char* kind = type == QtWarningMsg ? "Qt warning: " : type == QtCriticalMsg ? "Qt critical: " : "Qt fatal: ";
+        musacad::core::crash::note(kind + message.toStdString());
+    }
+    if (g_previous_message_handler != nullptr) {
+        g_previous_message_handler(type, context, message);
+    }
+}
+
 /// Rebuild an argv for Qt from the arguments the CLI parser did not claim.
 std::vector<char*> qt_argv(const std::vector<std::string>& args) {
     std::vector<char*> v;
@@ -117,6 +132,15 @@ int main(int argc, char* argv[]) {
     // UI -- including dialogs, message boxes and the file picker -- is consistent.
     musacad::ui::apply_dark_theme(app);
 
+    // A crash from here on leaves a report; the ones earlier runs left are offered below.
+    const QString crash_dir = musacad::ui::MainWindow::crash_report_dir();
+    QStringList crash_reports;
+    for (const musacad::core::crash::PendingReport& r : musacad::core::crash::take_pending(crash_dir.toStdString())) {
+        crash_reports << QString::fromStdString(r.path);
+    }
+    musacad::core::crash::install(crash_dir.toStdString(), musacad::ui::MainWindow::crash_report_about());
+    g_previous_message_handler = qInstallMessageHandler(&note_qt_message);
+
     musacad::ui::MainWindow window;
     // Launch maximized (full screen) like every desktop CAD -- EXCEPT under the headless capture/
     // self-test harnesses, which set their own window geometry (a fixed width per shot kind) and
@@ -141,6 +165,9 @@ int main(int argc, char* argv[]) {
     } else {
         window.showMaximized();
         window.start_update_checks();
+        if (!crash_reports.isEmpty()) {
+            QTimer::singleShot(600, &window, [&window, crash_reports] { window.offer_crash_reports(crash_reports); });
+        }
     }
 
     // `musacad drawing.musa` -- the file argument rides the EXISTING OpenDocumentCommand

@@ -1,5 +1,6 @@
 add_library(musacad_core STATIC
     version.cpp
+    crash_report.cpp
     geometry_store.cpp
     native_kernel_2d.cpp
     spatial_grid.cpp

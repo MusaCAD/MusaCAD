@@ -2660,38 +2660,216 @@ void MatchPropCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void TrimCommand::start(CommandContext& ctx) {
     picks_ = 0;
-    ctx.set_prompt("Select object to trim or [Undo]: ");
+    fence_.clear();
+    fence_open_ = false;
+    prompt(ctx);
+}
+
+void TrimCommand::prompt(CommandContext& ctx) {
+    if (fence_open_) {
+        ctx.set_prompt(fence_.empty() ? "Specify first fence point: " : "Specify next fence point or [Undo]: ");
+        return;
+    }
+    if (!fence_.empty()) {
+        ctx.set_prompt("Specify second fence point: ");
+        return;
+    }
+    ctx.set_prompt(extend_ ? "Select object to extend or shift-select to trim or [Fence/Undo]: "
+                           : "Select object to trim or shift-select to extend or [Fence/Undo]: ");
+}
+
+void TrimCommand::path(CommandContext& ctx, std::vector<core::Vec2> points, bool extend) {
+    if (points.size() < 2) {
+        return;
+    }
+    if (picks_ > 0) {
+        (void)ctx.new_group(); // the whole path is one undo step
+    }
+    ctx.submit(core::TrimPathCommand{std::move(points), extend, ctx.pick_radius(), ctx.group_id()});
+    ++picks_;
+}
+
+void TrimCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& points) {
+    fence_.clear();
+    fence_open_ = false;
+    ctx.set_preview({});
+    path(ctx, points, extend_ != ctx.shift_held());
+    prompt(ctx);
 }
 
 void TrimCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
     if (u.empty()) {
+        if (fence_open_ && fence_.size() >= 2) {
+            path(ctx, fence_, extend_);
+        }
+        if (fence_open_ || !fence_.empty()) {
+            fence_.clear();
+            fence_open_ = false;
+            ctx.set_preview({});
+            prompt(ctx);
+            return;
+        }
         done_ = true;
         return;
     }
     if (u == "U" || u == "UNDO") {
-        if (picks_ == 0) {
+        if (!fence_.empty()) {
+            fence_.pop_back();
+            ctx.set_preview(fence_.empty() ? PreviewSpec{} : PreviewSpec{PreviewKind::Polyline, fence_});
+        } else if (picks_ == 0) {
             ctx.echo("Nothing to undo.");
         } else {
             ctx.submit(core::UndoLastGroupCommand{}); // the last pick is its own step
             --picks_;
         }
+        prompt(ctx);
+        return;
+    }
+    if (u == "F" || u == "FENCE") {
+        fence_.clear();
+        fence_open_ = true;
+        prompt(ctx);
         return;
     }
     const auto p = read_point(ctx, text);
     if (!p) {
         return;
     }
+    if (fence_open_) {
+        fence_.push_back(*p);
+        ctx.set_preview({PreviewKind::Polyline, fence_});
+        prompt(ctx);
+        return;
+    }
+    if (!fence_.empty()) { // the second of two picks on empty space
+        std::vector<core::Vec2> f{fence_.front(), *p};
+        fence_.clear();
+        ctx.set_preview({});
+        path(ctx, std::move(f), extend_ != ctx.shift_held());
+        prompt(ctx);
+        return;
+    }
+    if (ctx.input_is_pick() && !ctx.hovered_kind().has_value()) {
+        // A click on empty space starts a fence, as AutoCAD's Quick mode has it.
+        fence_ = {*p};
+        ctx.set_preview({PreviewKind::Segment, fence_});
+        prompt(ctx);
+        return;
+    }
     if (picks_ > 0) {
         (void)ctx.new_group(); // every pick its own undo step
     }
-    ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+    if (extend_ != ctx.shift_held()) {
+        ctx.submit(core::ExtendPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+    } else {
+        ctx.submit(core::TrimPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
+    }
     ++picks_;
     // Result is echoed by the engine (honest status), not assumed here.
 }
 
 void TrimCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// COPYCLIP / CUTCLIP / COPYBASE / CUTBASE, PASTECLIP / PASTEORIG
+// ---------------------------------------------------------------------------
+void ClipCopyCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (with_base_) {
+        ctx.set_prompt("Specify base point: ");
+        return;
+    }
+    if (ctx.has_selection()) {
+        finish(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void ClipCopyCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        if (cut_) {
+            ctx.submit(core::CutClipboardCommand{ctx.group_id(), base_});
+        } else {
+            ctx.submit(core::CopyClipboardCommand{base_});
+        }
+    }
+    done_ = true;
+}
+
+void ClipCopyCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void ClipCopyCommand::input(CommandContext& ctx, const std::string& text) {
+    if (with_base_ && !base_) {
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            if (ctx.has_selection()) {
+                finish(ctx);
+            } else {
+                select_.begin(ctx);
+            }
+        }
+        return;
+    }
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void ClipCopyCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void PasteClipCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    kind_ = ctx.view() != nullptr ? ctx.view()->prepare_paste() : std::string();
+    if (original_) {
+        if (kind_ != "objects" && !kind_.empty()) {
+            ctx.echo("PASTEORIG pastes objects copied from a drawing; the clipboard holds something else.");
+        } else if (ctx.view() == nullptr || !ctx.view()->paste_at({}, true)) {
+            ctx.submit(core::PasteClipboardCommand{{}, ctx.group_id(), false});
+        }
+        done_ = true;
+        return;
+    }
+    if (kind_ == "objects" || kind_.empty()) {
+        PreviewSpec pv;
+        pv.paste_band = true; // the objects follow the cursor
+        ctx.set_preview(std::move(pv));
+    }
+    ctx.set_prompt("Specify insertion point: ");
+}
+
+void PasteClipCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        ctx.set_preview({});
+        done_ = true; // Enter: nothing pasted
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    ctx.set_preview({});
+    if (ctx.view() == nullptr || !ctx.view()->paste_at(*p, false)) {
+        ctx.submit(core::PasteClipboardCommand{*p, ctx.group_id(), true});
+    }
+    done_ = true;
+}
+
+void PasteClipCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
     done_ = true;
 }
 
@@ -7780,40 +7958,6 @@ void ArrayCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // EXTEND (pick the object to extend; repeats)
 // ---------------------------------------------------------------------------
-void ExtendCommand::start(CommandContext& ctx) {
-    picks_ = 0;
-    ctx.set_prompt("Select object to extend or [Undo]: ");
-}
-
-void ExtendCommand::input(CommandContext& ctx, const std::string& text) {
-    const std::string u = upper(trimmed(text));
-    if (u.empty()) {
-        done_ = true;
-        return;
-    }
-    if (u == "U" || u == "UNDO") {
-        if (picks_ == 0) {
-            ctx.echo("Nothing to undo.");
-        } else {
-            ctx.submit(core::UndoLastGroupCommand{});
-            --picks_;
-        }
-        return;
-    }
-    if (const auto p = read_point(ctx, text)) {
-        if (picks_ > 0) {
-            (void)ctx.new_group();
-        }
-        ctx.submit(core::ExtendPickCommand{*p, ctx.pick_radius(), ctx.group_id()});
-        ++picks_;
-        // Result is echoed by the engine (honest status), not assumed here.
-    }
-}
-
-void ExtendCommand::cancel(CommandContext& ctx) {
-    ctx.echo("*Cancel*");
-    done_ = true;
-}
 
 // ---------------------------------------------------------------------------
 // FILLET (radius, then two lines)

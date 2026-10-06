@@ -262,7 +262,9 @@ bool GeometryEngine::selectable(EntityHandle h) const {
            p->space() == store_.active_space();
 }
 
-std::vector<EntityHandle> GeometryEngine::all_live() const {
+std::vector<EntityHandle> GeometryEngine::all_live() const { return all_live_in(store_); }
+
+std::vector<EntityHandle> GeometryEngine::all_live_in(const GeometryStore& store) {
     std::vector<EntityHandle> live;
     const auto collect = [&](const auto& arena, EntityKind kind) {
         for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
@@ -271,32 +273,32 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
             }
         }
     };
-    collect(store_.points(), EntityKind::Point);
-    collect(store_.lines(), EntityKind::Line);
-    collect(store_.circles(), EntityKind::Circle);
-    collect(store_.arcs(), EntityKind::Arc);
-    collect(store_.polylines(), EntityKind::Polyline);
-    collect(store_.splines(), EntityKind::Spline);
-    collect(store_.texts(), EntityKind::Text);
-    collect(store_.attdefs(), EntityKind::AttDef);
-    collect(store_.dimensions(), EntityKind::Dimension);
-    collect(store_.leaders(), EntityKind::Leader);
-    collect(store_.mtexts(), EntityKind::MText);
-    collect(store_.mleaders(), EntityKind::MLeader);
-    collect(store_.inserts(), EntityKind::Insert);
+    collect(store.points(), EntityKind::Point);
+    collect(store.lines(), EntityKind::Line);
+    collect(store.circles(), EntityKind::Circle);
+    collect(store.arcs(), EntityKind::Arc);
+    collect(store.polylines(), EntityKind::Polyline);
+    collect(store.splines(), EntityKind::Spline);
+    collect(store.texts(), EntityKind::Text);
+    collect(store.attdefs(), EntityKind::AttDef);
+    collect(store.dimensions(), EntityKind::Dimension);
+    collect(store.leaders(), EntityKind::Leader);
+    collect(store.mtexts(), EntityKind::MText);
+    collect(store.mleaders(), EntityKind::MLeader);
+    collect(store.inserts(), EntityKind::Insert);
     // Hatches were MISSING here. all_live() feeds the load-time spatial-index rebuild,
     // SelectAll and ERASE All -- so a hatch loaded from a file was never indexed and
     // could not be picked, hovered, window-selected or erased (one created in-session
     // worked, because create_indexed inserts it directly, which is why it went unseen).
     // Pre-existing; fixed here because the GD&T arenas would have inherited it exactly.
-    collect(store_.xlines(), EntityKind::Xline);
-    collect(store_.ellipses(), EntityKind::Ellipse);
-    collect(store_.hatches(), EntityKind::Hatch);
-    collect(store_.fcfs(), EntityKind::Fcf);
-    collect(store_.datums(), EntityKind::Datum);
-    collect(store_.images(), EntityKind::Image);
-    collect(store_.viewports(), EntityKind::Viewport);
-    collect(store_.tables(), EntityKind::Table);
+    collect(store.xlines(), EntityKind::Xline);
+    collect(store.ellipses(), EntityKind::Ellipse);
+    collect(store.hatches(), EntityKind::Hatch);
+    collect(store.fcfs(), EntityKind::Fcf);
+    collect(store.datums(), EntityKind::Datum);
+    collect(store.images(), EntityKind::Image);
+    collect(store.viewports(), EntityKind::Viewport);
+    collect(store.tables(), EntityKind::Table);
     return live;
 }
 
@@ -2731,7 +2733,26 @@ void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
            (edits.size() == 1 ? " object." : " objects."));
 }
 
-void GeometryEngine::apply_copy_clipboard() {
+void GeometryEngine::fill_store_from_clipboard(GeometryStore& out, Vec2 offset) const {
+    out.clear();
+    out.set_font_engine(store_.font_engine());
+    out.set_image_decoder(store_.image_decoder());
+    out.set_layer_table(clipboard_.src_layers, 0);
+    out.set_dimstyle_table(clipboard_.src_dimstyles);
+    for (const BlockDef& b : clipboard_.src_blocks) {
+        out.add_block(b);
+    }
+    for (const std::string& f : clipboard_.src_fonts) {
+        out.add_font(f);
+    }
+    out.set_image_def_table(clipboard_.src_image_defs);
+    for (Command cmd : clipboard_.items) {
+        translate_cmd(cmd, offset);
+        add_command_to_store(out, cmd, EntityProps{});
+    }
+}
+
+void GeometryEngine::apply_copy_clipboard(std::optional<Vec2> base) {
     if (selection_.empty()) {
         report("Nothing selected to copy.");
         return;
@@ -2743,6 +2764,7 @@ void GeometryEngine::apply_copy_clipboard() {
     cb.src_dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     cb.src_blocks.assign(store_.blocks().begin(), store_.blocks().end());
     cb.src_fonts.assign(store_.fonts().begin(), store_.fonts().end());
+    cb.src_image_defs.assign(store_.image_defs().begin(), store_.image_defs().end());
     Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
     Vec2 hi{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
     bool any_bounds = false;
@@ -2763,14 +2785,33 @@ void GeometryEngine::apply_copy_clipboard() {
         report("Nothing selected to copy.");
         return;
     }
-    cb.base = any_bounds ? lo : Vec2{0.0, 0.0};
+    cb.base = base ? *base : (any_bounds ? lo : Vec2{0.0, 0.0});
     cb.has = true;
     clipboard_ = std::move(cb);
     report(std::to_string(clipboard_.items.size()) + " copied to clipboard.");
+    if (clipboard_listener_) {
+        // The system clipboard's two faces: the objects themselves (a native drawing of
+        // them alone) and their drawing, for a picture.
+        static std::uint64_t serial = 0;
+        GeometryStore scratch;
+        fill_store_from_clipboard(scratch, Vec2{});
+        ClipboardExport out;
+        out.serial = ++serial;
+        out.native_text = io::serialize_native(io::document_from_store(scratch));
+        // Curves fine enough for the picture (its longer side 1600 pixels).
+        const double extent = any_bounds ? std::max(hi.x - lo.x, hi.y - lo.y) : 0.0;
+        const double tol = extent > 0.0 ? std::min(tess_tolerance_, extent / 4000.0) : tess_tolerance_;
+        build_render_snapshot(scratch, kernel_, out.drawing, tol, store_.ltscale());
+        out.lo = any_bounds ? lo : Vec2{};
+        out.hi = any_bounds ? hi : Vec2{};
+        out.base = clipboard_.base;
+        out.count = clipboard_.items.size();
+        clipboard_listener_(out);
+    }
 }
 
-void GeometryEngine::apply_cut_clipboard(std::uint64_t group) {
-    apply_copy_clipboard();
+void GeometryEngine::apply_cut_clipboard(std::uint64_t group, std::optional<Vec2> base) {
+    apply_copy_clipboard(base);
     if (!clipboard_.has) {
         return; // nothing to cut
     }
@@ -2897,6 +2938,11 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
                 if constexpr (std::is_same_v<T, AddInsertCommand>) {
                     c.block = ensure_block(c.block);
                 }
+                if constexpr (std::is_same_v<T, AddImageCommand>) {
+                    if (c.def < clipboard_.src_image_defs.size()) {
+                        c.def = store_.add_image_def(clipboard_.src_image_defs[c.def]);
+                    }
+                }
             },
             cmd);
         translate_cmd(cmd, offset);
@@ -2905,10 +2951,56 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
         pasted.push_back(nh);
     }
     selection_ = pasted; // the pasted entities become the new selection
+    paste_preview_active_ = false;
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
     report(std::to_string(pasted.size()) + " pasted.");
+}
+
+void GeometryEngine::apply_paste_document(const PasteDocumentCommand& c) {
+    // Musa CAD objects copied in another window: the drawing they came as, read into a
+    // scratch store and taken from there as a clip of our own -- then pasted by the one
+    // paste path, which remaps every table by name.
+    io::Document doc;
+    if (!io::parse_native(c.native_text, doc).ok) {
+        report("The clipboard's drawing could not be read.");
+        return;
+    }
+    GeometryStore scratch;
+    scratch.set_font_engine(store_.font_engine());
+    scratch.set_image_decoder(store_.image_decoder());
+    io::populate_store(scratch, doc);
+    Clipboard cb;
+    cb.src_layers.assign(scratch.layers().begin(), scratch.layers().end());
+    cb.src_dimstyles.assign(scratch.dimstyles().begin(), scratch.dimstyles().end());
+    cb.src_blocks.assign(scratch.blocks().begin(), scratch.blocks().end());
+    cb.src_fonts.assign(scratch.fonts().begin(), scratch.fonts().end());
+    cb.src_image_defs.assign(scratch.image_defs().begin(), scratch.image_defs().end());
+    Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+    bool any = false;
+    for (const EntityHandle h : all_live_in(scratch)) {
+        cb.items.push_back(musacad::core::capture_entity(scratch, h)); // the free one, on the scratch store
+        Vec2 a;
+        Vec2 b;
+        if (entity_aabb(scratch, h, a, b)) {
+            lo = {std::min(lo.x, a.x), std::min(lo.y, a.y)};
+            any = true;
+        }
+    }
+    if (cb.items.empty()) {
+        report("The clipboard's drawing is empty.");
+        return;
+    }
+    cb.base = c.base ? *c.base : (any ? lo : Vec2{});
+    cb.has = true;
+    clipboard_ = std::move(cb);
+    if (c.load_only) {
+        const std::size_t n = clipboard_.items.size();
+        report(std::to_string(n) + (n == 1 ? " object" : " objects") + " on the clipboard.");
+        return;
+    }
+    apply_paste_clipboard(c.at, c.group, c.at_cursor);
 }
 
 void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group) {
@@ -8215,7 +8307,109 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     report((converted ? "Converted to a polyline. " : "") + what);
 }
 
+void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
+    if (c.path.size() < 2) {
+        return;
+    }
+    // Every crossing of the path with a line, arc, circle or polyline, in order along it.
+    Vec2 lo = c.path.front();
+    Vec2 hi = c.path.front();
+    for (const Vec2& p : c.path) {
+        lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+        hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+    }
+    std::vector<EntityHandle> cand;
+    grid_.query(lo, hi, cand); // deduplicated
+    struct Hit {
+        double along;
+        Vec2 at;
+    };
+    std::vector<Hit> hits;
+    std::vector<Vec2> tess;
+    for (const EntityHandle h : cand) {
+        if (!store_.is_valid(h) || !selectable(h) ||
+            (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
+             h.kind != EntityKind::Polyline)) {
+            continue;
+        }
+        tess.clear();
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+        if (h.kind == EntityKind::Polyline && store_.polyline(h)->closed && tess.size() > 2 &&
+            distance(tess.front(), tess.back()) > 1e-12) {
+            tess.push_back(tess.front());
+        }
+        double along = 0.0;
+        for (std::size_t i = 1; i < c.path.size(); ++i) {
+            const Vec2 p0 = c.path[i - 1];
+            const Vec2 d = c.path[i] - p0;
+            const double len = length(d);
+            for (std::size_t j = 1; j < tess.size(); ++j) {
+                const Vec2 q0 = tess[j - 1];
+                const Vec2 e = tess[j] - q0;
+                const double den = d.x * e.y - d.y * e.x;
+                if (std::abs(den) < 1e-18) {
+                    continue; // parallel
+                }
+                const Vec2 w = q0 - p0;
+                const double t = (w.x * e.y - w.y * e.x) / den;
+                const double u = (w.x * d.y - w.y * d.x) / den;
+                if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0) {
+                    hits.push_back(Hit{along + t * len, p0 + d * t});
+                }
+            }
+            along += len;
+        }
+    }
+    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.along < b.along; });
+    // Each crossing is a pick there, on what is there NOW (an earlier one may have cut it):
+    // a pick radius the size of the tessellation's error, so a neighbour is never taken.
+    const double r = std::max(kDefaultTessTolerance * 4.0, 1e-9);
+    int done = 0;
+    int deleted = 0;
+    Vec2 last{std::numeric_limits<double>::max(), 0.0};
+    for (const Hit& hit : hits) {
+        if (distance(hit.at, last) < 1e-9) {
+            continue;
+        }
+        last = hit.at;
+        const EntityHandle target = pick_nearest(hit.at, r);
+        if (target.is_null()) {
+            continue; // already cut away by an earlier crossing
+        }
+        if (c.extend) {
+            apply_extend(hit.at, r, c.group);
+            done += status_ == "Extended." ? 1 : 0;
+            continue;
+        }
+        apply_trim(hit.at, r, c.group);
+        if (trim_outcome_ == TrimOutcome::Trimmed) {
+            ++done;
+        } else if ((trim_outcome_ == TrimOutcome::NoEdge || trim_outcome_ == TrimOutcome::Whole) &&
+                   store_.is_valid(target)) {
+            const Command original = capture_entity(target);
+            remove_indexed(target);
+            push_erase_item(c.group, target, original);
+            std::erase(selection_, target);
+            ++deleted;
+        }
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    if (deleted > 0) {
+        dirty_ = true;
+    }
+    if (c.extend) {
+        report(done > 0 ? "Extended along the path." : "Extend: nothing along the path reaches a boundary.");
+    } else if (done + deleted == 0) {
+        report("Trim: the path crosses nothing to trim.");
+    } else {
+        report("Trimmed " + std::to_string(done) + (done == 1 ? " object" : " objects") +
+               (deleted > 0 ? ", deleted " + std::to_string(deleted) + " with nothing to trim them to." : "."));
+    }
+}
+
 void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
+    trim_outcome_ = TrimOutcome::None;
     const EntityHandle h = pick_nearest(pick, radius);
     if (h.is_null()) {
         report("Trim: nothing under the pick.");
@@ -8246,6 +8440,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         crossings.insert(crossings.end(), hits.begin(), hits.end());
     }
     if (crossings.empty()) {
+        trim_outcome_ = TrimOutcome::NoEdge;
         report("Trim: no crossing edge found.");
         return;
     }
@@ -8272,6 +8467,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
             }
         }
         if (ts.empty()) {
+            trim_outcome_ = TrimOutcome::NoEdge;
             report("Trim: no crossing edge found.");
             return;
         }
@@ -8325,6 +8521,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
             }
         }
         if (ss.empty()) {
+            trim_outcome_ = TrimOutcome::NoEdge;
             report("Trim: no crossing edge found.");
             return;
         }
@@ -8386,6 +8583,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
                              [](double x, double y) { return std::abs(x - y) < 1e-9; }),
                  qs.end());
         if (qs.empty()) {
+            trim_outcome_ = TrimOutcome::NoEdge;
             report("Trim: no crossing edge found.");
             return;
         }
@@ -8485,9 +8683,11 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     }
 
     if (pieces.empty()) {
+        trim_outcome_ = TrimOutcome::Whole;
         report("Trim: that would remove the whole object -- use ERASE.");
         return;
     }
+    trim_outcome_ = TrimOutcome::Trimmed;
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, h, original);
@@ -9259,7 +9459,20 @@ void GeometryEngine::apply(const Command& command) {
                 apply_xline_reference(c);
             }
             if constexpr (std::is_same_v<T, TrimPickCommand>) {
+                const EntityHandle target = pick_nearest(c.pick, c.radius);
                 apply_trim(c.pick, c.radius, c.group);
+                if (c.quick && (trim_outcome_ == TrimOutcome::NoEdge || trim_outcome_ == TrimOutcome::Whole) &&
+                    store_.is_valid(target)) {
+                    // Quick mode: what cannot be trimmed is deleted (AutoCAD's rule).
+                    const Command original = capture_entity(target);
+                    remove_indexed(target);
+                    push_erase_item(c.group, target, original);
+                    std::erase(selection_, target);
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    report("Deleted: nothing to trim it to.");
+                }
             }
             if constexpr (std::is_same_v<T, JoinPickCommand>) {
                 apply_join(c.picks, c.radius, c.group);
@@ -9453,10 +9666,21 @@ void GeometryEngine::apply(const Command& command) {
                 close_document(c.id);
             }
             if constexpr (std::is_same_v<T, CopyClipboardCommand>) {
-                apply_copy_clipboard();
+                apply_copy_clipboard(c.base);
             }
             if constexpr (std::is_same_v<T, CutClipboardCommand>) {
-                apply_cut_clipboard(c.group);
+                apply_cut_clipboard(c.group, c.base);
+            }
+            if constexpr (std::is_same_v<T, PasteDocumentCommand>) {
+                apply_paste_document(c);
+            }
+            if constexpr (std::is_same_v<T, PastePreviewCommand>) {
+                paste_preview_active_ = c.active;
+                paste_preview_at_ = c.at;
+                geom_dirty_ = true; // republish with (or without) the band
+            }
+            if constexpr (std::is_same_v<T, TrimPathCommand>) {
+                apply_trim_path(c);
             }
             if constexpr (std::is_same_v<T, PasteClipboardCommand>) {
                 apply_paste_clipboard(c.at, c.group, c.at_cursor);
@@ -10059,6 +10283,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, SwitchDocumentCommand> ||
                 std::is_same_v<T, CloseDocumentCommand> ||
                 std::is_same_v<T, CopyClipboardCommand> || // read-only (snapshots selection)
+                std::is_same_v<T, PastePreviewCommand> ||   // rubber band only
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||
@@ -10735,6 +10960,13 @@ void GeometryEngine::rebuild_and_publish() {
             buf.grip_preview_segments = std::move(tmp.line_vertices);
             buf.grip_preview_fills = std::move(tmp.fill_vertices);
         }
+    } else if (paste_preview_active_ && clipboard_.has) {
+        // PASTECLIP's placement: the clip at the cursor, by its base.
+        fill_store_from_clipboard(grip_preview_store_, paste_preview_at_ - clipboard_.base);
+        RenderSnapshot tmp;
+        build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
+        buf.grip_preview_segments = std::move(tmp.line_vertices);
+        buf.grip_preview_fills = std::move(tmp.fill_vertices);
     } else if (transform_preview_active_) {
         // Live ROTATE / SCALE (or a client's MOVE / MIRROR band): every selected entity
         // under the transform, through the helpers the commit uses, on the scratch store

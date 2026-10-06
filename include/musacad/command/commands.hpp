@@ -836,17 +836,75 @@ private:
 };
 
 /// TRIM: every pick is its own undo step and `Undo` takes the last one back.
+/// TRIM in AutoCAD's Quick mode: a pick trims the object at the pick between its nearest
+/// crossings (what cannot be trimmed is deleted); press and drag draws a freehand path,
+/// and two picks on empty space a fence, that trim everything they cross; Fence takes a
+/// fence of several points; shift-select extends instead. Every pick or path is one undo
+/// step, Undo takes the last back.
 class TrimCommand final : public ICommand {
 public:
-    std::string name() const override { return "TRIM"; }
+    explicit TrimCommand(bool extend = false) : extend_(extend) {}
+    std::string name() const override { return extend_ ? "EXTEND" : "TRIM"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool wants_freehand() const override { return !done_; }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+
+private:
+    void prompt(CommandContext& ctx);
+    void path(CommandContext& ctx, std::vector<core::Vec2> points, bool extend);
+    bool extend_ = false;
+    bool done_ = false;
+    int picks_ = 0;
+    std::vector<core::Vec2> fence_; ///< a fence being drawn
+    bool fence_open_ = false;       ///< typed Fence: points until Enter (else two picks)
+};
+
+/// COPYCLIP / CUTCLIP (Ctrl+C / Ctrl+X) and COPYBASE / CUTBASE (a base point first): the
+/// objects go to the clipboard -- the drawing's own, and the system's as Musa CAD objects
+/// and a picture other programs take.
+class ClipCopyCommand final : public ICommand {
+public:
+    ClipCopyCommand(bool cut, bool with_base) : cut_(cut), with_base_(with_base) {}
+    std::string name() const override {
+        return cut_ ? (with_base_ ? "CUTBASE" : "CUTCLIP") : (with_base_ ? "COPYBASE" : "COPYCLIP");
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void finish(CommandContext& ctx);
+    bool cut_;
+    bool with_base_;
+    std::optional<core::Vec2> base_;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// PASTECLIP (Ctrl+V): what the clipboard holds, at `Specify insertion point:` -- Musa CAD
+/// objects (from this window or another; they follow the cursor), an image (embedded,
+/// its lower-left corner at the point) or text (an MTEXT). PASTEORIG: objects at their own
+/// coordinates, no point asked.
+class PasteClipCommand final : public ICommand {
+public:
+    explicit PasteClipCommand(bool original) : original_(original) {}
+    std::string name() const override { return original_ ? "PASTEORIG" : "PASTECLIP"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
 private:
+    bool original_;
+    std::string kind_;
     bool done_ = false;
-    int picks_ = 0;
 };
 
 class RotateCommand final : public ICommand {
@@ -2162,18 +2220,6 @@ private:
 };
 
 /// EXTEND: every pick is its own undo step and `Undo` takes the last one back.
-class ExtendCommand final : public ICommand {
-public:
-    std::string name() const override { return "EXTEND"; }
-    void start(CommandContext& ctx) override;
-    void input(CommandContext& ctx, const std::string& text) override;
-    void cancel(CommandContext& ctx) override;
-    bool done() const override { return done_; }
-
-private:
-    bool done_ = false;
-    int picks_ = 0;
-};
 
 class FilletCommand final : public ICommand {
 public:
