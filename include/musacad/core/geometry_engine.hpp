@@ -302,6 +302,23 @@ private:
     /// What the last TRIM pick did, for Quick mode (an untrimmable pick deletes the object).
     enum class TrimOutcome : std::uint8_t { None, Trimmed, NoEdge, Whole };
     TrimOutcome trim_outcome_ = TrimOutcome::None;
+    /// What a TRIM pick would do, worked out without changing anything: the object, the
+    /// pieces that stay, and the part that goes as a chain of points (the hover preview).
+    struct TrimPlan {
+        EntityHandle h{};
+        TrimOutcome outcome = TrimOutcome::None;
+        std::string message;
+        std::vector<Command> pieces;
+        std::vector<Vec2> removed;
+    };
+    bool plan_trim(Vec2 pick, double radius, TrimPlan& out) const;
+    /// What an EXTEND pick would add, as a chain of points (the hover preview).
+    bool plan_extend_preview(Vec2 pick, double radius, std::vector<Vec2>& added) const;
+    // TRIM / EXTEND's hover preview: the part that would go, or be added, at the cursor.
+    bool trim_preview_active_ = false;
+    TrimPreviewCommand trim_preview_{};
+    bool fillet_preview_active_ = false;
+    FilletPreviewCommand fillet_preview_{};
     // TRIM / EXTEND's chosen cutting edges (SetTrimEdgesCommand): none chosen = every
     // object. An edge that is itself trimmed or extended passes the role to its pieces;
     // undo's remap brings it back under its new handle.
@@ -314,6 +331,14 @@ private:
     void note_trim_pieces(EntityHandle original, const std::vector<EntityHandle>& made);
     /// Edge=Extend: where `h` crosses the extensions of the line and arc edges.
     void implied_crossings(EntityHandle h, std::vector<Vec2>& out) const;
+    /// Where `h` crosses construction lines and rays (not in the spatial index: no box),
+    /// and, when `h` is one, where it crosses everything.
+    void xline_crossings(EntityHandle h, std::vector<Vec2>& out) const;
+    /// EXTEND's boundaries on a whole circle (an arc, or a polyline's arc end, growing
+    /// round it): every crossing with the edges, construction lines and rays included.
+    void circle_boundary_hits(EntityHandle self, Vec2 centre, double r, std::vector<Vec2>& out) const;
+    /// ... and on a whole ellipse.
+    void ellipse_boundary_hits(EntityHandle self, const EllipseData& whole, std::vector<Vec2>& out) const;
     // The layer tools: what LAYOFF / LAYFRZ's Undo restores, and what LAYUNISO turns back
     // on (the layers the last LAYISO turned off).
     void apply_layer_tool(const LayerToolCommand& c);
@@ -419,6 +444,11 @@ private:
     /// Shared JOIN core: merge every connected sub-chain among `ents` (lines/arcs/open
     /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
     void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group);
+    /// JOIN's own kinds, before chaining into a polyline: lines along one line become one
+    /// line, arcs on one circle one arc, elliptical arcs on one ellipse one elliptical arc
+    /// (gaps allowed). False when the objects are not all one such kind.
+    bool join_same_kind(const std::vector<EntityHandle>& ents, double tol, std::uint64_t group);
+    void join_close(EntityHandle h, std::uint64_t group);
     void apply_rotate(Vec2 base, double angle, std::uint64_t group, bool copy = false);
     void apply_scale(Vec2 base, double factor, std::uint64_t group, bool copy = false);
     void apply_array_rect(int rows, int cols, double dx, double dy, double angle,
@@ -478,6 +508,10 @@ private:
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
     void apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                       std::uint64_t group, bool trim = true);
+    /// FILLET of a line with an open polyline's end segment, or of two open polylines' end
+    /// segments: joined at their corner into one polyline, the corner rounded (AutoCAD's).
+    void apply_fillet_join(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
+                           std::uint64_t group, bool trim);
     void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
                        std::uint64_t group, bool trim = true);
     // Object-aware dimensioning: resolve the entity(ies) under the pick(s) via the

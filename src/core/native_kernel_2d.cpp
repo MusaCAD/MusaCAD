@@ -420,11 +420,6 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         out_point = closest_on_segment(l->a, l->b, query);
         return true;
     }
-    case EntityKind::Ellipse: {
-        std::vector<Vec2> pts;
-        ellipse::tessellate(*store.ellipse(entity), kDefaultTessTolerance, pts);
-        return nearest_on_segments(pts, query, out_point);
-    }
     case EntityKind::Xline: {
         const XlineData* x = store.xline(entity);
         double t = dot(query - x->base, x->dir); // dir is unit
@@ -446,6 +441,7 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         out_point = closest_on_arc(*store.arc(entity), query);
         return true;
     }
+    case EntityKind::Ellipse: // a chain of points, like these: every segment counts
     case EntityKind::Polyline:
     case EntityKind::Spline: {
         std::vector<Vec2> pts;

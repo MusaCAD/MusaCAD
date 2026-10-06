@@ -30,6 +30,29 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   point while the objects follow the cursor. It also pastes what other programs copy: an
   image is embedded in the drawing, and text becomes a multiline text. **COPYBASE** /
   **CUTBASE** take a base point first, and **PASTEORIG** pastes at the original coordinates.
+- **TRIM, EXTEND and FILLET on more kinds of object** (#48, #49) -- ellipses and elliptical
+  arcs trim (a whole ellipse to an arc) and extend round their ellipse; construction lines
+  and rays trim (to rays and lines), cut and bound other objects, and fillet with lines; a
+  polyline whose end segment is an arc extends round its circle; two parallel lines fillet
+  with a half circle as wide as the gap; a line filleted with an open polyline's end segment,
+  or two polylines' end segments, become one polyline with the corner rounded. Splines are
+  the kind still missing.
+- **LENGTHEN as AutoCAD has it** (#52) -- a pick at `Select an object to measure or
+  [DElta/Percent/Total/DYnamic]:` reports the length (and an arc's included angle); Angle
+  for an arc's delta or total; **DYnamic** asks where the end goes; one object after another
+  with **Undo**; open polylines and elliptical arcs as well as lines and arcs.
+- **JOIN as AutoCAD has it** (#52) -- `Select source object or multiple objects to join at
+  once:`, then picks and windows; lines along one line become one line (gaps and all), arcs
+  on one circle one arc (round the whole circle, a circle), elliptical arcs on one ellipse
+  one elliptical arc; **cLose** makes an arc a circle and an elliptical arc an ellipse;
+  only touching mixed objects chain into a polyline.
+- **DIVIDE and MEASURE [Block]** (#52) -- block references at the marks instead of points,
+  turned to the curve when aligned; MEASURE starts from the end nearer the pick.
+- **TRIM, EXTEND, FILLET and CHAMFER show what a pick would do** -- hovering an object at
+  TRIM's prompt draws the part that would be trimmed away (in Quick mode, the whole object
+  when nothing cuts it), at EXTEND's the extension that would be added (Shift shows the
+  other one); at FILLET's and CHAMFER's second-object prompt, the two objects as they would
+  be and the arc or bevel (Shift: the sharp corner).
 - **Dimensions, the rest of AutoCAD's options** (#56, #57) -- **Angle** at every dimension's
   placement prompt stands its text at an angle of its own. **DIMARC** gains **Partial**, for
   the part of an arc between two points, and **Leader**, a radial leader from the text in to
@@ -55,6 +78,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Report…** in the application menu writes the same report at any time.
 
 ### Fixed
+- Picking an ellipse or elliptical arc no longer misses it near half of its outline: the
+  nearest point was looked for on every other chord of the curve only, so a pick close to
+  the curve, or to an arc's end, could find nothing under it.
+- EXTEND on an arc no longer stops where the chord of a curved boundary would meet it, only
+  where the boundary itself does; polylines and ellipses bound an extending arc too.
 - EXTEND on an arc no longer stops at the extension of a line the arc never meets; it stops
   where the line is (or along its extension with Edge Extend).
 

@@ -175,6 +175,20 @@ struct PreviewSpec {
     bool dim_has_quadrant = false;
     core::Vec2 dim_quadrant{};
     /// PASTECLIP: the clip's objects follow the cursor (the engine draws them).
+    /// FILLET / CHAMFER at the second object: the viewport streams the cursor as the second
+    /// pick and the engine draws what it would make (Shift: a sharp corner).
+    bool fillet_hover = false;
+    core::Vec2 fillet_first{};
+    double fillet_radius = 0.0;
+    bool fillet_trim = true;
+    bool fillet_chamfer = false;
+    double chamfer_d1 = 0.0;
+    double chamfer_d2 = 0.0;
+    /// TRIM / EXTEND at the object prompt: the viewport streams the cursor and the engine
+    /// draws the part a pick there would trim away (or add, `trim_extend`; Shift swaps).
+    bool trim_hover = false;
+    bool trim_extend = false;
+    bool trim_quick = true;
     bool paste_band = false;
 };
 

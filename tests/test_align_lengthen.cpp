@@ -183,7 +183,7 @@ TEST_CASE("#27: LENGTHEN moves the end nearer the pick and anchors the other") {
     c.group = 2;
     engine.submit(c);
     REQUIRE(wait_until(engine, [](const auto& s) {
-        return s.status.find("Length changed from 100 to 150.") != std::string::npos;
+        return s.status.find("Length changed from 100.0000 to 150.0000.") != std::string::npos;
     }));
     engine.consume_snapshot();
     REQUIRE(has_vertex_near(engine.snapshot(), {0, 0}, 1e-9));   // anchored
@@ -293,7 +293,7 @@ TEST_CASE("#27: LENGTHEN refuses to erase the object or to touch a shape with no
     circle.group = 4;
     engine.submit(circle);
     REQUIRE(wait_until(engine, [](const auto& s) {
-        return s.status.find("only lines and arcs") != std::string::npos;
+        return s.status.find("only lines, arcs, polylines and elliptical arcs") != std::string::npos;
     }));
     engine.consume_snapshot();
     REQUIRE(has_vertex_near(engine.snapshot(), {100, 0}, 1e-9)); // the line survived intact
