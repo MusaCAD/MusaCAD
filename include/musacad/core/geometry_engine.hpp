@@ -358,6 +358,10 @@ private:
     void apply_dim_edit(const DimEditCommand& c);
     void apply_set_dim_override(const SetDimOverrideCommand& c);
     void apply_center_mark(const AddCenterMarkCommand& c);
+    /// After the store removed layer `removed`: the undo and redo history, DIMLAYER and the
+    /// layer tools' memories renumbered the way the store renumbered its objects (what was
+    /// on the removed layer comes back on layer 0).
+    void forget_layer(std::uint16_t removed);
     /// One PEDIT edit on `h`; the polyline it became (null when it could not be done,
     /// the reason reported unless `quiet`).
     EntityHandle pedit_one(EntityHandle h, const PeditCommand& c, bool quiet);

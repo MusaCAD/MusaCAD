@@ -117,6 +117,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Wayland session) instead of saying OpenGL is missing and closing: Musa CAD now asks for
   desktop OpenGL by name, where Qt would otherwise ask NVIDIA's driver for OpenGL ES (#82).
   Thanks to @devgarden-de for tracing it.
+- PURGE no longer removes a layer that only objects inside a block definition are on, and
+  removing a layer (PURGE, or deleting it in the Layer Manager) now renumbers the objects in
+  block definitions and in the undo history with the rest. Before, the block's objects, and
+  objects brought back by undo, could land on the wrong layer or on one that no longer
+  existed; an object whose own layer was removed now comes back on layer 0.
 - EXTEND on an arc no longer stops where the chord of a curved boundary would meet it, only
   where the boundary itself does; polylines and ellipses bound an extending arc too.
 - EXTEND on an arc no longer stops at the extension of a line the arc never meets; it stops

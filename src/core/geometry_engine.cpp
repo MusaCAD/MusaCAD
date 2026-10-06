@@ -2384,6 +2384,61 @@ std::optional<std::uint16_t> GeometryEngine::layer_named(std::string_view name) 
     return std::nullopt;
 }
 
+void GeometryEngine::forget_layer(std::uint16_t removed) {
+    const auto fix = [removed](EntityProps& p) {
+        if (p.layer == removed) {
+            p.layer = 0;
+        } else if (p.layer > removed) {
+            --p.layer;
+        }
+    };
+    const auto fix_cmd = [&](Command& c) {
+        std::visit(
+            [&](auto& x) {
+                if constexpr (requires { x.props.has_value(); }) {
+                    if (x.props) {
+                        fix(*x.props);
+                    }
+                } else if constexpr (requires { x.props.layer; }) {
+                    fix(x.props);
+                }
+                if constexpr (requires { x.text.props.has_value(); }) {
+                    if (x.text.props) {
+                        fix(*x.text.props);
+                    }
+                }
+            },
+            c);
+    };
+    for (std::vector<Group>* log : {&undo_, &redo_}) {
+        for (Group& g : *log) {
+            for (Item& it : g.items) {
+                fix_cmd(it.data);
+            }
+        }
+    }
+    const auto shift = [removed](std::uint16_t& i) {
+        if (i > removed) {
+            --i;
+        }
+    };
+    if (dim_layer_) {
+        if (*dim_layer_ == removed) {
+            dim_layer_.reset();
+        } else {
+            shift(*dim_layer_);
+        }
+    }
+    std::erase_if(layer_tool_undo_, [removed](const auto& e) { return e.first == removed; });
+    for (auto& e : layer_tool_undo_) {
+        shift(e.first);
+    }
+    std::erase(layiso_off_, removed);
+    for (std::uint16_t& i : layiso_off_) {
+        shift(i);
+    }
+}
+
 EntityProps GeometryEngine::fresh_props() const {
     EntityProps p = current_props_;
     p.layer = store_.current_layer();
@@ -6028,7 +6083,10 @@ void GeometryEngine::apply_purge(const PurgeCommand& c) {
     if (all || c.what == 4) {
         for (std::size_t i = store_.layer_count(); i-- > 1;) {
             if (wanted(store_.layers()[i].name)) {
-                layers += store_.remove_layer(static_cast<std::uint16_t>(i)) ? 1 : 0;
+                if (store_.remove_layer(static_cast<std::uint16_t>(i))) {
+                    forget_layer(static_cast<std::uint16_t>(i));
+                    ++layers;
+                }
             }
         }
     }
@@ -12422,6 +12480,7 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, RemoveLayerCommand>) {
                 if (store_.remove_layer(c.index)) {
+                    forget_layer(c.index);
                     geom_dirty_ = true;
                     report("Layer removed.");
                 } else {
