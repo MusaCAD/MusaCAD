@@ -393,6 +393,7 @@ void GeometryEngine::remap_history_handle(EntityHandle from, EntityHandle to, Gr
     for (Group& g : redo_) {
         fix(g);
     }
+    std::replace(trim_edges_.begin(), trim_edges_.end(), from, to); // TRIM's chosen edges
 }
 
 void GeometryEngine::do_undo_op() {
@@ -3405,7 +3406,7 @@ bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mo
         }
     };
     for (const EntityHandle c : all_live()) {
-        if (c == self) {
+        if (c == self || !is_trim_edge(c)) {
             continue;
         }
         if (c.kind == EntityKind::Line) {
@@ -3414,7 +3415,7 @@ bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mo
             if (NativeKernel2D::line_line_intersection(fix, mov, m->a, m->b, p)) {
                 const Vec2 md = m->b - m->a;
                 const double u = dot(p - m->a, md) / std::max(length_squared(md), 1e-18);
-                if (u >= -1e-9 && u <= 1.0 + 1e-9) {
+                if (trim_edge_extend_ || (u >= -1e-9 && u <= 1.0 + 1e-9)) { // Edge=Extend: the whole line
                     consider(p);
                 }
             }
@@ -3436,10 +3437,10 @@ bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mo
             Vec2 p1{};
             const int n =
                 NativeKernel2D::line_circle_intersection(fix, mov, arc->center, arc->radius, p0, p1);
-            if (n >= 1 && angle_on_arc(*arc, p0)) {
+            if (n >= 1 && (trim_edge_extend_ || angle_on_arc(*arc, p0))) { // Edge=Extend: the whole circle
                 consider(p0);
             }
-            if (n == 2 && angle_on_arc(*arc, p1)) {
+            if (n == 2 && (trim_edge_extend_ || angle_on_arc(*arc, p1))) {
                 consider(p1);
             }
         } else if (c.kind == EntityKind::Polyline) {
@@ -3471,6 +3472,30 @@ bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mo
     return found;
 }
 
+namespace {
+/// Where two circles cross (0, 1 or 2 points).
+int circle_circle_intersection(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0, Vec2& p1) {
+    const Vec2 d = c1 - c0;
+    const double dist = length(d);
+    if (!(dist > 1e-12) || dist > r0 + r1 + 1e-12 || dist < std::abs(r0 - r1) - 1e-12) {
+        return 0;
+    }
+    const double a = (r0 * r0 - r1 * r1 + dist * dist) / (2.0 * dist);
+    const double h2 = r0 * r0 - a * a;
+    const Vec2 u = d * (1.0 / dist);
+    const Vec2 m = c0 + u * a;
+    if (h2 <= 1e-18) {
+        p0 = m;
+        return 1;
+    }
+    const double h = std::sqrt(h2);
+    const Vec2 perp{-u.y, u.x};
+    p0 = m + perp * h;
+    p1 = m - perp * h;
+    return 2;
+}
+} // namespace
+
 void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group) {
     const ArcData* arc = store_.arc(h);
     const Vec2 centre = arc->center;
@@ -3490,16 +3515,21 @@ void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t g
                       centre.y + r * std::sin(arc->end_angle)};
     const bool grow_end = length_squared(pick - end_pt) <= length_squared(pick - start_pt);
 
-    // Candidates near the arc's FULL circle, since the extension leaves the arc's own box.
+    // Candidates near the arc's FULL circle, since the extension leaves the arc's own box;
+    // with Edge=Extend an edge from anywhere may reach it.
     std::vector<EntityHandle> cand;
-    grid_.query(Vec2{centre.x - r, centre.y - r}, Vec2{centre.x + r, centre.y + r}, cand);
+    if (trim_edge_extend_) {
+        cand = trim_edge_list();
+    } else {
+        grid_.query(Vec2{centre.x - r, centre.y - r}, Vec2{centre.x + r, centre.y + r}, cand);
+    }
 
     // The nearest crossing strictly beyond the growing end, measured as extra sweep.
     double best = 0.0;
     bool found = false;
     std::vector<Vec2> hits;
     for (const EntityHandle c : cand) {
-        if (c == h) {
+        if (c == h || !is_trim_edge(c)) {
             continue;
         }
         // Intersect the FULL circle the arc lies on: a boundary the arc does not reach
@@ -3511,6 +3541,24 @@ void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t g
             Vec2 p1{};
             const int n =
                 NativeKernel2D::line_circle_intersection(m->a, m->b, centre, r, p0, p1);
+            // On the boundary line itself, unless Edge=Extend lets the whole line count.
+            const Vec2 md = m->b - m->a;
+            const auto on_line = [&](Vec2 p) {
+                const double u = dot(p - m->a, md) / std::max(length_squared(md), 1e-18);
+                return trim_edge_extend_ || (u >= -1e-9 && u <= 1.0 + 1e-9);
+            };
+            if (n >= 1 && on_line(p0)) {
+                hits.push_back(p0);
+            }
+            if (n == 2 && on_line(p1)) {
+                hits.push_back(p1);
+            }
+        } else if (c.kind == EntityKind::Arc && trim_edge_extend_) {
+            // Edge=Extend: the boundary arc's whole circle.
+            const ArcData* ba = store_.arc(c);
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n = circle_circle_intersection(centre, r, ba->center, ba->radius, p0, p1);
             if (n >= 1) {
                 hits.push_back(p0);
             }
@@ -3566,7 +3614,9 @@ void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t g
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, h, original);
-    push_create_item(group, create_indexed(extended), extended);
+    const EntityHandle nh = create_indexed(extended);
+    push_create_item(group, nh, extended);
+    note_trim_pieces(h, {nh});
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
@@ -3621,7 +3671,9 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         push_erase_item(group, h, original);
         inherit_polyline(original);
         const Command extended = AddPolylineCommand{v, false, 0, props, b, cts};
-        push_create_item(group, create_indexed(extended), extended);
+        const EntityHandle nh = create_indexed(extended);
+        push_create_item(group, nh, extended);
+        note_trim_pieces(h, {nh});
         redo_.clear();
         geom_dirty_ = true;
         report("Extended.");
@@ -3653,7 +3705,9 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
     remove_indexed(h);
     push_erase_item(group, h, original);
     const Command extended = AddLineCommand{fix, target, 0, props, cts};
-    push_create_item(group, create_indexed(extended), extended);
+    const EntityHandle nh = create_indexed(extended);
+    push_create_item(group, nh, extended);
+    note_trim_pieces(h, {nh});
     redo_.clear();
     geom_dirty_ = true;
     report("Extended.");
@@ -8307,14 +8361,286 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     report((converted ? "Converted to a polyline. " : "") + what);
 }
 
+namespace {
+/// A Crossing window walked clockwise from its first corner, closed: AutoCAD resolves an
+/// ambiguous crossing trim by following the window that way to the first object met.
+std::vector<Vec2> clockwise_window(Vec2 first, Vec2 opposite) {
+    std::vector<Vec2> w{first, Vec2{first.x, opposite.y}, opposite, Vec2{opposite.x, first.y}, first};
+    double area2 = 0.0;
+    for (std::size_t i = 0; i + 1 < w.size(); ++i) {
+        area2 += w[i].x * w[i + 1].y - w[i + 1].x * w[i].y;
+    }
+    if (area2 > 0.0) { // counter-clockwise: walk it the other way
+        std::swap(w[1], w[3]);
+    }
+    return w;
+}
+} // namespace
+
+bool GeometryEngine::is_trim_edge(EntityHandle c) const {
+    return !trim_edges_set_ || std::find(trim_edges_.begin(), trim_edges_.end(), c) != trim_edges_.end();
+}
+
+std::vector<EntityHandle> GeometryEngine::trim_edge_list() const {
+    if (!trim_edges_set_) {
+        return all_live();
+    }
+    std::vector<EntityHandle> out;
+    for (const EntityHandle e : trim_edges_) {
+        if (store_.is_valid(e)) {
+            out.push_back(e);
+        }
+    }
+    return out;
+}
+
+void GeometryEngine::note_trim_pieces(EntityHandle original, const std::vector<EntityHandle>& made) {
+    if (trim_edges_set_ && std::find(trim_edges_.begin(), trim_edges_.end(), original) != trim_edges_.end()) {
+        // The pieces keep the role; the original's handle stays for undo to remap.
+        trim_edges_.insert(trim_edges_.end(), made.begin(), made.end());
+    }
+}
+
+void GeometryEngine::implied_crossings(EntityHandle h, std::vector<Vec2>& out) const {
+    // The target alone in a scratch store, beside one stand-in for each extended edge: a
+    // line long enough to cross the whole target, or the arc's full circle.
+    Vec2 lo;
+    Vec2 hi;
+    if (!entity_aabb(store_, h, lo, hi)) {
+        return;
+    }
+    const Vec2 mid = (lo + hi) * 0.5;
+    const double reach = length(hi - lo) + 1.0;
+    std::vector<Vec2> hits;
+    for (const EntityHandle e : trim_edge_list()) {
+        if (e == h || (e.kind != EntityKind::Line && e.kind != EntityKind::Arc)) {
+            continue;
+        }
+        Command stand_in;
+        if (e.kind == EntityKind::Line) {
+            const LineData* l = store_.line(e);
+            const Vec2 d = l->b - l->a;
+            const double len2 = length_squared(d);
+            if (!(len2 > 1e-18)) {
+                continue;
+            }
+            const Vec2 u = d * (1.0 / std::sqrt(len2));
+            const Vec2 foot = l->a + u * dot(mid - l->a, u); // nearest the target on the line
+            const double half = reach + length(mid - foot);
+            stand_in = AddLineCommand{foot - u * half, foot + u * half, 0};
+        } else {
+            const ArcData* arc = store_.arc(e);
+            stand_in = AddCircleCommand{arc->center, arc->radius, 0};
+        }
+        GeometryStore scratch;
+        const EntityHandle t = add_command_to_store(scratch, musacad::core::capture_entity(store_, h), EntityProps{});
+        const EntityHandle s = add_command_to_store(scratch, stand_in, EntityProps{});
+        hits.clear();
+        kernel_.intersect(scratch, t, s, hits);
+        out.insert(out.end(), hits.begin(), hits.end());
+    }
+}
+
+void GeometryEngine::apply_layer_tool(const LayerToolCommand& c) {
+    using Op = LayerToolCommand::Op;
+    layer_tool_changed_ = true; // unless it says otherwise below
+    const auto quoted = [this](std::uint16_t i) { return "\"" + store_.layers()[i].name + "\""; };
+    const auto put = [this](std::uint16_t i, const Layer& l) {
+        store_.set_layer(i, l);
+        geom_dirty_ = true;
+        prune_selection();
+    };
+    // The layer of the object at the pick: any object drawn, a locked one too (LAYULK).
+    const auto picked_layer = [&]() -> std::optional<std::uint16_t> {
+        std::vector<EntityHandle> cand;
+        grid_.query({c.pick.x - c.radius, c.pick.y - c.radius}, {c.pick.x + c.radius, c.pick.y + c.radius}, cand);
+        double best = c.radius * c.radius;
+        std::optional<std::uint16_t> layer;
+        Vec2 cp;
+        for (const EntityHandle h : cand) {
+            const EntityProps* p = store_.props(h);
+            const Layer* l = p != nullptr ? store_.layer(p->layer) : nullptr;
+            if (l == nullptr || !l->on || l->frozen || p->hidden() || p->space() != store_.active_space()) {
+                continue;
+            }
+            if (kernel_.closest_point(store_, h, c.pick, cp) && length_squared(cp - c.pick) <= best) {
+                best = length_squared(cp - c.pick);
+                layer = p->layer;
+            }
+        }
+        if (!layer) {
+            layer_tool_changed_ = false;
+            report("No object found.");
+        }
+        return layer;
+    };
+    const std::uint16_t current = store_.current_layer();
+    switch (c.op) {
+    case Op::Off: {
+        const auto i = picked_layer();
+        if (!i) {
+            return;
+        }
+        Layer l = store_.layers()[*i];
+        layer_tool_undo_.emplace_back(*i, l);
+        l.on = false;
+        put(*i, l);
+        report("Layer " + quoted(*i) + (*i == current ? " (the current layer)" : "") + " has been turned off.");
+        return;
+    }
+    case Op::Freeze: {
+        const auto i = picked_layer();
+        if (!i) {
+            return;
+        }
+        if (*i == current) {
+            layer_tool_changed_ = false;
+            report("Cannot freeze layer " + quoted(*i) + ". It is the current layer.");
+            return;
+        }
+        Layer l = store_.layers()[*i];
+        layer_tool_undo_.emplace_back(*i, l);
+        l.frozen = true;
+        put(*i, l);
+        report("Layer " + quoted(*i) + " has been frozen.");
+        return;
+    }
+    case Op::Lock:
+    case Op::Unlock: {
+        const auto i = picked_layer();
+        if (!i) {
+            return;
+        }
+        Layer l = store_.layers()[*i];
+        l.locked = c.op == Op::Lock;
+        put(*i, l);
+        report("Layer " + quoted(*i) + (c.op == Op::Lock ? " has been locked." : " has been unlocked."));
+        return;
+    }
+    case Op::MakeCurrent: {
+        const auto i = picked_layer();
+        if (!i) {
+            return;
+        }
+        store_.set_current_layer(*i);
+        geom_dirty_ = true;
+        report(store_.layers()[*i].name + " is now the current layer.");
+        return;
+    }
+    case Op::ToCurrent: {
+        std::size_t n = 0;
+        for (const EntityHandle h : selection_) {
+            n += store_.is_valid(h) ? 1U : 0U;
+        }
+        if (n == 0) {
+            layer_tool_changed_ = false;
+            report("Nothing selected.");
+            return;
+        }
+        apply_entity_layer(current, c.group);
+        report(std::to_string(n) + (n == 1 ? " object" : " objects") + " changed to layer " + quoted(current) +
+               " (the current layer).");
+        return;
+    }
+    case Op::Isolate: {
+        std::vector<std::uint16_t> keep;
+        for (const EntityHandle h : selection_) {
+            if (const EntityProps* p = store_.is_valid(h) ? store_.props(h) : nullptr;
+                p != nullptr && std::find(keep.begin(), keep.end(), p->layer) == keep.end()) {
+                keep.push_back(p->layer);
+            }
+        }
+        if (keep.empty()) {
+            layer_tool_changed_ = false;
+            report("Nothing selected.");
+            return;
+        }
+        // Every other layer off; the current layer moves to an isolated one if need be.
+        if (std::find(keep.begin(), keep.end(), current) == keep.end()) {
+            store_.set_current_layer(keep.front());
+        }
+        layiso_off_.clear();
+        const std::size_t count = store_.layers().size();
+        for (std::size_t k = 0; k < count; ++k) {
+            const auto i = static_cast<std::uint16_t>(k);
+            if (std::find(keep.begin(), keep.end(), i) == keep.end() && store_.layers()[i].on) {
+                Layer l = store_.layers()[i];
+                l.on = false;
+                store_.set_layer(i, l);
+                layiso_off_.push_back(i);
+            }
+        }
+        selection_.clear();
+        geom_dirty_ = true;
+        report(keep.size() == 1 ? "Layer " + quoted(keep.front()) + " has been isolated."
+                                : std::to_string(keep.size()) + " layers have been isolated.");
+        return;
+    }
+    case Op::Unisolate: {
+        if (layiso_off_.empty()) {
+            layer_tool_changed_ = false;
+            report("No layers were isolated by LAYISO.");
+            return;
+        }
+        for (const std::uint16_t i : layiso_off_) {
+            if (i < store_.layers().size()) {
+                Layer l = store_.layers()[i];
+                l.on = true;
+                store_.set_layer(i, l);
+            }
+        }
+        layiso_off_.clear();
+        geom_dirty_ = true;
+        report("Layers isolated by LAYISO have been restored.");
+        return;
+    }
+    case Op::AllOn:
+    case Op::AllThaw: {
+        const std::size_t count = store_.layers().size();
+        for (std::size_t k = 0; k < count; ++k) {
+            const auto i = static_cast<std::uint16_t>(k);
+            Layer l = store_.layers()[i];
+            if (c.op == Op::AllOn) {
+                l.on = true;
+            } else {
+                l.frozen = false;
+            }
+            store_.set_layer(i, l);
+        }
+        geom_dirty_ = true;
+        report(c.op == Op::AllOn ? "All layers have been turned on." : "All layers have been thawed.");
+        return;
+    }
+    case Op::UndoLast: {
+        if (layer_tool_undo_.empty()) {
+            layer_tool_changed_ = false;
+            report("Nothing to undo.");
+            return;
+        }
+        const auto [i, before] = layer_tool_undo_.back();
+        layer_tool_undo_.pop_back();
+        if (i < store_.layers().size()) {
+            Layer l = store_.layers()[i];
+            l.on = before.on;
+            l.frozen = before.frozen;
+            put(i, l);
+            report("Layer " + quoted(i) + " is back as it was.");
+        }
+        return;
+    }
+    }
+}
+
 void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
     if (c.path.size() < 2) {
         return;
     }
+    // A Crossing window is walked as a closed path clockwise from its first corner.
+    const std::vector<Vec2> path = c.window ? clockwise_window(c.path[0], c.path[1]) : c.path;
     // Every crossing of the path with a line, arc, circle or polyline, in order along it.
-    Vec2 lo = c.path.front();
-    Vec2 hi = c.path.front();
-    for (const Vec2& p : c.path) {
+    Vec2 lo = path.front();
+    Vec2 hi = path.front();
+    for (const Vec2& p : path) {
         lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
         hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
     }
@@ -8323,9 +8649,14 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
     struct Hit {
         double along;
         Vec2 at;
+        EntityHandle of;
     };
     std::vector<Hit> hits;
     std::vector<Vec2> tess;
+    double total = 0.0;
+    for (std::size_t i = 1; i < path.size(); ++i) {
+        total += length(path[i] - path[i - 1]);
+    }
     for (const EntityHandle h : cand) {
         if (!store_.is_valid(h) || !selectable(h) ||
             (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
@@ -8338,10 +8669,11 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
             distance(tess.front(), tess.back()) > 1e-12) {
             tess.push_back(tess.front());
         }
+        const std::size_t before = hits.size();
         double along = 0.0;
-        for (std::size_t i = 1; i < c.path.size(); ++i) {
-            const Vec2 p0 = c.path[i - 1];
-            const Vec2 d = c.path[i] - p0;
+        for (std::size_t i = 1; i < path.size(); ++i) {
+            const Vec2 p0 = path[i - 1];
+            const Vec2 d = path[i] - p0;
             const double len = length(d);
             for (std::size_t j = 1; j < tess.size(); ++j) {
                 const Vec2 q0 = tess[j - 1];
@@ -8354,10 +8686,34 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
                 const double t = (w.x * e.y - w.y * e.x) / den;
                 const double u = (w.x * d.y - w.y * d.x) / den;
                 if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0) {
-                    hits.push_back(Hit{along + t * len, p0 + d * t});
+                    hits.push_back(Hit{along + t * len, p0 + d * t, h});
                 }
             }
             along += len;
+        }
+        if (c.window && hits.size() == before && tess.size() >= 2) {
+            // Wholly inside the window (it does not cross the edge): taken at its middle,
+            // after everything the walk meets.
+            Vec2 blo;
+            Vec2 bhi;
+            if (entity_aabb(store_, h, blo, bhi) && blo.x >= lo.x && blo.y >= lo.y && bhi.x <= hi.x &&
+                bhi.y <= hi.y) {
+                double run = 0.0;
+                for (std::size_t j = 1; j < tess.size(); ++j) {
+                    run += length(tess[j] - tess[j - 1]);
+                }
+                double half = run * 0.5;
+                Vec2 at = tess.front();
+                for (std::size_t j = 1; j < tess.size(); ++j) {
+                    const double seg = length(tess[j] - tess[j - 1]);
+                    if (seg >= half && seg > 0.0) {
+                        at = tess[j - 1] + (tess[j] - tess[j - 1]) * (half / seg);
+                        break;
+                    }
+                    half -= seg;
+                }
+                hits.push_back(Hit{total + 1.0, at, h});
+            }
         }
     }
     std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.along < b.along; });
@@ -8367,8 +8723,12 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
     int done = 0;
     int deleted = 0;
     Vec2 last{std::numeric_limits<double>::max(), 0.0};
+    std::vector<EntityHandle> taken; // a window takes each object once
     for (const Hit& hit : hits) {
         if (distance(hit.at, last) < 1e-9) {
+            continue;
+        }
+        if (c.window && std::find(taken.begin(), taken.end(), hit.of) != taken.end()) {
             continue;
         }
         last = hit.at;
@@ -8376,6 +8736,7 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
         if (target.is_null()) {
             continue; // already cut away by an earlier crossing
         }
+        taken.push_back(hit.of);
         if (c.extend) {
             apply_extend(hit.at, r, c.group);
             done += status_ == "Extended." ? 1 : 0;
@@ -8384,7 +8745,7 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
         apply_trim(hit.at, r, c.group);
         if (trim_outcome_ == TrimOutcome::Trimmed) {
             ++done;
-        } else if ((trim_outcome_ == TrimOutcome::NoEdge || trim_outcome_ == TrimOutcome::Whole) &&
+        } else if (c.quick && (trim_outcome_ == TrimOutcome::NoEdge || trim_outcome_ == TrimOutcome::Whole) &&
                    store_.is_valid(target)) {
             const Command original = capture_entity(target);
             remove_indexed(target);
@@ -8398,10 +8759,12 @@ void GeometryEngine::apply_trim_path(const TrimPathCommand& c) {
     if (deleted > 0) {
         dirty_ = true;
     }
+    const char* what = c.window ? "window" : "path";
     if (c.extend) {
-        report(done > 0 ? "Extended along the path." : "Extend: nothing along the path reaches a boundary.");
+        report(done > 0 ? std::string("Extended ") + std::to_string(done) + (done == 1 ? " object." : " objects.")
+                        : std::string("Extend: nothing along the ") + what + " reaches a boundary.");
     } else if (done + deleted == 0) {
-        report("Trim: the path crosses nothing to trim.");
+        report(std::string("Trim: the ") + what + " crosses nothing to trim.");
     } else {
         report("Trimmed " + std::to_string(done) + (done == 1 ? " object" : " objects") +
                (deleted > 0 ? ", deleted " + std::to_string(deleted) + " with nothing to trim them to." : "."));
@@ -8432,12 +8795,15 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     std::vector<Vec2> crossings;
     std::vector<Vec2> hits;
     for (const EntityHandle c : cand) {
-        if (c == h) {
+        if (c == h || !is_trim_edge(c)) {
             continue;
         }
         hits.clear();
         kernel_.intersect(store_, h, c, hits);
         crossings.insert(crossings.end(), hits.begin(), hits.end());
+    }
+    if (trim_edge_extend_) {
+        implied_crossings(h, crossings);
     }
     if (crossings.empty()) {
         trim_outcome_ = TrimOutcome::NoEdge;
@@ -8692,9 +9058,13 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     remove_indexed(h);
     push_erase_item(group, h, original);
     inherit_polyline(original);
+    std::vector<EntityHandle> made;
     for (const Command& piece : pieces) {
-        push_create_item(group, create_indexed(piece), piece);
+        const EntityHandle nh = create_indexed(piece);
+        push_create_item(group, nh, piece);
+        made.push_back(nh);
     }
+    note_trim_pieces(h, made);
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
@@ -9682,6 +10052,20 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, TrimPathCommand>) {
                 apply_trim_path(c);
             }
+            if constexpr (std::is_same_v<T, SetTrimEdgesCommand>) {
+                trim_edge_extend_ = c.edge_extend;
+                if (c.op == SetTrimEdgesCommand::Op::FromSelection && !selection_.empty()) {
+                    trim_edges_ = selection_; // stays selected: the edges show
+                    trim_edges_set_ = true;
+                } else if (c.op != SetTrimEdgesCommand::Op::EdgeMode) {
+                    if (trim_edges_set_) {
+                        selection_.clear(); // the chosen edges were showing as the selection
+                    }
+                    trim_edges_.clear();
+                    trim_edges_set_ = false;
+                }
+                geom_dirty_ = true;
+            }
             if constexpr (std::is_same_v<T, PasteClipboardCommand>) {
                 apply_paste_clipboard(c.at, c.group, c.at_cursor);
             }
@@ -9708,6 +10092,9 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, SetEntityLayerCommand>) {
                 apply_entity_layer(c.index, c.group);
+            }
+            if constexpr (std::is_same_v<T, LayerToolCommand>) {
+                apply_layer_tool(c);
             }
             if constexpr (std::is_same_v<T, SetEntityColorCommand>) {
                 apply_entity_color(c.by_layer, c.color, c.group);
@@ -10284,6 +10671,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, CloseDocumentCommand> ||
                 std::is_same_v<T, CopyClipboardCommand> || // read-only (snapshots selection)
                 std::is_same_v<T, PastePreviewCommand> ||   // rubber band only
+                std::is_same_v<T, SetTrimEdgesCommand> ||   // a setting, not an edit
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||
@@ -10304,7 +10692,14 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, MeasureQueryCommand> || std::is_same_v<T, MassPropQueryCommand> ||
                 std::is_same_v<T, TimeCommand> || std::is_same_v<T, StatusQueryCommand> ||
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
-            if constexpr (!view_or_io) {
+            bool edit = !view_or_io;
+            if constexpr (std::is_same_v<T, PasteDocumentCommand>) {
+                edit = !c.load_only; // read in as the clip only: nothing pasted yet
+            }
+            if constexpr (std::is_same_v<T, LayerToolCommand>) {
+                edit = layer_tool_changed_; // "No object found." changes nothing
+            }
+            if (edit) {
                 dirty_ = true;
                 ++edit_serial_;
                 // Select objects: Previous is the set the last edit worked on -- as it is
@@ -10353,6 +10748,10 @@ void GeometryEngine::load_document_replace(const Command& command) {
     undo_.clear();
     redo_.clear();
     selection_.clear();
+    trim_edges_.clear();
+    trim_edges_set_ = false;
+    layer_tool_undo_.clear();
+    layiso_off_.clear();
     geom_dirty_ = true;
     dirty_ = false;
     ++document_version_;
@@ -10410,6 +10809,10 @@ void GeometryEngine::new_document() {
 }
 
 void GeometryEngine::park_active(DocState& d) {
+    trim_edges_.clear(); // handles of this document: never the next one's edges
+    trim_edges_set_ = false;
+    layer_tool_undo_.clear(); // layer indices of this document
+    layiso_off_.clear();
     d.store = std::move(store_);
     d.grid = std::move(grid_);
     d.undo = std::move(undo_);

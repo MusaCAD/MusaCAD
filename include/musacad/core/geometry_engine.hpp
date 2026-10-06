@@ -302,6 +302,24 @@ private:
     /// What the last TRIM pick did, for Quick mode (an untrimmable pick deletes the object).
     enum class TrimOutcome : std::uint8_t { None, Trimmed, NoEdge, Whole };
     TrimOutcome trim_outcome_ = TrimOutcome::None;
+    // TRIM / EXTEND's chosen cutting edges (SetTrimEdgesCommand): none chosen = every
+    // object. An edge that is itself trimmed or extended passes the role to its pieces;
+    // undo's remap brings it back under its new handle.
+    std::vector<EntityHandle> trim_edges_;
+    bool trim_edges_set_ = false;
+    bool trim_edge_extend_ = false; ///< Edge=Extend: lines and arcs count extended
+    [[nodiscard]] bool is_trim_edge(EntityHandle c) const;
+    /// The edges to look at beyond the neighbourhood (Edge=Extend reaches anywhere).
+    [[nodiscard]] std::vector<EntityHandle> trim_edge_list() const;
+    void note_trim_pieces(EntityHandle original, const std::vector<EntityHandle>& made);
+    /// Edge=Extend: where `h` crosses the extensions of the line and arc edges.
+    void implied_crossings(EntityHandle h, std::vector<Vec2>& out) const;
+    // The layer tools: what LAYOFF / LAYFRZ's Undo restores, and what LAYUNISO turns back
+    // on (the layers the last LAYISO turned off).
+    void apply_layer_tool(const LayerToolCommand& c);
+    std::vector<std::pair<std::uint16_t, Layer>> layer_tool_undo_;
+    std::vector<std::uint16_t> layiso_off_;
+    bool layer_tool_changed_ = false; ///< the last layer tool changed something (the drawing is modified)
     std::function<void(const ClipboardExport&)> clipboard_listener_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;
     void apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group);

@@ -82,8 +82,9 @@ std::filesystem::path temp_dir() {
     std::filesystem::create_directories(dir);
     return dir;
 }
-/// A source drawing: a line of `len`, a block SUB (a 5-unit circle) inserted at (20, 0).
-std::string write_source(double len) {
+/// A source drawing, `part.musa` in the folder `case_dir` of its own (ctest runs the cases
+/// side by side): a line of `len`, a block SUB (a 5-unit circle) inserted at (20, 0).
+std::string write_source(double len, const char* case_dir) {
     Document doc;
     doc.lines.push_back(DocLine{{0, 0}, {len, 0}});
     DocBlockDef sub;
@@ -94,14 +95,16 @@ std::string write_source(double len) {
     in.block_name = "SUB";
     in.pos = {20, 0};
     doc.inserts.push_back(in);
-    const std::string path = (temp_dir() / "part.musa").string();
+    const auto dir = temp_dir() / case_dir;
+    std::filesystem::create_directories(dir);
+    const std::string path = (dir / "part.musa").string();
     std::ofstream(path) << serialize_native(doc);
     return path;
 }
 } // namespace
 
 TEST_CASE("#25 XREF attach / reload / detach: a block that follows its file, nested blocks carried along") {
-    const std::string src = write_source(10.0);
+    const std::string src = write_source(10.0, "attach");
     GeometryEngine engine;
     engine.start();
     engine.submit(XrefAttachCommand{src, {100, 0}, 2.0, 0.0, 1});
@@ -126,7 +129,7 @@ TEST_CASE("#25 XREF attach / reload / detach: a block that follows its file, nes
     CHECK(circle_near);
 
     // The file changes; Reload picks it up.
-    write_source(50.0);
+    write_source(50.0, "attach");
     engine.submit(XrefReloadCommand{});
     REQUIRE(wait_until(engine, [](const auto& s) { return segments_near(s, {100, 0}, {200, 0}) == 1; }));
     engine.submit(XrefListCommand{});
@@ -143,7 +146,7 @@ TEST_CASE("#25 XREF attach / reload / detach: a block that follows its file, nes
 }
 
 TEST_CASE("#25 XREF: native v32 and DXF keep the source path; a drawing re-reads its xrefs on open") {
-    const std::string src = write_source(30.0);
+    const std::string src = write_source(30.0, "paths");
     Document doc;
     DocBlockDef b;
     b.name = "part";
@@ -165,7 +168,7 @@ TEST_CASE("#25 XREF: native v32 and DXF keep the source path; a drawing re-reads
     CHECK(from_dxf.block_defs[0].xref_path == src);
 
     // Opening a drawing with an xref re-reads it: the stale 1-unit line becomes 30.
-    const std::string host = (temp_dir() / "host.musa").string();
+    const std::string host = (temp_dir() / "paths" / "host.musa").string();
     std::ofstream(host) << serialize_native(doc);
     GeometryEngine engine;
     engine.start();

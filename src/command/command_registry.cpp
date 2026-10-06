@@ -138,6 +138,32 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a parallel copy of a curve at a specified distance.");
     reg({"TR", "TRIM"}, [] { return std::make_unique<TrimCommand>(); }, "assets/ribbon/trim.svg",
         "Trim objects to meet the edges of other objects.");
+    using LK = LayToolCommand::Kind;
+    reg({"LAYOFF"}, [] { return std::make_unique<LayToolCommand>(LK::Off); }, "assets/ribbon/layer-off.svg",
+        "Turn off the layer of each object picked.");
+    reg({"LAYFRZ"}, [] { return std::make_unique<LayToolCommand>(LK::Freeze); }, "assets/ribbon/layer-freeze.svg",
+        "Freeze the layer of each object picked.");
+    reg({"LAYLCK"}, [] { return std::make_unique<LayToolCommand>(LK::Lock); }, "",
+        "Lock the layer of the object picked.");
+    reg({"LAYULK"}, [] { return std::make_unique<LayToolCommand>(LK::Unlock); }, "",
+        "Unlock the layer of the object picked.");
+    reg({"LAYMCUR"}, [] { return std::make_unique<LayToolCommand>(LK::MakeCurrent); },
+        "assets/ribbon/layer-current.svg", "Make the layer of the object picked the current layer.");
+    reg({"LAYCUR"}, [] { return std::make_unique<LayToolCommand>(LK::ToCurrent); }, "",
+        "Move the selected objects to the current layer.");
+    reg({"LAYISO"}, [] { return std::make_unique<LayToolCommand>(LK::Isolate); }, "assets/ribbon/layer-iso.svg",
+        "Turn off every layer but those of the selected objects.");
+    reg({"LAYUNISO"}, [] { return std::make_unique<LayToolCommand>(LK::Unisolate); }, "",
+        "Turn back on the layers the last LAYISO turned off.");
+    reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
+    reg({"LAYTHW"}, [] { return std::make_unique<LayToolCommand>(LK::AllThaw); }, "", "Thaw every layer.");
+    reg({"TRIMEXTENDMODE"},
+        [] { return std::make_unique<IntVarCommand>("TRIMEXTENDMODE", 0, 1, &TrimCommand::s_mode_); }, "",
+        "TRIM and EXTEND's mode: 1 Quick (every object an edge), 0 Standard (edges chosen first).");
+    reg({"EDGEMODE"}, [] { return std::make_unique<IntVarCommand>("EDGEMODE", 0, 1, &TrimCommand::s_edgemode_); },
+        "", "Whether TRIM and EXTEND's chosen edges count along their extension (1) or only as drawn (0).");
+    reg({"PROJMODE"}, [] { return std::make_unique<IntVarCommand>("PROJMODE", 0, 2, &TrimCommand::s_projmode_); },
+        "", "TRIM and EXTEND's projection: 0 None, 1 UCS, 2 View (a 2D drawing is the same in all three).");
     reg({"J", "JOIN"}, [] { return std::make_unique<JoinCommand>(); }, "assets/ribbon/join.svg",
         "Join collinear or connected objects into a single object.");
 

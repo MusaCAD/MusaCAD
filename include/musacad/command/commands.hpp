@@ -4,6 +4,8 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <optional>
 #include <vector>
 
 #include "musacad/command/command.hpp"
@@ -835,12 +837,14 @@ private:
     double row_h_ = 8.0;
 };
 
-/// TRIM: every pick is its own undo step and `Undo` takes the last one back.
-/// TRIM in AutoCAD's Quick mode: a pick trims the object at the pick between its nearest
-/// crossings (what cannot be trimmed is deleted); press and drag draws a freehand path,
-/// and two picks on empty space a fence, that trim everything they cross; Fence takes a
-/// fence of several points; shift-select extends instead. Every pick or path is one undo
-/// step, Undo takes the last back.
+/// TRIM / EXTEND as AutoCAD has them. Quick mode (TRIMEXTENDMODE 1) takes every object as
+/// a cutting edge: a pick trims the object there between its nearest crossings, a press
+/// and drag on empty space draws a freehand path and two clicks a fence that trim all they
+/// cross, and what has nothing to trim it to is deleted. Standard mode asks for the cutting
+/// edges first (Enter: every object) and offers Fence, Crossing and Edge (an edge counted
+/// along its extension, EDGEMODE). Shift-select swaps trim and extend; cuTting edges
+/// (Boundary edges), Crossing, mOde, Project, eRase and Undo. Every pick, path or erase is
+/// one undo step.
 class TrimCommand final : public ICommand {
 public:
     explicit TrimCommand(bool extend = false) : extend_(extend) {}
@@ -849,17 +853,80 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool wants_freehand() const override { return !done_; }
+    bool wants_freehand() const override { return !done_ && state_ == State::Objects; }
     void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+    bool in_selection_phase() const override {
+        return !done_ && (state_ == State::Edges || state_ == State::Erase) && select_.active();
+    }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+    inline static int s_mode_ = 1;     ///< TRIMEXTENDMODE: 1 Quick, 0 Standard
+    inline static int s_edgemode_ = 0; ///< EDGEMODE: 1 an edge counts along its extension
+    inline static int s_projmode_ = 1; ///< PROJMODE: 0 None, 1 UCS, 2 View (2D: kept, no effect)
 
 private:
+    enum class State : std::uint8_t { Edges, Objects, Fence, Corner, Mode, Project, Edge, Erase };
     void prompt(CommandContext& ctx);
-    void path(CommandContext& ctx, std::vector<core::Vec2> points, bool extend);
+    void begin_edges(CommandContext& ctx);
+    void end_edges(CommandContext& ctx);
+    void end_erase(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    void path(CommandContext& ctx, std::vector<core::Vec2> points, bool extend, bool window = false);
+    void step(CommandContext& ctx); ///< a new undo step after the first
+    State state_ = State::Objects;
     bool extend_ = false;
     bool done_ = false;
     int picks_ = 0;
     std::vector<core::Vec2> fence_; ///< a fence being drawn
     bool fence_open_ = false;       ///< typed Fence: points until Enter (else two picks)
+    std::optional<core::Vec2> corner_; ///< Crossing's first corner
+    SelectObjectsPhase select_;
+};
+
+/// The layer tools. LAYOFF and LAYFRZ take one object after another (`[Undo]` takes the last
+/// back) until Enter; LAYLCK, LAYULK and LAYMCUR take one; LAYCUR and LAYISO take a
+/// selection (objects selected beforehand at once); LAYUNISO, LAYON and LAYTHW act at once.
+class LayToolCommand final : public ICommand {
+public:
+    enum class Kind : std::uint8_t { Off, Freeze, Lock, Unlock, MakeCurrent, ToCurrent, Isolate, Unisolate, AllOn, AllThaw };
+    explicit LayToolCommand(Kind kind) : kind_(kind) {}
+    std::string name() const override;
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void prompt(CommandContext& ctx);
+    void finish_selection(CommandContext& ctx);
+    Kind kind_;
+    int changed_ = 0; ///< LAYOFF / LAYFRZ: objects taken so far, for [Undo]
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// A whole-number setting typed as a command: `Enter new value for NAME <v>:` (TRIMEXTENDMODE,
+/// EDGEMODE, PROJMODE).
+class IntVarCommand final : public ICommand {
+public:
+    IntVarCommand(std::string var, int lo, int hi, int* value)
+        : var_(std::move(var)), lo_(lo), hi_(hi), value_(value) {}
+    std::string name() const override { return var_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::string var_;
+    int lo_;
+    int hi_;
+    int* value_;
+    bool done_ = false;
 };
 
 /// COPYCLIP / CUTCLIP (Ctrl+C / Ctrl+X) and COPYBASE / CUTBASE (a base point first): the

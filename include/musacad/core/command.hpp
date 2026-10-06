@@ -709,13 +709,29 @@ struct TrimPickCommand {
     /// Quick mode (AutoCAD's default): an object with nothing to trim it to is deleted.
     bool quick = true;
 };
-/// TRIM / EXTEND Quick mode: every object a freehand path or a fence crosses is trimmed
+/// TRIM / EXTEND by a path: every object a freehand path or a fence crosses is trimmed
 /// (or extended) as if picked where it is crossed -- one undo step for the whole path.
+/// `window` (Crossing): `path` holds a window's two corners; each object crossing its edge
+/// is taken once, where the edge first meets it going clockwise from the first corner,
+/// and an object wholly inside it at its middle.
 struct TrimPathCommand {
     std::vector<Vec2> path;
     bool extend = false;
     double radius = 0.0;
     std::uint64_t group = 0;
+    bool window = false;
+    /// Quick mode: an object with nothing to trim it to is deleted.
+    bool quick = true;
+};
+/// TRIM / EXTEND's cutting (boundary) edges: every object (Quick mode, or Enter at
+/// `Select objects or <select all>:`), or the current selection (Standard mode's chosen
+/// edges; it stays selected, so it shows, until the edges go back to All). `edge_extend`
+/// is Edge=Extend: a line edge counts along its whole infinite line and an arc edge round
+/// its whole circle. EdgeMode changes only that.
+struct SetTrimEdgesCommand {
+    enum class Op : std::uint8_t { All, FromSelection, EdgeMode };
+    Op op = Op::All;
+    bool edge_extend = false;
 };
 
 /// Join the picked lines/arcs/open polylines into a single polyline. `picks[0]` is the
@@ -1535,6 +1551,20 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// The layer tools: `op` on the layer of the object at `pick` (LAYOFF, LAYFRZ, LAYLCK,
+/// LAYULK, LAYMCUR), on the selection (LAYCUR moves it to the current layer, LAYISO turns
+/// every other layer off), or on every layer (LAYON, LAYTHW). Unisolate turns back on what
+/// the last Isolate turned off; UndoLast takes back the last Off / Freeze. The engine
+/// names the layer in its report.
+struct LayerToolCommand {
+    enum class Op : std::uint8_t {
+        Off, Freeze, Lock, Unlock, MakeCurrent, ToCurrent, Isolate, Unisolate, AllOn, AllThaw, UndoLast
+    };
+    Op op = Op::Off;
+    Vec2 pick{};
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
 /// Move every selected entity to layer `index` (one undo group).
 struct SetEntityLayerCommand {
     std::uint16_t index = 0;
@@ -1613,7 +1643,7 @@ using Command =
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
-                 PastePreviewCommand, TrimPathCommand,
+                 PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, LayerToolCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
