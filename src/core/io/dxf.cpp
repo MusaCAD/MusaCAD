@@ -805,6 +805,9 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             break;
         }
         code_i(s, 70, dimtype);
+        if (d.text_angle != 0.0) {
+            code_d(s, 53, to_degrees(d.text_angle)); // the text's own angle
+        }
         if (static_cast<DimType>(d.type) == DimType::Linear) {
             // 50: the angle of a rotated (horizontal, vertical, rotated) dimension's line.
             DimData dl;
@@ -1982,6 +1985,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 d.line_pt = {getd(body, 15), getd(body, 25)};
             }
             d.type = static_cast<std::uint8_t>(dt);
+            if (find(body, 53) != nullptr) {
+                d.text_angle = to_radians(getd(body, 53)); // the text's own angle; 0 = as laid out
+            }
             if (const std::string* st = find(body, 3)) {
                 d.style = ensure_dimstyle(*st);
             }

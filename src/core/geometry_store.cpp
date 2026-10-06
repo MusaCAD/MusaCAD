@@ -14,6 +14,18 @@ EntityHandle GeometryStore::add_ellipse(Vec2 center, Vec2 major, double ratio, d
     return EntityHandle{slot.index, slot.generation, EntityKind::Ellipse};
 }
 
+bool GeometryStore::set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept {
+    if (h.kind != EntityKind::Dimension) {
+        return false;
+    }
+    if (DimData* d = dims_.get(h.index, h.generation)) {
+        d->text_angle = text_angle;
+        d->arc_leader = arc_leader;
+        return true;
+    }
+    return false;
+}
+
 bool GeometryStore::set_dim_aux(EntityHandle h, double aux) noexcept {
     if (h.kind != EntityKind::Dimension) {
         return false;

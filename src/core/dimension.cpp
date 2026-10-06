@@ -547,6 +547,9 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     /// frame around exactly what will be drawn. The frame is dimension-line geometry,
     /// so it takes that colour and is picked and bounded with the dimension.
     const auto finish_label = [&]() {
+        if (d.text_angle != 0.0) {
+            g.text_rotation = d.text_angle; // the Angle option: the text at its own angle
+        }
         const double h = g.text_height;
         const double cs = std::cos(g.text_rotation);
         const double sn = std::sin(g.text_rotation);
@@ -833,6 +836,14 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         append_arrowhead(g.arrow_fills, g.arrow_lines, e1, Vec2{-std::sin(a1), std::cos(a1)},
                          style.arrow_size, atype);
         const double am = a0 + sweep * 0.5;
+        if (d.arc_leader) {
+            // DIMARC Leader: from the dimension arc under the text radially in to the arc
+            // it measures, the arrowhead on that arc pointing at the centre.
+            const Vec2 tip = on(am, r);
+            seg(g.dim_lines, on(am, rd), tip);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, tip, Vec2{-std::cos(am), -std::sin(am)},
+                             style.arrow_size, atype);
+        }
         g.text_pos = on(am, rd + style.text_height * 0.7);
         g.text_rotation = 0.0;
         g.text_justify = text::Justify::Center;

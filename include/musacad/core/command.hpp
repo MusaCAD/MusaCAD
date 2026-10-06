@@ -549,9 +549,37 @@ struct MoveSelectionCommand {
 /// `baseline` false = continue the chain from the previous second extension line;
 /// true = stack from the previous FIRST extension line, offset by the baseline spacing.
 struct ChainDimensionCommand {
-    Vec2 at;              ///< the new second extension-line origin
+    Vec2 at;              ///< the new second extension-line origin (Select: the pick)
     bool baseline = false;
     std::uint64_t group = 0;
+    /// Add the next dimension; Select the dimension at `at` to go on from (its extension
+    /// line -- or ray -- nearer `at` is the one gone on from); Start a run (from the last
+    /// dimension drawn); Back to the dimension gone on from before the last Add (Undo).
+    enum class Op : std::uint8_t { Add, Select, Start, Back };
+    Op op = Op::Add;
+    double spacing = 0.0;     ///< DIMBASELINE Offset (0 = the style's, 1.5 text heights)
+    double pick_radius = 0.0; ///< Select
+};
+
+/// DIM's aliGn and Distribute, on the selected dimensions: Align puts each on the base
+/// dimension's line (parallel ones), arc (concentric angular ones) or leader end (ordinate
+/// ones of the same datum); DistributeEqual spaces parallel dimensions evenly between the
+/// two outermost; DistributeOffset stacks them `offset` apart outward from the base. The
+/// base is the dimension at `base_pick` (not needed for DistributeEqual). One undo step.
+struct DimArrangeCommand {
+    enum class Op : std::uint8_t { Align, DistributeEqual, DistributeOffset };
+    Op op = Op::Align;
+    Vec2 base_pick{};
+    double radius = 0.0;
+    double offset = 0.0;
+    std::uint64_t group = 0;
+};
+/// DIMLAYER: the layer new dimensions go on -- by name, or the layer of the object at
+/// `pick`; an empty name (or ".") is the current layer.
+struct SetDimLayerCommand {
+    std::string name;
+    std::optional<Vec2> pick{};
+    double radius = 0.0;
 };
 
 /// Inquiry (issue #30). Read-only queries resolved on the geometry thread and reported
@@ -1012,6 +1040,10 @@ struct AddDimensionCommand {
     Vec2 text_offset = {};
     /// The extra datum of the newer types (see DimData::aux). Zero otherwise.
     double aux = 0.0;
+    /// The label's angle and an arc-length dimension's leader (DimData::text_angle,
+    /// DimData::arc_leader).
+    double text_angle = 0.0;
+    bool arc_leader = false;
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1043,6 +1075,12 @@ struct AddObjectDimensionCommand {
     /// (place_angular_dim). Unset: a dimension from before, the smaller angle.
     std::optional<Vec2> arc_at{};
     std::optional<Vec2> quadrant{};
+    /// The Angle option: the label's angle (radians; 0 = as laid out).
+    double text_angle = 0.0;
+    /// DIMARC: Leader, and Partial's two points on the arc (the part to dimension).
+    bool arc_leader = false;
+    std::optional<Vec2> partial_from{};
+    std::optional<Vec2> partial_to{};
 };
 
 /// Non-mutating query: resolve the def points of an object-based dimension under
@@ -1643,7 +1681,7 @@ using Command =
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
-                 PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, LayerToolCommand,
+                 PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

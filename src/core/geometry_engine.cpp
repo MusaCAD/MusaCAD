@@ -127,6 +127,9 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
     // The current entity properties (CECOLOR / CELTYPE / CELWEIGHT) on the current layer.
     EntityProps fresh = current_props_;
     fresh.layer = store_.current_layer();
+    if (dim_layer_ && *dim_layer_ < store_.layers().size() && std::holds_alternative<AddDimensionCommand>(add_command)) {
+        fresh.layer = *dim_layer_; // DIMLAYER
+    }
     fresh.set_space(store_.active_space()); // a new object belongs to the space being edited
     if (poly_inherit_) {
         if (const auto* pc = std::get_if<AddPolylineCommand>(&add_command);
@@ -1892,52 +1895,121 @@ EntityHandle GeometryEngine::most_recent_dimension() const {
     return EntityHandle::null();
 }
 
-void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group) {
-    const EntityHandle prev = most_recent_dimension();
+void GeometryEngine::apply_chain_dimension(const ChainDimensionCommand& c) {
+    using Op = ChainDimensionCommand::Op;
+    const bool baseline = c.baseline;
+    if (c.op == Op::Start) {
+        chain_base_ = EntityHandle::null();
+        chain_from_a_.reset();
+        chain_stack_.clear();
+        return;
+    }
+    if (c.op == Op::Back) {
+        if (!chain_stack_.empty()) {
+            chain_base_ = chain_stack_.back().first;
+            chain_from_a_ = chain_stack_.back().second;
+            chain_stack_.pop_back();
+        }
+        return;
+    }
+    if (c.op == Op::Select) {
+        // The nearest dimension under the pick, of a kind that chains.
+        std::vector<EntityHandle> cand;
+        const double r = c.pick_radius > 0.0 ? c.pick_radius : 1e-9;
+        grid_.query({c.at.x - r, c.at.y - r}, {c.at.x + r, c.at.y + r}, cand);
+        EntityHandle best = EntityHandle::null();
+        double best_d2 = r * r;
+        Vec2 cp;
+        for (const EntityHandle h : cand) {
+            if (h.kind == EntityKind::Dimension && selectable(h) && kernel_.closest_point(store_, h, c.at, cp) &&
+                length_squared(cp - c.at) <= best_d2) {
+                best_d2 = length_squared(cp - c.at);
+                best = h;
+            }
+        }
+        if (best.is_null()) {
+            report("No dimension found.");
+            return;
+        }
+        const DimData* d = store_.dimension(best);
+        if (d->type != DimType::Linear && d->type != DimType::Aligned && d->type != DimType::Angular &&
+            d->type != DimType::Ordinate) {
+            report("The dimension selected is not a linear, aligned, ordinate or angular dimension.");
+            return;
+        }
+        chain_base_ = best;
+        // Go on from the extension line (the ray) nearer the pick.
+        if (d->type == DimType::Angular) {
+            chain_from_a_ = distance(c.at, d->b) <= distance(c.at, d->line_pt);
+        } else if (d->type != DimType::Ordinate) {
+            chain_from_a_ = distance(c.at, d->a) <= distance(c.at, d->b);
+        } else {
+            chain_from_a_.reset();
+        }
+        return;
+    }
+
+    const EntityHandle prev = store_.is_valid(chain_base_) ? chain_base_ : most_recent_dimension();
     if (!store_.is_valid(prev)) {
-        report(baseline ? "DIMBASELINE: no previous dimension to stack from."
-                        : "DIMCONTINUE: no previous dimension to continue from.");
+        report(baseline ? "DIMBASELINE: no previous dimension to stack from; select a base dimension."
+                        : "DIMCONTINUE: no previous dimension to continue from; select a dimension.");
         return;
     }
     const DimData* p = store_.dimension(prev);
-    if (p->type != DimType::Linear && p->type != DimType::Aligned) {
-        // Continuing a radius/diameter/angular dimension is not defined; say so rather
-        // than producing something arbitrary.
-        report(baseline ? "DIMBASELINE needs a linear or aligned dimension to stack from."
-                        : "DIMCONTINUE needs a linear or aligned dimension to continue from.");
+    if (p->type != DimType::Linear && p->type != DimType::Aligned && p->type != DimType::Angular &&
+        p->type != DimType::Ordinate) {
+        report(baseline ? "DIMBASELINE needs a linear, aligned, ordinate or angular dimension to stack from."
+                        : "DIMCONTINUE needs a linear, aligned, ordinate or angular dimension to continue from.");
         return;
     }
-
-    // The previous dimension's line direction and which way its dim line sits relative to
-    // the def points -- both derived, so a chain follows a dimension that was later moved.
-    const Vec2 dir = dim_line_direction(*p);
-    // Which side of the def points the dimension line sits on. This must be measured
-    // along the PERPENDICULAR: `line_pt - foot_of_a` is parallel to `dir` by construction
-    // (the foot IS the projection of `a` onto the line through `line_pt` along `dir`), so
-    // using it gives a direction along the dimension instead of away from it, and a
-    // baseline stack that never offsets.
-    const Vec2 perp{-dir.y, dir.x};
-    const Vec2 away = dot(p->line_pt - p->a, perp) >= 0.0 ? perp : perp * -1.0;
-
     const DimStyle* raw = store_.dimstyle(p->style);
     const DimStyle st = apply_dim_overrides(raw != nullptr ? *raw : DimStyle{}, p->overrides);
     // Baseline spacing follows AutoCAD's DIMDLI default proportion (3.75 mm at 2.5 mm
-    // text). Derived from the text height rather than stored as its own style variable --
-    // a deliberate simplification, recorded in docs/TODO.md.
-    const double spacing = st.text_height * 1.5;
+    // text), unless Offset gave one.
+    const double spacing = c.spacing > 0.0 ? c.spacing : st.text_height * 1.5;
+    // Which extension line (ray) of the previous dimension this one starts from.
+    const bool from_a = chain_from_a_.value_or(baseline);
 
     DimData d;
     d.type = p->type;
-    d.a = baseline ? p->a : p->b; // stack from the first origin, or continue from the second
-    d.b = at;
-    d.line_pt = baseline ? p->line_pt + away * spacing : p->line_pt;
     d.style = p->style;
     d.props = p->props;
     d.overrides = p->overrides; // the chain inherits the previous dimension's look
-    // ... and a linear one its angle: the next dimension of a vertical chain is vertical,
-    // whatever its two points differ most on.
-    if (p->type == DimType::Linear) {
-        d.aux = p->aux != 0.0 ? p->aux : linear_dim_aux(std::atan2(dir.y, dir.x));
+    if (p->type == DimType::Ordinate) {
+        // The next feature on the same datum, its leader ending level with the last one's.
+        d.a = c.at;
+        d.b = p->aux < 0.5 ? Vec2{c.at.x, p->b.y} : Vec2{p->b.x, c.at.y};
+        d.line_pt = d.b;
+        d.aux = p->aux;
+    } else if (p->type == DimType::Angular) {
+        // The same vertex and the same arc (a baseline one a spacing further out), from the
+        // previous dimension's ray to the new point -- the smaller of the two angles.
+        const Vec2 v = p->a;
+        const Vec2 origin = from_a ? p->b : p->line_pt;
+        const double r0 = p->aux > 0.0 ? p->aux : std::max(distance(v, p->b), distance(v, p->line_pt));
+        d.a = v;
+        d.b = origin;
+        d.line_pt = c.at;
+        if (ccw_sweep(d.b - v, d.line_pt - v) > kPi) {
+            std::swap(d.b, d.line_pt); // counter-clockwise from the new ray instead
+        }
+        d.aux = baseline ? r0 + spacing : r0;
+    } else {
+        // The previous dimension's line direction and which way its dim line sits relative to
+        // the def points -- both derived, so a chain follows a dimension that was later moved.
+        const Vec2 dir = dim_line_direction(*p);
+        // Which side of the def points the dimension line sits on, measured along the
+        // PERPENDICULAR (`line_pt - foot_of_a` is parallel to `dir` by construction).
+        const Vec2 perp{-dir.y, dir.x};
+        const Vec2 away = dot(p->line_pt - p->a, perp) >= 0.0 ? perp : perp * -1.0;
+        d.a = from_a ? p->a : p->b; // stack from, or continue from, the extension line taken
+        d.b = c.at;
+        d.line_pt = baseline ? p->line_pt + away * spacing : p->line_pt;
+        // ... and a linear one its angle: the next dimension of a vertical chain is vertical,
+        // whatever its two points differ most on.
+        if (p->type == DimType::Linear) {
+            d.aux = p->aux != 0.0 ? p->aux : linear_dim_aux(std::atan2(dir.y, dir.x));
+        }
     }
 
     AddDimensionCommand cmd;
@@ -1946,16 +2018,157 @@ void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t
     cmd.b = d.b;
     cmd.line_pt = d.line_pt;
     cmd.style = d.style;
-    cmd.group = group;
+    cmd.group = c.group;
     cmd.props = d.props;
     cmd.overrides = d.overrides;
     cmd.aux = d.aux;
     const Command command = cmd;
     const EntityHandle nh = create_indexed(command);
-    push_create_item(group, nh, command);
+    push_create_item(c.group, nh, command);
+    // The next one goes on from this one (the last drawn); Undo comes back to `prev`.
+    chain_stack_.emplace_back(chain_base_, chain_from_a_);
+    chain_base_ = EntityHandle::null();
+    chain_from_a_.reset();
     redo_.clear();
     geom_dirty_ = true;
     report(baseline ? "Baseline dimension added." : "Continued dimension added.");
+}
+
+void GeometryEngine::apply_dim_arrange(const DimArrangeCommand& c) {
+    using Op = DimArrangeCommand::Op;
+    std::vector<EntityHandle> dims;
+    for (const EntityHandle h : selection_) {
+        if (h.kind == EntityKind::Dimension && store_.is_valid(h)) {
+            dims.push_back(h);
+        }
+    }
+    EntityHandle base = EntityHandle::null();
+    if (c.op != Op::DistributeEqual) {
+        std::vector<EntityHandle> cand;
+        const double r = c.radius > 0.0 ? c.radius : 1e-9;
+        grid_.query({c.base_pick.x - r, c.base_pick.y - r}, {c.base_pick.x + r, c.base_pick.y + r}, cand);
+        double best = r * r;
+        Vec2 cp;
+        for (const EntityHandle h : cand) {
+            if (h.kind == EntityKind::Dimension && selectable(h) && kernel_.closest_point(store_, h, c.base_pick, cp) &&
+                length_squared(cp - c.base_pick) <= best) {
+                best = length_squared(cp - c.base_pick);
+                base = h;
+            }
+        }
+        if (base.is_null()) {
+            report("No base dimension found.");
+            return;
+        }
+        std::erase(dims, base);
+    }
+    if (dims.empty()) {
+        report("No dimensions selected.");
+        return;
+    }
+    // One change: a dimension re-created with new placement, the old one erased.
+    std::vector<EntityHandle> made;
+    const auto replace = [&](EntityHandle h, const DimData& nd) {
+        Command original = capture_entity(h);
+        Command changed = original;
+        if (auto* a = std::get_if<AddDimensionCommand>(&changed)) {
+            a->line_pt = nd.line_pt;
+            a->b = nd.b;
+            a->aux = nd.aux;
+            a->group = c.group;
+        }
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(changed);
+        push_create_item(c.group, nh, changed);
+        made.push_back(nh);
+    };
+    const auto parallel = [](const DimData& a, const DimData& b) {
+        const Vec2 da = dim_line_direction(a);
+        const Vec2 db = dim_line_direction(b);
+        return std::abs(da.x * db.y - da.y * db.x) < 1e-6;
+    };
+    const auto is_line_dim = [](const DimData& d) { return d.type == DimType::Linear || d.type == DimType::Aligned; };
+    int moved = 0;
+    int skipped = 0;
+    if (c.op == Op::Align) {
+        const DimData b = *store_.dimension(base);
+        for (const EntityHandle h : dims) {
+            DimData d = *store_.dimension(h);
+            if (is_line_dim(b) && is_line_dim(d) && parallel(b, d)) {
+                const Vec2 dir = dim_line_direction(b);
+                const Vec2 perp{-dir.y, dir.x};
+                d.line_pt = d.line_pt + perp * dot(b.line_pt - d.line_pt, perp);
+            } else if (b.type == DimType::Angular && d.type == DimType::Angular && distance(b.a, d.a) < 1e-9 &&
+                       b.aux > 0.0) {
+                d.aux = b.aux; // concentric: the same arc
+            } else if (b.type == DimType::Ordinate && d.type == DimType::Ordinate && (b.aux < 0.5) == (d.aux < 0.5)) {
+                d.b = b.aux < 0.5 ? Vec2{d.b.x, b.b.y} : Vec2{b.b.x, d.b.y}; // the leaders end level
+                d.line_pt = d.b;
+            } else {
+                ++skipped;
+                continue;
+            }
+            replace(h, d);
+            ++moved;
+        }
+    } else {
+        // Parallel line dimensions, ordered by how far each line stands from the first's.
+        const DimData first = *store_.dimension(c.op == Op::DistributeOffset ? base : dims.front());
+        if (!is_line_dim(first)) {
+            report("Distribute works on parallel linear and aligned dimensions.");
+            return;
+        }
+        const Vec2 dir = dim_line_direction(first);
+        Vec2 perp{-dir.y, dir.x};
+        // Outward: the side the dimension lines stand on from the measured points.
+        if (dot(first.line_pt - first.a, perp) < 0.0) {
+            perp = perp * -1.0;
+        }
+        std::vector<std::pair<double, EntityHandle>> order;
+        for (const EntityHandle h : dims) {
+            const DimData* d = store_.dimension(h);
+            if (is_line_dim(*d) && parallel(first, *d)) {
+                order.emplace_back(dot(d->line_pt - first.line_pt, perp), h);
+            } else {
+                ++skipped;
+            }
+        }
+        std::sort(order.begin(), order.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+        if (c.op == Op::DistributeEqual) {
+            if (order.size() < 3) {
+                report("Distribute Equal needs three or more parallel dimensions.");
+                return;
+            }
+            const double lo = order.front().first;
+            const double hi = order.back().first;
+            for (std::size_t i = 1; i + 1 < order.size(); ++i) {
+                DimData d = *store_.dimension(order[i].second);
+                const double want = lo + (hi - lo) * static_cast<double>(i) / static_cast<double>(order.size() - 1);
+                d.line_pt = d.line_pt + perp * (want - order[i].first);
+                replace(order[i].second, d);
+                ++moved;
+            }
+        } else {
+            const double step = c.offset > 0.0 ? c.offset : 3.75;
+            for (std::size_t i = 0; i < order.size(); ++i) {
+                DimData d = *store_.dimension(order[i].second);
+                const double want = step * static_cast<double>(i + 1);
+                d.line_pt = d.line_pt + perp * (want - order[i].first);
+                replace(order[i].second, d);
+                ++moved;
+            }
+        }
+    }
+    selection_ = made;
+    redo_.clear();
+    geom_dirty_ = true;
+    if (moved > 0) {
+        dirty_ = true;
+    }
+    report(std::to_string(moved) + (moved == 1 ? " dimension " : " dimensions ") +
+           (c.op == Op::Align ? "aligned" : "distributed") +
+           (skipped > 0 ? "; " + std::to_string(skipped) + " left as they were (not parallel, concentric or on the same datum)." : "."));
 }
 
 void GeometryEngine::apply_area_query(const AreaQueryCommand& c) {
@@ -6957,6 +7170,39 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
             place_angular_dim(d, d.b, from); // no location: the arc at the arc / circle itself
         }
     }
+    if (static_cast<DimType>(c.type) == DimType::ArcLength && c.partial_from && c.partial_to) {
+        // DIMARC Partial: the part of the arc between the two points, each taken onto the
+        // arc (a point beyond an end goes to the nearer end).
+        const Vec2 ctr = d.a;
+        const double r = distance(ctr, d.b);
+        const double a0 = std::atan2(d.b.y - ctr.y, d.b.x - ctr.x);
+        double sweep = std::fmod(d.aux - a0, kTwoPi);
+        if (sweep < 0.0) {
+            sweep += kTwoPi;
+        }
+        if (sweep <= 1e-12) {
+            sweep = kTwoPi;
+        }
+        const auto along = [&](Vec2 q) {
+            double t = std::fmod(std::atan2(q.y - ctr.y, q.x - ctr.x) - a0, kTwoPi);
+            if (t < 0.0) {
+                t += kTwoPi;
+            }
+            if (t > sweep) {
+                t = (t - sweep) < (kTwoPi - t) ? sweep : 0.0;
+            }
+            return t;
+        };
+        double t1 = along(*c.partial_from);
+        double t2 = along(*c.partial_to);
+        if (t1 > t2) {
+            std::swap(t1, t2);
+        }
+        if (t2 - t1 > 1e-9) {
+            d.b = Vec2{ctr.x + r * std::cos(a0 + t1), ctr.y + r * std::sin(a0 + t1)};
+            d.aux = a0 + t2;
+        }
+    }
     AddDimensionCommand dim;
     dim.type = c.type;
     dim.a = d.a;
@@ -6966,6 +7212,8 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
     dim.style = c.style;
     dim.group = c.group;
     dim.text_override = c.text_override;
+    dim.text_angle = c.text_angle;
+    dim.arc_leader = c.arc_leader && static_cast<DimType>(c.type) == DimType::ArcLength;
     const std::uint64_t group = c.group;
     const Command add = dim;
     const EntityHandle nh = create_indexed(add);
@@ -9774,7 +10022,7 @@ void GeometryEngine::apply(const Command& command) {
                 forget_stretch_windows();
             }
             if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
-                apply_chain_dimension(c.at, c.baseline, c.group);
+                apply_chain_dimension(c);
             }
             if constexpr (std::is_same_v<T, AreaQueryCommand>) {
                 apply_area_query(c);
@@ -10051,6 +10299,43 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, TrimPathCommand>) {
                 apply_trim_path(c);
+            }
+            if constexpr (std::is_same_v<T, DimArrangeCommand>) {
+                apply_dim_arrange(c);
+            }
+            if constexpr (std::is_same_v<T, SetDimLayerCommand>) {
+                std::optional<std::uint16_t> layer;
+                bool ok = true;
+                if (c.pick) {
+                    const EntityHandle h = pick_nearest(*c.pick, c.radius);
+                    const EntityProps* p = h.is_null() ? nullptr : store_.props(h);
+                    if (p == nullptr) {
+                        report("No object found.");
+                        ok = false;
+                    } else {
+                        layer = p->layer;
+                    }
+                } else if (!c.name.empty() && c.name != ".") {
+                    const std::size_t n = store_.layers().size();
+                    for (std::size_t i = 0; i < n && !layer; ++i) {
+                        std::string a = store_.layers()[i].name;
+                        std::string b = c.name;
+                        std::transform(a.begin(), a.end(), a.begin(), [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                        std::transform(b.begin(), b.end(), b.begin(), [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                        if (a == b) {
+                            layer = static_cast<std::uint16_t>(i);
+                        }
+                    }
+                    if (!layer) {
+                        report("Layer \"" + c.name + "\" not found.");
+                        ok = false;
+                    }
+                }
+                if (ok) {
+                    dim_layer_ = layer;
+                    report(layer ? "New dimensions go on layer \"" + store_.layers()[*layer].name + "\"."
+                                 : std::string("New dimensions go on the current layer."));
+                }
             }
             if constexpr (std::is_same_v<T, SetTrimEdgesCommand>) {
                 trim_edge_extend_ = c.edge_extend;
@@ -10672,6 +10957,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, CopyClipboardCommand> || // read-only (snapshots selection)
                 std::is_same_v<T, PastePreviewCommand> ||   // rubber band only
                 std::is_same_v<T, SetTrimEdgesCommand> ||   // a setting, not an edit
+                std::is_same_v<T, SetDimLayerCommand> ||    // a setting, not an edit
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||
@@ -10811,6 +11097,10 @@ void GeometryEngine::new_document() {
 void GeometryEngine::park_active(DocState& d) {
     trim_edges_.clear(); // handles of this document: never the next one's edges
     trim_edges_set_ = false;
+    chain_base_ = EntityHandle::null();
+    chain_from_a_.reset();
+    chain_stack_.clear();
+    dim_layer_.reset(); // a layer index of this document
     layer_tool_undo_.clear(); // layer indices of this document
     layiso_off_.clear();
     d.store = std::move(store_);

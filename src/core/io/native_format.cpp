@@ -695,6 +695,10 @@ std::string serialize_native(const Document& doc) {
         // v23: the extra datum (ordinate axis / jog position / arc end angle).
         s += ' ';
         append_double(s, d.aux);
+        // v39: the label's angle and an arc-length dimension's leader.
+        s += ' ';
+        append_double(s, d.text_angle);
+        s += d.arc_leader ? " 1" : " 0";
         s += '\n';
         s += d.prefix;
         s += '\n';
@@ -1943,7 +1947,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             vals.clear();
             // 37 = v19 (the override block's 16 fields + decoration + the 2-token offset)
             // 38 = v23 (+ the aux datum)
-            const bool has_aux = tok.size() == 38;
+            // 40 = v39 (+ the text angle and the arc-length leader)
+            const bool has_text_angle = tok.size() == 40;
+            const bool has_aux = tok.size() == 38 || has_text_angle;
             const bool has_move = tok.size() == 37 || has_aux;
             const bool has_fit = tok.size() == 35 || has_move;
             const bool has_decor = tok.size() == 34 || has_fit;
@@ -1967,6 +1973,8 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::string doverride;
             Vec2 dtext_offset{};
             double daux = 0.0;
+            double dtext_angle = 0.0;
+            std::uint64_t dleader = 0;
             if (has_decor) {
                 // The decoration follows the override block, which is one field wider
                 // from v16 -- so its offset is keyed to the same discriminator.
@@ -1993,6 +2001,9 @@ IoResult parse_native(std::string_view text, Document& out) {
                     if (has_aux && !to_double(tok[db + 5], daux)) {
                         return fail("DIM aux datum malformed");
                     }
+                    if (has_text_angle && (!to_double(tok[db + 6], dtext_angle) || !to_uint(tok[db + 7], dleader))) {
+                        return fail("DIM text angle malformed");
+                    }
                 }
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
@@ -2007,7 +2018,9 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       tol,
                                       doverride,
                                       dtext_offset,
-                                      daux});
+                                      daux,
+                                      dtext_angle,
+                                      dleader != 0});
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");

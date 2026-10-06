@@ -30,6 +30,18 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   point while the objects follow the cursor. It also pastes what other programs copy: an
   image is embedded in the drawing, and text becomes a multiline text. **COPYBASE** /
   **CUTBASE** take a base point first, and **PASTEORIG** pastes at the original coordinates.
+- **Dimensions, the rest of AutoCAD's options** (#56, #57) -- **Angle** at every dimension's
+  placement prompt stands its text at an angle of its own. **DIMARC** gains **Partial**, for
+  the part of an arc between two points, and **Leader**, a radial leader from the text in to
+  the arc. **DIMCONTINUE** and **DIMBASELINE** take `[Select/Undo]` (and **Offset** for the
+  baseline spacing) -- Select goes on from the extension line nearer the pick -- and chain
+  angular and ordinate dimensions too. **DIM** places one dimension after another until
+  Enter: a line aligned (a second line makes the angle between them), a circle by its
+  diameter, an arc by its radius, two points linearly, previewing the dimension a hovered
+  object would get; Angular, Baseline, Continue and Ordinate run inside it, **aliGn** and
+  **Distribute** arrange dimensions already drawn, **Layer** sets **DIMLAYER**, the layer new
+  dimensions go on. Files keep the text angle and the leader: the format is now v39, and
+  DXF carries the angle (code 53).
 - **The layer tools** (#55) -- **LAYOFF** and **LAYFRZ** turn off or freeze the layer of
   each object picked (Undo takes the last back; the current layer is never frozen),
   **LAYLCK** / **LAYULK** lock and unlock the picked object's layer, **LAYMCUR** makes it

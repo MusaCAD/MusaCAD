@@ -68,7 +68,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 38;
+inline constexpr std::uint32_t kFormatVersion = 39;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -190,6 +190,8 @@ struct DocDim {
     std::string text_override;
     Vec2 text_offset{};
     double aux = 0.0; ///< v23: the extra datum of ordinate / jogged / arc-length dims
+    double text_angle = 0.0;  ///< v39: the label's angle (DimData::text_angle)
+    bool arc_leader = false;  ///< v39: an arc-length dimension's leader
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

@@ -2796,8 +2796,10 @@ bool MainWindow::selftest_annotation() {
     // right before the pick so it isn't clobbered by an intervening timer tick.
     type("DIM");
     processor_->set_hovered_kind(core::EntityKind::Circle);
-    type("75,0"); // pick the circle at (70,0) r=5
+    processor_->pick_point({75, 0}, std::nullopt); // pick the circle at (70,0) r=5 (a typed point is a first origin)
+    processor_->set_hovered_kind(std::nullopt);
     type("88,0"); // placement
+    type("");     // DIM goes on until Enter
     const bool smart_ok = pump([this, prev] { return viewport_->line_vertex_count() > prev; });
     std::printf("[selftest] DIM smart (circle -> diameter) renders: %s\n",
                 smart_ok ? "PASS" : "FAIL");

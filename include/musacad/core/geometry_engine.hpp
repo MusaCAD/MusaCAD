@@ -322,7 +322,16 @@ private:
     bool layer_tool_changed_ = false; ///< the last layer tool changed something (the drawing is modified)
     std::function<void(const ClipboardExport&)> clipboard_listener_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;
-    void apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group);
+    void apply_chain_dimension(const ChainDimensionCommand& c);
+    // DIMCONTINUE / DIMBASELINE: the dimension selected to go on from (null = the last one
+    // drawn), which of its extension lines (unset = the second for Continue, the first for
+    // Baseline), and what each Add replaced, for Undo.
+    EntityHandle chain_base_{};
+    std::optional<bool> chain_from_a_{};
+    std::vector<std::pair<EntityHandle, std::optional<bool>>> chain_stack_;
+    void apply_dim_arrange(const DimArrangeCommand& c);
+    /// DIMLAYER: the layer new dimensions go on (unset = the current layer).
+    std::optional<std::uint16_t> dim_layer_{};
     void apply_area_query(const AreaQueryCommand& c);
     [[nodiscard]] std::string list_geometry(EntityHandle h) const;
     [[nodiscard]] std::string list_block(EntityHandle h) const;

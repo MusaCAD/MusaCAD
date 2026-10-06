@@ -2601,3 +2601,21 @@ that would be flaky; geometry correctness is asserted numerically elsewhere.
   the render-side stroke font currently has only digits + a few glyphs, so a full
   alphabet (or a Qt text overlay) is needed first.
 * **Windows** — build is configured per docs/BUILD.md but verified only on Linux.
+
+## Dimension text angle and the arc-length leader (issues #56, #57)
+
+`DimData` gains `text_angle` (radians from the x axis; 0 = the dimension's own layout, the
+text along its line or upright on an angular arc) and `arc_leader` (an arc-length
+dimension's radial leader), and grows 184 → **200 B**. `compute_dim_geometry` applies the
+angle in `finish_label`, the one place every type's label becomes final, so the Limits
+second line, the basic-dimension frame and the moved-label connector all follow it.
+Native **v39**: two trailing tokens on the `DIM` record (40 tokens; 38 is v23), the angle
+and the leader flag. DXF writes and reads the angle as group 53 on DIMENSION; the leader
+is native only, since an arc-length dimension is exported as an aligned one.
+
+DIMCONTINUE / DIMBASELINE keep a little state on the geometry thread: the dimension
+selected to go on from (null = the last one drawn, found by walking the undo log as
+before), which of its extension lines, and a stack of what each Add replaced so the
+command's Undo can come back to a selected base. DIM runs the existing dimension commands
+as sub-commands, forwarding input, hover and selection gestures, so every kind keeps its
+own options and preview.

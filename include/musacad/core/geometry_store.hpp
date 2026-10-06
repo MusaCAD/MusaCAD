@@ -170,6 +170,11 @@ struct DimData {
     /// sweep from ray 1 (b) to ray 2 (line_pt), up to a full turn; 0 there is one from
     /// before, the smaller angle between the rays. Zero for the other classic types.
     double aux = 0.0;
+    /// The label's angle (the Angle option, DIMTEDIT Angle; DXF 53), in radians from the x
+    /// axis (v39). 0 = as the dimension lays it out: along its line, upright on angular ones.
+    double text_angle = 0.0;
+    /// An arc-length dimension's Leader option (v39): a radial leader from the text to the arc.
+    bool arc_leader = false;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
     /// so adding grips to any dimension type can never collide with it.
@@ -510,6 +515,8 @@ public:
     /// the MEASURED value, never replace it.
     /// Sets the extra datum of a dimension (see DimData::aux); false if `h` is not one.
     bool set_dim_aux(EntityHandle h, double aux) noexcept;
+    /// The label's angle and the arc-length leader (DimData::text_angle, ::arc_leader).
+    bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},
