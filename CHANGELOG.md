@@ -47,6 +47,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   where the line is (or along its extension with Edge Extend).
 
 ### Changed
+- Building from source with GCC takes far less memory: its variable tracking (debugger
+  detail for optimised code) is off for the geometry engine, whose compile at -O2 -g (how
+  Flathub builds) now peaks at 8.6 GB instead of 16.5 GB.
 - The Flathub listing and the desktop's own search know Musa CAD by what it does: keywords
   (CAD, 2D, drafting, technical drawing, engineering, architecture, mechanical, floor plan,
   blueprint, DXF, DWG) in the desktop file and the metainfo, and the brand colours Flathub
