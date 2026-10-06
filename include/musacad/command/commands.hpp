@@ -592,6 +592,10 @@ private:
 /// DIMCONTINUE (DCO) / DIMBASELINE (DBA) -- issue #28. Each pick adds another dimension
 /// chained from the previous one, so the command loops until Esc/Enter, which is how a
 /// row of holes actually gets dimensioned.
+/// DIMCONTINUE / DIMBASELINE (#57): `Specify a second extension line origin or
+/// [Select/Undo] <Select>:` (DIMBASELINE adds Offset), one dimension after another from the
+/// last one drawn -- linear, aligned, angular or ordinate; Enter (or Select) asks which
+/// dimension to go on from, and Enter there ends.
 class ChainDimCommand final : public ICommand {
 public:
     explicit ChainDimCommand(bool baseline) : baseline_(baseline) {}
@@ -602,7 +606,26 @@ public:
     bool done() const override { return done_; }
 
 private:
+    enum class State : std::uint8_t { Origin, Select, Offset };
+    void prompt(CommandContext& ctx);
     bool baseline_ = false;
+    State state_ = State::Origin;
+    int added_ = 0;        ///< dimensions this run, for Undo
+    double spacing_ = 0.0; ///< Offset (0 = the style's, 1.5 text heights)
+    bool done_ = false;
+};
+
+/// DIMLAYER: `Enter new value for DIMLAYER, or . for use current <...>:` -- the layer new
+/// dimensions go on.
+class DimLayerCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMLAYER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 
@@ -2435,7 +2458,8 @@ private:
     // Two points (First -> Second) or an object (Enter at the first prompt, or the
     // [Object] keyword: SelectObj), then Place with its options: Text asks for the
     // text, Rotated for the angle (a value, or two points: Rotation -> Rotation2).
-    enum class State { First, Second, SelectObj, Place, Text, Rotation, Rotation2 } state_ = State::First;
+    enum class State { First, Second, SelectObj, Place, Text, TextAngle, Rotation, Rotation2 } state_ = State::First;
+    double text_angle_ = 0.0; ///< Angle: radians; 0 = along the dimension line
     void enter_place(CommandContext& ctx);
     void place_prompt(CommandContext& ctx);
     void show_preview(CommandContext& ctx) const;
@@ -2472,6 +2496,8 @@ private:
     core::Vec2 obj_pick_{};
     std::string text_;   ///< typed at Mtext / Text ("" = the measurement)
     bool typing_ = false; ///< the next input is that text
+    bool angling_ = false;    ///< the next input is the text's angle (Angle)
+    double text_angle_ = 0.0; ///< radians; 0 = as the dimension lays it out
     bool done_ = false;
 };
 
@@ -2492,6 +2518,8 @@ private:
     int forced_ = -1; ///< -1 auto, 0 X datum, 1 Y datum
     std::string text_;
     bool typing_ = false;
+    bool angling_ = false;
+    double text_angle_ = 0.0;
     bool done_ = false;
 };
 
@@ -2512,6 +2540,8 @@ private:
     core::Vec2 place_{};
     std::string text_;
     bool typing_ = false;
+    bool angling_ = false;
+    double text_angle_ = 0.0;
     bool done_ = false;
 };
 
@@ -2527,10 +2557,16 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Select, Place } state_ = State::Select;
+    enum class State { Select, Place, Partial1, Partial2 } state_ = State::Select;
     core::Vec2 obj_pick_{};
     std::string text_;
     bool typing_ = false;
+    bool angling_ = false;
+    double text_angle_ = 0.0;
+    bool leader_ = false;                       ///< [Leader]
+    std::optional<core::Vec2> partial_from_{};  ///< [Partial]: the part of the arc
+    std::optional<core::Vec2> partial_to_{};
+    void place_prompt(CommandContext& ctx);
     bool done_ = false;
 };
 
@@ -2547,7 +2583,8 @@ public:
 private:
     // Select (an arc, a circle, a line, or Enter for the vertex) -> Line2 / CircleEnd, or
     // Vertex -> First -> Second; then Place, with Text and Quadrant on the way.
-    enum class State { Select, Line2, CircleEnd, Vertex, First, Second, Place, Text, Quadrant } state_ = State::Select;
+    enum class State { Select, Line2, CircleEnd, Vertex, First, Second, Place, Text, TextAngle, Quadrant } state_ = State::Select;
+    double text_angle_ = 0.0; ///< Angle: radians; 0 = upright on the arc
     void place_prompt(CommandContext& ctx);
     void show_preview(CommandContext& ctx) const;
     core::Vec2 pick1_{};
@@ -2561,10 +2598,13 @@ private:
     bool done_ = false;
 };
 
-/// DIM: AutoCAD's smart all-in-one dimension. As the cursor moves over candidates
-/// it previews the type it would create; on pick it reads the hovered entity kind
-/// (circle -> diameter, arc -> radius, line/polyline -> linear) and dispatches to
-/// the SAME object-aware machinery as DIMRADIUS/DIMDIAMETER/DIMLINEAR.
+/// DIM (#57): AutoCAD's one command for every dimension, one after another until Enter.
+/// An object picked is dimensioned by its kind -- a line aligned (a second line picked at
+/// the placement prompt makes it angular), a circle by its diameter, an arc by its radius --
+/// two points linearly; the dimension the hovered object would get is previewed. Angular,
+/// Baseline, Continue and Ordinate run those commands; aliGn and Distribute arrange
+/// dimensions already drawn; Layer sets DIMLAYER; Undo takes the last dimension back. The
+/// kinds are the dimension commands themselves, run inside DIM.
 class DimCommand final : public ICommand {
 public:
     std::string name() const override { return "DIM"; }
@@ -2573,11 +2613,28 @@ public:
     void hover(CommandContext& ctx, std::optional<core::EntityKind> kind) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool in_selection_phase() const override {
+        return !done_ && (sub_ ? sub_->in_selection_phase() : select_.active());
+    }
+    bool selection_removing() const override { return sub_ ? sub_->selection_removing() : select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class State { Select, Place } state_ = State::Select;
-    core::DimType type_ = core::DimType::Linear;
-    core::Vec2 obj_pick_{};
+    enum class State : std::uint8_t { Main, AlignBase, DistMethod, DistOffset, DistBase, Select, Layer };
+    void prompt(CommandContext& ctx);
+    void begin(CommandContext& ctx, std::unique_ptr<ICommand> sub);
+    void after_sub(CommandContext& ctx);
+    void arrange(CommandContext& ctx);
+    State state_ = State::Main;
+    std::unique_ptr<ICommand> sub_;
+    bool sub_from_line_ = false;       ///< sub_ is placing a line's dimension (a second line: angular)
+    core::Vec2 line_pick_{};
+    int made_ = 0;                     ///< dimensions this run, for Undo
+    bool align_ = true;                ///< the selection step is aliGn (else Distribute)
+    bool equal_ = true;                ///< Distribute Equal (else Offset)
+    double offset_ = 3.75;
+    core::Vec2 base_{};
+    SelectObjectsPhase select_;
     bool done_ = false;
 };
 

@@ -123,6 +123,7 @@ add_executable(musacad_tests
     test_align_lengthen.cpp
     test_inquiry.cpp
     test_multidoc.cpp
+    test_dims_more.cpp
     test_trim_paths_clipboard.cpp
     test_trim_modes.cpp
     test_layer_tools.cpp

@@ -43,6 +43,15 @@ struct Harness {
     FakeView view;
     CommandProcessor proc{[this](musacad::core::Command c) { cmds.push_back(std::move(c)); }, &view,
                           out};
+    template <class T>
+    [[nodiscard]] const T* last() const {
+        for (auto it = cmds.rbegin(); it != cmds.rend(); ++it) {
+            if (const auto* c = std::get_if<T>(&*it)) {
+                return c;
+            }
+        }
+        return nullptr;
+    }
 };
 
 } // namespace
@@ -403,36 +412,43 @@ TEST_CASE("Smart DIM dispatches by hovered entity kind") {
     auto run = [](EntityKind k) -> std::optional<std::uint8_t> {
         Harness h;
         h.proc.submit_line("DIM");
-        h.proc.set_hovered_kind(k);     // cursor over this kind
-        h.proc.submit_line("10,10");    // pick the object
-        h.proc.submit_line("20,20");    // placement
+        h.proc.set_hovered_kind(k);              // cursor over this kind
+        h.proc.pick_point({10, 10}, std::nullopt); // pick the object
+        h.proc.set_hovered_kind(std::nullopt);
+        h.proc.submit_line("20,20");             // placement
         const auto* od = last_object_dim(h.cmds);
         return od != nullptr ? std::optional<std::uint8_t>{od->type} : std::nullopt;
     };
     REQUIRE(run(EntityKind::Circle) == static_cast<std::uint8_t>(DimType::Diameter));
     REQUIRE(run(EntityKind::Arc) == static_cast<std::uint8_t>(DimType::Radius));
-    REQUIRE(run(EntityKind::Line) == static_cast<std::uint8_t>(DimType::Linear));
+    REQUIRE(run(EntityKind::Line) == static_cast<std::uint8_t>(DimType::Aligned));
 }
 
-TEST_CASE("Smart DIM previews the type in the prompt as the cursor hovers") {
+TEST_CASE("Smart DIM previews the dimension the hovered object would get") {
     Harness h;
     h.proc.submit_line("DIM");
+    h.proc.set_cursor_world({10, 0});
     h.proc.set_hovered_kind(EntityKind::Circle);
-    REQUIRE(h.out.prompt.find("Diameter") != std::string::npos);
-    h.proc.set_hovered_kind(EntityKind::Arc);
-    REQUIRE(h.out.prompt.find("Radius") != std::string::npos);
+    const auto* r = h.last<musacad::core::ResolveDimObjectCommand>();
+    REQUIRE(r != nullptr);
+    REQUIRE(r->type == static_cast<std::uint8_t>(DimType::Diameter));
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::Dimension);
     h.proc.set_hovered_kind(std::nullopt); // over empty space
-    REQUIRE(h.out.prompt.find("Diameter") == std::string::npos);
-    REQUIRE(h.out.prompt.find("Radius") == std::string::npos);
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::None);
 }
 
-TEST_CASE("Smart DIM refuses to dimension empty space") {
+TEST_CASE("Smart DIM: a point on empty space starts a linear dimension there") {
     Harness h;
     h.proc.submit_line("DIM");
     h.proc.set_hovered_kind(std::nullopt); // nothing under the cursor
-    h.proc.submit_line("10,10");
-    REQUIRE(last_object_dim(h.cmds) == nullptr); // nothing submitted
-    REQUIRE(h.proc.has_active_command());        // still waiting
+    h.proc.pick_point({10, 10}, std::nullopt);
+    REQUIRE(h.out.prompt == "Specify second extension line origin: ");
+    h.proc.submit_line("30,10");
+    h.proc.submit_line("20,20");
+    REQUIRE(h.last<musacad::core::AddDimensionCommand>() != nullptr);
+    REQUIRE(h.proc.has_active_command()); // DIM goes on until Enter
+    h.proc.submit_line("");
+    REQUIRE_FALSE(h.proc.has_active_command());
 }
 
 // --- Phase 16 Part C: dimension placement preview (cursor-follow rubber-band) ---

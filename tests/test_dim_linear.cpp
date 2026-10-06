@@ -221,12 +221,13 @@ TEST_CASE("#56 DIMLINEAR Text: the typed text, <> standing for the measurement")
     Harness keep;
     keep.run({"DLI", "0,0", "100,0", "M", "", "50,10"});
     REQUIRE(keep.last<AddDimensionCommand>()->text_override.empty());
-    // Angle is not there yet: said so, and the command goes on.
+    // Angle: the text's own angle, then the placement.
     Harness ang;
     ang.run({"DLI", "0,0", "100,0", "A"});
-    REQUIRE(ang.proc.has_active_command());
-    ang.run({"50,10"});
+    REQUIRE(ang.out.prompt == "Specify angle of dimension text: ");
+    ang.run({"30", "50,10"});
     REQUIRE(ang.last<AddDimensionCommand>() != nullptr);
+    REQUIRE(ang.last<AddDimensionCommand>()->text_angle == Approx(musacad::core::kPi / 6.0));
 }
 
 TEST_CASE("#56 Enter at the first prompt selects the object; Horizontal carries to the engine") {

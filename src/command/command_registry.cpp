@@ -420,6 +420,8 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"DCO", "DIMCONTINUE"}, [] { return std::make_unique<ChainDimCommand>(false); },
         "assets/ribbon/dimcontinue.svg",
         "Continue a dimension chain from the last dimension's second extension line.");
+    reg({"DIMLAYER"}, [] { return std::make_unique<DimLayerCommand>(); }, "",
+        "The layer new dimensions go on; . for the current layer.");
     reg({"DBA", "DIMBASELINE"}, [] { return std::make_unique<ChainDimCommand>(true); },
         "assets/ribbon/dimbaseline.svg",
         "Stack dimensions from a common first extension line.");

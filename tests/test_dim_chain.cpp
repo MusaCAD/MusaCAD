@@ -93,7 +93,7 @@ TEST_CASE("#28: a radial dimension cannot be chained, and the engine says so") {
                                       {0, 0}, {10, 0}, {10, 0}, 0, 1});
     REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
     engine.submit(ChainDimensionCommand{{50, 0}, false, 2});
-    REQUIRE(status_has(engine, "needs a linear or aligned dimension"));
+    REQUIRE(status_has(engine, "needs a linear, aligned, ordinate or angular dimension"));
 }
 
 TEST_CASE("#28: each chained dimension is its own undo group") {
