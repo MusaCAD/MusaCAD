@@ -41,6 +41,14 @@ target_compile_definitions(musacad_core PRIVATE
 find_package(Threads REQUIRED)
 target_link_libraries(musacad_core PUBLIC Threads::Threads)
 
+# The engine with GCC: its variable tracking (where each variable lives in optimised code,
+# for the debugger) is most of what geometry_engine.cpp takes to compile with -O2 -g --
+# 16.5 GB with it, 8.6 GB without, more than a packaging builder has. Line tables, and the
+# call stacks of a crash report, are not affected; it is off for this file only.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(geometry_engine.cpp PROPERTIES COMPILE_OPTIONS "-fno-var-tracking")
+endif()
+
 # musacad_core builds with warnings promoted to errors.
 musacad_set_warnings(musacad_core AS_ERRORS)
 musacad_enable_sanitizers(musacad_core)
