@@ -325,6 +325,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_plot_dialog_callback([this] { open_plot_dialog(); });
     viewport_->set_options_dialog_callback([this] { open_options_dialog(); });
     viewport_->set_dimstyle_dialog_callback([this] { open_dimstyle_dialog(); });
+    viewport_->set_layer_dialog_callback([this] { open_layer_dialog(); });
     viewport_->set_paste_callbacks([this] { return prepare_paste(); },
                                    [this](core::Vec2 at, bool original) { return paste_at(at, original); });
     set_performance_overlay(QSettings().value(QStringLiteral("display/performance_overlay"), false).toBool());
@@ -796,6 +797,15 @@ void MainWindow::build_status_bar() {
         modes_.otrack = on;
         processor_->set_otrack(on);
     });
+    const auto follow = [](QAction* a) {
+        return [a](bool on) {
+            if (a->isChecked() != on) {
+                a->setChecked(on);
+            }
+        };
+    };
+    viewport_->set_drafting_mode_callbacks(follow(ortho_action_), follow(snap_action_), follow(grid_action_),
+                                           [this] { return grid_action_->isChecked(); });
     viewport_->set_tracking_mode_callbacks(
         [this](bool on) {
             if (polar_action_->isChecked() != on) {

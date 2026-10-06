@@ -899,6 +899,48 @@ private:
     bool done_ = false;
 };
 
+/// LAYER (LA): the Layer Properties Manager; -LAYER (and LAYER without a window):
+/// `Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Freeze/Thaw/LOck/
+/// Unlock]:` again and again until Enter.
+class LayerCommand final : public ICommand {
+public:
+    explicit LayerCommand(bool dialog) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "LAYER" : "-LAYER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State : std::uint8_t { Option, Names, Value, RenameTo, SetPick };
+    void option_prompt(CommandContext& ctx);
+    void names_prompt(CommandContext& ctx);
+    bool dialog_;
+    State state_ = State::Option;
+    core::LayerEditCommand edit_{};
+    std::string value_text_;
+    bool done_ = false;
+};
+
+/// ORTHO `Enter mode [ON/OFF]`, SNAP `Specify snap spacing or [ON/OFF]` and GRID
+/// `[ON/OFF]`: the status-bar modes at the command line.
+class DraftModeCommand final : public ICommand {
+public:
+    enum class Mode : std::uint8_t { Ortho, Snap, Grid };
+    explicit DraftModeCommand(Mode m) : mode_(m) {}
+    std::string name() const override {
+        return mode_ == Mode::Ortho ? "ORTHO" : mode_ == Mode::Snap ? "SNAP" : "GRID";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    Mode mode_;
+    bool done_ = false;
+};
+
 /// DIST: two points, or `[Multiple points]` with a running total; AutoCAD's full readout.
 class DistCommand final : public ICommand {
 public:

@@ -157,6 +157,21 @@ public:
     void snap_override_changed() override;
     void set_polar_mode(bool on) override;
     void set_otrack_mode(bool on) override;
+    void set_ortho_mode(bool on) override;
+    void set_snap_mode(bool on) override;
+    void set_grid_mode(bool on) override;
+    [[nodiscard]] bool grid_mode() const override;
+    bool layer_dialog() override;
+    /// The status bar's ORTHO, SNAP and GRID buttons (and whether GRID is on), and the
+    /// Layer Properties Manager, for the commands that reach them.
+    void set_drafting_mode_callbacks(std::function<void(bool)> ortho, std::function<void(bool)> snap,
+                                     std::function<void(bool)> grid, std::function<bool()> grid_on) {
+        ortho_mode_callback_ = std::move(ortho);
+        snap_mode_callback_ = std::move(snap);
+        grid_mode_callback_ = std::move(grid);
+        grid_on_callback_ = std::move(grid_on);
+    }
+    void set_layer_dialog_callback(std::function<void()> cb) { layer_dialog_callback_ = std::move(cb); }
     /// The status bar's POLAR and OTRACK buttons, for the commands that switch the modes.
     void set_tracking_mode_callbacks(std::function<void(bool)> polar, std::function<void(bool)> otrack) {
         polar_mode_callback_ = std::move(polar);
@@ -763,6 +778,11 @@ private:
     std::function<void()> plot_dialog_callback_;
     std::function<void()> options_dialog_callback_;
     std::function<void()> dimstyle_dialog_callback_;
+    std::function<void(bool)> ortho_mode_callback_;
+    std::function<void(bool)> snap_mode_callback_;
+    std::function<void(bool)> grid_mode_callback_;
+    std::function<bool()> grid_on_callback_;
+    std::function<void()> layer_dialog_callback_;
     std::function<std::string()> prepare_paste_;
     std::function<bool(core::Vec2, bool)> paste_at_;
     // FILLET / CHAMFER's hover band, streamed only on change.

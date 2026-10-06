@@ -1745,6 +1745,21 @@ struct LayerToolCommand {
     double radius = 0.0;
     std::uint64_t group = 0;
 };
+/// -LAYER: one option on the layers `names` lists (comma separated, `*` and `?` wild
+/// cards, any case; empty: the current layer). List reports them; New adds each one not
+/// there; Make adds the one layer if need be and makes it current; Set makes it current;
+/// Rename gives the one layer the name `to` (not layer 0, not to a name in use); On, Off,
+/// Freeze, Thaw, Lock and Unlock switch them (the current layer is not frozen); Color,
+/// Ltype and LWeight give them `color`, `linetype` or `lineweight` (1/100 mm).
+struct LayerEditCommand {
+    enum class Op : std::uint8_t { List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight };
+    Op op = Op::List;
+    std::string names;
+    std::string to;
+    Rgb color{};
+    Linetype linetype = Linetype::Continuous;
+    std::uint8_t lineweight = 25;
+};
 /// Move every selected entity to layer `index` (one undo group).
 struct SetEntityLayerCommand {
     std::uint16_t index = 0;
@@ -1826,7 +1841,7 @@ using Command =
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
                  DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
-                 BlendCommand, BoundaryCommand, CenterlineCommand,
+                 BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

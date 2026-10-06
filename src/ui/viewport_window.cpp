@@ -594,6 +594,34 @@ void ViewportWindow::set_presentation_cursor(core::Vec2 world) {
     rebuild_overlay();
 }
 
+void ViewportWindow::set_ortho_mode(bool on) {
+    if (ortho_mode_callback_) {
+        ortho_mode_callback_(on);
+    }
+}
+
+void ViewportWindow::set_snap_mode(bool on) {
+    if (snap_mode_callback_) {
+        snap_mode_callback_(on);
+    }
+}
+
+void ViewportWindow::set_grid_mode(bool on) {
+    if (grid_mode_callback_) {
+        grid_mode_callback_(on);
+    }
+}
+
+bool ViewportWindow::grid_mode() const { return grid_on_callback_ ? grid_on_callback_() : false; }
+
+bool ViewportWindow::layer_dialog() {
+    if (!layer_dialog_callback_) {
+        return false;
+    }
+    layer_dialog_callback_();
+    return true;
+}
+
 void ViewportWindow::set_polar_mode(bool on) {
     if (polar_mode_callback_) {
         polar_mode_callback_(on);

@@ -13673,4 +13673,270 @@ void CenterBoundaryCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+
+// ---------------------------------------------------------------------------
+// LAYER / -LAYER (issue #69), ORTHO / SNAP / GRID (issue #65)
+// ---------------------------------------------------------------------------
+void LayerCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->layer_dialog()) {
+        done_ = true; // the Layer Properties Manager does the rest
+        return;
+    }
+    option_prompt(ctx);
+}
+
+void LayerCommand::option_prompt(CommandContext& ctx) {
+    state_ = State::Option;
+    edit_ = {};
+    value_text_.clear();
+    ctx.set_prompt("Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Freeze/Thaw/LOck/Unlock]: ");
+}
+
+void LayerCommand::names_prompt(CommandContext& ctx) {
+    using Op = core::LayerEditCommand::Op;
+    state_ = State::Names;
+    switch (edit_.op) {
+    case Op::List:
+        ctx.set_prompt("Enter layer name(s) to list <*>: ");
+        return;
+    case Op::Make:
+        ctx.set_prompt("Enter name for new layer (becomes the current layer): ");
+        return;
+    case Op::Set:
+        ctx.set_prompt("Enter layer name to make current or <select object>: ");
+        return;
+    case Op::New:
+        ctx.set_prompt("Enter name list for new layer(s): ");
+        return;
+    case Op::Rename:
+        ctx.set_prompt("Enter old layer name: ");
+        return;
+    case Op::On:
+        ctx.set_prompt("Enter name list of layer(s) to turn On: ");
+        return;
+    case Op::Off:
+        ctx.set_prompt("Enter name list of layer(s) to turn off <current>: ");
+        return;
+    case Op::Freeze:
+        ctx.set_prompt("Enter name list of layer(s) to freeze: ");
+        return;
+    case Op::Thaw:
+        ctx.set_prompt("Enter name list of layer(s) to thaw: ");
+        return;
+    case Op::Lock:
+        ctx.set_prompt("Enter name list of layer(s) to lock <current>: ");
+        return;
+    case Op::Unlock:
+        ctx.set_prompt("Enter name list of layer(s) to unlock <current>: ");
+        return;
+    case Op::Color:
+    case Op::Ltype:
+    case Op::LWeight:
+        ctx.set_prompt("Enter name list of layer(s) for " + value_text_ + " <current>: ");
+        return;
+    }
+}
+
+void LayerCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::LayerEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        struct Kw {
+            const char* full;
+            const char* abbr;
+            Op op;
+        };
+        static constexpr Kw kKeys[] = {{"?", "?", Op::List},         {"MAKE", "M", Op::Make},
+                                       {"SET", "S", Op::Set},         {"NEW", "N", Op::New},
+                                       {"RENAME", "R", Op::Rename},   {"ON", "ON", Op::On},
+                                       {"OFF", "OFF", Op::Off},       {"COLOR", "C", Op::Color},
+                                       {"LTYPE", "L", Op::Ltype},     {"LWEIGHT", "LW", Op::LWeight},
+                                       {"FREEZE", "F", Op::Freeze},   {"THAW", "T", Op::Thaw},
+                                       {"LOCK", "LO", Op::Lock},      {"UNLOCK", "U", Op::Unlock}};
+        const Kw* hit = nullptr;
+        for (const Kw& k : kKeys) {
+            if (u == k.full || u == k.abbr) {
+                hit = &k;
+            }
+        }
+        if (hit == nullptr) {
+            ctx.echo("Invalid option keyword.");
+            option_prompt(ctx);
+            return;
+        }
+        edit_.op = hit->op;
+        if (hit->op == Op::Color) {
+            state_ = State::Value;
+            ctx.set_prompt("New color [Truecolor]: ");
+        } else if (hit->op == Op::Ltype) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter a loaded linetype name [Continuous/Dashed/Center/Hidden] <Continuous>: ");
+        } else if (hit->op == Op::LWeight) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter lineweight (0.0mm - 2.11mm): ");
+        } else {
+            names_prompt(ctx);
+        }
+        return;
+    }
+    case State::Value: {
+        if (edit_.op == Op::Color) {
+            static constexpr const char* kNames[] = {"RED", "YELLOW", "GREEN", "CYAN", "BLUE", "MAGENTA", "WHITE"};
+            long aci = 0;
+            for (long i = 0; i < 7; ++i) {
+                aci = u == kNames[i] ? i + 1 : aci;
+            }
+            int r = -1;
+            int g = -1;
+            int b = -1;
+            if (aci == 0) {
+                if (const std::optional<double> v = parse_number(t); v && *v >= 1.0 && *v <= 255.0 && *v == std::floor(*v)) {
+                    aci = static_cast<long>(*v);
+                } else if (std::sscanf(t.c_str(), "%d,%d,%d", &r, &g, &b) == 3 && r >= 0 && r <= 255 && g >= 0 &&
+                           g <= 255 && b >= 0 && b <= 255) {
+                    edit_.color = core::Rgb{static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g),
+                                            static_cast<std::uint8_t>(b)};
+                    value_text_ = "color " + t;
+                    names_prompt(ctx);
+                    return;
+                } else {
+                    ctx.echo("Enter a colour number (1 to 255), a colour name, or red,green,blue.");
+                    return;
+                }
+            }
+            edit_.color = core::io::dxf_aci_to_rgb(aci);
+            value_text_ = "color " + std::to_string(aci);
+        } else if (edit_.op == Op::Ltype) {
+            const std::string n = t.empty() ? std::string("CONTINUOUS") : u;
+            if (n != "CONTINUOUS" && n != "DASHED" && n != "CENTER" && n != "HIDDEN") {
+                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+                return;
+            }
+            edit_.linetype = n == "DASHED" ? core::Linetype::Dashed
+                             : n == "CENTER" ? core::Linetype::Center
+                             : n == "HIDDEN" ? core::Linetype::Hidden
+                                             : core::Linetype::Continuous;
+            value_text_ = "linetype \"" + n + "\"";
+        } else {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0 || *v > 2.11) {
+                ctx.echo("Requires a lineweight from 0 to 2.11 mm.");
+                return;
+            }
+            edit_.lineweight = static_cast<std::uint8_t>(std::lround(*v * 100.0));
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "lineweight %.2fmm", *v);
+            value_text_ = buf;
+        }
+        names_prompt(ctx);
+        return;
+    }
+    case State::Names:
+        if (edit_.op == Op::Set && t.empty()) {
+            state_ = State::SetPick;
+            ctx.set_prompt("Select object: ");
+            return;
+        }
+        if (t.empty() && (edit_.op == Op::Make || edit_.op == Op::New || edit_.op == Op::Rename ||
+                          edit_.op == Op::On || edit_.op == Op::Freeze || edit_.op == Op::Thaw)) {
+            option_prompt(ctx); // nothing named: back to the options
+            return;
+        }
+        edit_.names = t;
+        if (edit_.op == Op::Rename) {
+            state_ = State::RenameTo;
+            ctx.set_prompt("Enter new layer name: ");
+            return;
+        }
+        ctx.submit(edit_);
+        option_prompt(ctx);
+        return;
+    case State::RenameTo:
+        if (!t.empty()) {
+            edit_.to = t;
+            ctx.submit(edit_);
+        }
+        option_prompt(ctx);
+        return;
+    case State::SetPick:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::LayerToolCommand{core::LayerToolCommand::Op::MakeCurrent, *p, ctx.pick_radius(), 0});
+        }
+        option_prompt(ctx);
+        return;
+    }
+}
+
+void LayerCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DraftModeCommand::start(CommandContext& ctx) {
+    switch (mode_) {
+    case Mode::Ortho:
+        ctx.set_prompt(std::string("Enter mode [ON/OFF] <") + (ctx.ortho_mode() ? "ON" : "OFF") + ">: ");
+        return;
+    case Mode::Snap:
+        ctx.set_prompt("Specify snap spacing or [ON/OFF] <" + fmt4(ctx.snap_spacing()) + ">: ");
+        return;
+    case Mode::Grid: {
+        const bool on = ctx.view() != nullptr && ctx.view()->grid_mode();
+        ctx.set_prompt(std::string("Enter mode [ON/OFF] <") + (on ? "ON" : "OFF") + ">: ");
+        return;
+    }
+    }
+}
+
+void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    const bool on = u == "ON";
+    if (!on && u != "OFF") {
+        if (mode_ == Mode::Snap) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v <= 0.0) {
+                ctx.echo("Requires a positive spacing, ON or OFF.");
+                return;
+            }
+            ctx.set_snap_spacing(*v);
+            ctx.set_snap_mode(true); // a new spacing turns snap on, as AutoCAD does
+            done_ = true;
+            return;
+        }
+        ctx.echo(mode_ == Mode::Grid ? "The grid's spacing follows the zoom here; enter ON or OFF."
+                                     : "Enter ON or OFF.");
+        return;
+    }
+    switch (mode_) {
+    case Mode::Ortho:
+        ctx.set_ortho_mode(on);
+        break;
+    case Mode::Snap:
+        ctx.set_snap_mode(on);
+        break;
+    case Mode::Grid:
+        if (ctx.view() != nullptr) {
+            ctx.view()->set_grid_mode(on);
+        }
+        break;
+    }
+    done_ = true;
+}
+
+void DraftModeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

@@ -2969,6 +2969,203 @@ void GeometryEngine::apply_centerline(const CenterlineCommand& c) {
     report("Center line created.");
 }
 
+void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
+    using Op = LayerEditCommand::Op;
+    layer_edit_changed_ = false;
+    // The names asked for, one by one, without the blanks round them.
+    std::vector<std::string> asked;
+    {
+        std::string cur;
+        for (const char ch : c.names + ",") {
+            if (ch == ',') {
+                const auto b = cur.find_first_not_of(" \t");
+                const auto e = cur.find_last_not_of(" \t");
+                if (b != std::string::npos) {
+                    asked.push_back(cur.substr(b, e - b + 1));
+                }
+                cur.clear();
+            } else {
+                cur += ch;
+            }
+        }
+    }
+    const auto quoted = [this](std::uint16_t i) { return "\"" + store_.layers()[i].name + "\""; };
+    const auto invalid_name = [](const std::string& n) {
+        return n.empty() || n.find_first_of("<>/\\\":;?*|,=`") != std::string::npos;
+    };
+    // The layers the patterns match (the current layer when none were given).
+    const auto matched = [&]() {
+        std::vector<std::uint16_t> out;
+        const std::size_t n = store_.layers().size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto idx = static_cast<std::uint16_t>(i);
+            bool hit = asked.empty() && idx == store_.current_layer();
+            for (const std::string& pat : asked) {
+                hit = hit || glob_match(pat, store_.layers()[i].name);
+            }
+            if (hit) {
+                out.push_back(idx);
+            }
+        }
+        return out;
+    };
+    const auto changed = [this]() {
+        layer_edit_changed_ = true;
+        geom_dirty_ = true;
+        prune_selection();
+    };
+    switch (c.op) {
+    case Op::List: {
+        std::vector<std::uint16_t> which;
+        const std::size_t n = store_.layers().size();
+        for (std::size_t i = 0; i < n; ++i) {
+            bool hit = asked.empty();
+            for (const std::string& pat : asked) {
+                hit = hit || glob_match(pat, store_.layers()[i].name);
+            }
+            if (hit) {
+                which.push_back(static_cast<std::uint16_t>(i));
+            }
+        }
+        std::string out = "Layer name  State  Color  Linetype  Lineweight";
+        static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
+        for (const std::uint16_t i : which) {
+            const Layer& l = store_.layers()[i];
+            char rgb[32];
+            std::snprintf(rgb, sizeof(rgb), "%u,%u,%u", l.color.r, l.color.g, l.color.b);
+            char lw[16];
+            std::snprintf(lw, sizeof(lw), "%.2fmm", static_cast<double>(l.lineweight) / 100.0);
+            out += "\n\"" + l.name + "\"  " + (l.on ? "On" : "Off") + (l.frozen ? " Frozen" : "") +
+                   (l.locked ? " Locked" : "") + (i == store_.current_layer() ? " Current" : "") + "  " + rgb + "  " +
+                   kLt[std::min<std::size_t>(static_cast<std::size_t>(l.linetype), 3)] + "  " + lw;
+        }
+        if (which.empty()) {
+            out += "\nNo matching layers.";
+        }
+        report(out);
+        return;
+    }
+    case Op::New:
+    case Op::Make: {
+        if (asked.empty() || (c.op == Op::Make && asked.size() != 1)) {
+            report(c.op == Op::Make ? "Make takes one layer name." : "No layer names given.");
+            return;
+        }
+        std::size_t made = 0;
+        for (const std::string& name : asked) {
+            if (invalid_name(name)) {
+                report("Invalid layer name: \"" + name + "\".");
+                return;
+            }
+            if (!layer_named(name)) {
+                Layer l;
+                l.name = name;
+                store_.add_layer(l);
+                ++made;
+            }
+        }
+        if (c.op == Op::Make) {
+            store_.set_current_layer(*layer_named(asked.front()));
+        }
+        changed();
+        report(c.op == Op::Make ? "Layer " + quoted(store_.current_layer()) + " is now the current layer."
+                                : std::to_string(made) + (made == 1 ? " layer" : " layers") + " added.");
+        return;
+    }
+    case Op::Set: {
+        const std::optional<std::uint16_t> i = asked.size() == 1 ? layer_named(asked.front()) : std::nullopt;
+        if (!i) {
+            report(asked.size() == 1 ? "Cannot find layer \"" + asked.front() + "\"." : "Set takes one layer name.");
+            return;
+        }
+        if (store_.layers()[*i].frozen) {
+            report("Cannot set a frozen layer current.");
+            return;
+        }
+        store_.set_current_layer(*i);
+        changed();
+        report("Layer " + quoted(*i) + " is now the current layer.");
+        return;
+    }
+    case Op::Rename: {
+        const std::optional<std::uint16_t> i = asked.size() == 1 ? layer_named(asked.front()) : std::nullopt;
+        if (!i) {
+            report(asked.size() == 1 ? "Cannot find layer \"" + asked.front() + "\"." : "Rename takes one layer name.");
+            return;
+        }
+        if (*i == 0) {
+            report("Layer 0 cannot be renamed.");
+            return;
+        }
+        if (invalid_name(c.to)) {
+            report("Invalid layer name: \"" + c.to + "\".");
+            return;
+        }
+        if (const auto other = layer_named(c.to); other && *other != *i) {
+            report("A layer named \"" + c.to + "\" already exists.");
+            return;
+        }
+        Layer l = store_.layers()[*i];
+        l.name = c.to;
+        store_.set_layer(*i, l);
+        changed();
+        report("Layer renamed to " + quoted(*i) + ".");
+        return;
+    }
+    default:
+        break;
+    }
+    const std::vector<std::uint16_t> which = matched();
+    if (which.empty()) {
+        report("No matching layers.");
+        return;
+    }
+    std::size_t n = 0;
+    std::string skipped;
+    for (const std::uint16_t i : which) {
+        Layer l = store_.layers()[i];
+        switch (c.op) {
+        case Op::On:
+            l.on = true;
+            break;
+        case Op::Off:
+            l.on = false;
+            break;
+        case Op::Freeze:
+            if (i == store_.current_layer()) {
+                skipped = " Cannot freeze layer " + quoted(i) + ". It is the CURRENT layer.";
+                continue;
+            }
+            l.frozen = true;
+            break;
+        case Op::Thaw:
+            l.frozen = false;
+            break;
+        case Op::Lock:
+            l.locked = true;
+            break;
+        case Op::Unlock:
+            l.locked = false;
+            break;
+        case Op::Color:
+            l.color = c.color;
+            break;
+        case Op::Ltype:
+            l.linetype = c.linetype;
+            break;
+        case Op::LWeight:
+            l.lineweight = c.lineweight;
+            break;
+        default:
+            break;
+        }
+        store_.set_layer(i, l);
+        ++n;
+    }
+    changed();
+    report(std::to_string(n) + (n == 1 ? " layer changed." : " layers changed.") + skipped);
+}
+
 void GeometryEngine::apply_area_query(const AreaQueryCommand& c) {
     if (c.reset) {
         area_total_ = 0.0;
@@ -12407,6 +12604,9 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, CenterlineCommand>) {
                 apply_centerline(c);
             }
+            if constexpr (std::is_same_v<T, LayerEditCommand>) {
+                apply_layer_edit(c);
+            }
             if constexpr (std::is_same_v<T, SetDimLayerCommand>) {
                 std::optional<std::uint16_t> layer;
                 bool ok = true;
@@ -13101,6 +13301,9 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, LayerToolCommand>) {
                 edit = layer_tool_changed_; // "No object found." changes nothing
+            }
+            if constexpr (std::is_same_v<T, LayerEditCommand>) {
+                edit = layer_edit_changed_; // ? lists; a name not found changes nothing
             }
             if (edit) {
                 dirty_ = true;
