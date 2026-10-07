@@ -124,6 +124,7 @@ add_executable(musacad_tests
     test_inquiry.cpp
     test_multidoc.cpp
     test_dims_more.cpp
+    test_dim_edit.cpp
     test_trim_curves.cpp
     test_lengthen_more.cpp
     test_trim_paths_clipboard.cpp

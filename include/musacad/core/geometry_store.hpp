@@ -175,6 +175,9 @@ struct DimData {
     double text_angle = 0.0;
     /// An arc-length dimension's Leader option (v39): a radial leader from the text to the arc.
     bool arc_leader = false;
+    /// DIMEDIT Oblique (v39, DXF 52): a linear or aligned dimension's extension lines at this
+    /// angle (radians from the x axis) instead of square to the dimension line; 0 = square.
+    double oblique = 0.0;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
     /// so adding grips to any dimension type can never collide with it.
@@ -517,6 +520,7 @@ public:
     bool set_dim_aux(EntityHandle h, double aux) noexcept;
     /// The label's angle and the arc-length leader (DimData::text_angle, ::arc_leader).
     bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
+    bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},

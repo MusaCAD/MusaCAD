@@ -143,6 +143,16 @@ inline constexpr const char* kDimVars[] = {"DIMTXT", "DIMASZ", "DIMBLK", "DIMDEC
 /// value out of its range, `style` then unchanged.
 bool apply_dim_var(DimStyle& style, std::string_view var, double value);
 
+/// The dimension variables one dimension can have of its own (DIMOVERRIDE): DIMTXT,
+/// DIMASZ, DIMBLK, DIMDEC, DIMTAD, DIMATFIT and the three colours.
+inline constexpr const char* kDimOverrideVars[] = {"DIMTXT", "DIMASZ", "DIMBLK",  "DIMDEC", "DIMTAD",
+                                                   "DIMATFIT", "DIMCLRD", "DIMCLRE", "DIMCLRT"};
+
+/// Sets `var` (one of kDimOverrideVars, any case) as an override in `o`; false for
+/// another variable, a value out of its range, or a colour that is not an ACI 1..255
+/// (an override is a colour of its own, not ByLayer), `o` then unchanged.
+bool apply_dim_override(DimOverrides& o, std::string_view var, double value);
+
 /// The value `var` has in `style` (a colour as its ACI, 256 = ByLayer, -1 = a true colour
 /// with no ACI); nullopt for an unknown variable.
 [[nodiscard]] std::optional<double> dim_var_value(const DimStyle& style, std::string_view var);

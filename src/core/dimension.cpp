@@ -298,6 +298,45 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
     return true;
 }
 
+bool apply_dim_override(DimOverrides& o, std::string_view var, double v) {
+    DimStyle s; // the value checked as a style would take it
+    if (!apply_dim_var(s, var, v)) {
+        return false;
+    }
+    using B = DimOverrides;
+    if (same_var(var, "DIMTXT")) {
+        o.text_height = s.text_height;
+        o.set(B::kTextHeight, true);
+    } else if (same_var(var, "DIMASZ")) {
+        o.arrow_size = s.arrow_size;
+        o.set(B::kArrowSize, true);
+    } else if (same_var(var, "DIMBLK")) {
+        o.arrow_type = s.arrow_type;
+        o.set(B::kArrowType, true);
+    } else if (same_var(var, "DIMDEC")) {
+        o.precision = s.precision;
+        o.set(B::kPrecision, true);
+    } else if (same_var(var, "DIMTAD")) {
+        o.text_above = s.text_above;
+        o.set(B::kTextAbove, true);
+    } else if (same_var(var, "DIMATFIT")) {
+        o.text_fit = s.text_fit;
+        o.set(B::kTextFit, true);
+    } else if (same_var(var, "DIMCLRD") && !s.dim_color.by_layer) {
+        o.dim_color = s.dim_color.color;
+        o.set(B::kDimColor, true);
+    } else if (same_var(var, "DIMCLRE") && !s.ext_color.by_layer) {
+        o.ext_color = s.ext_color.color;
+        o.set(B::kExtColor, true);
+    } else if (same_var(var, "DIMCLRT") && !s.text_color.by_layer) {
+        o.text_color = s.text_color.color;
+        o.set(B::kTextColor, true);
+    } else {
+        return false;
+    }
+    return true;
+}
+
 std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
     if (same_var(var, "DIMTXT")) {
         return s.text_height;
@@ -960,10 +999,20 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         return g;
     }
 
-    // Linear / Aligned.
+    // Linear / Aligned. With DIMEDIT Oblique the extension lines run at their own angle and
+    // meet the dimension line there; the measurement is the same.
     const Vec2 dir = dim_direction(d);
-    const Vec2 fa = foot(d.a, d.line_pt, dir);
-    const Vec2 fb = foot(d.b, d.line_pt, dir);
+    const auto foot_of = [&](Vec2 def) {
+        const Vec2 o{std::cos(d.oblique), std::sin(d.oblique)};
+        const double den = o.x * dir.y - o.y * dir.x;
+        if (d.oblique == 0.0 || std::abs(den) < 1e-6) {
+            return foot(def, d.line_pt, dir);
+        }
+        const Vec2 w = def - d.line_pt;
+        return def + o * (-(w.x * dir.y - w.y * dir.x) / den);
+    };
+    const Vec2 fa = foot_of(d.a);
+    const Vec2 fb = foot_of(d.b);
     const auto ext = [&](Vec2 def, Vec2 f) {
         const Vec2 v = f - def;
         const double len = length(v);

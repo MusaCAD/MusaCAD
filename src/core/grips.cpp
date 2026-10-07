@@ -103,7 +103,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                    d->text_offset,
                                    d->aux,
                                    d->text_angle,
-                                   d->arc_leader};
+                                   d->arc_leader,
+                                   d->oblique};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -324,6 +325,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                              c.suffix, c.tol, c.text_override, c.text_offset);
                 store.set_dim_aux(handle, c.aux);
                 store.set_dim_text(handle, c.text_angle, c.arc_leader);
+                store.set_dim_oblique(handle, c.oblique);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);

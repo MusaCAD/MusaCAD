@@ -2619,3 +2619,19 @@ before), which of its extension lines, and a stack of what each Add replaced so 
 command's Undo can come back to a selected base. DIM runs the existing dimension commands
 as sub-commands, forwarding input, hover and selection gestures, so every kind keeps its
 own options and preview.
+
+## Editing dimensions already drawn (issue #60)
+
+`DimData` gains `oblique` (radians from the x axis; 0 = square to the dimension line), and
+grows 200 → **208 B**. The linear and aligned branch of `compute_dim_geometry` finds each
+extension line's foot where a line at that angle from the definition point meets the
+dimension line; the measurement still comes from the definition points alone. Native v39
+writes it as a 41st `DIM` token (40-token records read as 0), and DXF as group 52.
+
+DIMEDIT, DIMTEDIT and DIMOVERRIDE are one engine command each (`DimEditCommand`,
+`SetDimOverrideCommand`) that re-create every dimension they touch from its captured
+`AddDimensionCommand` with the change made -- the same path grip edits and DIM aliGn
+take -- so one group undoes the lot. DIMTEDIT's point goes through `edit_for_grip_drag`
+on the text grip, so moving text from the command line and by dragging agree. DIMSPACE is
+DIM Distribute's Offset with Auto (twice the base's text height) and 0 (aliGn). DIMCENTER
+adds plain lines, as AutoCAD does.

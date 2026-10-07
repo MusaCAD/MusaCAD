@@ -310,7 +310,7 @@ Document document_from_store(const GeometryStore& store) {
                                       std::string(store.dim_prefix(dd)),
                                       std::string(store.dim_suffix(dd)), dd.tol,
                                       std::string(store.dim_override(dd)), dd.text_offset,
-                                      dd.aux, dd.text_angle, dd.arc_leader});
+                                      dd.aux, dd.text_angle, dd.arc_leader, dd.oblique});
         }
     }
     const auto& leaders = store.leaders();
@@ -591,6 +591,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
 
         store.set_dim_aux(dh, d.aux);
         store.set_dim_text(dh, d.text_angle, d.arc_leader);
+        store.set_dim_oblique(dh, d.oblique);
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
