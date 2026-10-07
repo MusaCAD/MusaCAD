@@ -135,6 +135,11 @@ commands (Ribbon Phase A):
 | DIMSPACE | Space parallel dimensions evenly from a base dimension, or line them up with it. |
 | DIMCENTER (DCE) | Mark the centre of an arc or circle, with centre lines if asked. |
 | DIMOVERRIDE (DOV) | Give dimensions settings of their own (DIMTXT, DIMASZ ...), or clear theirs. |
+| LAYER (LA) | Open the Layer Properties Manager. |
+| -LAYER (-LA) | Layers at the command line: make, set, add, rename, and switch them on, off, frozen, locked. |
+| ORTHO | Turn orthogonal drawing on or off (F8). |
+| SNAP (SN) | Set the snap spacing, or turn grid snap on or off (F9). |
+| GRID | Show or hide the grid (F7). |
 | REVERSE | Make lines, polylines and splines run the other way. |
 | OVERKILL (-OVERKILL) | Delete duplicate objects and combine overlapping collinear lines. |
 | COPYTOLAYER | Copy objects to another layer, in place or moved. |
@@ -479,6 +484,7 @@ phase covered **import, display, and selection**; authoring followed under issue
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
 | Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |
+| **LAYER** (`LA`) opens the Layer Properties Manager; **-LAYER** (`-LA`) -- `Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Freeze/Thaw/LOck/Unlock]:` until Enter: ? lists the layers matching a pattern with their state, colour, linetype and lineweight; Make adds a layer and makes it current; Set makes one current (or the layer of an object picked); New adds a comma list; Rename (not layer 0, not to a name in use); ON / OFF / Freeze / Thaw / LOck / Unlock take a comma list with `*` and `?` wild cards (Enter: the current layer; the current layer is not frozen); Color (a number, a name or red,green,blue), Ltype (Continuous, Dashed, Center, Hidden) and LWeight (mm) ask the value, then the layers | LA / -LA | Implemented (#69; TRansparency, MATerial, Plot, stAte, Description, rEconcile and Xref not yet) |
 | **Layer tools** — LAYOFF / LAYFRZ (`Select an object on the layer to be turned off:` / `... frozen:`, one object after another, `[Undo]`; the current layer cannot be frozen), LAYLCK / LAYULK (`Select an object on the layer to be locked:` / `unlocked:`), LAYMCUR (`Select object whose layer will become current:`), LAYCUR (`Select objects to be changed to the current layer:`), LAYISO (`Select objects on the layer(s) to be isolated:`; every other layer off, the current layer moved to an isolated one) and LAYUNISO, LAYON, LAYTHW; LAYMCH (`Select objects to be changed:`, `Select object on destination layer or [Name]:`) | LAYOFF / LAYFRZ / LAYLCK / LAYULK / LAYMCUR / LAYCUR / LAYISO / LAYUNISO / LAYON / LAYTHW; Home ▸ Layers | Implemented (Settings not yet: viewports and block nesting levels) |
 | **Crash reports** — if Musa CAD stops unexpectedly it writes a report (version, system, graphics driver, the drawing's file name, the last 96 command-line lines, the call stack); the next start shows it with **Save Report As…**, **Copy** and **Open Folder** to attach to an issue. **Save Bug Report…** in the application menu writes the same report on demand | application menu ▸ Save Bug Report… | Implemented |
 | **OPTIONS** — Updates: check automatically (once a day; on by default for packaged installs, off for source builds) and Check Now; Display: the performance overlay (frame rate / frame time in the drawing area, frame rate and build date in the title; off by default). Persisted per user | OP / application menu ▸ Options | Implemented |
@@ -617,8 +623,8 @@ and disappear (returning to the last fixed tab) when it doesn't. Mixed selection
 |---|---|---|
 | Object Snap | F3 | Implemented |
 | Grid display | F7 | Implemented |
-| Ortho | F8 | Implemented |
-| Snap (grid snap) | F9 | Implemented |
+| Ortho | F8 | Implemented; **ORTHO** `Enter mode [ON/OFF] <OFF>:` at the command line |
+| Snap (grid snap) | F9 | Implemented; **SNAP** `Specify snap spacing or [ON/OFF] <10.0000>:` (a spacing turns snap on; Aspect, Style and Type not yet). **GRID** `Enter mode [ON/OFF]:` shows or hides the grid, whose spacing follows the zoom |
 | Polar tracking | F10 | Implemented -- alignment paths at the polar angles from the last point; the cursor locks onto one within the aperture of it (a dashed path and a tooltip, `Polar: 12.3456 < 45°`). Increment angles from the POLAR dropdown or `POLARANG` (90 to begin with), additional angles (`POLARADDANG`, used with `POLARMODE` 4), angles relative to the last segment (`POLARMODE` 1), PolarSnap (`SNAPTYPE` 1 with SNAP on: steps of `POLARDIST` along the path) |
 | Object snap tracking | F11 | Implemented -- rest the cursor on an object snap point to acquire it (a small cross; rest on it again to let it go; seven at most), then track along the horizontal and vertical through it (every polar angle with `POLARMODE` 2), onto the crossing of two paths or of a path and a polar path (`Endpoint: < 90°, Polar: < 0°`). `AUTOSNAP` bits 8 and 16 switch the two tracking modes |
 | Temporary override keys, held at a point prompt | Shift … | Implemented -- Shift: ORTHO the other way; Shift + A: OSNAP; Shift + X: POLAR; Shift + Q: OTRACK; Shift + D (or L): no snapping or tracking; Shift + E (or P) / V (or M) / C: Endpoint / Midpoint / Center alone. `TEMPOVERRIDES` 0 switches them off |

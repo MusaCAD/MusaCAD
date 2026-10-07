@@ -176,6 +176,26 @@ public:
     [[nodiscard]] std::string tracking_tooltip() const;
     void set_grid_snap(bool on) { grid_snap_ = on; }
     void set_grid_spacing(double s) { grid_spacing_ = s; }
+    /// As ORTHO and SNAP switch them: the status bar follows.
+    [[nodiscard]] bool ortho_mode() const override { return ortho_; }
+    void set_ortho_mode(bool on) override {
+        ortho_ = on;
+        if (on) {
+            polar_ = false; // the two exclude each other, as F8 and F10 do
+        }
+        if (view_ != nullptr) {
+            view_->set_ortho_mode(on);
+        }
+    }
+    [[nodiscard]] bool snap_mode() const override { return grid_snap_; }
+    void set_snap_mode(bool on) override {
+        grid_snap_ = on;
+        if (view_ != nullptr) {
+            view_->set_snap_mode(on);
+        }
+    }
+    [[nodiscard]] double snap_spacing() const override { return grid_spacing_; }
+    void set_snap_spacing(double spacing) override { grid_spacing_ = spacing; }
     void set_pick_radius(double world_radius) { pick_radius_ = world_radius; }
 
     /// Starts a fresh undo group and returns its id, for one-shot commands

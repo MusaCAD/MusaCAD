@@ -75,6 +75,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   centre of an arc or circle, with centre lines if asked. **DIMOVERRIDE** gives the selected
   dimensions values of their own for DIMTXT, DIMASZ, DIMBLK, DIMDEC, DIMTAD, DIMATFIT and the
   three colours, or clears theirs.
+- **LAYER and -LAYER** (#69) -- **LAYER** (`LA`) opens the Layer Properties Manager, and
+  **-LAYER** works on layers at the command line: `?` lists them, **Make**, **Set**, **New**,
+  **Rename**, **ON** / **OFF**, **Freeze** / **Thaw**, **LOck** / **Unlock** (by name lists
+  with `*` and `?`), **Color**, **Ltype** and **LWeight**.
+- **ORTHO, SNAP and GRID** (#65) at the command line: ORTHO and GRID `[ON/OFF]`, SNAP a
+  spacing (which turns snap on) or `[ON/OFF]`; the status bar follows.
 - **Modify tools** (#55) -- **REVERSE** turns lines, polylines and splines round.
   **OVERKILL** deletes duplicate objects and makes collinear lines that overlap (or, if asked,
   meet end to end) one line. **COPYTOLAYER** copies objects to a layer, picked or named

@@ -235,6 +235,14 @@ public:
     /// switch them.
     virtual void set_polar_mode(bool on) { (void)on; }
     virtual void set_otrack_mode(bool on) { (void)on; }
+    /// ORTHO (F8), SNAP (F9) and GRID (F7) likewise, and whether the grid is shown.
+    virtual void set_ortho_mode(bool on) { (void)on; }
+    virtual void set_snap_mode(bool on) { (void)on; }
+    virtual void set_grid_mode(bool on) { (void)on; }
+    [[nodiscard]] virtual bool grid_mode() const { return false; }
+    /// LAYER: the Layer Properties Manager. False when there is none (no window, a test):
+    /// the command then works at the command line, as -LAYER.
+    [[nodiscard]] virtual bool layer_dialog() { return false; }
     virtual void osnap_settings_dialog() {}
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
     /// hit-tests the published attribute targets; nothing there = a message).
@@ -393,6 +401,13 @@ public:
     [[nodiscard]] virtual bool object_snap_tracking() const { return false; }
     virtual void set_polar_tracking(bool on) { (void)on; }
     virtual void set_object_snap_tracking(bool on) { (void)on; }
+    /// ORTHO and SNAP as the command layer has them, and the snap spacing (SNAPUNIT).
+    [[nodiscard]] virtual bool ortho_mode() const { return false; }
+    virtual void set_ortho_mode(bool on) { (void)on; }
+    [[nodiscard]] virtual bool snap_mode() const { return false; }
+    virtual void set_snap_mode(bool on) { (void)on; }
+    [[nodiscard]] virtual double snap_spacing() const { return 10.0; }
+    virtual void set_snap_spacing(double spacing) { (void)spacing; }
     /// TEMPOVERRIDES: whether the temporary override keys (Shift, Shift + A ...) are read.
     [[nodiscard]] virtual bool temp_overrides() const { return true; }
     virtual void set_temp_overrides(bool on) { (void)on; }

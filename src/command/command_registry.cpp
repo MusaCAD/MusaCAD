@@ -435,6 +435,16 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"DOV", "DIMOVERRIDE"}, [] { return std::make_unique<DimOverrideCommand>(); }, "",
         "Give dimensions settings of their own (DIMTXT, DIMASZ ...), or clear theirs.");
     // --- Modify and draw tools (issues #45, #55) ---
+    reg({"LA", "LAYER"}, [] { return std::make_unique<LayerCommand>(true); }, "",
+        "Open the Layer Properties Manager.");
+    reg({"-LA", "-LAYER"}, [] { return std::make_unique<LayerCommand>(false); }, "",
+        "Layers at the command line: make, set, add, rename, and switch them on, off, frozen, locked.");
+    reg({"ORTHO"}, [] { return std::make_unique<DraftModeCommand>(DraftModeCommand::Mode::Ortho); }, "",
+        "Turn orthogonal drawing on or off (F8).");
+    reg({"SN", "SNAP"}, [] { return std::make_unique<DraftModeCommand>(DraftModeCommand::Mode::Snap); }, "",
+        "Set the snap spacing, or turn grid snap on or off (F9).");
+    reg({"GRID"}, [] { return std::make_unique<DraftModeCommand>(DraftModeCommand::Mode::Grid); }, "",
+        "Show or hide the grid (F7).");
     reg({"REVERSE"}, [] { return std::make_unique<SelectThenCommand>(SelectThenCommand::Tool::Reverse); }, "",
         "Make lines, polylines and splines run the other way.");
     reg({"-OVERKILL", "OVERKILL"}, [] { return std::make_unique<SelectThenCommand>(SelectThenCommand::Tool::Overkill); }, "",
