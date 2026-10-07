@@ -1241,6 +1241,18 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(inserts_, check);
     for_each_live_const(xlines_, check);
     for_each_live_const(ellipses_, check);
+    // An object inside a block definition uses its layer too.
+    for (const BlockDef& b : blocks_) {
+        const BlockContent& bc = b.content;
+        for (const auto& v : bc.lines) check(v);
+        for (const auto& v : bc.circles) check(v);
+        for (const auto& v : bc.arcs) check(v);
+        for (const auto& v : bc.polylines) check(v);
+        for (const auto& v : bc.texts) check(v);
+        for (const auto& v : bc.mtexts) check(v);
+        for (const auto& v : bc.inserts) check(v);
+        for (const auto& v : bc.attdefs) check(v.text);
+    }
     return used;
 }
 
@@ -1269,6 +1281,17 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(inserts_, fix);
     for_each_live_mut(xlines_, fix);
     for_each_live_mut(ellipses_, fix);
+    for (BlockDef& b : blocks_) {
+        BlockContent& bc = b.content;
+        for (auto& v : bc.lines) fix(v);
+        for (auto& v : bc.circles) fix(v);
+        for (auto& v : bc.arcs) fix(v);
+        for (auto& v : bc.polylines) fix(v);
+        for (auto& v : bc.texts) fix(v);
+        for (auto& v : bc.mtexts) fix(v);
+        for (auto& v : bc.inserts) fix(v);
+        for (auto& v : bc.attdefs) fix(v.text);
+    }
     // Viewports: their own layer, and the list of layers frozen in them (VPLAYER).
     for_each_live_mut(viewports_, [&](ViewportData& v) {
         fix(v);
