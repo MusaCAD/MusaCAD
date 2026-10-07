@@ -2464,6 +2464,17 @@ void ViewportWindow::rebuild_overlay() {
                         e.major = core::Vec2{-mh.y, mh.x} * d;
                         e.ratio = a / d;
                     }
+                } else if (pv.ellipse_stage == 3) {
+                    // Rotation: the first axis's circle seen turned about it by the cursor's
+                    // angle from the axis, as the command will take it (under 89.4 degrees).
+                    const core::Vec2 v = cur_eff - pts[0];
+                    double deg = std::abs(std::fmod(
+                        core::to_degrees(std::atan2(v.y, v.x) - std::atan2(pv.major.y, pv.major.x)), 180.0));
+                    if (deg > 90.0) {
+                        deg = 180.0 - deg;
+                    }
+                    draw = core::length(pv.major) > 1e-9 && deg < 89.4;
+                    e.ratio = std::max(std::cos(core::to_radians(deg)), 1e-6);
                 } else if (pv.ellipse_stage == 2) {
                     e.start = pv.ellipse_start;
                     e.end = core::ellipse::param_of(e, cur);

@@ -4277,8 +4277,62 @@ double EllipseCommand::param_from_input(const std::string& text, bool parameter_
 }
 
 void EllipseCommand::commit(CommandContext& ctx) {
-    ctx.submit(core::AddEllipseCommand{center_, major_, ratio_, start_, end_, ctx.group_id(), {}});
     ctx.set_preview({});
+    done_ = true;
+    if (!s_pellipse_) {
+        ctx.submit(core::AddEllipseCommand{center_, major_, ratio_, start_, end_, ctx.group_id(), {}});
+        return;
+    }
+    // PELLIPSE 1: a polyline of arcs, a biarc on each sixteenth of the turn, tangent to the
+    // ellipse at every sample.
+    core::EllipseData e = shape();
+    const bool full = core::ellipse::is_full(e);
+    const double sweep = core::ellipse::sweep_of(e);
+    const int steps = std::max(2, static_cast<int>(std::ceil(sweep / (core::kTwoPi / 16.0) - 1e-9)));
+    const core::Vec2 n = core::ellipse::minor_axis(e);
+    const auto tangent = [&](double t) {
+        return core::normalized(core::Vec2{-e.major.x * std::sin(t) + n.x * std::cos(t),
+                                           -e.major.y * std::sin(t) + n.y * std::cos(t)});
+    };
+    core::AddPolylineCommand p;
+    p.closed = full;
+    p.group = ctx.group_id();
+    const int count = full ? steps : steps + 1;
+    for (int i = 0; i < steps; ++i) {
+        const double t0 = e.start + sweep * i / steps;
+        const double t1 = e.start + sweep * (i + 1) / steps;
+        const core::polyline_ops::Biarc a = core::polyline_ops::biarc(
+            core::ellipse::point_at(e, t0), tangent(t0), core::ellipse::point_at(e, t1), tangent(t1));
+        p.points.push_back(core::ellipse::point_at(e, t0));
+        p.bulges.push_back(a.bulge0);
+        p.points.push_back(a.joint);
+        p.bulges.push_back(a.bulge1);
+    }
+    if (count > steps) {
+        p.points.push_back(core::ellipse::point_at(e, e.start + sweep));
+        p.bulges.push_back(0.0);
+    }
+    ctx.submit(std::move(p));
+}
+
+void PellipseCommand::start(CommandContext& ctx) {
+    ctx.set_prompt(std::string("Enter new value for PELLIPSE <") + (EllipseCommand::s_pellipse_ ? "1" : "0") + ">: ");
+}
+
+void PellipseCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1") {
+            ctx.echo("Requires 0 or 1.");
+            return;
+        }
+        EllipseCommand::s_pellipse_ = t == "1";
+    }
+    done_ = true;
+}
+
+void PellipseCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
     done_ = true;
 }
 
@@ -4355,6 +4409,10 @@ void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
     case State::OtherDist: {
         if (u == "R" || u == "ROTATION") {
             state_ = State::Rotation;
+            PreviewSpec pv{PreviewKind::Ellipse, {center_}};
+            pv.major = first_dir_ * half_;
+            pv.ellipse_stage = 3; // the circle on the first axis, turned by the cursor's angle
+            ctx.set_preview(std::move(pv));
             ctx.set_prompt("Specify rotation around major axis: ");
             return;
         }
@@ -4576,7 +4634,7 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (!fit_ && (u == "D" || u == "DEGREE")) {
             state_ = State::DegreePick;
-            ctx.set_prompt("Enter degree <" + std::to_string(degree_) + ">: ");
+            ctx.set_prompt("Enter degree of spline <" + std::to_string(degree_) + ">: ");
             return;
         }
         if (u == "O" || u == "OBJECT") {
@@ -5428,7 +5486,7 @@ void WipeoutCommand::input(CommandContext& ctx, const std::string& text) {
             pts_.push_back(*p);
             ctx.set_last_point(*p);
             ctx.set_preview({PreviewKind::Polyline, pts_});
-            ctx.set_prompt(pts_.size() >= 3 ? "Specify next point or [Undo/Close] <Close>: "
+            ctx.set_prompt(pts_.size() >= 3 ? "Specify next point or [Close/Undo]: "
                                             : "Specify next point or [Undo]: ");
         }
         return;
@@ -5549,8 +5607,20 @@ void FieldCommand::input(CommandContext& ctx, const std::string& text) {
 // PEDIT
 // ---------------------------------------------------------------------------
 void PeditCommand::prompt_option(CommandContext& ctx) const {
-    ctx.set_prompt(
-        "Enter an option [Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+    ctx.set_prompt(multiple_
+                       ? "Enter an option [Close/Open/Join/Width/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: "
+                       : "Enter an option [Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+}
+
+void PeditCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        state_ = State::Option;
+        prompt_option(ctx);
+    }
 }
 
 void PeditCommand::prompt_vertex(CommandContext& ctx) const {
@@ -5572,21 +5642,70 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     const auto op = [&](std::uint8_t code, core::Vec2 p1 = {}, core::Vec2 p2 = {}) {
-        ctx.submit(core::PeditCommand{pick_, ctx.pick_radius(), code, p1, p2, ctx.new_group()});
+        core::PeditCommand c{pick_, ctx.pick_radius(), code, p1, p2, ctx.new_group()};
+        c.selection = multiple_;
+        ctx.submit(c);
     };
     switch (state_) {
     case State::Select:
         if (u == "M" || u == "MULTIPLE") {
-            ctx.echo("Multiple is not supported yet; select one polyline.");
+            multiple_ = true;
+            state_ = State::MultiSelect;
+            if (ctx.has_selection()) {
+                state_ = State::Option;
+                prompt_option(ctx);
+                return;
+            }
+            select_.begin(ctx);
             return;
         }
         if (const auto p = read_point(ctx, text)) {
             pick_ = *p;
             ctx.set_last_point(*p);
+            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first.
+            if (ctx.input_is_pick() &&
+                (ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc)) {
+                state_ = State::Accept;
+                ctx.echo("Object selected is not a polyline");
+                ctx.set_prompt("Do you want to turn it into one? <Y> ");
+                return;
+            }
             state_ = State::Option;
             prompt_option(ctx);
         }
         return;
+    case State::Accept:
+        if (t.empty() || u == "Y" || u == "YES") {
+            state_ = State::Option;
+            prompt_option(ctx);
+        } else if (u == "N" || u == "NO") {
+            state_ = State::Select;
+            ctx.set_prompt("Select polyline or [Multiple]: ");
+        } else {
+            ctx.echo("Enter Y or N.");
+        }
+        return;
+    case State::MultiSelect:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            if (!ctx.has_selection()) {
+                done_ = true;
+                return;
+            }
+            state_ = State::Option;
+            prompt_option(ctx);
+        }
+        return;
+    case State::Fuzz: {
+        double fuzz = 0.0;
+        if (!t.empty() && (!parse_number(t, fuzz) || fuzz < 0.0)) {
+            ctx.echo("Requires a distance of zero or more.");
+            return;
+        }
+        ctx.submit(core::JoinSelectionCommand{fuzz, ctx.new_group()});
+        state_ = State::Option;
+        prompt_option(ctx);
+        return;
+    }
     case State::Option:
         if (t.empty() || u == "X" || u == "EXIT") {
             done_ = true;
@@ -5596,6 +5715,11 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             op(0);
         } else if (u == "O" || u == "OPEN") {
             op(1);
+        } else if ((u == "J" || u == "JOIN") && multiple_) {
+            // The ends within the fuzz distance of each other are joined.
+            state_ = State::Fuzz;
+            ctx.set_prompt("Enter fuzz distance <0.0000>: ");
+            return;
         } else if (u == "J" || u == "JOIN") {
             join_picks_ = {pick_};
             state_ = State::JoinTargets;
@@ -5605,12 +5729,12 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             state_ = State::WidthVal;
             ctx.set_prompt("Specify new width for all segments: ");
             return;
-        } else if (u == "E" || u == "EDIT VERTEX" || u == "EDIT") {
+        } else if ((u == "E" || u == "EDIT VERTEX" || u == "EDIT") && !multiple_) {
             state_ = State::Vertex;
             prompt_vertex(ctx);
             return;
         } else if (u == "F" || u == "FIT") {
-            ctx.echo("Fit is not supported; Spline makes a fit spline through the vertices.");
+            op(10);
         } else if (u == "S" || u == "SPLINE") {
             op(4);
             done_ = true; // the polyline is a spline now
@@ -5624,7 +5748,8 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "U" || u == "UNDO") {
             ctx.submit(core::UndoLastGroupCommand{});
         } else {
-            ctx.echo("Enter Close, Open, Join, Width, Edit vertex, Spline, Decurve, Reverse, Undo or Enter to finish.");
+            ctx.echo(multiple_ ? "Enter Close, Open, Join, Width, Fit, Spline, Decurve, Reverse, Undo or Enter to finish."
+                               : "Enter Close, Open, Join, Width, Edit vertex, Fit, Spline, Decurve, Reverse, Undo or Enter to finish.");
         }
         prompt_option(ctx);
         return;
@@ -7865,16 +7990,19 @@ void RevcloudCommand::main_prompt(CommandContext& ctx) {
     state_ = State::Main;
     path_.clear();
     ctx.clear_preview();
-    ctx.set_prompt("Specify first point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] "
-                   "<Object>: ");
+    // The prompt follows the type in force, which is remembered for the session.
+    static constexpr const char* kFirst[] = {"Specify first corner point", "Specify start point",
+                                             "Specify first point"};
+    ctx.set_prompt(std::string(kFirst[s_type_]) +
+                   " or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] <Object>: ");
 }
 
 void RevcloudCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    char buf[128];
-    std::snprintf(buf, sizeof(buf),
-                  "Minimum arc length: %.4f   Maximum arc length: %.4f   Style: Normal", min_arc_,
-                  max_arc_);
+    static constexpr const char* kType[] = {"Rectangular", "Polygonal", "Freehand"};
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "Minimum arc length: %.4f   Maximum arc length: %.4f   Style: %s   Type: %s",
+                  min_arc_, max_arc_, s_calligraphy_ ? "Calligraphy" : "Normal", kType[s_type_]);
     ctx.echo(buf);
     main_prompt(ctx);
 }
@@ -7893,6 +8021,9 @@ void RevcloudCommand::emit_cloud(CommandContext& ctx, const std::vector<core::Ve
     pc.points = std::move(verts);
     pc.bulges = std::move(bulges);
     pc.closed = closed;
+    if (s_calligraphy_) {
+        pc.widths = core::polyline_ops::calligraphy_widths(pc.points, closed);
+    }
     pc.group = ctx.group_id();
     ctx.clear_preview();
     ctx.submit(std::move(pc));
@@ -7917,29 +8048,30 @@ void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt(buf);
             return;
         }
-        if (u == "R" || u == "RECTANGULAR") {
-            state_ = State::RectFirst;
-            ctx.set_prompt("Specify first corner point: ");
-            return;
-        }
-        if (u == "P" || u == "POLYGONAL" || u == "F" || u == "FREEHAND") {
-            state_ = State::PathNext;
-            path_.clear();
-            ctx.set_prompt(u.front() == 'F' ? "Guide the path point by point (Enter closes): "
-                                            : "Specify start point: ");
+        if (u == "R" || u == "RECTANGULAR" || u == "P" || u == "POLYGONAL" || u == "F" || u == "FREEHAND") {
+            s_type_ = u.front() == 'R' ? 0 : (u.front() == 'P' ? 1 : 2);
+            main_prompt(ctx);
             return;
         }
         if (u == "S" || u == "STYLE") {
             state_ = State::Style;
-            ctx.set_prompt("Select arc style [Normal/Calligraphy] <Normal>: ");
+            ctx.set_prompt(std::string("Select arc style [Normal/Calligraphy] <") +
+                           (s_calligraphy_ ? "Calligraphy" : "Normal") + ">: ");
             return;
         }
         if (u == "M" || u == "MODIFY") {
             ctx.echo("Modify is not supported yet; draw a new cloud.");
             return;
         }
-        // A point at the main prompt starts a path (AutoCAD's default Freehand type).
-        if (const auto p = read_point(ctx, text)) {
+        // A point at the main prompt starts the type in force: a rectangle's first corner,
+        // or a path clicked point by point.
+        if (const auto p = read_point(ctx, text); p && s_type_ == 0) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::RectSecond;
+            ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {first_}});
+            ctx.set_prompt("Specify opposite corner: ");
+        } else if (p) {
             state_ = State::PathNext;
             path_ = {*p};
             ctx.set_last_point(*p);
@@ -8022,6 +8154,7 @@ void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
             cmd.pick_radius = ctx.pick_radius();
             cmd.arc_len = arc_len();
             cmd.group = ctx.group_id();
+            cmd.calligraphy = s_calligraphy_;
             ctx.submit(cmd);
             state_ = State::ObjectReverse;
             ctx.set_prompt("Reverse direction [Yes/No] <No>: ");
@@ -8035,7 +8168,12 @@ void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Style:
         if (u == "C" || u == "CALLIGRAPHY") {
-            ctx.echo("Calligraphy style is not supported; Normal is used.");
+            s_calligraphy_ = true;
+        } else if (u == "N" || u == "NORMAL") {
+            s_calligraphy_ = false;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
         }
         main_prompt(ctx);
         return;

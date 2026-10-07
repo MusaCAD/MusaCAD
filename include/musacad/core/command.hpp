@@ -41,6 +41,7 @@ struct RevcloudObjectCommand {
     double pick_radius = 0.0;
     double arc_len = 0.5;
     std::uint64_t group = 0;
+    bool calligraphy = false; ///< the Calligraphy style: tapered lobes (calligraphy_widths)
 };
 
 /// REVCLOUD's "Reverse direction": flip every lobe of the selected cloud polylines
@@ -122,6 +123,9 @@ struct PeditCommand {
     Vec2 p1{};
     Vec2 p2{};
     std::uint64_t group = 0;
+    /// Multiple: the edit on every selected polyline (and line and arc, made polylines)
+    /// instead of the one at `pick`. op 10 is Fit (polyline_ops::fit_arcs).
+    bool selection = false;
 };
 
 /// REVERSE: the selected lines, polylines and splines run the other way (a polyline's

@@ -5280,6 +5280,9 @@ void GeometryEngine::apply_revcloud_object(const RevcloudObjectCommand& c) {
     cloud.points = std::move(verts);
     cloud.bulges = std::move(bulges);
     cloud.closed = closed;
+    if (c.calligraphy) {
+        cloud.widths = polyline_ops::calligraphy_widths(cloud.points, closed);
+    }
     cloud.props = ep != nullptr ? *ep : EntityProps{store_.current_layer()};
     // AutoCAD converts the object: the cloud replaces it, as one undo group.
     const Command original = capture_entity(h);
@@ -9831,11 +9834,42 @@ void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
 // as one undo group, so undo, redo and the file see an ordinary polyline edit. A line
 // or arc under the pick becomes a polyline first (AutoCAD's "turn it into one?").
 void GeometryEngine::apply_pedit(const PeditCommand& c) {
-    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
-    if (h.is_null()) {
-        report("PEDIT: nothing under the pick.");
+    if (!c.selection) {
+        const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+        if (h.is_null()) {
+            report("PEDIT: nothing under the pick.");
+            return;
+        }
+        const EntityHandle nh = pedit_one(h, c, false);
+        if (!nh.is_null()) {
+            selection_ = {nh};
+        }
         return;
     }
+    // Multiple: each selected polyline, line and arc; the rest stay as they are.
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> out;
+    std::size_t changed = 0;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const bool fits = h.kind == EntityKind::Polyline || h.kind == EntityKind::Line || h.kind == EntityKind::Arc;
+        const EntityHandle nh = fits ? pedit_one(h, c, true) : EntityHandle::null();
+        out.push_back(nh.is_null() ? h : nh);
+        changed += nh.is_null() ? 0U : 1U;
+    }
+    selection_ = out;
+    report(changed == 0 ? std::string("PEDIT: no polylines, lines or arcs it applies to are selected.")
+                        : std::to_string(changed) + (changed == 1 ? " object changed." : " objects changed."));
+}
+
+EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bool quiet) {
+    const auto say = [&](const std::string& m) {
+        if (!quiet) {
+            report(m);
+        }
+    };
     std::vector<Vec2> v;
     std::vector<double> b;
     std::vector<double> w; // two per vertex, zeros for a plain polyline
@@ -9883,8 +9917,8 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         cts = store_.celtscale(h);
         converted = true;
     } else {
-        report("PEDIT: select a polyline (or a line or arc to convert).");
-        return;
+        say("PEDIT: select a polyline (or a line or arc to convert).");
+        return EntityHandle::null();
     }
     const std::size_t n = v.size();
     w.resize(2 * n, 0.0);
@@ -9905,8 +9939,8 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     switch (c.op) {
     case 0: // Close
         if (n < 3) {
-            report("PEDIT: a polyline needs three vertices to close.");
-            return;
+            say("PEDIT: a polyline needs three vertices to close.");
+            return EntityHandle::null();
         }
         closed = true;
         what = "Closed.";
@@ -9943,8 +9977,8 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
             fit.push_back(v.front());
         }
         if (fit.size() < 2) {
-            report("PEDIT: not enough vertices for a spline.");
-            return;
+            say("PEDIT: not enough vertices for a spline.");
+            return EntityHandle::null();
         }
         AddSplineCommand sp;
         sp.control_points = spline::fit_or_fallback(fit, 3, spline::FitParam::Chord);
@@ -9978,8 +10012,8 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     }
     case 6: { // Delete the vertex nearest p1
         if ((closed && n <= 3) || (!closed && n <= 2)) {
-            report("PEDIT: cannot delete -- too few vertices would remain.");
-            return;
+            say("PEDIT: cannot delete -- too few vertices would remain.");
+            return EntityHandle::null();
         }
         const std::size_t i = nearest_vertex(c.p1);
         v.erase(v.begin() + static_cast<std::ptrdiff_t>(i));
@@ -10006,8 +10040,8 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     }
     case 8: { // Width: one width for every segment
         if (!(c.p1.x >= 0.0)) {
-            report("PEDIT: the width cannot be negative.");
-            return;
+            say("PEDIT: the width cannot be negative.");
+            return EntityHandle::null();
         }
         std::fill(w.begin(), w.end(), c.p1.x);
         what = "Width set to " + fmt_len(c.p1.x) + ".";
@@ -10015,8 +10049,8 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     }
     case 9: { // the widths of the segment leaving the vertex nearest p1
         if (!(c.p2.x >= 0.0) || !(c.p2.y >= 0.0)) {
-            report("PEDIT: a width cannot be negative.");
-            return;
+            say("PEDIT: a width cannot be negative.");
+            return EntityHandle::null();
         }
         const std::size_t i = nearest_vertex(c.p1);
         w[2 * i] = c.p2.x;
@@ -10024,9 +10058,17 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
         what = "Segment width set.";
         break;
     }
+    case 10: { // Fit: arcs through the vertices, smooth at each (two per segment)
+        if (!polyline_ops::fit_arcs(v, b, w, closed)) {
+            say("PEDIT: Fit needs three vertices.");
+            return EntityHandle::null();
+        }
+        what = "Fit.";
+        break;
+    }
     default:
-        report("PEDIT: unknown option.");
-        return;
+        say("PEDIT: unknown option.");
+        return EntityHandle::null();
     }
     if (!replacement) {
         bool any_bulge = false;
@@ -10048,11 +10090,11 @@ void GeometryEngine::apply_pedit(const PeditCommand& c) {
     push_erase_item(c.group, h, original);
     const EntityHandle nh = create_indexed(*replacement);
     push_create_item(c.group, nh, *replacement);
-    selection_ = {nh};
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
-    report((converted ? "Converted to a polyline. " : "") + what);
+    say((converted ? "Converted to a polyline. " : "") + what);
+    return nh;
 }
 
 namespace {
