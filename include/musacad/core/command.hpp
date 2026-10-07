@@ -676,6 +676,21 @@ struct DimEditCommand {
     Vec2 to{};
     std::uint64_t group = 0;
 };
+/// QDIM: dimensions for the selected geometry, their lines through `at`. The points are
+/// the ends of lines, arcs and polyline segments, points, and the centres of circles;
+/// `at` above or below them makes horizontal dimensions, beside them vertical ones.
+/// Continuous chains the points in turn; Staggered nests pairs from the outside in;
+/// Baseline measures each from the first; Ordinate gives each point's X (or Y), its
+/// leader ending at `at`; Radius and Diameter dimension each circle and arc, the text
+/// toward `at`. Staggered and Baseline stack `spacing` apart (0: the style's baseline
+/// spacing, 1.5 text heights). One undo group.
+struct QuickDimCommand {
+    enum class Mode : std::uint8_t { Continuous, Staggered, Baseline, Ordinate, Radius, Diameter };
+    Mode mode = Mode::Continuous;
+    Vec2 at{};
+    double spacing = 0.0;
+    std::uint64_t group = 0;
+};
 /// DIMOVERRIDE: the selected dimensions take these dimension variables as their own
 /// (apply_dim_override), or with `clear` drop all of theirs. One undo step.
 struct SetDimOverrideCommand {
@@ -1841,7 +1856,7 @@ using Command =
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
                  DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
-                 BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand,
+                 BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

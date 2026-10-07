@@ -359,6 +359,7 @@ private:
     void apply_set_dim_override(const SetDimOverrideCommand& c);
     void apply_center_mark(const AddCenterMarkCommand& c);
     void apply_layer_edit(const LayerEditCommand& c);
+    void apply_quick_dim(const QuickDimCommand& c);
     bool layer_edit_changed_ = false; ///< the last -LAYER option changed the layer table
     /// After the store removed layer `removed`: the undo and redo history, DIMLAYER and the
     /// layer tools' memories renumbered the way the store renumbered its objects (what was

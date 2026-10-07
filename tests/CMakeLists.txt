@@ -129,6 +129,7 @@ add_executable(musacad_tests
     test_pedit_fit.cpp
     test_layer_removal.cpp
     test_layer_command.cpp
+    test_qdim.cpp
     test_trim_curves.cpp
     test_lengthen_more.cpp
     test_trim_paths_clipboard.cpp

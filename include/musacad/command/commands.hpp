@@ -702,6 +702,28 @@ private:
     bool done_ = false;
 };
 
+/// QDIM: `Select geometry to dimension:`, then `Specify dimension line position, or
+/// [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter] <Continuous>:` -- the kind is
+/// remembered for the session.
+class QuickDimUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "QDIM"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void position_prompt(CommandContext& ctx);
+    static inline core::QuickDimCommand::Mode s_mode_ = core::QuickDimCommand::Mode::Continuous;
+    bool positioning_ = false;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// DIMCENTER: a centre mark on the arc or circle picked; Lines adds centre lines.
 class DimCenterCommand final : public ICommand {
 public:
