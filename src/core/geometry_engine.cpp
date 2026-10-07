@@ -2353,13 +2353,565 @@ void GeometryEngine::apply_center_mark(const AddCenterMarkCommand& c) {
             segs.emplace_back(ctr + u * (2.0 * m), ctr + u * (r + m));
         }
     }
-    for (const auto& [a, b] : segs) {
-        const AddLineCommand l{a, b, c.group};
+    for (std::size_t i = 0; i < segs.size(); ++i) {
+        AddLineCommand l{segs[i].first, segs[i].second, c.group};
+        if (c.center_linetype && i >= 2) {
+            EntityProps p = fresh_props();
+            p.set_linetype_by_layer(false);
+            p.linetype = Linetype::Center;
+            l.props = p;
+        }
         push_create_item(c.group, create_indexed(l), l);
     }
     redo_.clear();
     geom_dirty_ = true;
     report(c.lines ? "Center mark and center lines added." : "Center mark added.");
+}
+
+std::optional<std::uint16_t> GeometryEngine::layer_named(std::string_view name) const {
+    const auto up = [](std::string_view s) {
+        std::string u(s);
+        std::transform(u.begin(), u.end(), u.begin(), [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return u;
+    };
+    const std::string want = up(name);
+    const std::size_t n = store_.layers().size();
+    for (std::size_t i = 0; i < n; ++i) {
+        if (up(store_.layers()[i].name) == want) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return std::nullopt;
+}
+
+EntityProps GeometryEngine::fresh_props() const {
+    EntityProps p = current_props_;
+    p.layer = store_.current_layer();
+    p.set_space(store_.active_space());
+    return p;
+}
+
+namespace {
+// Defined further down in this file (the props visitor shared with the property edits).
+void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn);
+
+/// A polyline run the other way: vertices backwards, each segment's bulge negated and
+/// its taper turned round.
+void reverse_polyline(AddPolylineCommand& p) {
+    const std::size_t n = p.points.size();
+    if (n < 2) {
+        return;
+    }
+    std::vector<double> b = p.bulges;
+    b.resize(n, 0.0);
+    const bool per_vertex = p.widths.size() == 2 * n;
+    std::vector<double> rb(n, 0.0);
+    std::vector<double> rw(per_vertex ? 2 * n : 0, 0.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t src = (n + n - 2 - i) % n; // the old segment, now run backwards
+        if (p.closed || i + 1 < n) {
+            rb[i] = -b[src];
+            if (per_vertex) {
+                rw[2 * i] = p.widths[2 * src + 1];
+                rw[2 * i + 1] = p.widths[2 * src];
+            }
+        }
+    }
+    std::reverse(p.points.begin(), p.points.end());
+    if (!p.bulges.empty()) {
+        p.bulges = std::move(rb);
+    }
+    if (per_vertex) {
+        p.widths = std::move(rw);
+    } else if (p.widths.size() == 2) {
+        std::swap(p.widths[0], p.widths[1]); // the one taper every segment has
+    }
+}
+
+Vec2 rotated(Vec2 v, double a) {
+    const double cs = std::cos(a);
+    const double sn = std::sin(a);
+    return {v.x * cs - v.y * sn, v.x * sn + v.y * cs};
+}
+} // namespace
+
+void GeometryEngine::apply_reverse(const ReverseSelectionCommand& c) {
+    const std::vector<EntityHandle> sel = selection_;
+    std::vector<EntityHandle> out;
+    int done = 0;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        Command original = capture_entity(h);
+        Command changed = original;
+        if (auto* l = std::get_if<AddLineCommand>(&changed)) {
+            std::swap(l->a, l->b);
+        } else if (auto* p = std::get_if<AddPolylineCommand>(&changed)) {
+            reverse_polyline(*p);
+        } else if (auto* s = std::get_if<AddSplineCommand>(&changed)) {
+            std::reverse(s->control_points.begin(), s->control_points.end());
+        } else {
+            out.push_back(h);
+            continue;
+        }
+        remove_indexed(h);
+        push_erase_item(c.group, h, std::move(original));
+        const EntityHandle nh = create_indexed(changed);
+        push_create_item(c.group, nh, std::move(changed));
+        out.push_back(nh);
+        ++done;
+    }
+    selection_ = out;
+    if (done > 0) {
+        redo_.clear();
+        geom_dirty_ = true;
+    }
+    report(done == 0 ? std::string("No lines, polylines or splines selected.")
+                     : std::to_string(done) + (done == 1 ? " object reversed." : " objects reversed."));
+}
+
+void GeometryEngine::apply_copy_to_layer(const CopyToLayerCommand& c) {
+    std::vector<EntityHandle> sel;
+    for (const EntityHandle h : selection_) {
+        if (store_.is_valid(h)) {
+            sel.push_back(h);
+        }
+    }
+    if (sel.empty()) {
+        report("Nothing selected.");
+        return;
+    }
+    std::optional<std::uint16_t> layer;
+    bool made = false;
+    if (c.pick) {
+        const EntityHandle h = pick_nearest(*c.pick, c.radius);
+        if (const EntityProps* p = h.is_null() ? nullptr : store_.props(h)) {
+            layer = p->layer;
+        } else {
+            report("No object found.");
+            return;
+        }
+    } else {
+        layer = layer_named(c.name);
+        if (!layer) {
+            if (c.name.empty()) {
+                report("No layer named.");
+                return;
+            }
+            Layer l;
+            l.name = c.name;
+            layer = store_.add_layer(l);
+            made = true;
+        }
+    }
+    std::vector<EntityHandle> copies;
+    for (const EntityHandle h : sel) {
+        Command copy = capture_entity(h);
+        translate_cmd(copy, c.offset);
+        modify_cmd_props(copy, [&](EntityProps& p) { p.layer = *layer; });
+        const EntityHandle nh = create_indexed(copy);
+        push_create_item(c.group, nh, std::move(copy));
+        copies.push_back(nh);
+    }
+    selection_ = copies;
+    redo_.clear();
+    geom_dirty_ = true;
+    const std::size_t n = copies.size();
+    report(std::to_string(n) + (n == 1 ? " object copied" : " objects copied") + " to layer \"" +
+           store_.layers()[*layer].name + "\"" + (made ? " (a new layer)." : "."));
+}
+
+void GeometryEngine::apply_change_props(const ChangePropsCommand& c) {
+    std::size_t n = 0;
+    for (const EntityHandle h : selection_) {
+        n += store_.is_valid(h) ? 1U : 0U;
+    }
+    if (n == 0) {
+        report("Nothing selected.");
+        return;
+    }
+    std::optional<std::uint16_t> layer;
+    if (!c.layer.empty()) {
+        layer = layer_named(c.layer);
+        if (!layer) {
+            report("Layer \"" + c.layer + "\" not found.");
+            return;
+        }
+    }
+    if (c.color || layer || c.linetype || c.lineweight) {
+        apply_props_change(
+            [&](EntityProps& p) {
+                if (c.color) {
+                    p.set_color_by_layer(c.color->first);
+                    if (!c.color->first) {
+                        p.color = c.color->second;
+                    }
+                }
+                if (layer) {
+                    p.layer = *layer;
+                }
+                if (c.linetype) {
+                    p.set_linetype_by_layer(c.linetype->first);
+                    if (!c.linetype->first) {
+                        p.linetype = c.linetype->second;
+                    }
+                }
+                if (c.lineweight) {
+                    p.set_lineweight_by_layer(c.lineweight->first);
+                    if (!c.lineweight->first) {
+                        p.lineweight = c.lineweight->second;
+                    }
+                }
+            },
+            c.group);
+    }
+    if (c.celtscale > 0.0) {
+        PropertyValue v;
+        v.num = c.celtscale;
+        apply_set_property(PropertyId::Celtscale, v, c.group);
+    }
+    report("Properties changed on " + std::to_string(n) + (n == 1 ? " object." : " objects."));
+}
+
+void GeometryEngine::apply_overkill(const OverkillCommand& c) {
+    const double tol = std::max(c.tolerance, 1e-12);
+    const auto near = [tol](Vec2 a, Vec2 b) { return distance(a, b) <= tol; };
+    const auto near_d = [tol](double a, double b) { return std::abs(a - b) <= tol; };
+    const auto same_angle = [tol](double a, double b) {
+        const double d = std::remainder(a - b, kTwoPi);
+        return std::abs(d) <= tol;
+    };
+    std::vector<EntityHandle> sel;
+    for (const EntityHandle h : selection_) {
+        if (store_.is_valid(h)) {
+            sel.push_back(h);
+        }
+    }
+    // The same geometry, kind by kind; kinds not listed are never duplicates here.
+    const auto same = [&](EntityHandle a, EntityHandle b) -> bool {
+        if (a.kind != b.kind || !(*store_.props(a) == *store_.props(b))) {
+            return false;
+        }
+        switch (a.kind) {
+        case EntityKind::Point:
+            return near(store_.point(a)->p, store_.point(b)->p);
+        case EntityKind::Line: {
+            const LineData* x = store_.line(a);
+            const LineData* y = store_.line(b);
+            return (near(x->a, y->a) && near(x->b, y->b)) || (near(x->a, y->b) && near(x->b, y->a));
+        }
+        case EntityKind::Circle: {
+            const CircleData* x = store_.circle(a);
+            const CircleData* y = store_.circle(b);
+            return near(x->center, y->center) && near_d(x->radius, y->radius);
+        }
+        case EntityKind::Arc: {
+            const ArcData* x = store_.arc(a);
+            const ArcData* y = store_.arc(b);
+            return near(x->center, y->center) && near_d(x->radius, y->radius) &&
+                   same_angle(x->start_angle, y->start_angle) && same_angle(x->end_angle, y->end_angle);
+        }
+        case EntityKind::Polyline: {
+            const PolylineData* x = store_.polyline(a);
+            const PolylineData* y = store_.polyline(b);
+            const auto xv = store_.vertices_of(*x);
+            const auto yv = store_.vertices_of(*y);
+            if (xv.size() != yv.size() || x->closed != y->closed) {
+                return false;
+            }
+            const auto xb = store_.bulges_of(*x);
+            const auto yb = store_.bulges_of(*y);
+            const auto bulge = [](std::span<const double> bs, std::size_t i) { return i < bs.size() ? bs[i] : 0.0; };
+            bool fwd = true;
+            for (std::size_t i = 0; i < xv.size() && fwd; ++i) {
+                fwd = near(xv[i], yv[i]) && near_d(bulge(xb, i), bulge(yb, i));
+            }
+            if (fwd || x->closed) {
+                return fwd;
+            }
+            const std::size_t n = xv.size();
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!near(xv[i], yv[n - 1 - i]) || (i + 1 < n && !near_d(bulge(xb, i), -bulge(yb, n - 2 - i)))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        case EntityKind::Text: {
+            const TextData* x = store_.text(a);
+            const TextData* y = store_.text(b);
+            return near(x->pos, y->pos) && near_d(x->height, y->height) && same_angle(x->rotation, y->rotation) &&
+                   store_.string_of(*x) == store_.string_of(*y);
+        }
+        default:
+            return false;
+        }
+    };
+    std::vector<bool> gone(sel.size(), false);
+    std::size_t deleted = 0;
+    const auto erase = [&](std::size_t i) {
+        Command original = capture_entity(sel[i]);
+        remove_indexed(sel[i]);
+        push_erase_item(c.group, sel[i], std::move(original));
+        gone[i] = true;
+    };
+    for (std::size_t i = 0; i < sel.size(); ++i) {
+        for (std::size_t j = i + 1; j < sel.size() && !gone[i]; ++j) {
+            if (!gone[j] && same(sel[i], sel[j])) {
+                erase(j);
+                ++deleted;
+            }
+        }
+    }
+    // Collinear lines that overlap (or meet) become one, spanning them all.
+    std::size_t combined = 0;
+    std::vector<EntityHandle> kept;
+    if (c.combine) {
+        std::vector<std::size_t> lines;
+        for (std::size_t i = 0; i < sel.size(); ++i) {
+            if (!gone[i] && sel[i].kind == EntityKind::Line) {
+                lines.push_back(i);
+            }
+        }
+        std::vector<bool> used(sel.size(), false);
+        for (const std::size_t i : lines) {
+            if (used[i] || gone[i]) {
+                continue;
+            }
+            const LineData base = *store_.line(sel[i]);
+            const double len = distance(base.a, base.b);
+            if (len <= tol) {
+                continue;
+            }
+            const Vec2 u = (base.b - base.a) / len;
+            const auto t_of = [&](Vec2 p) { return dot(p - base.a, u); };
+            const auto off = [&](Vec2 p) { return std::abs(cross(u, p - base.a)); };
+            // Every collinear line with the same properties, as an interval along `u`.
+            std::vector<std::pair<double, double>> iv;
+            std::vector<std::size_t> members;
+            for (const std::size_t j : lines) {
+                if (used[j] || gone[j]) {
+                    continue;
+                }
+                const LineData* l = store_.line(sel[j]);
+                if (!(*store_.props(sel[j]) == *store_.props(sel[i])) || off(l->a) > tol || off(l->b) > tol) {
+                    continue;
+                }
+                const double t0 = std::min(t_of(l->a), t_of(l->b));
+                const double t1 = std::max(t_of(l->a), t_of(l->b));
+                iv.emplace_back(t0, t1);
+                members.push_back(j);
+            }
+            // Merge the intervals that overlap (or touch, end to end) into runs.
+            std::vector<std::size_t> order(members.size());
+            for (std::size_t k = 0; k < order.size(); ++k) {
+                order[k] = k;
+            }
+            std::sort(order.begin(), order.end(), [&](std::size_t x, std::size_t y) { return iv[x].first < iv[y].first; });
+            std::size_t k = 0;
+            while (k < order.size()) {
+                double lo = iv[order[k]].first;
+                double hi = iv[order[k]].second;
+                std::vector<std::size_t> run{members[order[k]]};
+                std::size_t m = k + 1;
+                while (m < order.size()) {
+                    const double gap = iv[order[m]].first - hi;
+                    if (gap < -tol || (c.end_to_end && gap <= tol)) {
+                        hi = std::max(hi, iv[order[m]].second);
+                        run.push_back(members[order[m]]);
+                        ++m;
+                    } else {
+                        break;
+                    }
+                }
+                for (const std::size_t r : run) {
+                    used[r] = true;
+                }
+                if (run.size() > 1) {
+                    AddLineCommand merged = std::get<AddLineCommand>(capture_entity(sel[run.front()]));
+                    merged.a = base.a + u * lo;
+                    merged.b = base.a + u * hi;
+                    merged.group = c.group;
+                    for (const std::size_t r : run) {
+                        erase(r);
+                    }
+                    const EntityHandle nh = create_indexed(merged);
+                    push_create_item(c.group, nh, merged);
+                    kept.push_back(nh);
+                    combined += run.size();
+                }
+                k = m;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < sel.size(); ++i) {
+        if (!gone[i]) {
+            kept.push_back(sel[i]);
+        }
+    }
+    selection_ = kept;
+    if (deleted + combined > 0) {
+        redo_.clear();
+        geom_dirty_ = true;
+    }
+    report(std::to_string(deleted) + (deleted == 1 ? " duplicate deleted, " : " duplicates deleted, ") +
+           std::to_string(combined) + (combined == 1 ? " overlapping object combined." : " overlapping objects combined."));
+}
+
+void GeometryEngine::apply_blend(const BlendCommand& c) {
+    // The end of the object nearer the pick, and the way the object leaves through it.
+    const auto end_of = [&](Vec2 pick, EntityHandle& h) -> std::optional<std::pair<Vec2, Vec2>> {
+        h = pick_nearest(pick, c.radius);
+        if (h.is_null()) {
+            return std::nullopt;
+        }
+        const auto choose = [&](Vec2 s, Vec2 s_out, Vec2 e, Vec2 e_out) {
+            return distance(pick, s) <= distance(pick, e) ? std::make_pair(s, s_out) : std::make_pair(e, e_out);
+        };
+        std::vector<Vec2> pts;
+        switch (h.kind) {
+        case EntityKind::Line: {
+            const LineData* l = store_.line(h);
+            if (distance(l->a, l->b) < 1e-12) {
+                return std::nullopt;
+            }
+            return choose(l->a, normalized(l->a - l->b), l->b, normalized(l->b - l->a));
+        }
+        case EntityKind::Arc: {
+            const ArcData* a = store_.arc(h);
+            const Vec2 s = a->center + Vec2{std::cos(a->start_angle), std::sin(a->start_angle)} * a->radius;
+            const Vec2 e = a->center + Vec2{std::cos(a->end_angle), std::sin(a->end_angle)} * a->radius;
+            return choose(s, Vec2{std::sin(a->start_angle), -std::cos(a->start_angle)}, e,
+                          Vec2{-std::sin(a->end_angle), std::cos(a->end_angle)});
+        }
+        case EntityKind::Polyline: {
+            const PolylineData* pl = store_.polyline(h);
+            const auto v = store_.vertices_of(*pl);
+            const auto b = store_.bulges_of(*pl);
+            const std::size_t n = v.size();
+            if (pl->closed || n < 2 || distance(v[0], v[1]) < 1e-12 || distance(v[n - 2], v[n - 1]) < 1e-12) {
+                return std::nullopt;
+            }
+            const double b0 = b.empty() ? 0.0 : b[0];
+            const double b1 = n - 2 < b.size() ? b[n - 2] : 0.0;
+            const Vec2 s_tan = rotated(normalized(v[1] - v[0]), -2.0 * std::atan(b0));
+            const Vec2 e_tan = rotated(normalized(v[n - 1] - v[n - 2]), 2.0 * std::atan(b1));
+            return choose(v[0], s_tan * -1.0, v[n - 1], e_tan);
+        }
+        case EntityKind::Spline: {
+            const auto cp = store_.control_points_of(*store_.spline(h));
+            const std::size_t n = cp.size();
+            if (n >= 2 && distance(cp[0], cp[1]) > 1e-12 && distance(cp[n - 1], cp[n - 2]) > 1e-12) {
+                return choose(cp[0], normalized(cp[0] - cp[1]), cp[n - 1], normalized(cp[n - 1] - cp[n - 2]));
+            }
+            break;
+        }
+        case EntityKind::Ellipse:
+            if (ellipse::is_full(*store_.ellipse(h))) {
+                return std::nullopt;
+            }
+            break;
+        default:
+            return std::nullopt;
+        }
+        kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+        if (pts.size() < 2) {
+            return std::nullopt;
+        }
+        const std::size_t n = pts.size();
+        return choose(pts[0], normalized(pts[0] - pts[1]), pts[n - 1], normalized(pts[n - 1] - pts[n - 2]));
+    };
+    EntityHandle h1;
+    EntityHandle h2;
+    const auto e1 = end_of(c.pick1, h1);
+    const auto e2 = end_of(c.pick2, h2);
+    if (!e1 || !e2) {
+        report("Select lines, arcs, open polylines, splines or elliptical arcs.");
+        return;
+    }
+    const double chord = distance(e1->first, e2->first);
+    if (chord < 1e-9) {
+        report("The two ends meet; there is nothing to blend.");
+        return;
+    }
+    AddSplineCommand s;
+    s.group = c.group;
+    const Vec2 p0 = e1->first;
+    const Vec2 p1 = e2->first;
+    const Vec2 t0 = e1->second;
+    const Vec2 t1 = e2->second;
+    if (c.smooth) {
+        const double k = chord / 5.0;
+        s.degree = 5;
+        s.control_points = {p0, p0 + t0 * k, p0 + t0 * (2.0 * k), p1 + t1 * (2.0 * k), p1 + t1 * k, p1};
+    } else {
+        const double k = chord / 3.0;
+        s.degree = 3;
+        s.control_points = {p0, p0 + t0 * k, p1 + t1 * k, p1};
+    }
+    const EntityHandle nh = create_indexed(s);
+    push_create_item(c.group, nh, s);
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Blend created.");
+}
+
+void GeometryEngine::apply_boundary(const BoundaryCommand& c) {
+    const auto loops = boundary_loops(c.point);
+    if (!loops) {
+        report("No closed boundary found round that point.");
+        return;
+    }
+    std::size_t made = 0;
+    for (std::size_t i = 0; i < loops->size() && (i == 0 || c.islands); ++i) {
+        AddPolylineCommand p;
+        p.points = (*loops)[i];
+        if (p.points.size() > 3 && distance(p.points.front(), p.points.back()) < 1e-9) {
+            p.points.pop_back();
+        }
+        p.closed = true;
+        p.group = c.group;
+        const EntityHandle nh = create_indexed(p);
+        push_create_item(c.group, nh, std::move(p));
+        ++made;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    report("BOUNDARY created " + std::to_string(made) + (made == 1 ? " polyline." : " polylines."));
+}
+
+void GeometryEngine::apply_centerline(const CenterlineCommand& c) {
+    const EntityHandle h1 = pick_nearest(c.pick1, c.radius);
+    const EntityHandle h2 = pick_nearest(c.pick2, c.radius);
+    const LineData* l1 = h1.kind == EntityKind::Line ? store_.line(h1) : nullptr;
+    const LineData* l2 = h2.kind == EntityKind::Line ? store_.line(h2) : nullptr;
+    if (l1 == nullptr || l2 == nullptr || h1 == h2) {
+        report("Select two lines.");
+        return;
+    }
+    Vec2 a2 = l2->a;
+    Vec2 b2 = l2->b;
+    if (dot(b2 - a2, l1->b - l1->a) < 0.0) {
+        std::swap(a2, b2);
+    }
+    Vec2 s = (l1->a + a2) * 0.5;
+    Vec2 e = (l1->b + b2) * 0.5;
+    if (distance(s, e) < 1e-9) {
+        report("Those lines leave no centre line between them.");
+        return;
+    }
+    const Vec2 u = normalized(e - s);
+    s = s - u * c.extension;
+    e = e + u * c.extension;
+    EntityProps p = fresh_props();
+    p.set_linetype_by_layer(false);
+    p.linetype = Linetype::Center;
+    const AddLineCommand line{s, e, c.group, p};
+    push_create_item(c.group, create_indexed(line), line);
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Center line created.");
 }
 
 void GeometryEngine::apply_area_query(const AreaQueryCommand& c) {
@@ -9967,6 +10519,24 @@ void GeometryEngine::apply_layer_tool(const LayerToolCommand& c) {
         report(c.op == Op::AllOn ? "All layers have been turned on." : "All layers have been thawed.");
         return;
     }
+    case Op::Match: {
+        std::size_t n = 0;
+        for (const EntityHandle h : selection_) {
+            n += store_.is_valid(h) ? 1U : 0U;
+        }
+        if (n == 0) {
+            layer_tool_changed_ = false;
+            report("Nothing selected.");
+            return;
+        }
+        const auto i = picked_layer();
+        if (!i) {
+            return;
+        }
+        apply_entity_layer(*i, c.group);
+        report(std::to_string(n) + (n == 1 ? " object" : " objects") + " changed to layer " + quoted(*i) + ".");
+        return;
+    }
     case Op::UndoLast: {
         if (layer_tool_undo_.empty()) {
             layer_tool_changed_ = false;
@@ -10851,6 +11421,28 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
 
 void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
                                             double angle, std::uint64_t group, Rgb color2) {
+    std::optional<std::vector<std::vector<Vec2>>> loops = boundary_loops(p);
+    if (!loops) {
+        report("Valid hatch boundary not found.");
+        return;
+    }
+    AddHatchCommand cmd;
+    cmd.loops = std::move(*loops);
+    cmd.pattern_name = pattern;
+    cmd.pattern_scale = scale;
+    cmd.pattern_angle = angle;
+    cmd.color2 = color2;
+    cmd.group = group;
+    const EntityHandle nh = create_indexed(cmd);
+    push_create_item(group, nh, cmd);
+    selection_.clear();
+    selection_.push_back(nh);
+    redo_.clear();
+    geom_dirty_ = true;
+    report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
+}
+
+std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec2 p) {
     // Gather candidate boundary edges from every curve-like entity (tessellated, so arcs +
     // bulged polylines follow their true shape), closing the loop for closed shapes.
     std::vector<hatch::Segment> segs;
@@ -10891,8 +11483,7 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     const double tol = 1e-6; // basic endpoint gap bridging; full HPGAPTOL parity staged
     const std::optional<std::vector<Vec2>> outer = hatch::trace_boundary(segs, p, tol);
     if (!outer) {
-        report("Valid hatch boundary not found.");
-        return;
+        return std::nullopt;
     }
     std::vector<std::vector<Vec2>> loops;
     loops.push_back(*outer);
@@ -10923,20 +11514,7 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
             loops.push_back(verts);
         }
     }
-    AddHatchCommand cmd;
-    cmd.loops = std::move(loops);
-    cmd.pattern_name = pattern;
-    cmd.pattern_scale = scale;
-    cmd.pattern_angle = angle;
-    cmd.color2 = color2;
-    cmd.group = group;
-    const EntityHandle nh = create_indexed(cmd);
-    push_create_item(group, nh, cmd);
-    selection_.clear();
-    selection_.push_back(nh);
-    redo_.clear();
-    geom_dirty_ = true;
-    report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
+    return loops;
 }
 
 void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double radius,
@@ -11166,7 +11744,9 @@ void GeometryEngine::apply(const Command& command) {
                 geom_dirty_ = true;
             }
             if constexpr (std::is_same_v<T, RedoLastGroupCommand>) {
-                do_redo_group();
+                for (std::uint32_t k = 0; k < std::max<std::uint32_t>(c.count, 1) && !redo_.empty(); ++k) {
+                    do_redo_group();
+                }
                 geom_dirty_ = true;
             }
             if constexpr (std::is_same_v<T, UndoLastOpCommand>) {
@@ -11705,6 +12285,27 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, AddCenterMarkCommand>) {
                 apply_center_mark(c);
+            }
+            if constexpr (std::is_same_v<T, ReverseSelectionCommand>) {
+                apply_reverse(c);
+            }
+            if constexpr (std::is_same_v<T, CopyToLayerCommand>) {
+                apply_copy_to_layer(c);
+            }
+            if constexpr (std::is_same_v<T, ChangePropsCommand>) {
+                apply_change_props(c);
+            }
+            if constexpr (std::is_same_v<T, OverkillCommand>) {
+                apply_overkill(c);
+            }
+            if constexpr (std::is_same_v<T, BlendCommand>) {
+                apply_blend(c);
+            }
+            if constexpr (std::is_same_v<T, BoundaryCommand>) {
+                apply_boundary(c);
+            }
+            if constexpr (std::is_same_v<T, CenterlineCommand>) {
+                apply_centerline(c);
             }
             if constexpr (std::is_same_v<T, SetDimLayerCommand>) {
                 std::optional<std::uint16_t> layer;

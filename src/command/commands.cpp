@@ -23,6 +23,7 @@
 #include "musacad/core/text/justify.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/polyline_ops.hpp"
+#include "musacad/core/io/dxf.hpp"
 
 namespace musacad::command {
 
@@ -12917,6 +12918,619 @@ void DimOverrideCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void DimOverrideCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+
+// ---------------------------------------------------------------------------
+// Modify and draw tools (issues #45, #55): REVERSE / OVERKILL / COPYTOLAYER / LAYMCH /
+// CHPROP / BLEND / REDO / MREDO / TRACE / SOLID / CENTERMARK / CENTERLINE / BOUNDARY
+// ---------------------------------------------------------------------------
+void SelectThenCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        selected(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void SelectThenCommand::selected(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    if (tool_ == Tool::Reverse) {
+        ctx.submit(core::ReverseSelectionCommand{ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    state_ = State::Option;
+    option_prompt(ctx);
+}
+
+void SelectThenCommand::option_prompt(CommandContext& ctx) {
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "Current settings: Tolerance=%.6g, Combine partial overlap=%s, Combine end to end=%s",
+                  s_overkill_.tolerance, s_overkill_.combine ? "Yes" : "No", s_overkill_.end_to_end ? "Yes" : "No");
+    ctx.echo(buf);
+    ctx.set_prompt("Enter an option to change [Done/tOlerance/combine parTial overlap/combine Endtoend] <done>: ");
+}
+
+void SelectThenCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        selected(ctx);
+    }
+}
+
+void SelectThenCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            selected(ctx);
+        }
+        return;
+    case State::Option:
+        if (t.empty() || u == "D" || u == "DONE") {
+            core::OverkillCommand c = s_overkill_;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+            done_ = true;
+        } else if (u == "O" || u == "TOLERANCE") {
+            state_ = State::Tolerance;
+            ctx.set_prompt("Specify tolerance <" + fmt4(s_overkill_.tolerance) + ">: ");
+        } else if (u == "T" || u == "PARTIAL") {
+            s_overkill_.combine = !s_overkill_.combine;
+            option_prompt(ctx);
+        } else if (u == "E" || u == "ENDTOEND") {
+            s_overkill_.end_to_end = !s_overkill_.end_to_end;
+            if (s_overkill_.end_to_end) {
+                s_overkill_.combine = true;
+            }
+            option_prompt(ctx);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            option_prompt(ctx);
+        }
+        return;
+    case State::Tolerance:
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a distance of 0 or more.");
+                return;
+            }
+            s_overkill_.tolerance = *v;
+        }
+        state_ = State::Option;
+        option_prompt(ctx);
+        return;
+    }
+}
+
+void SelectThenCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void LayerCopyCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        to_layer(ctx);
+        return;
+    }
+    select_.begin(ctx, copy_ ? "Select objects to copy: " : "Select objects to be changed: ");
+}
+
+void LayerCopyCommand::to_layer(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    state_ = State::Layer;
+    ctx.set_prompt(copy_ ? "Select object on destination layer or [Name] <Name>: "
+                         : "Select object on destination layer or [Name]: ");
+}
+
+void LayerCopyCommand::to_base(CommandContext& ctx) {
+    if (!copy_) {
+        if (c_.pick) {
+            ctx.submit(core::LayerToolCommand{core::LayerToolCommand::Op::Match, *c_.pick, c_.radius, ctx.group_id()});
+        } else {
+            core::ChangePropsCommand c;
+            c.layer = c_.name;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+        }
+        done_ = true;
+        return;
+    }
+    state_ = State::Base;
+    ctx.set_prompt("Specify base point or [Displacement/eXit] <eXit>: ");
+}
+
+void LayerCopyCommand::finish(CommandContext& ctx, core::Vec2 offset) {
+    c_.offset = offset;
+    c_.group = ctx.group_id();
+    ctx.submit(c_);
+    done_ = true;
+}
+
+void LayerCopyCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        to_layer(ctx);
+    }
+}
+
+void LayerCopyCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            to_layer(ctx);
+        }
+        return;
+    case State::Layer:
+        if ((t.empty() && copy_) || u == "N" || u == "NAME") {
+            state_ = State::Name;
+            ctx.set_prompt("Enter layer name: ");
+            return;
+        }
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.pick = *p;
+            c_.radius = ctx.pick_radius();
+            to_base(ctx);
+        }
+        return;
+    case State::Name:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.name = t;
+        to_base(ctx);
+        return;
+    case State::Base:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            finish(ctx, {});
+        } else if (u == "D" || u == "DISPLACEMENT") {
+            state_ = State::Displacement;
+            ctx.set_prompt("Specify displacement <0,0>: ");
+        } else if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            state_ = State::Second;
+            ctx.set_preview({PreviewKind::Move, {base_}});
+            ctx.set_prompt("Specify second point of displacement or <use first point as displacement>: ");
+        }
+        return;
+    case State::Second:
+        ctx.set_preview({});
+        if (t.empty()) {
+            finish(ctx, base_);
+        } else if (const auto p = read_point(ctx, text)) {
+            finish(ctx, *p - base_);
+        }
+        return;
+    case State::Displacement:
+        if (t.empty()) {
+            finish(ctx, {});
+        } else if (const auto p = read_point(ctx, text)) {
+            finish(ctx, *p);
+        }
+        return;
+    }
+}
+
+void LayerCopyCommand::cancel(CommandContext& ctx) {
+    ctx.set_preview({});
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ChPropCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        property_prompt(ctx);
+        return;
+    }
+    select_.begin(ctx);
+}
+
+void ChPropCommand::property_prompt(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    state_ = State::Property;
+    ctx.set_prompt("Enter property to change [Color/LAyer/LType/ltScale/LWeight]: ");
+}
+
+void ChPropCommand::finish(CommandContext& ctx) {
+    if (c_.color || !c_.layer.empty() || c_.linetype || c_.celtscale > 0.0 || c_.lineweight) {
+        c_.group = ctx.group_id();
+        ctx.submit(c_);
+    }
+    done_ = true;
+}
+
+void ChPropCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        property_prompt(ctx);
+    }
+}
+
+void ChPropCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            property_prompt(ctx);
+        }
+        return;
+    case State::Property:
+        if (t.empty()) {
+            finish(ctx);
+        } else if (u == "C" || u == "COLOR" || u == "COLOUR") {
+            state_ = State::Color;
+            ctx.set_prompt("Enter new color [Truecolor] <BYLAYER>: ");
+        } else if (u == "LA" || u == "LAYER") {
+            state_ = State::Layer;
+            ctx.set_prompt("Enter new layer name: ");
+        } else if (u == "LT" || u == "LTYPE") {
+            state_ = State::Linetype;
+            ctx.set_prompt("Enter new linetype name [Continuous/Dashed/Center/Hidden] <BYLAYER>: ");
+        } else if (u == "S" || u == "LTSCALE") {
+            state_ = State::Ltscale;
+            ctx.set_prompt("Specify new linetype scale <1.0000>: ");
+        } else if (u == "LW" || u == "LWEIGHT") {
+            state_ = State::Lineweight;
+            ctx.set_prompt("Enter new lineweight in mm <BYLAYER>: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+            property_prompt(ctx);
+        }
+        return;
+    case State::Color: {
+        static constexpr const char* kNames[] = {"RED", "YELLOW", "GREEN", "CYAN", "BLUE", "MAGENTA", "WHITE"};
+        if (t.empty() || u == "BYLAYER" || u == "BYBLOCK") {
+            c_.color = std::make_pair(true, core::Rgb{});
+            property_prompt(ctx);
+            return;
+        }
+        if (u == "T" || u == "TRUECOLOR") {
+            state_ = State::TrueColor;
+            ctx.set_prompt("Red, Green, Blue: ");
+            return;
+        }
+        long aci = 0;
+        for (long i = 0; i < 7; ++i) {
+            aci = u == kNames[i] ? i + 1 : aci;
+        }
+        if (aci == 0) {
+            const std::optional<double> v = parse_number(t);
+            if (v && *v >= 1.0 && *v <= 255.0 && *v == std::floor(*v)) {
+                aci = static_cast<long>(*v);
+            }
+        }
+        if (aci == 0) {
+            ctx.echo("Enter a colour number (1 to 255), a colour name, BYLAYER or Truecolor.");
+            return;
+        }
+        c_.color = std::make_pair(false, core::io::dxf_aci_to_rgb(aci));
+        property_prompt(ctx);
+        return;
+    }
+    case State::TrueColor: {
+        int r = -1;
+        int g = -1;
+        int b = -1;
+        if (std::sscanf(t.c_str(), "%d,%d,%d", &r, &g, &b) != 3 || r < 0 || r > 255 || g < 0 || g > 255 || b < 0 ||
+            b > 255) {
+            ctx.echo("Enter three values from 0 to 255, separated by commas.");
+            return;
+        }
+        c_.color = std::make_pair(false, core::Rgb{static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g),
+                                                   static_cast<std::uint8_t>(b)});
+        property_prompt(ctx);
+        return;
+    }
+    case State::Layer:
+        if (!t.empty()) {
+            c_.layer = t;
+        }
+        property_prompt(ctx);
+        return;
+    case State::Linetype:
+        if (t.empty() || u == "BYLAYER" || u == "BYBLOCK") {
+            c_.linetype = std::make_pair(true, core::Linetype::Continuous);
+        } else if (u == "CONTINUOUS" || u == "DASHED" || u == "CENTER" || u == "HIDDEN") {
+            const core::Linetype lt = u == "DASHED"   ? core::Linetype::Dashed
+                                      : u == "CENTER" ? core::Linetype::Center
+                                      : u == "HIDDEN" ? core::Linetype::Hidden
+                                                      : core::Linetype::Continuous;
+            c_.linetype = std::make_pair(false, lt);
+        } else {
+            ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            return;
+        }
+        property_prompt(ctx);
+        return;
+    case State::Ltscale:
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v <= 0.0) {
+                ctx.echo("Requires a positive number.");
+                return;
+            }
+            c_.celtscale = *v;
+        }
+        property_prompt(ctx);
+        return;
+    case State::Lineweight:
+        if (t.empty() || u == "BYLAYER" || u == "BYBLOCK") {
+            c_.lineweight = std::make_pair(true, std::uint8_t{0});
+        } else {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0 || *v > 2.11) {
+                ctx.echo("Requires a lineweight from 0 to 2.11 mm, or BYLAYER.");
+                return;
+            }
+            c_.lineweight = std::make_pair(false, static_cast<std::uint8_t>(std::lround(*v * 100.0)));
+        }
+        property_prompt(ctx);
+        return;
+    }
+}
+
+void ChPropCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void BlendCurvesCommand::start(CommandContext& ctx) {
+    ctx.echo(std::string("Current setting: Continuity = ") + (s_smooth_ ? "Smooth" : "Tangent"));
+    first_prompt(ctx);
+}
+
+void BlendCurvesCommand::first_prompt(CommandContext& ctx) {
+    state_ = State::First;
+    ctx.set_prompt("Select first object or [CONtinuity]: ");
+}
+
+void BlendCurvesCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (t.empty()) {
+            done_ = true;
+        } else if (u == "CON" || u == "CONTINUITY") {
+            state_ = State::Continuity;
+            ctx.set_prompt(std::string("Enter continuity [Tangent/Smooth] <") + (s_smooth_ ? "Smooth" : "Tangent") + ">: ");
+        } else if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            radius_ = ctx.pick_radius();
+            state_ = State::Second;
+            ctx.set_prompt("Select second object: ");
+        }
+        return;
+    case State::Continuity:
+        if (u == "T" || u == "TANGENT") {
+            s_smooth_ = false;
+        } else if (u == "S" || u == "SMOOTH") {
+            s_smooth_ = true;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        first_prompt(ctx);
+        return;
+    case State::Second:
+        if (t.empty()) {
+            done_ = true;
+        } else if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::BlendCommand{first_, *p, std::max(radius_, ctx.pick_radius()), s_smooth_, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void BlendCurvesCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void RedoStepsCommand::start(CommandContext& ctx) {
+    if (!many_) {
+        ctx.submit(core::RedoLastGroupCommand{});
+        ctx.echo("Redo");
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Enter number of actions or [All/Last]: ");
+}
+
+void RedoStepsCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    std::uint32_t n = 0;
+    if (u == "A" || u == "ALL") {
+        n = 0xFFFFFFFFu;
+    } else if (u == "L" || u == "LAST") {
+        n = 1;
+    } else if (const std::optional<double> v = parse_number(t); v && *v >= 1.0 && *v == std::floor(*v)) {
+        n = *v > 1e9 ? 0xFFFFFFFFu : static_cast<std::uint32_t>(*v);
+    } else {
+        ctx.echo("Requires a positive whole number, All or Last.");
+        return;
+    }
+    ctx.submit(core::RedoLastGroupCommand{n});
+    done_ = true;
+}
+
+void RedoStepsCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TraceSolidCommand::start(CommandContext& ctx) { prompt(ctx); }
+
+void TraceSolidCommand::prompt(CommandContext& ctx) {
+    if (!solid_) {
+        if (!width_asked_) {
+            ctx.set_prompt("Specify trace width <" + fmt4(s_width_) + ">: ");
+        } else {
+            ctx.set_prompt(pts_.empty() ? "Specify start point: " : "Specify next point: ");
+        }
+        return;
+    }
+    static constexpr const char* kAsk[] = {"Specify first point: ", "Specify second point: ",
+                                           "Specify third point: ", "Specify fourth point or <exit>: "};
+    ctx.set_prompt(kAsk[std::min<std::size_t>(pts_.size(), 3)]);
+}
+
+void TraceSolidCommand::finish_trace(CommandContext& ctx) {
+    ctx.set_preview({});
+    if (pts_.size() >= 2) {
+        core::AddPolylineCommand p;
+        p.points = pts_;
+        p.widths = {s_width_, s_width_};
+        p.group = ctx.group_id();
+        ctx.submit(p);
+    }
+    done_ = true;
+}
+
+void TraceSolidCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!solid_ && !width_asked_) {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a width of 0 or more.");
+                return;
+            }
+            s_width_ = *v;
+        }
+        width_asked_ = true;
+        prompt(ctx);
+        return;
+    }
+    if (t.empty()) {
+        if (!solid_) {
+            finish_trace(ctx);
+            return;
+        }
+        if (pts_.size() == 3) { // a triangle
+            ctx.submit(core::AddHatchCommand{{pts_}, "SOLID", 1.0, 0.0, {}, ctx.new_group()});
+        }
+        ctx.set_preview({});
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    pts_.push_back(*p);
+    ctx.set_last_point(*p);
+    if (solid_ && pts_.size() == 4) {
+        // 1, 2, 4, 3 round the edge: the third and fourth points are across from the first two.
+        ctx.submit(core::AddHatchCommand{{{pts_[0], pts_[1], pts_[3], pts_[2]}}, "SOLID", 1.0, 0.0, {}, ctx.new_group()});
+        pts_ = {pts_[2], pts_[3]};
+    }
+    ctx.set_preview({PreviewKind::Polyline, pts_});
+    prompt(ctx);
+}
+
+void TraceSolidCommand::cancel(CommandContext& ctx) {
+    ctx.set_preview({});
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void CenterBoundaryCommand::start(CommandContext& ctx) {
+    switch (tool_) {
+    case Tool::CenterMark:
+        ctx.set_prompt("Select circle or arc to add centermark: ");
+        return;
+    case Tool::CenterLine:
+        ctx.set_prompt(first_ ? "Select second line: " : "Select first line: ");
+        return;
+    case Tool::Boundary:
+        ctx.set_prompt("Pick internal point: ");
+        return;
+    }
+}
+
+void CenterBoundaryCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    switch (tool_) {
+    case Tool::CenterMark:
+        if (ctx.input_is_pick() && ctx.hovered_kind() != core::EntityKind::Circle &&
+            ctx.hovered_kind() != core::EntityKind::Arc) {
+            ctx.echo("Select a circle or an arc.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            core::AddCenterMarkCommand c;
+            c.pick = *p;
+            c.radius = ctx.pick_radius();
+            c.lines = true;
+            c.center_linetype = true;
+            c.group = made_ > 0 ? ctx.new_group() : ctx.group_id();
+            ctx.submit(c);
+            ++made_;
+            start(ctx);
+        }
+        return;
+    case Tool::CenterLine:
+        if (ctx.input_is_pick() && ctx.hovered_kind() != core::EntityKind::Line) {
+            ctx.echo("Select a line.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            if (!first_) {
+                first_ = *p;
+                radius_ = ctx.pick_radius();
+                start(ctx);
+                return;
+            }
+            core::CenterlineCommand c;
+            c.pick1 = *first_;
+            c.pick2 = *p;
+            c.radius = std::max(radius_, ctx.pick_radius());
+            c.group = ctx.group_id();
+            ctx.submit(c);
+            done_ = true;
+        }
+        return;
+    case Tool::Boundary:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::BoundaryCommand{*p, true, made_ > 0 ? ctx.new_group() : ctx.group_id()});
+            ++made_;
+            start(ctx);
+        }
+        return;
+    }
+}
+
+void CenterBoundaryCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

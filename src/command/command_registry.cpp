@@ -432,6 +432,33 @@ CommandRegistry CommandRegistry::make_default() {
         "Mark the centre of an arc or circle, with centre lines if asked.");
     reg({"DOV", "DIMOVERRIDE"}, [] { return std::make_unique<DimOverrideCommand>(); }, "",
         "Give dimensions settings of their own (DIMTXT, DIMASZ ...), or clear theirs.");
+    // --- Modify and draw tools (issues #45, #55) ---
+    reg({"REVERSE"}, [] { return std::make_unique<SelectThenCommand>(SelectThenCommand::Tool::Reverse); }, "",
+        "Make lines, polylines and splines run the other way.");
+    reg({"-OVERKILL", "OVERKILL"}, [] { return std::make_unique<SelectThenCommand>(SelectThenCommand::Tool::Overkill); }, "",
+        "Delete duplicate objects and combine overlapping collinear lines.");
+    reg({"COPYTOLAYER"}, [] { return std::make_unique<LayerCopyCommand>(true); }, "",
+        "Copy objects to another layer, in place or moved.");
+    reg({"LAYMCH"}, [] { return std::make_unique<LayerCopyCommand>(false); }, "",
+        "Put objects on the layer of another object, or a layer named.");
+    reg({"CHPROP"}, [] { return std::make_unique<ChPropCommand>(); }, "",
+        "Change objects' colour, layer, linetype, linetype scale or lineweight at the command line.");
+    reg({"BLEND"}, [] { return std::make_unique<BlendCurvesCommand>(); }, "",
+        "A spline joining the ends of two objects, tangent (or smooth) to both.");
+    reg({"REDO"}, [] { return std::make_unique<RedoStepsCommand>(false); }, "",
+        "Redo the last step undone.");
+    reg({"MREDO"}, [] { return std::make_unique<RedoStepsCommand>(true); }, "",
+        "Redo several undone steps, or all of them.");
+    reg({"TRACE"}, [] { return std::make_unique<TraceSolidCommand>(false); }, "",
+        "Draw wide line segments (a polyline with a width).");
+    reg({"SO", "SOLID"}, [] { return std::make_unique<TraceSolidCommand>(true); }, "",
+        "Draw filled triangles and quadrilaterals.");
+    reg({"CM", "CENTERMARK"}, [] { return std::make_unique<CenterBoundaryCommand>(CenterBoundaryCommand::Tool::CenterMark); }, "",
+        "Mark the centres of circles and arcs, with centre lines.");
+    reg({"CL", "CENTERLINE"}, [] { return std::make_unique<CenterBoundaryCommand>(CenterBoundaryCommand::Tool::CenterLine); }, "",
+        "Draw the centre line between two lines.");
+    reg({"BO", "-BOUNDARY", "BOUNDARY"}, [] { return std::make_unique<CenterBoundaryCommand>(CenterBoundaryCommand::Tool::Boundary); }, "",
+        "Closed polylines round the area enclosing a point, and its islands.");
     reg({"DBA", "DIMBASELINE"}, [] { return std::make_unique<ChainDimCommand>(true); },
         "assets/ribbon/dimbaseline.svg",
         "Stack dimensions from a common first extension line.");
