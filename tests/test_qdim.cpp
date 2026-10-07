@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -44,8 +46,12 @@ bool wait_until(GeometryEngine& e, Pred pred) {
 
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
+    // Wait for THIS save: the status alone can be a stale "Saved" from the dump before,
+    // when the command in between (an undo, say) reported nothing.
+    engine.consume_snapshot();
+    const std::uint64_t before = engine.snapshot().document_version;
     engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    REQUIRE(wait_until(engine, [before](const auto& s) { return s.document_version > before; }));
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     std::filesystem::remove(p);
@@ -63,10 +69,12 @@ double measured(const io::DocDim& d) {
     return dim_measure(dd);
 }
 
+/// The measurements, sorted, rounded to a thousandth (a diameter's point on the circle is
+/// a normalised direction times the radius, so it carries rounding).
 std::vector<double> values(const io::Document& doc) {
     std::vector<double> v;
     for (const io::DocDim& d : doc.dims) {
-        v.push_back(measured(d));
+        v.push_back(std::round(measured(d) * 1000.0) / 1000.0);
     }
     std::sort(v.begin(), v.end());
     return v;
