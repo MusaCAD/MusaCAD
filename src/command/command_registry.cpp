@@ -424,6 +424,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Continue a dimension chain from the last dimension's second extension line.");
     reg({"DIMLAYER"}, [] { return std::make_unique<DimLayerCommand>(); }, "",
         "The layer new dimensions go on; . for the current layer.");
+    reg({"QDIM"}, [] { return std::make_unique<QuickDimUiCommand>(); }, "",
+        "Dimension the selected geometry at once: a chain, staggered, from a baseline, ordinates, radii or diameters.");
     reg({"DED", "DIMEDIT"}, [] { return std::make_unique<DimEditTextCommand>(); }, "",
         "Put dimensions' text home, replace or rotate it, or slant their extension lines (Oblique).");
     reg({"DIMTED", "DIMTEDIT"}, [] { return std::make_unique<DimTextEditCommand>(); }, "",

@@ -3166,6 +3166,156 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
     report(std::to_string(n) + (n == 1 ? " layer changed." : " layers changed.") + skipped);
 }
 
+void GeometryEngine::apply_quick_dim(const QuickDimCommand& c) {
+    using Mode = QuickDimCommand::Mode;
+    std::vector<Vec2> pts;
+    struct Round {
+        Vec2 center;
+        double radius;
+    };
+    std::vector<Round> rounds;
+    for (const EntityHandle h : selection_) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        switch (h.kind) {
+        case EntityKind::Point:
+            pts.push_back(store_.point(h)->p);
+            break;
+        case EntityKind::Line:
+            pts.push_back(store_.line(h)->a);
+            pts.push_back(store_.line(h)->b);
+            break;
+        case EntityKind::Polyline:
+            for (const Vec2& v : store_.vertices_of(*store_.polyline(h))) {
+                pts.push_back(v);
+            }
+            break;
+        case EntityKind::Arc: {
+            const ArcData* a = store_.arc(h);
+            pts.push_back(a->center + Vec2{std::cos(a->start_angle), std::sin(a->start_angle)} * a->radius);
+            pts.push_back(a->center + Vec2{std::cos(a->end_angle), std::sin(a->end_angle)} * a->radius);
+            rounds.push_back({a->center, a->radius});
+            break;
+        }
+        case EntityKind::Circle:
+            pts.push_back(store_.circle(h)->center);
+            rounds.push_back({store_.circle(h)->center, store_.circle(h)->radius});
+            break;
+        default:
+            break;
+        }
+    }
+    const std::uint16_t style = store_.current_dimstyle();
+    const DimStyle* st = store_.dimstyle(style);
+    const double text_h = st != nullptr ? st->text_height : 2.5;
+    const double spacing = c.spacing > 0.0 ? c.spacing : 1.5 * text_h;
+    std::size_t made = 0;
+    const auto add = [&](AddDimensionCommand d) {
+        d.style = style;
+        d.group = c.group;
+        const EntityHandle nh = create_indexed(d);
+        push_create_item(c.group, nh, std::move(d));
+        ++made;
+    };
+    if (c.mode == Mode::Radius || c.mode == Mode::Diameter) {
+        if (rounds.empty()) {
+            report("QDIM: no circles or arcs selected.");
+            return;
+        }
+        for (const Round& r : rounds) {
+            const Vec2 v = c.at - r.center;
+            const Vec2 dir = length_squared(v) > 1e-18 ? normalized(v) : Vec2{1.0, 0.0};
+            AddDimensionCommand d;
+            d.type = static_cast<std::uint8_t>(c.mode == Mode::Radius ? DimType::Radius : DimType::Diameter);
+            d.a = r.center;
+            d.b = r.center + dir * r.radius;
+            d.line_pt = r.center + dir * (r.radius + 2.0 * text_h); // the text just outside, toward `at`
+            add(std::move(d));
+        }
+    } else {
+        if (pts.size() < (c.mode == Mode::Ordinate ? 1U : 2U)) {
+            report("QDIM: select geometry with at least two points to dimension.");
+            return;
+        }
+        Vec2 lo = pts.front();
+        Vec2 hi = pts.front();
+        for (const Vec2& p : pts) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        }
+        // Above or below the geometry: horizontal dimensions, measured along x.
+        const bool horizontal = c.at.y > hi.y || c.at.y < lo.y || (c.at.x >= lo.x && c.at.x <= hi.x);
+        const auto along = [&](Vec2 p) { return horizontal ? p.x : p.y; };
+        const auto across = [&](Vec2 p) { return horizontal ? p.y : p.x; };
+        const double out_sign = horizontal ? (c.at.y >= hi.y ? 1.0 : -1.0) : (c.at.x >= hi.x ? 1.0 : -1.0);
+        // One point per position along the line: the one nearest the dimension line.
+        std::sort(pts.begin(), pts.end(), [&](Vec2 p, Vec2 q) { return along(p) < along(q); });
+        std::vector<Vec2> u;
+        for (const Vec2& p : pts) {
+            if (!u.empty() && std::abs(along(p) - along(u.back())) < 1e-6) {
+                if (std::abs(across(p) - across(c.at)) < std::abs(across(u.back()) - across(c.at))) {
+                    u.back() = p;
+                }
+                continue;
+            }
+            u.push_back(p);
+        }
+        const double aux = linear_dim_aux(horizontal ? 0.0 : kHalfPi);
+        const auto line_at = [&](double offset) {
+            return horizontal ? Vec2{c.at.x, c.at.y + out_sign * offset} : Vec2{c.at.x + out_sign * offset, c.at.y};
+        };
+        const auto linear = [&](Vec2 p, Vec2 q, double offset) {
+            AddDimensionCommand d;
+            d.type = static_cast<std::uint8_t>(DimType::Linear);
+            d.a = p;
+            d.b = q;
+            d.line_pt = line_at(offset);
+            d.aux = aux;
+            add(std::move(d));
+        };
+        if (c.mode != Mode::Ordinate && u.size() < 2) {
+            report("QDIM: the points are all in one place along that direction.");
+            return;
+        }
+        switch (c.mode) {
+        case Mode::Continuous:
+            for (std::size_t i = 0; i + 1 < u.size(); ++i) {
+                linear(u[i], u[i + 1], 0.0);
+            }
+            break;
+        case Mode::Baseline:
+            for (std::size_t i = 1; i < u.size(); ++i) {
+                linear(u.front(), u[i], spacing * static_cast<double>(i - 1));
+            }
+            break;
+        case Mode::Staggered: {
+            const std::size_t pairs = u.size() / 2;
+            for (std::size_t i = 0; i < pairs; ++i) {
+                linear(u[i], u[u.size() - 1 - i], spacing * static_cast<double>(pairs - 1 - i));
+            }
+            break;
+        }
+        case Mode::Ordinate:
+            for (const Vec2& p : u) {
+                AddDimensionCommand d;
+                d.type = static_cast<std::uint8_t>(DimType::Ordinate);
+                d.a = p;
+                d.b = horizontal ? Vec2{p.x, c.at.y} : Vec2{c.at.x, p.y};
+                d.line_pt = d.b;
+                d.aux = horizontal ? 0.0 : 1.0; // the X datum along a horizontal row
+                add(std::move(d));
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    report(std::to_string(made) + (made == 1 ? " dimension created." : " dimensions created."));
+}
+
 void GeometryEngine::apply_area_query(const AreaQueryCommand& c) {
     if (c.reset) {
         area_total_ = 0.0;
@@ -12606,6 +12756,9 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 apply_layer_edit(c);
+            }
+            if constexpr (std::is_same_v<T, QuickDimCommand>) {
+                apply_quick_dim(c);
             }
             if constexpr (std::is_same_v<T, SetDimLayerCommand>) {
                 std::optional<std::uint16_t> layer;

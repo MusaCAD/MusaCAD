@@ -5,6 +5,7 @@
 // REVCLOUD's Calligraphy style and remembered type (#40).
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -44,8 +45,12 @@ bool wait_until(GeometryEngine& e, Pred pred) {
 
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
+    // Wait for THIS save: the status alone can be a stale "Saved" from the dump before,
+    // when the command in between (an undo, say) reported nothing.
+    engine.consume_snapshot();
+    const std::uint64_t before = engine.snapshot().document_version;
     engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    REQUIRE(wait_until(engine, [before](const auto& s) { return s.document_version > before; }));
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     std::filesystem::remove(p);

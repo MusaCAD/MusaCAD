@@ -13939,4 +13939,73 @@ void DraftModeCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+
+// ---------------------------------------------------------------------------
+// QDIM (issue #60)
+// ---------------------------------------------------------------------------
+void QuickDimUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        position_prompt(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select geometry to dimension: ");
+}
+
+void QuickDimUiCommand::position_prompt(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    positioning_ = true;
+    static constexpr const char* kNames[] = {"Continuous", "Staggered", "Baseline", "Ordinate", "Radius", "Diameter"};
+    ctx.set_prompt(std::string("Specify dimension line position, or [Continuous/Staggered/Baseline/Ordinate/Radius/"
+                               "Diameter] <") +
+                   kNames[static_cast<std::size_t>(s_mode_)] + ">: ");
+}
+
+void QuickDimUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        position_prompt(ctx);
+    }
+}
+
+void QuickDimUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Mode = core::QuickDimCommand::Mode;
+    if (!positioning_) {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            position_prompt(ctx);
+        }
+        return;
+    }
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    const std::pair<const char*, Mode> keys[] = {{"CONTINUOUS", Mode::Continuous}, {"STAGGERED", Mode::Staggered},
+                                                 {"BASELINE", Mode::Baseline},     {"ORDINATE", Mode::Ordinate},
+                                                 {"RADIUS", Mode::Radius},         {"DIAMETER", Mode::Diameter}};
+    for (const auto& [word, mode] : keys) {
+        if (u == word || (u.size() == 1 && u[0] == word[0])) {
+            s_mode_ = mode;
+            position_prompt(ctx);
+            return;
+        }
+    }
+    if (const auto p = read_point(ctx, text)) {
+        core::QuickDimCommand c;
+        c.mode = s_mode_;
+        c.at = *p;
+        c.group = ctx.group_id();
+        ctx.submit(c);
+        done_ = true;
+    }
+}
+
+void QuickDimUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 } // namespace musacad::command

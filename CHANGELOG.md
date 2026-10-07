@@ -65,6 +65,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **Distribute** arrange dimensions already drawn, **Layer** sets **DIMLAYER**, the layer new
   dimensions go on. Files keep the text angle and the leader: the format is now v39, and
   DXF carries the angle (code 53).
+- **QDIM** (#60) dimensions the selected geometry at once -- a chain, staggered pairs, from a
+  baseline, ordinates, or every circle's and arc's radius or diameter -- horizontal or
+  vertical by where the dimension line is placed.
 - **Editing dimensions already drawn** (#60) -- **DIMEDIT** `[Home/New/Rotate/Oblique]` puts
   the selected dimensions' text home, replaces it (`<>` for the measurement), rotates it, or
   slants a linear or aligned dimension's extension lines (**Oblique**; kept in the drawing and
