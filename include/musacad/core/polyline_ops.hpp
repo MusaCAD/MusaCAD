@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -323,8 +324,30 @@ inline bool fit_arcs(std::vector<Vec2>& pts, std::vector<double>& bulges, std::v
         if (!closed && (i == 0 || i + 1 == n)) {
             continue;
         }
-        const Vec2 in = unit(pts[i] - pts[(i + n - 1) % n]);
-        const Vec2 out = unit(pts[(i + 1) % n] - pts[i]);
+        // The nearest vertices that are somewhere else: a repeated vertex is one vertex,
+        // its tangent along the bisector of the segments either side of the repeat.
+        const auto distinct = [&](std::size_t from, bool forward) -> std::optional<Vec2> {
+            std::size_t j = from;
+            for (std::size_t k = 1; k < n; ++k) {
+                if (!closed && (forward ? j + 1 >= n : j == 0)) {
+                    break;
+                }
+                j = forward ? (j + 1) % n : (j + n - 1) % n;
+                const Vec2 d = pts[j] - pts[from];
+                if (dot(d, d) > 1e-24) {
+                    return pts[j];
+                }
+            }
+            return std::nullopt;
+        };
+        const std::optional<Vec2> before = distinct(i, false);
+        const std::optional<Vec2> after = distinct(i, true);
+        if (!before && !after) {
+            tan[i] = {1.0, 0.0}; // every vertex in one place: nothing to fit
+            continue;
+        }
+        const Vec2 out = after ? unit(*after - pts[i]) : unit(pts[i] - *before);
+        const Vec2 in = before ? unit(pts[i] - *before) : out;
         const Vec2 t = in + out;
         tan[i] = dot(t, t) > 1e-18 ? unit(t) : out;
     }

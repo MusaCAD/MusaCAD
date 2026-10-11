@@ -6,6 +6,7 @@
 // DIVIDE and MEASURE, and MEASURE from the end nearer the pick.
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -44,8 +45,12 @@ bool wait_until(GeometryEngine& e, Pred pred) {
 
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     std::filesystem::remove(p);
@@ -272,4 +277,33 @@ TEST_CASE("JOIN: lines along one line into one line, arcs on one circle into one
     proc.set_selection_count(2);
     proc.submit_line("");
     REQUIRE(std::holds_alternative<JoinSelectionCommand>(cmds.back()));
+}
+
+TEST_CASE("JOIN's arc does not depend on which arc comes first; PEDIT's Join makes a polyline") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddArcCommand{{0, 0}, 10.0, 0.0, kHalfPi, 1}); // A
+    engine.submit(AddArcCommand{{0, 0}, 10.0, kHalfPi, kPi, 2}); // B, touching A at 90
+    engine.submit(AddLineCommand{{0, 50}, {10, 50}, 3});
+    engine.submit(AddLineCommand{{10, 50}, {20, 50}, 4});
+    engine.submit(AddLineCommand{{0, 80}, {10, 80}, 5});
+    engine.submit(AddLineCommand{{20, 80}, {30, 80}, 6}); // 10 apart
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 10; }));
+    // B first, A clockwise of it: one half circle, not a whole one.
+    engine.submit(JoinPickCommand{{{-7.07, 7.07}, {7.07, 7.07}}, 0.5, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Joined 2 arcs into one arc."; }));
+    JoinPickCommand touching{{{5, 50}, {15, 50}}, 0.5, 11};
+    touching.polyline = true; // PEDIT: a polyline, not JOIN's one line
+    engine.submit(touching);
+    JoinPickCommand apart{{{5, 80}, {25, 80}}, 0.5, 12};
+    apart.polyline = true; // nor a line bridging the gap
+    engine.submit(apart);
+    const io::Document doc = dump(engine, "musacad_join_order.musa");
+    REQUIRE(doc.circles.empty());
+    REQUIRE(doc.arcs.size() == 1);
+    REQUIRE(doc.arcs[0].start_angle == Approx(0.0).margin(1e-9));
+    REQUIRE(doc.arcs[0].end_angle == Approx(kPi));
+    REQUIRE(doc.polylines.size() == 1);
+    REQUIRE(doc.lines.size() == 2);
+    engine.stop();
 }

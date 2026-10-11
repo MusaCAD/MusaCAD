@@ -128,9 +128,17 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Thanks to @devgarden-de for tracing it.
 - PURGE no longer removes a layer that only objects inside a block definition are on, and
   removing a layer (PURGE, or deleting it in the Layer Manager) now renumbers the objects in
-  block definitions and in the undo history with the rest. Before, the block's objects, and
-  objects brought back by undo, could land on the wrong layer or on one that no longer
-  existed; an object whose own layer was removed now comes back on layer 0.
+  block definitions, in the undo history, in what OOPS would bring back and in the layers a
+  viewport freezes, with the rest. Before, the block's objects, and objects brought back by
+  undo or OOPS, could land on the wrong layer or on one that no longer existed; an object
+  whose own layer was removed now comes back on layer 0.
+- A command's own **Undo** -- in TRIM, EXTEND, LENGTHEN, FILLET, CHAMFER, COPY, OFFSET,
+  PEDIT, TEXTEDIT, DIM, DIMCONTINUE and DIMBASELINE -- no longer takes back work done before
+  the command when one of its steps changed nothing (a pick on empty space, an object it
+  could not change); it says there is nothing to undo. LAYOFF and LAYFRZ's Undo only takes
+  back what that run of the command did.
+- Moving, copying, rotating, pasting or grip-editing an ellipse or a construction line no
+  longer piles up copies of it in the preview as the cursor moves.
 - EXTEND on an arc no longer stops where the chord of a curved boundary would meet it, only
   where the boundary itself does; polylines and ellipses bound an extending arc too.
 - EXTEND on an arc no longer stops at the extension of a line the arc never meets; it stops

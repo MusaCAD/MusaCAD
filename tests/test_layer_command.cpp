@@ -216,3 +216,18 @@ TEST_CASE("ORTHO, SNAP and GRID at the command line") {
     h.proc.submit_line("ON");
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("The -LAYER options check every name before adding any; Make will not make a frozen layer current") {
+    using Op = LayerEditCommand::Op;
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(edit(Op::New, "A,B?"));
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Invalid layer name: \"B?\"."; }));
+    REQUIRE(engine.snapshot().layers.size() == 1); // A not added either
+    engine.submit(edit(Op::New, "X"));
+    engine.submit(edit(Op::Freeze, "X"));
+    engine.submit(edit(Op::Make, "X"));
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Cannot set a frozen layer current."; }));
+    REQUIRE(engine.snapshot().current_layer == 0);
+    engine.stop();
+}

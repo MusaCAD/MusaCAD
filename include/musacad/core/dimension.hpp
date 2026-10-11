@@ -41,6 +41,10 @@ struct DimGeometry {
     std::string label2;
     Vec2 label2_pos{};
     double text_rotation = 0.0;
+    /// The rotation the dimension lays its text out at, before the Angle option turns it
+    /// (DimData::text_angle): the frame text_offset is measured in -- along the dimension
+    /// line and across it -- so a moved label means the same whatever angle it stands at.
+    double layout_rotation = 0.0;
     double text_height = 2.5;
     text::Justify text_justify = text::Justify::Center;
 

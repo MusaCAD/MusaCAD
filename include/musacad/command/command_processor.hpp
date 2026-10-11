@@ -319,6 +319,7 @@ public:
     void set_prompt(const std::string& prompt) override;
     void submit(core::Command command) override;
     [[nodiscard]] std::uint64_t group_id() const override { return current_group_; }
+    [[nodiscard]] std::uint64_t command_group() const override { return command_group_; }
     [[nodiscard]] std::uint64_t new_group() override { return begin_group(); }
     [[nodiscard]] std::optional<core::Vec2> last_point() const override { return last_point_; }
     void set_last_point(core::Vec2 p) override {
@@ -429,6 +430,7 @@ private:
     std::optional<core::Vec2> cursor_world_;
     std::uint64_t group_counter_ = 0;
     std::uint64_t current_group_ = 0;
+    std::uint64_t command_group_ = 0; ///< current_group_ when the running command started
     std::string last_command_alias_;
     std::string current_prompt_ = "Command: "; ///< mirrored to every input surface
     std::vector<std::string> history_;          ///< submitted lines (newest last)

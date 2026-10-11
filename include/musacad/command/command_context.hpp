@@ -332,6 +332,9 @@ public:
     /// Mint a FRESH undo group, so a command can make each step individually undoable
     /// (MATCHPROP: one undo entry per matched target). Default = the current group.
     [[nodiscard]] virtual std::uint64_t new_group() { return group_id(); }
+    /// The group the running command started with: a command's own [Undo] passes it to
+    /// UndoLastGroupCommand, so it never undoes what came before the command.
+    [[nodiscard]] virtual std::uint64_t command_group() const { return group_id(); }
 
     [[nodiscard]] virtual std::optional<core::Vec2> last_point() const = 0;
     virtual void set_last_point(core::Vec2 p) = 0;

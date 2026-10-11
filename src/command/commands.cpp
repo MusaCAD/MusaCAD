@@ -1991,7 +1991,7 @@ void CopyCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if ((u == "U" || u == "UNDO") && placed_ > 0) {
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             --placed_;
             prompt_second(ctx);
             return;
@@ -2319,7 +2319,7 @@ void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
                 ctx.echo("Nothing to undo.");
                 return;
             }
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             --placed_;
             return;
         }
@@ -2345,7 +2345,7 @@ void OffsetCommand::input(CommandContext& ctx, const std::string& text) {
                 ctx.echo("Nothing to undo.");
                 return;
             }
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             --placed_;
             return;
         }
@@ -2947,7 +2947,7 @@ void TrimCommand::input(CommandContext& ctx, const std::string& text) {
         if (picks_ == 0) {
             ctx.echo("Nothing to undo.");
         } else {
-            ctx.submit(core::UndoLastGroupCommand{}); // the last pick is its own step
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()}); // the last pick is its own step
             --picks_;
         }
         prompt(ctx);
@@ -4060,7 +4060,7 @@ void LengthenCommand::input(CommandContext& ctx, const std::string& text) {
             if (changed_ == 0) {
                 ctx.echo("Nothing to undo.");
             } else {
-                ctx.submit(core::UndoLastGroupCommand{});
+                ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
                 --changed_;
             }
             ask_change();
@@ -5701,7 +5701,7 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.echo("Requires a distance of zero or more.");
             return;
         }
-        ctx.submit(core::JoinSelectionCommand{fuzz, ctx.new_group()});
+        ctx.submit(core::JoinSelectionCommand{fuzz, ctx.new_group(), true}); // a polyline, as PEDIT makes
         state_ = State::Option;
         prompt_option(ctx);
         return;
@@ -5746,7 +5746,7 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "R" || u == "REVERSE") {
             op(2);
         } else if (u == "U" || u == "UNDO") {
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
         } else {
             ctx.echo(multiple_ ? "Enter Close, Open, Join, Width, Fit, Spline, Decurve, Reverse, Undo or Enter to finish."
                                : "Enter Close, Open, Join, Width, Edit vertex, Fit, Spline, Decurve, Reverse, Undo or Enter to finish.");
@@ -5756,7 +5756,9 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
     case State::JoinTargets:
         if (t.empty()) {
             if (join_picks_.size() > 1) {
-                ctx.submit(core::JoinPickCommand{join_picks_, ctx.pick_radius(), ctx.new_group()});
+                core::JoinPickCommand j{join_picks_, ctx.pick_radius(), ctx.new_group()};
+                j.polyline = true; // PEDIT joins into a polyline, never one line or arc
+                ctx.submit(std::move(j));
             }
             state_ = State::Option;
             prompt_option(ctx);
@@ -8752,7 +8754,7 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
                 ctx.echo("Nothing to undo.");
                 return;
             }
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             last_group_ = 0;
             return;
         }
@@ -8933,7 +8935,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
                 ctx.echo("Nothing to undo.");
                 return;
             }
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             last_group_ = 0;
             return;
         }
@@ -10546,7 +10548,7 @@ void DimCommand::input(CommandContext& ctx, const std::string& text) {
         if (made_ == 0) {
             ctx.echo("Nothing to undo.");
         } else {
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             --made_;
         }
         prompt(ctx);
@@ -10667,7 +10669,7 @@ void ChainDimCommand::input(CommandContext& ctx, const std::string& text) {
         if (added_ == 0) {
             ctx.echo("Nothing to undo.");
         } else {
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             core::ChainDimensionCommand back;
             back.op = core::ChainDimensionCommand::Op::Back;
             back.baseline = baseline_;
@@ -11931,7 +11933,7 @@ void TextEditCommand::input(CommandContext& ctx, const std::string& text) {
                 ctx.echo("Nothing to undo.");
                 return;
             }
-            ctx.submit(core::UndoLastGroupCommand{});
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
             --edits_;
             return;
         }

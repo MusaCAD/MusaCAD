@@ -325,6 +325,10 @@ private:
     std::vector<EntityHandle> trim_edges_;
     bool trim_edges_set_ = false;
     bool trim_edge_extend_ = false; ///< Edge=Extend: lines and arcs count extended
+    /// What the commands keep about the active drawing -- handles and layer indices of its
+    /// own (TRIM's edges, the DIMCONTINUE chain, DIMLAYER, the layer tools' undo, LAYISO's
+    /// off-list) -- forgotten whenever a different drawing becomes active or is loaded.
+    void forget_document_state();
     [[nodiscard]] bool is_trim_edge(EntityHandle c) const;
     /// The edges to look at beyond the neighbourhood (Edge=Extend reaches anywhere).
     [[nodiscard]] std::vector<EntityHandle> trim_edge_list() const;
@@ -342,7 +346,12 @@ private:
     // The layer tools: what LAYOFF / LAYFRZ's Undo restores, and what LAYUNISO turns back
     // on (the layers the last LAYISO turned off).
     void apply_layer_tool(const LayerToolCommand& c);
-    std::vector<std::pair<std::uint16_t, Layer>> layer_tool_undo_;
+    struct LayerToolStep {
+        std::uint16_t index = 0; ///< the layer
+        Layer before;            ///< its state before the step
+        std::uint64_t group = 0; ///< the run (LAYOFF / LAYFRZ) that took it
+    };
+    std::vector<LayerToolStep> layer_tool_undo_;
     std::vector<std::uint16_t> layiso_off_;
     bool layer_tool_changed_ = false; ///< the last layer tool changed something (the drawing is modified)
     std::function<void(const ClipboardExport&)> clipboard_listener_;
@@ -461,8 +470,8 @@ private:
     void apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group);
     void apply_offset(Vec2 pick, double radius, double distance, Vec2 side, std::uint64_t group);
     void apply_trim(Vec2 pick, double radius, std::uint64_t group);
-    void apply_join(const std::vector<Vec2>& picks, double radius, std::uint64_t group);
-    void apply_join_selection(double radius, std::uint64_t group);
+    void apply_join(const std::vector<Vec2>& picks, double radius, std::uint64_t group, bool polyline);
+    void apply_join_selection(double radius, std::uint64_t group, bool polyline);
     /// HATCH "Select objects" mode: build a hatch from the selected closed polylines.
     void apply_hatch_from_selection(const std::string& pattern, double scale, double angle,
                                     std::uint64_t group, Rgb color2 = {});
@@ -472,7 +481,9 @@ private:
                                 std::uint64_t group, Rgb color2 = {});
     /// Shared JOIN core: merge every connected sub-chain among `ents` (lines/arcs/open
     /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
-    void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group);
+    /// `polyline`: PEDIT's Join -- a polyline of what touches, never JOIN's same-kind result.
+    void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group,
+                       bool polyline = false);
     /// JOIN's own kinds, before chaining into a polyline: lines along one line become one
     /// line, arcs on one circle one arc, elliptical arcs on one ellipse one elliptical arc
     /// (gaps allowed). False when the objects are not all one such kind.
