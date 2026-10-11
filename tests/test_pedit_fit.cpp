@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <variant>
@@ -273,4 +274,25 @@ TEST_CASE("REVCLOUD: Calligraphy lobes taper; the type is remembered and the pro
     h.proc.submit_line("N");
     h.proc.submit_line("F");
     h.proc.cancel();
+}
+
+TEST_CASE("PEDIT Fit goes smoothly through a repeated vertex") {
+    std::vector<Vec2> pts{{0, 0}, {5, 5}, {5, 5}, {5, 10}, {10, 10}};
+    std::vector<double> bulges;
+    std::vector<double> widths;
+    REQUIRE(polyline_ops::fit_arcs(pts, bulges, widths, false));
+    // Where one arc ends and the next (past any zero-length segment) begins, the direction
+    // is the same: no kink at the repeat.
+    std::optional<Vec2> arriving;
+    for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+        if (distance(pts[i], pts[i + 1]) < 1e-12) {
+            continue;
+        }
+        const auto [leave, arrive] = arc_tangents(pts[i], pts[i + 1], bulges[i]);
+        if (arriving) {
+            REQUIRE(arriving->x == Approx(leave.x).margin(1e-9));
+            REQUIRE(arriving->y == Approx(leave.y).margin(1e-9));
+        }
+        arriving = arrive;
+    }
 }

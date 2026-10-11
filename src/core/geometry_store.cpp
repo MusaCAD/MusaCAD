@@ -571,6 +571,8 @@ std::size_t GeometryStore::live_count() const noexcept {
 
 void GeometryStore::clear() noexcept {
     points_.clear();
+    xlines_.clear();
+    ellipses_.clear();
     lines_.clear();
     circles_.clear();
     arcs_.clear();

@@ -6,6 +6,7 @@
 // DIM with its options (aliGn, Distribute, Layer).
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -47,8 +48,12 @@ bool wait_until(GeometryEngine& e, Pred pred) {
 /// The engine's drawing saved and read back: how a test sees the dimensions it made.
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     std::filesystem::remove(p);
@@ -451,5 +456,42 @@ TEST_CASE("Aligning and distributing dimensions moves their lines; DIMLAYER puts
     REQUIRE(doc.dims.size() == 5);
     REQUIRE(doc.dims[3].props.layer == 1);
     REQUIRE(doc.dims[4].props.layer == 0);
+    engine.stop();
+}
+
+TEST_CASE("An angular chain past half a turn goes on from the ray it just drew") {
+    GeometryEngine engine;
+    engine.start();
+    AddDimensionCommand ang;
+    ang.type = static_cast<std::uint8_t>(DimType::Angular);
+    ang.a = {0, 0};
+    ang.b = {10, 0};          // 0 degrees
+    ang.line_pt = {7.07, 7.07}; // 45 degrees
+    ang.aux = 8.0;
+    ang.group = 1;
+    engine.submit(ang);
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    ChainDimensionCommand start;
+    start.op = ChainDimensionCommand::Op::Start;
+    engine.submit(start);
+    ChainDimensionCommand sel;
+    sel.op = ChainDimensionCommand::Op::Select;
+    sel.at = {7.99, 0.3}; // on the arc, at its 0 degree end
+    sel.pick_radius = 1.0;
+    engine.submit(sel);
+    engine.submit(ChainDimensionCommand{{7.07, -7.07}, false, 2}); // 315: from 315 to 0
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Continued dimension added."; }));
+    engine.submit(ChainDimensionCommand{{0, -10}, false, 3});      // 270: from 270 to 315
+    const io::Document doc = dump(engine, "musacad_dims_more_angular_turn.musa");
+    REQUIRE(doc.dims.size() == 3);
+    for (const io::DocDim& d : doc.dims) {
+        DimData dd;
+        dd.type = DimType::Angular;
+        dd.a = d.a;
+        dd.b = d.b;
+        dd.line_pt = d.line_pt;
+        dd.aux = d.aux;
+        REQUIRE(dim_measure(dd) == Approx(45.0).margin(1e-3)); // none overlaps the last
+    }
     engine.stop();
 }

@@ -7,6 +7,7 @@
 // arc its own), Quadrant to choose it apart from the arc's place.
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -215,8 +216,12 @@ TEST_CASE("#56 engine: an arc's own angle, a circle's, two lines' -- where the a
     l.arc_at = Vec2{230, 30};
     l.group = 6;
     engine.submit(l);
-    engine.submit(SaveDocumentCommand{(std::filesystem::temp_directory_path() / "musacad_dim_angular.musa").string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{(std::filesystem::temp_directory_path() / "musacad_dim_angular.musa").string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native((std::filesystem::temp_directory_path() / "musacad_dim_angular.musa").string(), doc).ok);
     REQUIRE(doc.dims.size() == 3);

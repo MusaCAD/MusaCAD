@@ -1440,6 +1440,17 @@ void translate_cmd(Command& c, Vec2 d) {
         c);
 }
 
+/// A dimension's text angle or oblique angle after a turn, kept off 0: 0 there means "as
+/// laid out" / "square", so an angle that lands on it takes the same direction one
+/// `period` round (2pi for the text, pi for an extension line's slant).
+double turned_dim_angle(double a, double period) {
+    a = std::fmod(a, period);
+    if (a < 0.0) {
+        a += period;
+    }
+    return a < 1e-12 || a > period - 1e-12 ? period : a;
+}
+
 void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
     const Vec2 dir = normalized(B - A);
     const double axis = std::atan2(dir.y, dir.x);
@@ -1549,6 +1560,21 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                 if (type == DimType::Angular && x.aux > 0.0) {
                     std::swap(x.b, x.line_pt); // the counter-clockwise turn is now clockwise
                 }
+                // The text's own angle is reflected and stays readable, as dimension text
+                // always does; the extension lines' slant is reflected.
+                if (x.text_angle != 0.0) {
+                    double t = refl_ang(x.text_angle);
+                    while (t > kHalfPi + 1e-12) {
+                        t -= kPi;
+                    }
+                    while (t <= -kHalfPi + 1e-12) {
+                        t += kPi;
+                    }
+                    x.text_angle = turned_dim_angle(t, kTwoPi);
+                }
+                if (x.oblique != 0.0) {
+                    x.oblique = turned_dim_angle(refl_ang(x.oblique), kPi);
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip = refl(x.tip);
                 x.knee = refl(x.knee);
@@ -1647,6 +1673,13 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
                 x.line_pt = rot(x.line_pt);
+                // The text's own angle and the extension lines' slant are absolute: they turn too.
+                if (x.text_angle != 0.0) {
+                    x.text_angle = turned_dim_angle(x.text_angle + ang, kTwoPi);
+                }
+                if (x.oblique != 0.0) {
+                    x.oblique = turned_dim_angle(x.oblique + ang, kPi);
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip = rot(x.tip);
                 x.knee = rot(x.knee);
@@ -1975,6 +2008,7 @@ void GeometryEngine::apply_chain_dimension(const ChainDimensionCommand& c) {
     d.style = p->style;
     d.props = p->props;
     d.overrides = p->overrides; // the chain inherits the previous dimension's look
+    bool swapped = false;       // an angular one measured from its new ray (see below)
     if (p->type == DimType::Ordinate) {
         // The next feature on the same datum, its leader ending level with the last one's.
         d.a = c.at;
@@ -1992,6 +2026,7 @@ void GeometryEngine::apply_chain_dimension(const ChainDimensionCommand& c) {
         d.line_pt = c.at;
         if (ccw_sweep(d.b - v, d.line_pt - v) > kPi) {
             std::swap(d.b, d.line_pt); // counter-clockwise from the new ray instead
+            swapped = true;
         }
         d.aux = baseline ? r0 + spacing : r0;
     } else {
@@ -2029,6 +2064,11 @@ void GeometryEngine::apply_chain_dimension(const ChainDimensionCommand& c) {
     chain_stack_.emplace_back(chain_base_, chain_from_a_);
     chain_base_ = EntityHandle::null();
     chain_from_a_.reset();
+    if (swapped) {
+        // The rays changed places: the next one continues from the new ray (now `b`), or
+        // stacks from the base ray (now `line_pt`).
+        chain_from_a_ = !baseline;
+    }
     redo_.clear();
     geom_dirty_ = true;
     report(baseline ? "Baseline dimension added." : "Continued dimension added.");
@@ -2250,7 +2290,8 @@ void GeometryEngine::apply_dim_edit(const DimEditCommand& c) {
                 const DimStyle* st = store_.dimstyle(d.style);
                 const DimStyle base = st != nullptr ? *st : DimStyle{};
                 const DimGeometry g = compute_dim_geometry(home, base, Rgb{}, store_.dim_text_parts(d));
-                const Vec2 ax{std::cos(g.text_rotation), std::sin(g.text_rotation)};
+                // Along the dimension line: the layout frame text_offset is measured in.
+                const Vec2 ax{std::cos(g.layout_rotation), std::sin(g.layout_rotation)};
                 Vec2 q[4];
                 double w = 0.0;
                 if (dim_label_quad(g, false, q)) {
@@ -2407,6 +2448,14 @@ void GeometryEngine::forget_layer(std::uint16_t removed) {
                         fix(*x.text.props);
                     }
                 }
+                if constexpr (requires { x.frozen_layers; }) { // a viewport's VPLAYER list
+                    std::erase(x.frozen_layers, removed);
+                    for (std::uint16_t& i : x.frozen_layers) {
+                        if (i > removed) {
+                            --i;
+                        }
+                    }
+                }
             },
             c);
     };
@@ -2416,6 +2465,14 @@ void GeometryEngine::forget_layer(std::uint16_t removed) {
                 fix_cmd(it.data);
             }
         }
+    }
+    for (Command& c : oops_) { // what OOPS would bring back
+        fix_cmd(c);
+    }
+    if (refedit_.active) { // the reference REFCLOSE puts back
+        Command ins = refedit_.insert;
+        fix_cmd(ins);
+        refedit_.insert = std::get<AddInsertCommand>(ins);
     }
     const auto shift = [removed](std::uint16_t& i) {
         if (i > removed) {
@@ -2429,9 +2486,9 @@ void GeometryEngine::forget_layer(std::uint16_t removed) {
             shift(*dim_layer_);
         }
     }
-    std::erase_if(layer_tool_undo_, [removed](const auto& e) { return e.first == removed; });
-    for (auto& e : layer_tool_undo_) {
-        shift(e.first);
+    std::erase_if(layer_tool_undo_, [removed](const LayerToolStep& e) { return e.index == removed; });
+    for (LayerToolStep& e : layer_tool_undo_) {
+        shift(e.index);
     }
     std::erase(layiso_off_, removed);
     for (std::uint16_t& i : layiso_off_) {
@@ -2630,13 +2687,13 @@ void GeometryEngine::apply_change_props(const ChangePropsCommand& c) {
 }
 
 void GeometryEngine::apply_overkill(const OverkillCommand& c) {
+    // The tolerance is a distance: everything is compared as positions (an arc by its
+    // ends, a bulge by how far its arc stands off the chord). Angles and the properties
+    // that are not geometry (text style, widths) must match as they are.
     const double tol = std::max(c.tolerance, 1e-12);
     const auto near = [tol](Vec2 a, Vec2 b) { return distance(a, b) <= tol; };
     const auto near_d = [tol](double a, double b) { return std::abs(a - b) <= tol; };
-    const auto same_angle = [tol](double a, double b) {
-        const double d = std::remainder(a - b, kTwoPi);
-        return std::abs(d) <= tol;
-    };
+    const auto same_angle = [](double a, double b) { return std::abs(std::remainder(a - b, kTwoPi)) <= 1e-9; };
     std::vector<EntityHandle> sel;
     for (const EntityHandle h : selection_) {
         if (store_.is_valid(h)) {
@@ -2664,8 +2721,11 @@ void GeometryEngine::apply_overkill(const OverkillCommand& c) {
         case EntityKind::Arc: {
             const ArcData* x = store_.arc(a);
             const ArcData* y = store_.arc(b);
+            const auto at = [](const ArcData* r, double t) {
+                return r->center + Vec2{std::cos(t), std::sin(t)} * r->radius;
+            };
             return near(x->center, y->center) && near_d(x->radius, y->radius) &&
-                   same_angle(x->start_angle, y->start_angle) && same_angle(x->end_angle, y->end_angle);
+                   near(at(x, x->start_angle), at(y, y->start_angle)) && near(at(x, x->end_angle), at(y, y->end_angle));
         }
         case EntityKind::Polyline: {
             const PolylineData* x = store_.polyline(a);
@@ -2675,20 +2735,41 @@ void GeometryEngine::apply_overkill(const OverkillCommand& c) {
             if (xv.size() != yv.size() || x->closed != y->closed) {
                 return false;
             }
+            if (!near_d(x->elevation, y->elevation) || !near_d(x->thickness, y->thickness)) {
+                return false;
+            }
             const auto xb = store_.bulges_of(*x);
             const auto yb = store_.bulges_of(*y);
+            const auto xw = store_.widths_of(*x);
+            const auto yw = store_.widths_of(*y);
             const auto bulge = [](std::span<const double> bs, std::size_t i) { return i < bs.size() ? bs[i] : 0.0; };
+            const auto width = [](std::span<const double> ws, std::size_t i) {
+                return ws.empty() ? 0.0 : ws.size() == 2 ? ws[i % 2] : (i < ws.size() ? ws[i] : 0.0);
+            };
+            const std::size_t n = xv.size();
+            // Two arcs on one chord: how far apart their middles stand (the sagittas).
+            const auto same_bulge = [&](double b1, double b2, Vec2 p, Vec2 q) {
+                return std::abs(b1 - b2) * distance(p, q) * 0.5 <= tol;
+            };
             bool fwd = true;
-            for (std::size_t i = 0; i < xv.size() && fwd; ++i) {
-                fwd = near(xv[i], yv[i]) && near_d(bulge(xb, i), bulge(yb, i));
+            for (std::size_t i = 0; i < n && fwd; ++i) {
+                fwd = near(xv[i], yv[i]) && same_bulge(bulge(xb, i), bulge(yb, i), xv[i], xv[(i + 1) % n]) &&
+                      near_d(width(xw, 2 * i), width(yw, 2 * i)) && near_d(width(xw, 2 * i + 1), width(yw, 2 * i + 1));
             }
             if (fwd || x->closed) {
                 return fwd;
             }
-            const std::size_t n = xv.size();
             for (std::size_t i = 0; i < n; ++i) {
-                if (!near(xv[i], yv[n - 1 - i]) || (i + 1 < n && !near_d(bulge(xb, i), -bulge(yb, n - 2 - i)))) {
+                if (!near(xv[i], yv[n - 1 - i])) {
                     return false;
+                }
+                if (i + 1 < n) { // segment i runs backwards as the other's segment n - 2 - i
+                    const std::size_t j = n - 2 - i;
+                    if (!same_bulge(bulge(xb, i), -bulge(yb, j), xv[i], xv[i + 1]) ||
+                        !near_d(width(xw, 2 * i), width(yw, 2 * j + 1)) ||
+                        !near_d(width(xw, 2 * i + 1), width(yw, 2 * j))) {
+                        return false;
+                    }
                 }
             }
             return true;
@@ -2697,6 +2778,8 @@ void GeometryEngine::apply_overkill(const OverkillCommand& c) {
             const TextData* x = store_.text(a);
             const TextData* y = store_.text(b);
             return near(x->pos, y->pos) && near_d(x->height, y->height) && same_angle(x->rotation, y->rotation) &&
+                   x->justify == y->justify && x->style == y->style && x->font == y->font &&
+                   std::abs(x->width_factor - y->width_factor) <= 1e-9 && near(x->align, y->align) &&
                    store_.string_of(*x) == store_.string_of(*y);
         }
         default:
@@ -3051,12 +3134,20 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             report(c.op == Op::Make ? "Make takes one layer name." : "No layer names given.");
             return;
         }
-        std::size_t made = 0;
-        for (const std::string& name : asked) {
+        for (const std::string& name : asked) { // every name checked before any is added
             if (invalid_name(name)) {
                 report("Invalid layer name: \"" + name + "\".");
                 return;
             }
+        }
+        if (c.op == Op::Make) {
+            if (const auto i = layer_named(asked.front()); i && store_.layers()[*i].frozen) {
+                report("Cannot set a frozen layer current.");
+                return;
+            }
+        }
+        std::size_t made = 0;
+        for (const std::string& name : asked) {
             if (!layer_named(name)) {
                 Layer l;
                 l.name = name;
@@ -10837,7 +10928,7 @@ void GeometryEngine::apply_layer_tool(const LayerToolCommand& c) {
             return;
         }
         Layer l = store_.layers()[*i];
-        layer_tool_undo_.emplace_back(*i, l);
+        layer_tool_undo_.push_back({*i, l, c.group});
         l.on = false;
         put(*i, l);
         report("Layer " + quoted(*i) + (*i == current ? " (the current layer)" : "") + " has been turned off.");
@@ -10854,7 +10945,7 @@ void GeometryEngine::apply_layer_tool(const LayerToolCommand& c) {
             return;
         }
         Layer l = store_.layers()[*i];
-        layer_tool_undo_.emplace_back(*i, l);
+        layer_tool_undo_.push_back({*i, l, c.group});
         l.frozen = true;
         put(*i, l);
         report("Layer " + quoted(*i) + " has been frozen.");
@@ -10985,12 +11076,14 @@ void GeometryEngine::apply_layer_tool(const LayerToolCommand& c) {
         return;
     }
     case Op::UndoLast: {
-        if (layer_tool_undo_.empty()) {
+        // Only what this run of the command did: an earlier run's steps stay as they are.
+        if (layer_tool_undo_.empty() || layer_tool_undo_.back().group != c.group) {
             layer_tool_changed_ = false;
             report("Nothing to undo.");
             return;
         }
-        const auto [i, before] = layer_tool_undo_.back();
+        const std::uint16_t i = layer_tool_undo_.back().index;
+        const Layer before = layer_tool_undo_.back().before;
         layer_tool_undo_.pop_back();
         if (i < store_.layers().size()) {
             Layer l = store_.layers()[i];
@@ -11433,8 +11526,11 @@ bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
         }
         std::sort(ss.begin(), ss.end());
         ss.erase(std::unique(ss.begin(), ss.end(), [](double x, double y) { return std::abs(x - y) < 1e-9; }), ss.end());
-        if (ss.empty() || (full && ss.size() < 2)) {
-            return fail(TrimOutcome::NoEdge, full ? "Trim: an ellipse needs two crossing edges to trim between." : "Trim: no crossing edge found.");
+        if (ss.empty()) {
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
+        }
+        if (full && ss.size() < 2) { // as a circle: crossed once, there is nothing to cut out
+            return fail(TrimOutcome::None, "Trim: an ellipse needs two crossing edges to trim between.");
         }
         const double sp = along(pick);
         if (full) {
@@ -11676,8 +11772,8 @@ std::optional<JoinSeg> to_join_seg(const GeometryStore& store, EntityHandle h) {
 }
 } // namespace
 
-void GeometryEngine::apply_join(const std::vector<Vec2>& picks, double radius,
-                                std::uint64_t group) {
+void GeometryEngine::apply_join(const std::vector<Vec2>& picks, double radius, std::uint64_t group,
+                                bool polyline) {
     // Resolve picks -> unique entity handles, then join all that connect.
     std::vector<EntityHandle> ents;
     for (const Vec2 pk : picks) {
@@ -11689,8 +11785,68 @@ void GeometryEngine::apply_join(const std::vector<Vec2>& picks, double radius,
             ents.push_back(h);
         }
     }
-    join_entities(ents, radius, group);
+    join_entities(ents, radius, group, polyline);
 }
+
+namespace {
+/// The arc JOIN makes of arcs on one circle (or ellipse, in its parameter): the circle less
+/// the largest gap between them, so the result does not depend on the order they come in;
+/// on a tie, the one that starts at the source arc (AutoCAD joins counter-clockwise from
+/// it). Each arc is (start, sweep); the source is the first. A sweep of 2pi: all the way
+/// round.
+std::pair<double, double> join_cover(std::vector<std::pair<double, double>> arcs) {
+    constexpr double eps = 1e-9;
+    const auto norm = [](double a) {
+        a = std::fmod(a, kTwoPi);
+        return a < 0.0 ? a + kTwoPi : a;
+    };
+    const double source = norm(arcs.front().first);
+    for (auto& a : arcs) {
+        a.first = norm(a.first);
+    }
+    std::sort(arcs.begin(), arcs.end());
+    std::vector<std::pair<double, double>> m; // merged (start, end), the end maybe past 2pi
+    for (const auto& [s, sw] : arcs) {
+        if (!m.empty() && s <= m.back().second + eps) {
+            m.back().second = std::max(m.back().second, s + sw);
+        } else {
+            m.emplace_back(s, s + sw);
+        }
+    }
+    while (m.size() > 1 && m.front().first + kTwoPi <= m.back().second + eps) { // wraps over the first
+        m.back().second = std::max(m.back().second, m.front().second + kTwoPi);
+        m.erase(m.begin());
+    }
+    for (const auto& [s, e] : m) {
+        if (e - s >= kTwoPi - eps) {
+            return {0.0, kTwoPi};
+        }
+    }
+    const std::size_t n = m.size();
+    if (n == 1) {
+        return {m[0].first, m[0].second - m[0].first};
+    }
+    // Gap i runs from the end of m[i] to the start of m[i + 1] (the last one round to m[0]).
+    const auto gap = [&](std::size_t i) {
+        return i + 1 < n ? m[i + 1].first - m[i].second : m[0].first + kTwoPi - m[i].second;
+    };
+    std::size_t best = n - 1;
+    for (std::size_t k = 0; k < n; ++k) {
+        if ((source >= m[k].first - eps && source <= m[k].second + eps) ||
+            (source + kTwoPi >= m[k].first - eps && source + kTwoPi <= m[k].second + eps)) {
+            best = (k + n - 1) % n; // the gap before the source's run
+        }
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        if (gap(i) > gap(best) + eps) {
+            best = i;
+        }
+    }
+    const std::size_t first = (best + 1) % n;
+    const double end = best + 1 < n ? m[best].second + kTwoPi : m[best].second;
+    return {m[first].first, end - m[first].first};
+}
+} // namespace
 
 bool GeometryEngine::join_same_kind(const std::vector<EntityHandle>& ents, double tol, std::uint64_t group) {
     std::vector<EntityHandle> hs;
@@ -11738,48 +11894,42 @@ bool GeometryEngine::join_same_kind(const std::vector<EntityHandle>& ents, doubl
         // On one circle: counter-clockwise from the source's start to the furthest end;
         // round the whole circle, a circle.
         const ArcData* s = store_.arc(hs.front());
-        double reach = 0.0;
+        std::vector<std::pair<double, double>> arcs;
         for (const EntityHandle h : hs) {
             const ArcData* a = store_.arc(h);
             if (distance(a->center, s->center) > tol || std::abs(a->radius - s->radius) > tol) {
                 return false;
             }
-            double from = std::fmod(a->start_angle - s->start_angle, kTwoPi);
-            if (from < -1e-9) {
-                from += kTwoPi;
-            }
             double sw = a->end_angle - a->start_angle;
             while (sw <= 0.0) {
                 sw += kTwoPi;
             }
-            reach = std::max(reach, from + sw);
+            arcs.emplace_back(a->start_angle, sw);
         }
-        if (reach >= kTwoPi - 1e-9) {
+        const auto [from, sweep] = join_cover(std::move(arcs));
+        if (sweep >= kTwoPi - 1e-9) {
             joined = AddCircleCommand{s->center, s->radius, 0, s->props, store_.celtscale(hs.front())};
             what = "arcs into a circle";
         } else {
-            joined = AddArcCommand{s->center, s->radius, s->start_angle, s->start_angle + reach, 0, s->props,
-                                   store_.celtscale(hs.front())};
+            joined = AddArcCommand{s->center, s->radius, from, from + sweep, 0, s->props, store_.celtscale(hs.front())};
             what = "arcs into one arc";
         }
     } else if (kind == EntityKind::Ellipse) {
         const EllipseData s = *store_.ellipse(hs.front());
-        double reach = 0.0;
+        std::vector<std::pair<double, double>> arcs;
         for (const EntityHandle h : hs) {
             const EllipseData* e = store_.ellipse(h);
             if (distance(e->center, s.center) > tol || length(e->major - s.major) > tol ||
                 std::abs(e->ratio - s.ratio) > 1e-9) {
                 return false;
             }
-            double from = std::fmod(e->start - s.start, kTwoPi);
-            if (from < -1e-9) {
-                from += kTwoPi;
-            }
-            reach = std::max(reach, from + ellipse::sweep_of(*e));
+            arcs.emplace_back(e->start, ellipse::sweep_of(*e));
         }
-        joined = AddEllipseCommand{s.center, s.major, s.ratio, s.start,
-                                   reach >= kTwoPi - 1e-9 ? s.start + kTwoPi : s.start + reach, 0, s.props};
-        what = reach >= kTwoPi - 1e-9 ? "elliptical arcs into an ellipse" : "elliptical arcs into one";
+        const auto [from, sweep] = join_cover(std::move(arcs));
+        const bool whole = sweep >= kTwoPi - 1e-9;
+        joined = AddEllipseCommand{s.center, s.major, s.ratio, whole ? 0.0 : from, whole ? kTwoPi : from + sweep, 0,
+                                   s.props};
+        what = whole ? "elliptical arcs into an ellipse" : "elliptical arcs into one";
     } else {
         return false;
     }
@@ -11822,9 +11972,9 @@ void GeometryEngine::join_close(EntityHandle h, std::uint64_t group) {
     report(h.kind == EntityKind::Arc ? "Arc converted to a circle." : "Elliptical arc converted to an ellipse.");
 }
 
-void GeometryEngine::apply_join_selection(double radius, std::uint64_t group) {
+void GeometryEngine::apply_join_selection(double radius, std::uint64_t group, bool polyline) {
     const std::vector<EntityHandle> sel = selection_; // copy: join_entities reassigns selection_
-    join_entities(sel, radius, group);
+    join_entities(sel, radius, group, polyline);
 }
 
 void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, double scale,
@@ -11964,9 +12114,11 @@ std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec
     return loops;
 }
 
-void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double radius,
-                                   std::uint64_t group) {
-    if (join_same_kind(ents, radius > 0.0 ? radius : 1e-6, group)) {
+void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group,
+                                   bool polyline) {
+    // JOIN makes lines along one line one line, arcs on one circle one arc; PEDIT's Join
+    // makes a polyline of what touches, as it always has.
+    if (!polyline && join_same_kind(ents, radius > 0.0 ? radius : 1e-6, group)) {
         return;
     }
     // Convert every joinable input to a uniform vertex+bulge segment. Closed polylines
@@ -12187,8 +12339,12 @@ void GeometryEngine::apply(const Command& command) {
                 }
             }
             if constexpr (std::is_same_v<T, UndoLastGroupCommand>) {
-                do_undo_group();
-                geom_dirty_ = true;
+                if (c.since != 0 && (undo_.empty() || undo_.back().id < c.since)) {
+                    report("Nothing to undo."); // the command's steps changed nothing
+                } else {
+                    do_undo_group();
+                    geom_dirty_ = true;
+                }
             }
             if constexpr (std::is_same_v<T, RedoLastGroupCommand>) {
                 for (std::uint32_t k = 0; k < std::max<std::uint32_t>(c.count, 1) && !redo_.empty(); ++k) {
@@ -12513,11 +12669,11 @@ void GeometryEngine::apply(const Command& command) {
                 if (c.close && !c.picks.empty()) {
                     join_close(pick_nearest(c.picks.front(), c.radius), c.group);
                 } else {
-                    apply_join(c.picks, c.radius, c.group);
+                    apply_join(c.picks, c.radius, c.group, c.polyline);
                 }
             }
             if constexpr (std::is_same_v<T, JoinSelectionCommand>) {
-                apply_join_selection(c.radius, c.group);
+                apply_join_selection(c.radius, c.group, c.polyline);
             }
             if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
                 apply_hatch_from_selection(c.pattern_name, c.pattern_scale, c.pattern_angle,
@@ -13458,6 +13614,9 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 edit = layer_edit_changed_; // ? lists; a name not found changes nothing
             }
+            if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
+                edit = c.op == ChainDimensionCommand::Op::Add; // Start, Select, Back: bookkeeping
+            }
             if (edit) {
                 dirty_ = true;
                 ++edit_serial_;
@@ -13507,10 +13666,8 @@ void GeometryEngine::load_document_replace(const Command& command) {
     undo_.clear();
     redo_.clear();
     selection_.clear();
-    trim_edges_.clear();
-    trim_edges_set_ = false;
-    layer_tool_undo_.clear();
-    layiso_off_.clear();
+    oops_.clear(); // what ERASE took from the drawing that was here
+    forget_document_state();
     geom_dirty_ = true;
     dirty_ = false;
     ++document_version_;
@@ -13519,6 +13676,7 @@ void GeometryEngine::load_document_replace(const Command& command) {
 
 void GeometryEngine::reset_active_state() {
     // Reset the live (active-document) heavy state to a fresh empty drawing.
+    forget_document_state();
     store_.clear();
     store_.set_font_engine(font_engine_); // re-bind metrics (clear may drop the engine)
     store_.set_image_decoder(image_decoder_);
@@ -13567,15 +13725,20 @@ void GeometryEngine::new_document() {
     report("New drawing.");
 }
 
-void GeometryEngine::park_active(DocState& d) {
+void GeometryEngine::forget_document_state() {
     trim_edges_.clear(); // handles of this document: never the next one's edges
     trim_edges_set_ = false;
+    trim_edge_extend_ = false;
     chain_base_ = EntityHandle::null();
     chain_from_a_.reset();
     chain_stack_.clear();
     dim_layer_.reset(); // a layer index of this document
     layer_tool_undo_.clear(); // layer indices of this document
     layiso_off_.clear();
+}
+
+void GeometryEngine::park_active(DocState& d) {
+    forget_document_state();
     d.store = std::move(store_);
     d.grid = std::move(grid_);
     d.undo = std::move(undo_);
@@ -13617,6 +13780,7 @@ void GeometryEngine::park_active(DocState& d) {
 }
 
 void GeometryEngine::load_active(DocState& d) {
+    forget_document_state(); // closing a tab comes here without park_active
     store_ = std::move(d.store);
     store_.set_font_engine(font_engine_); // font engine is engine-global
     grid_ = std::move(d.grid);

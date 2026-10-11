@@ -94,3 +94,18 @@ TEST_CASE("Store: arc and spline creation") {
     REQUIRE(store.spline(spline)->degree == 3);
     REQUIRE(store.control_points_of(*store.spline(spline)).size() == 4);
 }
+
+TEST_CASE("Store: clear() empties every kind, construction lines and ellipses too") {
+    GeometryStore store;
+    (void)store.add_line({0.0, 0.0}, {1.0, 0.0});
+    (void)store.add_xline({0.0, 0.0}, {1.0, 0.0}, false);
+    (void)store.add_ellipse({0.0, 0.0}, {2.0, 0.0}, 0.5, 0.0, kTwoPi);
+    REQUIRE(store.xlines().live_count() == 1);
+    REQUIRE(store.ellipses().live_count() == 1);
+    store.clear();
+    // A preview store is cleared and filled again on every frame; anything clear() missed
+    // would pile up there, and come along into a drawing opened in place.
+    CHECK(store.lines().live_count() == 0);
+    CHECK(store.xlines().live_count() == 0);
+    CHECK(store.ellipses().live_count() == 0);
+}

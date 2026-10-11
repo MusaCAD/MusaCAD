@@ -6,6 +6,7 @@
 // travels through the native format and the DXF STYLE table.
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -195,8 +196,12 @@ TEST_CASE("#29 engine: the style resolves on add, is published, and round-trips 
     REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
 
     const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_tstyle.musa";
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     REQUIRE(doc.text_styles.size() == 2);

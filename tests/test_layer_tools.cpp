@@ -90,10 +90,14 @@ TEST_CASE("LAYOFF turns off the picked object's layer; its Undo turns it back on
     REQUIRE(wait_until(engine, [](const auto& s) {
         return !s.layers[0].on && s.status == "Layer \"0\" (the current layer) has been turned off.";
     }));
-    engine.submit(LayerToolCommand{Op::UndoLast});
-    engine.submit(LayerToolCommand{Op::UndoLast});
+    // Another run of the command (group 10) has nothing of its own to undo.
+    engine.submit(LayerToolCommand{Op::UndoLast, {}, 0.0, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Nothing to undo."; }));
+    REQUIRE_FALSE(engine.snapshot().layers[1].on);
+    engine.submit(LayerToolCommand{Op::UndoLast, {}, 0.0, 9});
+    engine.submit(LayerToolCommand{Op::UndoLast, {}, 0.0, 9});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.layers[0].on && s.layers[1].on; }));
-    engine.submit(LayerToolCommand{Op::UndoLast});
+    engine.submit(LayerToolCommand{Op::UndoLast, {}, 0.0, 9});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Nothing to undo."; }));
     engine.submit(LayerToolCommand{Op::Off, {50, 50}, 0.5, 9});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "No object found."; }));

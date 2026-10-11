@@ -4,6 +4,7 @@
 // Issue #33: DONUT, named views (VIEW) and groups (GROUP / UNGROUP / PICKSTYLE).
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -183,8 +184,12 @@ TEST_CASE("#33 named views live in the drawing: engine table, snapshot, and the 
         return s.named_views.size() == 1 && s.named_views[0].scale == Approx(5.0);
     }));
     const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_views.musa";
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     REQUIRE(doc.views.size() == 1);
@@ -227,8 +232,12 @@ TEST_CASE("#33 GROUP: picking a member selects the group; PICKSTYLE 0 and UNGROU
 
     // The group survives save and open (members re-resolved by kind and order).
     const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_groups.musa";
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     engine.submit(NewDocumentCommand{});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty(); }));
     engine.submit(OpenDocumentCommand{p.string(), false});

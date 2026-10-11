@@ -458,7 +458,12 @@ struct EraseCommand {
 };
 
 /// Undo the most recent command group (command-line `U` / Ctrl+Z).
-struct UndoLastGroupCommand {};
+struct UndoLastGroupCommand {
+    /// A command's own [Undo]: the group the command started with. The last group is undone
+    /// only when it was made since then (a step that changed nothing leaves none, and the
+    /// work before the command stays). 0: the last group, whatever made it (U, Ctrl+Z).
+    std::uint64_t since = 0;
+};
 
 /// Redo the most recently undone command group (Ctrl+Y).
 struct RedoLastGroupCommand {
@@ -925,6 +930,9 @@ struct JoinPickCommand {
     std::uint64_t group = 0;
     /// JOIN cLose: the arc (elliptical arc) at the first pick made whole -- a circle (ellipse).
     bool close = false;
+    /// PEDIT's Join: always a polyline of what touches (within `radius`), never JOIN's one
+    /// line or arc of the same kind with the gaps bridged.
+    bool polyline = false;
 };
 
 /// Join every currently-selected line/arc/open polyline that shares endpoints (within
@@ -934,6 +942,7 @@ struct JoinPickCommand {
 struct JoinSelectionCommand {
     double radius = 0.0;
     std::uint64_t group = 0;
+    bool polyline = false; ///< PEDIT Multiple's Join: see JoinPickCommand::polyline
 };
 
 /// Rotate the selection by `angle` (radians) about `base`.

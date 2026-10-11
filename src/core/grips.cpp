@@ -814,6 +814,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.overrides = x.overrides;
                     probe.tol = x.tol;
                     probe.aux = x.aux;
+                    probe.text_angle = x.text_angle; // where the label really is ...
+                    probe.oblique = x.oblique;
                     if (t == DimType::Angular) {
                         const double r = std::max(distance(x.a, newpos), 1e-9);
                         const double a0 = std::atan2(x.b.y - x.a.y, x.b.x - x.a.x);
@@ -837,15 +839,16 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     const Vec2 across{-dir.y, dir.x};
                     const Vec2 delta = newpos - anchor;
                     x.line_pt = x.line_pt + across * dot(delta, across);
-                    const Vec2 ax{std::cos(base.text_rotation), std::sin(base.text_rotation)};
+                    // ... and the offset in the layout frame (DimGeometry::layout_rotation).
+                    const Vec2 ax{std::cos(base.layout_rotation), std::sin(base.layout_rotation)};
                     x.text_offset = {dot(delta, ax), 0.0};
                     return;
                 }
                 if (grip_index == DimData::kTextGripIndex) {
-                    // Displacement is stored in the TEXT's own frame, so a rotated
-                    // (e.g. vertical) dimension's label moves along its own baseline
-                    // rather than in world x -- and so the offset survives the whole
-                    // dimension being rotated later.
+                    // Displacement is stored in the label's layout frame, so a rotated
+                    // (e.g. vertical) dimension's label moves along its own line rather
+                    // than in world x -- and so the offset survives the whole dimension
+                    // being rotated later, or its text being turned by the Angle option.
                     DimData probe;
                     probe.type = t;
                     probe.a = x.a;
@@ -854,14 +857,16 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.overrides = x.overrides;
                     probe.tol = x.tol;
                     probe.aux = x.aux; // a linear one's angle, an angular one's radius ...
+                    probe.text_angle = x.text_angle;
+                    probe.oblique = x.oblique;
                     const DimGeometry base = compute_dim_geometry(
                         probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
                     Vec2 q[4];
                     const Vec2 anchor = dim_label_quad(base, false, q) ? (q[0] + q[2]) * 0.5
                                                                       : base.text_pos;
                     const Vec2 delta = newpos - anchor;
-                    const double cs = std::cos(base.text_rotation);
-                    const double sn = std::sin(base.text_rotation);
+                    const double cs = std::cos(base.layout_rotation);
+                    const double sn = std::sin(base.layout_rotation);
                     x.text_offset = {delta.x * cs + delta.y * sn, -delta.x * sn + delta.y * cs};
                     return;
                 }

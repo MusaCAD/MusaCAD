@@ -607,6 +607,7 @@ void CommandProcessor::start_command(const std::string& alias) {
         preview_ = PreviewSpec{};
     }
     current_group_ = ++group_counter_;
+    command_group_ = current_group_;
     last_command_alias_ = alias;
     active_ = std::move(cmd);
     output_.append_line("Command: " + active_->name());

@@ -7,6 +7,7 @@
 // or Rotated. Enter at the first prompt selects the object; Text types the text.
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -90,8 +91,12 @@ void sync(GeometryEngine& engine) {
 
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     std::filesystem::remove(p);

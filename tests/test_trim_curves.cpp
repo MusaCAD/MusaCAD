@@ -7,6 +7,7 @@
 // hover preview of the part that would go or be added.
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -46,8 +47,12 @@ bool wait_until(GeometryEngine& e, Pred pred) {
 /// The engine's drawing saved and read back: how a test sees what it made.
 io::Document dump(GeometryEngine& engine, const char* name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     std::filesystem::remove(p);
@@ -330,5 +335,20 @@ TEST_CASE("FILLET a line with a polyline's end segment: one polyline, the corner
     REQUIRE(std::abs(p.bulges[1]) > 0.0); // the rounding arc
     engine.submit(UndoLastGroupCommand{});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() >= 6; }));
+    engine.stop();
+}
+
+TEST_CASE("Quick TRIM leaves a whole ellipse that one edge crosses, as it leaves a circle") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddEllipseCommand{{0, 0}, {10, 0}, 0.5, 0.0, kTwoPi, 1});
+    engine.submit(AddLineCommand{{0, 0}, {20, 0}, 2}); // from inside out: one crossing
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(TrimPickCommand{{0, 5}, 0.5, ++g}); // Quick mode
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "Trim: an ellipse needs two crossing edges to trim between.";
+    }));
+    const io::Document doc = dump(engine, "musacad_trim_curves_ellipse_once.musa");
+    REQUIRE(doc.ellipses.size() == 1);
     engine.stop();
 }

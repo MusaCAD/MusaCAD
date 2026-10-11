@@ -107,3 +107,24 @@ TEST_CASE("After a layer is removed, undo brings objects back on the layers they
     }
     engine.stop();
 }
+
+TEST_CASE("OOPS after a layer is removed brings the objects back on the layers they were on") {
+    GeometryEngine engine;
+    engine.start();
+    add_layer(engine, "A"); // 1
+    add_layer(engine, "B"); // 2
+    engine.submit(line_on(2, {0, 0}, {10, 0}, 1)); // on B
+    engine.submit(line_on(1, {0, 5}, {10, 5}, 2)); // on A
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(EraseSelectionCommand{3});
+    engine.submit(RemoveLayerCommand{1}); // A, now empty
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Layer removed."; }));
+    engine.submit(OopsCommand{4});
+    const io::Document doc = dump(engine, "musacad_layer_removal_oops.musa");
+    REQUIRE(doc.lines.size() == 2);
+    for (const io::DocLine& l : doc.lines) {
+        REQUIRE(l.props.layer == (l.a.y == 0.0 ? 1 : 0)); // B is 1 now; A is gone
+    }
+    engine.stop();
+}

@@ -207,6 +207,7 @@ struct DimOverrides {
     }
     if (o.has(DimOverrides::kDimColor)) {
         s.dim_color = ElementColor{false, o.dim_color};
+        s.arrow_color = s.dim_color; // DIMCLRD colours the arrowheads too, as on a style
     }
     if (o.has(DimOverrides::kExtColor)) {
         s.ext_color = ElementColor{false, o.ext_color};

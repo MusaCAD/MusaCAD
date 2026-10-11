@@ -586,6 +586,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     /// frame around exactly what will be drawn. The frame is dimension-line geometry,
     /// so it takes that colour and is picked and bounded with the dimension.
     const auto finish_label = [&]() {
+        g.layout_rotation = g.text_rotation;
         if (d.text_angle != 0.0) {
             g.text_rotation = d.text_angle; // the Angle option: the text at its own angle
         }
@@ -598,11 +599,14 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         // Author displacement (issue #21), applied HERE because finish_label is the one
         // place text_pos becomes final for every dimension type -- so all five get the
         // grip from a single edit, and the automatic ISO 129-1 fit (#12) still ran above
-        // to choose the derived position this offset is measured from.
+        // to choose the derived position this offset is measured from. It is measured in
+        // the layout frame, not along a text turned by the Angle option.
         if (!arc_slid && (d.text_offset.x != 0.0 || d.text_offset.y != 0.0)) {
+            const Vec2 lx{std::cos(g.layout_rotation), std::sin(g.layout_rotation)};
+            const Vec2 ly{-lx.y, lx.x};
             g.derived_text_pos = g.text_pos; // remember where it would have sat
             g.text_moved = true;
-            g.text_pos = g.text_pos + ax * d.text_offset.x + ay * d.text_offset.y;
+            g.text_pos = g.text_pos + lx * d.text_offset.x + ly * d.text_offset.y;
         }
         const double pad = h * 0.4; // ASME draws the frame close around the text
         // A boxed label needs the FRAME, not the text, to clear the dimension line --

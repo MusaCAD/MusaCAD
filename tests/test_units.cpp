@@ -4,6 +4,7 @@
 // Issue #30: UNITS (display formats), AUDIT, and PURGE beyond layers.
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -128,8 +129,12 @@ TEST_CASE("#30 UNITS: set through the engine, published, saved, and used by the 
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("Area = 78 9/16") != std::string::npos; }));
 
     const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_units.musa";
-    engine.submit(SaveDocumentCommand{p.string(), false});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Saved", 0) == 0; }));
+    { // wait for this save itself, not a "Saved" left by an earlier one
+        engine.consume_snapshot();
+        const std::uint64_t saved_before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{p.string(), false});
+        REQUIRE(wait_until(engine, [saved_before](const auto& s) { return s.document_version > saved_before; }));
+    }
     io::Document doc;
     REQUIRE(io::load_native(p.string(), doc).ok);
     REQUIRE(doc.display_units.linear == LinearFormat::Fractional);

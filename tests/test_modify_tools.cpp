@@ -429,3 +429,34 @@ TEST_CASE("The modify and draw tools' prompts") {
     h.proc.submit_line("");
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("OVERKILL's tolerance is a distance: a bowed polyline, an arc to another angle and a wide polyline are not duplicates") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPolylineCommand{{{0, 0}, {100, 0}}, false, 1});
+    AddPolylineCommand bowed;
+    bowed.points = {{0, 0}, {100, 0}};
+    bowed.bulges = {0.4, 0.0}; // its arc stands 20 off the chord
+    bowed.group = 2;
+    engine.submit(bowed);
+    engine.submit(AddArcCommand{{0, 50}, 10.0, 0.0, kHalfPi, 3});
+    engine.submit(AddArcCommand{{0, 50}, 10.0, 0.0, kHalfPi + 0.35, 4}); // ends 3.5 away
+    AddPolylineCommand thin;
+    thin.points = {{0, 100}, {50, 100}};
+    thin.group = 5;
+    engine.submit(thin);
+    AddPolylineCommand wide = thin;
+    wide.widths = {5, 5, 5, 5};
+    wide.group = 6;
+    engine.submit(wide);
+    select_all(engine, 6);
+    engine.submit(OverkillCommand{0.5, true, false, 7});
+    REQUIRE(says(engine, "0 duplicates deleted, 0 overlapping objects combined."));
+
+    // A real duplicate, 0.2 off, still goes.
+    engine.submit(AddArcCommand{{0.2, 50}, 10.0, 0.0, kHalfPi, 8});
+    select_all(engine, 7);
+    engine.submit(OverkillCommand{0.5, true, false, 9});
+    REQUIRE(says(engine, "1 duplicate deleted, 0 overlapping objects combined."));
+    engine.stop();
+}

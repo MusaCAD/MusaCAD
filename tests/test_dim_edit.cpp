@@ -349,3 +349,49 @@ TEST_CASE("The dimension editing prompts") {
     REQUIRE(h.last<SetDimOverrideCommand>()->clear);
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("A moved label is measured along the dimension line, whatever angle its text stands at") {
+    DimStyle st;
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {100, 0};
+    d.line_pt = {50, 10};
+    const DimGeometry home = compute_dim_geometry(d, st, Rgb{});
+    d.text_angle = kHalfPi; // the text stands upright
+    d.text_offset = {20, 0};
+    const DimGeometry moved = compute_dim_geometry(d, st, Rgb{});
+    REQUIRE(moved.layout_rotation == Approx(home.text_rotation));
+    REQUIRE(moved.text_pos.x == Approx(home.text_pos.x + 20.0)); // along the line ...
+    REQUIRE(moved.text_pos.y == Approx(home.text_pos.y));        // ... not up the text
+    REQUIRE(moved.text_rotation == Approx(kHalfPi));
+}
+
+TEST_CASE("ROTATE turns a dimension's oblique and text angles; a DIMCLRD override colours the arrowheads") {
+    GeometryEngine engine;
+    engine.start();
+    AddDimensionCommand d = linear_dim({0, 0}, {100, 0}, {50, 10}, 1);
+    d.oblique = kPi / 3.0;
+    d.text_angle = 0.4;
+    engine.submit(d);
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(RotateSelectionCommand{{0, 0}, kHalfPi, 2});
+    const io::Document doc = dump(engine, "musacad_dim_edit_rotate.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].oblique == Approx(kPi / 3.0 + kHalfPi));
+    REQUIRE(doc.dims[0].text_angle == Approx(0.4 + kHalfPi));
+    engine.stop();
+
+    DimStyle st;
+    DimData dd;
+    dd.type = DimType::Linear;
+    dd.a = {0, 0};
+    dd.b = {100, 0};
+    dd.line_pt = {50, 10};
+    REQUIRE(apply_dim_override(dd.overrides, "DIMCLRD", 1.0)); // red
+    const DimGeometry g = compute_dim_geometry(dd, st, Rgb{0, 0, 255});
+    REQUIRE(g.dim_color == Rgb{255, 0, 0});
+    REQUIRE(g.arrow_color == Rgb{255, 0, 0});
+}
