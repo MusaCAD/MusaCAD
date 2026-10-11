@@ -33,14 +33,17 @@ echo "==> [2/3] Building Flatpak bundle"
 packaging/flatpak/build_flatpak.sh "$VERSION"
 
 echo "==> [3/3] Verifying the AppImage (load a drawing + plot a vector PDF)"
-SAMPLE="$REPO_ROOT/dwg_samples/single_block.musa"
+# The headless path, from outside the build tree and with no display: --plot loads Qt's
+# offscreen plugin, which the desktop launch never does (docs/RELEASING.md).
+SAMPLE="$REPO_ROOT/tests/fixtures/cli_demo.musa"
 if [[ -f "$SAMPLE" ]]; then
   tmp="$(mktemp -d)"; cp "$APPIMAGE" "$tmp/"
   ( cd "$tmp"
-    APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen \
-      MUSACAD_PLOT_TEST="$SAMPLE|$tmp/verify.pdf|1" "./$APPIMAGE" >/dev/null 2>&1
-    if [[ -s "$tmp/verify.pdf" ]]; then echo "    OK: produced $(du -h "$tmp/verify.pdf" | cut -f1) PDF"
-    else echo "    WARNING: verify PDF not produced"; fi )
+    rc=0
+    env -u DISPLAY -u WAYLAND_DISPLAY APPIMAGE_EXTRACT_AND_RUN=1 \
+      timeout 120 "./$APPIMAGE" --plot "$SAMPLE" "$tmp/verify.pdf" --paper A4 >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 && -s "$tmp/verify.pdf" ]]; then echo "    OK: produced $(du -h "$tmp/verify.pdf" | cut -f1) PDF"
+    else echo "    WARNING: verify PDF not produced (exit $rc)"; fi )
   rm -rf "$tmp"
 else
   echo "    (no sample drawing at $SAMPLE -- skipped automated verify)"
