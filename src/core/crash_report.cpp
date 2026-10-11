@@ -426,7 +426,22 @@ const char* exception_text(DWORD code) noexcept {
     }
 }
 
+// The filter that was there before ours: the C runtime's, which hands a C++ exception
+// nothing caught to std::terminate with the exception still current.
+LPTOP_LEVEL_EXCEPTION_FILTER g_previous_filter = nullptr;
+constexpr DWORD kMsvcCppException = 0xE06D7363; // what MSVC's `throw` raises
+
 LONG WINAPI on_unhandled(EXCEPTION_POINTERS* ep) {
+    // A C++ exception goes the way it does on Linux: std::terminate, where on_terminate
+    // notes its message, then abort, whose SIGABRT writes the report. Replacing the
+    // runtime's filter outright would leave the report without the message.
+    if (ep != nullptr && ep->ExceptionRecord != nullptr && ep->ExceptionRecord->ExceptionCode == kMsvcCppException &&
+        g_previous_filter != nullptr) {
+        const LONG r = g_previous_filter(ep); // does not return for an exception it takes
+        if (r != EXCEPTION_CONTINUE_SEARCH) {
+            return r;
+        }
+    }
     if (!g_writing.exchange(true)) {
         Event ev;
         if (ep != nullptr && ep->ExceptionRecord != nullptr) {
@@ -490,7 +505,7 @@ std::array<char, 64 * 1024> g_altstack{};
 void install_handlers() {
     std::set_terminate(&on_terminate);
 #if defined(_WIN32)
-    ::SetUnhandledExceptionFilter(&on_unhandled);
+    g_previous_filter = ::SetUnhandledExceptionFilter(&on_unhandled);
     std::signal(SIGABRT, &on_abort);
 #else
 #if defined(MUSACAD_HAVE_BACKTRACE)
