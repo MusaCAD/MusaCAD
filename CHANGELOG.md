@@ -6,7 +6,7 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.7.0 - 2026-10-11
 
 ### Added
 - **TRIM and EXTEND by a path** -- press on empty space and drag across the objects: each one
@@ -24,12 +24,6 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   window once and removes what lies wholly inside; **eRase** erases without leaving the
   command. A cutting edge that is itself trimmed stays an edge. TRIMEXTENDMODE, EDGEMODE
   and PROJMODE are kept for the session.
-- **The system clipboard** -- Ctrl+C / Ctrl+X (COPYCLIP / CUTCLIP) put the objects on the
-  system clipboard as Musa CAD objects and as a picture, so they paste into another Musa CAD
-  window, a document, an email or an image editor. Ctrl+V (PASTECLIP) asks for the insertion
-  point while the objects follow the cursor. It also pastes what other programs copy: an
-  image is embedded in the drawing, and text becomes a multiline text. **COPYBASE** /
-  **CUTBASE** take a base point first, and **PASTEORIG** pastes at the original coordinates.
 - **TRIM, EXTEND and FILLET on more kinds of object** (#48, #49) -- ellipses and elliptical
   arcs trim (a whole ellipse to an arc) and extend round their ellipse; construction lines
   and rays trim (to rays and lines), cut and bound other objects, and fillet with lines; a
@@ -37,6 +31,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   with a half circle as wide as the gap; a line filleted with an open polyline's end segment,
   or two polylines' end segments, become one polyline with the corner rounded. Splines are
   the kind still missing.
+- **TRIM, EXTEND, FILLET and CHAMFER show what a pick would do** -- hovering an object at
+  TRIM's prompt draws the part that would be trimmed away (in Quick mode, the whole object
+  when nothing cuts it), at EXTEND's the extension that would be added (Shift shows the
+  other one); at FILLET's and CHAMFER's second-object prompt, the two objects as they would
+  be and the arc or bevel (Shift: the sharp corner).
 - **LENGTHEN as AutoCAD has it** (#52) -- a pick at `Select an object to measure or
   [DElta/Percent/Total/DYnamic]:` reports the length (and an arc's included angle); Angle
   for an arc's delta or total; **DYnamic** asks where the end goes; one object after another
@@ -48,11 +47,39 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   only touching mixed objects chain into a polyline.
 - **DIVIDE and MEASURE [Block]** (#52) -- block references at the marks instead of points,
   turned to the curve when aligned; MEASURE starts from the end nearer the pick.
-- **TRIM, EXTEND, FILLET and CHAMFER show what a pick would do** -- hovering an object at
-  TRIM's prompt draws the part that would be trimmed away (in Quick mode, the whole object
-  when nothing cuts it), at EXTEND's the extension that would be added (Shift shows the
-  other one); at FILLET's and CHAMFER's second-object prompt, the two objects as they would
-  be and the arc or bevel (Shift: the sharp corner).
+- **PEDIT Fit and Multiple** (#52) -- **Fit** puts two arcs on each segment, through every
+  vertex and smooth at each. **Multiple** applies Close, Open, Width, Fit, Spline, Decurve
+  and Reverse to every polyline selected (lines and arcs become polylines), and its Join
+  takes a fuzz distance. Picking a line or arc asks whether to turn it into a polyline.
+- **Modify tools** (#55) -- **REVERSE** turns lines, polylines and splines round.
+  **OVERKILL** deletes duplicate objects and makes collinear lines that overlap (or, if asked,
+  meet end to end) one line. **COPYTOLAYER** copies objects to a layer, picked or named
+  (made if there is none), in place or moved; **LAYMCH** moves them to one. **CHPROP**
+  changes colour, layer, linetype, linetype scale and lineweight at the command line, in
+  one undo step. **BLEND** joins the ends of two objects with a spline, Tangent or Smooth.
+  **REDO** and **MREDO** are commands as well as Ctrl+Y.
+- **The layer tools** (#55) -- **LAYOFF** and **LAYFRZ** turn off or freeze the layer of
+  each object picked (Undo takes the last back; the current layer is never frozen),
+  **LAYLCK** / **LAYULK** lock and unlock the picked object's layer, **LAYMCUR** makes it
+  current, **LAYCUR** moves the selected objects to the current layer, **LAYISO** turns off
+  every layer but the selected objects' and **LAYUNISO** turns them back on, **LAYON** and
+  **LAYTHW** turn on and thaw every layer. Off, Isolate, Freeze and Make Current are live on
+  the Home tab's Layers panel, the rest in its slide-out.
+- **LAYER and -LAYER** (#69) -- **LAYER** (`LA`) opens the Layer Properties Manager, and
+  **-LAYER** works on layers at the command line: `?` lists them, **Make**, **Set**, **New**,
+  **Rename**, **ON** / **OFF**, **Freeze** / **Thaw**, **LOck** / **Unlock** (by name lists
+  with `*` and `?`), **Color**, **Ltype** and **LWeight**.
+- **Draw tools** (#45) -- **TRACE** draws wide segments (one polyline of the width);
+  **SOLID** draws filled triangles and quadrilaterals; **BOUNDARY** makes closed polylines
+  round the area HATCH's pick point would fill and round its islands; **CENTERMARK** marks
+  centres with centre lines, and **CENTERLINE** draws the centre line between two lines,
+  in the Center linetype.
+- **ELLIPSE** (#39) previews the ellipse at the Rotation step, and **PELLIPSE** 1 makes it a
+  polyline of arcs. SPLINE asks `Enter degree of spline <3>:`.
+- **REVCLOUD** (#40) draws the **Calligraphy** style (each lobe tapered, as with a broad
+  pen), remembers the cloud type, and its prompt follows the type: `Specify first corner
+  point` for Rectangular, `Specify start point` for Polygonal, `Specify first point` for
+  Freehand.
 - **Dimensions, the rest of AutoCAD's options** (#56, #57) -- **Angle** at every dimension's
   placement prompt stands its text at an angle of its own. **DIMARC** gains **Partial**, for
   the part of an arc between two points, and **Leader**, a radial leader from the text in to
@@ -65,9 +92,6 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **Distribute** arrange dimensions already drawn, **Layer** sets **DIMLAYER**, the layer new
   dimensions go on. Files keep the text angle and the leader: the format is now v39, and
   DXF carries the angle (code 53).
-- **QDIM** (#60) dimensions the selected geometry at once -- a chain, staggered pairs, from a
-  baseline, ordinates, or every circle's and arc's radius or diameter -- horizontal or
-  vertical by where the dimension line is placed.
 - **Editing dimensions already drawn** (#60) -- **DIMEDIT** `[Home/New/Rotate/Oblique]` puts
   the selected dimensions' text home, replaces it (`<>` for the measurement), rotates it, or
   slants a linear or aligned dimension's extension lines (**Oblique**; kept in the drawing and
@@ -78,41 +102,17 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   centre of an arc or circle, with centre lines if asked. **DIMOVERRIDE** gives the selected
   dimensions values of their own for DIMTXT, DIMASZ, DIMBLK, DIMDEC, DIMTAD, DIMATFIT and the
   three colours, or clears theirs.
-- **LAYER and -LAYER** (#69) -- **LAYER** (`LA`) opens the Layer Properties Manager, and
-  **-LAYER** works on layers at the command line: `?` lists them, **Make**, **Set**, **New**,
-  **Rename**, **ON** / **OFF**, **Freeze** / **Thaw**, **LOck** / **Unlock** (by name lists
-  with `*` and `?`), **Color**, **Ltype** and **LWeight**.
+- **QDIM** (#60) dimensions the selected geometry at once -- a chain, staggered pairs, from a
+  baseline, ordinates, or every circle's and arc's radius or diameter -- horizontal or
+  vertical by where the dimension line is placed.
 - **ORTHO, SNAP and GRID** (#65) at the command line: ORTHO and GRID `[ON/OFF]`, SNAP a
   spacing (which turns snap on) or `[ON/OFF]`; the status bar follows.
-- **Modify tools** (#55) -- **REVERSE** turns lines, polylines and splines round.
-  **OVERKILL** deletes duplicate objects and makes collinear lines that overlap (or, if asked,
-  meet end to end) one line. **COPYTOLAYER** copies objects to a layer, picked or named
-  (made if there is none), in place or moved; **LAYMCH** moves them to one. **CHPROP**
-  changes colour, layer, linetype, linetype scale and lineweight at the command line, in
-  one undo step. **BLEND** joins the ends of two objects with a spline, Tangent or Smooth.
-  **REDO** and **MREDO** are commands as well as Ctrl+Y.
-- **PEDIT Fit and Multiple** (#52) -- **Fit** puts two arcs on each segment, through every
-  vertex and smooth at each. **Multiple** applies Close, Open, Width, Fit, Spline, Decurve
-  and Reverse to every polyline selected (lines and arcs become polylines), and its Join
-  takes a fuzz distance. Picking a line or arc asks whether to turn it into a polyline.
-- **REVCLOUD** (#40) draws the **Calligraphy** style (each lobe tapered, as with a broad
-  pen), remembers the cloud type, and its prompt follows the type: `Specify first corner
-  point` for Rectangular, `Specify start point` for Polygonal, `Specify first point` for
-  Freehand.
-- **ELLIPSE** (#39) previews the ellipse at the Rotation step, and **PELLIPSE** 1 makes it a
-  polyline of arcs. SPLINE asks `Enter degree of spline <3>:`.
-- **Draw tools** (#45) -- **TRACE** draws wide segments (one polyline of the width);
-  **SOLID** draws filled triangles and quadrilaterals; **BOUNDARY** makes closed polylines
-  round the area HATCH's pick point would fill and round its islands; **CENTERMARK** marks
-  centres with centre lines, and **CENTERLINE** draws the centre line between two lines,
-  in the Center linetype.
-- **The layer tools** (#55) -- **LAYOFF** and **LAYFRZ** turn off or freeze the layer of
-  each object picked (Undo takes the last back; the current layer is never frozen),
-  **LAYLCK** / **LAYULK** lock and unlock the picked object's layer, **LAYMCUR** makes it
-  current, **LAYCUR** moves the selected objects to the current layer, **LAYISO** turns off
-  every layer but the selected objects' and **LAYUNISO** turns them back on, **LAYON** and
-  **LAYTHW** turn on and thaw every layer. Off, Isolate, Freeze and Make Current are live on
-  the Home tab's Layers panel, the rest in its slide-out.
+- **The system clipboard** -- Ctrl+C / Ctrl+X (COPYCLIP / CUTCLIP) put the objects on the
+  system clipboard as Musa CAD objects and as a picture, so they paste into another Musa CAD
+  window, a document, an email or an image editor. Ctrl+V (PASTECLIP) asks for the insertion
+  point while the objects follow the cursor. It also pastes what other programs copy: an
+  image is embedded in the drawing, and text becomes a multiline text. **COPYBASE** /
+  **CUTBASE** take a base point first, and **PASTEORIG** pastes at the original coordinates.
 - **Crash reports** -- if Musa CAD stops unexpectedly it writes a report: the version and
   system, the graphics driver, the drawing's file name, the last commands and the call stack.
   The next start shows it, ready to save or copy and attach to an issue. **Save Bug
