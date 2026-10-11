@@ -94,6 +94,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.7.0" date="2026-10-11">
+      <description>
+        <p>Modify and dimension editing as AutoCAD has them: TRIM and EXTEND with Quick and
+        Standard modes, freehand paths and a preview of what a pick would do, on ellipses and
+        construction lines too; FILLET of parallel lines and polylines; LENGTHEN, JOIN and
+        PEDIT Fit; OVERKILL, BLEND, CHPROP and the layer tools; DIM, QDIM, DIMEDIT and
+        DIMTEDIT; the system clipboard; and crash reports.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-10-02">
       <description>
         <p>Text and dimensions as AutoCAD has them: TEXT with its fifteen justifications and
