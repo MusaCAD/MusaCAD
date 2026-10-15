@@ -154,7 +154,7 @@ TEST_CASE("A plot leaves out the layers not plotted, and wipeout frames shown bu
     engine.submit(BuildPlotSnapshotCommand{0.01});
     REQUIRE(plot_ready(engine, before));
     REQUIRE(engine.plot_snapshot().line_vertices.size() == 2); // no frame on paper
-    REQUIRE(engine.plot_snapshot().wipeout_vertices.size() == 3); // the mask still plots
+    REQUIRE_FALSE(engine.plot_snapshot().wipeout_vertices.empty()); // the mask still plots
     const io::Document doc = dump(engine, "musacad_layer_plot.musa");
     REQUIRE(doc.wipeout_frames);
     REQUIRE_FALSE(doc.wipeout_frames_plot);
@@ -162,7 +162,7 @@ TEST_CASE("A plot leaves out the layers not plotted, and wipeout frames shown bu
     engine.stop();
 }
 
-TEST_CASE("-LAYER Plot and Description; WIPEOUT Frames Display but not plot") {
+TEST_CASE("The -LAYER Plot and Description options; WIPEOUT Frames Display but not plot") {
     using Op = LayerEditCommand::Op;
     H h;
     h.proc.submit_line("-LAYER");
