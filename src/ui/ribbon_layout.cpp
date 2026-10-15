@@ -490,6 +490,9 @@ void MainWindow::build_ribbon() {
         small(layers, c2, QStringLiteral("Lock"), "LAYLCK", "layer-props");
         small(layers, c2, QStringLiteral("Unlock"), "LAYULK", "layer-props");
         small(layers, c2, QStringLiteral("Change to Current Layer"), "LAYCUR", "layer-current");
+        QWidget* c3 = layers->add_column_to(out);
+        small(layers, c3, QStringLiteral("Previous"), "LAYERP", "layer-props");
+        small(layers, c3, QStringLiteral("Layer States"), "LAYERSTATE", "layer-props");
     }
 
     // --- Block: Insert large; Create / Edit / Define Attributes stacked.

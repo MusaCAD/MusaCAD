@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include "musacad/core/grid_settings.hpp"
 #include "musacad/render/camera.hpp"
 
 namespace musacad::render {
@@ -27,5 +28,13 @@ struct GridResult {
 /// a safety valve against pathological inputs.
 [[nodiscard]] GridResult build_grid(const Camera2D& camera, double target_minor_px = 14.0,
                                     int max_lines_per_axis = 4096);
+
+/// The grid GRID set up: lines `settings.x` / `settings.y` apart (a spacing of 0 is the
+/// zoom-following grid above), a major one every `settings.major`; adaptive, a spacing
+/// too fine on screen is multiplied by `major` until it is not, and with `subdivide` one
+/// far apart is divided by it. Without `beyond_limits` the grid stops at `lim_lo` /
+/// `lim_hi`. Too fine and not adaptive: no grid.
+[[nodiscard]] GridResult build_grid(const Camera2D& camera, const core::GridSettings& settings, Vec2 lim_lo,
+                                    Vec2 lim_hi, int max_lines_per_axis = 4096);
 
 } // namespace musacad::render

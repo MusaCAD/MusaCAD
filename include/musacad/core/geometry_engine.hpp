@@ -147,6 +147,11 @@ private:
         std::vector<EntityHandle> working_set;
         std::vector<EntityHandle> added;
     };
+    /// LAYERP: the layer settings before a change to them, and the current layer's name.
+    struct LayerpState {
+        std::vector<Layer> layers;
+        std::string current;
+    };
     struct DocState {
         GeometryStore store;
         SpatialGrid grid;
@@ -184,6 +189,7 @@ private:
         // LAYUNISO) and DIMLAYER.
         std::vector<std::uint16_t> layiso_off;
         std::optional<std::uint16_t> dim_layer;
+        std::vector<LayerpState> layerp;
     };
     struct DocMeta {
         std::uint64_t id = 0;
@@ -219,6 +225,7 @@ private:
 
     void run(threading::stop_token token);
     void apply(const Command& command);
+    void apply_one(const Command& command); ///< apply() without the LAYERP bookkeeping
     void rebuild_and_publish();
 
     // --- store + index maintenance (kept in lockstep) ---
@@ -294,11 +301,15 @@ private:
         std::vector<ImageDef> src_image_defs; // source raster definitions (index -> def)
         Vec2 base{};                       // reference point (selection AABB min, or COPYBASE's)
         bool has = false;
+        std::uint8_t src_insunits = 0;     // the source drawing's INSUNITS (a paste scales by it)
     };
     Clipboard clipboard_;
     /// The clip's objects in a scratch store of their own, on their source tables, moved by
-    /// `offset`: what the system clipboard and the paste preview are made from.
-    void fill_store_from_clipboard(GeometryStore& out, Vec2 offset) const;
+    /// `offset` (and scaled by `factor` about `about`): what the system clipboard and the
+    /// paste preview are made from.
+    void fill_store_from_clipboard(GeometryStore& out, Vec2 offset, double factor = 1.0, Vec2 about = {}) const;
+    /// What a paste scales the clip by: its drawing's units into this drawing's (INSUNITS).
+    [[nodiscard]] double paste_factor() const;
     void apply_paste_document(const PasteDocumentCommand& c);
     void apply_trim_path(const TrimPathCommand& c);
     bool paste_preview_active_ = false;
@@ -357,6 +368,14 @@ private:
     };
     std::vector<LayerToolStep> layer_tool_undo_;
     std::vector<std::uint16_t> layiso_off_;
+    // LAYERP: the layer settings before each change to them, newest last (LAYERPMODE on).
+    std::vector<LayerpState> layerp_;
+    bool layerp_mode_ = true;
+    bool layerp_changed_ = false; ///< the last LAYERP / LAYERSTATE changed the layers
+    /// The layers' settings (by name) and the current layer from `saved`; layers not in
+    /// it, and names not found, are left. The current layer is never frozen.
+    void restore_layer_settings(const std::vector<Layer>& saved, const std::string& current);
+    void apply_layer_state(const LayerStateCommand& c);
     bool layer_tool_changed_ = false; ///< the last layer tool changed something (the drawing is modified)
     std::function<void(const ClipboardExport&)> clipboard_listener_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;
@@ -533,8 +552,9 @@ private:
     void reload_all_xrefs();
     /// Read `full_path` as block content named `name` into the block table (its own
     /// blocks as "name|block"); returns the index, or 0xFFFF with `err` set.
+    /// `src_insunits` (if given) receives the referenced drawing's INSUNITS.
     std::uint16_t load_xref_definition(const std::string& full_path, const std::string& name,
-                                       const std::string& xref_path, std::string& err);
+                                       const std::string& xref_path, std::string& err, std::uint8_t* src_insunits = nullptr);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);

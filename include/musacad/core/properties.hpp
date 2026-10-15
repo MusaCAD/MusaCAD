@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace musacad::core {
 
@@ -41,6 +42,15 @@ struct Layer {
     bool plot = true;             ///< plotted (the manager's Plot column; DXF 290)
     std::string description{};    ///< the manager's Description column
     friend bool operator==(const Layer&, const Layer&) = default;
+};
+
+/// A named layer state (LAYERSTATE): every layer's settings when it was saved, by name,
+/// and the layer that was current.
+struct LayerState {
+    std::string name;
+    std::string current;
+    std::vector<Layer> layers;
+    friend bool operator==(const LayerState&, const LayerState&) = default;
 };
 
 /// Dimension subtype. Linear/Aligned are fully implemented; the rest are staged.

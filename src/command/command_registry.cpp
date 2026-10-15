@@ -158,6 +158,12 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"LAYUNISO"}, [] { return std::make_unique<LayToolCommand>(LK::Unisolate); }, "",
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
+    reg({"LAYERP"}, [] { return std::make_unique<LayerPreviousCommand>(false); }, "",
+        "Put the layer settings back as they were before the last change.");
+    reg({"LAYERPMODE"}, [] { return std::make_unique<LayerPreviousCommand>(true); }, "",
+        "Whether LAYERP keeps track of layer changes.");
+    reg({"LAYERSTATE", "-LAYERSTATE", "LAS"}, [] { return std::make_unique<LayerStateCommand>(); }, "",
+        "Save, restore, rename and delete named layer states.");
     reg({"LAYTHW"}, [] { return std::make_unique<LayToolCommand>(LK::AllThaw); }, "", "Thaw every layer.");
     reg({"TRIMEXTENDMODE"},
         [] { return std::make_unique<IntVarCommand>("TRIMEXTENDMODE", 0, 1, &TrimCommand::s_mode_); }, "",

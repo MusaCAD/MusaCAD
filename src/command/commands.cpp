@@ -13931,12 +13931,19 @@ void DraftModeCommand::start(CommandContext& ctx) {
     case Mode::Snap:
         ctx.set_prompt("Specify snap spacing or [ON/OFF/Aspect/Legacy/Style/Type] <" + fmt4(ctx.snap_spacing()) + ">: ");
         return;
-    case Mode::Grid: {
-        const bool on = ctx.view() != nullptr && ctx.view()->grid_mode();
-        ctx.set_prompt(std::string("Enter mode [ON/OFF] <") + (on ? "ON" : "OFF") + ">: ");
+    case Mode::Grid:
+        ctx.set_prompt("Specify grid spacing(X) or [ON/OFF/Snap/Major/aDaptive/Limits/Follow/Aspect] <" +
+                       fmt4(ctx.grid_settings().x) + ">: ");
         return;
     }
+}
+
+void DraftModeCommand::grid_set(CommandContext& ctx, const core::GridSettings& g) {
+    ctx.set_grid_settings(g);
+    if (ctx.view() != nullptr) {
+        ctx.view()->set_grid_mode(true);
     }
+    done_ = true;
 }
 
 void DraftModeCommand::main_prompt(CommandContext& ctx) {
@@ -13950,6 +13957,28 @@ void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
     switch (step_) {
     case Step::AspectX:
     case Step::AspectY: {
+        if (mode_ == Mode::Grid) {
+            core::GridSettings g = ctx.grid_settings();
+            double v = step_ == Step::AspectX ? g.x : g.y;
+            if (!t.empty()) {
+                const std::optional<double> n = parse_number(t);
+                if (!n || *n < 0.0) {
+                    ctx.echo("Requires a spacing of zero or more.");
+                    return;
+                }
+                v = *n;
+            }
+            if (step_ == Step::AspectX) {
+                x_ = v;
+                step_ = Step::AspectY;
+                ctx.set_prompt("Specify the vertical spacing(Y) <" + fmt4(g.y) + ">: ");
+                return;
+            }
+            g.x = x_;
+            g.y = v;
+            grid_set(ctx, g);
+            return;
+        }
         double v = step_ == Step::AspectX ? ctx.snap_spacing() : ctx.snap_spacing_y();
         if (!t.empty()) {
             const std::optional<double> n = parse_number(t);
@@ -13993,12 +14022,107 @@ void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
         }
         done_ = true;
         return;
+    case Step::Major: {
+        core::GridSettings g = ctx.grid_settings();
+        if (!t.empty()) {
+            const std::optional<double> n = parse_number(t);
+            if (!n || *n < 1.0 || *n > 100.0 || *n != std::floor(*n)) {
+                ctx.echo("Requires a whole number from 1 to 100.");
+                return;
+            }
+            g.major = static_cast<int>(*n);
+        }
+        grid_set(ctx, g);
+        return;
+    }
+    case Step::Adaptive:
+    case Step::Subdivide:
+    case Step::Limits:
+    case Step::Follow: {
+        const bool yes = u == "Y" || u == "YES";
+        if (!t.empty() && !yes && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        core::GridSettings g = ctx.grid_settings();
+        if (step_ == Step::Adaptive) {
+            g.adaptive = t.empty() ? g.adaptive : yes;
+            if (g.adaptive) {
+                ctx.set_grid_settings(g);
+                step_ = Step::Subdivide;
+                ctx.set_prompt(std::string("Allow subdivision below grid spacing [Yes/No] <") +
+                               (g.subdivide ? "Yes" : "No") + ">: ");
+                return;
+            }
+        } else if (step_ == Step::Subdivide) {
+            g.subdivide = t.empty() ? g.subdivide : yes;
+        } else if (step_ == Step::Limits) {
+            g.beyond_limits = t.empty() ? g.beyond_limits : yes;
+        } else if (yes) {
+            ctx.echo("There is no dynamic UCS here; the grid stays on the world's axes.");
+        }
+        grid_set(ctx, g);
+        return;
+    }
     case Step::Main:
         break;
     }
     if (t.empty()) {
         done_ = true;
         return;
+    }
+    if (mode_ == Mode::Grid) {
+        core::GridSettings g = ctx.grid_settings();
+        if (u == "S" || u == "SNAP") {
+            g.x = ctx.snap_spacing(); // the snap spacing, as it is now
+            g.y = ctx.snap_spacing_y();
+            grid_set(ctx, g);
+            return;
+        }
+        if (u == "M" || u == "MAJOR") {
+            step_ = Step::Major;
+            ctx.set_prompt("Specify the number of grid divisions per major grid line <" + std::to_string(g.major) +
+                           ">: ");
+            return;
+        }
+        if (u == "D" || u == "ADAPTIVE") {
+            step_ = Step::Adaptive;
+            ctx.set_prompt(std::string("Turn adaptive behavior on [Yes/No] <") + (g.adaptive ? "Yes" : "No") + ">: ");
+            return;
+        }
+        if (u == "L" || u == "LIMITS") {
+            step_ = Step::Limits;
+            ctx.set_prompt(std::string("Display grid beyond Limits [Yes/No] <") + (g.beyond_limits ? "Yes" : "No") +
+                           ">: ");
+            return;
+        }
+        if (u == "F" || u == "FOLLOW") {
+            step_ = Step::Follow;
+            ctx.set_prompt("Follow Dynamic UCS [Yes/No] <No>: ");
+            return;
+        }
+        if (u == "A" || u == "ASPECT") {
+            step_ = Step::AspectX;
+            ctx.set_prompt("Specify the horizontal spacing(X) <" + fmt4(g.x) + ">: ");
+            return;
+        }
+        if (u != "ON" && u != "OFF") {
+            // A spacing, or a multiple of the snap spacing ("2x"); 0 follows the zoom.
+            std::string num = t;
+            const bool times = !num.empty() && (num.back() == 'x' || num.back() == 'X');
+            if (times) {
+                num.pop_back();
+            }
+            const std::optional<double> v = parse_number(num);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a spacing of zero or more, ON, OFF or an option.");
+                return;
+            }
+            g.x = times ? *v * ctx.snap_spacing() : *v;
+            g.y = times ? *v * ctx.snap_spacing_y() : *v;
+            grid_set(ctx, g);
+            return;
+        }
     }
     if (mode_ == Mode::Snap) {
         if (u == "A" || u == "ASPECT") {
@@ -14036,8 +14160,7 @@ void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
             done_ = true;
             return;
         }
-        ctx.echo(mode_ == Mode::Grid ? "The grid's spacing follows the zoom here; enter ON or OFF."
-                                     : "Enter ON or OFF.");
+        ctx.echo("Enter ON or OFF.");
         return;
     }
     switch (mode_) {
@@ -14135,6 +14258,111 @@ void QuickDimUiCommand::cancel(CommandContext& ctx) {
 // MULTIPLE, PDMODE / PDSIZE / PTYPE, LIMITS (issues #40, #65)
 // ---------------------------------------------------------------------------
 void MultipleCommand::start(CommandContext& ctx) { ctx.set_prompt("Enter command name to repeat: "); }
+
+// ---------------------------------------------------------------------------
+// LAYERP / LAYERPMODE, LAYERSTATE (issue #69)
+// ---------------------------------------------------------------------------
+void LayerPreviousCommand::start(CommandContext& ctx) {
+    if (!mode_) {
+        ctx.submit(core::LayerPreviousCommand{});
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Enter LAYERP mode [ON/OFF]: ");
+}
+
+void LayerPreviousCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
+        ctx.submit(core::SetLayerpModeCommand{}); // says which
+    } else if (u == "ON") {
+        ctx.submit(core::SetLayerpModeCommand{true});
+    } else if (u == "OFF") {
+        ctx.submit(core::SetLayerpModeCommand{false});
+    } else {
+        ctx.echo("Enter ON or OFF.");
+        return;
+    }
+    done_ = true;
+}
+
+void LayerPreviousCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void LayerStateCommand::options(CommandContext& ctx) {
+    step_ = Step::Option;
+    ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name]: ");
+}
+
+void LayerStateCommand::start(CommandContext& ctx) { options(ctx); }
+
+void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::LayerStateCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Option:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            ctx.submit(core::LayerStateCommand{Op::List, {}, {}});
+            options(ctx);
+            return;
+        }
+        if (u == "S" || u == "SAVE") {
+            op_ = Op::Save;
+            ctx.set_prompt("Enter new layer state name: ");
+        } else if (u == "R" || u == "RESTORE") {
+            op_ = Op::Restore;
+            ctx.set_prompt("Enter name of layer state to restore or [?]: ");
+        } else if (u == "D" || u == "DELETE") {
+            op_ = Op::Delete;
+            ctx.set_prompt("Enter name of layer state to delete or [?]: ");
+        } else if (u == "N" || u == "NAME") {
+            op_ = Op::Rename;
+            ctx.set_prompt("Enter name of layer state to rename or [?]: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+            options(ctx);
+            return;
+        }
+        step_ = Step::Name;
+        return;
+    case Step::Name:
+        if (t.empty()) {
+            options(ctx);
+            return;
+        }
+        if (t == "?" && op_ != Op::Save) {
+            ctx.submit(core::LayerStateCommand{Op::List, {}, {}});
+            return; // the same prompt again
+        }
+        if (op_ == Op::Rename) {
+            from_ = t;
+            step_ = Step::NewName;
+            ctx.set_prompt("Enter new layer state name: ");
+            return;
+        }
+        ctx.submit(core::LayerStateCommand{op_, t, {}});
+        options(ctx);
+        return;
+    case Step::NewName:
+        if (!t.empty()) {
+            ctx.submit(core::LayerStateCommand{Op::Rename, from_, t});
+        }
+        options(ctx);
+        return;
+    }
+}
+
+void LayerStateCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
 
 std::unique_ptr<ICommand> CommandContext::make_command(const std::string& alias) {
     (void)alias;

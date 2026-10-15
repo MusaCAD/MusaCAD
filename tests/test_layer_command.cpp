@@ -210,9 +210,11 @@ TEST_CASE("ORTHO, SNAP and GRID at the command line") {
     h.proc.submit_line("");
 
     h.proc.submit_line("GRID");
-    REQUIRE(h.out.prompt == "Enter mode [ON/OFF] <OFF>: ");
+    REQUIRE(h.out.prompt == "Specify grid spacing(X) or [ON/OFF/Snap/Major/aDaptive/Limits/Follow/Aspect] <0.0000>: ");
     h.proc.submit_line("10");
-    REQUIRE(h.out.lines.back() == "The grid's spacing follows the zoom here; enter ON or OFF.");
+    REQUIRE(h.proc.grid_settings().x == 10.0);
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.proc.submit_line("GRID");
     h.proc.submit_line("ON");
     REQUIRE_FALSE(h.proc.has_active_command());
 }

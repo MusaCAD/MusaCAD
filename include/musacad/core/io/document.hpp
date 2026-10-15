@@ -366,6 +366,7 @@ struct Document {
     std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted
+    std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)
     bool fillmode = true;       ///< FILLMODE (v37)
     std::uint8_t pdmode = 0;    ///< PDMODE (v40): how points are drawn
     double pdsize = 0.0;        ///< PDSIZE (v40): their size (0 or less: on screen)

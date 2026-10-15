@@ -1771,6 +1771,23 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// LAYERP: the layer settings as they were before the last change to them (on, frozen,
+/// locked, colour, linetype, lineweight, plot, and the current layer). New, renamed and
+/// removed layers stay as they are.
+struct LayerPreviousCommand {};
+/// LAYERPMODE: whether LAYERP keeps track of layer changes (unset: say which).
+struct SetLayerpModeCommand {
+    std::optional<bool> on{};
+};
+/// LAYERSTATE: the named layer states kept with the drawing -- List them, Save the layers'
+/// settings as `name` (replacing one of that name), Restore them, Delete one, or Rename
+/// `name` to `to`. Names are matched in any case.
+struct LayerStateCommand {
+    enum class Op : std::uint8_t { List, Save, Restore, Delete, Rename };
+    Op op = Op::List;
+    std::string name;
+    std::string to;
+};
 /// The layer tools: `op` on the layer of the object at `pick` (LAYOFF, LAYFRZ, LAYLCK,
 /// LAYULK, LAYMCUR), on the selection (LAYCUR moves it to the current layer, LAYISO turns
 /// every other layer off), or on every layer (LAYON, LAYTHW). Unisolate turns back on what
@@ -1867,6 +1884,7 @@ using Command =
                  AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
+                 LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

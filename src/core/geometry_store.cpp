@@ -613,6 +613,7 @@ void GeometryStore::clear() noexcept {
     text_styles_.assign(1, TextStyle{}); // [0] = Standard
     current_text_style_ = 0;
     named_views_.clear();
+    layer_states_.clear();
     vports_.clear();
     vports_active_ = 0;
     ++vports_version_; // the UI drops its tiles for a fresh store

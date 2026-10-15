@@ -203,6 +203,13 @@ public:
         grid_spacing_y_ = spacing;
     }
     [[nodiscard]] double snap_spacing_y() const override { return grid_spacing_y_; }
+    [[nodiscard]] core::GridSettings grid_settings() const override { return grid_settings_; }
+    void set_grid_settings(const core::GridSettings& g) override {
+        grid_settings_ = g;
+        if (view_ != nullptr) {
+            view_->set_grid_settings(g);
+        }
+    }
     void set_snap_spacing_xy(double x, double y) override {
         grid_spacing_ = x;
         grid_spacing_y_ = y;
@@ -464,6 +471,7 @@ private:
     bool grid_snap_ = false;
     double grid_spacing_ = 1.0;
     double grid_spacing_y_ = 1.0;
+    core::GridSettings grid_settings_{};
     std::uint8_t pdmode_ = 0;
     double pdsize_ = 0.0;
     Limits limits_{};

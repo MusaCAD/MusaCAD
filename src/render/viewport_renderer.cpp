@@ -567,7 +567,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             break;
         }
     }
-    const GridResult g = build_grid(camera);
+    const GridResult g = build_grid(camera, grid_settings_, snapshot.limits_min, snapshot.limits_max);
     const std::size_t minor_count = pack_segments(g.minor, scratch_);
     grid_minor_->upload(scratch_.data(), scratch_.size() * sizeof(float));
     std::size_t grid_bytes = scratch_.size() * sizeof(float);

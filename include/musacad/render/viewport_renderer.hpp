@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "musacad/core/grid_settings.hpp"
 #include "musacad/render/gpu/texture.hpp"
 #include "musacad/core/image_decoder.hpp"
 #include "musacad/core/render_snapshot.hpp"
@@ -76,6 +77,8 @@ public:
         cursor_y_ = screen_y;
     }
     void set_grid_visible(bool visible) { grid_visible_ = visible; }
+    /// GRID's spacing, major lines, adaptive behaviour and limits (see build_grid).
+    void set_grid_settings(const core::GridSettings& g) { grid_settings_ = g; }
 
     /// Device pixel density for AutoCAD-accurate lineweight display, in *logical*
     /// pixels per millimetre = screen DPI / 25.4. The framebuffer is in PHYSICAL
@@ -154,6 +157,7 @@ private:
     float cursor_x_ = 0.0f;
     float cursor_y_ = 0.0f;
     bool grid_visible_ = true;
+    core::GridSettings grid_settings_{};
     float device_px_per_mm_ = 96.0f / 25.4f; // ~3.78 px/mm @ 96 DPI (AutoCAD default)
     float device_pixel_ratio_ = 1.0f;        // Qt devicePixelRatio (HiDPI scaling)
     std::shared_ptr<const RenderOverlay> overlay_ptr_;

@@ -31,6 +31,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   a layer set not to plot is left off every plot. Kept in the drawing and in DXF.
 - **WIPEOUT Frames: Display but not plot** (#40) -- the frames on screen, not on paper.
 - **PASTEBLOCK** (#55) -- the copied objects pasted as one block at a point.
+- **LAYERP**, **LAYERPMODE** and **LAYERSTATE** (#69) -- the layer settings back as they
+  were before the last change, one change at a time; named layer states saved with the
+  drawing and restored by name. Home > Layers has Previous and Layer States.
+- **GRID** with a spacing of its own (#65) -- `[ON/OFF/Snap/Major/aDaptive/Limits/Follow/
+  Aspect]`: a spacing, the snap spacing or a multiple of it, a major line every so many,
+  fewer lines zoomed out and more zoomed in, the grid kept within the limits, and different
+  horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
+- **Units across drawings** (#81) -- copying between drawings in different units, or
+  attaching one as a reference, scales the objects into the drawing's own units
+  (millimetres into inches at 1/25.4); unitless drawings are not scaled.
 
 ### Fixed
 - DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other
