@@ -11773,38 +11773,358 @@ void DatumCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void LeaderCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify leader arrow point: ");
+    ctx.set_prompt("Specify leader start point: ");
+}
+
+void LeaderCommand::more_prompt(CommandContext& ctx) {
+    state_ = pts_.size() < 2 ? State::Next : State::More;
+    ctx.set_preview(PreviewSpec{PreviewKind::Polyline, pts_});
+    ctx.set_prompt(pts_.size() < 2 ? "Specify next point: "
+                                   : "Specify next point or [Annotation/Format/Undo] <Annotation>: ");
+}
+
+void LeaderCommand::finish(CommandContext& ctx) {
+    ctx.clear_preview();
+    std::string content;
+    for (std::size_t i = 0; i < lines_.size(); ++i) {
+        content += (i > 0 ? "\n" : "") + lines_[i];
+    }
+    const double h = current_dim_text_height(ctx);
+    if (pts_.size() == 2 && lines_.size() <= 1) {
+        ctx.submit(core::AddLeaderCommand{pts_[0], pts_[1], h, ctx.current_dim_style(), content, ctx.group_id()});
+    } else {
+        // The text beside the last point, on the side the leader comes in from.
+        const bool right = pts_.back().x >= pts_[pts_.size() - 2].x;
+        core::MTextBlock b;
+        b.height = h;
+        b.attach = right ? 3 : 5; // middle left / middle right
+        b.pos = pts_.back() + core::Vec2{right ? h * 0.5 : -h * 0.5, 0.0};
+        ctx.submit(core::AddMLeaderCommand{pts_, ctx.current_dim_style(), b, content, ctx.group_id()});
+    }
+    ctx.echo("Leader placed.");
+    done_ = true;
 }
 
 void LeaderCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
     switch (state_) {
-    case State::Tip:
+    case State::Start:
+    case State::Next:
         if (const auto p = read_point(ctx, text)) {
-            tip_ = *p;
+            pts_.push_back(*p);
             ctx.set_last_point(*p);
-            state_ = State::Knee;
-            ctx.set_prompt("Specify landing point: ");
+            more_prompt(ctx);
         }
         return;
-    case State::Knee:
+    case State::More:
+        if (t.empty() || u == "A" || u == "ANNOTATION") {
+            ctx.clear_preview();
+            state_ = State::AnnoFirst;
+            ctx.set_prompt("Enter first line of annotation text or <options>: ");
+            return;
+        }
+        if (u == "F" || u == "FORMAT") {
+            state_ = State::Format;
+            ctx.set_prompt("Enter leader format option [Spline/STraight/Arrow/None] <Exit>: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            pts_.pop_back();
+            ctx.set_last_point(pts_.back());
+            more_prompt(ctx);
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
-            knee_ = *p;
+            pts_.push_back(*p);
             ctx.set_last_point(*p);
-            state_ = State::Content;
-            ctx.set_prompt("Enter leader text: ");
+            more_prompt(ctx);
         }
         return;
-    case State::Content:
-        ctx.submit(core::AddLeaderCommand{tip_, knee_, current_dim_text_height(ctx), ctx.current_dim_style(), text,
-                                          ctx.group_id()});
-        ctx.echo("Leader placed.");
-        done_ = true;
+    case State::Format:
+        if (u == "S" || u == "SPLINE") {
+            ctx.echo("Spline leaders are not available yet; the leader stays straight.");
+        } else if (u == "N" || u == "NONE") {
+            ctx.echo("A leader here always has its arrowhead.");
+        } else if (!t.empty() && u != "ST" && u != "STRAIGHT" && u != "A" && u != "ARROW" && u != "E" && u != "EXIT") {
+            ctx.echo("Enter Spline, STraight, Arrow, None or Exit.");
+            return;
+        }
+        more_prompt(ctx);
+        return;
+    case State::AnnoFirst:
+        if (t.empty()) {
+            state_ = State::AnnoOption;
+            ctx.set_prompt("Enter an annotation option [Tolerance/Copy/Block/None/Mtext] <Mtext>: ");
+            return;
+        }
+        lines_.push_back(t);
+        state_ = State::AnnoNext;
+        ctx.set_prompt("Enter next line of annotation text: ");
+        return;
+    case State::AnnoNext:
+        if (t.empty()) {
+            finish(ctx);
+            return;
+        }
+        lines_.push_back(t);
+        return;
+    case State::AnnoOption:
+        if (u == "N" || u == "NONE") {
+            finish(ctx);
+            return;
+        }
+        if (t.empty() || u == "M" || u == "MTEXT") {
+            state_ = State::AnnoMtext;
+            ctx.set_prompt("Enter annotation text: ");
+            return;
+        }
+        if (u == "T" || u == "TOLERANCE" || u == "C" || u == "COPY" || u == "B" || u == "BLOCK") {
+            ctx.echo("Tolerance, Copy and Block annotations are not available yet.");
+        } else {
+            ctx.echo("Enter Tolerance, Copy, Block, None or Mtext.");
+        }
+        return;
+    case State::AnnoMtext:
+        if (!t.empty()) {
+            lines_.push_back(t);
+        }
+        finish(ctx);
         return;
     }
 }
 
 void LeaderCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// MLEADER (issue #61)
+// ---------------------------------------------------------------------------
+void MLeaderCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    first_prompt(ctx);
+}
+
+void MLeaderCommand::first_prompt(CommandContext& ctx) {
+    state_ = State::First;
+    switch (order_) {
+    case Order::Arrow:
+        ctx.set_prompt("Specify leader arrowhead location or [leader Landing first/Content first/Options] <Options>: ");
+        return;
+    case Order::Landing:
+        ctx.set_prompt("Specify leader landing location or [leader arrowHead first/Content first/Options] <Options>: ");
+        return;
+    case Order::Content:
+        ctx.set_prompt("Specify location of the text or [leader arrowHead first/leader Landing first/Options] <Options>: ");
+        return;
+    }
+}
+
+void MLeaderCommand::after_points(CommandContext& ctx) {
+    ctx.set_preview(PreviewSpec{PreviewKind::Polyline, pts_});
+    if (order_ == Order::Arrow) {
+        if (static_cast<int>(pts_.size()) < s_max_points_ - 1) {
+            state_ = State::Next;
+            ctx.set_prompt("Specify next point: ");
+        } else {
+            state_ = State::Landing;
+            ctx.set_prompt("Specify leader landing location: ");
+        }
+        return;
+    }
+    state_ = State::Arrow; // the landing (or the text) is there: the arrowhead next
+    ctx.set_prompt("Specify leader arrowhead location: ");
+}
+
+void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
+    ctx.clear_preview();
+    const double h = current_dim_text_height(ctx);
+    std::vector<core::Vec2> v = pts_;
+    const bool right = v.back().x >= v[v.size() - 2].x;
+    const double side = right ? 1.0 : -1.0;
+    if (s_landing_) {
+        v.push_back(v.back() + core::Vec2{side * h * 2.0, 0.0}); // the horizontal landing
+    }
+    core::MTextBlock b;
+    b.height = h;
+    b.attach = right ? 3 : 5; // middle left / middle right, a gap beyond the landing
+    b.pos = v.back() + core::Vec2{side * h * 0.5, 0.0};
+    ctx.submit(core::AddMLeaderCommand{v, ctx.current_dim_style(), b, s_content_ ? text : std::string(), ctx.group_id()});
+    ctx.echo("Multileader placed.");
+    done_ = true;
+}
+
+void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (t.empty() || u == "O" || u == "OPTIONS") {
+            state_ = State::Options;
+            ctx.set_prompt("Enter an option [Leader type/leader lAnding/Content type/Maxpoints/First angle/Second "
+                           "angle/eXit options] <eXit options>: ");
+            return;
+        }
+        if (u == "L" || u == "LANDING" || u == "LEADER LANDING FIRST") {
+            order_ = Order::Landing;
+            first_prompt(ctx);
+            return;
+        }
+        if (u == "H" || u == "ARROWHEAD" || u == "LEADER ARROWHEAD FIRST") {
+            order_ = Order::Arrow;
+            first_prompt(ctx);
+            return;
+        }
+        if (u == "C" || u == "CONTENT" || u == "CONTENT FIRST") {
+            order_ = Order::Content;
+            first_prompt(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.set_last_point(*p);
+            if (order_ == Order::Content) {
+                text_at_ = *p;
+                if (!s_content_) {
+                    pts_ = {*p};
+                    after_points(ctx);
+                    return;
+                }
+                state_ = State::Text;
+                ctx.set_prompt("Enter annotation text: ");
+                return;
+            }
+            pts_ = {*p};
+            after_points(ctx);
+        }
+        return;
+    case State::Next:
+    case State::Landing:
+        if (state_ == State::Next && t.empty()) {
+            state_ = State::Landing; // Enter: the last point is the landing
+            if (pts_.size() >= 2) {
+                if (s_content_) {
+                    state_ = State::Text;
+                    ctx.set_prompt("Enter annotation text: ");
+                } else {
+                    finish(ctx, {});
+                }
+            }
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            if (state_ == State::Next) {
+                after_points(ctx);
+                return;
+            }
+            if (s_content_) {
+                ctx.clear_preview();
+                state_ = State::Text;
+                ctx.set_prompt("Enter annotation text: ");
+            } else {
+                finish(ctx, {});
+            }
+        }
+        return;
+    case State::Arrow:
+        if (const auto p = read_point(ctx, text)) {
+            pts_.insert(pts_.begin(), *p); // the arrowhead first, the landing (or text) last
+            if (order_ == Order::Content) {
+                finish(ctx, text_);
+            } else if (s_content_) {
+                ctx.clear_preview();
+                state_ = State::Text;
+                ctx.set_prompt("Enter annotation text: ");
+            } else {
+                finish(ctx, {});
+            }
+        }
+        return;
+    case State::Text:
+        if (order_ == Order::Content && pts_.empty()) {
+            text_ = t;
+            pts_ = {*text_at_};
+            after_points(ctx);
+            return;
+        }
+        finish(ctx, t);
+        return;
+    case State::Options:
+        if (t.empty() || u == "X" || u == "EXIT" || u == "EXIT OPTIONS") {
+            first_prompt(ctx);
+        } else if (u == "M" || u == "MAXPOINTS") {
+            state_ = State::MaxPoints;
+            ctx.set_prompt("Enter the maximum points for leader line <" + std::to_string(s_max_points_) + ">: ");
+        } else if (u == "C" || u == "CONTENT TYPE") {
+            state_ = State::ContentType;
+            ctx.set_prompt(std::string("Select a content type [Mtext/None] <") + (s_content_ ? "Mtext" : "None") + ">: ");
+        } else if (u == "L" || u == "LEADER TYPE") {
+            state_ = State::LeaderType;
+            ctx.set_prompt("Select a leader type [Straight/sPline/None] <Straight>: ");
+        } else if (u == "A" || u == "LANDING" || u == "LEADER LANDING") {
+            state_ = State::UseLanding;
+            ctx.set_prompt(std::string("Use landing [Yes/No] <") + (s_landing_ ? "Yes" : "No") + ">: ");
+        } else if (u == "F" || u == "S" || u == "FIRST ANGLE" || u == "SECOND ANGLE") {
+            ctx.echo("Angle constraints are not available yet.");
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    case State::MaxPoints: {
+        if (!t.empty()) {
+            const std::optional<double> n = parse_number(t);
+            if (!n || *n < 2.0 || *n > 99.0 || *n != std::floor(*n)) {
+                ctx.echo("Requires a whole number from 2 to 99.");
+                return;
+            }
+            s_max_points_ = static_cast<int>(*n);
+        }
+        state_ = State::Options;
+        ctx.set_prompt("Enter an option [Leader type/leader lAnding/Content type/Maxpoints/First angle/Second "
+                       "angle/eXit options] <eXit options>: ");
+        return;
+    }
+    case State::ContentType:
+    case State::LeaderType:
+    case State::UseLanding:
+        if (state_ == State::ContentType) {
+            if (u == "N" || u == "NONE") {
+                s_content_ = false;
+            } else if (t.empty() || u == "M" || u == "MTEXT") {
+                s_content_ = t.empty() ? s_content_ : true;
+            } else if (u == "B" || u == "BLOCK") {
+                ctx.echo("Block content is not available yet.");
+                return;
+            } else {
+                ctx.echo("Enter Mtext or None.");
+                return;
+            }
+        } else if (state_ == State::LeaderType) {
+            if (u == "P" || u == "SPLINE") {
+                ctx.echo("Spline leaders are not available yet; the leader stays straight.");
+            } else if (u == "N" || u == "NONE") {
+                ctx.echo("A multileader here always has its leader line.");
+            }
+        } else if (u == "Y" || u == "YES" || u == "N" || u == "NO") {
+            s_landing_ = u[0] == 'Y';
+        } else if (!t.empty()) {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        state_ = State::Options;
+        ctx.set_prompt("Enter an option [Leader type/leader lAnding/Content type/Maxpoints/First angle/Second "
+                       "angle/eXit options] <eXit options>: ");
+        return;
+    }
+}
+
+void MLeaderCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
     done_ = true;
 }
 

@@ -435,6 +435,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",
         "Create a dimension suited to the selected object.");
+    reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",
+        "Draw a multileader: an arrowhead, a leader line and a landing, and its text.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a leader line with an arrowhead and annotation.");
     // --- Dimension chaining (issue #28) ---

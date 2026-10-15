@@ -3123,6 +3123,10 @@ private:
 };
 
 /// LEADER: pick the arrow tip, the landing point, then enter the label.
+/// LEADER: `Specify leader start point:`, `Specify next point:`, then `Specify next point or
+/// [Annotation/Format/Undo] <Annotation>:` until Enter; `Enter first line of annotation text
+/// or <options>:` and the next lines until Enter (the options: `[Tolerance/Copy/Block/None/
+/// Mtext]`). Two points make a leader with its text at the second; more, a multileader.
 class LeaderCommand final : public ICommand {
 public:
     std::string name() const override { return "LEADER"; }
@@ -3130,12 +3134,48 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override {
+        return state_ == State::AnnoFirst || state_ == State::AnnoNext || state_ == State::AnnoMtext;
+    }
 
 private:
-    enum class State { Tip, Knee, Content } state_ = State::Tip;
-    core::Vec2 tip_{};
-    core::Vec2 knee_{};
+    enum class State { Start, Next, More, Format, AnnoFirst, AnnoNext, AnnoOption, AnnoMtext };
+    void more_prompt(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    State state_ = State::Start;
+    std::vector<core::Vec2> pts_;
+    std::vector<std::string> lines_;
     bool done_ = false;
+};
+
+/// MLEADER (MLD): `Specify leader arrowhead location or [leader Landing first/Content first/
+/// Options] <Options>:`, the landing, then the text, which sits beside a short horizontal
+/// landing. Options: Maxpoints (`Enter the maximum points for leader line <2>:`), Content
+/// type Mtext or None, Leader type and landing (straight, with a landing).
+class MLeaderCommand final : public ICommand {
+public:
+    std::string name() const override { return "MLEADER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool free_text() const override { return state_ == State::Text; }
+
+private:
+    enum class Order : std::uint8_t { Arrow, Landing, Content };
+    enum class State : std::uint8_t { First, Next, Landing, Arrow, Text, Options, MaxPoints, ContentType, LeaderType, UseLanding };
+    void first_prompt(CommandContext& ctx);
+    void after_points(CommandContext& ctx);
+    void finish(CommandContext& ctx, const std::string& text);
+    State state_ = State::First;
+    Order order_ = Order::Arrow;
+    std::vector<core::Vec2> pts_; ///< arrowhead first, the landing last
+    std::optional<core::Vec2> text_at_;
+    std::string text_;
+    bool done_ = false;
+    static inline int s_max_points_ = 2;
+    static inline bool s_content_ = true;
+    static inline bool s_landing_ = true;
 };
 
 /// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph

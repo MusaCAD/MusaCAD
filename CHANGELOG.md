@@ -40,6 +40,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
 - **DSETTINGS** (#65) -- the Drafting Settings dialog with its Snap and Grid, Polar
   Tracking, Object Snap and Dynamic Input tabs; `DS`, `SE` and `OS` open it.
+- **MLEADER** (#61) -- arrowhead first, landing first or content first, a horizontal landing
+  with the text beside it, and Maxpoints, Content type and landing options; Annotate >
+  Leaders opens with it. **LEADER** takes any number of points with Undo, Format and
+  Annotation, and several lines of text.
 - **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
   the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
   Decimal), the fraction format, round off, a prefix and suffix and the measurement scale

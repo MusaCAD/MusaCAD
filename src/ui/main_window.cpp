@@ -2807,7 +2807,7 @@ bool MainWindow::selftest_annotation() {
         all = all && ok;
         prev = viewport_->line_vertex_count();
     };
-    place("LEADER", {"LEADER", "60,60", "70,66", "see note"});
+    place("LEADER", {"LEADER", "60,60", "70,66", "", "see note", ""});
 
     // --- Object-aware dimensioning (Phase 15): dimension entities by SELECTING
     // them. Draw the source geometry, then pick the objects themselves.
