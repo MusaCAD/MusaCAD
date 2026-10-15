@@ -430,11 +430,8 @@ public:
     };
     [[nodiscard]] virtual Limits limits() const { return {}; }
     /// A fresh command for `alias` (MULTIPLE runs one again and again); nothing for an
-    /// unknown name.
-    [[nodiscard]] virtual std::unique_ptr<ICommand> make_command(const std::string& alias) {
-        (void)alias;
-        return {};
-    }
+    /// unknown name. (Defined where ICommand is complete.)
+    [[nodiscard]] virtual std::unique_ptr<ICommand> make_command(const std::string& alias);
     /// TEMPOVERRIDES: whether the temporary override keys (Shift, Shift + A ...) are read.
     [[nodiscard]] virtual bool temp_overrides() const { return true; }
     virtual void set_temp_overrides(bool on) { (void)on; }

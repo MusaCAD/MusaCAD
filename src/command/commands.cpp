@@ -14089,6 +14089,11 @@ void QuickDimUiCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void MultipleCommand::start(CommandContext& ctx) { ctx.set_prompt("Enter command name to repeat: "); }
 
+std::unique_ptr<ICommand> CommandContext::make_command(const std::string& alias) {
+    (void)alias;
+    return nullptr; // only a context with a command registry makes commands
+}
+
 void MultipleCommand::again(CommandContext& ctx) {
     sub_ = ctx.make_command(alias_);
     if (!sub_) {
