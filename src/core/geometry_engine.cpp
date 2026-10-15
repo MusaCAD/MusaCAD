@@ -14339,6 +14339,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, FindTextCommand>) {
                 edit = c.do_replace; // finding only selects
             }
+            if constexpr (std::is_same_v<T, PropsFromPickCommand>) {
+                edit = false; // the current properties: a setting, not an edit
+            }
             if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 edit = c.op == ChainDimensionCommand::Op::Add; // Start, Select, Back: bookkeeping
             }
