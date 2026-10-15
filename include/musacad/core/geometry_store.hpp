@@ -544,6 +544,8 @@ public:
                            Rgb color2 = {});
     /// WIPEOUTFRAME: whether wipeout boundaries are drawn (AutoCAD's default: shown).
     [[nodiscard]] bool wipeout_frames() const noexcept { return wipeout_frames_; }
+    /// WIPEOUTFRAME 2 is frames shown (wipeout_frames) but not plotted (this false).
+    [[nodiscard]] bool wipeout_frames_plot() const noexcept { return wipeout_frames_plot_; }
     /// FILLMODE: wide polylines and solid hatches are filled (1) or drawn as outlines (0).
     [[nodiscard]] bool fillmode() const noexcept { return fillmode_; }
     void set_fillmode(bool on) noexcept { fillmode_ = on; }
@@ -659,6 +661,7 @@ public:
     void set_image_frame(std::uint8_t mode) noexcept { image_frame_ = mode <= 2 ? mode : 1; }
     void set_attdisp(std::uint8_t mode) noexcept { attdisp_ = mode <= 2 ? mode : 0; }
     void set_wipeout_frames(bool on) noexcept { wipeout_frames_ = on; }
+    void set_wipeout_frames_plot(bool plot) noexcept { wipeout_frames_plot_ = plot; }
     /// A feature control frame. `cells` are the raw cell strings in order (cell 0 is the
     /// characteristic symbol); they are copied into the shared char pool.
     EntityHandle add_fcf(const std::vector<std::string>& cells, Vec2 pos, double rotation,
@@ -1239,6 +1242,7 @@ private:
     std::uint16_t current_text_style_ = 0;
     std::uint16_t current_dimstyle_ = 0;
     bool wipeout_frames_ = true;
+    bool wipeout_frames_plot_ = true;
     bool fillmode_ = true;
     std::uint8_t pdmode_ = 0;
     double pdsize_ = 0.0;

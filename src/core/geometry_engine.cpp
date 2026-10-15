@@ -2055,6 +2055,9 @@ void GeometryEngine::apply_chain_dimension(const ChainDimensionCommand& c) {
     cmd.style = d.style;
     cmd.group = c.group;
     cmd.props = d.props;
+    if (dim_layer_ && *dim_layer_ < store_.layers().size()) {
+        cmd.props->layer = *dim_layer_; // DIMLAYER, as for any new dimension
+    }
     cmd.overrides = d.overrides;
     cmd.aux = d.aux;
     const Command command = cmd;
@@ -3119,8 +3122,10 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             char lw[16];
             std::snprintf(lw, sizeof(lw), "%.2fmm", static_cast<double>(l.lineweight) / 100.0);
             out += "\n\"" + l.name + "\"  " + (l.on ? "On" : "Off") + (l.frozen ? " Frozen" : "") +
-                   (l.locked ? " Locked" : "") + (i == store_.current_layer() ? " Current" : "") + "  " + rgb + "  " +
-                   kLt[std::min<std::size_t>(static_cast<std::size_t>(l.linetype), 3)] + "  " + lw;
+                   (l.locked ? " Locked" : "") + (l.plot ? "" : " No-plot") +
+                   (i == store_.current_layer() ? " Current" : "") + "  " + rgb + "  " +
+                   kLt[std::min<std::size_t>(static_cast<std::size_t>(l.linetype), 3)] + "  " + lw +
+                   (l.description.empty() ? std::string() : "  " + l.description);
         }
         if (which.empty()) {
             out += "\nNo matching layers.";
@@ -3246,6 +3251,12 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             break;
         case Op::LWeight:
             l.lineweight = c.lineweight;
+            break;
+        case Op::Plot:
+            l.plot = c.plot;
+            break;
+        case Op::Description:
+            l.description = c.description;
             break;
         default:
             break;
@@ -9550,7 +9561,36 @@ void GeometryEngine::apply_fillet_join(EntityHandle h1, EntityHandle h2, Vec2 pi
         report("Filleted.");
         return;
     }
-    const Command joined = AddPolylineCommand{pts, false, 0, props, bs, cts};
+    // The widths of the polylines joined go with their segments; the fillet arc takes the
+    // width of the segments either side of it (a line has none).
+    std::vector<double> widths;
+    for (const EntityHandle sh : {h1, h2}) {
+        if (sh.kind != EntityKind::Polyline) {
+            continue;
+        }
+        const PolylineData* sp = store_.polyline(sh);
+        const std::span<const double> sw = store_.widths_of(*sp);
+        if (!pline::has_width(sw)) {
+            continue;
+        }
+        pline::inherit_widths(store_.vertices_of(*sp), store_.bulges_of(*sp), sw, sp->closed, pts, bs, false, widths,
+                              1e-6);
+    }
+    if (radius > 0.0 && widths.size() == 2 * pts.size()) {
+        const auto c = static_cast<std::size_t>(corner);
+        if (c >= 1 && c + 2 < pts.size()) {
+            // A line's side has no width: the arc then takes the polyline's on the other.
+            double w_in = widths[2 * (c - 1) + 1];
+            double w_out = widths[2 * (c + 1)];
+            w_in = w_in > 0.0 ? w_in : w_out;
+            w_out = w_out > 0.0 ? w_out : w_in;
+            widths[2 * c] = w_in;
+            widths[2 * c + 1] = w_out;
+        }
+    }
+    AddPolylineCommand joined_cmd{pts, false, 0, props, bs, cts};
+    joined_cmd.widths = std::move(widths);
+    const Command joined = std::move(joined_cmd);
     const Command o1 = capture_entity(h1);
     const Command o2 = capture_entity(h2);
     remove_indexed(h1);
@@ -10797,7 +10837,27 @@ void GeometryEngine::ellipse_boundary_hits(EntityHandle self, const EllipseData&
             continue;
         }
         poly.clear();
-        kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
+        if (trim_edge_extend_ && c.kind == EntityKind::Line) {
+            // Edge=Extend: the boundary line runs on both ways, as for circles and arcs.
+            const LineData* m = store_.line(c);
+            if (distance(m->a, m->b) > 1e-12) {
+                line_cross_poly(m->a, m->b - m->a, false, ring, out);
+            }
+            continue;
+        }
+        if (trim_edge_extend_ && c.kind == EntityKind::Arc) {
+            // ... and a boundary arc counts as its whole circle.
+            const ArcData* ba = store_.arc(c);
+            const double tol = std::max(tess_tolerance_, 1e-6) * 0.25;
+            const double step = 2.0 * std::acos(std::clamp(1.0 - tol / std::max(ba->radius, 1e-12), -1.0, 1.0));
+            const int n = std::clamp(static_cast<int>(std::ceil(kTwoPi / std::max(step, 1e-6))), 32, 4096);
+            for (int k = 0; k <= n; ++k) {
+                const double a = kTwoPi * k / n;
+                poly.push_back(ba->center + Vec2{std::cos(a), std::sin(a)} * ba->radius);
+            }
+        } else {
+            kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
+        }
         if (c.kind == EntityKind::Polyline && store_.polyline(c)->closed && poly.size() > 2) {
             poly.push_back(poly.front());
         }
@@ -12343,6 +12403,15 @@ void GeometryEngine::apply(const Command& command) {
                     report("Nothing to undo."); // the command's steps changed nothing
                 } else {
                     do_undo_group();
+                    if (c.reselect && !redo_.empty()) {
+                        std::erase_if(selection_, [this](EntityHandle h) { return !store_.is_valid(h); });
+                        for (const Item& i : redo_.back().items) {
+                            if (!i.is_create && store_.is_valid(i.handle) &&
+                                std::find(selection_.begin(), selection_.end(), i.handle) == selection_.end()) {
+                                selection_.push_back(i.handle);
+                            }
+                        }
+                    }
                     geom_dirty_ = true;
                 }
             }
@@ -12783,7 +12852,28 @@ void GeometryEngine::apply(const Command& command) {
                 // store is never mutated; the live snapshot/triple-buffer is untouched.
                 const double tol = c.tolerance > 0.0 ? c.tolerance : kDefaultTessTolerance;
                 text::set_field_context(field_context_now());
-                build_render_snapshot(store_, kernel_, plot_snapshot_, tol, store_.ltscale());
+                // Layers set not to plot, and wipeout frames shown but not plotted, are left
+                // out: the plot is built from a copy with them off.
+                bool all_plot = store_.wipeout_frames_plot();
+                for (const Layer& l : store_.layers()) {
+                    all_plot = all_plot && l.plot;
+                }
+                if (all_plot) {
+                    build_render_snapshot(store_, kernel_, plot_snapshot_, tol, store_.ltscale());
+                } else {
+                    GeometryStore plotted = store_;
+                    for (std::size_t li = 0; li < plotted.layers().size(); ++li) {
+                        if (!plotted.layers()[li].plot) {
+                            Layer l = plotted.layers()[li];
+                            l.on = false;
+                            plotted.set_layer(static_cast<std::uint16_t>(li), l);
+                        }
+                    }
+                    if (!plotted.wipeout_frames_plot()) {
+                        plotted.set_wipeout_frames(false);
+                    }
+                    build_render_snapshot(plotted, kernel_, plot_snapshot_, tol, store_.ltscale());
+                }
                 plot_version_.fetch_add(1, std::memory_order_release);
             }
             if constexpr (std::is_same_v<T, GripDragCommand>) {
@@ -13497,9 +13587,10 @@ void GeometryEngine::apply(const Command& command) {
             }
             if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
                 store_.set_wipeout_frames(c.on);
+                store_.set_wipeout_frames_plot(c.plot);
                 dirty_ = true;
                 geom_dirty_ = true;
-                report(c.on ? "Wipeout frames on." : "Wipeout frames off.");
+                report(!c.on ? "Wipeout frames off." : c.plot ? "Wipeout frames on." : "Wipeout frames shown, not plotted.");
             }
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
@@ -13751,6 +13842,8 @@ void GeometryEngine::forget_document_state() {
 }
 
 void GeometryEngine::park_active(DocState& d) {
+    d.layiso_off = std::move(layiso_off_); // the drawing's own, back when it is active again
+    d.dim_layer = dim_layer_;
     forget_document_state();
     d.store = std::move(store_);
     d.grid = std::move(grid_);
@@ -13794,6 +13887,8 @@ void GeometryEngine::park_active(DocState& d) {
 
 void GeometryEngine::load_active(DocState& d) {
     forget_document_state(); // closing a tab comes here without park_active
+    layiso_off_ = std::move(d.layiso_off);
+    dim_layer_ = d.dim_layer;
     store_ = std::move(d.store);
     store_.set_font_engine(font_engine_); // font engine is engine-global
     grid_ = std::move(d.grid);

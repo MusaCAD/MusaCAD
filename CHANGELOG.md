@@ -26,6 +26,24 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   checking on, a point outside the limits is refused at every prompt (`**Outside limits`).
   **SNAP** gains **Aspect** (a horizontal and a vertical spacing) and **Type** (Polar / Grid);
   Style and Legacy say what is not there yet.
+- **Layers that are not plotted, and layer descriptions** (#69) -- the Layer Properties
+  Manager's **Plot** and **Description** columns and -LAYER's **Plot** and **Description**;
+  a layer set not to plot is left off every plot. Kept in the drawing and in DXF.
+- **WIPEOUT Frames: Display but not plot** (#40) -- the frames on screen, not on paper.
+- **PASTEBLOCK** (#55) -- the copied objects pasted as one block at a point.
+
+### Fixed
+- DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other
+  dimension command does, instead of the previous dimension's.
+- LAYUNISO works after switching to another drawing tab and back; LAYISO's list and
+  DIMLAYER now stay with each drawing.
+- PEDIT Multiple: after its Undo, the polylines as they were are still selected, so the next
+  option works on them.
+- FILLET joining a line and a wide polyline (or two polylines) keeps the polylines' widths.
+- EXTEND of an elliptical arc with Edge set to Extend reaches the extension of a boundary
+  line or arc, as it does for lines and arcs.
+- Ctrl+C followed at once by Ctrl+V pastes what was just copied, even when another program
+  or Musa CAD window had put something on the clipboard before.
 
 ## 0.7.0 - 2026-10-11
 

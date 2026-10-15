@@ -227,7 +227,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     fanout_ = std::make_unique<FanoutOutput>();
     fanout_->add(command_widget_);
     processor_ = std::make_unique<command::CommandProcessor>(
-        [this](core::Command c) { engine_->submit(std::move(c)); }, viewport_, *fanout_);
+        [this](core::Command c) {
+            if (std::holds_alternative<core::CopyClipboardCommand>(c) ||
+                std::holds_alternative<core::CutClipboardCommand>(c)) {
+                copy_sent_at_ = std::chrono::steady_clock::now(); // on the clipboard shortly
+            }
+            engine_->submit(std::move(c));
+        },
+        viewport_, *fanout_);
     processor_->set_grid_spacing(10.0);
     command_widget_->set_processor(processor_.get());
     viewport_->set_processor(processor_.get());
@@ -2625,6 +2632,7 @@ QImage clip_picture(const core::ClipboardExport& e) {
 } // namespace
 
 void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
+    copy_sent_at_ = {};
     auto* md = new QMimeData;
     md->setData(kMimeDrawing, QByteArray::fromStdString(e.native_text));
     last_clipboard_token_ =
@@ -2641,6 +2649,12 @@ void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
 std::string MainWindow::prepare_paste() {
     pending_paste_image_ = QImage();
     pending_paste_text_.clear();
+    if (copy_sent_at_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::steady_clock::now() - copy_sent_at_ < std::chrono::seconds(3)) {
+        // Copied a moment ago and not on the system clipboard yet: what the engine holds
+        // is what was copied (the paste is queued after the copy).
+        return "objects";
+    }
     const QMimeData* md = QGuiApplication::clipboard()->mimeData();
     if (md == nullptr) {
         return {};

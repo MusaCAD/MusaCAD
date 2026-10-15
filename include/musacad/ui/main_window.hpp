@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -291,6 +292,10 @@ private:
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;
+    /// When a copy or cut was last sent to the engine and its export has not come back
+    /// yet: a paste then takes the engine's own clip, not what the system clipboard still
+    /// holds from before (zero: none in flight).
+    std::chrono::steady_clock::time_point copy_sent_at_{};
     QImage pending_paste_image_;
     QString pending_paste_text_;
 

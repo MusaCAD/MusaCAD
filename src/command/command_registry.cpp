@@ -281,6 +281,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Paste the clipboard (Ctrl+V): drawing objects, an image, or text as multiline text.");
     reg({"PASTEORIG"}, [] { return std::make_unique<PasteClipCommand>(true); }, "",
         "Paste copied objects at the coordinates they had.");
+    reg({"PASTEBLOCK"}, [] { return std::make_unique<PasteClipCommand>(false, true); }, "",
+        "Paste copied objects as one block at a point.");
     reg({"D", "DST", "DDIM", "DIMSTYLE"}, [] { return std::make_unique<DimStyleCommand>(true); }, "",
         "Create and change dimension styles: text, arrows, units and colours, and the current style.");
     reg({"-DIMSTYLE"}, [] { return std::make_unique<DimStyleCommand>(false); }, "",

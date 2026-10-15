@@ -38,6 +38,8 @@ struct Layer {
     bool frozen = false;          ///< frozen layers don't render
     bool locked = false;          ///< locked layers render but can't be selected/modified
     bool vp_freeze_new = false;   ///< frozen in every viewport created later (VPLAYER Vpvisdflt)
+    bool plot = true;             ///< plotted (the manager's Plot column; DXF 290)
+    std::string description{};    ///< the manager's Description column
     friend bool operator==(const Layer&, const Layer&) = default;
 };
 

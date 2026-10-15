@@ -370,10 +370,26 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
     }
     // v34: VPFRZNEW idx -- the layer is frozen in every viewport created afterwards.
+    // v40: NOPLOT idx -- the layer is not plotted; LAYERDESC idx text -- its description
+    // (spaces, tabs and line breaks as 0x1f).
     for (std::size_t i = 0; i < doc.layers.size(); ++i) {
         if (doc.layers[i].vp_freeze_new) {
             s += "VPFRZNEW ";
             append_uint(s, i);
+            s += '\n';
+        }
+        if (!doc.layers[i].plot) {
+            s += "NOPLOT ";
+            append_uint(s, i);
+            s += '\n';
+        }
+        if (!doc.layers[i].description.empty()) {
+            s += "LAYERDESC ";
+            append_uint(s, i);
+            s += ' ';
+            for (const char ch : doc.layers[i].description) {
+                s += (ch == ' ' || ch == '\n' || ch == '\t' || ch == '\r') ? '\x1f' : ch;
+            }
             s += '\n';
         }
     }
@@ -1045,8 +1061,8 @@ std::string serialize_native(const Document& doc) {
     s += "CURDIMSTYLE ";
     append_uint(s, doc.current_dimstyle);
     s += '\n';
-    s += "WIPEOUTFRAME ";
-    append_uint(s, doc.wipeout_frames ? 1 : 0);
+    s += "WIPEOUTFRAME "; // 0 off, 1 on, 2 displayed but not plotted (v40)
+    append_uint(s, doc.wipeout_frames ? (doc.wipeout_frames_plot ? 1 : 2) : 0);
     s += '\n';
     s += "FILLMODE ";
     append_uint(s, doc.fillmode ? 1 : 0);
@@ -1558,6 +1574,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed WIPEOUTFRAME");
             }
             doc.wipeout_frames = on != 0;
+            doc.wipeout_frames_plot = on != 2;
         } else if (key == "CURDIMSTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {
@@ -2207,6 +2224,26 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("VPFRZNEW record malformed");
             }
             doc.layers[li].vp_freeze_new = true;
+        } else if (key == "NOPLOT") {
+            // NOPLOT idx (v40): the layer is not plotted.
+            std::uint64_t li = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], li) || li >= doc.layers.size()) {
+                return fail("NOPLOT record malformed");
+            }
+            doc.layers[li].plot = false;
+        } else if (key == "LAYERDESC") {
+            // LAYERDESC idx text (v40): the layer's description, spaces as 0x1f.
+            std::uint64_t li = 0;
+            if (tok.size() != 3 || !to_uint(tok[1], li) || li >= doc.layers.size()) {
+                return fail("LAYERDESC record malformed");
+            }
+            std::string d(tok[2]);
+            for (char& ch : d) {
+                if (ch == '\x1f') {
+                    ch = ' ';
+                }
+            }
+            doc.layers[li].description = std::move(d);
         } else if (key == "IMAGE") {
             // IMAGE def px py w h rot clipped u0 v0 u1 v1 <props7>
             std::uint64_t def = 0;

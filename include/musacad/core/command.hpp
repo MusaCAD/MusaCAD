@@ -475,6 +475,9 @@ struct UndoLastGroupCommand {
     /// only when it was made since then (a step that changed nothing leaves none, and the
     /// work before the command stays). 0: the last group, whatever made it (U, Ctrl+Z).
     std::uint64_t since = 0;
+    /// The objects the undo brings back are selected, in place of those it takes away
+    /// (PEDIT Multiple's Undo: the polylines as they were stay the ones being edited).
+    bool reselect = false;
 };
 
 /// Redo the most recently undone command group (Ctrl+Y).
@@ -1669,9 +1672,11 @@ struct HatchPickPointCommand {
     Rgb color2{}; ///< GRADIENT: the second colour
 };
 
-/// WIPEOUT [Frames]: show or hide wipeout boundaries (WIPEOUTFRAME).
+/// WIPEOUT [Frames]: show or hide wipeout boundaries (WIPEOUTFRAME); `plot` false with
+/// `on`: shown but not plotted (Display but not plot, WIPEOUTFRAME 2).
 struct SetWipeoutFramesCommand {
     bool on = true;
+    bool plot = true;
 };
 /// WIPEOUT [Polyline]: a wipeout from the closed polyline under `pick` (arc segments
 /// tessellated), optionally erasing the polyline.
@@ -1787,14 +1792,19 @@ struct LayerToolCommand {
 /// Rename gives the one layer the name `to` (not layer 0, not to a name in use); On, Off,
 /// Freeze, Thaw, Lock and Unlock switch them (the current layer is not frozen); Color,
 /// Ltype and LWeight give them `color`, `linetype` or `lineweight` (1/100 mm).
+/// Plot sets whether they are plotted (`plot`); Description gives them `description`.
 struct LayerEditCommand {
-    enum class Op : std::uint8_t { List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight };
+    enum class Op : std::uint8_t {
+        List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight, Plot, Description
+    };
     Op op = Op::List;
     std::string names;
     std::string to;
     Rgb color{};
     Linetype linetype = Linetype::Continuous;
     std::uint8_t lineweight = 25;
+    bool plot = true;
+    std::string description;
 };
 /// Move every selected entity to layer `index` (one undo group).
 struct SetEntityLayerCommand {

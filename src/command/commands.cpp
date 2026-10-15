@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <sstream>
 #include <optional>
@@ -3282,6 +3283,11 @@ void ClipCopyCommand::cancel(CommandContext& ctx) {
 void PasteClipCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     kind_ = ctx.view() != nullptr ? ctx.view()->prepare_paste() : std::string();
+    if (as_block_ && kind_ != "objects" && !kind_.empty()) {
+        ctx.echo("PASTEBLOCK pastes objects copied from a drawing; the clipboard holds something else.");
+        done_ = true;
+        return;
+    }
     if (original_) {
         if (kind_ != "objects" && !kind_.empty()) {
             ctx.echo("PASTEORIG pastes objects copied from a drawing; the clipboard holds something else.");
@@ -3310,6 +3316,19 @@ void PasteClipCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     ctx.set_preview({});
+    if (as_block_) {
+        // The objects pasted are the selection; BLOCK's own path makes them one insert at
+        // the point, all in one undo step.
+        static std::uint32_t serial = 0;
+        const auto stamp = static_cast<std::uint32_t>(
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000 * 2654435761ULL);
+        char name[16];
+        std::snprintf(name, sizeof(name), "A$C%08X", stamp + (serial++ * 0x9E3779B9U));
+        ctx.submit(core::PasteClipboardCommand{*p, ctx.group_id(), true});
+        ctx.submit(core::DefineBlockCommand{name, *p, ctx.group_id()});
+        done_ = true;
+        return;
+    }
     if (ctx.view() == nullptr || !ctx.view()->paste_at(*p, false)) {
         ctx.submit(core::PasteClipboardCommand{*p, ctx.group_id(), true});
     }
@@ -5442,7 +5461,7 @@ void WipeoutCommand::input(CommandContext& ctx, const std::string& text) {
     case State::First:
         if (u == "F" || u == "FRAMES") {
             state_ = State::Frames;
-            ctx.set_prompt("Enter mode [ON/OFF] <ON>: ");
+            ctx.set_prompt("Enter mode [ON/OFF/Display but not plot] <ON>: ");
             return;
         }
         if (t.empty() || u == "P" || u == "POLYLINE") {
@@ -5501,8 +5520,10 @@ void WipeoutCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.submit(core::SetWipeoutFramesCommand{false});
         } else if (t.empty() || u == "ON") {
             ctx.submit(core::SetWipeoutFramesCommand{true});
+        } else if (u == "D" || u == "DISPLAY" || u == "DISPLAY BUT NOT PLOT") {
+            ctx.submit(core::SetWipeoutFramesCommand{true, false});
         } else {
-            ctx.echo("Enter ON or OFF.");
+            ctx.echo("Enter ON, OFF or Display but not plot.");
             return;
         }
         done_ = true;
@@ -5752,7 +5773,8 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "R" || u == "REVERSE") {
             op(2);
         } else if (u == "U" || u == "UNDO") {
-            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+            // Multiple: the polylines as they were are the ones selected again.
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group(), multiple_});
         } else {
             ctx.echo(multiple_ ? "Enter Close, Open, Join, Width, Fit, Spline, Decurve, Reverse, Undo or Enter to finish."
                                : "Enter Close, Open, Join, Width, Edit vertex, Fit, Spline, Decurve, Reverse, Undo or Enter to finish.");
@@ -13687,7 +13709,8 @@ void LayerCommand::option_prompt(CommandContext& ctx) {
     state_ = State::Option;
     edit_ = {};
     value_text_.clear();
-    ctx.set_prompt("Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Freeze/Thaw/LOck/Unlock]: ");
+    ctx.set_prompt(
+        "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/LOck/Unlock/Description]: ");
 }
 
 void LayerCommand::names_prompt(CommandContext& ctx) {
@@ -13732,6 +13755,12 @@ void LayerCommand::names_prompt(CommandContext& ctx) {
     case Op::LWeight:
         ctx.set_prompt("Enter name list of layer(s) for " + value_text_ + " <current>: ");
         return;
+    case Op::Plot:
+        ctx.set_prompt("Enter layer name(s) for this plot preference <current>: ");
+        return;
+    case Op::Description:
+        ctx.set_prompt("Enter name list of layer(s) to apply the description to <current>: ");
+        return;
     }
 }
 
@@ -13756,7 +13785,8 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
                                        {"OFF", "OFF", Op::Off},       {"COLOR", "C", Op::Color},
                                        {"LTYPE", "L", Op::Ltype},     {"LWEIGHT", "LW", Op::LWeight},
                                        {"FREEZE", "F", Op::Freeze},   {"THAW", "T", Op::Thaw},
-                                       {"LOCK", "LO", Op::Lock},      {"UNLOCK", "U", Op::Unlock}};
+                                       {"LOCK", "LO", Op::Lock},      {"UNLOCK", "U", Op::Unlock},
+                                       {"PLOT", "P", Op::Plot},       {"DESCRIPTION", "D", Op::Description}};
         const Kw* hit = nullptr;
         for (const Kw& k : kKeys) {
             if (u == k.full || u == k.abbr) {
@@ -13778,6 +13808,12 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (hit->op == Op::LWeight) {
             state_ = State::Value;
             ctx.set_prompt("Enter lineweight (0.0mm - 2.11mm): ");
+        } else if (hit->op == Op::Plot) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter a plotting preference [Plot/No plot] <Plot>: ");
+        } else if (hit->op == Op::Description) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter layer description: ");
         } else {
             names_prompt(ctx);
         }
@@ -13821,6 +13857,17 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
                              : n == "HIDDEN" ? core::Linetype::Hidden
                                              : core::Linetype::Continuous;
             value_text_ = "linetype \"" + n + "\"";
+        } else if (edit_.op == Op::Plot) {
+            if (t.empty() || u == "P" || u == "PLOT") {
+                edit_.plot = true;
+            } else if (u == "N" || u == "NO" || u == "NO PLOT" || u == "NOPLOT") {
+                edit_.plot = false;
+            } else {
+                ctx.echo("Enter Plot or No plot.");
+                return;
+            }
+        } else if (edit_.op == Op::Description) {
+            edit_.description = trimmed(text); // as typed, capitals and all
         } else {
             const std::optional<double> v = parse_number(t);
             if (!v || *v < 0.0 || *v > 2.11) {
