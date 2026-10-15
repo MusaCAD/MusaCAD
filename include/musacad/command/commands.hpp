@@ -2377,6 +2377,28 @@ private:
 
 /// UNITS (UN, -UNITS): the command-line flow -- linear format and precision, angle
 /// format and precision, direction of angle 0, clockwise -- stored with the drawing.
+/// MLEADERALIGN (MLA): `Select multileaders:`, `Select multileader to align to or
+/// [Options]:`, `Specify direction:` -- their text lined up along that direction.
+class MLeaderAlignUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "MLEADERALIGN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Base, Direction };
+    void base_prompt(CommandContext& ctx);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    core::Vec2 base_{};
+    bool done_ = false;
+};
+
 /// -DWGUNITS: the drawing's unit (`Unit for length <3>:` from Inches, Feet, Millimeters,
 /// Centimeters, Decimeters, Meters), the display format and precision, and whether the
 /// objects are scaled to the new unit (`Scale objects in current drawing to reflect change

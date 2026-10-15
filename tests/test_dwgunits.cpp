@@ -110,3 +110,47 @@ TEST_CASE("DWGUNITS takes the drawing to another unit and scales every object, l
     REQUIRE(units->units.linear_precision == 3);
     REQUIRE_FALSE(proc.has_active_command());
 }
+
+TEST_CASE("MLEADERALIGN lines up the multileaders' text along a direction; the arrowheads stay") {
+    GeometryEngine engine;
+    engine.start();
+    MTextBlock a;
+    a.pos = {16, 10};
+    a.attach = 3;
+    engine.submit(AddMLeaderCommand{{{0, 0}, {10, 10}, {15, 10}}, 0, a, "A", 1});
+    MTextBlock b;
+    b.pos = {18, -5};
+    b.attach = 3;
+    engine.submit(AddMLeaderCommand{{{0, -20}, {12, -5}, {17, -5}}, 0, b, "B", 2});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(MLeaderAlignCommand{{12, 10}, 0.5, {15, 30}, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 multileader aligned."; }));
+    const io::Document doc = dump(engine, "musacad_mleaderalign.musa");
+    bool found = false;
+    for (const auto& m : doc.mleaders) {
+        if (m.content == "B") {
+            found = true;
+            REQUIRE(m.vertices[0] == Vec2{0, -20}); // the arrowhead stays
+            REQUIRE(m.vertices[1] == Vec2{10, -5});
+            REQUIRE(m.vertices[2] == Vec2{15, -5});
+            REQUIRE(m.block.pos == Vec2{16, -5});
+        }
+    }
+    REQUIRE(found);
+    engine.stop();
+
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+    proc.set_selection_count(2);
+    proc.submit_line("MLA");
+    REQUIRE(out.prompt == "Select multileader to align to or [Options]: ");
+    proc.submit_line("12,10");
+    REQUIRE(out.prompt == "Specify direction: ");
+    proc.submit_line("15,30");
+    const auto* al = std::get_if<MLeaderAlignCommand>(&cmds.back());
+    REQUIRE(al != nullptr);
+    REQUIRE(al->base_pick == Vec2{12, 10});
+    REQUIRE(al->toward == Vec2{15, 30});
+}

@@ -1776,6 +1776,15 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// MLEADERALIGN: the selected multileaders' text (with its landing) moved onto the line
+/// through the text of the multileader at `base_pick`, toward `toward`; each keeps its place
+/// along the line, and the arrowheads stay where they are. One undo step.
+struct MLeaderAlignCommand {
+    Vec2 base_pick{};
+    double radius = 0.0;
+    Vec2 toward{};
+    std::uint64_t group = 0;
+};
 /// -DWGUNITS: every model-space object (on any layer, locked or not) and the limits scaled
 /// by `factor` about the origin, one undo step -- the drawing taken to another unit.
 struct ScaleDrawingCommand {
@@ -1923,7 +1932,7 @@ using Command =
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
-                 TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand,
+                 TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

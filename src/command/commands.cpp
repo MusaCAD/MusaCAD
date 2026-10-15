@@ -15631,6 +15631,80 @@ void AddSelectedCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// MLEADERALIGN (issue #61)
+// ---------------------------------------------------------------------------
+void MLeaderAlignUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        base_prompt(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx, "Select multileaders: ");
+}
+
+void MLeaderAlignUiCommand::base_prompt(CommandContext& ctx) {
+    step_ = Step::Base;
+    ctx.echo("Current mode: Use current spacing");
+    ctx.set_prompt("Select multileader to align to or [Options]: ");
+}
+
+void MLeaderAlignUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        base_prompt(ctx);
+    }
+}
+
+void MLeaderAlignUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            if (!ctx.has_selection()) {
+                done_ = true;
+                return;
+            }
+            base_prompt(ctx);
+        }
+        return;
+    case Step::Base:
+        if (u.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "O" || u == "OPTIONS") {
+            ctx.echo("Only Use current spacing is available here.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Direction;
+            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify direction: ");
+        }
+        return;
+    case Step::Direction:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.clear_preview();
+            ctx.submit(core::MLeaderAlignCommand{base_, ctx.pick_radius(), *p, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void MLeaderAlignUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // -DWGUNITS (issue #81)
 // ---------------------------------------------------------------------------
 namespace {

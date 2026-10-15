@@ -40,6 +40,7 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
 - **DSETTINGS** (#65) -- the Drafting Settings dialog with its Snap and Grid, Polar
   Tracking, Object Snap and Dynamic Input tabs; `DS`, `SE` and `OS` open it.
+- **MLEADERALIGN** (#61) -- the selected multileaders' text lined up along a direction.
 - **MLEADER** (#61) -- arrowhead first, landing first or content first, a horizontal landing
   with the text beside it, and Maxpoints, Content type and landing options; Annotate >
   Leaders opens with it. **LEADER** takes any number of points with Undo, Format and

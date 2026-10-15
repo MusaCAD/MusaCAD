@@ -457,6 +457,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",
         "Create a dimension suited to the selected object.");
+    reg({"MLEADERALIGN", "MLA"}, [] { return std::make_unique<MLeaderAlignUiCommand>(); }, "",
+        "Line up the text of the selected multileaders along a direction.");
     reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a multileader: an arrowhead, a leader line and a landing, and its text.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
