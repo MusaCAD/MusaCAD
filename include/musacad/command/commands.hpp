@@ -1283,6 +1283,29 @@ private:
     SelectObjectsPhase select_;
 };
 
+/// BREAKLINE (Express Tools): `Specify first point for breakline or [Block/Size/Extension]:`,
+/// the second point and `Specify location for break symbol <Midpoint>:` -- one polyline
+/// along the two points, past each by the extension, with a zigzag break at the location.
+class BreaklineCommand final : public ICommand {
+public:
+    std::string name() const override { return "BREAKLINE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { First, Second, Location, Size, Extension };
+    void first_prompt(CommandContext& ctx);
+    void make(CommandContext& ctx, core::Vec2 at);
+    Step step_ = Step::First;
+    core::Vec2 p1_{};
+    core::Vec2 p2_{};
+    bool done_ = false;
+    static inline double s_size_ = 1.0;
+    static inline double s_extension_ = 1.25;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:

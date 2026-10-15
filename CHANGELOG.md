@@ -50,6 +50,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **HELP** and **F1** (#65) -- open the command reference in the browser.
 - **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
   the view, `2` against the limits); PAN and -PAN; REGENALL.
+- **BREAKLINE** (#77) -- a line past two points with a zigzag break symbol, as the Express
+  Tools draw it.
 - **SKETCH** (#45) -- press and drag to draw freehand; each stroke becomes lines, a polyline
   or a spline, its points the sketch increment apart.
 - **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion

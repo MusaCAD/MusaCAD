@@ -15016,6 +15016,108 @@ void QuickDimUiCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void MultipleCommand::start(CommandContext& ctx) { ctx.set_prompt("Enter command name to repeat: "); }
 
+void BreaklineCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.echo("Block= BRKLINE.DWG, Size= " + fmt4(s_size_) + ", Extension= " + fmt4(s_extension_));
+    first_prompt(ctx);
+}
+
+void BreaklineCommand::first_prompt(CommandContext& ctx) {
+    step_ = Step::First;
+    ctx.set_prompt("Specify first point for breakline or [Block/Size/Extension]: ");
+}
+
+void BreaklineCommand::make(CommandContext& ctx, core::Vec2 at) {
+    const core::Vec2 d = p2_ - p1_;
+    const double len = core::length(d);
+    const core::Vec2 u = d / len;
+    const core::Vec2 n{-u.y, u.x};
+    // The symbol's centre on the line, kept clear of its ends.
+    const double t = std::clamp(core::dot(at - p1_, u), s_size_ * 0.5, std::max(s_size_ * 0.5, len - s_size_ * 0.5));
+    const core::Vec2 c = p1_ + u * t;
+    const double s = s_size_;
+    const std::vector<core::Vec2> pts{p1_ - u * s_extension_,
+                                      c - u * (s * 0.5),
+                                      c - u * (s / 6.0) + n * (s * 0.75),
+                                      c + u * (s / 6.0) - n * (s * 0.75),
+                                      c + u * (s * 0.5),
+                                      p2_ + u * s_extension_};
+    ctx.clear_preview();
+    ctx.submit(core::AddPolylineCommand{pts, false, ctx.group_id()});
+    done_ = true;
+}
+
+void BreaklineCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::First:
+        if (u == "B" || u == "BLOCK") {
+            ctx.echo("Only the standard break symbol is drawn here.");
+            return;
+        }
+        if (u == "S" || u == "SIZE") {
+            step_ = Step::Size;
+            ctx.set_prompt("Breakline symbol size <" + fmt4(s_size_) + ">: ");
+            return;
+        }
+        if (u == "E" || u == "EXTENSION") {
+            step_ = Step::Extension;
+            ctx.set_prompt("Breakline extension distance <" + fmt4(s_extension_) + ">: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            p1_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Second;
+            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify second point for breakline: ");
+        }
+        return;
+    case Step::Second:
+        if (const auto p = read_point(ctx, text)) {
+            if (core::distance(*p, p1_) <= s_size_) {
+                ctx.echo("The two points must be further apart than the break symbol.");
+                return;
+            }
+            p2_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Location;
+            ctx.clear_preview();
+            ctx.set_prompt("Specify location for break symbol <Midpoint>: ");
+        }
+        return;
+    case Step::Location:
+        if (t.empty()) {
+            make(ctx, (p1_ + p2_) * 0.5);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            make(ctx, *p);
+        }
+        return;
+    case Step::Size:
+    case Step::Extension: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0 || (step_ == Step::Size && *v == 0.0)) {
+                ctx.echo(step_ == Step::Size ? "Requires a positive size." : "Requires a distance of zero or more.");
+                return;
+            }
+            (step_ == Step::Size ? s_size_ : s_extension_) = *v;
+        }
+        first_prompt(ctx);
+        return;
+    }
+    }
+}
+
+void BreaklineCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
 void HelpCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || !ctx.view()->open_help()) {
         ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");

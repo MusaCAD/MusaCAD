@@ -287,3 +287,24 @@ TEST_CASE("ZOOM Window, Center, Previous and Scale; -PAN by a displacement") {
     proc.submit_line("");
     REQUIRE_FALSE(proc.has_active_command());
 }
+
+TEST_CASE("BREAKLINE: a polyline past both points with a zigzag at the break") {
+    H h;
+    h.run({"BREAKLINE"});
+    REQUIRE(h.out.lines.back() == "Block= BRKLINE.DWG, Size= 1.0000, Extension= 1.2500");
+    REQUIRE(h.out.prompt == "Specify first point for breakline or [Block/Size/Extension]: ");
+    h.run({"S", "2", "0,0", "10,0"});
+    REQUIRE(h.out.prompt == "Specify location for break symbol <Midpoint>: ");
+    h.run({""});
+    const auto* p = h.last<AddPolylineCommand>();
+    REQUIRE(p != nullptr);
+    REQUIRE(p->points.size() == 6);
+    REQUIRE(p->points[0].x == Approx(-1.25));
+    REQUIRE(p->points[1].x == Approx(4.0));
+    REQUIRE(p->points[2].y == Approx(1.5));
+    REQUIRE(p->points[3].y == Approx(-1.5));
+    REQUIRE(p->points[4].x == Approx(6.0));
+    REQUIRE(p->points[5].x == Approx(11.25));
+    h.run({"BREAKLINE", "S", "1", ""});
+    h.proc.cancel();
+}
