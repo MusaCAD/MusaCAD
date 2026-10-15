@@ -159,6 +159,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
+    reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",
+        "Show the plot as it will come out, with the last plot's settings.");
     reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
         "Find text in the drawing and replace it.");
     reg({"TCASE"}, [] { return std::make_unique<TextCaseCommand>(); }, "",

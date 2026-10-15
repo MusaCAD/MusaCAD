@@ -48,6 +48,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **MTEXT's corner options** (#43) -- `[Height/Justify/Line spacing/Rotation/Style/Width/
   Columns]` at the opposite corner, the current text style's height by default; text typed
   for MTEXT and QLEADER keeps its spaces.
+- **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
+  and Output > Plot > Preview, with Plot from it.
 - **HELP** and **F1** (#65) -- open the command reference in the browser.
 - **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
   the view, `2` against the limits); PAN and -PAN; REGENALL.

@@ -19,6 +19,9 @@
 
 #include <memory>
 
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QGraphicsPixmapItem>
 #include <QAbstractButton>
 #include <QGridLayout>
 #include <QActionGroup>
@@ -262,6 +265,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_find_dialog_callback([this] { open_find_dialog(); });
     viewport_->set_layer_walk_callback([this] { open_layer_walk_dialog(); });
     viewport_->set_text_style_callback([this] { open_text_style_dialog(); });
+    viewport_->set_plot_preview_callback([this] { plot_preview(last_plot_spec_); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -8901,21 +8905,50 @@ void MainWindow::plot_preview(const PlotSpec& spec) {
         return;
     }
     // Reuse paint_plot onto a raster image at the paper's aspect (the preview is a screen
-    // image; the actual plot output stays vector).
+    // image; the actual plot output stays vector), large enough to zoom into.
     const double aspect = spec.paper_h_mm > 0 ? spec.paper_w_mm / spec.paper_h_mm : 1.4;
-    const int w = 900;
+    const int w = 2400;
     const int h = std::max(1, static_cast<int>(w / aspect));
     QImage img(w, h, QImage::Format_RGB32);
     img.fill(Qt::white);
     paint_plot(img, engine_->plot_snapshot(), spec, amin, amax);
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle(QStringLiteral("Plot Preview"));
+    auto* scene = new QGraphicsScene(dlg);
+    scene->setBackgroundBrush(QColor(90, 90, 90));
+    scene->addPixmap(QPixmap::fromImage(img));
+    auto* view = new QGraphicsView(scene, dlg);
+    view->setDragMode(QGraphicsView::ScrollHandDrag); // drag to pan
+    view->setRenderHint(QPainter::SmoothPixmapTransform);
+    view->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+    auto* bar = new QHBoxLayout;
+    auto* zoom_in = new QPushButton(QStringLiteral("Zoom In"), dlg);
+    auto* zoom_out = new QPushButton(QStringLiteral("Zoom Out"), dlg);
+    auto* fit = new QPushButton(QStringLiteral("Fit"), dlg);
+    auto* plot = new QPushButton(QStringLiteral("Plot…"), dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), dlg);
+    bar->addWidget(zoom_in);
+    bar->addWidget(zoom_out);
+    bar->addWidget(fit);
+    bar->addStretch(1);
+    bar->addWidget(plot);
+    bar->addWidget(close);
     auto* lay = new QVBoxLayout(dlg);
-    auto* lbl = new QLabel(dlg);
-    lbl->setPixmap(QPixmap::fromImage(img));
-    lay->addWidget(lbl);
+    lay->addWidget(view, 1);
+    lay->addLayout(bar);
+    const auto fit_view = [view, scene] { view->fitInView(scene->itemsBoundingRect(), Qt::KeepAspectRatio); };
+    connect(zoom_in, &QPushButton::clicked, view, [view] { view->scale(1.25, 1.25); });
+    connect(zoom_out, &QPushButton::clicked, view, [view] { view->scale(0.8, 0.8); });
+    connect(fit, &QPushButton::clicked, view, fit_view);
+    connect(plot, &QPushButton::clicked, this, [this, dlg] {
+        dlg->close();
+        open_plot_dialog_seeded(last_plot_spec_);
+    });
+    connect(close, &QPushButton::clicked, dlg, &QDialog::close);
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->resize(1000, 760);
     dlg->show();
+    QTimer::singleShot(0, view, fit_view); // once the view has its size
 }
 
 bool MainWindow::selftest_plot_file(const QString& in_path, const QString& out_pdf, int area) {

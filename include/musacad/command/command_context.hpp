@@ -257,6 +257,8 @@ public:
     virtual bool layer_walk_dialog() { return false; }
     /// STYLE: the Text Style window; false where there is none (the command line asks).
     virtual bool text_style_dialog() { return false; }
+    /// PREVIEW: the plot as it will come out, with the last plot's settings.
+    virtual bool plot_preview() { return false; }
     /// HELP / F1: the command reference in the browser; false where there is none.
     virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI

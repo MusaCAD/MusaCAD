@@ -39,6 +39,7 @@ commands (Ribbon Phase A):
 | PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
 | UNDO (U) | Reverse the most recent action. |
 | HELP (?, F1) | Open this command reference in the browser. |
+| PREVIEW (PRE) | The plot as it will come out, with the last plot's settings: zoom, pan by dragging, Plot. |
 | ZOOM (Z) | Zoom in or out to change the view magnification. |
 | PAN (P) / -PAN (-P) | Move the view with a drag, or by a displacement. |
 | MOVE (M) | Move selected objects a specified distance and direction. |

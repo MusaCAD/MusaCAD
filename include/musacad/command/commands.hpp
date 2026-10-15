@@ -1434,6 +1434,24 @@ private:
     bool done_ = false;
 };
 
+/// PREVIEW (PRE): the plot preview, with the settings of the last plot.
+class PlotPreviewCommand final : public ICommand {
+public:
+    std::string name() const override { return "PREVIEW"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !ctx.view()->plot_preview()) {
+            ctx.echo("PREVIEW needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:
