@@ -261,6 +261,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_purge_dialog_callback([this] { open_purge_dialog(); });
     viewport_->set_find_dialog_callback([this] { open_find_dialog(); });
     viewport_->set_layer_walk_callback([this] { open_layer_walk_dialog(); });
+    viewport_->set_text_style_callback([this] { open_text_style_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -2656,6 +2657,141 @@ void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
         md->setImageData(pic);
     }
     QGuiApplication::clipboard()->setMimeData(md);
+}
+
+void MainWindow::open_text_style_dialog() {
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("Text Style"));
+    auto* list = new QListWidget(dlg);
+    auto* font = new QComboBox(dlg);
+    font->setEditable(true);
+    font->addItem(QStringLiteral("Standard (stroke)"));
+    font->addItems(QFontDatabase::families());
+    auto* height = new QDoubleSpinBox(dlg);
+    height->setDecimals(4);
+    height->setRange(0.0, 1e6);
+    height->setToolTip(QStringLiteral("0: the height is asked for each text."));
+    auto* width = new QDoubleSpinBox(dlg);
+    width->setDecimals(4);
+    width->setRange(0.01, 100.0);
+    auto* oblique = new QDoubleSpinBox(dlg);
+    oblique->setDecimals(2);
+    oblique->setRange(-85.0, 85.0);
+    auto* form = new QFormLayout;
+    form->addRow(QStringLiteral("Font name:"), font);
+    form->addRow(QStringLiteral("Height:"), height);
+    form->addRow(QStringLiteral("Width factor:"), width);
+    form->addRow(QStringLiteral("Oblique angle:"), oblique);
+    auto* effects = new QLabel(QStringLiteral("Upside down, Backwards and Vertical are not available yet."), dlg);
+    effects->setWordWrap(true);
+    effects->setEnabled(false);
+    form->addRow(QString(), effects);
+    auto* current_label = new QLabel(dlg);
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), dlg);
+    auto* new_style = new QPushButton(QStringLiteral("New..."), dlg);
+    auto* apply = new QPushButton(QStringLiteral("Apply"), dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), dlg);
+    auto* side = new QVBoxLayout;
+    side->addWidget(set_current);
+    side->addWidget(new_style);
+    side->addStretch(1);
+    auto* body = new QHBoxLayout;
+    auto* left = new QVBoxLayout;
+    left->addWidget(new QLabel(QStringLiteral("Styles:"), dlg));
+    left->addWidget(list, 1);
+    body->addLayout(left, 1);
+    body->addLayout(form, 2);
+    body->addLayout(side);
+    auto* bottom = new QHBoxLayout;
+    bottom->addWidget(current_label, 1);
+    bottom->addWidget(apply);
+    bottom->addWidget(close);
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addLayout(body, 1);
+    layout->addLayout(bottom);
+    // The styles as the drawing has them; refilled after each change reaches the engine.
+    auto styles = std::make_shared<std::vector<core::TextStyle>>(viewport_->text_styles());
+    if (styles->empty()) {
+        styles->push_back(core::TextStyle{});
+    }
+    const auto show_style = [=](int row) {
+        if (row < 0 || row >= static_cast<int>(styles->size())) {
+            return;
+        }
+        const core::TextStyle& s = (*styles)[static_cast<std::size_t>(row)];
+        font->setCurrentText(s.font.empty() ? QStringLiteral("Standard (stroke)") : QString::fromStdString(s.font));
+        height->setValue(s.height);
+        width->setValue(s.width_factor);
+        oblique->setValue(core::to_degrees(s.oblique));
+    };
+    const auto fill = [=, this](const std::string& select) {
+        list->clear();
+        const std::uint16_t cur = viewport_->current_text_style();
+        int pick = 0;
+        for (std::size_t i = 0; i < styles->size(); ++i) {
+            list->addItem(QString::fromStdString((*styles)[i].name));
+            if ((*styles)[i].name == select) {
+                pick = static_cast<int>(i);
+            }
+        }
+        current_label->setText(QStringLiteral("Current text style: %1")
+                                   .arg(QString::fromStdString(cur < styles->size() ? (*styles)[cur].name
+                                                                                    : std::string("Standard"))));
+        list->setCurrentRow(pick);
+        show_style(pick);
+    };
+    const std::uint16_t cur0 = viewport_->current_text_style();
+    fill(cur0 < styles->size() ? (*styles)[cur0].name : std::string("Standard"));
+    connect(list, &QListWidget::currentRowChanged, dlg, show_style);
+    const auto edited = [=]() {
+        const int row = list->currentRow();
+        core::TextStyle s = row >= 0 && row < static_cast<int>(styles->size()) ? (*styles)[static_cast<std::size_t>(row)]
+                                                                               : core::TextStyle{};
+        const QString f = font->currentText().trimmed();
+        s.font = f == QStringLiteral("Standard (stroke)") || f.isEmpty() ? std::string() : f.toStdString();
+        s.height = height->value();
+        s.width_factor = width->value();
+        s.oblique = core::to_radians(oblique->value());
+        return s;
+    };
+    connect(apply, &QPushButton::clicked, dlg, [=, this] {
+        const core::TextStyle s = edited();
+        engine_->submit(core::SetTextStyleCommand{s, false});
+        const int row = list->currentRow();
+        if (row >= 0 && row < static_cast<int>(styles->size())) {
+            (*styles)[static_cast<std::size_t>(row)] = s;
+        }
+    });
+    connect(set_current, &QPushButton::clicked, dlg, [=, this] {
+        const core::TextStyle s = edited();
+        engine_->submit(core::SetTextStyleCommand{s, true});
+        current_label->setText(QStringLiteral("Current text style: %1").arg(QString::fromStdString(s.name)));
+    });
+    connect(new_style, &QPushButton::clicked, dlg, [=, this] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(dlg, QStringLiteral("New Text Style"), QStringLiteral("Style name:"),
+                                                   QLineEdit::Normal, QStringLiteral("Style1"), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        for (const core::TextStyle& s : *styles) {
+            if (QString::fromStdString(s.name).compare(name, Qt::CaseInsensitive) == 0) {
+                QMessageBox::information(dlg, QStringLiteral("Text Style"),
+                                         QStringLiteral("A text style named %1 already exists.").arg(name));
+                return;
+            }
+        }
+        core::TextStyle s = edited();
+        s.name = name.toStdString();
+        engine_->submit(core::SetTextStyleCommand{s, false});
+        styles->push_back(s);
+        fill(s.name);
+    });
+    connect(close, &QPushButton::clicked, dlg, &QDialog::close);
+    dlg->resize(640, 360);
+    dlg->show();
 }
 
 void MainWindow::open_layer_walk_dialog() {

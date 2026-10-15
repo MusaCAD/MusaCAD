@@ -301,6 +301,14 @@ bool ViewportWindow::quick_select_dialog(bool filter) {
     return true;
 }
 
+bool ViewportWindow::text_style_dialog() {
+    if (!text_style_callback_) {
+        return false;
+    }
+    text_style_callback_();
+    return true;
+}
+
 bool ViewportWindow::layer_walk_dialog() {
     if (!layer_walk_callback_) {
         return false;

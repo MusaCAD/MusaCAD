@@ -290,7 +290,9 @@ CommandRegistry CommandRegistry::make_default() {
         "Move the view by a displacement: a base point and a second point.");
     reg({"RE", "REGEN", "REA", "REGENALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
         "Rebuild and redraw the scene.");
-    reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
+    reg({"-ST", "-STYLE"}, [] { return std::make_unique<StyleCommand>(false); }, "",
+        "Text styles at the command line: name, font, height, width factor and oblique angle.");
+    reg({"ST", "STYLE"}, [] { return std::make_unique<StyleCommand>(true); }, "",
         "Create or change a named text style and make it current.");
     reg({"COPYCLIP"}, [] { return std::make_unique<ClipCopyCommand>(false, false); }, "",
         "Copy the selected objects to the clipboard (Ctrl+C), for this drawing, another one, or another program as a picture.");

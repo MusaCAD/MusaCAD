@@ -2360,7 +2360,8 @@ private:
 /// vertical are reported as not supported. The style becomes current.
 class StyleCommand final : public ICommand {
 public:
-    std::string name() const override { return "STYLE"; }
+    explicit StyleCommand(bool dialog = false) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "STYLE" : "-STYLE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -2368,6 +2369,7 @@ public:
 
 private:
     enum class State { Name, Font, Height, Width, Oblique, Backwards, Upside, Vertical };
+    bool dialog_;
     State state_ = State::Name;
     core::TextStyle ts_{};
     bool done_ = false;

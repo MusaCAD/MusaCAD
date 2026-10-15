@@ -7756,6 +7756,10 @@ void RegenCommand::cancel(CommandContext& ctx) {
 // STYLE (-STYLE): the command-line flow, prompt by prompt
 // ---------------------------------------------------------------------------
 void StyleCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->text_style_dialog()) {
+        done_ = true; // the Text Style window does the rest
+        return;
+    }
     state_ = State::Name;
     const std::vector<core::TextStyle> styles = ctx.text_styles();
     const std::uint16_t cur = ctx.current_text_style();

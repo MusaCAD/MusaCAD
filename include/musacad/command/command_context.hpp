@@ -255,6 +255,8 @@ public:
     virtual bool find_dialog() { return false; }
     /// LAYWALK: the window that shows only the layers chosen in it; false where there is none.
     virtual bool layer_walk_dialog() { return false; }
+    /// STYLE: the Text Style window; false where there is none (the command line asks).
+    virtual bool text_style_dialog() { return false; }
     /// HELP / F1: the command reference in the browser; false where there is none.
     virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
