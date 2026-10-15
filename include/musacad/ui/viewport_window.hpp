@@ -157,6 +157,7 @@ public:
     [[nodiscard]] std::uint32_t snap_mask() const override;
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
+    bool open_help() override;
     void snap_override_changed() override;
     void set_polar_mode(bool on) override;
     void set_otrack_mode(bool on) override;

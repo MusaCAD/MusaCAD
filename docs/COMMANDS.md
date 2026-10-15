@@ -38,6 +38,7 @@ commands (Ribbon Phase A):
 | ISOLATEOBJECTS / HIDEOBJECTS / UNISOLATEOBJECTS | Hide everything but the selection, hide the selection, show everything again. Hidden objects are neither drawn nor pickable; the flag is saved with the drawing. |
 | PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
 | UNDO (U) | Reverse the most recent action. |
+| HELP (?, F1) | Open this command reference in the browser. |
 | ZOOM (Z) | Zoom in or out to change the view magnification. |
 | PAN (P) / -PAN (-P) | Move the view with a drag, or by a displacement. |
 | MOVE (M) | Move selected objects a specified distance and direction. |

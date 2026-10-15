@@ -248,6 +248,8 @@ public:
     /// the command then works at the command line, as -LAYER.
     [[nodiscard]] virtual bool layer_dialog() { return false; }
     virtual void osnap_settings_dialog() {}
+    /// HELP / F1: the command reference in the browser; false where there is none.
+    virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
     /// hit-tests the published attribute targets; nothing there = a message).
     virtual void attribute_editor_at(core::Vec2 pick, double pick_radius) {

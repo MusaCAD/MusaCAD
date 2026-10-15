@@ -784,6 +784,13 @@ void MainWindow::build_status_bar() {
     // command-line bar -- the toggleable fallback.
     const bool dyn_initial =
         QSettings().value(QStringLiteral("dyn/enabled"), kDynDefaultEnabled).toBool();
+    {
+        auto* help = new QAction(QStringLiteral("Help"), this);
+        help->setShortcut(QKeySequence(Qt::Key_F1));
+        help->setShortcutContext(Qt::ApplicationShortcut);
+        connect(help, &QAction::triggered, this, [this] { viewport_->open_help(); });
+        addAction(help);
+    }
     dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial,
                                    QStringLiteral("Show command input and prompts at the cursor "
                                                   "(Dynamic Input)."));

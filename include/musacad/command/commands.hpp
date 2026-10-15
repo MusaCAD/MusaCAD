@@ -1283,6 +1283,19 @@ private:
     SelectObjectsPhase select_;
 };
 
+/// HELP (F1): the command reference opens in the browser.
+class HelpCommand final : public ICommand {
+public:
+    std::string name() const override { return "HELP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// SKETCH: `Specify sketch or [Type/increment/toLerance]:` -- press and drag to sketch; each
 /// stroke is kept as lines, a polyline or a spline (Type), its points at least the
 /// increment apart, until Enter. The whole sketch is one undo step.

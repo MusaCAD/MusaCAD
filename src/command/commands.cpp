@@ -15016,6 +15016,13 @@ void QuickDimUiCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void MultipleCommand::start(CommandContext& ctx) { ctx.set_prompt("Enter command name to repeat: "); }
 
+void HelpCommand::start(CommandContext& ctx) {
+    if (ctx.view() == nullptr || !ctx.view()->open_help()) {
+        ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");
+    }
+    done_ = true;
+}
+
 // ---------------------------------------------------------------------------
 // SKETCH (issue #45)
 // ---------------------------------------------------------------------------

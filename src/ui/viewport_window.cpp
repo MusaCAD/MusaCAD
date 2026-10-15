@@ -35,6 +35,8 @@
 #include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
+#include <QDesktopServices>
+#include <QUrl>
 #include <QTimer>
 #include <QCursor>
 #include <QExposeEvent>
@@ -860,6 +862,10 @@ void ViewportWindow::show_osnap_menu(QPoint global) {
             return;
         }
     }
+}
+
+bool ViewportWindow::open_help() {
+    return QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md")));
 }
 
 void ViewportWindow::osnap_settings_dialog() {
