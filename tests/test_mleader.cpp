@@ -141,3 +141,31 @@ TEST_CASE("LEADER: points until Enter, lines of annotation, Undo and Format") {
     REQUIRE(h.last<AddLeaderCommand>()->content.empty());
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("MTEXT: the corner options -- height, justification, line spacing, rotation, width") {
+    H h;
+    h.run({"MT", "0,0"});
+    REQUIRE(h.out.prompt == "Specify opposite corner or [Height/Justify/Line spacing/Rotation/Style/Width/Columns]: ");
+    h.run({"H", "5", "J", "MC", "L", ""});
+    REQUIRE(h.out.prompt == "Enter line spacing factor or distance <1.0000x>: ");
+    h.run({"2x", "R", "30", "40,-20"});
+    REQUIRE(h.out.prompt == "Enter text: ");
+    REQUIRE(h.proc.wants_free_text());
+    h.run({"TWO WORDS"});
+    const auto* m = h.last<AddMTextCommand>();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->content == "TWO WORDS");
+    REQUIRE(m->block.height == 5.0);
+    REQUIRE(m->block.attach == 4);
+    REQUIRE(m->block.pos == Vec2{20, -10});
+    REQUIRE(m->block.line_spacing == 2.0);
+    REQUIRE(m->block.rotation == Approx(to_radians(30.0)));
+    REQUIRE(m->block.width == 40.0);
+    h.run({"MT", "10,10", "W", "25", "X"});
+    m = h.last<AddMTextCommand>();
+    REQUIRE(m->block.pos == Vec2{10, 10});
+    REQUIRE(m->block.width == 25.0);
+    h.run({"MT", "0,0", "J", "QQ"});
+    REQUIRE(h.out.lines.back() == "Enter TL, TC, TR, ML, MC, MR, BL, BC or BR.");
+    h.proc.cancel();
+}

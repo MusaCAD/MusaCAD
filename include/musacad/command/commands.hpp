@@ -3180,6 +3180,8 @@ private:
 
 /// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph
 /// text. Wraps within the defined width across multiple lines.
+/// `Specify opposite corner or [Height/Justify/Line spacing/Rotation/Style/Width/Columns]:`
+/// -- each option asked, then the corner again; the text height from the current style.
 class MTextCommand final : public ICommand {
 public:
     std::string name() const override { return "MTEXT"; }
@@ -3187,12 +3189,21 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override { return !done_ && state_ == State::Content; }
 
 private:
-    enum class State { First, Second, Content } state_ = State::First;
+    enum class State { First, Second, Content, Height, Justify, SpacingType, Spacing, Rotation, Style, Width, Columns };
+    void corner_prompt(CommandContext& ctx);
+    void place(CommandContext& ctx, core::Vec2 other);
+    State state_ = State::First;
     core::Vec2 c1_{};
     core::Vec2 pos_{};
     double width_ = 0.0;
+    double height_ = 0.0;
+    double rotation_ = 0.0;
+    double spacing_ = 1.0;
+    std::uint8_t attach_ = 0;
+    std::string font_;
     bool done_ = false;
 };
 
@@ -3205,6 +3216,7 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override { return !done_ && state_ == State::Content; }
 
 private:
     enum class State { Arrow, Vertices, Content } state_ = State::Arrow;

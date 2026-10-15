@@ -12133,40 +12133,214 @@ void MLeaderCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void MTextCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    // The current text style: its font, and its height when it has one (else 2.5).
+    const std::vector<core::TextStyle> styles = ctx.text_styles();
+    const std::uint16_t cur = ctx.current_text_style();
+    height_ = 2.5;
+    std::string style_name = "Standard";
+    if (cur < styles.size()) {
+        style_name = styles[cur].name;
+        font_ = styles[cur].font;
+        if (styles[cur].height > 0.0) {
+            height_ = styles[cur].height;
+        }
+    }
+    ctx.echo("Current text style:  \"" + style_name + "\"  Text height:  " + fmt4(height_) + "  Annotative:  No");
     ctx.set_prompt("Specify first corner: ");
 }
 
+void MTextCommand::corner_prompt(CommandContext& ctx) {
+    state_ = State::Second;
+    ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
+    ctx.set_prompt("Specify opposite corner or [Height/Justify/Line spacing/Rotation/Style/Width/Columns]: ");
+}
+
+void MTextCommand::place(CommandContext& ctx, core::Vec2 other) {
+    // The justification picks the point of the box the text hangs from.
+    const double x0 = std::min(c1_.x, other.x);
+    const double x1 = std::max(c1_.x, other.x);
+    const double y0 = std::min(c1_.y, other.y);
+    const double y1 = std::max(c1_.y, other.y);
+    const int col = attach_ % 3;
+    const int row = attach_ / 3;
+    pos_ = {col == 0 ? x0 : col == 1 ? (x0 + x1) * 0.5 : x1, row == 0 ? y1 : row == 1 ? (y0 + y1) * 0.5 : y0};
+    width_ = x1 - x0;
+    state_ = State::Content;
+    ctx.clear_preview();
+    ctx.set_prompt("Enter text: ");
+}
+
 void MTextCommand::input(CommandContext& ctx, const std::string& text) {
-    if (state_ == State::Content) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Content: {
         core::MTextBlock b;
         b.pos = pos_;
         b.width = width_;
-        b.height = 2.5;
-        b.attach = 0; // top-left
-        ctx.submit(core::AddMTextCommand{b, text, ctx.group_id()});
+        b.height = height_;
+        b.attach = attach_;
+        b.rotation = rotation_;
+        b.line_spacing = spacing_;
+        core::AddMTextCommand m{b, text, ctx.group_id()};
+        m.font = font_;
+        ctx.submit(std::move(m));
         ctx.echo("MText placed.");
         ctx.clear_preview();
         done_ = true;
         return;
     }
-    const auto p = read_point(ctx, text);
-    if (!p) {
+    case State::First:
+        if (const auto p = read_point(ctx, text)) {
+            c1_ = *p;
+            ctx.set_last_point(*p);
+            corner_prompt(ctx);
+        }
+        return;
+    case State::Second:
+        if (u == "H" || u == "HEIGHT") {
+            state_ = State::Height;
+            ctx.set_prompt("Specify height <" + fmt4(height_) + ">: ");
+            return;
+        }
+        if (u == "J" || u == "JUSTIFY") {
+            static constexpr const char* kJ[] = {"TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"};
+            state_ = State::Justify;
+            ctx.set_prompt(std::string("Enter justification [TL/TC/TR/ML/MC/MR/BL/BC/BR] <") + kJ[attach_ % 9] + ">: ");
+            return;
+        }
+        if (u == "L" || u == "LINE SPACING") {
+            state_ = State::SpacingType;
+            ctx.set_prompt("Enter line spacing type [At least/Exactly] <At least>: ");
+            return;
+        }
+        if (u == "R" || u == "ROTATION") {
+            state_ = State::Rotation;
+            ctx.set_prompt("Specify rotation angle <" + fmt4(core::to_degrees(rotation_)) + ">: ");
+            return;
+        }
+        if (u == "S" || u == "STYLE") {
+            state_ = State::Style;
+            ctx.set_prompt("Enter style name or [?] <" +
+                           (ctx.current_text_style() < ctx.text_styles().size()
+                                ? ctx.text_styles()[ctx.current_text_style()].name
+                                : std::string("Standard")) +
+                           ">: ");
+            return;
+        }
+        if (u == "W" || u == "WIDTH") {
+            state_ = State::Width;
+            ctx.set_prompt("Specify width: ");
+            return;
+        }
+        if (u == "C" || u == "COLUMNS") {
+            state_ = State::Columns;
+            ctx.set_prompt("Enter column type [Dynamic/Static/No columns] <Dynamic>: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            place(ctx, *p);
+        }
+        return;
+    case State::Height:
+    case State::Rotation:
+    case State::Spacing:
+    case State::Width: {
+        if (t.empty() && state_ != State::Width) {
+            corner_prompt(ctx);
+            return;
+        }
+        std::string num = t;
+        const bool times = state_ == State::Spacing && !num.empty() && (num.back() == 'x' || num.back() == 'X');
+        if (times) {
+            num.pop_back();
+        }
+        const std::optional<double> v = state_ == State::Width ? std::optional<double>{} : parse_number(num);
+        if (state_ == State::Width) {
+            // A width typed, or a point that gives it from the first corner.
+            if (const std::optional<double> w = parse_number(t); w && *w >= 0.0) {
+                place(ctx, c1_ + core::Vec2{*w, -height_});
+                width_ = *w;
+                pos_ = c1_; // the first corner is where the text hangs from
+                return;
+            }
+            if (const auto p = read_point(ctx, text)) {
+                place(ctx, core::Vec2{p->x, c1_.y - height_});
+                pos_ = c1_;
+            }
+            return;
+        }
+        if (!v || (state_ != State::Rotation && *v <= 0.0)) {
+            ctx.echo(state_ == State::Rotation ? "Requires an angle." : "Requires a positive value.");
+            return;
+        }
+        if (state_ == State::Height) {
+            height_ = *v;
+        } else if (state_ == State::Rotation) {
+            rotation_ = core::to_radians(*v);
+        } else {
+            spacing_ = times ? *v : *v / (height_ * 5.0 / 3.0); // a distance is a multiple of the single line
+        }
+        corner_prompt(ctx);
         return;
     }
-    if (state_ == State::First) {
-        c1_ = *p;
-        ctx.set_last_point(*p);
-        state_ = State::Second;
-        ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
-        ctx.set_prompt("Specify opposite corner: ");
+    case State::Justify: {
+        static constexpr const char* kJ[] = {"TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"};
+        if (!t.empty()) {
+            int hit = -1;
+            for (int i = 0; i < 9; ++i) {
+                hit = u == kJ[i] ? i : hit;
+            }
+            if (hit < 0) {
+                ctx.echo("Enter TL, TC, TR, ML, MC, MR, BL, BC or BR.");
+                return;
+            }
+            attach_ = static_cast<std::uint8_t>(hit);
+        }
+        corner_prompt(ctx);
         return;
     }
-    // Second corner: top-left insertion + wrap width from the box.
-    pos_ = {std::min(c1_.x, p->x), std::max(c1_.y, p->y)};
-    width_ = std::abs(p->x - c1_.x);
-    state_ = State::Content;
-    ctx.clear_preview();
-    ctx.set_prompt("Enter text: ");
+    case State::SpacingType:
+        if (!t.empty() && u != "A" && u != "AT LEAST" && u != "E" && u != "EXACTLY") {
+            ctx.echo("Enter At least or Exactly.");
+            return;
+        }
+        state_ = State::Spacing;
+        ctx.set_prompt("Enter line spacing factor or distance <" + fmt4(spacing_) + "x>: ");
+        return;
+    case State::Style: {
+        const std::vector<core::TextStyle> styles = ctx.text_styles();
+        if (t == "?") {
+            std::string line = "Text styles:";
+            for (const core::TextStyle& s : styles) {
+                line += " " + s.name;
+            }
+            ctx.echo(line);
+            return;
+        }
+        if (!t.empty()) {
+            const auto it = std::find_if(styles.begin(), styles.end(), [&](const core::TextStyle& s) {
+                return upper(s.name) == u;
+            });
+            if (it == styles.end()) {
+                ctx.echo("Cannot find text style \"" + t + "\".");
+                return;
+            }
+            font_ = it->font;
+            if (it->height > 0.0) {
+                height_ = it->height;
+            }
+        }
+        corner_prompt(ctx);
+        return;
+    }
+    case State::Columns:
+        if (!t.empty() && u != "N" && u != "NO COLUMNS") {
+            ctx.echo("Columns are not available yet; the text is one column.");
+        }
+        corner_prompt(ctx);
+        return;
+    }
 }
 
 void MTextCommand::cancel(CommandContext& ctx) {
