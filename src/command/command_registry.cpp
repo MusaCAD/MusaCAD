@@ -274,7 +274,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
     reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",
         "Write a block, or the whole drawing, to a .musa file.");
-    reg({"RE", "REGEN"}, [] { return std::make_unique<RegenCommand>(); }, "",
+    reg({"P", "PAN"}, [] { return std::make_unique<PanCommand>(false); }, "", "Move the view with a drag.");
+    reg({"-P", "-PAN"}, [] { return std::make_unique<PanCommand>(true); }, "",
+        "Move the view by a displacement: a base point and a second point.");
+    reg({"RE", "REGEN", "REA", "REGENALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
         "Rebuild and redraw the scene.");
     reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
         "Create or change a named text style and make it current.");

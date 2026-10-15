@@ -30,6 +30,8 @@ namespace musacad::command {
 
 namespace {
 
+std::string fmt4(double v); // "%.4f", defined with DONUT below
+
 std::string upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -1746,36 +1748,237 @@ void UndoCommand::cancel(CommandContext&) { done_ = true; }
 // ZOOM
 // ---------------------------------------------------------------------------
 void ZoomCommand::start(CommandContext& ctx) {
-    ctx.set_prompt("Specify scale factor or [All/Extents]: ");
+    ctx.set_prompt("Specify corner of window, enter a scale factor (nX or nXP), or "
+                   "[All/Center/Dynamic/Extents/Previous/Scale/Window/Object] <real time>: ");
+}
+
+void ZoomCommand::remember_view(CommandContext& ctx) {
+    core::Vec2 c;
+    double s = 0.0;
+    if (ctx.view() != nullptr && ctx.view()->current_view(c, s) && s > 0.0) {
+        s_previous_.emplace_back(c, s);
+        if (s_previous_.size() > 10) {
+            s_previous_.erase(s_previous_.begin());
+        }
+    }
+}
+
+bool ZoomCommand::apply_scale(CommandContext& ctx, const std::string& u0) {
+    // nX: relative to the view now; nXP: the same here (paper space is one view); n: relative
+    // to the drawing limits filling the view.
+    std::string u = u0;
+    bool relative = false;
+    if (u.size() > 2 && u.compare(u.size() - 2, 2, "XP") == 0) {
+        u.resize(u.size() - 2);
+        relative = true;
+    } else if (!u.empty() && u.back() == 'X') {
+        u.pop_back();
+        relative = true;
+    }
+    double factor = 0.0;
+    if (!parse_number(u, factor) || factor <= 0.0) {
+        return false;
+    }
+    ViewControl* v = ctx.view();
+    remember_view(ctx);
+    if (relative) {
+        if (v != nullptr) {
+            v->zoom_scale(factor);
+        }
+    } else if (v != nullptr) {
+        int w = 0;
+        int h = 0;
+        core::Vec2 c;
+        double s = 0.0;
+        const CommandContext::Limits lim = ctx.limits();
+        const core::Vec2 size = lim.max - lim.min;
+        if (v->viewport_size(w, h) && v->current_view(c, s) && size.x > 0.0 && size.y > 0.0) {
+            const double fit = std::min(w / size.x, h / size.y);
+            v->set_view((lim.min + lim.max) * 0.5, fit * factor);
+        }
+    }
+    ctx.echo("Zoom " + fmt4(factor) + (relative ? "x." : "."));
+    done_ = true;
+    return true;
 }
 
 void ZoomCommand::input(CommandContext& ctx, const std::string& text) {
-    std::string u = upper(trimmed(text));
-    if (u.empty()) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    ViewControl* v = ctx.view();
+    switch (step_) {
+    case Step::Main:
+        if (u.empty()) {
+            done_ = true; // real time: the wheel and a drag do it
+            return;
+        }
+        if (u == "E" || u == "EXTENTS" || u == "A" || u == "ALL") {
+            remember_view(ctx);
+            if (v != nullptr) {
+                v->zoom_extents();
+            }
+            ctx.echo("Zoom extents.");
+            done_ = true;
+            return;
+        }
+        if (u == "P" || u == "PREVIOUS") {
+            if (s_previous_.empty()) {
+                ctx.echo("No previous view saved.");
+            } else {
+                const auto [c, s] = s_previous_.back();
+                s_previous_.pop_back();
+                if (v != nullptr) {
+                    v->set_view(c, s);
+                }
+            }
+            done_ = true;
+            return;
+        }
+        if (u == "W" || u == "WINDOW" || u == "D" || u == "DYNAMIC" || u == "O" || u == "OBJECT") {
+            if (u[0] == 'D') {
+                ctx.echo("Dynamic zoom is not available; specify a window.");
+            } else if (u[0] == 'O') {
+                ctx.echo("Zoom Object is not available yet; specify a window.");
+            }
+            step_ = Step::WindowFirst;
+            ctx.set_prompt("Specify first corner: ");
+            return;
+        }
+        if (u == "C" || u == "CENTER") {
+            step_ = Step::Center;
+            ctx.set_prompt("Specify center point: ");
+            return;
+        }
+        if (u == "S" || u == "SCALE") {
+            step_ = Step::Scale;
+            ctx.set_prompt("Enter a scale factor (nX or nXP): ");
+            return;
+        }
+        if (t.find(',') != std::string::npos || ctx.input_is_pick()) {
+            if (const auto p = read_point(ctx, text)) {
+                corner_ = *p; // a window's first corner, given at once
+                step_ = Step::WindowSecond;
+                ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {corner_}});
+                ctx.set_prompt("Specify opposite corner: ");
+            }
+            return;
+        }
+        if (!apply_scale(ctx, u)) {
+            ctx.echo("Requires a point, a scale factor (nX or nXP), or an option keyword.");
+        }
+        return;
+    case Step::WindowFirst:
+        if (const auto p = read_point(ctx, text)) {
+            corner_ = *p;
+            step_ = Step::WindowSecond;
+            ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {corner_}});
+            ctx.set_prompt("Specify opposite corner: ");
+        }
+        return;
+    case Step::WindowSecond:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.clear_preview();
+            const core::Vec2 d{std::abs(p->x - corner_.x), std::abs(p->y - corner_.y)};
+            int w = 0;
+            int h = 0;
+            if (v != nullptr && v->viewport_size(w, h) && d.x > 1e-12 && d.y > 1e-12) {
+                remember_view(ctx);
+                v->set_view((corner_ + *p) * 0.5, std::min(w / d.x, h / d.y));
+            }
+            done_ = true;
+        }
+        return;
+    case Step::Center:
+        if (const auto p = read_point(ctx, text)) {
+            corner_ = *p;
+            core::Vec2 c;
+            double s = 0.0;
+            int w = 0;
+            int h = 0;
+            const bool have = v != nullptr && v->current_view(c, s) && v->viewport_size(w, h) && s > 0.0;
+            step_ = Step::CenterSize;
+            ctx.set_prompt("Enter magnification or height <" + fmt4(have ? h / s : 0.0) + ">: ");
+        }
+        return;
+    case Step::CenterSize: {
+        core::Vec2 c;
+        double s = 0.0;
+        int w = 0;
+        int h = 0;
+        if (v == nullptr || !v->current_view(c, s) || !v->viewport_size(w, h) || s <= 0.0) {
+            done_ = true;
+            return;
+        }
+        double scale = s;
+        if (!t.empty()) {
+            std::string n = u;
+            const bool times = !n.empty() && n.back() == 'X';
+            if (times) {
+                n.pop_back();
+            }
+            double val = 0.0;
+            if (!parse_number(n, val) || val <= 0.0) {
+                ctx.echo("Requires a positive magnification (nX) or height.");
+                return;
+            }
+            scale = times ? s * val : h / val;
+        }
+        remember_view(ctx);
+        v->set_view(corner_, scale);
         done_ = true;
         return;
     }
-    if (u == "E" || u == "EXTENTS" || u == "A" || u == "ALL") {
-        if (ViewControl* v = ctx.view()) {
-            v->zoom_extents();
+    case Step::Scale:
+        if (t.empty()) {
+            done_ = true;
+            return;
         }
-        ctx.echo("Zoom extents.");
+        if (!apply_scale(ctx, u)) {
+            ctx.echo("Requires a scale factor (nX or nXP).");
+        }
+        return;
+    }
+}
+
+void PanCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!typed_) {
+        ctx.echo("Press Esc or Enter to exit. Drag with the middle button, or hold the wheel, to pan.");
+        ctx.set_prompt("Pan: ");
+        return;
+    }
+    ctx.set_prompt("Specify base point or displacement: ");
+}
+
+void PanCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!typed_ || trimmed(text).empty()) {
         done_ = true;
         return;
     }
-    if (!u.empty() && (u.back() == 'X')) {
-        u.pop_back(); // accept "2X" style
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
     }
-    double factor = 0.0;
-    if (parse_number(u, factor) && factor > 0.0) {
-        if (ViewControl* v = ctx.view()) {
-            v->zoom_scale(factor);
-        }
-        ctx.echo("Zoom " + std::to_string(factor) + "x.");
-        done_ = true;
-    } else {
-        ctx.echo("Enter a positive scale factor, or A/E for extents.");
+    if (!base_) {
+        base_ = *p;
+        ctx.set_last_point(*p);
+        ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+        ctx.set_prompt("Specify second point: ");
+        return;
     }
+    ctx.clear_preview();
+    core::Vec2 c;
+    double s = 0.0;
+    if (ctx.view() != nullptr && ctx.view()->current_view(c, s)) {
+        ZoomCommand::remember_view(ctx);
+        ctx.view()->set_view(c - (*p - *base_), s); // the drawing moves by the displacement
+    }
+    done_ = true;
+}
+
+void PanCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
+    done_ = true;
 }
 
 void ZoomCommand::cancel(CommandContext& ctx) {

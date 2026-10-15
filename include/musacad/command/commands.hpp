@@ -286,6 +286,10 @@ private:
     bool done_ = false;
 };
 
+/// ZOOM: `Specify corner of window, enter a scale factor (nX or nXP), or [All/Center/Dynamic/
+/// Extents/Previous/Scale/Window/Object] <real time>:` -- a window (a first corner typed at
+/// once starts one), Center with a magnification or a height, Previous (the views ZOOM
+/// and PAN left, newest first), Scale relative (nX) or to the limits (n), All and Extents.
 class ZoomCommand final : public ICommand {
 public:
     std::string name() const override { return "ZOOM"; }
@@ -293,8 +297,32 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// The view before a ZOOM or PAN changed it (ZOOM Previous goes back through these).
+    static void remember_view(CommandContext& ctx);
 
 private:
+    enum class Step : std::uint8_t { Main, WindowFirst, WindowSecond, Center, CenterSize, Scale };
+    bool apply_scale(CommandContext& ctx, const std::string& u);
+    Step step_ = Step::Main;
+    core::Vec2 corner_{};
+    bool done_ = false;
+    static inline std::vector<std::pair<core::Vec2, double>> s_previous_;
+};
+
+/// PAN: the view follows a drag (Esc or Enter ends); -PAN: `Specify base point or
+/// displacement:`, `Specify second point:` -- the drawing moves by the displacement.
+class PanCommand final : public ICommand {
+public:
+    explicit PanCommand(bool typed) : typed_(typed) {}
+    std::string name() const override { return typed_ ? "-PAN" : "PAN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool typed_;
+    std::optional<core::Vec2> base_;
     bool done_ = false;
 };
 

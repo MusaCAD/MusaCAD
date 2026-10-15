@@ -216,3 +216,74 @@ TEST_CASE("SKETCH: strokes kept as lines, a polyline or a spline, points an incr
     REQUIRE_FALSE(h.proc.has_active_command());
     h.run({"SKETCH", "T", "L", "I", "1", ""}); // the defaults again
 }
+
+namespace {
+struct CameraView : musacad::command::ViewControl {
+    Vec2 center{0, 0};
+    double scale = 1.0;
+    void zoom_extents() override {
+        center = {50, 50};
+        scale = 4.0;
+    }
+    void zoom_scale(double f) override { scale *= f; }
+    bool current_view(Vec2& c, double& s) override {
+        c = center;
+        s = scale;
+        return true;
+    }
+    void set_view(Vec2 c, double s) override {
+        center = c;
+        scale = s;
+    }
+    bool viewport_size(int& w, int& h) const override {
+        w = 800;
+        h = 600;
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("ZOOM Window, Center, Previous and Scale; -PAN by a displacement") {
+    CameraView view;
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, &view, out};
+    proc.submit_line("Z");
+    REQUIRE(out.prompt == "Specify corner of window, enter a scale factor (nX or nXP), or "
+                          "[All/Center/Dynamic/Extents/Previous/Scale/Window/Object] <real time>: ");
+    proc.submit_line("0,0"); // a corner at once: a window
+    proc.submit_line("100,50");
+    REQUIRE(view.center == Vec2{50, 25});
+    REQUIRE(view.scale == Approx(8.0)); // 800 / 100, 600 / 50 = 12: the smaller
+    proc.submit_line("Z");
+    proc.submit_line("C");
+    proc.submit_line("10,10");
+    REQUIRE(out.prompt == "Enter magnification or height <75.0000>: ");
+    proc.submit_line("300");
+    REQUIRE(view.center == Vec2{10, 10});
+    REQUIRE(view.scale == Approx(2.0));
+    proc.submit_line("Z");
+    proc.submit_line("2X");
+    REQUIRE(view.scale == Approx(4.0));
+    proc.submit_line("Z");
+    proc.submit_line("P");
+    REQUIRE(view.scale == Approx(2.0)); // back one
+    proc.submit_line("Z");
+    proc.submit_line("P");
+    REQUIRE(view.center == Vec2{50, 25});
+    proc.set_limits({0, 0}, {400, 300}, false);
+    proc.submit_line("Z");
+    proc.submit_line("S");
+    proc.submit_line("1"); // the limits fill the view
+    REQUIRE(view.center == Vec2{200, 150});
+    REQUIRE(view.scale == Approx(2.0));
+    proc.submit_line("-PAN");
+    REQUIRE(out.prompt == "Specify base point or displacement: ");
+    proc.submit_line("0,0");
+    proc.submit_line("10,5");
+    REQUIRE(view.center == Vec2{190, 145});
+    REQUIRE_FALSE(proc.has_active_command());
+    proc.submit_line("PAN");
+    proc.submit_line("");
+    REQUIRE_FALSE(proc.has_active_command());
+}

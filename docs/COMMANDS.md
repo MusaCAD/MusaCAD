@@ -39,6 +39,7 @@ commands (Ribbon Phase A):
 | PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
 | UNDO (U) | Reverse the most recent action. |
 | ZOOM (Z) | Zoom in or out to change the view magnification. |
+| PAN (P) / -PAN (-P) | Move the view with a drag, or by a displacement. |
 | MOVE (M) | Move selected objects a specified distance and direction. |
 | COPY (CO) | Duplicate selected objects at a specified offset. |
 | MIRROR (MI) | Create a mirror-image copy of objects across an axis. |
@@ -84,7 +85,7 @@ commands (Ribbon Phase A):
 | REFSET | Add objects to, or remove them from, the working set of the reference being edited. |
 | REFCLOSE | Save the working set back into the block definition (every reference updates) or discard the changes. |
 | WBLOCK (W) | Write a block (base point at the origin) or the whole drawing to a .musa file. |
-| REGEN (RE) | Rebuild and redraw the scene. |
+| REGEN (RE), REGENALL (REA) | Rebuild and redraw the scene. |
 | STYLE (ST, -STYLE) | Named text styles: font, fixed height, width factor, obliquing angle; TEXT uses the current style and the palette's Style dropdown changes it. |
 | UNITS (UN) | The Drawing Units dialog: length and angle type and precision, clockwise, the insertion scale (INSUNITS), the sample output and the Direction Control dialog. |
 | -UNITS | The same from the command line: AutoCAD's numbered format tables, `Enter choice, 1 to 5 <2>:`, the fraction denominator, the angle base and direction, `Do you want angles measured clockwise?`. |
@@ -404,8 +405,8 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 
 | Command | Alias | Status |
 |---|---|---|
-| ZOOM (scale factor) | Z | Implemented |
-| ZOOM Extents / All | Z→E/A | Implemented |
+| ZOOM -- `Specify corner of window, enter a scale factor (nX or nXP), or [All/Center/Dynamic/Extents/Previous/Scale/Window/Object] <real time>:`: a window (a first corner typed at once starts one), Center with a magnification (`2x`) or a height, Previous (the last ten views ZOOM and PAN left), Scale `nX` against the view or `n` against the limits, All / Extents | Z | Implemented (#72; Dynamic and Object fall back to a window) |
+| PAN / -PAN -- the view follows a drag until Esc or Enter; -PAN `Specify base point or displacement:`, `Specify second point:` | P / -P | Implemented (#72) |
 | PAN (middle-drag) | P | Implemented (mouse) |
 | Zoom about cursor (wheel) | — | Implemented (mouse) |
 | Smooth curves at any zoom (adaptive tessellation; re-tessellate on zoom, not pan) | — | Implemented |
