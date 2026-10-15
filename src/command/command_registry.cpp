@@ -167,6 +167,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Draw a break line: a polyline with a zigzag break symbol.");
     reg({"SKETCH"}, [] { return std::make_unique<SketchCommand>(); }, "",
         "Draw freehand: press and drag; each stroke becomes lines, a polyline or a spline.");
+    reg({"LAYWALK"}, [] { return std::make_unique<LayerWalkCommand>(); }, "",
+        "Show only the layers chosen in a list, one or several at a time.");
     reg({"LAYERP"}, [] { return std::make_unique<LayerPreviousCommand>(false); }, "",
         "Put the layer settings back as they were before the last change.");
     reg({"LAYERPMODE"}, [] { return std::make_unique<LayerPreviousCommand>(true); }, "",

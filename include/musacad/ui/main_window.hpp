@@ -290,6 +290,7 @@ private:
     // takes what is there (objects from any Musa CAD window, an image, text).
     void export_to_system_clipboard(const core::ClipboardExport& e);
     void open_find_dialog(); ///< FIND: Find and Replace
+    void open_layer_walk_dialog(); ///< LAYWALK
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;

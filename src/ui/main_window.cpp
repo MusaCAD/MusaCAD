@@ -260,6 +260,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_quick_select_callback([this](bool filter) { open_quick_select_dialog(filter); });
     viewport_->set_purge_dialog_callback([this] { open_purge_dialog(); });
     viewport_->set_find_dialog_callback([this] { open_find_dialog(); });
+    viewport_->set_layer_walk_callback([this] { open_layer_walk_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -2655,6 +2656,55 @@ void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
         md->setImageData(pic);
     }
     QGuiApplication::clipboard()->setMimeData(md);
+}
+
+void MainWindow::open_layer_walk_dialog() {
+    const std::vector<core::Layer> before = viewport_->layers();
+    if (before.empty()) {
+        return;
+    }
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("LayerWalk - %1 layers").arg(before.size()));
+    auto* list = new QListWidget(dlg);
+    list->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    for (const core::Layer& l : before) {
+        list->addItem(QString::fromStdString(l.name));
+    }
+    auto* restore = new QCheckBox(QStringLiteral("Restore on exit"), dlg);
+    restore->setChecked(true);
+    auto* hint = new QLabel(QStringLiteral("Only the layers selected here are shown. Ctrl and Shift select several."), dlg);
+    hint->setWordWrap(true);
+    hint->setEnabled(false);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addWidget(hint);
+    layout->addWidget(list, 1);
+    layout->addWidget(restore);
+    layout->addWidget(buttons);
+    const auto show_selected = [this, list, before] {
+        for (int i = 0; i < list->count() && i < static_cast<int>(before.size()); ++i) {
+            core::Layer l = before[static_cast<std::size_t>(i)];
+            l.on = list->item(i)->isSelected();
+            l.frozen = l.frozen && !l.on; // a layer walked to is shown even if it was frozen
+            engine_->submit(core::SetLayerCommand{static_cast<std::uint16_t>(i), l});
+        }
+    };
+    connect(list, &QListWidget::itemSelectionChanged, dlg, show_selected);
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    connect(dlg, &QDialog::finished, this, [this, restore, before] {
+        if (!restore->isChecked()) {
+            return;
+        }
+        const std::vector<core::Layer> now = viewport_->layers();
+        for (std::size_t i = 0; i < before.size() && i < now.size(); ++i) {
+            if (now[i].name == before[i].name) {
+                engine_->submit(core::SetLayerCommand{static_cast<std::uint16_t>(i), before[i]});
+            }
+        }
+    });
+    dlg->resize(320, 420);
+    dlg->show();
 }
 
 void MainWindow::open_find_dialog() {

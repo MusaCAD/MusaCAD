@@ -53,6 +53,7 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **PEDIT's vertex editor as AutoCAD has it** (#52) -- an X on the current vertex, Next and
   Previous, Insert after it, Move it, the next segment's Width, and Break or Straighten
   between it and a second vertex.
+- **LAYWALK** (#55) -- show only the layers chosen in a list; restored on exit.
 - **Hot grips** (#54) -- click a grip instead of dragging it, and `** STRETCH **` asks where it
   goes; Enter or Space cycles to MOVE, ROTATE, SCALE and MIRROR about the grip, with Base
   point, Copy and Undo.

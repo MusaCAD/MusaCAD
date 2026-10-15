@@ -1389,6 +1389,24 @@ private:
     bool done_ = false;
 };
 
+/// LAYWALK: the LayerWalk window (only the layers chosen in it shown; restored on exit).
+class LayerWalkCommand final : public ICommand {
+public:
+    std::string name() const override { return "LAYWALK"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !ctx.view()->layer_walk_dialog()) {
+            ctx.echo("LAYWALK needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:
