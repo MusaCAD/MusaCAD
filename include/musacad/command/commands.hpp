@@ -1360,6 +1360,35 @@ private:
     bool done_ = false;
 };
 
+/// A hot grip -- a grip clicked rather than dragged: `** STRETCH ** Specify stretch point or
+/// [Base point/Copy/Undo/eXit]:`; Enter or Space cycles STRETCH, MOVE, ROTATE, SCALE and
+/// MIRROR, each about the grip (or the Base point given) on the selection. With Copy each
+/// point makes a copy and the mode goes on until eXit; without, one point ends it.
+class GripModeCommand final : public ICommand {
+public:
+    GripModeCommand(core::EntityHandle h, std::uint32_t index, core::Vec2 pos) : handle_(h), index_(index), base_(pos) {}
+    std::string name() const override { return "GRIP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Mode : std::uint8_t { Stretch, Move, Rotate, Scale, Mirror };
+    void enter(CommandContext& ctx, Mode m);
+    void prompt(CommandContext& ctx);
+    void apply(CommandContext& ctx, core::Vec2 p, std::optional<double> typed);
+    core::EntityHandle handle_;
+    std::uint32_t index_ = 0;
+    core::Vec2 base_{};
+    Mode mode_ = Mode::Stretch;
+    bool copy_ = false;
+    bool asking_base_ = false;
+    bool stretching_ = false; ///< the engine's grip drag is under way
+    int copies_ = 0;
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:

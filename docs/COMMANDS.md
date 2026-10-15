@@ -583,6 +583,7 @@ AutoCAD's selection conventions are the base every edit command stands on (issue
 |---|---|
 | Grips (blue squares) show on a selected entity; grabbed/hovered grip goes hot (red) | Implemented |
 | Drag a grip → live preview; release commits as one undo step; Esc cancels (entity unchanged) | Implemented |
+| **Hot grips** -- click a grip (rather than drag it): `** STRETCH ** Specify stretch point or [Base point/Copy/Undo/eXit]:`; Enter or Space cycles STRETCH, MOVE, ROTATE, SCALE and MIRROR about the grip (or a Base point), on the selection; Copy leaves the originals and places copies until eXit | Implemented (#54; Copy with STRETCH, Reference, several hot grips with Shift and the hover menus not yet) |
 | Zero store mutation / op-log churn during the drag (transient preview) | Implemented |
 | ORTHO/POLAR/OSNAP honored on the dragged grip | Implemented |
 | Line (2 endpoints + midpoint-move) | Implemented |

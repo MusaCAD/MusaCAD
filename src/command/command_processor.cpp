@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "musacad/command/command.hpp"
+#include "musacad/command/commands.hpp"
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/crash_report.hpp"
@@ -612,6 +613,20 @@ void CommandProcessor::start_command(const std::string& alias) {
     last_command_alias_ = alias;
     active_ = std::move(cmd);
     output_.append_line("Command: " + active_->name());
+    active_->start(*this);
+    finalize_if_done();
+}
+
+void CommandProcessor::start_grip_mode(core::EntityHandle handle, std::uint32_t index, core::Vec2 pos) {
+    drop_point_modifiers();
+    if (active_) {
+        active_->cancel(*this);
+        active_.reset();
+        preview_ = PreviewSpec{};
+    }
+    current_group_ = ++group_counter_;
+    command_group_ = current_group_;
+    active_ = std::make_unique<GripModeCommand>(handle, index, pos);
     active_->start(*this);
     finalize_if_done();
 }

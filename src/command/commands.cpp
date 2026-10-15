@@ -15347,6 +15347,193 @@ void TextCaseCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// Hot grips (issue #54)
+// ---------------------------------------------------------------------------
+void GripModeCommand::start(CommandContext& ctx) {
+    stretching_ = true; // the press on the grip began the engine's drag
+    enter(ctx, Mode::Stretch);
+}
+
+void GripModeCommand::prompt(CommandContext& ctx) {
+    switch (mode_) {
+    case Mode::Stretch:
+        ctx.echo("** STRETCH **");
+        ctx.set_prompt("Specify stretch point or [Base point/Copy/Undo/eXit]: ");
+        return;
+    case Mode::Move:
+        ctx.echo("** MOVE **");
+        ctx.set_prompt("Specify move point or [Base point/Copy/Undo/eXit]: ");
+        return;
+    case Mode::Rotate:
+        ctx.echo("** ROTATE **");
+        ctx.set_prompt("Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]: ");
+        return;
+    case Mode::Scale:
+        ctx.echo("** SCALE **");
+        ctx.set_prompt("Specify scale factor or [Base point/Copy/Undo/Reference/eXit]: ");
+        return;
+    case Mode::Mirror:
+        ctx.echo("** MIRROR **");
+        ctx.set_prompt("Specify second point or [Base point/Copy/Undo/eXit]: ");
+        return;
+    }
+}
+
+void GripModeCommand::enter(CommandContext& ctx, Mode m) {
+    if (stretching_ && m != Mode::Stretch) {
+        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
+        stretching_ = false;
+    } else if (!stretching_ && m == Mode::Stretch) {
+        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, handle_, index_, {}, 0});
+        stretching_ = true;
+    }
+    mode_ = m;
+    ctx.set_last_point(base_);
+    PreviewSpec pv;
+    pv.points = {base_};
+    switch (m) {
+    case Mode::Stretch:
+        pv.kind = PreviewKind::Segment;
+        pv.grip_hot = true;
+        break;
+    case Mode::Move:
+        pv.kind = PreviewKind::Move;
+        break;
+    case Mode::Rotate:
+        pv.kind = PreviewKind::Rotate;
+        break;
+    case Mode::Scale:
+        pv.kind = PreviewKind::Scale;
+        break;
+    case Mode::Mirror:
+        pv.kind = PreviewKind::Mirror;
+        break;
+    }
+    ctx.set_preview(std::move(pv));
+    prompt(ctx);
+}
+
+void GripModeCommand::apply(CommandContext& ctx, core::Vec2 p, std::optional<double> typed) {
+    const std::uint64_t group = ctx.new_group();
+    switch (mode_) {
+    case Mode::Stretch:
+        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, p, group});
+        stretching_ = false;
+        break;
+    case Mode::Move:
+        if (copy_) {
+            ctx.submit(core::CopySelectionCommand{p - base_, group});
+        } else {
+            ctx.submit(core::MoveSelectionCommand{p - base_, group});
+        }
+        break;
+    case Mode::Rotate: {
+        const double angle = typed ? core::to_radians(*typed) : std::atan2(p.y - base_.y, p.x - base_.x);
+        ctx.submit(core::RotateSelectionCommand{base_, angle, group, copy_});
+        break;
+    }
+    case Mode::Scale: {
+        const double f = typed ? *typed : core::distance(p, base_);
+        if (f <= 0.0) {
+            ctx.echo("Requires a positive scale factor.");
+            return;
+        }
+        ctx.submit(core::ScaleSelectionCommand{base_, f, group, copy_});
+        break;
+    }
+    case Mode::Mirror:
+        if (core::distance(p, base_) < 1e-12) {
+            ctx.echo("The mirror line needs two different points.");
+            return;
+        }
+        ctx.submit(core::MirrorSelectionCommand{base_, p, !copy_, group});
+        break;
+    }
+    ++copies_;
+    if (!copy_) {
+        ctx.clear_preview();
+        done_ = true;
+        return;
+    }
+    if (mode_ == Mode::Stretch) {
+        enter(ctx, Mode::Stretch); // a fresh drag for the next one
+    }
+}
+
+void GripModeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (asking_base_) {
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            asking_base_ = false;
+            enter(ctx, mode_);
+        }
+        return;
+    }
+    if (t.empty()) {
+        // Enter or Space: the next mode.
+        enter(ctx, mode_ == Mode::Mirror ? Mode::Stretch : static_cast<Mode>(static_cast<int>(mode_) + 1));
+        return;
+    }
+    if (u == "X" || u == "EXIT") {
+        cancel(ctx);
+        return;
+    }
+    if (u == "B" || u == "BASE" || u == "BASE POINT") {
+        if (mode_ == Mode::Stretch) {
+            ctx.echo("STRETCH moves the grip itself; a base point is for MOVE, ROTATE, SCALE and MIRROR.");
+            return;
+        }
+        asking_base_ = true;
+        ctx.set_prompt("Specify base point: ");
+        return;
+    }
+    if (u == "C" || u == "COPY") {
+        if (mode_ == Mode::Stretch) {
+            ctx.echo("Copy with STRETCH is not available yet; cycle to MOVE, ROTATE, SCALE or MIRROR.");
+            return;
+        }
+        copy_ = true;
+        prompt(ctx);
+        return;
+    }
+    if (u == "U" || u == "UNDO") {
+        if (copies_ == 0) {
+            ctx.echo("Nothing to undo.");
+        } else {
+            ctx.submit(core::UndoLastGroupCommand{ctx.group_id()});
+            --copies_;
+        }
+        prompt(ctx);
+        return;
+    }
+    if (u == "R" || u == "REFERENCE") {
+        ctx.echo("Reference is not available with grips yet.");
+        return;
+    }
+    if ((mode_ == Mode::Rotate || mode_ == Mode::Scale) && t.find(',') == std::string::npos && !ctx.input_is_pick()) {
+        double v = 0.0;
+        if (parse_number(t, v)) {
+            apply(ctx, base_, v);
+            return;
+        }
+    }
+    if (const auto p = read_point(ctx, text)) {
+        apply(ctx, *p, std::nullopt);
+    }
+}
+
+void GripModeCommand::cancel(CommandContext& ctx) {
+    if (stretching_) {
+        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
+        stretching_ = false;
+    }
+    ctx.clear_preview();
+    done_ = true;
+}
+
 void HelpCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || !ctx.view()->open_help()) {
         ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");

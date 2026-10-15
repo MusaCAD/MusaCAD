@@ -1779,6 +1779,8 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             }
             dragging_grip_ = true;
             grip_origin_ = ginfo.pos;
+            grip_press_screen_ = screen_px;
+            grip_pressed_ = ginfo;
             processor_->set_pick_radius(pick_aperture(dpr, scale));
             processor_->set_last_point(ginfo.pos);
             engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
@@ -2055,6 +2057,13 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         dragging_grip_ = false;
         const double dpr = devicePixelRatio();
         const core::Vec2 rel_screen = local_px(event->position(), dpr);
+        if (core::length(rel_screen - grip_press_screen_) < 4.0 * dpr) {
+            // A click, not a drag: the grip is hot and the grip modes take over (the
+            // engine's drag stays under way for STRETCH).
+            processor_->start_grip_mode(grip_pressed_.handle, grip_pressed_.index, grip_pressed_.pos);
+            rebuild_overlay();
+            return;
+        }
         core::Vec2 world;
         {
             std::scoped_lock lock(camera_mutex_);
@@ -2362,6 +2371,11 @@ void ViewportWindow::rebuild_overlay() {
         // Live STRETCH: stream the (ortho/snap/DYN-resolved) cursor delta to the geometry
         // thread, which previews the whole selection stretched by it. Only on change, so
         // a redraw that did not move the cursor does not resubmit the same preview.
+        if (pv.grip_hot && core::length(cur_eff - last_hot_grip_target_) > 1e-12) {
+            // A hot grip's STRETCH: the engine previews the object with the grip here.
+            last_hot_grip_target_ = cur_eff;
+            engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Move, {}, 0, cur_eff, 0});
+        }
         if (pv.live_stretch && !pts.empty()) {
             const core::Vec2 delta = cur_eff - pts[0];
             if (!stretch_preview_sent_ || core::length(delta - last_stretch_delta_) > 1e-12) {

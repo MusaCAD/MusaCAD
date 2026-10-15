@@ -92,6 +92,9 @@ struct PreviewSpec {
     /// kind rather than a new kind, so Dynamic Input's length/angle fields and ortho
     /// behave exactly as they do for LINE with no second code path.
     bool live_stretch = false;
+    /// A hot grip's STRETCH (GripModeCommand): the viewport streams the resolved cursor to
+    /// the engine's grip drag (GripDragCommand Move), which previews the object edited.
+    bool grip_hot = false;
     /// ROTATE / SCALE (PreviewKind::Rotate / Scale): points[0] is the base point. The
     /// live angle is the cursor's bearing from it minus `ref_angle` (radians; ROTATE
     /// Reference), the live factor the cursor's distance from it divided by

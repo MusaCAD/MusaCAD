@@ -339,3 +339,56 @@ TEST_CASE("HATCH: [Select objects/Undo/seTtings], the pattern asked and remember
     REQUIRE(h.last<HatchPickPointCommand>()->pattern_name == "SOLID");
     h.run({"H", "T", "ANSI31", "1", "0", ""}); // back to the defaults
 }
+
+TEST_CASE("Hot grips: STRETCH, then Enter or Space through MOVE, ROTATE, SCALE and MIRROR") {
+    using P = GripDragCommand::Phase;
+    H h;
+    h.proc.set_selection_count(1);
+    const EntityHandle line{0, 1, EntityKind::Line};
+    h.proc.start_grip_mode(line, 1, {10, 0});
+    REQUIRE(h.out.lines.back() == "** STRETCH **");
+    REQUIRE(h.out.prompt == "Specify stretch point or [Base point/Copy/Undo/eXit]: ");
+    REQUIRE(h.proc.preview().grip_hot);
+    h.run({"20,5"});
+    REQUIRE(h.last<GripDragCommand>()->phase == P::Commit);
+    REQUIRE(h.last<GripDragCommand>()->pos == Vec2{20, 5});
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    h.proc.start_grip_mode(line, 1, {10, 0});
+    h.run({""});
+    REQUIRE(h.last<GripDragCommand>()->phase == P::Cancel); // STRETCH's drag ends
+    REQUIRE(h.out.lines.back() == "** MOVE **");
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::Move);
+    h.run({"C", "15,0", "20,0"});
+    REQUIRE(h.last<CopySelectionCommand>()->delta == Vec2{10, 0});
+    REQUIRE(h.proc.has_active_command()); // Copy goes on
+    h.run({"X"});
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    h.proc.start_grip_mode(line, 1, {10, 0});
+    h.run({"", ""});
+    REQUIRE(h.out.lines.back() == "** ROTATE **");
+    h.run({"90"});
+    REQUIRE(h.last<RotateSelectionCommand>()->angle == Approx(kHalfPi));
+    REQUIRE(h.last<RotateSelectionCommand>()->base == Vec2{10, 0});
+
+    h.proc.start_grip_mode(line, 1, {10, 0});
+    h.run({"", "", "", "B"});
+    REQUIRE(h.out.prompt == "Specify base point: ");
+    h.run({"0,0", "2"});
+    REQUIRE(h.last<ScaleSelectionCommand>()->factor == 2.0);
+    REQUIRE(h.last<ScaleSelectionCommand>()->base == Vec2{0, 0});
+
+    h.proc.start_grip_mode(line, 1, {10, 0});
+    h.run({"", "", "", ""});
+    REQUIRE(h.out.lines.back() == "** MIRROR **");
+    h.run({"10,10"});
+    REQUIRE(h.last<MirrorSelectionCommand>()->b == Vec2{10, 10});
+    REQUIRE(h.last<MirrorSelectionCommand>()->erase_source);
+
+    h.proc.start_grip_mode(line, 1, {10, 0});
+    h.run({"", "", "", "", ""}); // round to STRETCH: the drag begins again
+    REQUIRE(h.last<GripDragCommand>()->phase == P::Begin);
+    h.proc.cancel();
+    REQUIRE(h.last<GripDragCommand>()->phase == P::Cancel);
+}

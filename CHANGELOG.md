@@ -53,6 +53,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **PEDIT's vertex editor as AutoCAD has it** (#52) -- an X on the current vertex, Next and
   Previous, Insert after it, Move it, the next segment's Width, and Break or Straighten
   between it and a second vertex.
+- **Hot grips** (#54) -- click a grip instead of dragging it, and `** STRETCH **` asks where it
+  goes; Enter or Space cycles to MOVE, ROTATE, SCALE and MIRROR about the grip, with Base
+  point, Copy and Undo.
 - **HATCH's prompts** (#41) -- `Pick internal point or [Select objects/Undo/seTtings]:`;
   seTtings asks the pattern (`?` lists them), its scale and angle, and they are kept for the
   next hatch, ANSI31 to begin with as in AutoCAD; Undo takes the last pick back; **-HATCH**
