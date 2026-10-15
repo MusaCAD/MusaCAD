@@ -1197,13 +1197,15 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { Rows, Cols, ColWidth, RowHeight, Place };
+    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style };
+    void place_prompt(CommandContext& ctx);
     bool done_ = false;
-    Mode mode_ = Mode::Rows;
-    int rows_ = 4;
-    int cols_ = 3;
-    double col_w_ = 40.0;
-    double row_h_ = 8.0;
+    Mode mode_ = Mode::Cols;
+    int rows_ = 1; ///< data rows; a title and a header row come with them
+    int cols_ = 5;
+    double col_w_ = 63.5;
+    int row_lines_ = 1;
+    static constexpr double kLine = 9.0; ///< one line of the Standard table style's text, with its margins
 };
 
 /// TRIM / EXTEND as AutoCAD has them. Quick mode (TRIMEXTENDMODE 1) takes every object as

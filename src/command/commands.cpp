@@ -11587,8 +11587,15 @@ void StretchCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void TableCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    mode_ = Mode::Rows;
-    ctx.set_prompt("Number of rows <4>: ");
+    mode_ = Mode::Cols;
+    ctx.echo("Current table style: Standard  Cell width: " + fmt4(col_w_) + "  Cell height: " +
+             std::to_string(row_lines_) + " line(s)");
+    ctx.set_prompt("Enter number of columns or [Auto] <" + std::to_string(cols_) + ">: ");
+}
+
+void TableCommand::place_prompt(CommandContext& ctx) {
+    mode_ = Mode::Place;
+    ctx.set_prompt("Specify insertion point or [Style/Width/Height]: ");
 }
 
 void TableCommand::input(CommandContext& ctx, const std::string& text) {
@@ -11605,41 +11612,82 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         } catch (...) {
         }
     };
+    const std::string u = upper(t);
     switch (mode_) {
+    case Mode::Cols:
     case Mode::Rows: {
-        double v = rows_;
-        number(v, 1.0);
-        rows_ = static_cast<int>(v);
-        mode_ = Mode::Cols;
-        ctx.set_prompt("Number of columns <3>: ");
-        return;
-    }
-    case Mode::Cols: {
-        double v = cols_;
-        number(v, 1.0);
-        cols_ = static_cast<int>(v);
-        mode_ = Mode::ColWidth;
-        ctx.set_prompt("Column width <40>: ");
+        if (u == "A" || u == "AUTO") {
+            ctx.echo("Auto sizing from a window is not available yet; enter a number.");
+            return;
+        }
+        double v = mode_ == Mode::Cols ? cols_ : rows_;
+        if (!t.empty()) {
+            const std::optional<double> n = parse_number(t);
+            if (!n || *n < 1.0 || *n > 500.0 || *n != std::floor(*n)) {
+                ctx.echo("Requires a whole number from 1 to 500.");
+                return;
+            }
+            v = *n;
+        }
+        if (mode_ == Mode::Cols) {
+            cols_ = static_cast<int>(v);
+            mode_ = Mode::Rows;
+            ctx.set_prompt("Enter number of data rows or [Auto] <" + std::to_string(rows_) + ">: ");
+        } else {
+            rows_ = static_cast<int>(v);
+            place_prompt(ctx);
+        }
         return;
     }
     case Mode::ColWidth:
         number(col_w_, 1e-6);
-        mode_ = Mode::RowHeight;
-        ctx.set_prompt("Row height <8>: ");
+        place_prompt(ctx);
         return;
-    case Mode::RowHeight:
-        number(row_h_, 1e-6);
-        mode_ = Mode::Place;
-        ctx.set_prompt("Specify insertion point (top-left corner): ");
+    case Mode::RowHeight: {
+        double v = row_lines_;
+        number(v, 1.0);
+        row_lines_ = static_cast<int>(v);
+        place_prompt(ctx);
+        return;
+    }
+    case Mode::Style:
+        if (t == "?") {
+            ctx.echo("Table styles: Standard");
+            return;
+        }
+        if (!t.empty() && u != "STANDARD") {
+            ctx.echo("Cannot find table style \"" + t + "\".");
+            return;
+        }
+        place_prompt(ctx);
         return;
     case Mode::Place:
+        if (u == "W" || u == "WIDTH") {
+            mode_ = Mode::ColWidth;
+            ctx.set_prompt("Specify column width <" + fmt4(col_w_) + ">: ");
+            return;
+        }
+        if (u == "H" || u == "HEIGHT") {
+            mode_ = Mode::RowHeight;
+            ctx.set_prompt("Specify row height in lines <" + std::to_string(row_lines_) + ">: ");
+            return;
+        }
+        if (u == "S" || u == "STYLE") {
+            mode_ = Mode::Style;
+            ctx.set_prompt("Enter a table style name or [?] <Standard>: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
+            // A title row and a header row above the data rows, as AutoCAD's Standard style.
+            const int rows = rows_ + 2;
             core::AddTableCommand cmd;
-            cmd.rows = static_cast<std::uint16_t>(rows_);
+            cmd.rows = static_cast<std::uint16_t>(rows);
             cmd.cols = static_cast<std::uint16_t>(cols_);
             cmd.col_widths.assign(static_cast<std::size_t>(cols_), col_w_);
-            cmd.row_heights.assign(static_cast<std::size_t>(rows_), row_h_);
-            const std::size_t n = static_cast<std::size_t>(rows_) * cols_;
+            cmd.row_heights.assign(static_cast<std::size_t>(rows), kLine * row_lines_);
+            cmd.has_title = true;
+            cmd.has_header = true;
+            const std::size_t n = static_cast<std::size_t>(rows) * cols_;
             cmd.cells.assign(n, core::TableCell{});
             cmd.texts.assign(n, std::string{});
             cmd.pos = *p;

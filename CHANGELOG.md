@@ -47,6 +47,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **MTEXT's corner options** (#43) -- `[Height/Justify/Line spacing/Rotation/Style/Width/
   Columns]` at the opposite corner, the current text style's height by default; text typed
   for MTEXT and QLEADER keeps its spaces.
+- **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
+  point with Style, Width and Height; a title and a header row come with the data rows.
 - **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
   the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
   Decimal), the fraction format, round off, a prefix and suffix and the measurement scale

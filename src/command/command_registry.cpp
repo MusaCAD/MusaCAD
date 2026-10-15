@@ -526,7 +526,7 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/stretch.svg",
         "Move the parts of objects inside a crossing window, keeping the rest anchored.");
 
-    reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(); },
+    reg({"TB", "TABLE", "-TABLE"}, [] { return std::make_unique<TableCommand>(); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");
 

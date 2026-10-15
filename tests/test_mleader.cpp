@@ -169,3 +169,26 @@ TEST_CASE("MTEXT: the corner options -- height, justification, line spacing, rot
     REQUIRE(h.out.lines.back() == "Enter TL, TC, TR, ML, MC, MR, BL, BC or BR.");
     h.proc.cancel();
 }
+
+TEST_CASE("-TABLE: columns, data rows, then the point with Width and Height; a title and a header row") {
+    H h;
+    h.run({"-TABLE"});
+    REQUIRE(h.out.lines.back() == "Current table style: Standard  Cell width: 63.5000  Cell height: 1 line(s)");
+    REQUIRE(h.out.prompt == "Enter number of columns or [Auto] <5>: ");
+    h.run({"3"});
+    REQUIRE(h.out.prompt == "Enter number of data rows or [Auto] <1>: ");
+    h.run({"4"});
+    REQUIRE(h.out.prompt == "Specify insertion point or [Style/Width/Height]: ");
+    h.run({"W", "20", "H", "2", "S", "?"});
+    REQUIRE(h.out.lines.back() == "Table styles: Standard");
+    h.run({"", "10,10"});
+    const auto* t = h.last<AddTableCommand>();
+    REQUIRE(t != nullptr);
+    REQUIRE(t->cols == 3);
+    REQUIRE(t->rows == 6); // a title, a header, four data rows
+    REQUIRE(t->has_title);
+    REQUIRE(t->has_header);
+    REQUIRE(t->col_widths == std::vector<double>(3, 20.0));
+    REQUIRE(t->row_heights[0] == 18.0);
+    REQUIRE(t->pos == Vec2{10, 10});
+}
