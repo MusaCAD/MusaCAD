@@ -1255,6 +1255,30 @@ private:
     SelectObjectsPhase select_;
 };
 
+/// SKETCH: `Specify sketch or [Type/increment/toLerance]:` -- press and drag to sketch; each
+/// stroke is kept as lines, a polyline or a spline (Type), its points at least the
+/// increment apart, until Enter. The whole sketch is one undo step.
+class SketchCommand final : public ICommand {
+public:
+    std::string name() const override { return "SKETCH"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool wants_freehand() const override { return !done_ && step_ == Step::Sketch; }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+
+private:
+    enum class Step : std::uint8_t { Sketch, Type, Increment, Tolerance };
+    void main_prompt(CommandContext& ctx);
+    Step step_ = Step::Sketch;
+    int strokes_ = 0;
+    bool done_ = false;
+    static inline int s_type_ = 0; ///< SKPOLY: 0 lines, 1 a polyline, 2 a spline
+    static inline double s_increment_ = 1.0;
+    static inline double s_tolerance_ = 0.5;
+};
+
 /// LAYERP: the layer settings back as they were before the last change (at once).
 /// LAYERPMODE: `Enter LAYERP mode [ON/OFF] <current>:` -- Enter says which.
 class LayerPreviousCommand final : public ICommand {

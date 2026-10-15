@@ -155,6 +155,7 @@ commands (Ribbon Phase A):
 | REDO | Redo the last step undone. |
 | MREDO | Redo several undone steps, or all of them. |
 | TRACE | Draw wide line segments (a polyline with a width). |
+| SKETCH | Draw freehand: each stroke becomes lines, a polyline or a spline. |
 | SOLID (SO) | Draw filled triangles and quadrilaterals. |
 | CENTERMARK (CM) | Mark the centres of circles and arcs, with centre lines. |
 | CENTERLINE (CL) | Draw the centre line between two lines. |
@@ -196,6 +197,7 @@ commands (Ribbon Phase A):
 | HATCH **line patterns** (Part B) — `.PAT` parser + a built-in stock library (ANSI31–ANSI38, NET/NET3/GRID, BRICK, BOX, HEX/HONEY, ANGLE, DOTS, CROSS, SQUARE, TRIANG, GRASS, EARTH, STEEL, CONC, INSUL, …; authored from the public .PAT format, **not** copied from acad.pat — load that file for the vendor set). Line families are **generated + clipped to the boundary at render time** (derived-not-baked, even-odd so islands carve out) and plot as vectors. Choose via the command's `[Pattern/Scale/Angle]` options or the PR. SOLID stays the special fill name — one render path, patterns are not a fork | H ▸ Pattern | Implemented (Part B) |
 | HATCH GRADIENT fills (entity colour to a second colour along an angle; 24 flat bands, so it plots as vectors; DXF gradient block both ways) | H ▸ Gradient | Implemented |
 | TRACE -- `Specify trace width <1.0000>:` (kept for the session), `Specify start point:`, `Specify next point:` until Enter: one polyline of that width | TRACE | Implemented (#45; a polyline, so it is mitred and edited as one) |
+| SKETCH -- `Specify sketch or [Type/increment/toLerance]:`: press and drag to sketch; each stroke becomes lines, a polyline or a spline (`Enter sketch type [Line/Polyline/Spline]`), its points the increment apart, until Enter; one undo step | SKETCH | Implemented (#45) |
 | SOLID -- `Specify first point:`, `second`, `third`, `Specify fourth point or <exit>:`; the third and fourth points are across from the first two (four in a Z make a bow tie, as AutoCAD), and go on as the first two of the next; Enter after three makes a triangle | SO | Implemented (#45; each a solid hatch) |
 | BOUNDARY -- `Pick internal point:` until Enter: closed polylines round the area HATCH's pick point would fill, and round its islands | BO / -BOUNDARY | Implemented (#45; curved edges come out as short straight segments; no dialog or Region type) |
 | CENTERMARK -- `Select circle or arc to add centermark:` until Enter: a cross at the centre and centre lines past the circle in the Center linetype. CENTERLINE -- `Select first line:`, `Select second line:`: the centre line from the midpoint of their starts to the midpoint of their ends, 3.5 past each, in the Center linetype | CM / CL | Implemented (#45; plain lines, not associative) |

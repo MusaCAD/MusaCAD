@@ -158,6 +158,8 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"LAYUNISO"}, [] { return std::make_unique<LayToolCommand>(LK::Unisolate); }, "",
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
+    reg({"SKETCH"}, [] { return std::make_unique<SketchCommand>(); }, "",
+        "Draw freehand: press and drag; each stroke becomes lines, a polyline or a spline.");
     reg({"LAYERP"}, [] { return std::make_unique<LayerPreviousCommand>(false); }, "",
         "Put the layer settings back as they were before the last change.");
     reg({"LAYERPMODE"}, [] { return std::make_unique<LayerPreviousCommand>(true); }, "",

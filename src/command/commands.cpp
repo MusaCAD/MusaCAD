@@ -14814,6 +14814,104 @@ void QuickDimUiCommand::cancel(CommandContext& ctx) {
 void MultipleCommand::start(CommandContext& ctx) { ctx.set_prompt("Enter command name to repeat: "); }
 
 // ---------------------------------------------------------------------------
+// SKETCH (issue #45)
+// ---------------------------------------------------------------------------
+void SketchCommand::start(CommandContext& ctx) {
+    static constexpr const char* kTypes[] = {"Line", "Polyline", "Spline"};
+    ctx.echo(std::string("Type = ") + kTypes[std::clamp(s_type_, 0, 2)] + "  Increment = " + fmt4(s_increment_) +
+             "  Tolerance = " + fmt4(s_tolerance_));
+    main_prompt(ctx);
+}
+
+void SketchCommand::main_prompt(CommandContext& ctx) {
+    step_ = Step::Sketch;
+    ctx.set_prompt("Specify sketch or [Type/increment/toLerance]: ");
+}
+
+void SketchCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) {
+    // The stroke's points, each at least the increment from the last one kept.
+    std::vector<core::Vec2> pts;
+    for (const core::Vec2& p : path) {
+        if (pts.empty() || core::distance(pts.back(), p) >= s_increment_) {
+            pts.push_back(p);
+        }
+    }
+    if (pts.size() >= 2 && core::distance(pts.back(), path.back()) > 1e-12) {
+        pts.push_back(path.back()); // it ends where the pen came up
+    }
+    if (pts.size() < 2) {
+        return;
+    }
+    if (s_type_ == 1) {
+        ctx.submit(core::AddPolylineCommand{pts, false, ctx.group_id()});
+    } else if (s_type_ == 2 && pts.size() >= 3) {
+        ctx.submit(core::AddSplineCommand{pts, 3, ctx.group_id()});
+    } else {
+        for (std::size_t i = 1; i < pts.size(); ++i) {
+            ctx.submit(core::AddLineCommand{pts[i - 1], pts[i], ctx.group_id()});
+        }
+    }
+    ++strokes_;
+}
+
+void SketchCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Sketch:
+        if (t.empty()) {
+            ctx.echo(std::to_string(strokes_) + (strokes_ == 1 ? " sketch stroke recorded." : " sketch strokes recorded."));
+            done_ = true;
+        } else if (u == "T" || u == "TYPE") {
+            step_ = Step::Type;
+            static constexpr const char* kTypes[] = {"Line", "Polyline", "Spline"};
+            ctx.set_prompt(std::string("Enter sketch type [Line/Polyline/Spline] <") + kTypes[std::clamp(s_type_, 0, 2)] +
+                           ">: ");
+        } else if (u == "I" || u == "INCREMENT") {
+            step_ = Step::Increment;
+            ctx.set_prompt("Specify sketch increment <" + fmt4(s_increment_) + ">: ");
+        } else if (u == "L" || u == "TOLERANCE") {
+            step_ = Step::Tolerance;
+            ctx.set_prompt("Specify spline fit tolerance <" + fmt4(s_tolerance_) + ">: ");
+        } else {
+            ctx.echo("Press and drag to sketch, or enter Type, increment or toLerance.");
+        }
+        return;
+    case Step::Type:
+        if (u == "L" || u == "LINE") {
+            s_type_ = 0;
+        } else if (u == "P" || u == "POLYLINE") {
+            s_type_ = 1;
+        } else if (u == "S" || u == "SPLINE") {
+            s_type_ = 2;
+        } else if (!t.empty()) {
+            ctx.echo("Enter Line, Polyline or Spline.");
+            return;
+        }
+        main_prompt(ctx);
+        return;
+    case Step::Increment:
+    case Step::Tolerance: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v <= 0.0) {
+                ctx.echo("Requires a positive value.");
+                return;
+            }
+            (step_ == Step::Increment ? s_increment_ : s_tolerance_) = *v;
+        }
+        main_prompt(ctx);
+        return;
+    }
+    }
+}
+
+void SketchCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // LAYERP / LAYERPMODE, LAYERSTATE (issue #69)
 // ---------------------------------------------------------------------------
 void LayerPreviousCommand::start(CommandContext& ctx) {

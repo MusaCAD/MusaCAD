@@ -192,3 +192,27 @@ TEST_CASE("-TABLE: columns, data rows, then the point with Width and Height; a t
     REQUIRE(t->row_heights[0] == 18.0);
     REQUIRE(t->pos == Vec2{10, 10});
 }
+
+TEST_CASE("SKETCH: strokes kept as lines, a polyline or a spline, points an increment apart") {
+    H h;
+    h.run({"SKETCH"});
+    REQUIRE(h.out.lines.back() == "Type = Line  Increment = 1.0000  Tolerance = 0.5000");
+    REQUIRE(h.out.prompt == "Specify sketch or [Type/increment/toLerance]: ");
+    REQUIRE(h.proc.wants_freehand());
+    h.proc.submit_freehand({{0, 0}, {0.4, 0}, {1.0, 0}, {1.5, 0}, {2.2, 0}, {2.5, 0}});
+    std::size_t lines = 0;
+    for (const Command& c : h.cmds) {
+        lines += std::holds_alternative<AddLineCommand>(c) ? 1 : 0;
+    }
+    REQUIRE(lines == 3); // 0 -> 1 -> 2.2 -> 2.5
+    h.run({"T", "P"});
+    h.proc.submit_freehand({{0, 5}, {3, 5}, {3, 8}});
+    REQUIRE(h.last<AddPolylineCommand>()->points.size() == 3);
+    h.run({"T", "S", "I", "0.5"});
+    h.proc.submit_freehand({{0, 9}, {1, 10}, {2, 9}, {3, 10}});
+    REQUIRE(h.last<AddSplineCommand>()->control_points.size() == 4);
+    h.run({""});
+    REQUIRE(h.out.lines.back() == "3 sketch strokes recorded.");
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"SKETCH", "T", "L", "I", "1", ""}); // the defaults again
+}
