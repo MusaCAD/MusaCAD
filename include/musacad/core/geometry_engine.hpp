@@ -376,6 +376,17 @@ private:
     /// it, and names not found, are left. The current layer is never frozen.
     void restore_layer_settings(const std::vector<Layer>& saved, const std::string& current);
     void apply_layer_state(const LayerStateCommand& c);
+    /// FIND and TCASE: every text-bearing object (the selection's, or all) whose text
+    /// `edit` changes is re-created with the new text in group `group`; `edit` returns
+    /// how many changes (matches) it made in one string. Returns the objects touched.
+    std::size_t edit_texts(bool selection_only, std::uint64_t group, bool commit,
+                           const std::function<int(std::string&)>& edit, std::size_t& changes);
+    // PEDIT's vertex editor: the polyline, the current vertex (the X), the Break /
+    // Straighten mark.
+    void apply_pedit_vertex(const PeditCommand& c);
+    EntityHandle pv_handle_{};
+    std::size_t pv_index_ = 0;
+    std::optional<std::size_t> pv_mark_{};
     bool layer_tool_changed_ = false; ///< the last layer tool changed something (the drawing is modified)
     std::function<void(const ClipboardExport&)> clipboard_listener_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;

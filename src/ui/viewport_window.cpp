@@ -301,6 +301,14 @@ bool ViewportWindow::quick_select_dialog(bool filter) {
     return true;
 }
 
+bool ViewportWindow::find_dialog() {
+    if (!find_dialog_callback_) {
+        return false;
+    }
+    find_dialog_callback_();
+    return true;
+}
+
 bool ViewportWindow::purge_dialog() {
     if (!purge_dialog_callback_) {
         return false;

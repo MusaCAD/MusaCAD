@@ -10393,7 +10393,210 @@ void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
 // PEDIT: every option is "capture the polyline, change the vertex list, re-create it"
 // as one undo group, so undo, redo and the file see an ordinary polyline edit. A line
 // or arc under the pick becomes a polyline first (AutoCAD's "turn it into one?").
+void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
+    if (c.op == 11) {
+        const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+        if (h.is_null() || h.kind != EntityKind::Polyline) {
+            report("PEDIT: the vertex editor works on a polyline.");
+            pv_handle_ = EntityHandle::null();
+            return;
+        }
+        pv_handle_ = h;
+        pv_index_ = 0;
+        pv_mark_.reset();
+        geom_dirty_ = true;
+        return;
+    }
+    if (c.op == 17 || !store_.is_valid(pv_handle_) || pv_handle_.kind != EntityKind::Polyline) {
+        pv_handle_ = EntityHandle::null();
+        pv_mark_.reset();
+        geom_dirty_ = true;
+        return;
+    }
+    const PolylineData* pl = store_.polyline(pv_handle_);
+    std::vector<Vec2> v(store_.vertices_of(*pl).begin(), store_.vertices_of(*pl).end());
+    const std::size_t n = v.size();
+    std::vector<double> b(n, 0.0);
+    if (const auto bs = store_.bulges_of(*pl); !bs.empty()) {
+        std::copy(bs.begin(), bs.begin() + static_cast<std::ptrdiff_t>(std::min(bs.size(), n)), b.begin());
+    }
+    std::vector<double> w(store_.widths_of(*pl).begin(), store_.widths_of(*pl).end());
+    w.resize(2 * n, 0.0);
+    const bool closed = pl->closed;
+    if (n == 0) {
+        return;
+    }
+    pv_index_ = std::min(pv_index_, n - 1);
+    switch (c.op) {
+    case 12:
+        pv_index_ = pv_index_ + 1 < n ? pv_index_ + 1 : (closed ? 0 : pv_index_);
+        geom_dirty_ = true;
+        return;
+    case 13:
+        pv_index_ = pv_index_ > 0 ? pv_index_ - 1 : (closed ? n - 1 : 0);
+        geom_dirty_ = true;
+        return;
+    case 14:
+        pv_mark_ = pv_index_;
+        return;
+    case 21:
+        pv_mark_.reset();
+        return;
+    default:
+        break;
+    }
+    // The edits: the polyline made again, the session on the new one.
+    std::vector<std::vector<Vec2>> pieces_v;
+    std::vector<std::vector<double>> pieces_b;
+    std::vector<std::vector<double>> pieces_w;
+    bool piece_closed = closed;
+    std::size_t next_index = pv_index_;
+    const std::size_t i = pv_index_;
+    switch (c.op) {
+    case 18: { // Insert after the current vertex
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(i + 1), c.p1);
+        b[i] = 0.0;
+        b.insert(b.begin() + static_cast<std::ptrdiff_t>(i + 1), 0.0);
+        const double w1 = w[2 * i + 1];
+        const double wm = (w[2 * i] + w1) * 0.5;
+        w[2 * i + 1] = wm;
+        w.insert(w.begin() + static_cast<std::ptrdiff_t>(2 * (i + 1)), {wm, w1});
+        next_index = i + 1;
+        report("Vertex inserted.");
+        break;
+    }
+    case 19:
+        v[i] = c.p1;
+        report("Vertex moved.");
+        break;
+    case 20:
+        if (!(c.p2.x >= 0.0) || !(c.p2.y >= 0.0)) {
+            report("PEDIT: a width cannot be negative.");
+            return;
+        }
+        w[2 * i] = c.p2.x;
+        w[2 * i + 1] = c.p2.y;
+        report("Segment width set.");
+        break;
+    case 15:
+    case 16: {
+        if (!pv_mark_) {
+            report("PEDIT: no vertex is marked.");
+            return;
+        }
+        std::size_t a = std::min(*pv_mark_, i);
+        std::size_t z = std::max(*pv_mark_, i);
+        if (c.op == 16) { // Straighten: the run from a to z becomes one straight segment
+            if (z - a < 1) {
+                report("PEDIT: mark another vertex to straighten to.");
+                return;
+            }
+            v.erase(v.begin() + static_cast<std::ptrdiff_t>(a + 1), v.begin() + static_cast<std::ptrdiff_t>(z));
+            b.erase(b.begin() + static_cast<std::ptrdiff_t>(a + 1), b.begin() + static_cast<std::ptrdiff_t>(z));
+            b[a] = 0.0;
+            w.erase(w.begin() + static_cast<std::ptrdiff_t>(2 * (a + 1)), w.begin() + static_cast<std::ptrdiff_t>(2 * z));
+            next_index = a;
+            report("Straightened.");
+            break;
+        }
+        // Break: what lies between the two vertices goes (at one vertex: split there).
+        if (closed) {
+            // Open from z round to a.
+            std::vector<Vec2> ov;
+            std::vector<double> ob;
+            std::vector<double> ow;
+            for (std::size_t k = 0; k < n; ++k) {
+                const std::size_t at = (z + k) % n;
+                ov.push_back(v[at]);
+                ob.push_back(b[at]);
+                ow.insert(ow.end(), {w[2 * at], w[2 * at + 1]});
+                if (at == a && k > 0) {
+                    break;
+                }
+            }
+            if (a == z) {
+                ov.push_back(v[a]); // round to itself: open at that vertex
+                ob.push_back(0.0);
+                ow.insert(ow.end(), {0.0, 0.0});
+            }
+            ob.back() = 0.0;
+            pieces_v.push_back(std::move(ov));
+            pieces_b.push_back(std::move(ob));
+            pieces_w.push_back(std::move(ow));
+            piece_closed = false;
+        } else {
+            if (a == 0 && z == n - 1) {
+                report("PEDIT: breaking between the two ends would leave nothing.");
+                return;
+            }
+            if (a > 0 || a == z) {
+                pieces_v.emplace_back(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(a + 1));
+                pieces_b.emplace_back(b.begin(), b.begin() + static_cast<std::ptrdiff_t>(a + 1));
+                pieces_w.emplace_back(w.begin(), w.begin() + static_cast<std::ptrdiff_t>(2 * (a + 1)));
+                pieces_b.back().back() = 0.0;
+            }
+            if (z < n - 1 || a == z) {
+                pieces_v.emplace_back(v.begin() + static_cast<std::ptrdiff_t>(z), v.end());
+                pieces_b.emplace_back(b.begin() + static_cast<std::ptrdiff_t>(z), b.end());
+                pieces_w.emplace_back(w.begin() + static_cast<std::ptrdiff_t>(2 * z), w.end());
+            }
+        }
+        next_index = 0;
+        report("Broken.");
+        break;
+    }
+    default:
+        report("PEDIT: unknown vertex option.");
+        return;
+    }
+    if (pieces_v.empty()) {
+        pieces_v.push_back(std::move(v));
+        pieces_b.push_back(std::move(b));
+        pieces_w.push_back(std::move(w));
+    }
+    const PolylineData keep = *pl;
+    const double cts = store_.celtscale(pv_handle_);
+    const Command original = capture_entity(pv_handle_);
+    remove_indexed(pv_handle_);
+    push_erase_item(c.group, pv_handle_, original);
+    EntityHandle first;
+    for (std::size_t k = 0; k < pieces_v.size(); ++k) {
+        if (pieces_v[k].size() < 2) {
+            continue;
+        }
+        bool any_bulge = false;
+        for (const double bb : pieces_b[k]) {
+            any_bulge = any_bulge || std::abs(bb) > 1e-12;
+        }
+        const Command made = AddPolylineCommand{pieces_v[k],
+                                                piece_closed,
+                                                0,
+                                                keep.props,
+                                                any_bulge ? pieces_b[k] : std::vector<double>{},
+                                                cts,
+                                                pline::has_width(pieces_w[k]) ? pieces_w[k] : std::vector<double>{},
+                                                keep.elevation,
+                                                keep.thickness};
+        const EntityHandle nh = create_indexed(made);
+        push_create_item(c.group, nh, made);
+        if (first.is_null()) {
+            first = nh;
+        }
+    }
+    pv_handle_ = first;
+    pv_index_ = next_index;
+    pv_mark_.reset();
+    selection_ = first.is_null() ? std::vector<EntityHandle>{} : std::vector<EntityHandle>{first};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+}
+
 void GeometryEngine::apply_pedit(const PeditCommand& c) {
+    if (c.op >= 11 && c.op <= 21 && !c.selection) {
+        apply_pedit_vertex(c);
+        return;
+    }
     if (!c.selection) {
         const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
         if (h.is_null()) {
@@ -12492,6 +12695,83 @@ void GeometryEngine::apply_layer_state(const LayerStateCommand& c) {
     }
 }
 
+std::size_t GeometryEngine::edit_texts(bool selection_only, std::uint64_t group, bool commit,
+                                       const std::function<int(std::string&)>& edit, std::size_t& changes) {
+    std::vector<EntityHandle> cand;
+    if (selection_only) {
+        prune_selection();
+        cand = selection_;
+    } else {
+        for (const EntityHandle h : all_live()) {
+            switch (h.kind) {
+            case EntityKind::Text:
+            case EntityKind::MText:
+            case EntityKind::Leader:
+            case EntityKind::MLeader:
+            case EntityKind::Table:
+            case EntityKind::Insert:
+            case EntityKind::Dimension:
+                cand.push_back(h);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    changes = 0;
+    std::vector<EntityHandle> touched;
+    std::vector<EntityHandle> made;
+    for (const EntityHandle h : cand) {
+        if (!store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        Command c = capture_entity(h);
+        int n = 0;
+        std::visit(
+            [&](auto& x) {
+                using T = std::decay_t<decltype(x)>;
+                if constexpr (std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddMTextCommand> ||
+                              std::is_same_v<T, AddMLeaderCommand> || std::is_same_v<T, AddLeaderCommand>) {
+                    n += edit(x.content);
+                } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                    for (std::string& t : x.texts) {
+                        n += edit(t);
+                    }
+                } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
+                    for (std::string& a : x.attribs) {
+                        n += edit(a);
+                    }
+                } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                    n += x.text_override.empty() ? 0 : edit(x.text_override);
+                }
+            },
+            c);
+        if (n == 0) {
+            continue;
+        }
+        changes += static_cast<std::size_t>(n);
+        touched.push_back(h);
+        if (commit) {
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(group, h, original);
+            const EntityHandle nh = create_indexed(c);
+            push_create_item(group, nh, c);
+            made.push_back(nh);
+        }
+    }
+    if (commit && !made.empty()) {
+        selection_ = made;
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    } else if (!commit) {
+        selection_ = touched; // FIND: the objects found are selected
+        geom_dirty_ = true;
+    }
+    return touched.size();
+}
+
 void GeometryEngine::apply(const Command& command) {
     // LAYERP: the layer settings as a command that may change them finds them.
     std::optional<LayerpState> layerp_before;
@@ -13786,6 +14066,109 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, LayerStateCommand>) {
                 apply_layer_state(c);
             }
+            if constexpr (std::is_same_v<T, FindTextCommand>) {
+                if (c.find.empty()) {
+                    report("Nothing to find.");
+                } else {
+                    const auto lower_ascii = [](std::string s) {
+                        for (char& ch : s) {
+                            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                        }
+                        return s;
+                    };
+                    const auto word_char = [](char ch) {
+                        return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_' ||
+                               (static_cast<unsigned char>(ch) & 0x80) != 0;
+                    };
+                    const std::string needle = c.match_case ? c.find : lower_ascii(c.find);
+                    const auto edit = [&](std::string& s) {
+                        const std::string hay = c.match_case ? s : lower_ascii(s);
+                        std::string out;
+                        int n = 0;
+                        std::size_t i = 0;
+                        std::size_t copied = 0;
+                        while ((i = hay.find(needle, i)) != std::string::npos) {
+                            const bool starts = i == 0 || !word_char(hay[i - 1]);
+                            const bool ends = i + needle.size() >= hay.size() || !word_char(hay[i + needle.size()]);
+                            if (c.whole_word && !(starts && ends)) {
+                                ++i;
+                                continue;
+                            }
+                            out += s.substr(copied, i - copied);
+                            out += c.replace;
+                            i += needle.size();
+                            copied = i;
+                            ++n;
+                        }
+                        if (n > 0 && c.do_replace) {
+                            out += s.substr(copied);
+                            s = std::move(out);
+                        }
+                        return n;
+                    };
+                    std::size_t matches = 0;
+                    const std::size_t objects = edit_texts(c.selection_only, c.group, c.do_replace, edit, matches);
+                    const std::string where = std::to_string(objects) + (objects == 1 ? " object" : " objects");
+                    if (objects == 0) {
+                        report("No matches found for \"" + c.find + "\".");
+                    } else if (c.do_replace) {
+                        report("Replaced " + std::to_string(matches) + (matches == 1 ? " match" : " matches") + " in " +
+                               where + ".");
+                    } else {
+                        report("Found " + std::to_string(matches) + (matches == 1 ? " match" : " matches") + " in " +
+                               where + "; they are selected.");
+                    }
+                }
+            }
+            if constexpr (std::is_same_v<T, TextCaseCommand>) {
+                using M = TextCaseCommand::Mode;
+                const auto edit = [&c](std::string& s) {
+                    std::string out = s;
+                    bool sentence_start = true;
+                    bool word_start = true;
+                    for (std::size_t i = 0; i < out.size(); ++i) {
+                        const auto ch = static_cast<unsigned char>(out[i]);
+                        if (ch == '\\' && i + 1 < out.size()) {
+                            ++i; // a format code's letter stays as it is
+                            continue;
+                        }
+                        const bool alpha = std::isalpha(ch) != 0;
+                        switch (c.mode) {
+                        case M::Lower:
+                            out[i] = static_cast<char>(std::tolower(ch));
+                            break;
+                        case M::Upper:
+                            out[i] = static_cast<char>(std::toupper(ch));
+                            break;
+                        case M::Toggle:
+                            out[i] = static_cast<char>(std::isupper(ch) != 0 ? std::tolower(ch) : std::toupper(ch));
+                            break;
+                        case M::Title:
+                            out[i] = static_cast<char>(word_start ? std::toupper(ch) : std::tolower(ch));
+                            break;
+                        case M::Sentence:
+                            out[i] = static_cast<char>(sentence_start && alpha ? std::toupper(ch) : std::tolower(ch));
+                            break;
+                        }
+                        word_start = std::isspace(ch) != 0;
+                        if (alpha) {
+                            sentence_start = false;
+                        } else if (ch == '.' || ch == '!' || ch == '?' || ch == '\n') {
+                            sentence_start = true;
+                        }
+                    }
+                    if (out == s) {
+                        return 0;
+                    }
+                    s = std::move(out);
+                    return 1;
+                };
+                std::size_t changed = 0;
+                const std::size_t objects = edit_texts(true, c.group, true, edit, changed);
+                report(objects == 0 ? std::string("No text changed.")
+                                    : std::to_string(objects) + (objects == 1 ? " text object changed." : " text objects changed."));
+            }
+
             if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
                 store_.set_wipeout_frames(c.on);
                 store_.set_wipeout_frames_plot(c.plot);
@@ -13928,6 +14311,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, LayerStateCommand>) {
                 edit = c.op != LayerStateCommand::Op::List && (c.op != LayerStateCommand::Op::Restore || layerp_changed_);
             }
+            if constexpr (std::is_same_v<T, FindTextCommand>) {
+                edit = c.do_replace; // finding only selects
+            }
             if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 edit = c.op == ChainDimensionCommand::Op::Add; // Start, Select, Back: bookkeeping
             }
@@ -14050,6 +14436,8 @@ void GeometryEngine::forget_document_state() {
     layer_tool_undo_.clear(); // layer indices of this document
     layiso_off_.clear();
     layerp_.clear();
+    pv_handle_ = EntityHandle::null(); // PEDIT's vertex editor
+    pv_mark_.reset();
 }
 
 void GeometryEngine::park_active(DocState& d) {
@@ -14715,6 +15103,16 @@ void GeometryEngine::rebuild_and_publish() {
                                   store_.ltscale());
             buf.grip_preview_segments = std::move(tmp.line_vertices);
             buf.grip_preview_fills = std::move(tmp.fill_vertices);
+        }
+    }
+    // PEDIT's vertex editor: an X on the current vertex, eight pixels across.
+    if (store_.is_valid(pv_handle_) && pv_handle_.kind == EntityKind::Polyline) {
+        const auto vs = store_.vertices_of(*store_.polyline(pv_handle_));
+        if (!vs.empty()) {
+            const Vec2 p = vs[std::min(pv_index_, vs.size() - 1)];
+            const double r = 4.0 * view_world_per_px_;
+            buf.grip_preview_segments.insert(buf.grip_preview_segments.end(),
+                                             {p + Vec2{-r, -r}, p + Vec2{r, r}, p + Vec2{-r, r}, p + Vec2{r, -r}});
         }
     }
 

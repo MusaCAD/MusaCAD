@@ -524,22 +524,36 @@ public:
 // HATCH / H: fill a closed boundary with a pattern (Part A: SOLID, from selected closed
 // polylines). Noun-verb: with a pre-selection, hatches it immediately; otherwise prompts to
 // pick a closed boundary. The engine extracts the boundary loops (UI never touches the store).
+/// HATCH: `Pick internal point or [Select objects/Undo/seTtings]:` -- picks fill regions,
+/// Select objects fills closed boundaries, Undo takes the last pick back, seTtings asks the
+/// pattern (`Enter a pattern name or [?/Solid/User defined/Gradient] <ANSI31>:`), its scale
+/// and angle. -HATCH: `Specify internal point or [Properties/Select objects/...]:`. The
+/// pattern, scale and angle are remembered (HPNAME, HPSCALE, HPANG).
 class HatchCommand final : public ICommand {
 public:
-    std::string name() const override { return "HATCH"; }
+    explicit HatchCommand(bool typed = false) : typed_(typed) {}
+    std::string name() const override { return typed_ ? "-HATCH" : "HATCH"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && mode_ == Mode::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select };
+    void main_prompt(CommandContext& ctx);
+    void fill_selection(CommandContext& ctx);
+    bool typed_;
     bool done_ = false;
+    int picks_ = 0;
     Mode mode_ = Mode::PickPoint;
-    std::string pattern_ = "SOLID"; // SOLID, GRADIENT, or a known line pattern (e.g. ANSI31)
-    double scale_ = 1.0;
-    double angle_ = 0.0; // radians (pattern rotation / gradient direction)
-    core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
+    SelectObjectsPhase select_;
+    static inline std::string pattern_ = "ANSI31"; // HPNAME: SOLID, GRADIENT or a line pattern
+    static inline double scale_ = 1.0;             // HPSCALE
+    static inline double angle_ = 0.0;             // HPANG, radians (also the gradient's direction)
+    static inline core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
 };
 
 /// WIPEOUT: a mask polygon (a hatch with the WIPEOUT pattern) from picked points, or
@@ -1306,6 +1320,46 @@ private:
     static inline double s_extension_ = 1.25;
 };
 
+/// FIND: the Find and Replace window; without one, `Enter the text to find:`, `Enter the
+/// replacement text, or Enter to find only:`, `Match case [Yes/No] <No>:`, `Find whole words
+/// only [Yes/No] <No>:` and, with objects selected, `Find where [Selection/Entire drawing]`.
+class FindCommand final : public ICommand {
+public:
+    std::string name() const override { return "FIND"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::What || step_ == Step::With; }
+
+private:
+    enum class Step : std::uint8_t { What, With, Case, Whole, Where };
+    void submit(CommandContext& ctx);
+    Step step_ = Step::What;
+    core::FindTextCommand find_{};
+    bool done_ = false;
+};
+
+/// TCASE (Express Tools): `Enter case [Sentence/Lower/Upper/Title/tOggle] <Upper>:` for the
+/// selected text.
+class TextCaseCommand final : public ICommand {
+public:
+    std::string name() const override { return "TCASE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && selecting_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after_selection(CommandContext& ctx);
+    bool selecting_ = false;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:
@@ -1821,13 +1875,14 @@ public:
 
 private:
     enum class State {
-        Select, Option, JoinTargets, Vertex, VInsert, VDelete, VMoveFrom, VMoveTo,
+        Select, Option, JoinTargets, Vertex, VInsert, VMoveTo,
+        VBreak,      ///< [Edit vertex] > [Break] / [Straighten]: `[Next/Previous/Go/eXit]`
+        VTangent,    ///< [Edit vertex] > [Tangent]: the direction
         Accept,      ///< a line or arc picked: `Do you want to turn it into one? <Y>`
         MultiSelect, ///< [Multiple]: `Select objects:`
         Fuzz,        ///< [Multiple] > [Join]: the fuzz distance
         WidthVal,    ///< [Width]: one width for every segment
-        VWidthAt,    ///< [Edit vertex] > [Width]: the vertex the segment leaves
-        VWidthStart, ///< ... its starting width
+        VWidthStart, ///< [Edit vertex] > [Width]: the starting width of the segment leaving the X
         VWidthEnd,   ///< ... and its ending width
     };
     double vw_start_ = 0.0;
@@ -1837,7 +1892,7 @@ private:
     void prompt_vertex(CommandContext& ctx) const;
     State state_ = State::Select;
     core::Vec2 pick_{};
-    core::Vec2 vfrom_{};
+    bool straighten_ = false; ///< the vertex editor's Go straightens (else it breaks)
     std::vector<core::Vec2> join_picks_;
     bool done_ = false;
 };

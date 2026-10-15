@@ -103,9 +103,11 @@ public:
     bool set_selection_setting(const std::string& name, int value) override;
     bool quick_select_dialog(bool filter) override;
     bool purge_dialog() override;
+    bool find_dialog() override;
     bool units_dialog() override;
     void set_quick_select_callback(std::function<void(bool)> cb) { quick_select_callback_ = std::move(cb); }
     void set_purge_dialog_callback(std::function<void()> cb) { purge_dialog_callback_ = std::move(cb); }
+    void set_find_dialog_callback(std::function<void()> cb) { find_dialog_callback_ = std::move(cb); }
     void set_units_dialog_callback(std::function<void()> cb) { units_dialog_callback_ = std::move(cb); }
     bool quickcalc_dialog() override;
     bool dwgprops_dialog() override;
@@ -735,6 +737,7 @@ private:
     bool object_isolation_ = false;
     std::function<void(bool)> quick_select_callback_;
     std::function<void()> purge_dialog_callback_;
+    std::function<void()> find_dialog_callback_;
     std::function<void()> units_dialog_callback_;
     std::function<void()> quickcalc_callback_;
     std::function<void()> dwgprops_callback_;

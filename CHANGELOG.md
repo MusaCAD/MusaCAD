@@ -50,6 +50,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **HELP** and **F1** (#65) -- open the command reference in the browser.
 - **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
   the view, `2` against the limits); PAN and -PAN; REGENALL.
+- **PEDIT's vertex editor as AutoCAD has it** (#52) -- an X on the current vertex, Next and
+  Previous, Insert after it, Move it, the next segment's Width, and Break or Straighten
+  between it and a second vertex.
+- **HATCH's prompts** (#41) -- `Pick internal point or [Select objects/Undo/seTtings]:`;
+  seTtings asks the pattern (`?` lists them), its scale and angle, and they are kept for the
+  next hatch, ANSI31 to begin with as in AutoCAD; Undo takes the last pick back; **-HATCH**
+  with Properties and Select objects.
+- **FIND** (#62) -- find and replace text in text, multiline text, leaders, table cells,
+  block attributes and dimension text; the objects found are selected.
+- **TCASE** (#77) -- the selected text in Sentence, lower, UPPER, Title or tOGGLE case.
 - **BREAKLINE** (#77) -- a line past two points with a zigzag break symbol, as the Express
   Tools draw it.
 - **SKETCH** (#45) -- press and drag to draw freehand; each stroke becomes lines, a polyline

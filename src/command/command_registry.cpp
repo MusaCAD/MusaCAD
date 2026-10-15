@@ -159,6 +159,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
+    reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
+        "Find text in the drawing and replace it.");
+    reg({"TCASE"}, [] { return std::make_unique<TextCaseCommand>(); }, "",
+        "Change the case of the selected text: Sentence, lower, UPPER, Title or tOGGLE.");
     reg({"BREAKLINE"}, [] { return std::make_unique<BreaklineCommand>(); }, "",
         "Draw a break line: a polyline with a zigzag break symbol.");
     reg({"SKETCH"}, [] { return std::make_unique<SketchCommand>(); }, "",
@@ -413,6 +417,8 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"MA", "MATCHPROP", "PAINTER"}, [] { return std::make_unique<MatchPropCommand>(); },
         "assets/ribbon/matchprop.svg",
         "Copy properties from a source object to one or more target objects.");
+    reg({"-H", "-HATCH"}, [] { return std::make_unique<HatchCommand>(true); }, "",
+        "Hatch at the command line: an internal point or the selected boundaries, with Properties.");
     reg({"H", "HATCH", "BHATCH"}, [] { return std::make_unique<HatchCommand>(); },
         "assets/ribbon/hatch.svg", "Fill an enclosed area with a pattern or solid color.");
 

@@ -126,6 +126,11 @@ struct PeditCommand {
     /// Multiple: the edit on every selected polyline (and line and arc, made polylines)
     /// instead of the one at `pick`. op 10 is Fit (polyline_ops::fit_arcs).
     bool selection = false;
+    /// The vertex editor (Edit vertex) works on a current vertex, marked with an X: op 11
+    /// starts it on the polyline at `pick` (its first vertex), 12 Next, 13 Previous, 14
+    /// marks the current vertex for Break / Straighten (15 Go breaks, 16 Go straightens
+    /// between the two; 21 drops the mark), 18 inserts `p1` after the current vertex, 19
+    /// moves it to `p1`, 20 sets the next segment's widths (`p2` x start, y end), 17 ends.
 };
 
 /// REVERSE: the selected lines, polylines and splines run the other way (a polyline's
@@ -1771,6 +1776,25 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// FIND: `find` in the text of TEXT, MTEXT, leaders, multileaders, table cells, block
+/// attributes and dimension text overrides -- in the selection, or everywhere -- as typed
+/// or in any case, and as part of a word or only a whole one. Find selects the objects
+/// found; Replace puts `replace` in place of every match, one undo step.
+struct FindTextCommand {
+    std::string find;
+    std::string replace;
+    bool do_replace = false;
+    bool match_case = false;
+    bool whole_word = false;
+    bool selection_only = false;
+    std::uint64_t group = 0;
+};
+/// TCASE: the selected text objects' text in Sentence, lower, UPPER, Title or tOGGLE case.
+struct TextCaseCommand {
+    enum class Mode : std::uint8_t { Sentence, Lower, Upper, Title, Toggle };
+    Mode mode = Mode::Upper;
+    std::uint64_t group = 0;
+};
 /// LAYERP: the layer settings as they were before the last change to them (on, frozen,
 /// locked, colour, linetype, lineweight, plot, and the current layer). New, renamed and
 /// removed layers stay as they are.
@@ -1884,7 +1908,8 @@ using Command =
                  AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
-                 LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand,
+                 LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
+                 TextCaseCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

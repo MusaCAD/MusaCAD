@@ -289,6 +289,7 @@ private:
     // The system clipboard: a copy goes out as Musa CAD objects and a picture; a paste
     // takes what is there (objects from any Musa CAD window, an image, text).
     void export_to_system_clipboard(const core::ClipboardExport& e);
+    void open_find_dialog(); ///< FIND: Find and Replace
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;

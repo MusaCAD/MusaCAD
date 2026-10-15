@@ -259,6 +259,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_match_settings_callback([this] { open_matchprop_dialog(); });
     viewport_->set_quick_select_callback([this](bool filter) { open_quick_select_dialog(filter); });
     viewport_->set_purge_dialog_callback([this] { open_purge_dialog(); });
+    viewport_->set_find_dialog_callback([this] { open_find_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -2656,6 +2657,59 @@ void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
     QGuiApplication::clipboard()->setMimeData(md);
 }
 
+void MainWindow::open_find_dialog() {
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("Find and Replace"));
+    auto* form = new QFormLayout;
+    auto* what = new QLineEdit(dlg);
+    auto* with = new QLineEdit(dlg);
+    auto* where = new QComboBox(dlg);
+    where->addItem(QStringLiteral("Entire drawing"));
+    where->addItem(QStringLiteral("Current selection"));
+    if (viewport_->selection_count() > 0) {
+        where->setCurrentIndex(1);
+    }
+    form->addRow(QStringLiteral("Find what:"), what);
+    form->addRow(QStringLiteral("Replace with:"), with);
+    form->addRow(QStringLiteral("Find where:"), where);
+    auto* match_case = new QCheckBox(QStringLiteral("Match case"), dlg);
+    auto* whole = new QCheckBox(QStringLiteral("Find whole words only"), dlg);
+    auto* scope = new QLabel(QStringLiteral("Searches text, multiline text, leaders, table cells, block attributes "
+                                            "and dimension text."),
+                             dlg);
+    scope->setWordWrap(true);
+    scope->setEnabled(false);
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addLayout(form);
+    layout->addWidget(match_case);
+    layout->addWidget(whole);
+    layout->addWidget(scope);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    auto* find = buttons->addButton(QStringLiteral("Find"), QDialogButtonBox::ActionRole);
+    auto* replace = buttons->addButton(QStringLiteral("Replace All"), QDialogButtonBox::ActionRole);
+    find->setDefault(true);
+    layout->addWidget(buttons);
+    const auto run = [this, what, with, where, match_case, whole](bool do_replace) {
+        if (what->text().isEmpty()) {
+            return;
+        }
+        core::FindTextCommand c;
+        c.find = what->text().toStdString();
+        c.replace = with->text().toStdString();
+        c.do_replace = do_replace;
+        c.match_case = match_case->isChecked();
+        c.whole_word = whole->isChecked();
+        c.selection_only = where->currentIndex() == 1;
+        c.group = processor_->begin_group();
+        engine_->submit(std::move(c)); // the result is reported at the command line
+    };
+    connect(find, &QPushButton::clicked, dlg, [run] { run(false); });
+    connect(replace, &QPushButton::clicked, dlg, [run] { run(true); });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    dlg->show();
+}
+
 std::string MainWindow::prepare_paste() {
     pending_paste_image_ = QImage();
     pending_paste_text_.clear();
@@ -4709,13 +4763,13 @@ bool MainWindow::hatch_shot(int kind, const std::string& out_png) {
         pump(150);
         processor_->submit_line("HATCH");
         pump(120);
-        processor_->submit_line("P");   // Pattern option
+        processor_->submit_line("T");   // seTtings: the pattern, its scale and angle
         pump(120);
         processor_->submit_line(pat);   // pattern name
         pump(120);
-        processor_->submit_line("S");   // Scale option
-        pump(120);
         processor_->submit_line("3");   // a readable scale for the screenshot
+        pump(120);
+        processor_->submit_line("0");   // the angle
         pump(120);
         processor_->submit_line("30,22"); // pick inside
         pump(300);

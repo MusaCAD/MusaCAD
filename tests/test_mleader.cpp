@@ -308,3 +308,34 @@ TEST_CASE("BREAKLINE: a polyline past both points with a zigzag at the break") {
     h.run({"BREAKLINE", "S", "1", ""});
     h.proc.cancel();
 }
+
+TEST_CASE("HATCH: [Select objects/Undo/seTtings], the pattern asked and remembered; -HATCH Properties") {
+    H h;
+    h.run({"H"});
+    REQUIRE(h.out.prompt == "Pick internal point or [Select objects/Undo/seTtings]: ");
+    h.run({"T"});
+    REQUIRE(h.out.prompt.rfind("Enter a pattern name or [?/Solid/User defined/Gradient] <", 0) == 0);
+    h.run({"?"});
+    REQUIRE(h.out.lines.back().rfind("Patterns: SOLID", 0) == 0);
+    h.run({"ANSI37"});
+    REQUIRE(h.out.prompt == "Specify a scale for the pattern <1.0000>: ");
+    h.run({"2", "45"});
+    REQUIRE(h.out.prompt == "Pick internal point or [Select objects/Undo/seTtings]: ");
+    h.run({"5,5"});
+    const auto* p = h.last<HatchPickPointCommand>();
+    REQUIRE(p != nullptr);
+    REQUIRE(p->pattern_name == "ANSI37");
+    REQUIRE(p->pattern_scale == 2.0);
+    REQUIRE(p->pattern_angle == Approx(to_radians(45.0)));
+    h.run({"U"});
+    REQUIRE(std::holds_alternative<UndoLastGroupCommand>(h.cmds.back()));
+    h.run({""});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"H", "1,1", ""}); // remembered
+    REQUIRE(h.last<HatchPickPointCommand>()->pattern_name == "ANSI37");
+    h.run({"-HATCH"});
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [Properties/Select objects/draW boundary/", 0) == 0);
+    h.run({"P", "S", "2,2", ""});
+    REQUIRE(h.last<HatchPickPointCommand>()->pattern_name == "SOLID");
+    h.run({"H", "T", "ANSI31", "1", "0", ""}); // back to the defaults
+}
