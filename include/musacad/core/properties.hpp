@@ -158,6 +158,30 @@ struct DimStyle {
     /// 1 the text moves alone with a leader back to the line, 2 alone without one.
     std::uint8_t text_move = 0;
 
+    // Units (v40). DIMLUNIT: 1 scientific, 2 decimal, 3 engineering, 4 architectural, 5
+    // fractional (6, Windows desktop, reads as decimal); DIMFRAC: 0 horizontal, 1 diagonal,
+    // 2 not stacked (fractions are written inline); DIMRND rounds to a multiple (0 none);
+    // DIMLFAC multiplies every length measured; DIMAUNIT: 0 degrees, 1 degrees/minutes/
+    // seconds, 2 grads, 3 radians, with DIMADEC places (-1: DIMDEC's).
+    std::uint8_t linear_unit = 2;
+    std::uint8_t fraction_format = 0;
+    double round_off = 0.0;
+    double linear_factor = 1.0;
+    std::uint8_t angular_unit = 0;
+    std::int8_t angular_precision = -1;
+    // Alternate units (DIMALT): the length again times DIMALTF in DIMALTU with DIMALTD
+    // places, rounded to DIMALTRND, in brackets after the value.
+    bool alt = false;
+    std::uint8_t alt_unit = 2;
+    std::uint8_t alt_precision = 2;
+    double alt_factor = 25.4;
+    double alt_round = 0.0;
+    /// DIMPOST: "<>" stands for the value ("<> mm"); text without it is a suffix. A prefix
+    /// on a radius or diameter takes the place of R or the diameter sign.
+    std::string post{};
+    /// DIMAPOST: "[]" stands for the alternate value.
+    std::string alt_post{};
+
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };
 

@@ -580,6 +580,23 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
         code_i(s, 279, ds.text_move);         // DIMTMOVE
         code_i(s, 371, ds.dim_lineweight);    // DIMLWD
+        if (!ds.post.empty()) {
+            code(s, 3, ds.post); // DIMPOST
+        }
+        if (!ds.alt_post.empty()) {
+            code(s, 4, ds.alt_post); // DIMAPOST
+        }
+        code_d(s, 45, ds.round_off);          // DIMRND
+        code_d(s, 143, ds.alt_factor);        // DIMALTF
+        code_d(s, 144, ds.linear_factor);     // DIMLFAC
+        code_d(s, 148, ds.alt_round);         // DIMALTRND
+        code_i(s, 170, ds.alt ? 1 : 0);       // DIMALT
+        code_i(s, 171, ds.alt_precision);     // DIMALTD
+        code_i(s, 179, ds.angular_precision); // DIMADEC
+        code_i(s, 273, ds.alt_unit);          // DIMALTU
+        code_i(s, 275, ds.angular_unit);      // DIMAUNIT
+        code_i(s, 276, ds.fraction_format);   // DIMFRAC
+        code_i(s, 277, ds.linear_unit);       // DIMLUNIT
     }
     code(s, 0, "ENDTAB");
     // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
@@ -1777,6 +1794,39 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const long w = to_l(*v); w >= 0 && w <= 211) {
                 ds.dim_lineweight = static_cast<std::uint8_t>(w);
             }
+        }
+        // The units: each read only within its range, the default kept otherwise.
+        const auto ranged = [&](int code, long lo, long hi, auto set) {
+            if (const std::string* v = find(body, code)) {
+                if (const long x = to_l(*v); x >= lo && x <= hi) {
+                    set(x);
+                }
+            }
+        };
+        ranged(277, 1, 6, [&](long x) { ds.linear_unit = static_cast<std::uint8_t>(x); });
+        ranged(276, 0, 2, [&](long x) { ds.fraction_format = static_cast<std::uint8_t>(x); });
+        ranged(275, 0, 3, [&](long x) { ds.angular_unit = static_cast<std::uint8_t>(x); });
+        ranged(179, -1, 8, [&](long x) { ds.angular_precision = static_cast<std::int8_t>(x); });
+        ranged(170, 0, 1, [&](long x) { ds.alt = x != 0; });
+        ranged(273, 1, 6, [&](long x) { ds.alt_unit = static_cast<std::uint8_t>(x); });
+        ranged(171, 0, 8, [&](long x) { ds.alt_precision = static_cast<std::uint8_t>(x); });
+        if (const std::string* v = find(body, 45); v != nullptr && to_d(*v) >= 0.0) {
+            ds.round_off = to_d(*v);
+        }
+        if (const std::string* v = find(body, 144); v != nullptr && to_d(*v) > 0.0) {
+            ds.linear_factor = to_d(*v);
+        }
+        if (const std::string* v = find(body, 143); v != nullptr && to_d(*v) > 0.0) {
+            ds.alt_factor = to_d(*v);
+        }
+        if (const std::string* v = find(body, 148); v != nullptr && to_d(*v) >= 0.0) {
+            ds.alt_round = to_d(*v);
+        }
+        if (const std::string* v = find(body, 3)) {
+            ds.post = *v;
+        }
+        if (const std::string* v = find(body, 4)) {
+            ds.alt_post = *v;
         }
     };
 

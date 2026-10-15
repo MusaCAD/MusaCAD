@@ -471,6 +471,59 @@ std::string serialize_native(const Document& doc) {
         s += ds.name;
         s += '\n';
     }
+    // v40: DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost
+    // (the two texts with spaces as 0x1f, "-" for none) -- for a style whose units differ
+    // from the defaults.
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        const DimStyle& ds = doc.dimstyles[i];
+        const DimStyle def{};
+        if (ds.linear_unit == def.linear_unit && ds.fraction_format == def.fraction_format &&
+            ds.round_off == def.round_off && ds.linear_factor == def.linear_factor &&
+            ds.angular_unit == def.angular_unit && ds.angular_precision == def.angular_precision &&
+            ds.alt == def.alt && ds.alt_unit == def.alt_unit && ds.alt_precision == def.alt_precision &&
+            ds.alt_factor == def.alt_factor && ds.alt_round == def.alt_round && ds.post.empty() &&
+            ds.alt_post.empty()) {
+            continue;
+        }
+        const auto word = [](const std::string& in) {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& c : out) {
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                    c = '\x1f';
+                }
+            }
+            return out;
+        };
+        s += "DIMUNITS ";
+        append_uint(s, i);
+        s += ' ';
+        append_uint(s, ds.linear_unit);
+        s += ' ';
+        append_uint(s, ds.fraction_format);
+        s += ' ';
+        append_double(s, ds.round_off);
+        s += ' ';
+        append_double(s, ds.linear_factor);
+        s += ' ';
+        append_uint(s, ds.angular_unit);
+        s += ' ';
+        append_uint(s, static_cast<std::uint64_t>(ds.angular_precision + 1));
+        s += ' ';
+        append_uint(s, ds.alt ? 1 : 0);
+        s += ' ';
+        append_uint(s, ds.alt_unit);
+        s += ' ';
+        append_uint(s, ds.alt_precision);
+        s += ' ';
+        append_double(s, ds.alt_factor);
+        s += ' ';
+        append_double(s, ds.alt_round);
+        s += ' ';
+        s += word(ds.post);
+        s += ' ';
+        s += word(ds.alt_post);
+        s += '\n';
+    }
 
     // PAGESETUP <name> <paper> <target> pw ph land area wminx wminy wmaxx wmaxy fit
     //           snum sden center offx offy plw style  -- the three strings have their
@@ -2299,6 +2352,41 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             l.name = std::move(name);
             doc.layer_states.back().layers.push_back(std::move(l));
+        } else if (key == "DIMUNITS") {
+            // DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost (v40)
+            std::uint64_t idx = 0;
+            std::uint64_t n[8] = {};
+            double d[4] = {};
+            if (tok.size() != 15 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size() || !to_uint(tok[2], n[0]) ||
+                !to_uint(tok[3], n[1]) || !to_double(tok[4], d[0]) || !to_double(tok[5], d[1]) ||
+                !to_uint(tok[6], n[2]) || !to_uint(tok[7], n[3]) || !to_uint(tok[8], n[4]) ||
+                !to_uint(tok[9], n[5]) || !to_uint(tok[10], n[6]) || !to_double(tok[11], d[2]) ||
+                !to_double(tok[12], d[3])) {
+                return fail("malformed DIMUNITS");
+            }
+            const auto word = [](std::string_view t) {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            DimStyle& ds = doc.dimstyles[idx];
+            ds.linear_unit = static_cast<std::uint8_t>(std::clamp<std::uint64_t>(n[0], 1, 6));
+            ds.fraction_format = static_cast<std::uint8_t>(std::min<std::uint64_t>(n[1], 2));
+            ds.round_off = d[0] >= 0.0 ? d[0] : 0.0;
+            ds.linear_factor = d[1] > 0.0 ? d[1] : 1.0;
+            ds.angular_unit = static_cast<std::uint8_t>(std::min<std::uint64_t>(n[2], 3));
+            ds.angular_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(n[3], 9)) - 1);
+            ds.alt = n[4] != 0;
+            ds.alt_unit = static_cast<std::uint8_t>(std::clamp<std::uint64_t>(n[5], 1, 6));
+            ds.alt_precision = static_cast<std::uint8_t>(std::min<std::uint64_t>(n[6], 8));
+            ds.alt_factor = d[2] > 0.0 ? d[2] : 25.4;
+            ds.alt_round = d[3] >= 0.0 ? d[3] : 0.0;
+            ds.post = word(tok[13]);
+            ds.alt_post = word(tok[14]);
         } else if (key == "NOPLOT") {
             // NOPLOT idx (v40): the layer is not plotted.
             std::uint64_t li = 0;
