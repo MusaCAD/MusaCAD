@@ -201,8 +201,9 @@ CommandRegistry CommandRegistry::make_default() {
         "Mask what lies beneath a polygon (text still shows through); [Frames] and [Polyline].");
     reg({"FIELD"}, [] { return std::make_unique<FieldCommand>(); }, "",
         "Place text showing the date, time, file name or login, refreshed on regen.");
-    reg({"OS", "OSNAP", "DDOSNAP"}, [] { return std::make_unique<OsnapCommand>(); }, "",
-        "Open the running object snap settings.");
+    reg({"OS", "OSNAP", "DDOSNAP", "DS", "DSETTINGS", "SE", "DDRMODES", "RM"},
+        [] { return std::make_unique<OsnapCommand>(); }, "",
+        "Open the Drafting Settings: snap and grid, polar tracking, object snaps, dynamic input.");
     using TrackVar = TrackingVarCommand::Var;
     reg({"POLARANG"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::PolarAng); }, "",
         "The polar tracking increment angle, in degrees.");

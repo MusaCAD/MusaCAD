@@ -38,6 +38,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Aspect]`: a spacing, the snap spacing or a multiple of it, a major line every so many,
   fewer lines zoomed out and more zoomed in, the grid kept within the limits, and different
   horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
+- **DSETTINGS** (#65) -- the Drafting Settings dialog with its Snap and Grid, Polar
+  Tracking, Object Snap and Dynamic Input tabs; `DS`, `SE` and `OS` open it.
 - **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
   the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
   Decimal), the fraction format, round off, a prefix and suffix and the measurement scale
