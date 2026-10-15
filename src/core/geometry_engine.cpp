@@ -14120,6 +14120,33 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, ScaleDrawingCommand>) {
+                if (c.factor > 0.0 && std::isfinite(c.factor) && c.factor != 1.0) {
+                    std::size_t n = 0;
+                    for (const EntityHandle h : all_live()) {
+                        const EntityProps* p = store_.props(h);
+                        if (p == nullptr || p->space() != 0) {
+                            continue; // model space only: a layout's sheet keeps its size
+                        }
+                        Command scaled = capture_entity(h);
+                        scale_cmd(scaled, Vec2{}, c.factor);
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(scaled);
+                        push_create_item(c.group, nh, scaled);
+                        ++n;
+                    }
+                    store_.set_limits(store_.limits_min() * c.factor, store_.limits_max() * c.factor, store_.limits_on());
+                    selection_.clear();
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    char buf[96];
+                    std::snprintf(buf, sizeof(buf), "%zu objects scaled by %g.", n, c.factor);
+                    report(buf);
+                }
+            }
             if constexpr (std::is_same_v<T, PropsFromPickCommand>) {
                 if (c.restore) {
                     if (props_saved_) {

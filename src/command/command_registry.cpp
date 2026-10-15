@@ -318,6 +318,8 @@ CommandRegistry CommandRegistry::make_default() {
     }
     reg({"UN", "UNITS"}, [] { return std::make_unique<UnitsCommand>(true); }, "",
         "Set the display format and precision of lengths and angles (the Drawing Units dialog).");
+    reg({"-DWGUNITS", "DWGUNITS"}, [] { return std::make_unique<DwgUnitsCommand>(); }, "",
+        "Take the drawing to another unit, scaling its objects to match.");
     reg({"-UNITS"}, [] { return std::make_unique<UnitsCommand>(false); }, "",
         "Set the units from the command line: the numbered format tables, angle base and direction.");
     reg({"INSUNITS"}, [] { return std::make_unique<InsunitsCommand>(); }, "",

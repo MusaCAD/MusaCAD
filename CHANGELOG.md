@@ -81,6 +81,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **Alternate Units** tab shows the length again in brackets (`25.00 [0.98]`). The same
   settings as DIMLUNIT, DIMFRAC, DIMRND, DIMLFAC, DIMAUNIT, DIMADEC, DIMALT, DIMALTU,
   DIMALTD, DIMALTF and DIMALTRND at the command line; kept in the drawing and in DXF.
+- **-DWGUNITS** (#81) -- the drawing taken to another unit in one step, its objects scaled
+  to match.
 - **Units across drawings** (#81) -- copying between drawings in different units, or
   attaching one as a reference, scales the objects into the drawing's own units
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.

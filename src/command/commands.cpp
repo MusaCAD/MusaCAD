@@ -15630,6 +15630,147 @@ void AddSelectedCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// -DWGUNITS (issue #81)
+// ---------------------------------------------------------------------------
+namespace {
+// -DWGUNITS's six units, as INSUNITS codes.
+constexpr std::uint8_t kDwgUnits[] = {1, 2, 4, 5, 14, 6};
+constexpr const char* kDwgUnitNames[] = {"Inches", "Feet", "Millimeters", "Centimeters", "Decimeters", "Meters"};
+} // namespace
+
+void DwgUnitsCommand::start(CommandContext& ctx) {
+    units_ = ctx.units();
+    from_ = units_.insunits;
+    step_ = Step::Unit;
+    ask(ctx);
+}
+
+void DwgUnitsCommand::ask(CommandContext& ctx) {
+    switch (step_) {
+    case Step::Unit: {
+        ctx.echo("Drawing units:");
+        int cur = 3;
+        for (int i = 0; i < 6; ++i) {
+            ctx.echo("  " + std::to_string(i + 1) + ". " + kDwgUnitNames[i]);
+            cur = kDwgUnits[i] == units_.insunits ? i + 1 : cur;
+        }
+        ctx.set_prompt("Unit for length <" + std::to_string(cur) + ">: ");
+        return;
+    }
+    case Step::Format:
+        ctx.echo("Linear display format:");
+        ctx.echo("  1. Scientific  2. Decimal  3. Engineering  4. Architectural  5. Fractional");
+        ctx.set_prompt("Linear display format <" + std::to_string(static_cast<int>(units_.linear)) + ">: ");
+        return;
+    case Step::Precision:
+        ctx.set_prompt("Linear display precision <" + std::to_string(units_.linear_precision) + ">: ");
+        return;
+    case Step::InsertScale:
+        ctx.set_prompt("Scale objects from other drawings upon insert? [Yes/No] <Yes>: ");
+        return;
+    case Step::Match:
+        ctx.set_prompt("Match INSUNITS to drawing units? [Yes/No] <Yes>: ");
+        return;
+    case Step::Scale:
+        ctx.set_prompt("Scale objects in current drawing to reflect change in units? [Yes/No] <Yes>: ");
+        return;
+    }
+}
+
+void DwgUnitsCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const auto whole = [&](int lo, int hi, int& out) {
+        double v = 0.0;
+        if (t.empty()) {
+            return true;
+        }
+        if (!parse_number(t, v) || v < lo || v > hi || v != std::floor(v)) {
+            ctx.echo("Requires a whole number from " + std::to_string(lo) + " to " + std::to_string(hi) + ".");
+            return false;
+        }
+        out = static_cast<int>(v);
+        return true;
+    };
+    const auto yes_no = [&](bool& out) {
+        if (t.empty() || u == "Y" || u == "YES") {
+            out = true;
+        } else if (u == "N" || u == "NO") {
+            out = false;
+        } else {
+            ctx.echo("Enter Yes or No.");
+            return false;
+        }
+        return true;
+    };
+    switch (step_) {
+    case Step::Unit: {
+        int choice = 0;
+        if (!whole(1, 6, choice)) {
+            return;
+        }
+        if (choice > 0) {
+            units_.insunits = kDwgUnits[choice - 1];
+        } else if (units_.insunits == 0) {
+            units_.insunits = 4; // Millimeters, the default offered
+        }
+        step_ = Step::Format;
+        break;
+    }
+    case Step::Format: {
+        int f = static_cast<int>(units_.linear);
+        if (!whole(1, 5, f)) {
+            return;
+        }
+        units_.linear = static_cast<core::LinearFormat>(f);
+        step_ = Step::Precision;
+        break;
+    }
+    case Step::Precision: {
+        int p = units_.linear_precision;
+        if (!whole(0, 8, p)) {
+            return;
+        }
+        units_.linear_precision = static_cast<std::uint8_t>(p);
+        step_ = Step::InsertScale;
+        break;
+    }
+    case Step::InsertScale:
+    case Step::Match: {
+        bool yes = true;
+        if (!yes_no(yes)) {
+            return;
+        }
+        if (!yes) {
+            ctx.echo(step_ == Step::InsertScale ? "Objects from other drawings are always scaled by their units here."
+                                                : "INSUNITS is the drawing unit here.");
+        }
+        step_ = step_ == Step::InsertScale ? Step::Match : Step::Scale;
+        break;
+    }
+    case Step::Scale: {
+        bool yes = true;
+        if (!yes_no(yes)) {
+            return;
+        }
+        const double f = core::units::insunits_factor(from_, units_.insunits);
+        if (yes && f != 1.0) {
+            ctx.submit(core::ScaleDrawingCommand{f, ctx.group_id()});
+        }
+        ctx.submit(core::SetUnitsCommand{units_});
+        done_ = true;
+        return;
+    }
+    }
+    ask(ctx);
+}
+
+void DwgUnitsCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void HelpCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || !ctx.view()->open_help()) {
         ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");

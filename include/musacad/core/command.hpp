@@ -1776,6 +1776,12 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// -DWGUNITS: every model-space object (on any layer, locked or not) and the limits scaled
+/// by `factor` about the origin, one undo step -- the drawing taken to another unit.
+struct ScaleDrawingCommand {
+    double factor = 1.0;
+    std::uint64_t group = 0;
+};
 /// ADDSELECTED: the current layer and properties (colour, linetype, lineweight, linetype
 /// scale) taken from the object at `pick` for what is drawn next; `restore` puts back
 /// what they were before.
@@ -1917,7 +1923,7 @@ using Command =
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
-                 TextCaseCommand, PropsFromPickCommand,
+                 TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

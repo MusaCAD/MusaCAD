@@ -138,6 +138,7 @@ add_executable(musacad_tests
     test_mleader.cpp
     test_find_text.cpp
     test_pedit_vertex.cpp
+    test_dwgunits.cpp
     test_trim_curves.cpp
     test_lengthen_more.cpp
     test_trim_paths_clipboard.cpp
