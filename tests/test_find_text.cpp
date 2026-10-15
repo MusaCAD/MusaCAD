@@ -156,3 +156,45 @@ TEST_CASE("TCASE changes the case of the selected text") {
     proc.submit_line("T");
     REQUIRE(std::get_if<TextCaseCommand>(&cmds.back())->mode == M::Title);
 }
+
+TEST_CASE("ADDSELECTED draws the kind of object picked, on its layer and in its colour") {
+    GeometryEngine engine;
+    engine.start();
+    Layer walls;
+    walls.name = "Walls";
+    engine.submit(AddLayerCommand{walls});
+    EntityProps red;
+    red.layer = 1;
+    red.color = Rgb{255, 0, 0};
+    red.set_color_by_layer(false);
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, red});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(PropsFromPickCommand{{5, 0}, 0.5, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.current_layer == 1; }));
+    engine.submit(AddLineCommand{{0, 5}, {10, 5}, 2});
+    engine.submit(PropsFromPickCommand{{}, 0.0, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.current_layer == 0; }));
+    const io::Document doc = dump(engine, "musacad_addselected.musa");
+    REQUIRE(doc.lines.size() == 2);
+    for (const io::DocLine& l : doc.lines) {
+        REQUIRE(l.props.layer == 1);
+        REQUIRE(l.props.color == Rgb{255, 0, 0});
+    }
+    engine.stop();
+
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+    proc.submit_line("ADDSELECTED");
+    REQUIRE(out.prompt == "Select object: ");
+    proc.set_hovered_kind(EntityKind::Line);
+    proc.submit_line("5,0");
+    proc.set_hovered_kind(std::nullopt);
+    REQUIRE(std::get_if<PropsFromPickCommand>(&cmds.back())->pick == Vec2{5, 0});
+    REQUIRE(out.prompt.rfind("Specify first point", 0) == 0);
+    proc.submit_line("0,5");
+    proc.submit_line("10,5");
+    proc.submit_line("");
+    REQUIRE(std::get_if<PropsFromPickCommand>(&cmds.back())->restore);
+    REQUIRE_FALSE(proc.has_active_command());
+}

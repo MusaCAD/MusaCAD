@@ -1389,6 +1389,33 @@ private:
     bool done_ = false;
 };
 
+/// ADDSELECTED: `Select object:` -- the command that draws that kind of object starts, and
+/// what it draws takes the object's layer, colour, linetype and lineweight.
+class AddSelectedCommand final : public ICommand {
+public:
+    std::string name() const override { return "ADDSELECTED"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    void hover(CommandContext& ctx, std::optional<core::EntityKind> kind) override {
+        if (sub_) {
+            sub_->hover(ctx, kind);
+        }
+    }
+    bool in_selection_phase() const override { return sub_ && !done_ && sub_->in_selection_phase(); }
+    bool selection_removing() const override { return sub_ && sub_->selection_removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    bool wants_freehand() const override { return sub_ && sub_->wants_freehand(); }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+    bool free_text() const override { return sub_ && sub_->free_text(); }
+
+private:
+    void after(CommandContext& ctx);
+    std::unique_ptr<ICommand> sub_;
+    bool done_ = false;
+};
+
 /// LAYWALK: the LayerWalk window (only the layers chosen in it shown; restored on exit).
 class LayerWalkCommand final : public ICommand {
 public:

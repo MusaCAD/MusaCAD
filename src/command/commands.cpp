@@ -15534,6 +15534,98 @@ void GripModeCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// ADDSELECTED (issue #45)
+// ---------------------------------------------------------------------------
+void AddSelectedCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select object: ");
+}
+
+void AddSelectedCommand::after(CommandContext& ctx) {
+    if (sub_ && sub_->done()) {
+        ctx.submit(core::PropsFromPickCommand{{}, 0.0, true}); // the current properties back
+        done_ = true;
+    }
+}
+
+void AddSelectedCommand::input(CommandContext& ctx, const std::string& text) {
+    if (sub_) {
+        sub_->input(ctx, text);
+        after(ctx);
+        return;
+    }
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    const std::optional<core::EntityKind> kind = ctx.hovered_kind();
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    using K = core::EntityKind;
+    const char* alias = nullptr;
+    if (kind) {
+        switch (*kind) {
+        case K::Line: alias = "LINE"; break;
+        case K::Polyline: alias = "PLINE"; break;
+        case K::Circle: alias = "CIRCLE"; break;
+        case K::Arc: alias = "ARC"; break;
+        case K::Ellipse: alias = "ELLIPSE"; break;
+        case K::Spline: alias = "SPLINE"; break;
+        case K::Point: alias = "POINT"; break;
+        case K::Text: alias = "TEXT"; break;
+        case K::MText: alias = "MTEXT"; break;
+        case K::Hatch: alias = "HATCH"; break;
+        case K::Dimension: alias = "DIM"; break;
+        case K::Leader: alias = "LEADER"; break;
+        case K::MLeader: alias = "MLEADER"; break;
+        case K::Insert: alias = "INSERT"; break;
+        case K::Xline: alias = "XLINE"; break;
+        case K::Table: alias = "TABLE"; break;
+        default: break;
+        }
+    }
+    if (alias == nullptr) {
+        ctx.echo(kind ? "ADDSELECTED does not draw that kind of object." : "No object found.");
+        return;
+    }
+    sub_ = ctx.make_command(alias);
+    if (!sub_) {
+        done_ = true;
+        return;
+    }
+    ctx.submit(core::PropsFromPickCommand{*p, ctx.pick_radius(), false});
+    ctx.echo("Command: " + sub_->name());
+    sub_->start(ctx);
+    after(ctx);
+}
+
+void AddSelectedCommand::selection_gesture(CommandContext& ctx) {
+    if (sub_) {
+        sub_->selection_gesture(ctx);
+        after(ctx);
+    }
+}
+
+void AddSelectedCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) {
+    if (sub_) {
+        sub_->freehand(ctx, path);
+        after(ctx);
+    }
+}
+
+void AddSelectedCommand::cancel(CommandContext& ctx) {
+    if (sub_) {
+        sub_->cancel(ctx);
+        ctx.submit(core::PropsFromPickCommand{{}, 0.0, true});
+    } else {
+        ctx.echo("*Cancel*");
+    }
+    done_ = true;
+}
+
 void HelpCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || !ctx.view()->open_help()) {
         ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");

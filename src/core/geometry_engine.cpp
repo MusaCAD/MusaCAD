@@ -14120,6 +14120,31 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, PropsFromPickCommand>) {
+                if (c.restore) {
+                    if (props_saved_) {
+                        current_props_ = props_saved_->first;
+                        if (props_saved_->second < store_.layers().size()) {
+                            store_.set_current_layer(props_saved_->second);
+                        }
+                        props_saved_.reset();
+                    }
+                } else if (const EntityHandle h = pick_nearest(c.pick, c.radius); !h.is_null()) {
+                    if (const EntityProps* p = store_.props(h)) {
+                        if (!props_saved_) {
+                            props_saved_ = std::make_pair(current_props_, store_.current_layer());
+                        }
+                        current_props_ = *p;
+                        current_props_.layer = 0; // the current layer applies at creation
+                        if (p->layer < store_.layers().size() && !store_.layers()[p->layer].frozen) {
+                            store_.set_current_layer(p->layer);
+                        }
+                        geom_dirty_ = true;
+                    }
+                } else {
+                    report("Nothing under the pick.");
+                }
+            }
             if constexpr (std::is_same_v<T, TextCaseCommand>) {
                 using M = TextCaseCommand::Mode;
                 const auto edit = [&c](std::string& s) {

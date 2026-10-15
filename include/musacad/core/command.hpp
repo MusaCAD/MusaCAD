@@ -1776,6 +1776,14 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// ADDSELECTED: the current layer and properties (colour, linetype, lineweight, linetype
+/// scale) taken from the object at `pick` for what is drawn next; `restore` puts back
+/// what they were before.
+struct PropsFromPickCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    bool restore = false;
+};
 /// FIND: `find` in the text of TEXT, MTEXT, leaders, multileaders, table cells, block
 /// attributes and dimension text overrides -- in the selection, or everywhere -- as typed
 /// or in any case, and as part of a word or only a whole one. Find selects the objects
@@ -1909,7 +1917,7 @@ using Command =
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
-                 TextCaseCommand,
+                 TextCaseCommand, PropsFromPickCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

@@ -384,6 +384,8 @@ private:
     // PEDIT's vertex editor: the polyline, the current vertex (the X), the Break /
     // Straighten mark.
     void apply_pedit_vertex(const PeditCommand& c);
+    /// ADDSELECTED: the current properties and layer before they were taken from an object.
+    std::optional<std::pair<EntityProps, std::uint16_t>> props_saved_{};
     EntityHandle pv_handle_{};
     std::size_t pv_index_ = 0;
     std::optional<std::size_t> pv_mark_{};

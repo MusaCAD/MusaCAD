@@ -66,6 +66,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TCASE** (#77) -- the selected text in Sentence, lower, UPPER, Title or tOGGLE case.
 - **BREAKLINE** (#77) -- a line past two points with a zigzag break symbol, as the Express
   Tools draw it.
+- **ADDSELECTED** (#45) -- draw another object of the kind picked, on its layer and with its
+  colour, linetype and lineweight.
 - **SKETCH** (#45) -- press and drag to draw freehand; each stroke becomes lines, a polyline
   or a spline, its points the sketch increment apart.
 - **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
