@@ -15568,6 +15568,7 @@ void MultipleCommand::again(CommandContext& ctx) {
         done_ = true;
         return;
     }
+    (void)ctx.new_group(); // each repetition its own undo step, as a command typed again
     ctx.echo("Command: " + sub_->name());
     sub_->start(ctx);
     if (sub_->done()) {
