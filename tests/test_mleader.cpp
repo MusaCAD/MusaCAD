@@ -170,7 +170,7 @@ TEST_CASE("MTEXT: the corner options -- height, justification, line spacing, rot
     h.proc.cancel();
 }
 
-TEST_CASE("-TABLE: columns, data rows, then the point with Width and Height; a title and a header row") {
+TEST_CASE("TABLE at the command line (-TABLE): columns, data rows, then the point with Width and Height; a title and a header row") {
     H h;
     h.run({"-TABLE"});
     REQUIRE(h.out.lines.back() == "Current table style: Standard  Cell width: 63.5000  Cell height: 1 line(s)");
