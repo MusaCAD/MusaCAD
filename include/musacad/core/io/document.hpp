@@ -68,7 +68,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 39;
+inline constexpr std::uint32_t kFormatVersion = 40;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -366,6 +366,11 @@ struct Document {
     std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool fillmode = true;       ///< FILLMODE (v37)
+    std::uint8_t pdmode = 0;    ///< PDMODE (v40): how points are drawn
+    double pdsize = 0.0;        ///< PDSIZE (v40): their size (0 or less: on screen)
+    Vec2 limits_min{0.0, 0.0};        ///< LIMMIN (v40)
+    Vec2 limits_max{420.0, 297.0};    ///< LIMMAX (v40)
+    bool limits_on = false;           ///< LIMCHECK (v40)
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
     std::uint8_t image_frame = 1; ///< IMAGEFRAME (v29): 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts;  ///< the layout tabs (v30); entities refer to them by EntityProps::space

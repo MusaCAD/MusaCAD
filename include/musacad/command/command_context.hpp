@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -312,6 +313,8 @@ public:
 /// never touch the GeometryStore: the only way they affect geometry is by
 /// emitting a core::Command via submit(), which the processor forwards to the
 /// UI->geometry MPSC queue.
+class ICommand; // a command made by name (make_command), defined in command.hpp
+
 class CommandContext {
 public:
     virtual ~CommandContext() = default;
@@ -411,6 +414,27 @@ public:
     virtual void set_snap_mode(bool on) { (void)on; }
     [[nodiscard]] virtual double snap_spacing() const { return 10.0; }
     virtual void set_snap_spacing(double spacing) { (void)spacing; }
+    /// SNAP Aspect: the vertical spacing apart from the horizontal one.
+    [[nodiscard]] virtual double snap_spacing_y() const { return snap_spacing(); }
+    virtual void set_snap_spacing_xy(double x, double y) {
+        (void)y;
+        set_snap_spacing(x);
+    }
+    /// PDMODE / PDSIZE and LIMITS as the drawing has them (from its last snapshot).
+    [[nodiscard]] virtual std::uint8_t pdmode() const { return 0; }
+    [[nodiscard]] virtual double pdsize() const { return 0.0; }
+    struct Limits {
+        core::Vec2 min{0.0, 0.0};
+        core::Vec2 max{420.0, 297.0};
+        bool on = false;
+    };
+    [[nodiscard]] virtual Limits limits() const { return {}; }
+    /// A fresh command for `alias` (MULTIPLE runs one again and again); nothing for an
+    /// unknown name.
+    [[nodiscard]] virtual std::unique_ptr<ICommand> make_command(const std::string& alias) {
+        (void)alias;
+        return {};
+    }
     /// TEMPOVERRIDES: whether the temporary override keys (Shift, Shift + A ...) are read.
     [[nodiscard]] virtual bool temp_overrides() const { return true; }
     virtual void set_temp_overrides(bool on) { (void)on; }

@@ -350,6 +350,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_named_views(viewport_->named_views());
         processor_->set_units(viewport_->units());
         {
+            const auto [mode, size] = viewport_->point_display();
+            processor_->set_point_display(mode, size);
+            const auto [lo, hi, on] = viewport_->limits();
+            processor_->set_limits(lo, hi, on);
+        }
+        {
             std::vector<core::TextStyle> tstyles = viewport_->text_styles();
             const std::uint16_t cur = viewport_->current_text_style();
             std::vector<std::string> names;

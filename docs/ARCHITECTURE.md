@@ -2635,3 +2635,25 @@ take -- so one group undoes the lot. DIMTEDIT's point goes through `edit_for_gri
 on the text grip, so moving text from the command line and by dragging agree. DIMSPACE is
 DIM Distribute's Offset with Auto (twice the base's text height) and 0 (aliGn). DIMCENTER
 adds plain lines, as AutoCAD does.
+
+## Point display, limits and lengths as typed (issues #40, #65, #81)
+
+PDMODE / PDSIZE and the limits live in `GeometryStore` beside FILLMODE, are set by
+`SetPointDisplayCommand` and `SetLimitsCommand`, and reach the UI in the render snapshot,
+which the main window hands to the command processor each tick (as it does the units).
+Native **v40** writes them as two records after `FILLMODE`: `POINTMODE <mode> <size>` and
+`LIMITS <minx> <miny> <maxx> <maxy> <on>`; v39 files read the defaults (a dot, 0,0 to
+420,297, checking off). DXF writes and reads `$PDMODE`, `$PDSIZE`, `$LIMMIN`, `$LIMMAX`,
+`$LIMCHECK` and `$FILLMODE`, and the units (`$INSUNITS`, `$LUNITS`, `$LUPREC`, `$AUNITS`,
+`$AUPREC`, `$ANGDIR`, `$ANGBASE`, `$MEASUREMENT`).
+
+`build_render_snapshot` turns each point into marker segments for any PDMODE other than 0
+and 1 (a circle as a 24-segment polygon, a square as four lines), added to the line batch
+in the point's colour; half the marker is PDSIZE / 2, or for PDSIZE ≤ 0 a size from the
+pick tolerance, so it stays the same on screen.
+
+The limits are checked in `read_point`, the one place every point prompt goes through, so
+no command needs to know. `units::parse_length_text` (fractions and feet-and-inches, a
+foot being twelve drawing units) is the fallback in both number parsers, so every length
+and coordinate prompt takes it. MULTIPLE holds the command it repeats through
+`CommandContext::make_command` and forwards input, hover, selection and freehand to it.

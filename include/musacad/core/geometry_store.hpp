@@ -547,6 +547,25 @@ public:
     /// FILLMODE: wide polylines and solid hatches are filled (1) or drawn as outlines (0).
     [[nodiscard]] bool fillmode() const noexcept { return fillmode_; }
     void set_fillmode(bool on) noexcept { fillmode_ = on; }
+    /// PDMODE / PDSIZE: how points are drawn (0 a dot, 1 nothing, 2 a plus, 3 a cross, 4 a
+    /// tick up; +32 in a circle, +64 in a square) and how big (> 0 in drawing units; 0 or
+    /// less a size on screen whatever the zoom).
+    [[nodiscard]] std::uint8_t pdmode() const noexcept { return pdmode_; }
+    [[nodiscard]] double pdsize() const noexcept { return pdsize_; }
+    void set_point_display(std::uint8_t mode, double size) noexcept {
+        pdmode_ = mode;
+        pdsize_ = size;
+    }
+    /// LIMITS: the drawing's limits (LIMMIN / LIMMAX) and whether points outside them are
+    /// refused (LIMCHECK).
+    [[nodiscard]] Vec2 limits_min() const noexcept { return limits_min_; }
+    [[nodiscard]] Vec2 limits_max() const noexcept { return limits_max_; }
+    [[nodiscard]] bool limits_on() const noexcept { return limits_on_; }
+    void set_limits(Vec2 lo, Vec2 hi, bool on) noexcept {
+        limits_min_ = lo;
+        limits_max_ = hi;
+        limits_on_ = on;
+    }
     [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
     [[nodiscard]] std::uint8_t image_frame() const noexcept { return image_frame_; }
 
@@ -1221,6 +1240,11 @@ private:
     std::uint16_t current_dimstyle_ = 0;
     bool wipeout_frames_ = true;
     bool fillmode_ = true;
+    std::uint8_t pdmode_ = 0;
+    double pdsize_ = 0.0;
+    Vec2 limits_min_{0.0, 0.0};
+    Vec2 limits_max_{420.0, 297.0}; // an A3 sheet: AutoCAD's metric template
+    bool limits_on_ = false;
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
     std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts_{Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};

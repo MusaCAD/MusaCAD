@@ -202,6 +202,11 @@ struct RenderSnapshot {
     std::vector<ViewportRect> viewport_rects; // the active layout's viewports
     bool wipeout_frames = true;         // WIPEOUTFRAME
     bool fillmode = true;               // FILLMODE
+    std::uint8_t pdmode = 0;            // PDMODE: how points are drawn
+    double pdsize = 0.0;                // PDSIZE
+    Vec2 limits_min{0.0, 0.0};          // LIMITS
+    Vec2 limits_max{420.0, 297.0};
+    bool limits_on = false;             // LIMCHECK
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer

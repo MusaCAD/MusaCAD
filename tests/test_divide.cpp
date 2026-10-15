@@ -238,9 +238,15 @@ TEST_CASE("#27: DIVIDE and MEASURE report honestly when they cannot act") {
     engine.stop();
 }
 
-TEST_CASE("#23: POINT stays open for repeated picks until Esc") {
-    // AutoCAD's POINT keeps prompting; points are almost always placed in groups.
+TEST_CASE("#23, #40: POINT places one point; MULTIPLE POINT stays open for repeated picks until Esc") {
+    // AutoCAD's POINT places one point; the ribbon's Multiple Points is MULTIPLE POINT.
     ProcHarness h;
+    h.proc.submit_line("PO");
+    h.proc.submit_line("1,1");
+    REQUIRE(h.cmds.size() == 1);
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.cmds.clear();
+    h.proc.submit_line("MULTIPLE");
     h.proc.submit_line("PO");
     h.proc.submit_line("1,1");
     h.proc.submit_line("2,2");

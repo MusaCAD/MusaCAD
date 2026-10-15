@@ -357,6 +357,16 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/explode.svg", "Break compound objects into their components.");
     reg({"POL", "POLYGON"}, [] { return std::make_unique<PolygonCommand>(); },
         "assets/ribbon/polygon.svg", "Draw a regular polygon by centre or by one edge.");
+    reg({"MULTIPLE"}, [] { return std::make_unique<MultipleCommand>(); }, "",
+        "Repeat a command until Esc (MULTIPLE POINT places point after point).");
+    reg({"PDMODE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Mode); }, "",
+        "How points are drawn: 0 a dot, 1 nothing, 2 a plus, 3 a cross, 4 a tick; +32 in a circle, +64 in a square.");
+    reg({"PDSIZE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Size); }, "",
+        "The size of point markers: in drawing units, or 0 or less for a size on screen.");
+    reg({"PTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
+        "The point display mode and size (PDMODE and PDSIZE).");
+    reg({"LIMITS"}, [] { return std::make_unique<LimitsCommand>(); }, "",
+        "The drawing's limits, and whether points outside them are refused.");
     reg({"PO", "POINT"}, [] { return std::make_unique<PointCommand>(); },
         "assets/ribbon/point.svg", "Place point objects; Esc ends.");
     reg({"DIV", "DIVIDE"}, [] { return std::make_unique<DivideCommand>(false); },

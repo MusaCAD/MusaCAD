@@ -621,6 +621,11 @@ void GeometryStore::clear() noexcept {
     units_ = DrawingUnits{};
     wipeout_frames_ = true;
     fillmode_ = true;
+    pdmode_ = 0;
+    pdsize_ = 0.0;
+    limits_min_ = {0.0, 0.0};
+    limits_max_ = {420.0, 297.0};
+    limits_on_ = false;
     attdisp_ = 0;
     image_frame_ = 1;
     layouts_ = {Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};

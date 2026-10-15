@@ -6,9 +6,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/text/parse_double.hpp"
 
 // Drawing units (AutoCAD UNITS): how lengths and angles are DISPLAYED -- inquiry
 // reports, the coordinate readout, dynamic input. Stored with the drawing. Dimension
@@ -51,6 +54,93 @@ struct DrawingUnits {
 };
 
 namespace units {
+/// A length as a user types it, in drawing units: a decimal ("12.5", "-3", "1e3"), a
+/// fraction ("3/8", "12 3/8", "12-3/8"), or feet and inches ("1'-6\"", "1'6", "1'",
+/// "6\"", "1'-6 1/2\"", "-2'3"), a foot being twelve drawing units as the Engineering
+/// and Architectural formats print them. Nothing for anything else.
+inline std::optional<double> parse_length_text(std::string_view text) {
+    std::size_t b = 0;
+    std::size_t e = text.size();
+    while (b < e && (text[b] == ' ' || text[b] == '\t')) {
+        ++b;
+    }
+    while (e > b && (text[e - 1] == ' ' || text[e - 1] == '\t')) {
+        --e;
+    }
+    std::string_view t = text.substr(b, e - b);
+    if (t.empty()) {
+        return std::nullopt;
+    }
+    bool neg = false;
+    if (t.front() == '-' || t.front() == '+') {
+        neg = t.front() == '-';
+        t.remove_prefix(1);
+        if (t.empty()) {
+            return std::nullopt;
+        }
+    }
+    // A plain decimal, the whole string (the C locale's '.', whatever the application's).
+    const auto decimal = [](std::string_view s, double& out) {
+        if (s.empty() || s.front() == '+' || s.front() == '-') {
+            return false;
+        }
+        return parse_double_all(s, out) && std::isfinite(out);
+    };
+    double v = 0.0;
+    if (decimal(t, v)) {
+        return neg ? -v : v;
+    }
+    // Feet, then inches: the foot mark splits them; a dash after it is a separator.
+    double feet = 0.0;
+    std::string_view in = t;
+    if (const auto ft = t.find('\''); ft != std::string_view::npos) {
+        if (ft == 0 || !decimal(t.substr(0, ft), feet)) {
+            return std::nullopt;
+        }
+        in = t.substr(ft + 1);
+        while (!in.empty() && (in.front() == '-' || in.front() == ' ')) {
+            in.remove_prefix(1);
+        }
+    }
+    if (!in.empty() && in.back() == '"') {
+        in.remove_suffix(1);
+    }
+    double inches = 0.0;
+    if (!in.empty()) {
+        // "6", "6.5", "3/8", "6 3/8", "6-3/8".
+        const auto fraction = [&](std::string_view f, double& out) {
+            const auto sl = f.find('/');
+            double n = 0.0;
+            double d = 0.0;
+            if (sl == std::string_view::npos || !decimal(f.substr(0, sl), n) || !decimal(f.substr(sl + 1), d) ||
+                d <= 0.0) {
+                return false;
+            }
+            out = n / d;
+            return true;
+        };
+        std::size_t sep = in.find(' ');
+        if (sep == std::string_view::npos) {
+            sep = in.find('-');
+        }
+        double whole = 0.0;
+        double frac = 0.0;
+        if (sep != std::string_view::npos && decimal(in.substr(0, sep), whole) && fraction(in.substr(sep + 1), frac)) {
+            inches = whole + frac;
+        } else if (decimal(in, whole)) {
+            inches = whole;
+        } else if (fraction(in, frac)) {
+            inches = frac;
+        } else {
+            return std::nullopt;
+        }
+    } else if (t.find('\'') == std::string_view::npos) {
+        return std::nullopt; // a lone inch mark
+    }
+    const double total = feet * 12.0 + inches;
+    return neg ? -total : total;
+}
+
 /// The INSUNITS names, in AutoCAD's order (index = the value).
 inline const char* insunits_name(std::uint8_t v) {
     static constexpr const char* kNames[] = {

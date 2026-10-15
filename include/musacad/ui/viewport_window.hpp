@@ -65,6 +65,9 @@ public:
     /// The drawing's saved views, from the last consumed snapshot (GUI thread).
     std::vector<core::NamedView> named_views();
     core::DrawingUnits units();
+    /// PDMODE / PDSIZE and LIMITS from the last snapshot, for the commands that show them.
+    std::pair<std::uint8_t, double> point_display();
+    std::tuple<core::Vec2, core::Vec2, bool> limits();
     std::vector<core::TextStyle> text_styles();
     std::uint16_t current_text_style();
     std::vector<core::DimStyle> dim_styles();
@@ -842,6 +845,11 @@ private:
     double pending_view_scale_ = 1.0;
     std::vector<core::NamedView> named_views_; ///< under layers_mutex_
     core::DrawingUnits units_{};                ///< under layers_mutex_
+    std::uint8_t pdmode_ = 0;                   ///< under layers_mutex_
+    double pdsize_ = 0.0;
+    core::Vec2 limits_min_{0.0, 0.0};
+    core::Vec2 limits_max_{420.0, 297.0};
+    bool limits_on_ = false;
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
     std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_

@@ -180,6 +180,16 @@ core::DrawingUnits ViewportWindow::units() {
     return units_;
 }
 
+std::pair<std::uint8_t, double> ViewportWindow::point_display() {
+    std::scoped_lock lock(layers_mutex_);
+    return {pdmode_, pdsize_};
+}
+
+std::tuple<core::Vec2, core::Vec2, bool> ViewportWindow::limits() {
+    std::scoped_lock lock(layers_mutex_);
+    return {limits_min_, limits_max_, limits_on_};
+}
+
 std::vector<core::TextStyle> ViewportWindow::text_styles() {
     std::scoped_lock lock(layers_mutex_);
     return text_styles_;
@@ -1392,6 +1402,11 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             current_props_ = snap.current_props;
             named_views_ = snap.named_views;
             units_ = snap.units;
+            pdmode_ = snap.pdmode;
+            pdsize_ = snap.pdsize;
+            limits_min_ = snap.limits_min;
+            limits_max_ = snap.limits_max;
+            limits_on_ = snap.limits_on;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
             dim_styles_ = snap.dimstyles;

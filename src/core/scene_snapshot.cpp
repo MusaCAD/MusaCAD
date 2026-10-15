@@ -219,6 +219,11 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     out.page_setups = store.page_setups();
     out.wipeout_frames = store.wipeout_frames();
     out.fillmode = store.fillmode();
+    out.pdmode = store.pdmode();
+    out.pdsize = store.pdsize();
+    out.limits_min = store.limits_min();
+    out.limits_max = store.limits_max();
+    out.limits_on = store.limits_on();
     out.active_space = store.active_space();
     out.layouts.clear();
     for (const Layout& l : store.layouts()) {
@@ -313,11 +318,60 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         }
     };
 
+    // Points as PDMODE draws them: 0 a dot (the renderer's point), 1 nothing, 2 a plus, 3 a
+    // cross, 4 a tick up from the point; +32 inside a circle, +64 inside a square. PDSIZE
+    // above zero is the marker's size in drawing units; zero or less, a size on screen
+    // whatever the zoom (about forty pixels: `tolerance` is a chord error of 0.3 pixels).
+    const std::uint8_t pdmode = store.pdmode();
+    const double point_half = store.pdsize() > 0.0 ? store.pdsize() * 0.5 : (tolerance / 0.3) * 20.0;
+    std::vector<Vec2> marker;
     for_each_live(store.points(), EntityKind::Point, [&](EntityHandle h) {
         const PointData* d = store.point(h);
-        if (visible(store, d->props)) {
-            point_groups[pack_rgb(entity_resolved(store, d->props).color)].push_back(d->p);
+        if (!visible(store, d->props)) {
+            return;
         }
+        const ResolvedProps r = entity_resolved(store, d->props);
+        const std::uint8_t shape = pdmode & 7;
+        if (shape == 1) {
+            return;
+        }
+        if (shape == 0 && (pdmode & 96) == 0) {
+            point_groups[pack_rgb(r.color)].push_back(d->p);
+            return;
+        }
+        marker.clear();
+        const Vec2 c = d->p;
+        const double hs = point_half;
+        const auto seg = [&](Vec2 a, Vec2 b) {
+            marker.push_back(a);
+            marker.push_back(b);
+        };
+        if (shape == 0) {
+            seg(c - Vec2{hs * 0.05, 0.0}, c + Vec2{hs * 0.05, 0.0}); // the dot, inside its frame
+        } else if (shape == 2) {
+            seg(c - Vec2{hs, 0.0}, c + Vec2{hs, 0.0});
+            seg(c - Vec2{0.0, hs}, c + Vec2{0.0, hs});
+        } else if (shape == 3) {
+            seg(c + Vec2{-hs, -hs}, c + Vec2{hs, hs});
+            seg(c + Vec2{-hs, hs}, c + Vec2{hs, -hs});
+        } else if (shape == 4) {
+            seg(c, c + Vec2{0.0, hs});
+        }
+        if ((pdmode & 32) != 0) {
+            constexpr int kSteps = 24;
+            for (int i = 0; i < kSteps; ++i) {
+                const double a0 = kTwoPi * i / kSteps;
+                const double a1 = kTwoPi * (i + 1) / kSteps;
+                seg(c + Vec2{std::cos(a0), std::sin(a0)} * hs, c + Vec2{std::cos(a1), std::sin(a1)} * hs);
+            }
+        }
+        if ((pdmode & 64) != 0) {
+            seg(c + Vec2{-hs, -hs}, c + Vec2{hs, -hs});
+            seg(c + Vec2{hs, -hs}, c + Vec2{hs, hs});
+            seg(c + Vec2{hs, hs}, c + Vec2{-hs, hs});
+            seg(c + Vec2{-hs, hs}, c + Vec2{-hs, -hs});
+        }
+        add_lines(r.color, r.lineweight, marker);
     });
 
     // Dash buffer reused across entities. dash_polyline appends "on" sub-segments

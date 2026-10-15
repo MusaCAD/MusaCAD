@@ -398,6 +398,37 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code(s, 9, "$DIMSTYLE"); // the current dimension style
     code(s, 2, doc.current_dimstyle < doc.dimstyles.size() ? doc.dimstyles[doc.current_dimstyle].name
                                                             : std::string("Standard"));
+    // The units (UNITS), so another program reads the drawing at the right scale and shows
+    // lengths and angles the way this one does.
+    const auto code_i = [&](const char* var, long v) {
+        code(s, 9, var);
+        code(s, 70, std::to_string(v));
+    };
+    code_i("$INSUNITS", doc.display_units.insunits);
+    code_i("$LUNITS", static_cast<long>(doc.display_units.linear));
+    code_i("$LUPREC", doc.display_units.linear_precision);
+    code_i("$AUNITS", static_cast<long>(doc.display_units.angular));
+    code_i("$AUPREC", doc.display_units.angular_precision);
+    code_i("$ANGDIR", doc.display_units.clockwise ? 1 : 0);
+    code(s, 9, "$ANGBASE");
+    code_d(s, 50, to_degrees(doc.display_units.base_angle));
+    {
+        // Imperial drawing units take the inch-based linetypes and hatch patterns.
+        const std::uint8_t u = doc.display_units.insunits;
+        const bool imperial = u == 1 || u == 2 || u == 3 || u == 8 || u == 9 || u == 10;
+        code_i("$MEASUREMENT", imperial ? 0 : 1);
+    }
+    code_i("$PDMODE", doc.pdmode);
+    code(s, 9, "$PDSIZE");
+    code_d(s, 40, doc.pdsize);
+    code(s, 9, "$LIMMIN");
+    code_d(s, 10, doc.limits_min.x);
+    code_d(s, 20, doc.limits_min.y);
+    code(s, 9, "$LIMMAX");
+    code_d(s, 10, doc.limits_max.x);
+    code_d(s, 20, doc.limits_max.y);
+    code_i("$LIMCHECK", doc.limits_on ? 1 : 0);
+    code_i("$FILLMODE", doc.fillmode ? 1 : 0);
     code(s, 0, "ENDSEC");
 }
 
@@ -2461,6 +2492,48 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (section == "HEADER" && p.code == 9 && p.value == "$DIMSTYLE") {
             if (i + 1 < n && pairs[i + 1].code == 2) {
                 current_dimstyle_name = pairs[i + 1].value;
+                i += 2;
+                continue;
+            }
+        }
+        // The units and drawing settings this program keeps (one value each; the limits are
+        // a point: codes 10 and 20).
+        if (section == "HEADER" && p.code == 9 && i + 1 < n && p.value.size() > 1 && p.value[0] == '$') {
+            const std::string& var = p.value;
+            const Pair& q = pairs[i + 1];
+            DrawingUnits& du = doc.display_units;
+            const auto whole = [&](long lo, long hi) { return std::clamp(to_l(q.value), lo, hi); };
+            bool took = true;
+            if (var == "$INSUNITS" && q.code == 70) {
+                du.insunits = static_cast<std::uint8_t>(whole(0, 20));
+            } else if (var == "$LUNITS" && q.code == 70) {
+                du.linear = static_cast<LinearFormat>(whole(1, 5));
+            } else if (var == "$LUPREC" && q.code == 70) {
+                du.linear_precision = static_cast<std::uint8_t>(whole(0, 8));
+            } else if (var == "$AUNITS" && q.code == 70) {
+                du.angular = static_cast<AngleFormat>(whole(0, 4));
+            } else if (var == "$AUPREC" && q.code == 70) {
+                du.angular_precision = static_cast<std::uint8_t>(whole(0, 8));
+            } else if (var == "$ANGDIR" && q.code == 70) {
+                du.clockwise = to_l(q.value) != 0;
+            } else if (var == "$ANGBASE" && q.code == 50) {
+                du.base_angle = to_radians(to_d(q.value));
+            } else if (var == "$PDMODE" && q.code == 70) {
+                doc.pdmode = static_cast<std::uint8_t>(whole(0, 100));
+            } else if (var == "$PDSIZE" && q.code == 40) {
+                doc.pdsize = to_d(q.value);
+            } else if (var == "$LIMCHECK" && q.code == 70) {
+                doc.limits_on = to_l(q.value) != 0;
+            } else if (var == "$FILLMODE" && q.code == 70) {
+                doc.fillmode = to_l(q.value) != 0;
+            } else if ((var == "$LIMMIN" || var == "$LIMMAX") && q.code == 10 && i + 2 < n && pairs[i + 2].code == 20) {
+                (var == "$LIMMIN" ? doc.limits_min : doc.limits_max) = Vec2{to_d(q.value), to_d(pairs[i + 2].value)};
+                i += 3;
+                continue;
+            } else {
+                took = false;
+            }
+            if (took) {
                 i += 2;
                 continue;
             }

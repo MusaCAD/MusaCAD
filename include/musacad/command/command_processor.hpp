@@ -175,7 +175,10 @@ public:
     /// "Polar: 12.3456 < 45°", "Endpoint: < 90°, Polar: < 0°"; empty when free.
     [[nodiscard]] std::string tracking_tooltip() const;
     void set_grid_snap(bool on) { grid_snap_ = on; }
-    void set_grid_spacing(double s) { grid_spacing_ = s; }
+    void set_grid_spacing(double s) {
+        grid_spacing_ = s;
+        grid_spacing_y_ = s;
+    }
     /// As ORTHO and SNAP switch them: the status bar follows.
     [[nodiscard]] bool ortho_mode() const override { return ortho_; }
     void set_ortho_mode(bool on) override {
@@ -195,7 +198,27 @@ public:
         }
     }
     [[nodiscard]] double snap_spacing() const override { return grid_spacing_; }
-    void set_snap_spacing(double spacing) override { grid_spacing_ = spacing; }
+    void set_snap_spacing(double spacing) override {
+        grid_spacing_ = spacing;
+        grid_spacing_y_ = spacing;
+    }
+    [[nodiscard]] double snap_spacing_y() const override { return grid_spacing_y_; }
+    void set_snap_spacing_xy(double x, double y) override {
+        grid_spacing_ = x;
+        grid_spacing_y_ = y;
+    }
+    /// The drawing's point display and limits, as the UI reads them from the snapshot.
+    void set_point_display(std::uint8_t mode, double size) {
+        pdmode_ = mode;
+        pdsize_ = size;
+    }
+    void set_limits(core::Vec2 lo, core::Vec2 hi, bool on) { limits_ = Limits{lo, hi, on}; }
+    [[nodiscard]] std::uint8_t pdmode() const override { return pdmode_; }
+    [[nodiscard]] double pdsize() const override { return pdsize_; }
+    [[nodiscard]] Limits limits() const override { return limits_; }
+    [[nodiscard]] std::unique_ptr<ICommand> make_command(const std::string& alias) override {
+        return registry_.create(alias);
+    }
     void set_pick_radius(double world_radius) { pick_radius_ = world_radius; }
 
     /// Starts a fresh undo group and returns its id, for one-shot commands
@@ -440,6 +463,10 @@ private:
     bool polar_ = false;
     bool grid_snap_ = false;
     double grid_spacing_ = 1.0;
+    double grid_spacing_y_ = 1.0;
+    std::uint8_t pdmode_ = 0;
+    double pdsize_ = 0.0;
+    Limits limits_{};
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
     std::optional<core::EntityKind> hovered_kind_;

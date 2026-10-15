@@ -375,6 +375,18 @@ struct SetCeltscaleCommand {
 struct SetFillModeCommand {
     bool on = true;
 };
+/// PDMODE / PDSIZE (PTYPE): how points are drawn and how big (GeometryStore::set_point_display).
+struct SetPointDisplayCommand {
+    std::uint8_t mode = 0;
+    double size = 0.0;
+};
+/// LIMITS: the drawing's limits, and whether points outside them are refused.
+struct SetLimitsCommand {
+    Vec2 min{};
+    Vec2 max{};
+    bool on = false;
+    bool corners = true; ///< false: ON / OFF only, the corners kept
+};
 /// GROUP ?: list the groups with their descriptions and member counts.
 struct ListGroupsCommand {};
 /// PSLTSCALE / MSLTSCALE: whether linetypes in paper space (viewports) and in model
@@ -1866,6 +1878,7 @@ using Command =
                  DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
+                 SetPointDisplayCommand, SetLimitsCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

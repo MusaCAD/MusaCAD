@@ -330,7 +330,7 @@ void MainWindow::build_ribbon() {
                                       true),
              "SPL");
         bind(draw->add_small_dropdown(c2, icon_of("PO"), QStringLiteral("Point"),
-                                      menu_of({action("PO", QStringLiteral("Multiple Points")),
+                                      menu_of({macro(QStringLiteral("Multiple Points"), "MULTIPLE", {"POINT"}, "PO"),
                                                action("DIV", QStringLiteral("Divide")),
                                                action("ME", QStringLiteral("Measure"))}),
                                       true),
