@@ -1944,26 +1944,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                     std::scoped_lock lock(grips_mutex_);
                     ginfo = grips_cache_[static_cast<std::size_t>(gi)];
                 }
-                if (ginfo.handle.kind == core::EntityKind::Polyline) {
-                    show_polyline_grip_menu(ginfo, event->globalPosition().toPoint());
-                } else if (ginfo.handle.kind == core::EntityKind::Dimension) {
-                    show_dimension_grip_menu(ginfo, event->globalPosition().toPoint());
-                } else if ((ginfo.handle.kind == core::EntityKind::Line && ginfo.index <= 1) ||
-                           (ginfo.handle.kind == core::EntityKind::Arc && ginfo.index >= 1 && ginfo.index <= 3)) {
-                    // A line's or an arc's end: Stretch, Lengthen; an arc's middle: Stretch, Radius.
-                    QMenu menu;
-                    QAction* stretch = menu.addAction(QStringLiteral("Stretch"));
-                    QAction* other = menu.addAction(ginfo.index == 3 ? QStringLiteral("Radius") : QStringLiteral("Lengthen"));
-                    QAction* chosen = menu.exec(event->globalPosition().toPoint());
-                    if (chosen == stretch || chosen == other) {
-                        core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, ginfo.handle, ginfo.index, {}, 0};
-                        begin.variant = chosen == stretch ? 0 : ginfo.index == 3 ? 2 : 1;
-                        engine_.submit(begin);
-                        processor_->set_last_point(ginfo.pos);
-                        processor_->start_grip_mode(begin, ginfo.pos);
-                        rebuild_overlay();
-                    }
-                }
+                show_grip_menu(ginfo, event->globalPosition().toPoint());
             } else if (box_pending_ || lasso_active_) {
                 box_pending_ = false; // right-click abandons a box in progress
                 lasso_active_ = false;
@@ -2256,6 +2237,39 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
         connect(rest_timer_, &QTimer::timeout, this, [this] { note_snap_for_tracking(); });
     }
     rest_timer_->start(); // restarted by every move: it fires once the cursor rests
+
+    // Multi-functional grips: resting on a grip whose object has a menu opens it there.
+    if (processor_ != nullptr && !processor_->has_active_command() && !dragging_grip_ && !selecting_ &&
+        event->buttons() == Qt::NoButton) {
+        const int gi = grip_at(world, pick_aperture(dpr, scale));
+        core::GripInfo g{};
+        if (gi >= 0) {
+            std::scoped_lock lock(grips_mutex_);
+            g = grips_cache_[static_cast<std::size_t>(gi)];
+        }
+        if (gi < 0 || !has_grip_menu(g)) {
+            grip_hovering_ = false;
+            if (grip_hover_timer_ != nullptr) {
+                grip_hover_timer_->stop();
+            }
+        } else if (!grip_hovering_ || !(g.handle == grip_hover_.handle && g.index == grip_hover_.index)) {
+            grip_hovering_ = false;
+            grip_hover_ = g;
+            if (grip_hover_timer_ == nullptr) {
+                grip_hover_timer_ = new QTimer(this);
+                grip_hover_timer_->setSingleShot(true);
+                grip_hover_timer_->setInterval(600);
+                connect(grip_hover_timer_, &QTimer::timeout, this, [this] {
+                    if (processor_ == nullptr || processor_->has_active_command() || dragging_grip_ || selecting_ ||
+                        grip_hovering_ || !cursor_inside_.load(std::memory_order_relaxed)) {
+                        return;
+                    }
+                    show_grip_menu(grip_hover_, QCursor::pos());
+                });
+            }
+            grip_hover_timer_->start();
+        }
+    }
 
     if (panning_) {
         const double dx = event->position().x() - last_x_;
@@ -2572,6 +2586,50 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
     }
     const std::uint64_t group = processor_->begin_group();
     engine_.submit(core::PolylineVertexCommand{grip.handle, grip.index, op, group});
+    rebuild_overlay();
+}
+
+bool ViewportWindow::has_grip_menu(const core::GripInfo& grip) {
+    switch (grip.handle.kind) {
+    case core::EntityKind::Polyline:
+    case core::EntityKind::Dimension: return true;
+    case core::EntityKind::Line: return grip.index <= 1;
+    case core::EntityKind::Arc: return grip.index >= 1 && grip.index <= 3;
+    default: return false;
+    }
+}
+
+bool ViewportWindow::show_grip_menu(const core::GripInfo& grip, QPoint global) {
+    grip_hovering_ = true; // a menu shown: resting there again does not reopen it
+    switch (grip.handle.kind) {
+    case core::EntityKind::Polyline:
+        show_polyline_grip_menu(grip, global);
+        return true;
+    case core::EntityKind::Dimension:
+        show_dimension_grip_menu(grip, global);
+        return true;
+    default:
+        if (has_grip_menu(grip)) {
+            show_curve_grip_menu(grip, global);
+            return true;
+        }
+        return false;
+    }
+}
+
+void ViewportWindow::show_curve_grip_menu(const core::GripInfo& grip, QPoint global) {
+    QMenu menu;
+    QAction* stretch = menu.addAction(QStringLiteral("Stretch"));
+    QAction* other = menu.addAction(grip.index == 3 ? QStringLiteral("Radius") : QStringLiteral("Lengthen"));
+    QAction* chosen = menu.exec(global);
+    if (processor_ == nullptr || (chosen != stretch && chosen != other)) {
+        return;
+    }
+    core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0};
+    begin.variant = static_cast<std::uint8_t>(chosen == stretch ? 0 : grip.index == 3 ? 2 : 1);
+    engine_.submit(begin);
+    processor_->set_last_point(grip.pos);
+    processor_->start_grip_mode(begin, grip.pos);
     rebuild_overlay();
 }
 

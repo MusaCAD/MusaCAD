@@ -350,6 +350,11 @@ public:
     /// with Leader, Above Dim Line, Center Vertically, Reset Text Position; on its other grips,
     /// Stretch, Continue Dimension, Baseline Dimension, Flip Arrow.
     void show_dimension_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// A line's or an arc's end: Stretch, Lengthen; an arc's middle: Stretch, Radius.
+    void show_curve_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// The grip's menu, when its object has one (a right-click on it, or resting on it).
+    bool show_grip_menu(const core::GripInfo& grip, QPoint global);
+    [[nodiscard]] static bool has_grip_menu(const core::GripInfo& grip);
     /// The idle right-click menu (Repeat, Recent Input, Clipboard, Isolate, Select
     /// Similar, Quick Select, Deselect All, Undo / Redo, Properties).
     void show_context_menu(QPoint global, core::Vec2 world);
@@ -364,6 +369,9 @@ public:
     std::function<void(bool)> otrack_mode_callback_;
     std::atomic<int> snap_type_{0}; ///< the published snap's type, for the tracking label
     QTimer* rest_timer_ = nullptr;  ///< fires once the cursor has rested (OTRACK acquires)
+    QTimer* grip_hover_timer_ = nullptr; ///< resting on a grip opens its menu (multi-functional grips)
+    core::GripInfo grip_hover_{};        ///< the grip rested on
+    bool grip_hovering_ = false;
     /// The snap under the cursor goes to the processor: a point rested on is acquired.
     void note_snap_for_tracking();
     /// The alignment paths in hand, dashed, the acquired points, and the tooltip.

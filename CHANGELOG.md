@@ -161,7 +161,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   moves them all together (both ends of a line: the whole line). The grip menus of a line's
   and an arc's ends (Stretch, **Lengthen**) and an arc's middle (Stretch, **Radius**), and
   Stretch Vertex / Stretch on a polyline's. **Ctrl** at a hot grip's pick, or as a grip drag
-  ends, copies (`** STRETCH (multiple) **`).
+  ends, copies (`** STRETCH (multiple) **`). The grip menus open when the cursor rests on a
+  grip, or at once on a right-click.
 - **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
