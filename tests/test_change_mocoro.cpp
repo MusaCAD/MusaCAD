@@ -241,3 +241,44 @@ TEST_CASE("-MTEXT takes the text line by line until an empty line") {
     REQUIRE(h.last<AddMTextCommand>()->content == "First line\nSecond line");
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+namespace {
+struct ViewOnly : musacad::command::ViewControl {
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    bool current_view(Vec2& c, double& s) override {
+        c = {12, 34};
+        s = 2.5;
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("NEWVIEW saves the view on screen; VIEW without its window asks at the command line") {
+    ViewOnly view;
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, &view, out};
+    proc.submit_line("NEWVIEW");
+    REQUIRE(out.prompt == "Enter view name: ");
+    proc.submit_line("Front elevation");
+    const auto* v = std::get_if<SaveNamedViewCommand>(&cmds.back());
+    REQUIRE(v != nullptr);
+    REQUIRE(v->view.name == "Front elevation");
+    REQUIRE(v->view.center == Vec2{12, 34});
+    REQUIRE(v->view.scale == 2.5);
+    proc.submit_line("VIEW");
+    REQUIRE(out.prompt == "Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
+    proc.submit_line("");
+    proc.submit_line("LAYERSTATE");
+    REQUIRE(out.prompt == "Enter an option [?/Save/Restore/Delete/Name]: ");
+    proc.submit_line("");
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(LayerStateCommand{LayerStateCommand::Op::Save, "Plan", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.layer_state_names.size() == 1 && s.layer_state_names[0] == "Plan";
+    }));
+    engine.stop();
+}

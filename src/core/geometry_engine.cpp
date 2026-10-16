@@ -14926,6 +14926,10 @@ void GeometryEngine::rebuild_and_publish() {
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
+    buf.layer_state_names.clear();
+    for (const LayerState& st : store_.layer_states()) {
+        buf.layer_state_names.push_back(st.name);
+    }
     buf.vports = store_.vports();           // VPORTS: the UI follows vports_version
     buf.vports_active = store_.vports_active();
     buf.vports_version = store_.vports_version();

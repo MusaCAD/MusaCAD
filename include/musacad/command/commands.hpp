@@ -1551,6 +1551,20 @@ private:
     bool done_ = false;
 };
 
+/// NEWVIEW: `Enter view name:` -- the current view saved under that name.
+class NewViewCommand final : public ICommand {
+public:
+    std::string name() const override { return "NEWVIEW"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter view name: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+    bool free_text() const override { return true; }
+
+private:
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:
@@ -1608,7 +1622,9 @@ private:
 /// until Enter -- the named layer states kept with the drawing.
 class LayerStateCommand final : public ICommand {
 public:
-    std::string name() const override { return "-LAYERSTATE"; }
+    /// `dialog`: LAYERSTATE opens the Layer States Manager where there is one.
+    explicit LayerStateCommand(bool dialog = false) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "LAYERSTATE" : "-LAYERSTATE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -1619,6 +1635,7 @@ public:
 private:
     enum class Step : std::uint8_t { Option, Name, NewName };
     void options(CommandContext& ctx);
+    bool dialog_ = false;
     Step step_ = Step::Option;
     core::LayerStateCommand::Op op_ = core::LayerStateCommand::Op::List;
     std::string from_;
@@ -2763,7 +2780,9 @@ private:
 /// Orthographic and Ucs are reported as not applicable (2D).
 class ViewCommand final : public ICommand {
 public:
-    std::string name() const override { return "VIEW"; }
+    /// `dialog`: VIEW opens the View Manager where there is one; -VIEW always asks here.
+    explicit ViewCommand(bool dialog = false) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "VIEW" : "-VIEW"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -2771,6 +2790,7 @@ public:
 
 private:
     enum class State { Option, SaveName, RestoreName, DeleteName, WinFirst, WinSecond, WinName };
+    bool dialog_ = false;
     State state_ = State::Option;
     core::Vec2 w0_{};
     core::Vec2 w1_{};

@@ -5213,6 +5213,10 @@ void PlinewidCommand::cancel(CommandContext& ctx) {
 // VIEW
 // ---------------------------------------------------------------------------
 void ViewCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->view_manager()) {
+        done_ = true; // the View Manager does the rest
+        return;
+    }
     ctx.clear_last_point();
     state_ = State::Option;
     ctx.set_prompt("Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
@@ -16387,6 +16391,23 @@ void HatchEditUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void NewViewCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    core::Vec2 center;
+    double scale = 0.0;
+    if (ctx.view() == nullptr || !ctx.view()->current_view(center, scale)) {
+        ctx.echo("NEWVIEW needs the drawing window.");
+        done_ = true;
+        return;
+    }
+    ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale}});
+    done_ = true;
+}
+
 void HelpCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || !ctx.view()->open_help()) {
         ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");
@@ -16529,7 +16550,13 @@ void LayerStateCommand::options(CommandContext& ctx) {
     ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name]: ");
 }
 
-void LayerStateCommand::start(CommandContext& ctx) { options(ctx); }
+void LayerStateCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->layer_states_manager()) {
+        done_ = true; // the Layer States Manager does the rest
+        return;
+    }
+    options(ctx);
+}
 
 void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
     using Op = core::LayerStateCommand::Op;

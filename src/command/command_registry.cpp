@@ -185,7 +185,9 @@ CommandRegistry CommandRegistry::make_default() {
         "Put the layer settings back as they were before the last change.");
     reg({"LAYERPMODE"}, [] { return std::make_unique<LayerPreviousCommand>(true); }, "",
         "Whether LAYERP keeps track of layer changes.");
-    reg({"LAYERSTATE", "-LAYERSTATE", "LAS"}, [] { return std::make_unique<LayerStateCommand>(); }, "",
+    reg({"-LAYERSTATE"}, [] { return std::make_unique<LayerStateCommand>(false); }, "",
+        "Named layer states at the command line.");
+    reg({"LAYERSTATE", "LAS"}, [] { return std::make_unique<LayerStateCommand>(true); }, "",
         "Save, restore, rename and delete named layer states.");
     reg({"LAYTHW"}, [] { return std::make_unique<LayToolCommand>(LK::AllThaw); }, "", "Thaw every layer.");
     reg({"TRIMEXTENDMODE"},
@@ -378,7 +380,10 @@ CommandRegistry CommandRegistry::make_default() {
         "The width new polylines start with.");
     reg({"DO", "DONUT"}, [] { return std::make_unique<DonutCommand>(); },
         "assets/ribbon/donut.svg", "Draw a filled ring (or disc) from inside/outside diameters.");
-    reg({"V", "VIEW", "-VIEW"}, [] { return std::make_unique<ViewCommand>(); },
+    reg({"-V", "-VIEW"}, [] { return std::make_unique<ViewCommand>(false); }, "",
+        "Named views at the command line: ?, Delete, Restore, Save, Window.");
+    reg({"NEWVIEW"}, [] { return std::make_unique<NewViewCommand>(); }, "", "Save the current view under a name.");
+    reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },
         "assets/ribbon/view.svg", "Save, restore or delete named views.");
     reg({"G", "GROUP"}, [] { return std::make_unique<GroupCommand>(); },
         "assets/ribbon/group.svg", "Make the selected objects a named group.");

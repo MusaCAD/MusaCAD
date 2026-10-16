@@ -177,6 +177,11 @@ std::vector<core::NamedView> ViewportWindow::named_views() {
     return named_views_;
 }
 
+std::vector<std::string> ViewportWindow::layer_state_names() {
+    std::scoped_lock lock(layers_mutex_);
+    return layer_state_names_;
+}
+
 core::DrawingUnits ViewportWindow::units() {
     std::scoped_lock lock(layers_mutex_);
     return units_;
@@ -298,6 +303,22 @@ bool ViewportWindow::quick_select_dialog(bool filter) {
         return false;
     }
     quick_select_callback_(filter);
+    return true;
+}
+
+bool ViewportWindow::view_manager() {
+    if (!view_manager_callback_) {
+        return false;
+    }
+    view_manager_callback_();
+    return true;
+}
+
+bool ViewportWindow::layer_states_manager() {
+    if (!layer_states_callback_) {
+        return false;
+    }
+    layer_states_callback_();
     return true;
 }
 
@@ -1451,6 +1472,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             layers_ = snap.layers;
             current_props_ = snap.current_props;
             named_views_ = snap.named_views;
+            layer_state_names_ = snap.layer_state_names;
             units_ = snap.units;
             pdmode_ = snap.pdmode;
             pdsize_ = snap.pdsize;
