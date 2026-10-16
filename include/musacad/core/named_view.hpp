@@ -18,6 +18,8 @@ struct NamedView {
     /// The layer snapshot saved with the view (a layer state, "*VIEW|" + the name), put
     /// back when the view is restored; empty: none.
     std::string layer_state{};
+    /// The View Manager's View category (a sheet set's grouping of views); empty: none.
+    std::string category{};
     friend bool operator==(const NamedView&, const NamedView&) = default;
 };
 

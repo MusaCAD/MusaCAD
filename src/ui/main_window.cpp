@@ -3064,7 +3064,11 @@ NamedListDialog make_named_list_dialog(QWidget* parent, const QString& title) {
     return d;
 }
 QString current_name(const NamedListDialog& d) {
-    return d.list->currentItem() != nullptr ? d.list->currentItem()->text() : QString();
+    if (d.list->currentItem() == nullptr) {
+        return {};
+    }
+    const QVariant name = d.list->currentItem()->data(Qt::UserRole); // set where the text says more
+    return name.isValid() ? name.toString() : d.list->currentItem()->text();
 }
 } // namespace
 
@@ -3073,11 +3077,20 @@ void MainWindow::open_view_manager() {
     const auto refill = [this, d] {
         const QString keep = current_name(d);
         d.list->clear();
-        for (const core::NamedView& v : viewport_->named_views()) {
-            d.list->addItem(QString::fromStdString(v.name));
+        // By View category, as the View Manager groups them; the views without one first.
+        std::vector<core::NamedView> views = viewport_->named_views();
+        std::stable_sort(views.begin(), views.end(),
+                         [](const core::NamedView& a, const core::NamedView& b) { return a.category < b.category; });
+        QListWidgetItem* again = nullptr;
+        for (const core::NamedView& v : views) {
+            const QString name = QString::fromStdString(v.name);
+            auto* item = new QListWidgetItem(
+                v.category.empty() ? name : QStringLiteral("%1    (%2)").arg(name, QString::fromStdString(v.category)),
+                d.list);
+            item->setData(Qt::UserRole, name);
+            again = name == keep ? item : again;
         }
-        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
-        d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());
+        d.list->setCurrentItem(again != nullptr ? again : d.list->item(0));
         d.status->setText(d.list->count() == 0 ? QStringLiteral("No saved views: New saves the view on screen.")
                                                : QString());
     };
@@ -3111,7 +3124,19 @@ void MainWindow::open_view_manager() {
         auto* name_edit = new QLineEdit(&nv);
         auto* snapshot = new QCheckBox(QStringLiteral("Save layer snapshot with view"), &nv);
         snapshot->setChecked(true);
+        auto* category = new QComboBox(&nv);
+        category->setEditable(true);
+        category->addItem(QStringLiteral("<None>"));
+        QStringList seen;
+        for (const core::NamedView& v : viewport_->named_views()) {
+            const QString c = QString::fromStdString(v.category);
+            if (!c.isEmpty() && !seen.contains(c)) {
+                seen << c;
+                category->addItem(c);
+            }
+        }
         form->addRow(QStringLiteral("View name:"), name_edit);
+        form->addRow(QStringLiteral("View category:"), category);
         form->addRow(snapshot);
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &nv);
         connect(buttons, &QDialogButtonBox::accepted, &nv, &QDialog::accept);
@@ -3125,6 +3150,10 @@ void MainWindow::open_view_manager() {
             core::NamedView v{name.toStdString(), center, scale};
             if (snapshot->isChecked()) {
                 v.layer_state = "*VIEW|" + v.name;
+            }
+            const QString cat = category->currentText().trimmed();
+            if (!cat.isEmpty() && cat != QStringLiteral("<None>")) {
+                v.category = cat.toStdString();
             }
             engine_->submit(core::SaveNamedViewCommand{v});
             later();

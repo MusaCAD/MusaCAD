@@ -2712,3 +2712,13 @@ TEST_CASE("HPASSOC asks 0 or 1; a hatch made with it 0 does not follow, and the 
     REQUIRE(again.hatches[0].unassoc);
     engine.stop();
 }
+
+TEST_CASE("A view keeps its View category in the file, with or without a layer snapshot") {
+    io::Document doc;
+    doc.views.push_back(NamedView{"Plan", {1, 2}, 3.0, "", "Sheets A"});
+    doc.views.push_back(NamedView{"Side", {4, 5}, 6.0, "*VIEW|Side", "Details"});
+    doc.views.push_back(NamedView{"Top", {7, 8}, 9.0});
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.views == doc.views);
+}

@@ -152,6 +152,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
   line families DXF carries with each hatch) and draw; kept in the drawing and written back.
+- **View categories** (#72) -- New View's View category, kept with the view; the View Manager
+  lists the views by category.
 - **Layer snapshots with views** (#72) -- New View's Save layer snapshot with view (and NEWVIEW):
   restoring the view restores the layers as they were.
 - **-TABLE's Auto and table style colours** (#44) -- the columns and data rows fitted to a
