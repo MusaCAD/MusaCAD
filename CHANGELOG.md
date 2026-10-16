@@ -175,6 +175,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
   line families DXF carries with each hatch) and draw; kept in the drawing and written back.
+- **TEXTFIT on Aligned and Fit text** (#77) -- the text's two points move to the start and the
+  end picked.
 - **The Insert Table window's preview and Specify window** (#44) -- the table style's title,
   header and data rows, at its text heights and in its colours, redrawn as the style and the
   rows change; Insertion behavior Specify window fits the columns' width and the data rows to a

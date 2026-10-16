@@ -16592,7 +16592,31 @@ void GeometryEngine::apply_one(const Command& command) {
                 if (t == nullptr) {
                     report("Select a single-line text.");
                 } else if (t->justify == 3 || t->justify == 5) {
-                    report("Aligned and Fit text is fitted between its own two points.");
+                    // Aligned and Fit text runs between its own two points: those are what
+                    // move -- the first to the start, the second to the end along the text.
+                    Command cmd = capture_entity(h);
+                    auto* x = std::get_if<AddTextCommand>(&cmd);
+                    const Vec2 run = x != nullptr ? x->align - x->pos : Vec2{};
+                    const double len = length(run);
+                    const Vec2 dir = len > 1e-12 ? run / len : Vec2{std::cos(t->rotation), std::sin(t->rotation)};
+                    const Vec2 s = x == nullptr ? Vec2{} : (c.start ? *c.start : x->pos);
+                    const double w_new = dot(c.end - s, dir);
+                    if (x == nullptr || w_new <= 1e-9) {
+                        report("The end point must lie past the start of the text.");
+                    } else {
+                        x->pos = s;
+                        x->align = s + dir * w_new;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        selection_.clear();
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        report("Text fitted between its two points.");
+                    }
                 } else {
                     const text::TextFrame f = text::frame_of(store_, *t);
                     const Vec2 dir{std::cos(f.rotation), std::sin(f.rotation)};

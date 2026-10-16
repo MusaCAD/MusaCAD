@@ -3098,3 +3098,22 @@ TEST_CASE("HATCHEDIT's Disassociate, separate Hatches, hatch COlor and LAyer") {
     h.run({"HATCHEDIT", "5,5", "D"});
     REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Disassociate);
 }
+
+TEST_CASE("TEXTFIT fits Aligned and Fit text by moving its two points") {
+    GeometryEngine engine;
+    engine.start();
+    AddTextCommand t;
+    t.pos = {0, 0};
+    t.align = {10, 0};
+    t.justify = 5; // Fit
+    t.content = "FIT";
+    t.group = 1;
+    engine.submit(t);
+    engine.submit(TextFitCommand{{5, 1}, 2.0, {25, 0}, Vec2{5, 0}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Text fitted between its two points."; }));
+    const io::Document doc = dump(engine, "musacad_textfit_fit.musa");
+    REQUIRE(doc.texts.size() == 1);
+    REQUIRE(doc.texts[0].pos == Vec2{5, 0});
+    REQUIRE(doc.texts[0].align == Vec2{25, 0});
+    engine.stop();
+}
