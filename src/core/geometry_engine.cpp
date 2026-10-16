@@ -15,6 +15,7 @@
 #include "musacad/core/properties_registry.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <ctime>
@@ -11530,6 +11531,16 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         return;
     }
 
+    // Case 2a: an ellipse or a spline with a line, arc, circle, ellipse or spline.
+    const auto free_kind = [](EntityKind k) { return k == EntityKind::Ellipse || k == EntityKind::Spline; };
+    const auto fillets_with = [&](EntityKind k) {
+        return free_kind(k) || k == EntityKind::Line || k == EntityKind::Arc || k == EntityKind::Circle;
+    };
+    if (h1 != h2 && (free_kind(h1.kind) || free_kind(h2.kind)) && fillets_with(h1.kind) && fillets_with(h2.kind)) {
+        apply_fillet_free(h1, h2, pick1, pick2, radius, group, trim);
+        return;
+    }
+
     // Case 2: a line with an arc/circle, or two arcs/circles.
     const auto curvy = [](EntityKind k) { return k == EntityKind::Arc || k == EntityKind::Circle; };
     const auto lineish = [&](EntityKind k) { return k == EntityKind::Line || curvy(k); };
@@ -12186,6 +12197,351 @@ void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 
     push_create_item(group, create_indexed(arc), arc);
     redo_.clear();
     geom_dirty_ = true;
+    report("Filleted.");
+}
+
+namespace {
+/// A curve FILLET rounds by measure rather than by formula (an ellipse, a spline, or what it
+/// meets): its point at a parameter, the parameter nearest a point, and its samples.
+struct FreeCurve {
+    EntityKind kind = EntityKind::Line;
+    Vec2 a{}; // a line's ends
+    Vec2 b{};
+    Vec2 c{}; // a circle's or an arc's centre
+    double r = 0.0;
+    EllipseData e{};
+    std::vector<Vec2> cps; // a spline's control points and knots
+    std::vector<double> knots;
+    int degree = 3;
+
+    [[nodiscard]] spline::Curve spline_curve() const { return spline::Curve(cps, degree, knots); }
+    [[nodiscard]] Vec2 at(double t) const {
+        switch (kind) {
+        case EntityKind::Line:
+            return a + (b - a) * t;
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+            return {c.x + r * std::cos(t), c.y + r * std::sin(t)};
+        case EntityKind::Ellipse:
+            return ellipse::point_at(e, t);
+        default:
+            return spline_curve().at(t);
+        }
+    }
+    /// The parameter range a tangent point may be found in: a line runs on both ways, a
+    /// circle and an arc go all round (an arc grows to its point), an elliptical arc and a
+    /// spline keep to themselves.
+    void range(double reach, double& lo, double& hi) const {
+        switch (kind) {
+        case EntityKind::Line: {
+            const double l = std::max(length(b - a), 1e-12);
+            lo = -reach / l;
+            hi = 1.0 + reach / l;
+            return;
+        }
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+            lo = 0.0;
+            hi = kTwoPi;
+            return;
+        case EntityKind::Ellipse:
+            lo = e.start;
+            hi = e.start + ellipse::sweep_of(e);
+            return;
+        default: {
+            const spline::Curve sc = spline_curve();
+            lo = sc.lo();
+            hi = sc.hi();
+            return;
+        }
+        }
+    }
+    [[nodiscard]] double foot(Vec2 p, double lo, double hi) const {
+        if (kind == EntityKind::Line) {
+            const Vec2 d = b - a;
+            return std::clamp(dot(p - a, d) / std::max(length_squared(d), 1e-18), lo, hi);
+        }
+        if (kind == EntityKind::Circle || kind == EntityKind::Arc) {
+            const double t = std::atan2(p.y - c.y, p.x - c.x);
+            return t < 0.0 ? t + kTwoPi : t;
+        }
+        if (kind == EntityKind::Spline) {
+            return spline::param_near(spline_curve(), p);
+        }
+        const int n = 720;
+        double best = lo;
+        double bd = length_squared(at(lo) - p);
+        for (int i = 1; i <= n; ++i) {
+            const double t = lo + (hi - lo) * static_cast<double>(i) / n;
+            const double d = length_squared(at(t) - p);
+            if (d < bd) {
+                bd = d;
+                best = t;
+            }
+        }
+        double l = std::max(lo, best - (hi - lo) / n);
+        double h = std::min(hi, best + (hi - lo) / n);
+        for (int it = 0; it < 60; ++it) {
+            const double m1 = l + (h - l) * 0.381966;
+            const double m2 = l + (h - l) * 0.618034;
+            if (length_squared(at(m1) - p) < length_squared(at(m2) - p)) {
+                h = m2;
+            } else {
+                l = m1;
+            }
+        }
+        return 0.5 * (l + h);
+    }
+    [[nodiscard]] Vec2 tangent(double t, double lo, double hi) const {
+        const double dt = std::max((hi - lo) * 1e-6, 1e-12);
+        return normalized(at(std::min(t + dt, hi)) - at(std::max(t - dt, lo)));
+    }
+};
+
+FreeCurve free_curve_of(const GeometryStore& store, EntityHandle h) {
+    FreeCurve f;
+    f.kind = h.kind;
+    switch (h.kind) {
+    case EntityKind::Line:
+        f.a = store.line(h)->a;
+        f.b = store.line(h)->b;
+        break;
+    case EntityKind::Circle:
+        f.c = store.circle(h)->center;
+        f.r = store.circle(h)->radius;
+        break;
+    case EntityKind::Arc:
+        f.c = store.arc(h)->center;
+        f.r = store.arc(h)->radius;
+        break;
+    case EntityKind::Ellipse:
+        f.e = *store.ellipse(h);
+        break;
+    default: {
+        const SplineData* sd = store.spline(h);
+        const std::span<const Vec2> cp = store.control_points_of(*sd);
+        const std::span<const double> k = store.knots_of(*sd);
+        f.cps.assign(cp.begin(), cp.end());
+        f.knots.assign(k.begin(), k.end());
+        f.degree = static_cast<int>(sd->degree);
+        break;
+    }
+    }
+    return f;
+}
+
+bool segments_cross(Vec2 p1, Vec2 p2, Vec2 q1, Vec2 q2, Vec2& at) {
+    const Vec2 r = p2 - p1;
+    const Vec2 s = q2 - q1;
+    const double den = cross(r, s);
+    if (std::abs(den) < 1e-18) {
+        return false;
+    }
+    const double t = cross(q1 - p1, s) / den;
+    const double u = cross(q1 - p1, r) / den;
+    if (t < 0.0 || t > 1.0 || u < 0.0 || u > 1.0) {
+        return false;
+    }
+    at = p1 + r * t;
+    return true;
+}
+} // namespace
+
+// FILLET with an ellipse or a spline: the arc's centre is where the two curves' offsets at
+// the radius cross -- found on their samples, then made exact by stepping to where the
+// lines offset from the two tangents cross. Each curve is cut back (or a line or arc carried
+// on) to its tangent point on the side picked; a circle and a whole ellipse stay whole.
+void GeometryEngine::apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
+                                       std::uint64_t group, bool trim) {
+    if (radius <= 0.0) {
+        report("Fillet: a radius greater than 0 is needed to fillet a curve.");
+        return;
+    }
+    const FreeCurve f1 = free_curve_of(store_, h1);
+    const FreeCurve f2 = free_curve_of(store_, h2);
+    Vec2 lo_box;
+    Vec2 hi_box;
+    Vec2 lo2;
+    Vec2 hi2;
+    double reach = 4.0 * radius;
+    if (entity_aabb(store_, h1, lo_box, hi_box) && entity_aabb(store_, h2, lo2, hi2)) {
+        reach += 2.0 * length(Vec2{std::max(hi_box.x, hi2.x), std::max(hi_box.y, hi2.y)} -
+                              Vec2{std::min(lo_box.x, lo2.x), std::min(lo_box.y, lo2.y)});
+    }
+    double lo1 = 0.0;
+    double hi1 = 0.0;
+    double lo_2 = 0.0;
+    double hi_2 = 0.0;
+    f1.range(reach, lo1, hi1);
+    f2.range(reach, lo_2, hi_2);
+    // Both sides' offsets of each, as polylines.
+    const auto offsets = [&](const FreeCurve& f, double lo, double hi) {
+        const int n = f.kind == EntityKind::Line ? 1 : f.kind == EntityKind::Spline ? std::clamp(static_cast<int>(f.cps.size()) * 32, 128, 4096) : 256;
+        std::array<std::vector<Vec2>, 2> out;
+        for (int i = 0; i <= n; ++i) {
+            const double t = lo + (hi - lo) * static_cast<double>(i) / n;
+            const Vec2 tg = f.tangent(t, lo, hi);
+            const Vec2 nrm{-tg.y, tg.x};
+            out[0].push_back(f.at(t) + nrm * radius);
+            out[1].push_back(f.at(t) - nrm * radius);
+        }
+        return out;
+    };
+    const std::array<std::vector<Vec2>, 2> o1 = offsets(f1, lo1, hi1);
+    const std::array<std::vector<Vec2>, 2> o2 = offsets(f2, lo_2, hi_2);
+    std::vector<Vec2> seeds;
+    for (const std::vector<Vec2>& a : o1) {
+        for (const std::vector<Vec2>& b : o2) {
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                for (std::size_t j = 1; j < b.size(); ++j) {
+                    Vec2 at{};
+                    if (segments_cross(a[i - 1], a[i], b[j - 1], b[j], at)) {
+                        seeds.push_back(at);
+                    }
+                }
+            }
+        }
+    }
+    struct Fit {
+        Vec2 center;
+        double t1;
+        double t2;
+    };
+    std::optional<Fit> best;
+    double best_score = std::numeric_limits<double>::infinity();
+    const double tol = 1e-7 * std::max(1.0, radius);
+    for (Vec2 cc : seeds) {
+        double t1 = 0.0;
+        double t2 = 0.0;
+        bool ok = false;
+        for (int it = 0; it < 40; ++it) {
+            t1 = f1.foot(cc, lo1, hi1);
+            t2 = f2.foot(cc, lo_2, hi_2);
+            const Vec2 q1 = f1.at(t1);
+            const Vec2 q2 = f2.at(t2);
+            const Vec2 n1 = normalized(cc - q1);
+            const Vec2 n2 = normalized(cc - q2);
+            if (std::abs(distance(cc, q1) - radius) < tol && std::abs(distance(cc, q2) - radius) < tol) {
+                ok = true;
+                break;
+            }
+            Vec2 next{};
+            const Vec2 a1 = q1 + n1 * radius;
+            const Vec2 a2 = q2 + n2 * radius;
+            if (!NativeKernel2D::line_line_intersection(a1, a1 + f1.tangent(t1, lo1, hi1), a2,
+                                                        a2 + f2.tangent(t2, lo_2, hi_2), next)) {
+                break;
+            }
+            cc = next;
+        }
+        if (!ok) {
+            continue;
+        }
+        const double score = distance(f1.at(t1), pick1) + distance(f2.at(t2), pick2);
+        if (score < best_score) {
+            best_score = score;
+            best = Fit{cc, t1, t2};
+        }
+    }
+    if (!best) {
+        report("Fillet: no arc of that radius is tangent to both objects.");
+        return;
+    }
+    const Vec2 p1 = f1.at(best->t1);
+    const Vec2 p2 = f2.at(best->t2);
+    // The rounding arc: the minor arc between the tangent points about the centre.
+    double a1 = std::atan2(p1.y - best->center.y, p1.x - best->center.x);
+    double a2 = std::atan2(p2.y - best->center.y, p2.x - best->center.x);
+    double ccw = a2 - a1;
+    while (ccw < 0.0) {
+        ccw += kTwoPi;
+    }
+    if (ccw > kPi) {
+        std::swap(a1, a2);
+    }
+    const Command arc = AddArcCommand{best->center, radius, a1, a2, 0, joining_props(store_, h1, h2)};
+
+    // Each cut back to its tangent point, the side the pick is on kept.
+    const auto cut = [&](EntityHandle h, const FreeCurve& f, double t, Vec2 pick) -> std::optional<Command> {
+        const Vec2 tp = f.at(t);
+        switch (h.kind) {
+        case EntityKind::Line: {
+            const LineData l = *store_.line(h);
+            Vec2 u{};
+            return AddLineCommand{kept_endpoint(l, tp, pick, u), tp, 0, l.props, store_.celtscale(h)};
+        }
+        case EntityKind::Arc: {
+            const ArcData a = *store_.arc(h);
+            double total = a.end_angle - a.start_angle;
+            while (total <= 0.0) {
+                total += kTwoPi;
+            }
+            const auto sweep_from_start = [&](Vec2 p) {
+                double sw = std::atan2(p.y - a.center.y, p.x - a.center.x) - a.start_angle;
+                while (sw < 0.0) {
+                    sw += kTwoPi;
+                }
+                return sw;
+            };
+            const double st = sweep_from_start(tp);
+            double ns = a.start_angle;
+            double ne = a.end_angle;
+            if (st <= total + 1e-9) {
+                (sweep_from_start(pick) >= st ? ns : ne) = a.start_angle + st;
+            } else if (st - total <= kTwoPi - st) {
+                ne = a.start_angle + st;
+            } else {
+                ns = a.start_angle + st - kTwoPi;
+            }
+            return AddArcCommand{a.center, a.radius, ns, ne, 0, a.props, store_.celtscale(h)};
+        }
+        case EntityKind::Ellipse: {
+            const EllipseData& e = f.e;
+            if (ellipse::is_full(e)) {
+                return std::nullopt; // left whole, as a circle is
+            }
+            const double total = ellipse::sweep_of(e);
+            const double st = t - e.start;
+            if (st <= 1e-9 || st >= total - 1e-9) {
+                return std::nullopt;
+            }
+            const double sp = f.foot(pick, e.start, e.start + total) - e.start;
+            return sp >= st ? AddEllipseCommand{e.center, e.major, e.ratio, t, e.start + total, 0, e.props}
+                            : AddEllipseCommand{e.center, e.major, e.ratio, e.start, t, 0, e.props};
+        }
+        case EntityKind::Spline: {
+            const spline::Curve sc = f.spline_curve();
+            spline::Piece before;
+            spline::Piece after;
+            if (!spline::split(sc, t, before, after)) {
+                return std::nullopt; // at an end already
+            }
+            const spline::Piece& kept = spline::param_near(sc, pick) >= t ? after : before;
+            return AddSplineCommand{kept.ctrl, static_cast<std::uint32_t>(sc.degree), 0, store_.spline(h)->props,
+                                    kept.knots};
+        }
+        default:
+            return std::nullopt; // a circle is left whole
+        }
+    };
+    const std::optional<Command> e1 = trim ? cut(h1, f1, best->t1, pick1) : std::nullopt;
+    const std::optional<Command> e2 = trim ? cut(h2, f2, best->t2, pick2) : std::nullopt;
+    if (e1) {
+        const Command o1c = capture_entity(h1);
+        remove_indexed(h1);
+        push_erase_item(group, h1, o1c);
+        push_create_item(group, create_indexed(*e1), *e1);
+    }
+    if (e2) {
+        const Command o2c = capture_entity(h2);
+        remove_indexed(h2);
+        push_erase_item(group, h2, o2c);
+        push_create_item(group, create_indexed(*e2), *e2);
+    }
+    push_create_item(group, create_indexed(arc), arc);
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
     report("Filleted.");
 }
 

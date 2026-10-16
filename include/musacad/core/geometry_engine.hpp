@@ -588,6 +588,9 @@ private:
     bool nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mov, Vec2& target) const;
     void apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
                              double radius, std::uint64_t group, bool trim);
+    /// FILLET with an ellipse or a spline (and a line, arc, circle, ellipse or spline).
+    void apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
+                           std::uint64_t group, bool trim);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
     void apply_purge(const PurgeCommand& c);
     /// What PURGE could remove right now, by name (nothing refers to them).

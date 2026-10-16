@@ -404,6 +404,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
   spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
   spline without changing its shape.
+- **FILLET with ellipses and splines** (#49) -- an elliptical arc, a whole ellipse or a spline
+  rounded with a line, an arc, a circle or another of them: the arc tangent to both, each cut
+  back to it on the side picked (a whole ellipse, like a circle, is left whole).
 - **BREAK on ellipses** (#52) -- an elliptical arc breaks between two points or at one, and a
   whole ellipse loses the part counter-clockwise from the first point to the second, as a
   circle does.

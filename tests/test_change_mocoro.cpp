@@ -3777,3 +3777,55 @@ TEST_CASE("EXTEND and LENGTHEN on splines: the curve kept, straight on along its
     REQUIRE(whole > 45.0);
     engine.stop();
 }
+
+TEST_CASE("FILLET with a spline or an ellipse: an arc tangent to both, each cut back to it") {
+    const std::vector<Vec2> cp{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 10}, {50, 0}};
+    const std::vector<double> own{0, 0, 0, 0, 0.1, 0.7, 1, 1, 1, 1};
+    const spline::Curve curve(cp, 3, own);
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddSplineCommand s;
+        s.control_points = cp;
+        s.knots = own;
+        s.group = 1;
+        engine.submit(s);
+        engine.submit(AddLineCommand{{25, -40}, {25, 40}, 2}); // across the spline
+        engine.submit(FilletPickCommand{curve.at(0.2), {25, 30}, 3.0, 0.5, 3});
+        const io::Document d = dump(engine, "musacad_fillet_spline.mcad");
+        REQUIRE(d.arcs.size() == 1);
+        REQUIRE(d.splines.size() == 1);
+        REQUIRE(d.lines.size() == 1);
+        const io::DocArc& a = d.arcs[0];
+        REQUIRE(a.radius == Approx(3.0));
+        const Vec2 s0{a.center.x + 3.0 * std::cos(a.start_angle), a.center.y + 3.0 * std::sin(a.start_angle)};
+        const Vec2 s1{a.center.x + 3.0 * std::cos(a.end_angle), a.center.y + 3.0 * std::sin(a.end_angle)};
+        const spline::Curve kept(d.splines[0].control_points, 3, d.splines[0].knots);
+        const Vec2 spline_end = kept.at(kept.hi());
+        const Vec2 line_end = distance(d.lines[0].a, Vec2{25, 40}) < 1e-9 ? d.lines[0].b : d.lines[0].a;
+        REQUIRE(distance(kept.at(kept.lo()), cp.front()) < 1e-9); // the part picked is kept
+        REQUIRE(std::abs(a.center.x - 25.0) == Approx(3.0));       // tangent to the line
+        REQUIRE(std::min(distance(s0, spline_end), distance(s1, spline_end)) < 1e-5);
+        REQUIRE(std::min(distance(s0, line_end), distance(s1, line_end)) < 1e-5);
+        REQUIRE(distance(curve.at(spline::param_near(curve, a.center)), a.center) == Approx(3.0).margin(1e-5));
+        engine.stop();
+    }
+    {
+        // An elliptical arc and a line: the arc's end cut back to where the fillet meets it.
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddEllipseCommand{{0, 0}, {20, 0}, 0.5, 0.0, kPi, 1}); // the upper half
+        engine.submit(AddLineCommand{{-40, 5}, {40, 5}, 2});
+        const EllipseData e{{0, 0}, {20, 0}, 0.5, 0.0, kPi, {}};
+        engine.submit(FilletPickCommand{ellipse::point_at(e, 0.2), {35, 5}, 2.0, 0.5, 3});
+        const io::Document d = dump(engine, "musacad_fillet_ellipse.mcad");
+        REQUIRE(d.arcs.size() == 1);
+        REQUIRE(d.ellipses.size() == 1);
+        // The part picked kept (from the major axis up to the fillet), the rest past it cut away.
+        REQUIRE(d.ellipses[0].start == Approx(0.0));
+        REQUIRE(d.ellipses[0].end > 0.0);
+        REQUIRE(d.ellipses[0].end < kPi / 6.0); // short of where the line crosses it
+        REQUIRE(std::abs(d.arcs[0].center.y - 5.0) == Approx(2.0));
+        engine.stop();
+    }
+}
