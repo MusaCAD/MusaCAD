@@ -93,6 +93,11 @@ struct SplineData {
     std::uint32_t count;  ///< number of control points
     std::uint32_t degree;
     EntityProps props{};
+    /// The spline's own knots (count + degree + 1 of them in the knot pool), or kNoKnots for
+    /// the clamped uniform ones a spline drawn here has: a spline from an AutoCAD drawing
+    /// keeps its knots, and so does each piece of a trimmed or broken one.
+    static constexpr std::uint32_t kNoKnots = 0xFFFFFFFFu;
+    std::uint32_t knot_offset = kNoKnots;
 };
 
 /// Single-line text. The string lives in a shared char pool (offset, len) like
@@ -541,7 +546,7 @@ public:
                               bool closed, EntityProps props, std::span<const double> widths,
                               double elevation, double thickness);
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
-                            EntityProps props = {});
+                            EntityProps props = {}, std::span<const double> knots = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                           std::string_view content, EntityProps props = {}, std::uint16_t font = 0,
                           std::uint16_t style = 0);
@@ -1022,6 +1027,8 @@ public:
     /// The widths of a polyline (two per vertex), or an empty span for a plain one.
     [[nodiscard]] std::span<const double> widths_of(const PolylineData& pl) const noexcept;
     [[nodiscard]] std::span<const Vec2> control_points_of(const SplineData& sp) const noexcept;
+    /// A spline's own knots, or an empty span for the clamped uniform ones.
+    [[nodiscard]] std::span<const double> knots_of(const SplineData& sp) const noexcept;
 
     void reserve_lines(std::size_t n) { lines_.reserve(n); }
 
@@ -1368,6 +1375,7 @@ private:
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<double> width_pool_; // polyline widths, two per vertex
     std::vector<Vec2> spline_pool_;
+    std::vector<double> spline_knot_pool_; // splines' own knots
     std::vector<char> string_pool_; // text content
     std::vector<Vec2> hatch_vtx_pool_;            // hatch boundary-loop vertices (all loops)
     std::vector<std::uint32_t> hatch_loop_lens_;  // per-loop vertex counts

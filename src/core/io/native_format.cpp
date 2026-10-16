@@ -787,6 +787,15 @@ std::string serialize_native(const Document& doc) {
             append_vec(s, v);
         }
         append_props(s, sp.props);
+        // v40: its own knots after the properties, as a count and the values.
+        if (!sp.knots.empty()) {
+            s += ' ';
+            append_uint(s, sp.knots.size());
+            for (const double k : sp.knots) {
+                s += ' ';
+                append_double(s, k);
+            }
+        }
         s += '\n';
     }
     // TEXT params then the content on its own (raw) line, preserving spaces.
@@ -3209,8 +3218,17 @@ IoResult parse_native(std::string_view text, Document& out) {
                 sp.control_points.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
             if (version >= 2) {
-                if (!parse_props(tok, 3 + n * 2, sp.props) || tok.size() != 3 + n * 2 + 7) {
+                if (!parse_props(tok, 3 + n * 2, sp.props) || tok.size() < 3 + n * 2 + 7) {
                     return fail("SPLINE properties malformed");
+                }
+                const std::size_t at = 3 + n * 2 + 7;
+                std::uint64_t nk = 0;
+                if (tok.size() > at) {
+                    vals.clear();
+                    if (!to_uint(tok[at], nk) || tok.size() != at + 1 + nk || !parse_doubles(tok, at + 1, nk, vals)) {
+                        return fail("SPLINE knots malformed");
+                    }
+                    sp.knots = vals;
                 }
             } else if (tok.size() != 3 + n * 2) {
                 return fail("SPLINE record malformed");

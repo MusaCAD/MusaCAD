@@ -3285,6 +3285,7 @@ void GeometryEngine::apply_reverse(const ReverseSelectionCommand& c) {
             reverse_polyline(*p);
         } else if (auto* s = std::get_if<AddSplineCommand>(&changed)) {
             std::reverse(s->control_points.begin(), s->control_points.end());
+            s->knots = spline::reversed_knots(s->knots);
         } else {
             out.push_back(h);
             continue;
@@ -10590,9 +10591,81 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
     case EntityKind::Xline:
         report("Break: a construction line cannot be broken.");
         return;
-    case EntityKind::Ellipse:
-        report("Break: ellipses are not supported yet (lines, arcs, circles and polylines are).");
-        return;
+    case EntityKind::Ellipse: {
+        const EllipseData e = *store_.ellipse(h);
+        if (ellipse::is_full(e)) {
+            if (at_point) {
+                report("Break: an ellipse needs two different break points.");
+                return;
+            }
+            // As a circle: the piece counter-clockwise from the first point to the second
+            // goes, and what is left is the elliptical arc from the second round to the first.
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, ellipse::param_of(e, c.p2),
+                                               ellipse::param_of(e, c.p1), 0, e.props});
+            break;
+        }
+        // As an arc: each point by its parameter along the sweep from the start.
+        const double total = ellipse::sweep_of(e);
+        const auto along = [&](Vec2 p) {
+            double d = std::fmod(ellipse::param_of(e, p) - e.start, kTwoPi);
+            if (d < 0.0) {
+                d += kTwoPi;
+            }
+            return d > total ? ((d - total) < (kTwoPi - d) ? total : 0.0) : d;
+        };
+        double s1 = along(c.p1);
+        double s2 = at_point ? s1 : along(c.p2);
+        if (s1 > s2) {
+            std::swap(s1, s2);
+        }
+        if (s1 > 1e-9) {
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start, e.start + s1, 0, e.props});
+        }
+        if (total - s2 > 1e-9) {
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start + s2, e.start + total, 0, e.props});
+        }
+        break;
+    }
+    case EntityKind::Spline: {
+        // Along the spline's own parameter; each piece is the same curve over its part,
+        // with knots of its own. A closed spline opens: what is left runs from the second
+        // point round to the first.
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid()) {
+            report("Break: that spline has no length.");
+            return;
+        }
+        const auto deg = static_cast<std::uint32_t>(curve.degree);
+        const double eps = 1e-9 * (curve.hi() - curve.lo());
+        double u1 = spline::param_near(curve, c.p1);
+        double u2 = at_point ? u1 : spline::param_near(curve, c.p2);
+        if (u1 > u2) {
+            std::swap(u1, u2);
+        }
+        const auto keep = [&](const spline::Piece& pc) {
+            if (pc.ctrl.size() >= 2) {
+                pieces.push_back(AddSplineCommand{pc.ctrl, deg, 0, sd->props, pc.knots});
+            }
+        };
+        spline::Piece before;
+        spline::Piece after;
+        spline::Piece unused;
+        const bool cut_lo = u1 > curve.lo() + eps && spline::split(curve, u1, before, unused);
+        const bool cut_hi = u2 < curve.hi() - eps && spline::split(curve, u2, unused, after);
+        if (distance(cps.front(), cps.back()) < 1e-9 && cut_lo && cut_hi) {
+            keep(spline::joined(after, before, curve.degree));
+        } else {
+            if (cut_lo) {
+                keep(before);
+            }
+            if (cut_hi) {
+                keep(after);
+            }
+        }
+        break;
+    }
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         const Vec2 d = l->b - l->a;
@@ -12488,6 +12561,21 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
     std::string what;
     switch (c.op) {
     case Op::AddVertex: {
+        if (!sp->knots.empty()) {
+            // A spline with knots of its own: a knot inserted where the curve passes nearest
+            // the point -- one more control point, the curve as it was.
+            const spline::Curve curve(cp, static_cast<int>(sp->degree), sp->knots);
+            const double u = spline::param_near(curve, c.p1);
+            if (curve.valid() && u > curve.lo() && u < curve.hi()) {
+                std::vector<Vec2> pts(cp.begin(), cp.end());
+                std::vector<double> knots = curve.knots;
+                spline::insert_knot(pts, knots, curve.degree, u);
+                cp = std::move(pts);
+                sp->knots = std::move(knots);
+                what = "Control point added.";
+                break;
+            }
+        }
         // Into the leg of the control polygon nearest the point.
         std::size_t leg = 0;
         double best = std::numeric_limits<double>::infinity();
@@ -12511,7 +12599,14 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
                    " control points.");
             return;
         }
-        cp.erase(cp.begin() + static_cast<std::ptrdiff_t>(nearest(c.p1)));
+        {
+            const std::size_t at = nearest(c.p1);
+            if (!sp->knots.empty()) {
+                const int deg = spline::effective_degree(static_cast<int>(cp.size()), static_cast<int>(sp->degree));
+                sp->knots = spline::knots_without(sp->knots, deg, at);
+            }
+            cp.erase(cp.begin() + static_cast<std::ptrdiff_t>(at));
+        }
         what = "Control point deleted.";
         break;
     case Op::MoveVertex:
@@ -12520,6 +12615,7 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
         break;
     case Op::Reverse:
         std::reverse(cp.begin(), cp.end());
+        sp->knots = spline::reversed_knots(sp->knots);
         what = "Spline reversed.";
         break;
     case Op::ToPolyline: {
@@ -13735,8 +13831,9 @@ bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
     }
     out.h = h;
     if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
-        h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse && h.kind != EntityKind::Xline) {
-        return fail(TrimOutcome::None, "Trim: only lines, arcs, circles, ellipses, polylines, construction lines and rays can be trimmed.");
+        h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse && h.kind != EntityKind::Xline &&
+        h.kind != EntityKind::Spline) {
+        return fail(TrimOutcome::None, "Trim: only lines, arcs, circles, ellipses, splines, polylines, construction lines and rays can be trimmed.");
     }
 
     // Every crossing with a nearby entity, whatever both kinds are. The kernel already
@@ -14068,6 +14165,82 @@ bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
         }
         const double far = 1e6; // a construction line's endless side, for the preview
         out.removed = {x.base + x.dir * lo_t.value_or(x.ray ? 0.0 : -far), x.base + x.dir * hi_t.value_or(far)};
+    } else if (h.kind == EntityKind::Spline) {
+        // Along the spline's own parameter. What stays is the same curve over its part,
+        // cut where the edges cross it (knots inserted there, so nothing moves): each piece
+        // a spline with knots of its own.
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid()) {
+            return fail(TrimOutcome::None, "");
+        }
+        const EntityProps props = sd->props;
+        const auto deg = static_cast<std::uint32_t>(curve.degree);
+        const double u0 = curve.lo();
+        const double u1 = curve.hi();
+        const double eps = 1e-9 * (u1 - u0);
+        const bool loop = distance(cps.front(), cps.back()) < 1e-9;
+        std::vector<double> us;
+        for (const Vec2& p : crossings) {
+            const double u = spline::param_near(curve, p);
+            if (u > u0 + eps && u < u1 - eps) {
+                us.push_back(u);
+            }
+        }
+        std::sort(us.begin(), us.end());
+        us.erase(std::unique(us.begin(), us.end(), [eps](double x, double y) { return std::abs(x - y) <= eps; }), us.end());
+        if (us.empty()) {
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
+        }
+        if (loop && us.size() < 2) {
+            return fail(TrimOutcome::None, "Trim: a closed spline needs two crossing edges to trim between.");
+        }
+        const auto keep = [&](const spline::Piece& pc) {
+            if (pc.ctrl.size() >= 2) {
+                pieces.push_back(AddSplineCommand{pc.ctrl, deg, 0, props, pc.knots});
+            }
+        };
+        const double up = spline::param_near(curve, pick);
+        spline::Piece before;
+        spline::Piece after;
+        spline::Piece unused;
+        if (loop && (up < us.front() || up > us.back())) {
+            // The part across the seam goes: what stays runs from the first crossing to the last.
+            if (spline::split(curve, us.front(), unused, after)) {
+                const spline::Curve rest(after.ctrl, curve.degree, after.knots);
+                if (spline::split(rest, us.back(), before, unused)) {
+                    keep(before);
+                }
+            }
+            sample([&](double u) { return curve.at(u); }, us.back(), u1);
+            sample([&](double u) { return curve.at(u); }, u0, us.front());
+        } else {
+            double lo_u = u0;
+            double hi_u = u1;
+            for (const double u : us) {
+                if (u <= up) {
+                    lo_u = u;
+                }
+                if (u >= up) {
+                    hi_u = u;
+                    break;
+                }
+            }
+            const bool cut_lo = lo_u > u0 && spline::split(curve, lo_u, before, unused);
+            const bool cut_hi = hi_u < u1 && spline::split(curve, hi_u, unused, after);
+            if (loop && cut_lo && cut_hi) {
+                keep(spline::joined(after, before, curve.degree)); // one spline, round through the seam
+            } else {
+                if (cut_lo) {
+                    keep(before);
+                }
+                if (cut_hi) {
+                    keep(after);
+                }
+            }
+            sample([&](double u) { return curve.at(u); }, lo_u, hi_u);
+        }
     } else { // Circle
         const CircleData* ci = store_.circle(h);
         const Vec2 centre = ci->center;

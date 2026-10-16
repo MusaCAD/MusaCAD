@@ -144,6 +144,7 @@ struct DocSpline {
     std::vector<Vec2> control_points;
     std::uint32_t degree = 3;
     EntityProps props{};
+    std::vector<double> knots{}; ///< its own knots, or empty for the clamped uniform ones
     friend bool operator==(const DocSpline&, const DocSpline&) = default;
 };
 struct DocText {

@@ -731,14 +731,15 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 42, e.end);
     }
     // SPLINE: 70 flags (8 = planar), 71 degree, 72/73 knot/control counts, 40 knots
-    // (the clamped uniform vector we draw with), 10/20 control points.
+    // (the spline's own, or the clamped uniform vector it is drawn with), 10/20 control points.
     for (const DocSpline& sp : doc.splines) {
         const int n = static_cast<int>(sp.control_points.size());
         if (n < 2) {
             continue;
         }
         const int deg = spline::effective_degree(n, static_cast<int>(sp.degree));
-        const std::vector<double> knots = spline::clamped_knots(n, deg);
+        const std::vector<double> knots =
+            spline::usable_knots(sp.knots, n, deg) ? sp.knots : spline::clamped_knots(n, deg);
         code(s, 0, "SPLINE");
         emit_props(s, doc, sp.props);
         code(s, 70, "8");
@@ -2710,9 +2711,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (sink.splines != nullptr) {
                 // A REAL spline whenever it can be represented exactly: fit points are
                 // interpolated (chord parameterisation, AutoCAD's default), and control
-                // points whose knot vector is (or defaults to) our clamped uniform one are
-                // taken as they are. Anything else -- a genuinely non-uniform knot vector --
-                // is drawn faithfully as a tessellated polyline below.
+                // points are taken as they are -- with their own knots when those are not
+                // our clamped uniform ones (as an AutoCAD spline's almost never are). Knots
+                // that do not fit the control points draw as a tessellated polyline below.
                 const auto is_clamped_uniform = [&](const std::vector<double>& k) {
                     const int cp_count = static_cast<int>(ctrl.size());
                     const int deg = spline::effective_degree(cp_count, degree);
@@ -2741,11 +2742,17 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     sink.splines->push_back(std::move(sp));
                     return;
                 }
-                if (ctrl.size() >= 2 && (knots.empty() || is_clamped_uniform(knots))) {
+                const int cp_n = static_cast<int>(ctrl.size());
+                const bool own = cp_n >= 2 && !knots.empty() && !is_clamped_uniform(knots) &&
+                                 spline::usable_knots(knots, cp_n, spline::effective_degree(cp_n, degree));
+                if (ctrl.size() >= 2 && (knots.empty() || is_clamped_uniform(knots) || own)) {
                     DocSpline sp;
                     sp.control_points = ctrl;
                     sp.degree = static_cast<std::uint32_t>(degree);
                     sp.props = props_of(body);
+                    if (own) {
+                        sp.knots = knots;
+                    }
                     sink.splines->push_back(std::move(sp));
                     return;
                 }

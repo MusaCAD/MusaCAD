@@ -277,7 +277,7 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(entity);
-        spline::tessellate(store.control_points_of(*sp), sp->degree, out);
+        spline::tessellate(store.control_points_of(*sp), sp->degree, out, store.knots_of(*sp));
         break;
     }
     case EntityKind::Text:
@@ -1074,7 +1074,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(entity);
         std::vector<Vec2> dense;
-        spline::tessellate(store.control_points_of(*sp), sp->degree, dense);
+        spline::tessellate(store.control_points_of(*sp), sp->degree, dense, store.knots_of(*sp));
         const bool closed = dense.size() > 3 && length(dense.front() - dense.back()) < 1e-9;
         return offset_sampled(dense, closed, distance, side, sp->props, out);
     }

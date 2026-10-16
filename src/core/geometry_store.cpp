@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/spline_eval.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -209,11 +210,17 @@ EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
 }
 
 EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
-                                       EntityProps props) {
+                                       EntityProps props, std::span<const double> knots) {
     const auto offset = static_cast<std::uint32_t>(spline_pool_.size());
     spline_pool_.insert(spline_pool_.end(), control_points.begin(), control_points.end());
-    const auto slot = splines_.insert(
-        SplineData{offset, static_cast<std::uint32_t>(control_points.size()), degree, props});
+    SplineData d{offset, static_cast<std::uint32_t>(control_points.size()), degree, props};
+    // Knots only when they fit the curve as it is drawn; anything else draws as the default.
+    const int count = static_cast<int>(control_points.size());
+    if (spline::usable_knots(knots, count, spline::effective_degree(count, static_cast<int>(degree)))) {
+        d.knot_offset = static_cast<std::uint32_t>(spline_knot_pool_.size());
+        spline_knot_pool_.insert(spline_knot_pool_.end(), knots.begin(), knots.end());
+    }
+    const auto slot = splines_.insert(d);
     return EntityHandle{slot.index, slot.generation, EntityKind::Spline};
 }
 
@@ -766,6 +773,7 @@ void GeometryStore::clear() noexcept {
     bulge_pool_.clear();
     width_pool_.clear();
     spline_pool_.clear();
+    spline_knot_pool_.clear();
     string_pool_.clear();
     hatch_vtx_pool_.clear();
     hatch_loop_lens_.clear();
@@ -1037,6 +1045,14 @@ std::span<const double> GeometryStore::widths_of(const PolylineData& pl) const n
 }
 std::span<const Vec2> GeometryStore::control_points_of(const SplineData& sp) const noexcept {
     return std::span<const Vec2>(spline_pool_).subspan(sp.offset, sp.count);
+}
+std::span<const double> GeometryStore::knots_of(const SplineData& sp) const noexcept {
+    if (sp.knot_offset == SplineData::kNoKnots) {
+        return {};
+    }
+    const int count = static_cast<int>(sp.count);
+    const auto n = static_cast<std::size_t>(count + spline::effective_degree(count, static_cast<int>(sp.degree)) + 1);
+    return std::span<const double>(spline_knot_pool_).subspan(sp.knot_offset, n);
 }
 
 // --- per-entity properties -------------------------------------------------

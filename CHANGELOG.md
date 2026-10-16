@@ -387,6 +387,17 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **Units across drawings** (#81) -- copying between drawings in different units, or
   attaching one as a reference, scales the objects into the drawing's own units
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.
+- **Splines from AutoCAD drawings stay splines** (#39, #48) -- a spline whose knots are not
+  evenly spaced (as nearly every spline AutoCAD draws through fit points is) now opens as a
+  spline with its own knots, where it opened as a polyline, and is saved and written to DXF
+  with them.
+- **TRIM and BREAK on splines** (#48, #52) -- a spline is trimmed at the edges that cross it
+  and broken between two points or at one, each piece the same curve over its part; a closed
+  spline trims and breaks open into one. SPLINEDIT adds a control point to such a spline
+  without changing its shape.
+- **BREAK on ellipses** (#52) -- an elliptical arc breaks between two points or at one, and a
+  whole ellipse loses the part counter-clockwise from the first point to the second, as a
+  circle does.
 
 ### Fixed
 - **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now

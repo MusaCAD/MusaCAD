@@ -24,6 +24,7 @@
 #include "musacad/command/commands.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/ellipse.hpp"
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/grips.hpp"
@@ -3523,4 +3524,106 @@ TEST_CASE("Layer property filters -- a name pattern and settings -- are kept wit
     io::Document again;
     REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
     REQUIRE(again.layer_filters == doc.layer_filters);
+}
+
+TEST_CASE("Splines keep knots of their own: cut by knot insertion, trimmed and broken without moving") {
+    const std::vector<Vec2> cp{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 10}, {50, 0}};
+    const std::vector<double> own{0, 0, 0, 0, 0.1, 0.7, 1, 1, 1, 1}; // AutoCAD-like, not uniform
+    const spline::Curve curve(cp, 3, own);
+    REQUIRE(curve.own);
+    REQUIRE_FALSE(spline::Curve(cp, 3, std::vector<double>{0, 1, 2}).own); // knots that do not fit
+
+    // Split at a parameter: each piece is the same curve over its part.
+    spline::Piece a;
+    spline::Piece b;
+    REQUIRE(spline::split(curve, 0.4, a, b));
+    const spline::Curve ca(a.ctrl, 3, a.knots);
+    const spline::Curve cb(b.ctrl, 3, b.knots);
+    REQUIRE(ca.own);
+    REQUIRE(cb.own);
+    for (int i = 0; i <= 10; ++i) {
+        const double t = i / 10.0;
+        REQUIRE(distance(ca.at(0.4 * t), curve.at(0.4 * t)) < 1e-9);
+        REQUIRE(distance(cb.at(0.4 + 0.6 * t), curve.at(0.4 + 0.6 * t)) < 1e-9);
+    }
+    // Joined again, the whole curve; a knot inserted keeps it as it was.
+    const spline::Piece whole = spline::joined(a, b, 3);
+    const spline::Curve cw(whole.ctrl, 3, whole.knots);
+    std::vector<Vec2> pts(cp);
+    std::vector<double> knots(own);
+    spline::insert_knot(pts, knots, 3, 0.55);
+    REQUIRE(pts.size() == cp.size() + 1);
+    const spline::Curve ci(pts, 3, knots);
+    for (int i = 0; i <= 20; ++i) {
+        const double u = i / 20.0;
+        REQUIRE(distance(cw.at(u), curve.at(u)) < 1e-9);
+        REQUIRE(distance(ci.at(u), curve.at(u)) < 1e-9);
+    }
+    // Reversed, the same points the other way.
+    std::vector<Vec2> rcp(cp.rbegin(), cp.rend());
+    const spline::Curve cr(rcp, 3, spline::reversed_knots(own));
+    REQUIRE(distance(cr.at_unit(0.25), curve.at_unit(0.75)) < 1e-9);
+
+    // The knots are kept by the drawing, its file and DXF.
+    io::Document doc;
+    io::DocSpline ds;
+    ds.control_points = cp;
+    ds.knots = own;
+    doc.splines.push_back(ds);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.splines[0].knots == own);
+    io::Document dx;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dx).ok);
+    REQUIRE(dx.splines.size() == 1);
+    REQUIRE(dx.splines[0].knots == own);
+
+    // TRIM: a line across the spline; the end picked goes, the rest is the same curve.
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddSplineCommand s;
+        s.control_points = cp;
+        s.knots = own;
+        s.group = 1;
+        engine.submit(s);
+        const Vec2 cut = curve.at(0.5);
+        engine.submit(AddLineCommand{{cut.x, -40}, {cut.x, 40}, 2});
+        const Vec2 pick = curve.at(0.9);
+        engine.submit(TrimPickCommand{pick, 0.5, 3});
+        const io::Document d = dump(engine, "musacad_trim_spline.mcad");
+        REQUIRE(d.splines.size() == 1);
+        const spline::Curve kept(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(distance(kept.at_unit(0.0), cp.front()) < 1e-9);
+        REQUIRE(std::abs(kept.at_unit(1.0).x - cut.x) < 1e-6);
+        REQUIRE(distance(kept.at_unit(0.5), curve.at(0.5 * spline::param_near(curve, kept.at_unit(1.0)))) < 1e-6);
+        engine.stop();
+    }
+    // BREAK: a spline in two at a point; an elliptical arc between two points.
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddSplineCommand s;
+        s.control_points = cp;
+        s.knots = own;
+        s.group = 1;
+        engine.submit(s);
+        const Vec2 at = curve.at(0.3);
+        engine.submit(BreakCommand{at, 0.5, at, at, 2});
+        engine.submit(AddEllipseCommand{{100, 0}, {20, 0}, 0.5, 0.0, kPi, 3});
+        const EllipseData e{{100, 0}, {20, 0}, 0.5, 0.0, kPi, {}};
+        engine.submit(BreakCommand{ellipse::point_at(e, 1.0), 0.5, ellipse::point_at(e, 1.0), ellipse::point_at(e, 2.0), 4});
+        const io::Document d = dump(engine, "musacad_break_spline.mcad");
+        REQUIRE(d.splines.size() == 2);
+        for (const io::DocSpline& piece : d.splines) {
+            const spline::Curve pc(piece.control_points, 3, piece.knots);
+            const bool first = distance(pc.at_unit(0.0), cp.front()) < 1e-9;
+            REQUIRE(distance(first ? pc.at_unit(1.0) : pc.at_unit(0.0), at) < 1e-6);
+        }
+        REQUIRE(d.ellipses.size() == 2);
+        const bool in_order = d.ellipses[0].start < d.ellipses[1].start;
+        REQUIRE(d.ellipses[in_order ? 0 : 1].end == Approx(1.0));
+        REQUIRE(d.ellipses[in_order ? 1 : 0].start == Approx(2.0));
+        engine.stop();
+    }
 }

@@ -19,8 +19,10 @@
 // which must use the very same basis, or the committed curve would not pass through
 // the points the preview showed it passing through.
 //
-// Musa splines are clamped B-splines with uniform interior knots on [0,1]; `degree` is
-// lowered to count-1 when there are too few control points, as AutoCAD does.
+// A spline drawn in Musa CAD is a clamped B-spline with uniform interior knots on [0,1]
+// unless it carries knots of its own (a spline from an AutoCAD drawing, or a piece of a
+// trimmed or broken one); `degree` is lowered to count-1 when there are too few control
+// points, as AutoCAD does.
 
 namespace musacad::core::spline {
 
@@ -104,24 +106,71 @@ inline Vec2 de_boor(int span, double t, int degree, const std::vector<double>& u
     return d[static_cast<std::size_t>(degree)];
 }
 
-/// The curve point at t in [0,1].
-inline Vec2 evaluate(std::span<const Vec2> ctrl, int degree_in, double t) {
-    const int count = static_cast<int>(ctrl.size());
-    if (count == 0) {
-        return {};
+/// Knots a spline of `count` control points and (effective) `degree` can be drawn with:
+/// count + degree + 1 values, never decreasing, over a domain of some length.
+inline bool usable_knots(std::span<const double> k, int count, int degree) noexcept {
+    if (count < 2 || degree < 1 || k.size() != static_cast<std::size_t>(count + degree + 1)) {
+        return false;
     }
-    if (count == 1) {
-        return ctrl[0];
+    for (std::size_t i = 1; i < k.size(); ++i) {
+        if (!(k[i] >= k[i - 1])) { // NaN fails too
+            return false;
+        }
     }
-    const int degree = effective_degree(count, degree_in);
-    const std::vector<double> knots = clamped_knots(count, degree);
-    t = std::clamp(t, 0.0, 1.0);
-    return de_boor(find_span(count - 1, degree, t, knots), t, degree, knots, ctrl);
+    return k[static_cast<std::size_t>(degree)] < k[static_cast<std::size_t>(count)];
+}
+
+/// A spline ready to evaluate: its control points, the degree it is drawn with, and the
+/// knots -- its own when they fit it, otherwise the clamped uniform ones.
+struct Curve {
+    std::span<const Vec2> ctrl;
+    int degree = 1;
+    std::vector<double> knots;
+    bool own = false; ///< drawn with knots of its own
+
+    Curve(std::span<const Vec2> c, int degree_in, std::span<const double> own_knots = {})
+        : ctrl(c), degree(effective_degree(static_cast<int>(c.size()), degree_in)) {
+        const int count = static_cast<int>(c.size());
+        if (count < 2) {
+            return;
+        }
+        own = usable_knots(own_knots, count, degree);
+        knots = own ? std::vector<double>(own_knots.begin(), own_knots.end()) : clamped_knots(count, degree);
+    }
+    [[nodiscard]] bool valid() const noexcept { return ctrl.size() >= 2; }
+    /// The domain: the parameters at the curve's start and end.
+    [[nodiscard]] double lo() const noexcept { return knots[static_cast<std::size_t>(degree)]; }
+    [[nodiscard]] double hi() const noexcept { return knots[ctrl.size()]; }
+    /// The point at knot parameter u (clamped to the domain).
+    [[nodiscard]] Vec2 at(double u) const {
+        if (ctrl.empty()) {
+            return {};
+        }
+        if (ctrl.size() == 1) {
+            return ctrl[0];
+        }
+        u = std::clamp(u, lo(), hi());
+        return de_boor(find_span(static_cast<int>(ctrl.size()) - 1, degree, u, knots), u, degree, knots, ctrl);
+    }
+    /// The point at t in [0,1] along the domain.
+    [[nodiscard]] Vec2 at_unit(double t) const {
+        if (ctrl.size() < 2) {
+            return at(0.0);
+        }
+        return at(lo() + (hi() - lo()) * std::clamp(t, 0.0, 1.0));
+    }
+};
+
+/// The curve point at t in [0,1] (along the domain of its knots).
+inline Vec2 evaluate(std::span<const Vec2> ctrl, int degree_in, double t, std::span<const double> own = {}) {
+    return Curve(ctrl, degree_in, own).at_unit(t);
 }
 
 /// Chords along the curve: 16 samples per span, bounded -- the rule every consumer draws
-/// and picks with.
-inline void tessellate(std::span<const Vec2> ctrl, std::uint32_t degree_in, std::vector<Vec2>& out) {
+/// and picks with. A curve with knots of its own is sampled span by span, so a short span
+/// gets as many chords as a long one.
+inline void tessellate(std::span<const Vec2> ctrl, std::uint32_t degree_in, std::vector<Vec2>& out,
+                       std::span<const double> own = {}) {
     const int count = static_cast<int>(ctrl.size());
     if (count <= 0) {
         return;
@@ -130,16 +179,199 @@ inline void tessellate(std::span<const Vec2> ctrl, std::uint32_t degree_in, std:
         out.push_back(ctrl[0]);
         return;
     }
-    const int degree = effective_degree(count, static_cast<int>(degree_in));
-    const std::vector<double> knots = clamped_knots(count, degree);
-    const int n = count - 1;
+    const Curve c(ctrl, static_cast<int>(degree_in), own);
     const auto samples = std::clamp<std::size_t>(static_cast<std::size_t>(count - 1) * 16,
                                                  std::size_t{2}, std::size_t{8192});
-    out.reserve(out.size() + samples + 1);
-    for (std::size_t i = 0; i <= samples; ++i) {
-        const double t = std::clamp(static_cast<double>(i) / static_cast<double>(samples), 0.0, 1.0);
-        out.push_back(de_boor(find_span(n, degree, t, knots), t, degree, knots, ctrl));
+    if (!c.own) {
+        out.reserve(out.size() + samples + 1);
+        for (std::size_t i = 0; i <= samples; ++i) {
+            out.push_back(c.at_unit(static_cast<double>(i) / static_cast<double>(samples)));
+        }
+        return;
     }
+    std::size_t spans = 0;
+    for (int i = c.degree; i < count; ++i) {
+        spans += c.knots[static_cast<std::size_t>(i + 1)] > c.knots[static_cast<std::size_t>(i)] ? 1u : 0u;
+    }
+    const std::size_t per = std::clamp<std::size_t>(samples / std::max<std::size_t>(spans, 1), 2, 16);
+    out.reserve(out.size() + spans * per + 1);
+    out.push_back(c.at(c.lo()));
+    for (int i = c.degree; i < count; ++i) {
+        const double a = c.knots[static_cast<std::size_t>(i)];
+        const double b = c.knots[static_cast<std::size_t>(i + 1)];
+        if (!(b > a)) {
+            continue;
+        }
+        for (std::size_t k = 1; k <= per; ++k) {
+            out.push_back(c.at(a + (b - a) * static_cast<double>(k) / static_cast<double>(per)));
+        }
+    }
+}
+
+/// The parameter (knot parameter, within the domain) of the curve point nearest p: the
+/// nearest of a dense sampling, refined between its neighbours.
+inline double param_near(const Curve& c, Vec2 p) {
+    if (!c.valid()) {
+        return 0.0;
+    }
+    const int n = std::clamp(static_cast<int>(c.ctrl.size()) * 32, 64, 8192);
+    const double a = c.lo();
+    const double b = c.hi();
+    const auto u_of = [&](int i) { return a + (b - a) * static_cast<double>(i) / static_cast<double>(n); };
+    int best = 0;
+    double bd = length_squared(c.at(a) - p);
+    for (int i = 1; i <= n; ++i) {
+        const double d = length_squared(c.at(u_of(i)) - p);
+        if (d < bd) {
+            bd = d;
+            best = i;
+        }
+    }
+    double l = u_of(std::max(best - 1, 0));
+    double r = u_of(std::min(best + 1, n));
+    for (int it = 0; it < 60; ++it) { // golden-section on the distance
+        const double m1 = l + (r - l) * 0.381966;
+        const double m2 = l + (r - l) * 0.618034;
+        if (length_squared(c.at(m1) - p) < length_squared(c.at(m2) - p)) {
+            r = m2;
+        } else {
+            l = m1;
+        }
+    }
+    return 0.5 * (l + r);
+}
+
+/// One knot inserted at u (Boehm): one more control point, the curve unchanged.
+inline void insert_knot(std::vector<Vec2>& P, std::vector<double>& U, int p, double u) {
+    const int n = static_cast<int>(P.size()) - 1;
+    const int k = find_span(n, p, u, U);
+    std::vector<Vec2> Q(P.size() + 1);
+    for (int i = 0; i <= n + 1; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (i <= k - p) {
+            Q[ui] = P[ui];
+        } else if (i > k) {
+            Q[ui] = P[ui - 1];
+        } else {
+            const double den = U[static_cast<std::size_t>(i + p)] - U[ui];
+            const double alpha = den > 0.0 ? (u - U[ui]) / den : 0.0;
+            Q[ui] = P[ui] * alpha + P[ui - 1] * (1.0 - alpha);
+        }
+    }
+    U.insert(U.begin() + k + 1, u);
+    P = std::move(Q);
+}
+
+/// The knots left when control point i of a spline with knots U and degree p is taken out:
+/// the interior knot nearest that point's place along the curve (its Greville abscissa)
+/// goes with it. Empty when there is no interior knot to drop.
+inline std::vector<double> knots_without(std::span<const double> U, int p, std::size_t i) {
+    const std::size_t count = U.size() - static_cast<std::size_t>(p) - 1;
+    if (count <= static_cast<std::size_t>(p) + 1 || i >= count) {
+        return {};
+    }
+    double g = 0.0;
+    for (int j = 1; j <= p; ++j) {
+        g += U[i + static_cast<std::size_t>(j)];
+    }
+    g /= static_cast<double>(p);
+    std::size_t drop = static_cast<std::size_t>(p) + 1;
+    for (std::size_t j = drop; j < count; ++j) {
+        if (std::abs(U[j] - g) < std::abs(U[drop] - g)) {
+            drop = j;
+        }
+    }
+    std::vector<double> out(U.begin(), U.end());
+    out.erase(out.begin() + static_cast<std::ptrdiff_t>(drop));
+    return out;
+}
+
+/// A spline of its own: control points and knots (a piece of a cut one).
+struct Piece {
+    std::vector<Vec2> ctrl;
+    std::vector<double> knots;
+};
+
+/// The curve cut at knot parameter u (strictly inside the domain) into the part before and
+/// the part after: u inserted until it is `degree` deep (Boehm), which puts a control point
+/// on the curve there, shared by the two pieces. Each piece is the same curve over its part,
+/// of the same degree, clamped at the cut. False when u is not inside the domain.
+inline bool split(const Curve& c, double u, Piece& before, Piece& after) {
+    if (!c.valid() || !(u > c.lo()) || !(u < c.hi())) {
+        return false;
+    }
+    const int p = c.degree;
+    std::vector<Vec2> P(c.ctrl.begin(), c.ctrl.end());
+    std::vector<double> U = c.knots;
+    const double eps = 1e-12 * std::max(1.0, c.hi() - c.lo());
+    for (double& k : U) { // a cut at a knot takes the knot's own value
+        if (std::abs(k - u) <= eps) {
+            u = k;
+        }
+    }
+    int s = 0;
+    for (const double k : U) {
+        s += k == u ? 1 : 0;
+    }
+    for (int r = s; r < p; ++r) {
+        insert_knot(P, U, p, u);
+    }
+    std::size_t j0 = 0; // the first u
+    while (j0 < U.size() && U[j0] < u) {
+        ++j0;
+    }
+    if (j0 == 0 || j0 > P.size()) {
+        return false;
+    }
+    std::size_t last = j0; // past the last u
+    while (last < U.size() && U[last] == u) {
+        ++last;
+    }
+    const std::size_t m = last - j0; // u's depth: p, or more when it already was
+    const auto pp = static_cast<std::size_t>(p);
+    // Before: control points up to the one on the curve at u (its limit from below).
+    before.ctrl.assign(P.begin(), P.begin() + static_cast<std::ptrdiff_t>(j0));
+    before.knots.assign(U.begin(), U.begin() + static_cast<std::ptrdiff_t>(j0));
+    before.knots.insert(before.knots.end(), pp + 1, u);
+    // After: from the control point on the curve at u.
+    const std::size_t first = j0 - 1 + (m > pp ? m - pp : 0);
+    after.ctrl.assign(P.begin() + static_cast<std::ptrdiff_t>(first), P.end());
+    after.knots.assign(pp + 1, u);
+    after.knots.insert(after.knots.end(), U.begin() + static_cast<std::ptrdiff_t>(last), U.end());
+    return before.ctrl.size() >= 2 && after.ctrl.size() >= 2 &&
+           before.knots.size() == before.ctrl.size() + pp + 1 && after.knots.size() == after.ctrl.size() + pp + 1;
+}
+
+/// Two clamped pieces of degree p, the first ending where the second starts, as one spline:
+/// the second's knots moved on to follow the first's, the shared point kept once.
+inline Piece joined(const Piece& a, const Piece& b, int p) {
+    Piece out;
+    const auto pp = static_cast<std::size_t>(p);
+    if (a.ctrl.empty() || b.ctrl.empty() || a.knots.size() != a.ctrl.size() + pp + 1 ||
+        b.knots.size() != b.ctrl.size() + pp + 1) {
+        return out;
+    }
+    out.ctrl = a.ctrl;
+    out.ctrl.insert(out.ctrl.end(), b.ctrl.begin() + 1, b.ctrl.end());
+    out.knots.assign(a.knots.begin(), a.knots.end() - 1);
+    const double shift = a.knots.back() - b.knots.front();
+    for (std::size_t i = pp + 1; i < b.knots.size(); ++i) {
+        out.knots.push_back(b.knots[i] + shift);
+    }
+    return out;
+}
+
+/// The knots of the same curve run the other way (its control points reversed).
+inline std::vector<double> reversed_knots(std::span<const double> k) {
+    std::vector<double> out(k.size());
+    if (k.empty()) {
+        return out;
+    }
+    const double s = k.front() + k.back();
+    for (std::size_t i = 0; i < k.size(); ++i) {
+        out[i] = s - k[k.size() - 1 - i];
+    }
+    return out;
 }
 
 /// How FIT points are spaced in parameter space (AutoCAD's Knots option): by chord

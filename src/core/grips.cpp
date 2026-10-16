@@ -244,7 +244,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(h);
         const std::span<const Vec2> cp = store.control_points_of(*sp);
-        return AddSplineCommand{std::vector<Vec2>(cp.begin(), cp.end()), sp->degree, 0, sp->props};
+        const std::span<const double> k = store.knots_of(*sp);
+        return AddSplineCommand{std::vector<Vec2>(cp.begin(), cp.end()), sp->degree, 0, sp->props,
+                                std::vector<double>(k.begin(), k.end())};
     }
     }
     return AddLineCommand{};
@@ -264,7 +266,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_ellipse(c.center, c.major, c.ratio, c.start, c.end,
                                            props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
-                handle = store.add_spline(c.control_points, c.degree, props_of(c.props));
+                handle = store.add_spline(c.control_points, c.degree, props_of(c.props), c.knots);
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);

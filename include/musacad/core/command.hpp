@@ -321,6 +321,9 @@ struct AddSplineCommand {
     std::uint32_t degree = 3;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    /// The spline's own knots (control points + degree + 1), or empty for the clamped
+    /// uniform ones. An edit that changes the number of control points clears them.
+    std::vector<double> knots = {};
 };
 
 /// VIEW Save: store (or replace) a named view. VIEW Delete: remove one by name.

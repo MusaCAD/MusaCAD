@@ -287,8 +287,9 @@ Document document_from_store(const GeometryStore& store) {
         if (splines.alive(i)) {
             const SplineData& s = splines.data()[i];
             const std::span<const Vec2> cp = store.control_points_of(s);
+            const std::span<const double> k = store.knots_of(s);
             doc.splines.push_back(DocSpline{std::vector<Vec2>(cp.begin(), cp.end()), s.degree,
-                                            s.props});
+                                            s.props, std::vector<double>(k.begin(), k.end())});
         }
     }
     doc.dimstyles.assign(store.dimstyles().begin(), store.dimstyles().end());
@@ -736,7 +737,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_polyline_ltype_gen(ph, p.ltype_gen);
     }
     for (const DocSpline& s : doc.splines) {
-        store.add_spline(s.control_points, s.degree, s.props);
+        store.add_spline(s.control_points, s.degree, s.props, s.knots);
     }
     store.set_named_views(doc.views);
     store.set_layer_states(doc.layer_states);
