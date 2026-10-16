@@ -909,6 +909,7 @@ struct DimAssocCommand {
         Variable,     ///< DIMASSOC: whether new dimensions are (2) or not (0, 1)
         Disassociate, ///< the selected dimensions no longer follow
         Reassociate,  ///< the selected dimensions follow again
+        HatchVariable, ///< HPASSOC: whether new hatches follow their boundaries (1) or not (0)
     };
     Op op = Op::Variable;
     std::uint8_t value = 2;
@@ -1532,6 +1533,7 @@ struct AddHatchCommand {
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
     Rgb color2{}; ///< GRADIENT: the second colour
+    bool unassoc = false; ///< HatchData::unassoc
 };
 
 /// ATTDEF: an attribute definition. `text` gives the placement, props, font and style

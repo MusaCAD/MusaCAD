@@ -978,6 +978,9 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += escape(h.pattern_name);
         s += '\n';
+        if (h.unassoc) {
+            s += "HATCHNOASSOC\n"; // v40: the HATCH just written does not follow its boundary
+        }
     }
     // v31: paper-space viewports.
     for (const DocViewport& v : doc.viewports) {
@@ -2419,6 +2422,11 @@ IoResult parse_native(std::string_view text, Document& out) {
                 doc.dims.back().overrides.text_move = static_cast<std::uint8_t>(v);
                 doc.dims.back().overrides.set(DimOverrides::kTextMove, true);
             }
+        } else if (key == "HATCHNOASSOC") {
+            if (doc.hatches.empty()) {
+                return fail("HATCHNOASSOC without a HATCH");
+            }
+            doc.hatches.back().unassoc = true;
         } else if (key == "DIMNOASSOC") {
             if (doc.dims.empty()) {
                 return fail("DIMNOASSOC without a DIM");

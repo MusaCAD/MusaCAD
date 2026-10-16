@@ -164,7 +164,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                hd->pattern_origin,
                                0,
                                hd->props,
-                               hd->color2};
+                               hd->color2,
+                               hd->unassoc};
     }
     // GD&T: capture is authoritative for the overrides and carries a style SNAPSHOT for
     // PR's effective-value display (ignored on recreate) -- exactly AddDimensionCommand.
@@ -369,6 +370,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 handle = store.add_hatch(c.loops, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                          c.pattern_origin, props_of(c.props), c.color2);
+                if (c.unassoc) {
+                    store.set_hatch_unassoc(handle, true);
+                }
             } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
                 handle = store.add_fcf(c.cells, c.pos, c.rotation, c.style, props_of(c.props),
                                        c.overrides);

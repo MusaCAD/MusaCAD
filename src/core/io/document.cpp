@@ -366,7 +366,8 @@ Document document_from_store(const GeometryStore& store) {
             doc.hatches.push_back(DocHatch{store.hatch_loops(h), std::string(store.string_of(h)),
                                            h.pattern_scale, h.pattern_angle, h.pattern_origin,
                                            h.props,
-                                           h.color2});
+                                           h.color2,
+                                           h.unassoc});
         }
     }
     const auto& fcf_arena = store.fcfs();
@@ -647,8 +648,11 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
     }
     for (const DocHatch& h : doc.hatches) {
-        store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin,
-                        h.props, h.color2);
+        const EntityHandle hh = store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle,
+                                                h.pattern_origin, h.props, h.color2);
+        if (h.unassoc) {
+            store.set_hatch_unassoc(hh, true);
+        }
     }
     {
         std::vector<ImageDef> defs;

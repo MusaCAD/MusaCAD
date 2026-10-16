@@ -2300,6 +2300,22 @@ void DimAssocUiCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void HpAssocCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1") {
+            ctx.echo("Requires an integer between 0 and 1.");
+            return;
+        }
+        s_value_ = t[0] - '0';
+        core::DimAssocCommand c;
+        c.op = core::DimAssocCommand::Op::HatchVariable;
+        c.value = static_cast<std::uint8_t>(s_value_);
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
 void MirrtextCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
@@ -7725,7 +7741,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
-        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
         "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",

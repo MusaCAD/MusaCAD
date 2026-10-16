@@ -2640,3 +2640,75 @@ TEST_CASE("Ctrl at a hot grip's pick copies, again for each pick; the grip modes
     REQUIRE(h.proc.has_active_command());
     h.proc.cancel();
 }
+
+TEST_CASE("An associative hatch follows its boundary moved or reshaped; HPASSOC 0 makes them not") {
+    GeometryEngine engine;
+    engine.start();
+    AddPolylineCommand rect;
+    rect.points = {{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    rect.closed = true;
+    rect.group = 1;
+    engine.submit(rect);
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+    fill.group = 2;
+    engine.submit(fill);
+    const auto boundary = [&] {
+        engine.submit(SelectAllCommand{});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+        EntityHandle p{};
+        for (const EntityHandle h : engine.snapshot().selection) {
+            p = h.kind == EntityKind::Polyline ? h : p;
+        }
+        engine.submit(SelectHandleCommand{p});
+        return p;
+    };
+    boundary();
+    engine.submit(MoveSelectionCommand{{5, 5}, 3});
+    io::Document doc = dump(engine, "musacad_hatch_assoc_1.musa");
+    REQUIRE(doc.hatches[0].loops[0][0] == Vec2{5, 5});
+    REQUIRE(doc.hatches[0].loops[0][2] == Vec2{15, 15});
+    REQUIRE(doc.hatches[0].pattern_origin == Vec2{5, 5}); // the pattern went with it
+    // A grip edit of a corner: the hatch's corner goes there.
+    const EntityHandle p = boundary();
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, p, 2, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {25, 30}, 4});
+    doc = dump(engine, "musacad_hatch_assoc_2.musa");
+    REQUIRE(doc.hatches[0].loops[0][2] == Vec2{25, 30});
+    REQUIRE(doc.hatches[0].loops[0][1] == Vec2{15, 5});
+    // One undo takes the boundary and the hatch back together.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_hatch_assoc_3.musa");
+    REQUIRE(doc.hatches[0].loops[0][2] == Vec2{15, 15});
+    engine.stop();
+}
+
+TEST_CASE("HPASSOC asks 0 or 1; a hatch made with it 0 does not follow, and the file keeps that") {
+    H h;
+    h.run({"HPASSOC"});
+    REQUIRE(h.out.prompt == "Enter new value for HPASSOC <1>: ");
+    h.run({"0"});
+    REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::HatchVariable);
+    REQUIRE(h.last<DimAssocCommand>()->value == 0);
+    h.run({"HPASSOC", "1"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 1);
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::HatchVariable, 0, 0});
+    engine.submit(AddCircleCommand{{0, 0}, 5, 1});
+    AddHatchCommand fill;
+    fill.loops = {{{5, 0}, {0, 5}, {-5, 0}, {0, -5}}};
+    fill.group = 2;
+    engine.submit(fill);
+    engine.submit(SelectPickCommand{{3.5355339, 3.5355339}, 0.01, false});
+    engine.submit(MoveSelectionCommand{{0, 20}, 3});
+    const io::Document doc = dump(engine, "musacad_hatch_noassoc.musa");
+    REQUIRE(doc.circles[0].center == Vec2{0, 20});
+    REQUIRE(doc.hatches[0].loops[0][0] == Vec2{5, 0});
+    REQUIRE(doc.hatches[0].unassoc);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.hatches[0].unassoc);
+    engine.stop();
+}

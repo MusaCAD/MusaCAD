@@ -243,6 +243,7 @@ struct DocHatch {
     Vec2 pattern_origin{};
     EntityProps props{};
     Rgb color2{}; ///< GRADIENT second colour (v27)
+    bool unassoc = false; ///< v40: not associative (HatchData::unassoc)
     friend bool operator==(const DocHatch&, const DocHatch&) = default;
 };
 

@@ -262,6 +262,9 @@ struct HatchData {
     /// GRADIENT pattern: the second colour (the first is the entity's own colour); the
     /// fill runs from the first to the second along pattern_angle.
     Rgb color2{};
+    /// Not associative (HPASSOC 0 when made, DXF 71 = 0): it does not follow its boundary
+    /// when the boundary is moved or reshaped (#41).
+    bool unassoc = false;
 };
 
 /// One cell of a feature control frame. A cell is TEXT -- the characteristic symbol,
@@ -551,6 +554,7 @@ public:
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
     bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
     bool set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept;
+    bool set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
     bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;

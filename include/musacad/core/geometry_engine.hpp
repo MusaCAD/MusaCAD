@@ -492,18 +492,29 @@ private:
     [[nodiscard]] bool editable_entity(EntityHandle h) const { return store_.is_valid(h) && selectable(h); }
     bool mirrtext_ = false; ///< MIRRTEXT: 0 keeps mirrored text readable (the default)
     std::uint8_t dimassoc_ = 2; ///< DIMASSOC: 2, new dimensions are associative; 0 or 1, not
+    bool hpassoc_ = true;       ///< HPASSOC: new hatches are associative
     /// An associative dimension with points on objects about to be edited (#59): which of
     /// its def points (a, b, line_pt) are on them and follow them.
     struct DimFollow {
         EntityHandle dim;
         std::array<bool, 3> on{};
     };
-    /// The associative dimensions, not among `edited`, with points on `edited`.
-    [[nodiscard]] std::vector<DimFollow> dims_on(const std::vector<EntityHandle>& edited) const;
+    /// An associative hatch with boundary points on them (#41): which of its loop vertices.
+    struct HatchFollow {
+        EntityHandle hatch;
+        std::vector<bool> on;
+    };
+    struct Followers {
+        std::vector<DimFollow> dims;
+        std::vector<HatchFollow> hatches;
+        [[nodiscard]] bool empty() const noexcept { return dims.empty() && hatches.empty(); }
+    };
+    /// The associative dimensions and hatches, not among `edited`, with points on `edited`.
+    [[nodiscard]] Followers followers_on(const std::vector<EntityHandle>& edited) const;
     /// Takes each one's following points through `map`; when all of them follow and `whole` is
-    /// given, the dimension is transformed as a whole instead (as if it had been selected).
-    void follow_dims(const std::vector<DimFollow>& follows, const std::function<Vec2(Vec2)>& map,
-                     const std::function<void(Command&)>& whole, std::uint64_t group);
+    /// given, it is transformed as a whole instead (as if it had been selected).
+    void move_followers(const Followers& follows, const std::function<Vec2(Vec2)>& map,
+                        const std::function<void(Command&)>& whole, std::uint64_t group);
     void apply_dim_assoc(const DimAssocCommand& c);
     void apply_dim_grip_menu(const DimGripMenuCommand& c);
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides

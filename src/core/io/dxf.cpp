@@ -2287,6 +2287,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* pn = find(body, 2)) {
                 h.pattern_name = *pn;
             }
+            h.unassoc = getd(body, 71, 0.0) == 0.0; // 71: the associativity flag
             if (getd(body, 76, 1.0) == 0.0 || h.pattern_name == "_USER" || h.pattern_name == "_user") {
                 h.pattern_name = getd(body, 77, 0.0) != 0.0 ? "_USERDOUBLE" : "_USER"; // user-defined
             }

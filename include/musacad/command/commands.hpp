@@ -3157,6 +3157,26 @@ private:
     bool done_ = false;
 };
 
+/// HPASSOC: `Enter new value for HPASSOC <1>:` -- 1, the hatches made follow their boundaries
+/// when those are moved or reshaped; 0, they do not.
+class HpAssocCommand final : public ICommand {
+public:
+    std::string name() const override { return "HPASSOC"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Enter new value for HPASSOC <" + std::to_string(s_value_) + ">: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    inline static int s_value_ = 1; ///< the session's HPASSOC
+
+private:
+    bool done_ = false;
+};
+
 /// DIMDISASSOCIATE: `Select dimensions to disassociate:` -- they no longer follow the objects
 /// their points are on. DIMREASSOCIATE: `Select dimensions to reassociate:` -- they follow
 /// them again.

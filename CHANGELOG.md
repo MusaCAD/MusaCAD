@@ -134,6 +134,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
   dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
   with the drawing (format v40).
+- **Associative hatches** (#41) -- a hatch follows its boundary: MOVE, ROTATE, SCALE, MIRROR
+  (erasing the source) and grip edits of the objects around it take the hatch along, or its
+  edge with the part that changed, in the same undo step. **HPASSOC** (1, the default; 0, the
+  hatches made do not follow); DXF's associativity flag is read. Saved with the drawing.
 - **Dimension grip menus** (#59) -- right-click a selected dimension's grip: on its text,
   Stretch, Move with Dim Line, Move Text Only, Move with Leader (the dimension keeps that text
   movement), Above Dim Line, Center Vertically and Reset Text Position; on its other grips,
