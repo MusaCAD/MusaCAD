@@ -698,6 +698,8 @@ void MainWindow::build_ribbon() {
         small(data, col, QStringLiteral("Table"), "TB");
         small(data, col, QStringLiteral("Update Fields"), "UPDATEFIELD", "field");
         todo_small(data, col, QStringLiteral("Data Link"), "field");
+        QWidget* col2 = data->add_column();
+        small(data, col2, QStringLiteral("Extract Data"), "DX", "table");
     }
 
     // ================================================================== Annotate

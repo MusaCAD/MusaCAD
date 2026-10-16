@@ -1338,6 +1338,16 @@ struct ImportDimStylesCommand {
     std::string path;
     bool overwrite = false;
 };
+/// DATAEXTRACTION: the block references -- the selected ones, or every one with `all` --
+/// counted by name and attribute values (one row each, Count and Name then a column per
+/// attribute tag), written as CSV to `path` (when set) and placed as a table at `table_at`
+/// (when set). One undo step for the table.
+struct DataExtractCommand {
+    bool all = true;
+    std::string path{};
+    std::optional<Vec2> table_at{};
+    std::uint64_t group = 0;
+};
 /// RENAME: the named object `from` of `kind` called `to` (a block, a dimension style, a
 /// layer -- not 0 --, a text style or table style -- not Standard --, or a named view).
 struct RenameObjectCommand {
@@ -2120,7 +2130,7 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand, RenameObjectCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand, RenameObjectCommand, DataExtractCommand,
                  ExportDimStylesCommand, ImportDimStylesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,

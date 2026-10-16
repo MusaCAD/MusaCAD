@@ -1499,6 +1499,36 @@ private:
     bool done_ = false;
 };
 
+/// DATAEXTRACTION (DX): the block references counted by name and attribute values --
+/// `Extract from [Drawing/Selection] <Drawing>:` (Selection: `Select objects:`), `Output to
+/// [Table/File/Both] <Table>:`, the CSV file (a Save window, or `Enter file name:`) and the
+/// table's `Specify insertion point:`.
+class DataExtractionCommand final : public ICommand {
+public:
+    std::string name() const override { return "DATAEXTRACTION"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { From, Select, Output, File, Place };
+    void ask_output(CommandContext& ctx);
+    void after_file(CommandContext& ctx);
+    Step step_ = Step::From;
+    SelectObjectsPhase select_;
+    core::DataExtractCommand c_{};
+    bool table_ = true;
+    bool file_ = false;
+    bool done_ = false;
+};
+
 /// DBLIST: every object in the drawing listed, as LIST lists one.
 class DbListCommand final : public ICommand {
 public:

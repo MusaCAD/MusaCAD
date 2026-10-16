@@ -46,6 +46,7 @@ commands (Ribbon Phase A):
 | SETVAR (SET) | `Enter variable name or [?]:`, then the variable's own prompt; `?` lists the variables there are. |
 | REDRAW (R, RA, REDRAWALL), DIMREGEN | Redraw the drawing (as REGEN does). |
 | DBLIST | Every object in the drawing listed, as LIST lists one. |
+| DATAEXTRACTION (DX, EATTEXT) | The block references counted by name and attribute values -- `Extract from [Drawing/Selection] <Drawing>:`, `Output to [Table/File/Both] <Table>:` -- one row for each block and set of values, Count, Name and a column per attribute tag, as a CSV file and/or a table placed in the drawing. Insert > Data > Extract Data. (AutoCAD's wizard, its other object properties and .dxe templates are not here.) |
 | PLAN | `Enter an option [Current ucs/Ucs/World] <Current>:` -- the drawing seen from above with its extents in view (the World UCS is the only one). |
 | LWDISPLAY | `Enter new value for LWDISPLAY <ON>:` -- lineweights on screen, as LWT on the status bar. |
 | TRANSPARENCYDISPLAY | Layer transparency on screen: 1 shown, 0 every object opaque; TPY on the status bar. Plots stay opaque. |

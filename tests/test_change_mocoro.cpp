@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <variant>
@@ -1145,4 +1147,54 @@ TEST_CASE("DBLIST lists every object; PLAN takes the World view") {
     REQUIRE(h.out.prompt == "Enter an option [Current ucs/Ucs/World] <Current>: ");
     h.run({"W"});
     REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("DATAEXTRACTION counts block references by name and attribute values, into CSV and a table") {
+    GeometryEngine engine;
+    engine.start();
+    AddAttDefCommand ad;
+    ad.text.pos = {0, 0};
+    ad.text.height = 2.5;
+    ad.text.content = "SIZE";
+    ad.def = "M6";
+    ad.group = 1;
+    engine.submit(ad);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DefineBlockCommand{"BOLT", {0, 0}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.block_names.size() == 1; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{3});
+    const char* sizes[] = {"M6", "M8", "M6"};
+    for (int i = 0; i < 3; ++i) {
+        InsertBlockCommand ins;
+        ins.name = "BOLT";
+        ins.pos = {50.0 * i, 0};
+        ins.group = 4 + static_cast<std::uint64_t>(i);
+        ins.attribs = {sizes[i]};
+        engine.submit(ins);
+    }
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_extract.csv").string();
+    engine.submit(DataExtractCommand{true, path, Vec2{0, -50}, 10});
+    REQUIRE(wait_until(engine, [&](const auto& s) { return s.status == "2 rows extracted to " + path + ", and into a table."; }));
+    std::ifstream f(path);
+    std::string csv((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    REQUIRE(csv == "Count,Name,SIZE\r\n2,BOLT,M6\r\n1,BOLT,M8\r\n");
+    std::filesystem::remove(path);
+    const io::Document doc = dump(engine, "musacad_extract.musa");
+    REQUIRE(doc.tables.size() == 1);
+    REQUIRE(doc.tables[0].rows == 3);
+    REQUIRE(doc.tables[0].cols == 3);
+    engine.stop();
+
+    H h;
+    h.run({"DX"});
+    REQUIRE(h.out.prompt == "Extract from [Drawing/Selection] <Drawing>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Output to [Table/File/Both] <Table>: ");
+    h.run({"F"});
+    REQUIRE(h.out.prompt == "Enter file name: ");
+    h.run({"/tmp/parts"});
+    REQUIRE(h.last<DataExtractCommand>()->path == "/tmp/parts.csv");
+    REQUIRE_FALSE(h.last<DataExtractCommand>()->table_at.has_value());
 }

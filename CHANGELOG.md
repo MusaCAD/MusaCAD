@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **DATAEXTRACTION** (#71) -- the block references counted by name and attribute values, into a
+  CSV file and/or a table in the drawing: a parts list from the drawing's blocks.
 - **The file commands at the command line** -- NEW, OPEN, QSAVE, SAVEAS (SAVE), CLOSE, CLOSEALL,
   QUIT (EXIT), IMPORT / DXFIN and EXPORT / DXFOUT, as AutoCAD names them; and RENAME, SETVAR,
   REDRAW, DIMREGEN, DBLIST, PLAN, DTEXT and DDPTYPE.

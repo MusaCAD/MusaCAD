@@ -7331,6 +7331,109 @@ void RenameCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void DataExtractionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    step_ = Step::From;
+    ctx.set_prompt("Extract from [Drawing/Selection] <Drawing>: ");
+}
+
+void DataExtractionCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        ask_output(ctx);
+    }
+}
+
+void DataExtractionCommand::ask_output(CommandContext& ctx) {
+    step_ = Step::Output;
+    ctx.set_prompt("Output to [Table/File/Both] <Table>: ");
+}
+
+void DataExtractionCommand::after_file(CommandContext& ctx) {
+    if (table_) {
+        step_ = Step::Place;
+        ctx.set_prompt("Specify insertion point: ");
+        return;
+    }
+    c_.group = ctx.group_id();
+    ctx.submit(c_);
+    done_ = true;
+}
+
+void DataExtractionCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::From:
+        if (u == "S" || u == "SELECTION") {
+            c_.all = false;
+            if (ctx.has_selection()) {
+                ask_output(ctx);
+                return;
+            }
+            step_ = Step::Select;
+            select_.begin(ctx, "Select objects: ");
+            return;
+        }
+        if (!t.empty() && u != "D" && u != "DRAWING") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        c_.all = true;
+        ask_output(ctx);
+        return;
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            ask_output(ctx);
+        }
+        return;
+    case Step::Output:
+        if (u == "F" || u == "FILE") {
+            table_ = false;
+            file_ = true;
+        } else if (u == "B" || u == "BOTH") {
+            table_ = true;
+            file_ = true;
+        } else if (t.empty() || u == "T" || u == "TABLE") {
+            table_ = true;
+            file_ = false;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        if (!file_) {
+            after_file(ctx);
+            return;
+        }
+        step_ = Step::File;
+        if (ctx.view() != nullptr) {
+            const std::string path = ctx.view()->save_file_dialog("CSV (comma delimited) (*.csv)", "extraction.csv");
+            if (!path.empty()) {
+                c_.path = path;
+                after_file(ctx);
+                return;
+            }
+        }
+        ctx.set_prompt("Enter file name: ");
+        return;
+    case Step::File:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.path = t.size() >= 4 && upper(t.substr(t.size() - 4)) == ".CSV" ? t : t + ".csv";
+        after_file(ctx);
+        return;
+    case Step::Place:
+        if (const auto p = read_point(ctx, text)) {
+            c_.table_at = *p;
+            c_.group = ctx.group_id();
+            ctx.submit(c_);
+            done_ = true;
+        }
+        return;
+    }
+}
+
 void PlanCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
     const bool ucs = u == "U" || u == "UCS";

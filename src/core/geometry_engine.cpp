@@ -15131,6 +15131,111 @@ void GeometryEngine::apply_one(const Command& command) {
                            std::to_string(kept) + " kept as they were.");
                 }
             }
+            if constexpr (std::is_same_v<T, DataExtractCommand>) {
+                // The rows: (name, the values in tag order) -> count, in first-seen order.
+                std::vector<std::string> tags;
+                std::vector<std::pair<std::pair<std::string, std::vector<std::pair<std::string, std::string>>>, int>> rows;
+                std::vector<EntityHandle> refs;
+                if (c.all) {
+                    refs = all_live();
+                } else {
+                    prune_selection();
+                    refs = selection_;
+                }
+                for (const EntityHandle h : refs) {
+                    const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+                    const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+                    if (bd == nullptr || bd->name.starts_with("*")) {
+                        continue; // anonymous blocks (dimensions, hatches from DXF) are not parts
+                    }
+                    const std::vector<std::string> values = store_.insert_attribs(*in);
+                    std::vector<std::pair<std::string, std::string>> attrs;
+                    for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                        const std::string& tag = bd->content.attdefs[i].tag;
+                        attrs.emplace_back(tag, i < values.size() ? values[i] : bd->content.attdefs[i].def);
+                        if (std::find(tags.begin(), tags.end(), tag) == tags.end()) {
+                            tags.push_back(tag);
+                        }
+                    }
+                    const auto key = std::make_pair(bd->name, attrs);
+                    auto it = std::find_if(rows.begin(), rows.end(), [&](const auto& r) { return r.first == key; });
+                    if (it == rows.end()) {
+                        rows.emplace_back(key, 1);
+                    } else {
+                        ++it->second;
+                    }
+                }
+                if (rows.empty()) {
+                    report("No block references to extract.");
+                } else {
+                    // The table of cells: Count, Name, then each tag.
+                    std::vector<std::vector<std::string>> grid;
+                    std::vector<std::string> head{"Count", "Name"};
+                    head.insert(head.end(), tags.begin(), tags.end());
+                    grid.push_back(head);
+                    for (const auto& [key, count] : rows) {
+                        std::vector<std::string> line{std::to_string(count), key.first};
+                        for (const std::string& tag : tags) {
+                            const auto a = std::find_if(key.second.begin(), key.second.end(),
+                                                        [&](const auto& kv) { return kv.first == tag; });
+                            line.push_back(a != key.second.end() ? a->second : std::string());
+                        }
+                        grid.push_back(std::move(line));
+                    }
+                    std::string said = std::to_string(rows.size()) + (rows.size() == 1 ? " row" : " rows") + " extracted";
+                    if (!c.path.empty()) {
+                        std::ofstream f(c.path, std::ios::binary);
+                        const auto field = [](const std::string& v) {
+                            if (v.find_first_of(",\"\n") == std::string::npos) {
+                                return v;
+                            }
+                            std::string q = "\"";
+                            for (const char ch : v) {
+                                q += ch == '"' ? std::string("\"\"") : std::string(1, ch);
+                            }
+                            return q + "\"";
+                        };
+                        for (const auto& line : grid) {
+                            for (std::size_t i = 0; i < line.size(); ++i) {
+                                f << (i == 0 ? "" : ",") << field(line[i]);
+                            }
+                            f << "\r\n";
+                        }
+                        said += f.good() ? " to " + c.path : " -- " + c.path + " could not be written";
+                    }
+                    if (c.table_at) {
+                        const std::size_t ncols = head.size();
+                        AddTableCommand t;
+                        t.rows = static_cast<std::uint16_t>(grid.size());
+                        t.cols = static_cast<std::uint16_t>(ncols);
+                        t.has_header = true;
+                        t.pos = *c.table_at;
+                        t.style = store_.current_table_style();
+                        t.group = c.group;
+                        for (std::size_t col = 0; col < ncols; ++col) {
+                            std::size_t longest = 4;
+                            for (const auto& line : grid) {
+                                longest = std::max(longest, line[col].size());
+                            }
+                            t.col_widths.push_back(2.5 * 0.8 * static_cast<double>(longest) + 4.0);
+                        }
+                        t.row_heights.assign(grid.size(), 9.0);
+                        for (const auto& line : grid) {
+                            for (const std::string& v : line) {
+                                t.cells.push_back(TableCell{});
+                                t.texts.push_back(v);
+                            }
+                        }
+                        const Command add = t;
+                        push_create_item(c.group, create_indexed(add), add);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        said += c.path.empty() ? " into a table" : ", and into a table";
+                    }
+                    report(said + ".");
+                }
+            }
             if constexpr (std::is_same_v<T, RenameObjectCommand>) {
                 using K = RenameObjectCommand::Kind;
                 static constexpr const char* kWhat[6] = {"Block", "Dimension style", "Layer", "Text style",
