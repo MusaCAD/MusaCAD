@@ -254,6 +254,9 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
              "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
+    file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
+             "Open the Tool Palettes: commands, hatches and the drawing's blocks a click away (Ctrl+3).");
+    file_cmd({"TOOLPALETTESCLOSE"}, "TOOLPALETTESCLOSE", "", "Close the Tool Palettes.");
     reg({"WORKSPACE"}, [] { return std::make_unique<WorkspaceCommand>(); }, "",
         "Make a workspace current, or save, rename, delete or list them.");
     reg({"WSCURRENT"}, [] { return std::make_unique<WorkspaceCommand>(WorkspaceCommand::Mode::Current); }, "",

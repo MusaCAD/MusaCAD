@@ -91,6 +91,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **WSSAVE** and Workspace Switching on the status bar: the palettes, the ribbon and the Quick
   Access Toolbar saved under a name and put back; Drafting & Annotation is the window as it
   starts. The current one comes back at the next start.
+- **Tool Palettes** (#73) -- **TOOLPALETTES** (TP, Ctrl+3; View > Palettes and Manage >
+  Customization): Draw, Modify and Annotation tools, every hatch pattern with its swatch (a
+  click starts HATCH with it, at the internal point), and the drawing's blocks (a click
+  inserts one). **TOOLPALETTESCLOSE** closes them; a workspace keeps them open or closed.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and

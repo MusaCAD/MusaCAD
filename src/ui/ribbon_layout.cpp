@@ -18,6 +18,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCompleter>
+#include <QDockWidget>
 #include <QLineEdit>
 #include <QStringList>
 #include <QTimer>
@@ -1023,7 +1024,11 @@ void MainWindow::build_ribbon() {
         lp->setObjectName(QStringLiteral("ribbon.layer_manager2"));
         lp->setToolTip(QStringLiteral("Open the Layer Properties manager."));
         connect(lp, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
-        palettes->add_placeholder(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        QToolButton* tp = palettes->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        tp->setObjectName(QStringLiteral("ribbon.tool_palettes"));
+        tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
+        connect(tp, &QToolButton::clicked, this,
+                [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
     }
 
     // ================================================================== Manage
@@ -1035,7 +1040,12 @@ void MainWindow::build_ribbon() {
     RibbonPanel* customize = ribbon_->add_panel(manage, QStringLiteral("Customization"), 40);
     customize->set_representative_icon(asset("settings"));
     customize->add_placeholder(asset("settings"), QStringLiteral("User\nInterface"), RibbonTier::Primary);
-    customize->add_placeholder(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+    {
+        QToolButton* tp = customize->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
+        connect(tp, &QToolButton::clicked, this,
+                [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
+    }
     {
         QWidget* col = customize->add_column();
         small(customize, col, QStringLiteral("Edit Aliases"), "ALIASEDIT", "settings");

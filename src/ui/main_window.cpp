@@ -320,6 +320,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
             return true;
         }
+        if (action == "TOOLPALETTES" || action == "TOOLPALETTESCLOSE") {
+            show_tool_palettes(action == "TOOLPALETTES");
+            return true;
+        }
         if (action == "REINIT") {
             QTimer::singleShot(0, this, [this] { command_widget_->append_line(load_user_aliases().toStdString()); });
             return true;
@@ -426,6 +430,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     build_ribbon();
     build_status_bar();
+    build_tool_palettes();
     init_workspaces();
 
     title_timer_ = new QTimer(this);
@@ -3737,7 +3742,176 @@ void MainWindow::cycle_isoplane() {
 
 namespace {
 const QString kBuiltinWorkspace = QStringLiteral("Drafting & Annotation");
+
+/// A hatch pattern's swatch for the Tool Palettes: a few repeats of it, drawn in `ink`.
+QIcon hatch_swatch(const std::string& name, const QColor& ink) {
+    QPixmap pm(32, 32);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (name == "SOLID") {
+        p.fillRect(QRectF(2, 2, 28, 28), ink);
+        return QIcon(pm);
+    }
+    const core::hatch::Pattern* pat = core::hatch::builtin_pattern(name);
+    if (pat == nullptr) {
+        return {};
+    }
+    double spacing = 0.0; // the closest a family's lines come: about five of them across
+    for (const core::hatch::PatternLine& l : pat->lines) {
+        const double d = std::abs(l.delta.y);
+        if (d > 1e-9 && (spacing == 0.0 || d < spacing)) {
+            spacing = d;
+        }
+    }
+    const double side = (spacing > 0.0 ? spacing : 1.0) * 5.0;
+    const std::vector<std::vector<core::Vec2>> loops{{{0, 0}, {side, 0}, {side, side}, {0, side}}};
+    std::vector<core::Segment> segs;
+    core::hatch::generate_pattern_segments(loops, *pat, 1.0, 0.0, {}, segs);
+    const double k = 28.0 / side;
+    p.setPen(QPen(ink, 1.0));
+    for (const core::Segment& s : segs) {
+        p.drawLine(QPointF(2 + s.a.x * k, 30 - s.a.y * k), QPointF(2 + s.b.x * k, 30 - s.b.y * k));
+    }
+    QColor frame = ink;
+    frame.setAlpha(90);
+    p.setPen(QPen(frame, 1.0));
+    p.drawRect(QRectF(1.5, 1.5, 29, 29));
+    return QIcon(pm);
+}
 } // namespace
+
+void MainWindow::build_tool_palettes() {
+    tool_palettes_dock_ = new QDockWidget(QStringLiteral("Tool Palettes"), this);
+    tool_palettes_dock_->setObjectName(QStringLiteral("ToolPalettesDock"));
+    auto* tabs = new QTabWidget(tool_palettes_dock_);
+    tabs->setObjectName(QStringLiteral("ToolPalettes"));
+    tabs->setTabPosition(QTabWidget::West);
+    tabs->setDocumentMode(true);
+    const auto make_list = [tabs](const QString& title) {
+        auto* list = new QListWidget(tabs);
+        list->setIconSize(QSize(32, 32));
+        list->setSpacing(2);
+        list->setUniformItemSizes(true);
+        tabs->addTab(list, title);
+        return list;
+    };
+    // A command tool: its icon and tooltip from the command table; a click starts it.
+    const auto command_tab = [this, make_list](const QString& title, std::initializer_list<std::pair<const char*, const char*>> tools) {
+        QListWidget* list = make_list(title);
+        for (const auto& [label, alias] : tools) {
+            const command::CommandInfo* info = processor_->registry().find(alias);
+            auto* it = new QListWidgetItem(ribbon_icon(info != nullptr ? QString::fromStdString(info->icon) : QString()),
+                                           QString::fromLatin1(label), list);
+            it->setData(Qt::UserRole, QString::fromLatin1(alias));
+            if (info != nullptr) {
+                it->setToolTip(QString::fromStdString(info->description));
+            }
+        }
+        connect(list, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+            command_widget_->focus_input();
+            processor_->start_command(it->data(Qt::UserRole).toString().toStdString());
+        });
+    };
+    command_tab(QStringLiteral("Draw"), {{"Line", "L"},
+                                         {"Polyline", "PL"},
+                                         {"Circle", "C"},
+                                         {"Arc", "A"},
+                                         {"Rectangle", "REC"},
+                                         {"Polygon", "POL"},
+                                         {"Ellipse", "EL"},
+                                         {"Spline", "SPL"},
+                                         {"Point", "PO"},
+                                         {"Donut", "DO"},
+                                         {"Revision Cloud", "REVCLOUD"},
+                                         {"Wipeout", "WIPEOUT"},
+                                         {"Hatch", "H"},
+                                         {"Gradient", "GD"}});
+    command_tab(QStringLiteral("Modify"), {{"Move", "M"},
+                                           {"Copy", "CO"},
+                                           {"Rotate", "RO"},
+                                           {"Scale", "SC"},
+                                           {"Mirror", "MI"},
+                                           {"Offset", "O"},
+                                           {"Trim", "TR"},
+                                           {"Extend", "EX"},
+                                           {"Fillet", "F"},
+                                           {"Chamfer", "CHA"},
+                                           {"Array", "AR"},
+                                           {"Stretch", "S"},
+                                           {"Break", "BR"},
+                                           {"Join", "J"},
+                                           {"Explode", "X"},
+                                           {"Erase", "E"}});
+    command_tab(QStringLiteral("Annotation"), {{"Single Line Text", "TEXT"},
+                                               {"Multiline Text", "MT"},
+                                               {"Linear Dimension", "DLI"},
+                                               {"Aligned Dimension", "DAL"},
+                                               {"Angular Dimension", "DAN"},
+                                               {"Radius Dimension", "DRA"},
+                                               {"Diameter Dimension", "DDI"},
+                                               {"Multileader", "MLD"},
+                                               {"Table", "TB"},
+                                               {"Tolerance", "TOL"}});
+    // Hatches and Fills: a click starts -HATCH with the pattern set, at its internal point.
+    {
+        QListWidget* list = make_list(QStringLiteral("Hatches and Fills"));
+        const QColor ink = palette().color(QPalette::Text);
+        for (const std::string& name : core::hatch::pattern_choice_list()) {
+            auto* it = new QListWidgetItem(hatch_swatch(name, ink), QString::fromStdString(name), list);
+            it->setData(Qt::UserRole, QString::fromStdString(name));
+        }
+        connect(list, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+            const std::string name = it->data(Qt::UserRole).toString().toStdString();
+            command_widget_->focus_input();
+            processor_->start_macro("-HATCH", name == "SOLID" ? std::vector<std::string>{"P", name}
+                                                              : std::vector<std::string>{"P", name, "", ""});
+        });
+    }
+    // Blocks: the drawing's own; a click inserts one, at the point picked next.
+    palette_blocks_ = make_list(QStringLiteral("Blocks"));
+    connect(palette_blocks_, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+        command_widget_->focus_input();
+        processor_->start_macro("-INSERT", {it->text().toStdString()});
+    });
+    connect(tabs, &QTabWidget::currentChanged, this, [this, tabs] {
+        if (tabs->currentWidget() == palette_blocks_) {
+            refill_palette_blocks();
+        }
+    });
+    connect(tool_palettes_dock_, &QDockWidget::visibilityChanged, this, [this](bool on) {
+        if (on) {
+            refill_palette_blocks();
+        }
+    });
+    tool_palettes_dock_->setWidget(tabs);
+    addDockWidget(Qt::LeftDockWidgetArea, tool_palettes_dock_);
+    tool_palettes_dock_->hide();
+    auto* toggle = new QAction(QStringLiteral("Tool Palettes"), this);
+    toggle->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
+    toggle->setShortcutContext(Qt::ApplicationShortcut);
+    connect(toggle, &QAction::triggered, this, [this] { show_tool_palettes(!tool_palettes_dock_->isVisible()); });
+    addAction(toggle);
+}
+
+void MainWindow::show_tool_palettes(bool on) {
+    if (tool_palettes_dock_ != nullptr) {
+        tool_palettes_dock_->setVisible(on);
+    }
+}
+
+void MainWindow::refill_palette_blocks() {
+    if (palette_blocks_ == nullptr) {
+        return;
+    }
+    palette_blocks_->clear();
+    const QIcon icon = ribbon_icon(QStringLiteral("assets/ribbon/insert.svg"));
+    for (const std::string& name : viewport_->block_names()) {
+        if (!name.empty() && name.front() != '*') { // not the anonymous ones
+            new QListWidgetItem(icon, QString::fromStdString(name), palette_blocks_);
+        }
+    }
+}
 
 QVariantMap MainWindow::capture_workspace() const {
     QVariantMap w;
@@ -3765,7 +3939,11 @@ QVariantMap MainWindow::capture_workspace() const {
 void MainWindow::apply_workspace(const QVariantMap& w) {
     const QByteArray docks = w.value(QStringLiteral("docks")).toByteArray();
     if (!docks.isEmpty()) {
+        const bool command_line_hidden = command_dock_ != nullptr && command_dock_->isHidden(); // F12 decides it
         restoreState(docks);
+        if (command_dock_ != nullptr) {
+            command_dock_->setHidden(command_line_hidden);
+        }
     }
     if (navbar_ != nullptr) {
         show_navbar(navbar_->isVisible()); // the ribbon's toggle in step
@@ -8908,6 +9086,30 @@ bool MainWindow::selftest_vports() {
         QFile::remove(pdf);
         std::printf("[selftest] PUBLISH writes one PDF page per sheet: %s\n", book_ok ? "PASS" : "FAIL");
         all = all && book_ok;
+    }
+
+    // TOOLPALETTES opens its window (every hatch with a swatch); a workspace saved with it
+    // open brings it back after the built-in one closed it.
+    {
+        processor_->submit_line("TOOLPALETTES");
+        bool tp_ok = pump([this] { return tool_palettes_dock_->isVisible(); });
+        auto* tabs = qobject_cast<QTabWidget*>(tool_palettes_dock_->widget());
+        QListWidget* hatches = nullptr;
+        for (int i = 0; tabs != nullptr && i < tabs->count(); ++i) {
+            if (tabs->tabText(i) == QStringLiteral("Hatches and Fills")) {
+                hatches = qobject_cast<QListWidget*>(tabs->widget(i));
+            }
+        }
+        tp_ok = tp_ok && hatches != nullptr &&
+                hatches->count() == static_cast<int>(core::hatch::pattern_choice_list().size()) &&
+                !hatches->item(1)->icon().isNull();
+        tp_ok = tp_ok && workspace_op("saveas", QStringLiteral("Selftest"), {});
+        tp_ok = tp_ok && workspace_op("current", kBuiltinWorkspace, {}) && pump([this] { return !tool_palettes_dock_->isVisible(); });
+        tp_ok = tp_ok && workspace_op("current", QStringLiteral("Selftest"), {}) && pump([this] { return tool_palettes_dock_->isVisible(); });
+        tp_ok = tp_ok && workspace_op("current", kBuiltinWorkspace, {}) && workspace_op("delete", QStringLiteral("Selftest"), {}) &&
+                workspace_names() == QStringList{kBuiltinWorkspace};
+        std::printf("[selftest] TOOLPALETTES and a workspace that keeps it open: %s\n", tp_ok ? "PASS" : "FAIL");
+        all = all && tp_ok;
     }
     return all && gl_msg_ok;
 }

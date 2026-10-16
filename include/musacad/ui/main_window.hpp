@@ -37,6 +37,7 @@ class QCloseEvent;
 class QTabBar;
 class QToolBar;
 class QMenu;
+class QListWidget;
 class QPoint;
 
 namespace musacad::command {
@@ -434,6 +435,12 @@ private:
     bool workspace_op(const std::string& op, const QString& name, const QString& to);
     void open_save_workspace(); ///< WSSAVE: Save Workspace
     void init_workspaces();
+    // TOOLPALETTES (Ctrl+3): commands, hatches and the drawing's blocks a click away.
+    void build_tool_palettes();
+    void show_tool_palettes(bool on);
+    void refill_palette_blocks();
+    QDockWidget* tool_palettes_dock_ = nullptr;
+    QListWidget* palette_blocks_ = nullptr;
     QMenu* qat_menu_ = nullptr;   ///< Customize Quick Access Toolbar
     QStringList qat_default_shown_;
     QVariantMap default_workspace_;
