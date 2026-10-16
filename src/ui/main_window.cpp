@@ -88,7 +88,10 @@
 #include <QTabBar>
 #include <QTimer>
 #include <QSettings>
+#include <QColor>
+#include <QItemSelectionModel>
 #include <functional>
+#include <set>
 #include <QPainter>
 #include <QToolButton>
 #include <QToolTip>
@@ -244,6 +247,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         },
         viewport_, *fanout_);
     processor_->set_grid_spacing(10.0);
+    if (!developer_hook_active() && QFileInfo::exists(user_pgp_path())) {
+        (void)load_user_aliases(); // the user's own command aliases
+    }
     command_widget_->set_processor(processor_.get());
     viewport_->set_processor(processor_.get());
     viewport_->set_font_engine(ui_font_engine_.get()); // TTF for the on-canvas command UI
@@ -308,6 +314,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         if (action == "QUIT") {
             QTimer::singleShot(0, this, &MainWindow::close);
+            return true;
+        }
+        if (action == "ALIASEDIT") {
+            QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
+            return true;
+        }
+        if (action == "REINIT") {
+            QTimer::singleShot(0, this, [this] { command_widget_->append_line(load_user_aliases().toStdString()); });
             return true;
         }
         return false;
@@ -3040,6 +3054,185 @@ void MainWindow::open_view_manager() {
     refill();
     d.dlg->resize(420, 320);
     d.dlg->show();
+}
+
+QString MainWindow::user_pgp_path() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + QStringLiteral("/musacaduser.pgp");
+}
+
+QString MainWindow::load_user_aliases() {
+    if (user_aliases_applied_) {
+        processor_->registry() = command::CommandRegistry::make_default(); // the ones taken out go
+    }
+    QFile f(user_pgp_path());
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        user_aliases_applied_ = false;
+        return QStringLiteral("No command aliases of your own (%1).").arg(QDir::toNativeSeparators(user_pgp_path()));
+    }
+    const QByteArray bytes = f.readAll();
+    int loaded = 0;
+    QStringList unknown;
+    for (const auto& [alias, command] :
+         command::parse_pgp(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())))) {
+        if (processor_->registry().add_alias(alias, command)) {
+            ++loaded;
+        } else {
+            unknown << QString::fromStdString(alias + " (" + command + ")");
+        }
+    }
+    user_aliases_applied_ = true;
+    QString msg = QStringLiteral("%1 command alias%2 of your own read from %3.")
+                      .arg(loaded)
+                      .arg(loaded == 1 ? QString() : QStringLiteral("es"))
+                      .arg(QDir::toNativeSeparators(user_pgp_path()));
+    if (!unknown.isEmpty()) {
+        msg += QStringLiteral(" Not commands Musa CAD has: ") + unknown.join(QStringLiteral(", ")) + QLatin1Char('.');
+    }
+    return msg;
+}
+
+// ALIASEDIT: the user's own aliases in a table -- Alias and Command -- added, removed,
+// edited, or loaded from another PGP file (AutoCAD's acad.pgp among them); Apply or OK
+// writes the file and reads it again, so the aliases work at once.
+void MainWindow::open_alias_editor() {
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setObjectName(QStringLiteral("AliasEditDialog"));
+    dlg->setWindowTitle(QStringLiteral("Command Aliases"));
+    auto* lay = new QVBoxLayout(dlg);
+    auto* note = new QLabel(QStringLiteral("Aliases of your own, beside Musa CAD's: type the alias at the command line to "
+                                           "start its command. One of Musa CAD's aliases given here starts your command "
+                                           "instead. Kept in %1.")
+                                .arg(QDir::toNativeSeparators(user_pgp_path())),
+                            dlg);
+    note->setWordWrap(true);
+    lay->addWidget(note);
+    auto* table = new QTableWidget(0, 2, dlg);
+    table->setObjectName(QStringLiteral("AliasTable"));
+    table->setHorizontalHeaderLabels({QStringLiteral("Alias"), QStringLiteral("Command")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->hide();
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    lay->addWidget(table, 1);
+    const auto set_row = [table](const QString& alias, const QString& command) {
+        int row = table->rowCount();
+        for (int r = 0; r < table->rowCount(); ++r) {
+            if (table->item(r, 0) != nullptr && table->item(r, 0)->text().compare(alias, Qt::CaseInsensitive) == 0) {
+                row = r; // the same alias again: the later one wins, as AutoCAD reads a PGP
+            }
+        }
+        if (row == table->rowCount()) {
+            table->insertRow(row);
+        }
+        table->setItem(row, 0, new QTableWidgetItem(alias));
+        table->setItem(row, 1, new QTableWidgetItem(command));
+    };
+    const auto load_file = [set_row](const QString& path) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return false;
+        }
+        const QByteArray bytes = f.readAll();
+        for (const auto& [alias, command] :
+             command::parse_pgp(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())))) {
+            set_row(QString::fromStdString(alias), QString::fromStdString(command));
+        }
+        return true;
+    };
+    load_file(user_pgp_path());
+    // A command Musa CAD does not have is shown in red.
+    const auto check = [this, table](QTableWidgetItem* item) {
+        if (item == nullptr || item->column() != 1) {
+            return;
+        }
+        QString cmd = item->text().trimmed();
+        if (cmd.startsWith(QLatin1Char('*'))) {
+            cmd = cmd.mid(1);
+        }
+        const bool known = cmd.isEmpty() || processor_->registry().contains(cmd.toStdString());
+        const QSignalBlocker quiet(table);
+        item->setForeground(known ? palette().color(QPalette::Text) : QColor(200, 40, 40));
+        item->setToolTip(known ? QString() : QStringLiteral("Not a command Musa CAD has."));
+    };
+    for (int r = 0; r < table->rowCount(); ++r) {
+        check(table->item(r, 1));
+    }
+    connect(table, &QTableWidget::itemChanged, dlg, check);
+
+    auto* row = new QHBoxLayout;
+    auto* add = new QPushButton(QStringLiteral("Add"), dlg);
+    auto* remove = new QPushButton(QStringLiteral("Remove"), dlg);
+    auto* load = new QPushButton(QStringLiteral("Load..."), dlg);
+    load->setToolTip(QStringLiteral("Add the aliases of another PGP file -- an acad.pgp, say."));
+    row->addWidget(add);
+    row->addWidget(remove);
+    row->addStretch(1);
+    row->addWidget(load);
+    lay->addLayout(row);
+    connect(add, &QPushButton::clicked, dlg, [table] {
+        const int r = table->rowCount();
+        table->insertRow(r);
+        table->setItem(r, 0, new QTableWidgetItem);
+        table->setItem(r, 1, new QTableWidgetItem);
+        table->setCurrentCell(r, 0);
+        table->editItem(table->item(r, 0));
+    });
+    connect(remove, &QPushButton::clicked, dlg, [table] {
+        std::set<int, std::greater<>> rows;
+        for (const QModelIndex& i : table->selectionModel()->selectedRows()) {
+            rows.insert(i.row());
+        }
+        if (rows.empty() && table->currentRow() >= 0) {
+            rows.insert(table->currentRow());
+        }
+        for (const int r : rows) {
+            table->removeRow(r);
+        }
+    });
+    connect(load, &QPushButton::clicked, dlg, [dlg, load_file] {
+        const QString path = QFileDialog::getOpenFileName(dlg, QStringLiteral("Load Aliases"), QString(),
+                                                          QStringLiteral("PGP files (*.pgp);;All files (*)"));
+        if (!path.isEmpty() && !load_file(path)) {
+            QMessageBox::warning(dlg, QStringLiteral("Load Aliases"), QStringLiteral("Could not read %1.").arg(path));
+        }
+    });
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply, dlg);
+    lay->addWidget(buttons);
+    const auto apply = [this, dlg, table] {
+        QString out = QStringLiteral("; Musa CAD: your own command aliases -- ALIAS, *COMMAND a line.\n");
+        for (int r = 0; r < table->rowCount(); ++r) {
+            const QString alias = table->item(r, 0) != nullptr ? table->item(r, 0)->text().trimmed().toUpper() : QString();
+            QString cmd = table->item(r, 1) != nullptr ? table->item(r, 1)->text().trimmed().toUpper() : QString();
+            if (cmd.startsWith(QLatin1Char('*'))) {
+                cmd = cmd.mid(1).trimmed();
+            }
+            if (alias.isEmpty() || cmd.isEmpty() || alias.contains(QLatin1Char(' ')) || alias.contains(QLatin1Char(','))) {
+                continue;
+            }
+            out += alias + QLatin1Char(',') + QString(std::max<qsizetype>(1, 8 - alias.size()), QLatin1Char(' ')) +
+                   QLatin1Char('*') + cmd + QLatin1Char('\n');
+        }
+        QDir().mkpath(QFileInfo(user_pgp_path()).absolutePath());
+        QFile f(user_pgp_path());
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            QMessageBox::warning(dlg, QStringLiteral("Command Aliases"),
+                                 QStringLiteral("Could not write %1.").arg(QDir::toNativeSeparators(user_pgp_path())));
+            return false;
+        }
+        f.write(out.toUtf8());
+        f.close();
+        command_widget_->append_line(load_user_aliases().toStdString());
+        return true;
+    };
+    connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, dlg, apply);
+    connect(buttons, &QDialogButtonBox::accepted, dlg, [dlg, apply] {
+        if (apply()) {
+            dlg->accept();
+        }
+    });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+    dlg->resize(440, 420);
+    dlg->show();
 }
 
 void MainWindow::open_table_style_dialog() {

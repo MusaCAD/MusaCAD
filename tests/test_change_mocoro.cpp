@@ -1235,3 +1235,33 @@ TEST_CASE("NCOPY copies an object out of a block reference; the reference stays"
     h.run({""}); // in place
     REQUIRE(h.last<NestedCopyCommand>()->offset == Vec2{0, 0});
 }
+
+TEST_CASE("A PGP file's aliases are read as acad.pgp writes them", "[alias][pgp]") {
+    const auto pgp = musacad::command::parse_pgp("; comment\r\n"
+                                                 "EXPLORER, START EXPLORER, 1,,\n"
+                                                 "c,  *copy\n"
+                                                 "  ZZ ,*ZOOM ; zoom\n"
+                                                 "BAD ALIAS, *LINE\n"
+                                                 "NOSTAR, LINE\n");
+    REQUIRE(pgp.size() == 2);
+    REQUIRE(pgp[0] == std::pair<std::string, std::string>{"C", "COPY"});
+    REQUIRE(pgp[1] == std::pair<std::string, std::string>{"ZZ", "ZOOM"});
+}
+
+TEST_CASE("A user alias starts its command, in place of a built-in one", "[alias][pgp]") {
+    using musacad::command::CommandRegistry;
+    CommandRegistry r = CommandRegistry::make_default();
+    REQUIRE(r.create("C")->name() == "CIRCLE");
+    REQUIRE(r.add_alias("C", "COPY"));
+    REQUIRE(r.create("C")->name() == "COPY");
+    REQUIRE(r.add_alias("QQ", "L")); // an alias of an alias
+    REQUIRE(r.create("qq")->name() == "LINE");
+    REQUIRE(r.find("QQ")->name == "LINE");
+    const auto s = r.suggest("QQ");
+    REQUIRE(!s.empty());
+    REQUIRE(s.front().name == "LINE");
+    REQUIRE_FALSE(r.add_alias("XX", "NOSUCHCOMMAND"));
+    REQUIRE_FALSE(r.contains("XX"));
+    REQUIRE(r.contains("ALIASEDIT"));
+    REQUIRE(r.contains("REINIT"));
+}

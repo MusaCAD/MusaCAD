@@ -83,6 +83,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **The Quick Access Toolbar's drop-down** (#73) -- Customize Quick Access Toolbar: each tool
   ticked on or off, Plot Preview, Batch Plot, Match Properties, Layer, Properties and Data
   Extraction to add, and Show Below the Ribbon; the choice is kept for the next session.
+- **Command aliases of your own** (#73) -- **ALIASEDIT** (Manage > Customization > Edit Aliases):
+  an alias for any command, or one of Musa CAD's given to another command, added, removed or
+  loaded from another PGP file such as AutoCAD's acad.pgp; kept in `musacaduser.pgp` in the
+  settings folder and read at start-up. **REINIT** reads the file again.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and

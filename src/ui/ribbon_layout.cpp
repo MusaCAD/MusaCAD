@@ -1034,6 +1034,10 @@ void MainWindow::build_ribbon() {
     customize->set_representative_icon(asset("settings"));
     customize->add_placeholder(asset("settings"), QStringLiteral("User\nInterface"), RibbonTier::Primary);
     customize->add_placeholder(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+    {
+        QWidget* col = customize->add_column();
+        small(customize, col, QStringLiteral("Edit Aliases"), "ALIASEDIT", "settings");
+    }
 
     // ================================================================== Output
     const int output = ribbon_->add_tab(QStringLiteral("Output"));

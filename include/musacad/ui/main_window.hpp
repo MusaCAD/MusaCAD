@@ -299,6 +299,11 @@ private:
     void open_layer_states_manager(); ///< LAYERSTATE
     int open_dim_inspect_dialog(core::DimInspectCommand& io); ///< DIMINSPECT (1 OK, 0 cancelled)
     void open_table_style_dialog(); ///< TABLESTYLE
+    // The user's own command aliases, a PGP file in the settings folder (ALIASEDIT, REINIT).
+    static QString user_pgp_path();
+    QString load_user_aliases(); ///< reads the file again; says what it found
+    void open_alias_editor();    ///< ALIASEDIT
+    bool user_aliases_applied_ = false;
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;

@@ -40,6 +40,64 @@ void CommandRegistry::register_command(std::initializer_list<std::string_view> a
     }
 }
 
+bool CommandRegistry::add_alias(std::string_view alias, std::string_view command) {
+    const std::string key = upper(alias);
+    const auto it = table_.find(upper(command));
+    if (key.empty() || it == table_.end()) {
+        return false;
+    }
+    Factory factory = it->second; // copied before table_ can rehash
+    const CommandInfo meta = info_.at(upper(command));
+    table_[key] = std::move(factory);
+    info_[key] = meta;
+    const auto e = std::find_if(entries_.begin(), entries_.end(), [&](const CommandSuggestion& s) { return s.alias == key; });
+    if (e == entries_.end()) {
+        entries_.push_back(CommandSuggestion{key, meta.name, meta.description});
+    } else {
+        e->name = meta.name;
+        e->description = meta.description;
+    }
+    return true;
+}
+
+std::vector<std::pair<std::string, std::string>> parse_pgp(std::string_view text) {
+    std::vector<std::pair<std::string, std::string>> out;
+    const auto trim = [](std::string_view s) {
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) {
+            s.remove_prefix(1);
+        }
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())) != 0) {
+            s.remove_suffix(1);
+        }
+        return s;
+    };
+    while (!text.empty()) {
+        const std::size_t nl = text.find('\n');
+        std::string_view line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        if (const std::size_t semi = line.find(';'); semi != std::string_view::npos) {
+            line = line.substr(0, semi);
+        }
+        const std::size_t comma = line.find(',');
+        if (comma == std::string_view::npos) {
+            continue;
+        }
+        const std::string_view alias = trim(line.substr(0, comma));
+        std::string_view command = trim(line.substr(comma + 1));
+        if (alias.empty() || command.empty() || command.front() != '*') {
+            continue;
+        }
+        command = trim(command.substr(1));
+        if (const std::size_t end = command.find_first_of(" \t,"); end != std::string_view::npos) {
+            command = command.substr(0, end);
+        }
+        if (!command.empty() && alias.find_first_of(" \t") == std::string_view::npos) {
+            out.emplace_back(upper(alias), upper(command));
+        }
+    }
+    return out;
+}
+
 const CommandInfo* CommandRegistry::find(std::string_view alias) const {
     const auto it = info_.find(upper(alias));
     return it == info_.end() ? nullptr : &it->second;
@@ -193,6 +251,9 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"QSAVE"}, "QSAVE", "assets/ribbon/save.svg", "Save the drawing under its name (Save As the first time).");
     file_cmd({"SAVEAS", "SAVE"}, "SAVEAS", "assets/ribbon/saveas.svg", "Save the drawing under a name you choose.");
     file_cmd({"CLOSE"}, "CLOSE", "", "Close the drawing in front.");
+    file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
+             "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
+    file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
     file_cmd({"CLOSEALL"}, "CLOSEALL", "", "Close every open drawing.");
     file_cmd({"QUIT", "EXIT"}, "QUIT", "", "Quit Musa CAD, asking to save what is not saved.");
     file_cmd({"IMPORT", "IMP", "DXFIN"}, "IMPORT", "assets/ribbon/import.svg", "Bring a DXF file into the drawing.");

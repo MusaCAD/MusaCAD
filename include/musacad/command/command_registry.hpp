@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "musacad/command/command.hpp"
@@ -63,6 +64,11 @@ public:
     /// source of command truth.
     [[nodiscard]] std::vector<CommandSuggestion> suggest(std::string_view prefix) const;
 
+    /// A command alias of the user's own (a PGP line `ALIAS, *COMMAND`): `alias` then
+    /// starts what `command` starts -- a command's name or one of its aliases -- in place
+    /// of whatever it started before. False when `command` is not known.
+    bool add_alias(std::string_view alias, std::string_view command);
+
     /// The built-in AutoCAD-style command table.
     [[nodiscard]] static CommandRegistry make_default();
 
@@ -71,5 +77,9 @@ private:
     std::unordered_map<std::string, CommandInfo> info_; // key = upper alias -> metadata
     std::vector<CommandSuggestion> entries_;            // (alias, name, desc) for suggestions
 };
+
+/// The command aliases in a PGP file, AutoCAD's acad.pgp form: `ALIAS, *COMMAND` a line,
+/// a `;` starting a comment. The lines without a `*` (external commands) are skipped.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> parse_pgp(std::string_view text);
 
 } // namespace musacad::command
