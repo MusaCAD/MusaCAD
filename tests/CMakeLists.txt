@@ -131,13 +131,6 @@ add_executable(musacad_tests
     test_layer_command.cpp
     test_qdim.cpp
     test_command_undo_scope.cpp
-    test_point_limits_units.cpp
-    test_layer_plot_followups.cpp
-    test_layer_states_grid.cpp
-    test_dim_units.cpp
-    test_mleader.cpp
-    test_find_text.cpp
-    test_pedit_vertex.cpp
     test_trim_curves.cpp
     test_lengthen_more.cpp
     test_trim_paths_clipboard.cpp
@@ -220,10 +213,30 @@ target_link_libraries(musacad_tests PRIVATE
     musacad::command
     Catch2::Catch2WithMain)
 
+# A second test binary: under the dev preset (ASan, debug) one binary with every test
+# outgrows the 2 GB that 32-bit relative relocations reach, and the link fails.
+add_executable(musacad_tests_2
+    test_point_limits_units.cpp
+    test_layer_plot_followups.cpp
+    test_layer_states_grid.cpp
+    test_dim_units.cpp
+    test_mleader.cpp
+    test_find_text.cpp
+    test_pedit_vertex.cpp
+    test_dwgunits.cpp
+)
+target_link_libraries(musacad_tests_2 PRIVATE
+    musacad::core
+    musacad::cli
+    musacad::render
+    musacad::command
+    Catch2::Catch2WithMain)
+
 # Sanitizers (ASan/UBSan or TSan) follow the active preset; warnings are not
 # promoted to errors for the test target (Catch2 macros are noisy under the
 # strict set), but musacad_core is still built warnings-as-errors.
 musacad_enable_sanitizers(musacad_tests)
+musacad_enable_sanitizers(musacad_tests_2)
 
 list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
 include(Catch)
@@ -245,6 +258,7 @@ if(WIN32)
         endif()
     endif()
     catch_discover_tests(musacad_tests DL_PATHS ${_musacad_dl_paths})
+    catch_discover_tests(musacad_tests_2 DL_PATHS ${_musacad_dl_paths})
     # The same directories, as CTest environment edits, for the tests below that run the
     # application binary.
     set(_musacad_path_mods "")
@@ -253,6 +267,7 @@ if(WIN32)
     endforeach()
 else()
     catch_discover_tests(musacad_tests)
+    catch_discover_tests(musacad_tests_2)
 endif()
 
 # The portable fallbacks (parse_double without floating-point from_chars, the jthread /

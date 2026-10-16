@@ -14120,6 +14120,87 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, MLeaderAlignCommand>) {
+                const EntityHandle base = pick_nearest(c.base_pick, c.radius);
+                if (base.is_null() || base.kind != EntityKind::MLeader) {
+                    report("Select a multileader to align to.");
+                } else {
+                    const auto bv = store_.vertices_of(*store_.mleader(base));
+                    const Vec2 origin = bv.empty() ? c.base_pick : bv.back();
+                    const Vec2 d = normalized(c.toward - origin);
+                    std::size_t moved = 0;
+                    if (length(c.toward - origin) > 1e-12) {
+                        prune_selection();
+                        const std::vector<EntityHandle> sel = selection_;
+                        std::vector<EntityHandle> made;
+                        for (const EntityHandle h : sel) {
+                            if (h == base || h.kind != EntityKind::MLeader || !selectable(h)) {
+                                continue;
+                            }
+                            Command cmd = capture_entity(h);
+                            auto* m = std::get_if<AddMLeaderCommand>(&cmd);
+                            if (m == nullptr || m->vertices.empty()) {
+                                continue;
+                            }
+                            const Vec2 anchor = m->vertices.back();
+                            const Vec2 target = origin + d * dot(anchor - origin, d);
+                            const Vec2 delta = target - anchor;
+                            if (length(delta) < 1e-12) {
+                                continue;
+                            }
+                            // The landing (a level last segment) moves with the text; the rest stays.
+                            const std::size_t n = m->vertices.size();
+                            const bool landing = n >= 3 && std::abs(m->vertices[n - 1].y - m->vertices[n - 2].y) < 1e-9;
+                            m->vertices[n - 1] += delta;
+                            if (landing) {
+                                m->vertices[n - 2] += delta;
+                            }
+                            m->block.pos += delta;
+                            const Command original = capture_entity(h);
+                            remove_indexed(h);
+                            push_erase_item(c.group, h, original);
+                            const EntityHandle nh = create_indexed(cmd);
+                            push_create_item(c.group, nh, cmd);
+                            made.push_back(nh);
+                            ++moved;
+                        }
+                        if (moved > 0) {
+                            selection_ = made;
+                            redo_.clear();
+                            geom_dirty_ = true;
+                            dirty_ = true;
+                        }
+                    }
+                    report(std::to_string(moved) + (moved == 1 ? " multileader aligned." : " multileaders aligned."));
+                }
+            }
+            if constexpr (std::is_same_v<T, ScaleDrawingCommand>) {
+                if (c.factor > 0.0 && std::isfinite(c.factor) && c.factor != 1.0) {
+                    std::size_t n = 0;
+                    for (const EntityHandle h : all_live()) {
+                        const EntityProps* p = store_.props(h);
+                        if (p == nullptr || p->space() != 0) {
+                            continue; // model space only: a layout's sheet keeps its size
+                        }
+                        Command scaled = capture_entity(h);
+                        scale_cmd(scaled, Vec2{}, c.factor);
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(scaled);
+                        push_create_item(c.group, nh, scaled);
+                        ++n;
+                    }
+                    store_.set_limits(store_.limits_min() * c.factor, store_.limits_max() * c.factor, store_.limits_on());
+                    selection_.clear();
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    char buf[96];
+                    std::snprintf(buf, sizeof(buf), "%zu objects scaled by %g.", n, c.factor);
+                    report(buf);
+                }
+            }
             if constexpr (std::is_same_v<T, PropsFromPickCommand>) {
                 if (c.restore) {
                     if (props_saved_) {

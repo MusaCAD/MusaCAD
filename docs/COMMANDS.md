@@ -39,6 +39,7 @@ commands (Ribbon Phase A):
 | PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
 | UNDO (U) | Reverse the most recent action. |
 | HELP (?, F1) | Open this command reference in the browser. |
+| PREVIEW (PRE) | The plot as it will come out, with the last plot's settings: zoom, pan by dragging, Plot. |
 | ZOOM (Z) | Zoom in or out to change the view magnification. |
 | PAN (P) / -PAN (-P) | Move the view with a drag, or by a displacement. |
 | MOVE (M) | Move selected objects a specified distance and direction. |
@@ -259,6 +260,7 @@ commands (Ribbon Phase A):
 | VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
 | GROUP / UNGROUP / PICKSTYLE 0..3 / -GROUP (?, Order, Add, Remove, Explode, REName, Selectable, Create) / GROUPEDIT / Ctrl+H | G | Implemented (#53; group membership persists in .musa; not on the undo stack; PICKSTYLE's hatch bit waits for associative hatches, #41) |
 | UNITS (the Drawing Units dialog; -UNITS with AutoCAD's numbered tables; INSUNITS; degrees/DMS/grads/radians/surveyor) -- lengths are typed as decimals, fractions (`12 3/8`, `3/8`) or feet and inches (`1'-6"`, `1'6`, `6"`, `1'-6 1/2"`; a foot is twelve drawing units) at every length and point prompt; DXF carries `$INSUNITS`, `$LUNITS`, `$LUPREC`, `$AUNITS`, `$AUPREC`, `$ANGDIR`, `$ANGBASE` and `$MEASUREMENT` both ways | UN / -UNITS | Implemented (#67, #81; dimension text keeps the dimstyle precision, as DIMLUNIT does; blocks and pastes are not yet scaled by the units) |
+| -DWGUNITS -- `Unit for length <3>:` (Inches, Feet, Millimeters, Centimeters, Decimeters, Meters), the display format and precision, then `Scale objects in current drawing to reflect change in units? [Yes/No] <Yes>:`: every model-space object and the limits scaled to the new unit, one undo step | -DWGUNITS | Implemented (#81) |
 | LTSCALE shows the current value and says `Regenerating model.`; CELTSCALE, PSLTSCALE (viewport dashes follow the viewport scale), MSLTSCALE (recorded) | LTS | Implemented (#67) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) -- STYLE opens the Text Style window (the styles, font, height, width factor, oblique angle; Set Current, New, Apply); -STYLE asks at the command line | ST / -ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented |
@@ -406,7 +408,8 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
 | **DIMCONTINUE (DCO)** — `Specify a second extension line origin or [Select/Undo] <Select>:`, the next dimension from the previous one's second extension line, on the same dimension line. **DIMBASELINE (DBA)** — `[Select/Offset/Undo]`, stacked from the first extension line, a spacing further out (**Offset**: `Specify the baseline offset distance <3.7500>:`). Enter or **Select** asks `Select continued dimension:` / `Select base dimension:` -- the extension line nearer the pick is the one gone on from -- and Enter there ends. Linear, aligned, angular (the same vertex and arc, from the previous ray) and ordinate (the next feature on the same datum) dimensions chain; each takes the previous one's style and overrides; each pick is its own undo step and **Undo** comes back to the one gone on from | DCO / DBA | Implemented (#28, #57) |
 | MTEXT (multi-line) | MT | Implemented (Ph20; inline per-character formatting is not) |
-| MLEADER -- `Specify leader arrowhead location or [leader Landing first/Content first/Options] <Options>:`, the landing, the text beside a horizontal landing; Options: Maxpoints, Content type (Mtext / None), leader lAnding (Yes / No); Annotate ▸ Leaders ▸ Multileader | MLD | Implemented (#61; MLEADERSTYLE, MLEADERALIGN, MLEADERCOLLECT, MLEADEREDIT, spline leaders and angle constraints not yet) |
+| MLEADER -- `Specify leader arrowhead location or [leader Landing first/Content first/Options] <Options>:`, the landing, the text beside a horizontal landing; Options: Maxpoints, Content type (Mtext / None), leader lAnding (Yes / No); Annotate ▸ Leaders ▸ Multileader | MLD | Implemented (#61; MLEADERSTYLE, MLEADERCOLLECT, MLEADEREDIT, spline leaders and angle constraints not yet) |
+| MLEADERALIGN -- `Select multileaders:`, `Select multileader to align to or [Options]:`, `Specify direction:`: their text (with its landing) moved onto the line through the chosen one's, each keeping its place along it; the arrowheads stay | MLA | Implemented (#61; the Distribute, Parallel and Spacing options not yet) |
 | STYLE (text style) | ST | Implemented (#29) |
 
 ## View / Navigate

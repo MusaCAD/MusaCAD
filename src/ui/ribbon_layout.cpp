@@ -874,7 +874,7 @@ void MainWindow::build_ribbon() {
         connect(p, &QToolButton::clicked, this, &MainWindow::open_plot_dialog);
         QWidget* col = plot->add_column();
         todo_small(plot, col, QStringLiteral("Batch Plot"), "plot");
-        todo_small(plot, col, QStringLiteral("Preview"), "preview");
+        small(plot, col, QStringLiteral("Preview"), "PREVIEW", "preview");
         todo_small(plot, col, QStringLiteral("Page Setup Manager"), "pagesetup");
     }
     RibbonPanel* export_p = ribbon_->add_panel(output, QStringLiteral("Export to DWG/DXF/PDF"), 40);

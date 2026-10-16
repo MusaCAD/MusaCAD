@@ -159,6 +159,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
+    reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",
+        "Show the plot as it will come out, with the last plot's settings.");
     reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
         "Find text in the drawing and replace it.");
     reg({"TCASE"}, [] { return std::make_unique<TextCaseCommand>(); }, "",
@@ -318,6 +320,8 @@ CommandRegistry CommandRegistry::make_default() {
     }
     reg({"UN", "UNITS"}, [] { return std::make_unique<UnitsCommand>(true); }, "",
         "Set the display format and precision of lengths and angles (the Drawing Units dialog).");
+    reg({"-DWGUNITS", "DWGUNITS"}, [] { return std::make_unique<DwgUnitsCommand>(); }, "",
+        "Take the drawing to another unit, scaling its objects to match.");
     reg({"-UNITS"}, [] { return std::make_unique<UnitsCommand>(false); }, "",
         "Set the units from the command line: the numbered format tables, angle base and direction.");
     reg({"INSUNITS"}, [] { return std::make_unique<InsunitsCommand>(); }, "",
@@ -455,6 +459,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",
         "Create a dimension suited to the selected object.");
+    reg({"MLEADERALIGN", "MLA"}, [] { return std::make_unique<MLeaderAlignUiCommand>(); }, "",
+        "Line up the text of the selected multileaders along a direction.");
     reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a multileader: an arrowhead, a leader line and a landing, and its text.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",

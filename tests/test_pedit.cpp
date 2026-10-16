@@ -158,7 +158,7 @@ TEST_CASE("PEDIT: a line under the pick is converted to a polyline first") {
     engine.stop();
 }
 
-TEST_CASE("PEDIT command flow: options map to edits, vertex submenu, Join hands off to JOIN") {
+TEST_CASE("PEDIT command flow: options map to edits, the vertex editor, Join hands off to JOIN") {
     ProcHarness h;
     h.proc.submit_line("PE");
     h.proc.submit_line("5,0");
@@ -167,8 +167,7 @@ TEST_CASE("PEDIT command flow: options map to edits, vertex submenu, Join hands 
     h.proc.submit_line("E");
     h.proc.submit_line("I");
     h.proc.submit_line("5,3");
-    h.proc.submit_line("M");
-    h.proc.submit_line("5,3");
+    h.proc.submit_line("M"); // the vertex under the X moves
     h.proc.submit_line("5,-4");
     h.proc.submit_line("X");
     h.proc.submit_line("J");
@@ -176,21 +175,26 @@ TEST_CASE("PEDIT command flow: options map to edits, vertex submenu, Join hands 
     h.proc.submit_line("");
     h.proc.submit_line("U");
     h.proc.submit_line("");
-    REQUIRE(h.count<PeditCommand>() == 4);
+    REQUIRE(h.count<PeditCommand>() == 6); // Close, Reverse; the vertex editor's start, Insert, Move, eXit
     REQUIRE(h.count<JoinPickCommand>() == 1);
     REQUIRE(h.count<UndoLastGroupCommand>() == 1);
     REQUIRE(h.last<JoinPickCommand>()->picks.size() == 2);
     REQUIRE(!h.proc.has_active_command());
-    // The move op carries both points.
+    // Insert puts the point after the current vertex; Move takes the current one there.
+    int inserts = 0;
     int moves = 0;
     for (const Command& c : h.cmds) {
         if (const auto* p = std::get_if<PeditCommand>(&c)) {
-            if (p->op == 7) {
-                ++moves;
+            if (p->op == 18) {
+                ++inserts;
                 REQUIRE(p->p1 == Vec2{5, 3});
-                REQUIRE(p->p2 == Vec2{5, -4});
+            }
+            if (p->op == 19) {
+                ++moves;
+                REQUIRE(p->p1 == Vec2{5, -4});
             }
         }
     }
+    REQUIRE(inserts == 1);
     REQUIRE(moves == 1);
 }

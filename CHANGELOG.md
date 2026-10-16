@@ -40,6 +40,7 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
 - **DSETTINGS** (#65) -- the Drafting Settings dialog with its Snap and Grid, Polar
   Tracking, Object Snap and Dynamic Input tabs; `DS`, `SE` and `OS` open it.
+- **MLEADERALIGN** (#61) -- the selected multileaders' text lined up along a direction.
 - **MLEADER** (#61) -- arrowhead first, landing first or content first, a horizontal landing
   with the text beside it, and Maxpoints, Content type and landing options; Annotate >
   Leaders opens with it. **LEADER** takes any number of points with Undo, Format and
@@ -47,6 +48,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **MTEXT's corner options** (#43) -- `[Height/Justify/Line spacing/Rotation/Style/Width/
   Columns]` at the opposite corner, the current text style's height by default; text typed
   for MTEXT and QLEADER keeps its spaces.
+- **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
+  and Output > Plot > Preview, with Plot from it.
 - **HELP** and **F1** (#65) -- open the command reference in the browser.
 - **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
   the view, `2` against the limits); PAN and -PAN; REGENALL.
@@ -81,6 +84,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **Alternate Units** tab shows the length again in brackets (`25.00 [0.98]`). The same
   settings as DIMLUNIT, DIMFRAC, DIMRND, DIMLFAC, DIMAUNIT, DIMADEC, DIMALT, DIMALTU,
   DIMALTD, DIMALTF and DIMALTRND at the command line; kept in the drawing and in DXF.
+- **-DWGUNITS** (#81) -- the drawing taken to another unit in one step, its objects scaled
+  to match.
 - **Units across drawings** (#81) -- copying between drawings in different units, or
   attaching one as a reference, scales the objects into the drawing's own units
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.

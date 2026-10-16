@@ -1434,6 +1434,24 @@ private:
     bool done_ = false;
 };
 
+/// PREVIEW (PRE): the plot preview, with the settings of the last plot.
+class PlotPreviewCommand final : public ICommand {
+public:
+    std::string name() const override { return "PREVIEW"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !ctx.view()->plot_preview()) {
+            ctx.echo("PREVIEW needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:
@@ -2377,6 +2395,49 @@ private:
 
 /// UNITS (UN, -UNITS): the command-line flow -- linear format and precision, angle
 /// format and precision, direction of angle 0, clockwise -- stored with the drawing.
+/// MLEADERALIGN (MLA): `Select multileaders:`, `Select multileader to align to or
+/// [Options]:`, `Specify direction:` -- their text lined up along that direction.
+class MLeaderAlignUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "MLEADERALIGN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Base, Direction };
+    void base_prompt(CommandContext& ctx);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    core::Vec2 base_{};
+    bool done_ = false;
+};
+
+/// -DWGUNITS: the drawing's unit (`Unit for length <3>:` from Inches, Feet, Millimeters,
+/// Centimeters, Decimeters, Meters), the display format and precision, and whether the
+/// objects are scaled to the new unit (`Scale objects in current drawing to reflect change
+/// in units? [Yes/No] <Yes>:`), as one step.
+class DwgUnitsCommand final : public ICommand {
+public:
+    std::string name() const override { return "-DWGUNITS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Unit, Format, Precision, InsertScale, Match, Scale };
+    void ask(CommandContext& ctx);
+    Step step_ = Step::Unit;
+    core::DrawingUnits units_{};
+    std::uint8_t from_ = 0;
+    bool done_ = false;
+};
+
 /// UNITS opens the Drawing Units dialog; -UNITS (or UNITS with no dialog) prints
 /// AutoCAD's numbered format tables and asks `Enter choice, 1 to 5 <2>:` and the rest.
 class UnitsCommand final : public ICommand {

@@ -301,6 +301,14 @@ bool ViewportWindow::quick_select_dialog(bool filter) {
     return true;
 }
 
+bool ViewportWindow::plot_preview() {
+    if (!plot_preview_callback_) {
+        return false;
+    }
+    plot_preview_callback_();
+    return true;
+}
+
 bool ViewportWindow::text_style_dialog() {
     if (!text_style_callback_) {
         return false;
