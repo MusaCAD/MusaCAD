@@ -2020,3 +2020,39 @@ TEST_CASE("Feet and inches drop zero feet and zero inches as DIMZIN says") {
     REQUIRE(io::parse_native(io::serialize_native(doc), now).ok);
     REQUIRE((now.dimstyles.back().zero_suppression & kDimZinFeetInches) == 0);
 }
+
+TEST_CASE("Multileader styles: added, made current, kept in the drawing; MLEADER draws with the current one") {
+    GeometryEngine engine;
+    engine.start();
+    MLeaderStyle big;
+    big.name = "Big notes";
+    big.text_height = 5.0;
+    big.landing_distance = 10.0;
+    big.landing_gap = 2.0;
+    big.arrow = 3; // dot
+    big.arrow_size = 4.0;
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::Add, {}, big});
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::SetCurrent, "big notes", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.current_mleader_style == 1; }));
+    io::Document doc = dump(engine, "musacad_mls.musa");
+    REQUIRE(doc.mleader_styles.size() == 2);
+    REQUIRE(doc.mleader_styles[1] == big);
+    REQUIRE(doc.current_mleader_style == 1);
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::Delete, "Big notes", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "Multileader style \"Big notes\" cannot be deleted: it is Standard or the current style.";
+    }));
+    engine.stop();
+
+    H h;
+    h.proc.set_mleader_styles({MLeaderStyle{}, big}, 1);
+    h.run({"MLD", "0,0", "10,10", "NOTE"});
+    const auto* m = h.last<AddMLeaderCommand>();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->block.height == 5.0);
+    REQUIRE(m->vertices[2].x == Approx(20.0));      // a 10 landing
+    REQUIRE(m->block.pos.x == Approx(22.0));         // and a 2 gap
+    REQUIRE(m->overrides.arrow_type == 3);
+    REQUIRE(m->overrides.has(DimOverrides::kArrowType));
+    REQUIRE(m->overrides.arrow_size == 4.0);
+}

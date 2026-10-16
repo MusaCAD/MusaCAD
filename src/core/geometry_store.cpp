@@ -340,6 +340,18 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
     return EntityHandle{slot.index, slot.generation, EntityKind::Table};
 }
 
+std::uint16_t GeometryStore::mleader_style_index(std::string_view name) const noexcept {
+    for (std::size_t i = 0; i < mleader_styles_.size(); ++i) {
+        const std::string& n = mleader_styles_[i].name;
+        if (n.size() == name.size() && std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return 0xFFFF;
+}
+
 std::uint16_t GeometryStore::data_link_index(std::string_view name) const noexcept {
     for (std::size_t i = 0; i < data_links_.size(); ++i) {
         const std::string& n = data_links_[i].name;

@@ -16226,6 +16226,52 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
             }
+            if constexpr (std::is_same_v<T, MLeaderStyleCommand>) {
+                using Op = MLeaderStyleCommand::Op;
+                std::vector<MLeaderStyle> styles = store_.mleader_styles();
+                const std::uint16_t i = store_.mleader_style_index(c.op == Op::Add ? c.style.name : c.name);
+                const std::string quoted = "\"" + (c.op == Op::Add ? c.style.name : c.name) + "\"";
+                if (c.op == Op::Add) {
+                    if (c.style.name.empty() || i != 0xFFFF) {
+                        report(c.style.name.empty() ? "A multileader style needs a name."
+                                                    : "Multileader style " + quoted + " already exists.");
+                    } else {
+                        styles.push_back(c.style);
+                        store_.set_mleader_styles(std::move(styles));
+                        dirty_ = true;
+                        report("Multileader style " + quoted + " added.");
+                    }
+                } else if (i == 0xFFFF) {
+                    report("Multileader style " + quoted + " not found.");
+                } else if (c.op == Op::Modify) {
+                    const std::uint16_t clash = store_.mleader_style_index(c.style.name);
+                    if (c.style.name.empty() || (clash != 0xFFFF && clash != i)) {
+                        report("Another multileader style is called \"" + c.style.name + "\".");
+                    } else {
+                        const std::string keep = styles[i].name;
+                        styles[i] = c.style;
+                        if (i == 0) {
+                            styles[i].name = keep; // Standard stays Standard
+                        }
+                        store_.set_mleader_styles(std::move(styles));
+                        dirty_ = true;
+                        report("Multileader style \"" + store_.mleader_styles()[i].name + "\" changed.");
+                    }
+                } else if (c.op == Op::SetCurrent) {
+                    store_.set_current_mleader_style(i);
+                    dirty_ = true;
+                    report("\"" + store_.mleader_styles()[i].name + "\" is now the current multileader style.");
+                } else if (i == 0 || i == store_.current_mleader_style()) {
+                    report("Multileader style " + quoted + " cannot be deleted: it is Standard or the current style.");
+                } else {
+                    const std::uint16_t cur = store_.current_mleader_style();
+                    styles.erase(styles.begin() + i);
+                    store_.set_mleader_styles(std::move(styles));
+                    store_.set_current_mleader_style(cur > i ? static_cast<std::uint16_t>(cur - 1) : cur);
+                    dirty_ = true;
+                    report("Multileader style " + quoted + " deleted.");
+                }
+            }
             if constexpr (std::is_same_v<T, ExtrimCommand>) {
                 apply_extrim(c);
             }
@@ -16823,6 +16869,8 @@ void GeometryEngine::rebuild_and_publish() {
     buf.table_styles = store_.table_styles();
     buf.current_table_style = store_.current_table_style();
     buf.page_setups = store_.page_setups(); // PAGESETUP, the Plot window's saved setups
+    buf.mleader_styles = store_.mleader_styles(); // MLEADERSTYLE
+    buf.current_mleader_style = store_.current_mleader_style();
     buf.insbase = store_.insbase();       // BASE
     buf.data_links = store_.data_links(); // DATALINK
     buf.layer_used = layer_used_;

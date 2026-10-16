@@ -248,6 +248,8 @@ struct RenderSnapshot {
     std::uint16_t current_text_style = 0;
     std::vector<TableStyle> table_styles;  // TABLESTYLE (TABLE, the Table Style window)
     std::uint16_t current_table_style = 0;
+    std::vector<MLeaderStyle> mleader_styles; // MLEADERSTYLE (MLEADER, the Multileader Style window)
+    std::uint16_t current_mleader_style = 0;
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
     // any future hatching. `lineweight_display` is the LWDISPLAY toggle.

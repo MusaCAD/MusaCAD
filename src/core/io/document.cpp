@@ -188,6 +188,8 @@ Document document_from_store(const GeometryStore& store) {
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
     doc.current_table_style = store.current_table_style();
+    doc.mleader_styles = store.mleader_styles();
+    doc.current_mleader_style = store.current_mleader_style();
     doc.current_dimstyle = store.current_dimstyle();
     doc.wipeout_frames = store.wipeout_frames();
     doc.wipeout_frames_plot = store.wipeout_frames_plot();
@@ -665,6 +667,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_table_style_table(doc.table_styles);
     }
     store.set_current_table_style(doc.current_table_style);
+    store.set_mleader_styles(doc.mleader_styles);
+    store.set_current_mleader_style(doc.current_mleader_style);
     store.set_data_links(doc.data_links);
     for (const DocTable& t : doc.tables) {
         std::vector<TableCell> cells;

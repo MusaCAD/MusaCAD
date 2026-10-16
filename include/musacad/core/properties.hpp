@@ -218,6 +218,23 @@ inline constexpr std::uint8_t kDimZinFeetInches = 3;
 /// use the value here instead of the dimension's DimStyle". No bit => ByStyle. The
 /// effective value is resolved once, in compute_dim_geometry (override-first). Kept
 /// compact and only in the dimension's arena -- hot structs are untouched.
+/// A multileader style (MLEADERSTYLE): what MLEADER draws a new multileader with -- the
+/// arrowhead and its size, whether there is a landing and how long, the text height and
+/// its gap from the landing, how many leader points, and whether it carries text.
+/// Standard is the multileader Musa CAD drew before there were styles.
+struct MLeaderStyle {
+    std::string name = "Standard";
+    std::uint8_t arrow = 0;          ///< ArrowType
+    double arrow_size = 2.5;
+    bool landing = true;             ///< Automatically include landing
+    double landing_distance = 5.0;   ///< the landing's length
+    double text_height = 2.5;
+    double landing_gap = 1.25;       ///< between the landing and the text
+    std::uint8_t max_points = 2;     ///< leader points before the text (0: no limit)
+    bool text = true;                ///< Multileader type: MText (false: None)
+    friend bool operator==(const MLeaderStyle&, const MLeaderStyle&) = default;
+};
+
 struct DimOverrides {
     enum Bit : std::uint16_t {
         kTextHeight = 1u << 0,

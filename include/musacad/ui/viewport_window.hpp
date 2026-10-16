@@ -79,6 +79,8 @@ public:
     std::uint16_t current_dim_style();
     std::vector<core::TableStyle> table_styles();
     std::uint16_t current_table_style();
+    std::vector<core::MLeaderStyle> mleader_styles();
+    std::uint16_t current_mleader_style();
     std::vector<std::string> block_names();
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
     std::vector<core::LayoutInfo> layouts();
@@ -993,6 +995,8 @@ private:
     std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_
     std::uint16_t current_dim_style_ = 0;
     std::vector<core::TableStyle> table_styles_; ///< under layers_mutex_
+    std::vector<core::MLeaderStyle> mleader_styles_; ///< under layers_mutex_
+    std::uint16_t current_mleader_style_ = 0;
     std::uint16_t current_table_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_

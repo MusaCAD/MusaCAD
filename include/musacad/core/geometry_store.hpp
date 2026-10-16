@@ -942,6 +942,22 @@ public:
     }
     /// The index of the style named `name` (any case), or 0xFFFF.
     [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
+    /// MLEADERSTYLE: the multileader styles (Standard first) and the current one.
+    [[nodiscard]] const std::vector<MLeaderStyle>& mleader_styles() const noexcept { return mleader_styles_; }
+    void set_mleader_styles(std::vector<MLeaderStyle> v) {
+        if (!v.empty()) {
+            mleader_styles_ = std::move(v);
+        }
+        if (current_mleader_style_ >= mleader_styles_.size()) {
+            current_mleader_style_ = 0;
+        }
+    }
+    [[nodiscard]] std::uint16_t current_mleader_style() const noexcept { return current_mleader_style_; }
+    void set_current_mleader_style(std::uint16_t i) noexcept {
+        current_mleader_style_ = i < mleader_styles_.size() ? i : 0;
+    }
+    /// The index of the multileader style named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t mleader_style_index(std::string_view name) const noexcept;
     /// DATALINK: the drawing's data links (a link is never taken out from under a table:
     /// removing one leaves its slot with an empty name, so table indices stay valid).
     [[nodiscard]] const std::vector<DataLink>& data_links() const noexcept { return data_links_; }
@@ -1313,6 +1329,8 @@ private:
     std::vector<double> table_size_pool_;     ///< column widths then row heights
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
     std::uint16_t current_table_style_ = 0;
+    std::vector<MLeaderStyle> mleader_styles_{MLeaderStyle{}}; // MLEADERSTYLE
+    std::uint16_t current_mleader_style_ = 0;
     std::vector<DataLink> data_links_; // DATALINK
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service

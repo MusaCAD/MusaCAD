@@ -4486,6 +4486,7 @@ private:
     static inline int s_max_points_ = 2;
     static inline bool s_content_ = true;
     static inline bool s_landing_ = true;
+    core::MLeaderStyle style_{}; ///< the current multileader style, taken at the start
 };
 
 /// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph

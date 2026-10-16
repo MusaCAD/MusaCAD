@@ -327,6 +327,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
             return true;
         }
+        if (action == "MLEADERSTYLE") {
+            QTimer::singleShot(0, this, &MainWindow::open_mleader_style_dialog);
+            return true;
+        }
         if (action == "CUI") {
             QTimer::singleShot(0, this, &MainWindow::open_cui_dialog);
             return true;
@@ -490,6 +494,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
         processor_->set_table_styles(viewport_->table_styles(), viewport_->current_table_style());
+        processor_->set_mleader_styles(viewport_->mleader_styles(), viewport_->current_mleader_style());
         processor_->set_current_props(viewport_->current_props());
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
@@ -1917,6 +1922,13 @@ void MainWindow::sync_style_combos() {
             names.push_back(st.name);
         }
         sync(table_style_combo_, names, viewport_->current_table_style());
+    }
+    if (mleader_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::MLeaderStyle& st : viewport_->mleader_styles()) {
+            names.push_back(st.name);
+        }
+        sync(mleader_style_combo_, names, viewport_->current_mleader_style());
     }
 }
 
@@ -3855,6 +3867,149 @@ void MainWindow::open_table_style_dialog() {
         const QString name = current_name(d);
         if (!name.isEmpty()) {
             engine_->submit(core::TableStyleCommand{Op::Delete, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+// MLEADERSTYLE: the Multileader Style Manager -- the styles, Set Current, New (from the one
+// picked), Modify and Delete; a style's arrowhead, landing, text and leader points.
+void MainWindow::open_mleader_style_dialog() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Multileader Style Manager"));
+    d.dlg->setObjectName(QStringLiteral("MLeaderStyleDialog"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        const std::vector<core::MLeaderStyle> styles = viewport_->mleader_styles();
+        const std::uint16_t cur = viewport_->current_mleader_style();
+        d.list->clear();
+        for (const core::MLeaderStyle& st : styles) {
+            d.list->addItem(QString::fromStdString(st.name));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(cur < styles.size() ? cur : 0) : found.front());
+        d.status->setText(cur < styles.size()
+                              ? QStringLiteral("Current multileader style: %1").arg(QString::fromStdString(styles[cur].name))
+                              : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    const auto style_named = [this](const QString& name) {
+        for (const core::MLeaderStyle& st : viewport_->mleader_styles()) {
+            if (QString::fromStdString(st.name) == name) {
+                return st;
+            }
+        }
+        return core::MLeaderStyle{};
+    };
+    // AutoCAD's three tabs in one form: Leader Format (the arrowhead), Leader Structure
+    // (the points and the landing) and Content (the text and its gap).
+    const auto edit = [](QWidget* parent, const QString& title, core::MLeaderStyle& st) {
+        QDialog dlg(parent);
+        dlg.setWindowTitle(title);
+        auto* form = new QFormLayout(&dlg);
+        const auto spin = [&](double v, double lo, double hi) {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setDecimals(4);
+            s->setRange(lo, hi);
+            s->setValue(v);
+            return s;
+        };
+        auto* arrow = new QComboBox(&dlg);
+        arrow->addItems({QStringLiteral("Closed filled"), QStringLiteral("Architectural tick"), QStringLiteral("Open"),
+                         QStringLiteral("Dot")});
+        arrow->setCurrentIndex(std::min<int>(st.arrow, 3));
+        QDoubleSpinBox* arrow_size = spin(st.arrow_size, 0.0001, 1e6);
+        auto* max_points = new QSpinBox(&dlg);
+        max_points->setRange(0, 99);
+        max_points->setSpecialValueText(QStringLiteral("No limit"));
+        max_points->setValue(st.max_points);
+        auto* landing = new QCheckBox(QStringLiteral("Automatically include landing"), &dlg);
+        landing->setChecked(st.landing);
+        QDoubleSpinBox* landing_distance = spin(st.landing_distance, 0.0, 1e6);
+        auto* content = new QComboBox(&dlg);
+        content->addItems({QStringLiteral("Mtext"), QStringLiteral("None")});
+        content->setCurrentIndex(st.text ? 0 : 1);
+        QDoubleSpinBox* text_height = spin(st.text_height, 0.0001, 1e6);
+        QDoubleSpinBox* gap = spin(st.landing_gap, 0.0, 1e6);
+        form->addRow(QStringLiteral("Arrowhead symbol:"), arrow);
+        form->addRow(QStringLiteral("Arrowhead size:"), arrow_size);
+        form->addRow(QStringLiteral("Maximum leader points:"), max_points);
+        form->addRow(landing);
+        form->addRow(QStringLiteral("Landing distance:"), landing_distance);
+        form->addRow(QStringLiteral("Multileader type:"), content);
+        form->addRow(QStringLiteral("Text height:"), text_height);
+        form->addRow(QStringLiteral("Landing gap:"), gap);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(buttons);
+        if (dlg.exec() != QDialog::Accepted) {
+            return false;
+        }
+        st.arrow = static_cast<std::uint8_t>(std::max(0, arrow->currentIndex()));
+        st.arrow_size = arrow_size->value();
+        st.max_points = static_cast<std::uint8_t>(max_points->value());
+        st.landing = landing->isChecked();
+        st.landing_distance = landing_distance->value();
+        st.text = content->currentIndex() == 0;
+        st.text_height = text_height->value();
+        st.landing_gap = gap->value();
+        return true;
+    };
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* modify = new QPushButton(QStringLiteral("Modify..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, modify, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    using Op = core::MLeaderStyleCommand::Op;
+    connect(set_current, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::MLeaderStyleCommand{Op::SetCurrent, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(add, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        bool ok = false;
+        const QString base = current_name(d);
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("Create New Multileader Style"),
+                                                   QStringLiteral("New style name (starting from %1):").arg(base),
+                                                   QLineEdit::Normal, QStringLiteral("Copy of %1").arg(base), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        core::MLeaderStyle st = style_named(base);
+        st.name = name.toStdString();
+        if (edit(d.dlg, QStringLiteral("New Multileader Style: %1").arg(name), st)) {
+            engine_->submit(core::MLeaderStyleCommand{Op::Add, {}, st});
+            later();
+        }
+    });
+    connect(modify, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        core::MLeaderStyle st = style_named(name);
+        if (edit(d.dlg, QStringLiteral("Modify Multileader Style: %1").arg(name), st)) {
+            engine_->submit(core::MLeaderStyleCommand{Op::Modify, name.toStdString(), st});
+            later();
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, modify, &QPushButton::click);
+    connect(remove, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::MLeaderStyleCommand{Op::Delete, name.toStdString(), {}});
             later();
         }
     });

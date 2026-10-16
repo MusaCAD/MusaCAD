@@ -1974,6 +1974,15 @@ struct TableStyleCommand {
     std::string name;
     TableStyle style{};
 };
+/// MLEADERSTYLE: Add `style` (a name not in use), Modify the style named `name` to `style`
+/// (Standard keeps its name), make the style named `name` Current, or Delete it (not
+/// Standard or the current one). New multileaders take the current style.
+struct MLeaderStyleCommand {
+    enum class Op : std::uint8_t { Add, Modify, SetCurrent, Delete };
+    Op op = Op::SetCurrent;
+    std::string name;
+    MLeaderStyle style{};
+};
 /// TCOUNT: numbers the selected texts and multiline texts in `sort` order -- by X left to
 /// right, by Y top to bottom, or as they were selected -- from `start` by `step`: the number
 /// replaces the text (Overwrite), goes before or after it with a space (Prefix, Suffix), or
@@ -2238,7 +2247,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

@@ -894,6 +894,23 @@ void MainWindow::build_ribbon() {
     large_split(leaders, QStringLiteral("Multileader"), "MLEADER",
                 menu_of({action("MLEADER", QStringLiteral("Multileader")), action("LE", QStringLiteral("Quick Leader")),
                          action("LEADER", QStringLiteral("Leader"))}));
+    {
+        // The Multileader Style combo: the style new multileaders take.
+        QWidget* col = leaders->add_column();
+        mleader_style_combo_ = new QComboBox(col);
+        mleader_style_combo_->setObjectName(QStringLiteral("ribbon.mleader_style"));
+        mleader_style_combo_->setToolTip(QStringLiteral("Multileader Style: the style new multileaders take."));
+        mleader_style_combo_->setMinimumWidth(130);
+        connect(mleader_style_combo_, &QComboBox::activated, this, [this](int index) {
+            if (index >= 0) {
+                engine_->submit(core::MLeaderStyleCommand{core::MLeaderStyleCommand::Op::SetCurrent,
+                                                          mleader_style_combo_->itemText(index).toStdString(), {}});
+            }
+        });
+        col->layout()->addWidget(mleader_style_combo_);
+        small(leaders, col, QStringLiteral("Align"), "MLEADERALIGN", "leader");
+    }
+    leaders->set_dialog_launcher(QStringLiteral("Multileader Style"), [this] { open_mleader_style_dialog(); });
     RibbonPanel* tables = ribbon_->add_panel(annotate, QStringLiteral("Tables"), 30);
     tables->set_representative_icon(asset("table"));
     large(tables, QStringLiteral("Table"), "TB");

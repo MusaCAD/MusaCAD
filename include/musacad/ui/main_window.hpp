@@ -302,6 +302,7 @@ private:
     void open_layer_states_manager(); ///< LAYERSTATE
     int open_dim_inspect_dialog(core::DimInspectCommand& io); ///< DIMINSPECT (1 OK, 0 cancelled)
     void open_table_style_dialog(); ///< TABLESTYLE
+    void open_mleader_style_dialog(); ///< MLEADERSTYLE
     // The user's own command aliases, a PGP file in the settings folder (ALIASEDIT, REINIT).
     static QString user_pgp_path();
     QString load_user_aliases(); ///< reads the file again; says what it found
@@ -533,6 +534,7 @@ private:
     std::vector<core::Layer> layer_combo_shown_; // the layers the combo shows (names and state icons)
     QComboBox* text_style_combo_ = nullptr; // Annotate > Text: the current text style
     QComboBox* text_height_combo_ = nullptr; // Annotate > Text: TEXTSIZE
+    QComboBox* mleader_style_combo_ = nullptr; // Annotate > Leaders: the current multileader style
     QComboBox* dim_style_combo_ = nullptr;  // Annotate > Dimensions: the current dimension style
     QComboBox* table_style_combo_ = nullptr; // Annotate > Tables: the current table style
     QComboBox* color_combo_ = nullptr;      // ribbon Properties panel: colour / linetype /

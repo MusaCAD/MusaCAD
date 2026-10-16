@@ -282,6 +282,14 @@ public:
     }
     [[nodiscard]] std::vector<core::TableStyle> table_styles() const override { return table_styles_; }
     [[nodiscard]] std::uint16_t current_table_style() const override { return current_table_style_; }
+    void set_mleader_styles(std::vector<core::MLeaderStyle> v, std::uint16_t current) {
+        if (!v.empty()) {
+            mleader_styles_ = std::move(v);
+        }
+        current_mleader_style_ = current < mleader_styles_.size() ? current : 0;
+    }
+    [[nodiscard]] std::vector<core::MLeaderStyle> mleader_styles() const override { return mleader_styles_; }
+    [[nodiscard]] std::uint16_t current_mleader_style() const override { return current_mleader_style_; }
     void set_current_props(const core::EntityProps& p) { current_props_ = p; }
     [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
@@ -461,6 +469,8 @@ private:
     std::uint16_t current_dim_style_ = 0;
     std::vector<core::TableStyle> table_styles_;
     std::uint16_t current_table_style_ = 0;
+    std::vector<core::MLeaderStyle> mleader_styles_{core::MLeaderStyle{}};
+    std::uint16_t current_mleader_style_ = 0;
     core::EntityProps current_props_{};
     std::vector<std::string> block_names_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;

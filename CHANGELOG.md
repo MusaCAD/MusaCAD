@@ -122,6 +122,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **Multileader styles** (#61, #78) -- MLEADERSTYLE (MLS): the Multileader Style Manager -- the
+  arrowhead and its size, leader points, landing and its length, Mtext or None, text height
+  and landing gap; MLEADER draws with the current style. Annotate > Leaders: the Multileader
+  Style combo and the launcher. Kept in the drawing.
 - **Zero feet and zero inches** (#58) -- the Primary Units tab's 0 feet and 0 inches (DIMZIN):
   `0'-6"` reads `6"` and `1'-0"` reads `1'`, as AutoCAD's imperial drawings show them; in DXF
   too. Drawings saved before keep showing both.

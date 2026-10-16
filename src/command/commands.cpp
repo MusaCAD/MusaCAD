@@ -13766,6 +13766,14 @@ void LeaderCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void MLeaderCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    // The current multileader style: its leader points, landing and content to begin with
+    // (the Options change them for this leader), its arrow and text when it is placed.
+    const std::vector<core::MLeaderStyle> styles = ctx.mleader_styles();
+    const std::uint16_t cur = ctx.current_mleader_style();
+    style_ = cur < styles.size() ? styles[cur] : core::MLeaderStyle{};
+    s_max_points_ = style_.max_points;
+    s_content_ = style_.text;
+    s_landing_ = style_.landing;
     first_prompt(ctx);
 }
 
@@ -13802,18 +13810,23 @@ void MLeaderCommand::after_points(CommandContext& ctx) {
 
 void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     ctx.clear_preview();
-    const double h = current_dim_text_height(ctx);
+    const double h = style_.text_height > 0.0 ? style_.text_height : current_dim_text_height(ctx);
     std::vector<core::Vec2> v = pts_;
     const bool right = v.back().x >= v[v.size() - 2].x;
     const double side = right ? 1.0 : -1.0;
     if (s_landing_) {
-        v.push_back(v.back() + core::Vec2{side * h * 2.0, 0.0}); // the horizontal landing
+        v.push_back(v.back() + core::Vec2{side * style_.landing_distance, 0.0}); // the horizontal landing
     }
     core::MTextBlock b;
     b.height = h;
     b.attach = right ? 3 : 5; // middle left / middle right, a gap beyond the landing
-    b.pos = v.back() + core::Vec2{side * h * 0.5, 0.0};
-    ctx.submit(core::AddMLeaderCommand{v, ctx.current_dim_style(), b, s_content_ ? text : std::string(), ctx.group_id()});
+    b.pos = v.back() + core::Vec2{side * style_.landing_gap, 0.0};
+    core::AddMLeaderCommand c{v, ctx.current_dim_style(), b, s_content_ ? text : std::string(), ctx.group_id()};
+    c.overrides.arrow_type = style_.arrow; // the style's arrowhead
+    c.overrides.arrow_size = style_.arrow_size;
+    c.overrides.set(core::DimOverrides::kArrowType, true);
+    c.overrides.set(core::DimOverrides::kArrowSize, true);
+    ctx.submit(std::move(c));
     ctx.echo("Multileader placed.");
     done_ = true;
 }

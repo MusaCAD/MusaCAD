@@ -537,6 +537,9 @@ public:
     /// The drawing's table styles and the current one (TABLESTYLE), which TABLE uses.
     [[nodiscard]] virtual std::vector<core::TableStyle> table_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_table_style() const { return 0; }
+    /// MLEADERSTYLE: the multileader styles and the current one (MLEADER draws with it).
+    [[nodiscard]] virtual std::vector<core::MLeaderStyle> mleader_styles() const { return {core::MLeaderStyle{}}; }
+    [[nodiscard]] virtual std::uint16_t current_mleader_style() const { return 0; }
     /// The colour, linetype and lineweight new objects take (CECOLOR, CELTYPE, CELWEIGHT),
     /// as last published; COLOR, LINETYPE and LWEIGHT change them.
     [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }

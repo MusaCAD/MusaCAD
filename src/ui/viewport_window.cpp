@@ -238,6 +238,16 @@ std::uint16_t ViewportWindow::current_table_style() {
     return current_table_style_;
 }
 
+std::vector<core::MLeaderStyle> ViewportWindow::mleader_styles() {
+    std::scoped_lock lock(layers_mutex_);
+    return mleader_styles_;
+}
+
+std::uint16_t ViewportWindow::current_mleader_style() {
+    std::scoped_lock lock(layers_mutex_);
+    return current_mleader_style_;
+}
+
 std::vector<std::string> ViewportWindow::block_names() {
     std::scoped_lock lock(layers_mutex_);
     return block_names_;
@@ -1665,6 +1675,8 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             current_dim_style_ = snap.current_dimstyle;
             table_styles_ = snap.table_styles;
             current_table_style_ = snap.current_table_style;
+            mleader_styles_ = snap.mleader_styles;
+            current_mleader_style_ = snap.current_mleader_style;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
             layouts_ = snap.layouts;

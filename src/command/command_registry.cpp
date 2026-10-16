@@ -265,6 +265,8 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
              "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
+    file_cmd({"MLEADERSTYLE", "MLS"}, "MLEADERSTYLE", "assets/ribbon/leader.svg",
+             "Open the Multileader Style Manager: the styles new multileaders take.");
     file_cmd({"CUI"}, "CUI", "assets/ribbon/settings.svg",
              "Customize the user interface: keyboard shortcuts of your own for any command, and command aliases.");
     file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
