@@ -624,6 +624,11 @@ void ViewportWindow::set_grid_mode(bool on) {
 
 bool ViewportWindow::grid_mode() const { return grid_on_callback_ ? grid_on_callback_() : false; }
 
+void ViewportWindow::set_grid_settings(const core::GridSettings& g) {
+    std::scoped_lock lock(grid_mutex_);
+    grid_settings_ = g;
+}
+
 bool ViewportWindow::layer_dialog() {
     if (!layer_dialog_callback_) {
         return false;
@@ -1473,6 +1478,10 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         }
 
         renderer.set_grid_visible(modes_ == nullptr || modes_->grid.load(std::memory_order_relaxed));
+        {
+            std::scoped_lock lock(grid_mutex_);
+            renderer.set_grid_settings(grid_settings_);
+        }
         const bool presenting = presentation_.load(std::memory_order_relaxed);
         renderer.set_cursor(cursor_inside_.load(std::memory_order_relaxed) &&
                                 (!presenting || presentation_cursor_.load(std::memory_order_relaxed)),

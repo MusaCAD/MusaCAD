@@ -133,6 +133,7 @@ add_executable(musacad_tests
     test_command_undo_scope.cpp
     test_point_limits_units.cpp
     test_layer_plot_followups.cpp
+    test_layer_states_grid.cpp
     test_trim_curves.cpp
     test_lengthen_more.cpp
     test_trim_paths_clipboard.cpp

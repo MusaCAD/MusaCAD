@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "musacad/core/grid_settings.hpp"
 #include "musacad/command/tracking.hpp"
 #include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/command.hpp"
@@ -241,6 +242,8 @@ public:
     virtual void set_snap_mode(bool on) { (void)on; }
     virtual void set_grid_mode(bool on) { (void)on; }
     [[nodiscard]] virtual bool grid_mode() const { return false; }
+    /// GRID's spacing and display (the view draws the grid by them).
+    virtual void set_grid_settings(const core::GridSettings& g) { (void)g; }
     /// LAYER: the Layer Properties Manager. False when there is none (no window, a test):
     /// the command then works at the command line, as -LAYER.
     [[nodiscard]] virtual bool layer_dialog() { return false; }
@@ -429,6 +432,9 @@ public:
         bool on = false;
     };
     [[nodiscard]] virtual Limits limits() const { return {}; }
+    /// GRID's settings (GRIDUNIT, GRIDMAJOR, GRIDDISPLAY), kept here and handed to the view.
+    [[nodiscard]] virtual core::GridSettings grid_settings() const { return {}; }
+    virtual void set_grid_settings(const core::GridSettings& g) { (void)g; }
     /// A fresh command for `alias` (MULTIPLE runs one again and again); nothing for an
     /// unknown name. (Defined where ICommand is complete.)
     [[nodiscard]] virtual std::unique_ptr<ICommand> make_command(const std::string& alias);

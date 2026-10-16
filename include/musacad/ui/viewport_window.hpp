@@ -163,6 +163,7 @@ public:
     void set_ortho_mode(bool on) override;
     void set_snap_mode(bool on) override;
     void set_grid_mode(bool on) override;
+    void set_grid_settings(const core::GridSettings& g) override;
     [[nodiscard]] bool grid_mode() const override;
     bool layer_dialog() override;
     /// The status bar's ORTHO, SNAP and GRID buttons (and whether GRID is on), and the
@@ -642,6 +643,8 @@ private:
     std::uint64_t cam_doc_id_ = 0; // active document the camera currently reflects
 
     std::mutex overlay_mutex_;
+    mutable std::mutex grid_mutex_;
+    core::GridSettings grid_settings_{}; ///< GRID (guarded by grid_mutex_; read by the render thread)
     /// The overlay is published as an immutable shared object: the render thread takes
     /// a reference under the lock, never a copy. A rubber band or prompt with tens of
     /// thousands of glyph vertices used to be deep-copied on every frame.

@@ -141,6 +141,40 @@ inline std::optional<double> parse_length_text(std::string_view text) {
     return neg ? -total : total;
 }
 
+/// How many `to` units one `from` unit is (INSUNITS codes): what a block, a reference or a
+/// paste from a drawing in `from` units is scaled by in a drawing in `to` units. 1 when
+/// either drawing is unitless (0) or the code is unknown.
+inline double insunits_factor(std::uint8_t from, std::uint8_t to) {
+    static constexpr double kMetres[] = {
+        0.0,                    // 0 unitless
+        0.0254,                 // 1 inches
+        0.3048,                 // 2 feet
+        1609.344,               // 3 miles
+        0.001,                  // 4 millimetres
+        0.01,                   // 5 centimetres
+        1.0,                    // 6 metres
+        1000.0,                 // 7 kilometres
+        0.0254e-6,              // 8 microinches
+        0.0254e-3,              // 9 mils
+        0.9144,                 // 10 yards
+        1e-10,                  // 11 angstroms
+        1e-9,                   // 12 nanometres
+        1e-6,                   // 13 microns
+        0.1,                    // 14 decimetres
+        10.0,                   // 15 decametres
+        100.0,                  // 16 hectometres
+        1e9,                    // 17 gigametres
+        1.495978707e11,         // 18 astronomical units
+        9.4607304725808e15,     // 19 light years
+        3.0856775814913673e16,  // 20 parsecs
+    };
+    constexpr std::size_t n = sizeof(kMetres) / sizeof(kMetres[0]);
+    if (from == 0 || to == 0 || from == to || from >= n || to >= n) {
+        return 1.0;
+    }
+    return kMetres[from] / kMetres[to];
+}
+
 /// The INSUNITS names, in AutoCAD's order (index = the value).
 inline const char* insunits_name(std::uint8_t v) {
     static constexpr const char* kNames[] = {

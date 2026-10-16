@@ -4194,7 +4194,11 @@ void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
            (edits.size() == 1 ? " object." : " objects."));
 }
 
-void GeometryEngine::fill_store_from_clipboard(GeometryStore& out, Vec2 offset) const {
+double GeometryEngine::paste_factor() const {
+    return units::insunits_factor(clipboard_.src_insunits, store_.units().insunits);
+}
+
+void GeometryEngine::fill_store_from_clipboard(GeometryStore& out, Vec2 offset, double factor, Vec2 about) const {
     out.clear();
     out.set_font_engine(store_.font_engine());
     out.set_image_decoder(store_.image_decoder());
@@ -4209,6 +4213,9 @@ void GeometryEngine::fill_store_from_clipboard(GeometryStore& out, Vec2 offset) 
     out.set_image_def_table(clipboard_.src_image_defs);
     for (Command cmd : clipboard_.items) {
         translate_cmd(cmd, offset);
+        if (factor != 1.0) {
+            scale_cmd(cmd, about, factor);
+        }
         add_command_to_store(out, cmd, EntityProps{});
     }
 }
@@ -4248,6 +4255,7 @@ void GeometryEngine::apply_copy_clipboard(std::optional<Vec2> base) {
     }
     cb.base = base ? *base : (any_bounds ? lo : Vec2{0.0, 0.0});
     cb.has = true;
+    cb.src_insunits = store_.units().insunits;
     clipboard_ = std::move(cb);
     report(std::to_string(clipboard_.items.size()) + " copied to clipboard.");
     if (clipboard_listener_) {
@@ -4258,7 +4266,9 @@ void GeometryEngine::apply_copy_clipboard(std::optional<Vec2> base) {
         fill_store_from_clipboard(scratch, Vec2{});
         ClipboardExport out;
         out.serial = ++serial;
-        out.native_text = io::serialize_native(io::document_from_store(scratch));
+        io::Document clip_doc = io::document_from_store(scratch);
+        clip_doc.display_units = store_.units(); // so another window scales it to its own units
+        out.native_text = io::serialize_native(clip_doc);
         // Curves fine enough for the picture (its longer side 1600 pixels).
         const double extent = any_bounds ? std::max(hi.x - lo.x, hi.y - lo.y) : 0.0;
         const double tol = extent > 0.0 ? std::min(tess_tolerance_, extent / 4000.0) : tess_tolerance_;
@@ -4302,6 +4312,9 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
     // Paste-at-cursor lands the clip's reference point at `at`; otherwise keep the
     // original world coordinates (tab-to-tab drag).
     const Vec2 offset = at_cursor ? (at - clipboard_.base) : Vec2{0.0, 0.0};
+    // From a drawing in other units: scaled into this one's, about the point it lands on.
+    const double factor = paste_factor();
+    const Vec2 about = at_cursor ? at : clipboard_.base;
     // Resolve a source table index -> a target index BY NAME (creating if missing), the
     // same get-or-add pattern DXF import uses. Memoised per paste.
     std::unordered_map<std::uint16_t, std::uint16_t> layer_map;
@@ -4407,6 +4420,9 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
             },
             cmd);
         translate_cmd(cmd, offset);
+        if (factor != 1.0) {
+            scale_cmd(cmd, about, factor);
+        }
         const EntityHandle nh = create_indexed(cmd);
         push_create_item(group, nh, cmd);
         pasted.push_back(nh);
@@ -4455,6 +4471,7 @@ void GeometryEngine::apply_paste_document(const PasteDocumentCommand& c) {
     }
     cb.base = c.base ? *c.base : (any ? lo : Vec2{});
     cb.has = true;
+    cb.src_insunits = doc.display_units.insunits;
     clipboard_ = std::move(cb);
     if (c.load_only) {
         const std::size_t n = clipboard_.items.size();
@@ -7894,13 +7911,17 @@ void GeometryEngine::apply_vplayer(const SetViewportLayerFreezeCommand& c) {
 
 std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
                                                    const std::string& name,
-                                                   const std::string& xref_path, std::string& err) {
+                                                   const std::string& xref_path, std::string& err,
+                                                   std::uint8_t* src_insunits) {
     io::Document doc;
     const io::IoResult r = lower_ext(full_path) == ".dxf" ? io::load_dxf(full_path, doc)
                                                           : io::load_native(full_path, doc);
     if (!r.ok) {
         err = r.message;
         return 0xFFFF;
+    }
+    if (src_insunits != nullptr) {
+        *src_insunits = doc.display_units.insunits;
     }
     GeometryStore tmp;
     tmp.set_font_engine(store_.font_engine());
@@ -7980,13 +8001,16 @@ void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
         }
     }
     std::string err;
-    const std::uint16_t bi = load_xref_definition(c.path, name, stored, err);
+    std::uint8_t src_units = 0;
+    const std::uint16_t bi = load_xref_definition(c.path, name, stored, err, &src_units);
     if (bi == 0xFFFF) {
         report("XREF: " + err);
         return;
     }
-    AddInsertCommand ins{bi, c.pos, c.scale > 0.0 ? c.scale : 1.0, c.scale > 0.0 ? c.scale : 1.0,
-                         c.rotation, 0, {}, {}};
+    // A drawing in other units comes in at this drawing's (INSUNITS): millimetres into
+    // inches at 1/25.4.
+    const double sc = (c.scale > 0.0 ? c.scale : 1.0) * units::insunits_factor(src_units, store_.units().insunits);
+    AddInsertCommand ins{bi, c.pos, sc, sc, c.rotation, 0, {}, {}};
     const Command add = ins;
     const EntityHandle nh = create_indexed(add);
     push_create_item(c.group, nh, add);
@@ -12336,7 +12360,159 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
     report(msg);
 }
 
+void GeometryEngine::restore_layer_settings(const std::vector<Layer>& saved, const std::string& current) {
+    const auto index_of = [this](const std::string& name) -> std::optional<std::uint16_t> {
+        for (std::size_t i = 0; i < store_.layers().size(); ++i) {
+            if (store_.layers()[i].name == name) {
+                return static_cast<std::uint16_t>(i);
+            }
+        }
+        return std::nullopt;
+    };
+    if (const auto cur = index_of(current)) {
+        Layer l = store_.layers()[*cur];
+        l.frozen = false; // a current layer is thawed
+        store_.set_layer(*cur, l);
+        store_.set_current_layer(*cur);
+    }
+    for (const Layer& s : saved) {
+        const auto i = index_of(s.name);
+        if (!i) {
+            continue;
+        }
+        Layer l = store_.layers()[*i];
+        l.on = s.on;
+        l.frozen = s.frozen && *i != store_.current_layer();
+        l.locked = s.locked;
+        l.color = s.color;
+        l.linetype = s.linetype;
+        l.lineweight = s.lineweight;
+        l.plot = s.plot;
+        l.vp_freeze_new = s.vp_freeze_new;
+        store_.set_layer(*i, l);
+    }
+    geom_dirty_ = true;
+    prune_selection();
+}
+
+void GeometryEngine::apply_layer_state(const LayerStateCommand& c) {
+    using Op = LayerStateCommand::Op;
+    layerp_changed_ = false;
+    std::vector<LayerState> states = store_.layer_states();
+    const auto lower = [](std::string s) {
+        for (char& ch : s) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    const auto find = [&](const std::string& name) {
+        return std::find_if(states.begin(), states.end(),
+                            [&](const LayerState& s) { return lower(s.name) == lower(name); });
+    };
+    const auto quote = [](const std::string& n) { return "\"" + n + "\""; };
+    switch (c.op) {
+    case Op::List: {
+        if (states.empty()) {
+            report("No layer states saved.");
+            return;
+        }
+        std::string out = "Layer states:";
+        for (const LayerState& s : states) {
+            out += "\n  " + s.name + "  (" + std::to_string(s.layers.size()) + " layers, current " + s.current + ")";
+        }
+        report(out);
+        return;
+    }
+    case Op::Save: {
+        if (c.name.empty()) {
+            report("A layer state needs a name.");
+            return;
+        }
+        LayerState st;
+        st.name = c.name;
+        st.current = store_.layers()[store_.current_layer()].name;
+        st.layers = store_.layers();
+        const auto it = find(c.name);
+        const bool replaced = it != states.end();
+        if (replaced) {
+            st.name = it->name;
+            *it = std::move(st);
+        } else {
+            states.push_back(std::move(st));
+        }
+        store_.set_layer_states(std::move(states));
+        dirty_ = true;
+        report("Layer state " + quote(replaced ? find(c.name)->name : c.name) + (replaced ? " replaced." : " saved."));
+        return;
+    }
+    case Op::Restore: {
+        const auto it = find(c.name);
+        if (it == states.end()) {
+            report("Cannot find layer state " + quote(c.name) + ".");
+            return;
+        }
+        restore_layer_settings(it->layers, it->current);
+        layerp_changed_ = true;
+        report("Layer state " + quote(it->name) + " restored.");
+        return;
+    }
+    case Op::Delete: {
+        const auto it = find(c.name);
+        if (it == states.end()) {
+            report("Cannot find layer state " + quote(c.name) + ".");
+            return;
+        }
+        const std::string name = it->name;
+        states.erase(it);
+        store_.set_layer_states(std::move(states));
+        dirty_ = true;
+        report("Layer state " + quote(name) + " deleted.");
+        return;
+    }
+    case Op::Rename: {
+        const auto it = find(c.name);
+        if (it == states.end()) {
+            report("Cannot find layer state " + quote(c.name) + ".");
+            return;
+        }
+        if (c.to.empty()) {
+            report("A layer state needs a name.");
+            return;
+        }
+        if (const auto other = find(c.to); other != states.end() && other != it) {
+            report("A layer state named " + quote(c.to) + " already exists.");
+            return;
+        }
+        it->name = c.to;
+        store_.set_layer_states(std::move(states));
+        dirty_ = true;
+        report("Layer state renamed to " + quote(c.to) + ".");
+        return;
+    }
+    }
+}
+
 void GeometryEngine::apply(const Command& command) {
+    // LAYERP: the layer settings as a command that may change them finds them.
+    std::optional<LayerpState> layerp_before;
+    if (layerp_mode_ && (std::holds_alternative<SetLayerCommand>(command) ||
+                         std::holds_alternative<SetCurrentLayerCommand>(command) ||
+                         std::holds_alternative<LayerEditCommand>(command) ||
+                         std::holds_alternative<LayerToolCommand>(command) ||
+                         std::holds_alternative<LayerStateCommand>(command))) {
+        layerp_before = LayerpState{store_.layers(), store_.layers()[store_.current_layer()].name};
+    }
+    apply_one(command);
+    if (layerp_before && (layerp_before->layers != store_.layers() ||
+                          layerp_before->current != store_.layers()[store_.current_layer()].name)) {
+        layerp_.push_back(std::move(*layerp_before));
+        if (layerp_.size() > 200) {
+            layerp_.erase(layerp_.begin());
+        }
+    }
+}
+
+void GeometryEngine::apply_one(const Command& command) {
     poly_inherit_.reset();
     // The selection as an edit finds it (cursor updates are too frequent to copy for).
     if (!std::holds_alternative<SetCursorCommand>(command)) {
@@ -13585,6 +13761,31 @@ void GeometryEngine::apply(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
+                layerp_changed_ = false;
+                if (layerp_.empty()) {
+                    report(layerp_mode_ ? "*No previous layer state*" : "LAYERP is not tracking layer changes (LAYERPMODE is off).");
+                } else {
+                    LayerpState s = std::move(layerp_.back());
+                    layerp_.pop_back();
+                    restore_layer_settings(s.layers, s.current);
+                    layerp_changed_ = true;
+                    report("Restored previous layer states.");
+                }
+            }
+            if constexpr (std::is_same_v<T, SetLayerpModeCommand>) {
+                if (c.on) {
+                    layerp_mode_ = *c.on;
+                    if (!layerp_mode_) {
+                        layerp_.clear();
+                    }
+                }
+                report(layerp_mode_ ? "LAYERPMODE is on: LAYERP takes back layer changes."
+                                    : "LAYERPMODE is off: layer changes are not tracked.");
+            }
+            if constexpr (std::is_same_v<T, LayerStateCommand>) {
+                apply_layer_state(c);
+            }
             if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
                 store_.set_wipeout_frames(c.on);
                 store_.set_wipeout_frames_plot(c.plot);
@@ -13718,6 +13919,15 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 edit = layer_edit_changed_; // ? lists; a name not found changes nothing
             }
+            if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
+                edit = layerp_changed_;
+            }
+            if constexpr (std::is_same_v<T, SetLayerpModeCommand>) {
+                edit = false; // a setting of the session
+            }
+            if constexpr (std::is_same_v<T, LayerStateCommand>) {
+                edit = c.op != LayerStateCommand::Op::List && (c.op != LayerStateCommand::Op::Restore || layerp_changed_);
+            }
             if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 edit = c.op == ChainDimensionCommand::Op::Add; // Start, Select, Back: bookkeeping
             }
@@ -13839,11 +14049,13 @@ void GeometryEngine::forget_document_state() {
     dim_layer_.reset(); // a layer index of this document
     layer_tool_undo_.clear(); // layer indices of this document
     layiso_off_.clear();
+    layerp_.clear();
 }
 
 void GeometryEngine::park_active(DocState& d) {
     d.layiso_off = std::move(layiso_off_); // the drawing's own, back when it is active again
     d.dim_layer = dim_layer_;
+    d.layerp = std::move(layerp_);
     forget_document_state();
     d.store = std::move(store_);
     d.grid = std::move(grid_);
@@ -13889,6 +14101,7 @@ void GeometryEngine::load_active(DocState& d) {
     forget_document_state(); // closing a tab comes here without park_active
     layiso_off_ = std::move(d.layiso_off);
     dim_layer_ = d.dim_layer;
+    layerp_ = std::move(d.layerp);
     store_ = std::move(d.store);
     store_.set_font_engine(font_engine_); // font engine is engine-global
     grid_ = std::move(d.grid);
@@ -14456,7 +14669,8 @@ void GeometryEngine::rebuild_and_publish() {
         }
     } else if (paste_preview_active_ && clipboard_.has) {
         // PASTECLIP's placement: the clip at the cursor, by its base.
-        fill_store_from_clipboard(grip_preview_store_, paste_preview_at_ - clipboard_.base);
+        fill_store_from_clipboard(grip_preview_store_, paste_preview_at_ - clipboard_.base, paste_factor(),
+                                  paste_preview_at_);
         RenderSnapshot tmp;
         build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
         buf.grip_preview_segments = std::move(tmp.line_vertices);

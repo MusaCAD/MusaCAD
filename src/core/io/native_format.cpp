@@ -393,6 +393,36 @@ std::string serialize_native(const Document& doc) {
             s += '\n';
         }
     }
+    // v40: LAYERSTATE name current (spaces as 0x1f, "-" = empty), then one LSLAYER per
+    // layer: r g b linetype lineweight on frozen locked plot vpfreeze name...
+    for (const LayerState& st : doc.layer_states) {
+        const auto word = [](const std::string& in) {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& ch : out) {
+                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                    ch = '\x1f';
+                }
+            }
+            return out;
+        };
+        s += "LAYERSTATE ";
+        s += word(st.name);
+        s += ' ';
+        s += word(st.current);
+        s += '\n';
+        for (const Layer& l : st.layers) {
+            s += "LSLAYER ";
+            for (const unsigned v : {unsigned{l.color.r}, unsigned{l.color.g}, unsigned{l.color.b},
+                                     static_cast<unsigned>(l.linetype), unsigned{l.lineweight}, unsigned{l.on},
+                                     unsigned{l.frozen}, unsigned{l.locked}, unsigned{l.plot},
+                                     unsigned{l.vp_freeze_new}}) {
+                append_uint(s, v);
+                s += ' ';
+            }
+            s += l.name;
+            s += '\n';
+        }
+    }
     // DIMSTYLE th as at eo ee pr ta dlw  <4 element colours: by_layer r g b>  name...
     const auto append_ecolor = [](std::string& out, const ElementColor& ec) {
         append_uint(out, ec.by_layer ? 1 : 0);
@@ -2224,6 +2254,51 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("VPFRZNEW record malformed");
             }
             doc.layers[li].vp_freeze_new = true;
+        } else if (key == "LAYERSTATE") {
+            // LAYERSTATE name current (v40); its layers follow as LSLAYER records.
+            if (tok.size() != 3) {
+                return fail("malformed LAYERSTATE");
+            }
+            const auto word = [](std::string_view t) {
+                std::string r(t);
+                for (char& ch : r) {
+                    if (ch == '\x1f') {
+                        ch = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            LayerState st;
+            st.name = word(tok[1]);
+            st.current = word(tok[2]);
+            doc.layer_states.push_back(std::move(st));
+        } else if (key == "LSLAYER") {
+            // LSLAYER r g b linetype lineweight on frozen locked plot vpfreeze name... (v40)
+            if (tok.size() < 12 || doc.layer_states.empty()) {
+                return fail("malformed LSLAYER");
+            }
+            std::uint64_t f[10];
+            for (std::size_t k = 0; k < 10; ++k) {
+                if (!to_uint(tok[1 + k], f[k])) {
+                    return fail("malformed LSLAYER field");
+                }
+            }
+            Layer l;
+            l.color = {static_cast<std::uint8_t>(f[0]), static_cast<std::uint8_t>(f[1]), static_cast<std::uint8_t>(f[2])};
+            l.linetype = static_cast<Linetype>(f[3]);
+            l.lineweight = static_cast<std::uint8_t>(f[4]);
+            l.on = f[5] != 0;
+            l.frozen = f[6] != 0;
+            l.locked = f[7] != 0;
+            l.plot = f[8] != 0;
+            l.vp_freeze_new = f[9] != 0;
+            std::string name(tok[11]);
+            for (std::size_t k = 12; k < tok.size(); ++k) {
+                name += ' ';
+                name += std::string(tok[k]);
+            }
+            l.name = std::move(name);
+            doc.layer_states.back().layers.push_back(std::move(l));
         } else if (key == "NOPLOT") {
             // NOPLOT idx (v40): the layer is not plotted.
             std::uint64_t li = 0;

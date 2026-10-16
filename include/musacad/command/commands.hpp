@@ -963,8 +963,12 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Step : std::uint8_t { Main, AspectX, AspectY, Type, Style, Legacy };
+    enum class Step : std::uint8_t {
+        Main, AspectX, AspectY, Type, Style, Legacy, Major, Adaptive, Subdivide, Limits, Follow
+    };
     void main_prompt(CommandContext& ctx);
+    /// GRID: the setting changed, and the grid on (a spacing or an option turns it on).
+    void grid_set(CommandContext& ctx, const core::GridSettings& g);
     Mode mode_;
     Step step_ = Step::Main;
     double x_ = 0.0;
@@ -1247,6 +1251,43 @@ private:
     bool fence_open_ = false;       ///< typed Fence: points until Enter (else two picks)
     std::optional<core::Vec2> corner_; ///< Crossing's first corner
     SelectObjectsPhase select_;
+};
+
+/// LAYERP: the layer settings back as they were before the last change (at once).
+/// LAYERPMODE: `Enter LAYERP mode [ON/OFF] <current>:` -- Enter says which.
+class LayerPreviousCommand final : public ICommand {
+public:
+    explicit LayerPreviousCommand(bool mode) : mode_(mode) {}
+    std::string name() const override { return mode_ ? "LAYERPMODE" : "LAYERP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool mode_;
+    bool done_ = false;
+};
+
+/// LAYERSTATE / -LAYERSTATE: `Enter an option [?/Save/Restore/Delete/Name]:` again and again
+/// until Enter -- the named layer states kept with the drawing.
+class LayerStateCommand final : public ICommand {
+public:
+    std::string name() const override { return "-LAYERSTATE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    /// Layer state names are typed with their spaces.
+    bool free_text() const override { return step_ != Step::Option; }
+
+private:
+    enum class Step : std::uint8_t { Option, Name, NewName };
+    void options(CommandContext& ctx);
+    Step step_ = Step::Option;
+    core::LayerStateCommand::Op op_ = core::LayerStateCommand::Op::List;
+    std::string from_;
+    bool done_ = false;
 };
 
 /// The layer tools. LAYOFF and LAYFRZ take one object after another (`[Undo]` takes the last
