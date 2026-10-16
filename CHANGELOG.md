@@ -91,6 +91,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **WSSAVE** and Workspace Switching on the status bar: the palettes, the ribbon and the Quick
   Access Toolbar saved under a name and put back; Drafting & Annotation is the window as it
   starts. The current one comes back at the next start.
+- **The text-height field** (#78) -- Annotate > Text: the height new text takes, typed or
+  picked, and **TEXTSIZE**, which sets it at the command line.
 - **Hatch swatches** (#78) -- the Hatch Editor tab's pattern list shows each pattern as it draws.
 - **Tool Palettes** (#73) -- **TOOLPALETTES** (TP, Ctrl+3; View > Palettes and Manage >
   Customization): Draw, Modify and Annotation tools, every hatch pattern with its swatch (a

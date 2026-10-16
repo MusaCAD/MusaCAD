@@ -1869,6 +1869,13 @@ void MainWindow::sync_style_combos() {
             box->setCurrentIndex(cur);
         }
     };
+    if (text_height_combo_ != nullptr && !text_height_combo_->hasFocus() && !text_height_combo_->view()->isVisible()) {
+        const QString h = QString::number(processor_->text_size());
+        if (text_height_combo_->currentText() != h) {
+            const QSignalBlocker block(text_height_combo_);
+            text_height_combo_->setEditText(h); // TEXT and TEXTSIZE change it too
+        }
+    }
     if (text_style_combo_ != nullptr) {
         std::vector<std::string> names;
         for (const core::TextStyle& st : viewport_->text_styles()) {

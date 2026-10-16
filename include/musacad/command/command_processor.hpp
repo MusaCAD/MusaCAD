@@ -224,6 +224,9 @@ public:
     }
     void set_limits(core::Vec2 lo, core::Vec2 hi, bool on) { limits_ = Limits{lo, hi, on}; }
     void set_insbase(core::Vec2 p) { insbase_ = p; }
+    /// TEXTSIZE: the height TEXT offers (Annotate's text-height field).
+    [[nodiscard]] double text_size() const;
+    void set_text_size(double h);
     [[nodiscard]] core::Vec2 insbase() const override { return insbase_; }
     [[nodiscard]] std::uint8_t pdmode() const override { return pdmode_; }
     [[nodiscard]] double pdsize() const override { return pdsize_; }

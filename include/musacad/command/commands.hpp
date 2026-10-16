@@ -3694,6 +3694,22 @@ private:
     bool done_ = false;
 };
 
+/// TEXTSIZE: `Enter new value for TEXTSIZE <2.5000>:` -- the height TEXT offers.
+class TextSizeCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTSIZE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// BASE: `Enter base point <0.0000,0.0000,0.0000>:` -- the drawing's insertion base point
 /// (INSBASE): where it sits on the cursor when inserted into another drawing as a block,
 /// or attached as an xref.
@@ -3902,6 +3918,14 @@ private:
 
 class TextCommand final : public ICommand {
 public:
+    /// TEXTSIZE: the height TEXT offers (the last one used), also set from Annotate's
+    /// text-height field and by the TEXTSIZE variable.
+    [[nodiscard]] static double text_size() noexcept { return s_height_; }
+    static void set_text_size(double h) noexcept {
+        if (h > 0.0) {
+            s_height_ = h;
+        }
+    }
     std::string name() const override { return "TEXT"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;

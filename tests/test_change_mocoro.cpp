@@ -1543,3 +1543,19 @@ TEST_CASE("INSBASE is kept in the drawing and in DXF, and a drawing inserted as 
     host.stop();
     fs::remove(part);
 }
+
+TEST_CASE("TEXTSIZE sets the height TEXT offers") {
+    H h;
+    const double keep = h.proc.text_size();
+    h.proc.set_text_size(2.5);
+    h.run({"TEXTSIZE"});
+    REQUIRE(h.out.prompt == "Enter new value for TEXTSIZE <2.5000>: ");
+    h.run({"-1"});
+    REQUIRE(h.out.lines.back() == "Requires a positive value.");
+    h.run({"3.5"});
+    REQUIRE(h.proc.text_size() == 3.5);
+    h.run({"TEXT", "0,0"});
+    REQUIRE(h.out.prompt == "Specify height <3.5000>: ");
+    h.proc.cancel();
+    h.proc.set_text_size(keep);
+}

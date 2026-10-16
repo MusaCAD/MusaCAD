@@ -811,8 +811,27 @@ void MainWindow::build_ribbon() {
             }
         });
         col->layout()->addWidget(text_style_combo_);
-        small(text, col, QStringLiteral("Edit Text"), "ED", "text");
+        // The text height new text takes (TEXTSIZE), typed or picked.
+        text_height_combo_ = new QComboBox(col);
+        text_height_combo_->setObjectName(QStringLiteral("ribbon.text_height"));
+        text_height_combo_->setEditable(true);
+        text_height_combo_->setInsertPolicy(QComboBox::NoInsert);
+        text_height_combo_->setToolTip(QStringLiteral("Text Height: the height new text takes (TEXTSIZE)."));
+        text_height_combo_->addItems({QStringLiteral("1.8"), QStringLiteral("2.5"), QStringLiteral("3.5"), QStringLiteral("5"),
+                                      QStringLiteral("7"), QStringLiteral("10")});
+        text_height_combo_->setEditText(QString::number(processor_->text_size()));
+        connect(text_height_combo_, &QComboBox::textActivated, this, [this](const QString& s) {
+            bool ok = false;
+            const double h = s.trimmed().toDouble(&ok);
+            if (ok && h > 0.0) {
+                processor_->set_text_size(h);
+            }
+            text_height_combo_->setEditText(QString::number(processor_->text_size()));
+        });
+        col->layout()->addWidget(text_height_combo_);
         small(text, col, QStringLiteral("Find Text"), "FIND", "find");
+        QWidget* col2 = text->add_column();
+        small(text, col2, QStringLiteral("Edit Text"), "ED", "text");
     }
     text->set_dialog_launcher(QStringLiteral("Text Style"), [this] { open_text_style_dialog(); });
     RibbonPanel* dims = ribbon_->add_panel(annotate, QStringLiteral("Dimensions"), 55);

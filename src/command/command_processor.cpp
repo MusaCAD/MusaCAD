@@ -54,6 +54,14 @@ std::string first_token(const std::string& s) {
 
 } // namespace
 
+double CommandProcessor::text_size() const {
+    return TextCommand::text_size();
+}
+
+void CommandProcessor::set_text_size(double h) {
+    TextCommand::set_text_size(h);
+}
+
 CommandProcessor::CommandProcessor(CommandSink sink, ViewControl* view, CommandOutput& output)
     : sink_(std::move(sink)), view_(view), output_(output), registry_(CommandRegistry::make_default()) {
     show_ready();

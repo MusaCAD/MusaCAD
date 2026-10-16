@@ -7578,7 +7578,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
         "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
-        "TEXTEDITMODE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};
+        "TEXTEDITMODE", "TEXTSIZE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};
     if (sub_) {
         sub_->input(ctx, text);
         done_ = sub_->done();
@@ -18965,6 +18965,23 @@ void PointDisplayCommand::input(CommandContext& ctx, const std::string& text) {
 
 void PointDisplayCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextSizeCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for TEXTSIZE <" + fmt4(TextCommand::text_size()) + ">: ");
+}
+
+void TextSizeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v <= 0.0) {
+            ctx.echo("Requires a positive value.");
+            return;
+        }
+        TextCommand::set_text_size(v);
+    }
     done_ = true;
 }
 
