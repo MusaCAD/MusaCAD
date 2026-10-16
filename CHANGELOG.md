@@ -122,6 +122,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
+  line families DXF carries with each hatch) and draw; kept in the drawing and written back.
 - **Layer snapshots with views** (#72) -- New View's Save layer snapshot with view (and NEWVIEW):
   restoring the view restores the layers as they were.
 - **-TABLE's Auto and table style colours** (#44) -- the columns and data rows fitted to a

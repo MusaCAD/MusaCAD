@@ -859,7 +859,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     }
                 }
             }
-        } else if (const hatch::Pattern* pat = hatch::builtin_pattern(pname)) {
+        } else if (const hatch::Pattern* pat = store.pattern(pname)) {
             // Line patterns (ANSI31 etc.): generate the clipped line families here
             // (derived-not-baked) and route them into the colour/lineweight line groups, so
             // they batch like every other line and plot as PDF vectors with no special case.

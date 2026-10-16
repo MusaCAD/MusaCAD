@@ -1102,9 +1102,35 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         // User-defined (_USER, _USERDOUBLE here): AutoCAD's type 0 with its line families
         // written out, as it has no file to look them up in.
         const bool user = h.pattern_name == "_USER" || h.pattern_name == "_USERDOUBLE";
-        code_i(s, 76, user ? 0 : 1);  // pattern type = user-defined / predefined
+        // The drawing's own pattern: AutoCAD's custom type, its line families written out.
+        const hatch::Pattern* custom = nullptr;
+        for (const hatch::Pattern& p : doc.patterns) {
+            custom = p.name == h.pattern_name ? &p : custom;
+        }
+        code_i(s, 76, user ? 0 : custom != nullptr ? 2 : 1); // user-defined / predefined / custom
         code_d(s, 52, to_degrees(h.pattern_angle));
         code_d(s, 41, h.pattern_scale);
+        if (custom != nullptr) {
+            const double sc = h.pattern_scale > 0.0 ? h.pattern_scale : 1.0;
+            const auto turn = [](Vec2 v, double a) {
+                return Vec2{v.x * std::cos(a) - v.y * std::sin(a), v.x * std::sin(a) + v.y * std::cos(a)};
+            };
+            code_i(s, 78, static_cast<long>(custom->lines.size()));
+            for (const hatch::PatternLine& l : custom->lines) {
+                const double drawn = to_radians(l.angle) + h.pattern_angle;
+                const Vec2 o = turn(l.origin * sc, h.pattern_angle);
+                const Vec2 d = turn(l.delta * sc, drawn);
+                code_d(s, 53, to_degrees(drawn));
+                code_d(s, 43, o.x);
+                code_d(s, 44, o.y);
+                code_d(s, 45, d.x);
+                code_d(s, 46, d.y);
+                code_i(s, 79, static_cast<long>(l.dashes.size()));
+                for (const double dash : l.dashes) {
+                    code_d(s, 49, dash * sc);
+                }
+            }
+        }
         if (user) {
             const bool twice = h.pattern_name == "_USERDOUBLE";
             code_i(s, 77, twice ? 1 : 0);
@@ -2307,6 +2333,54 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 }
                 h.pattern_name = "GRADIENT";
                 h.pattern_angle = getd(body, 460, 0.0);
+            }
+            // A pattern Musa CAD does not have (an AutoCAD drawing's custom one): its line
+            // families come with the hatch, scaled and turned as it draws them -- taken back
+            // to the definition and kept with the drawing, so it draws here too.
+            if (h.pattern_name != "SOLID" && h.pattern_name != "GRADIENT" && h.pattern_name != "_USER" &&
+                h.pattern_name != "_USERDOUBLE" && hatch::builtin_pattern(h.pattern_name) == nullptr &&
+                std::none_of(doc.patterns.begin(), doc.patterns.end(),
+                             [&](const hatch::Pattern& p) { return p.name == h.pattern_name; })) {
+                const double s = h.pattern_scale > 0.0 ? h.pattern_scale : 1.0;
+                const auto turn = [](Vec2 v, double a) {
+                    return Vec2{v.x * std::cos(a) - v.y * std::sin(a), v.x * std::sin(a) + v.y * std::cos(a)};
+                };
+                hatch::Pattern pat;
+                pat.name = h.pattern_name;
+                bool in_lines = false;
+                for (const Pair& pr : body) {
+                    if (pr.code == 78) {
+                        in_lines = true;
+                    } else if (!in_lines) {
+                        continue;
+                    } else if (pr.code == 53) {
+                        pat.lines.emplace_back();
+                        pat.lines.back().angle = to_d(pr.value); // the line's angle as drawn
+                    } else if (pat.lines.empty()) {
+                        continue;
+                    } else if (pr.code == 43) {
+                        pat.lines.back().origin.x = to_d(pr.value);
+                    } else if (pr.code == 44) {
+                        pat.lines.back().origin.y = to_d(pr.value);
+                    } else if (pr.code == 45) {
+                        pat.lines.back().delta.x = to_d(pr.value);
+                    } else if (pr.code == 46) {
+                        pat.lines.back().delta.y = to_d(pr.value);
+                    } else if (pr.code == 49) {
+                        pat.lines.back().dashes.push_back(to_d(pr.value) / s);
+                    } else if (pr.code == 98) {
+                        break; // the seed points follow the pattern data
+                    }
+                }
+                for (hatch::PatternLine& l : pat.lines) {
+                    const double drawn = to_radians(l.angle);
+                    l.origin = turn(l.origin, -h.pattern_angle) / s;
+                    l.delta = turn(l.delta, -drawn) / s; // the offset in the line's own frame
+                    l.angle = l.angle - to_degrees(h.pattern_angle);
+                }
+                if (!pat.lines.empty()) {
+                    doc.patterns.push_back(std::move(pat));
+                }
             }
             sink.hatches->push_back(std::move(h));
             return;

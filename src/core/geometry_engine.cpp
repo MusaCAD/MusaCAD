@@ -6339,7 +6339,7 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
             const HatchData* hd = store_.hatch(h);
             const std::vector<std::vector<Vec2>> loops = store_.hatch_loops(*hd);
             const std::string_view pname = store_.string_of(*hd);
-            if (const hatch::Pattern* pat = pname == "SOLID" ? nullptr : hatch::builtin_pattern(pname)) {
+            if (const hatch::Pattern* pat = pname == "SOLID" ? nullptr : store_.pattern(pname)) {
                 std::vector<hatch::Segment> segs;
                 hatch::generate_pattern_segments(loops, *pat, hd->pattern_scale, hd->pattern_angle,
                                                  hd->pattern_origin, segs);

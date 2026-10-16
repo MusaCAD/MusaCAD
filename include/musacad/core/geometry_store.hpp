@@ -14,6 +14,7 @@
 #include "musacad/core/drawing_props.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/generational_arena.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
@@ -942,6 +943,15 @@ public:
     }
     /// The index of the style named `name` (any case), or 0xFFFF.
     [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
+    /// The drawing's own hatch patterns (from an AutoCAD drawing's custom patterns), looked
+    /// up before the built-in ones by pattern().
+    [[nodiscard]] const std::vector<hatch::Pattern>& custom_patterns() const noexcept { return custom_patterns_; }
+    void set_custom_patterns(std::vector<hatch::Pattern> v) { custom_patterns_ = std::move(v); }
+    /// Adds a pattern, or replaces the one of the same name (any case).
+    void add_custom_pattern(hatch::Pattern p);
+    /// The pattern called `name` (any case): the drawing's own, else a built-in; nullptr
+    /// for SOLID and names neither knows.
+    [[nodiscard]] const hatch::Pattern* pattern(std::string_view name) const noexcept;
     /// MLEADERSTYLE: the multileader styles (Standard first) and the current one.
     [[nodiscard]] const std::vector<MLeaderStyle>& mleader_styles() const noexcept { return mleader_styles_; }
     void set_mleader_styles(std::vector<MLeaderStyle> v) {
@@ -1330,6 +1340,7 @@ private:
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
     std::uint16_t current_table_style_ = 0;
     std::vector<MLeaderStyle> mleader_styles_{MLeaderStyle{}}; // MLEADERSTYLE
+    std::vector<hatch::Pattern> custom_patterns_;                // the drawing's own hatch patterns
     std::uint16_t current_mleader_style_ = 0;
     std::vector<DataLink> data_links_; // DATALINK
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table

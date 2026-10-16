@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "musacad/core/drawing_props.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
@@ -374,6 +375,7 @@ struct Document {
     std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
     std::uint16_t current_table_style = 0; ///< v40: the style new tables use (TABLESTYLE)
     std::vector<MLeaderStyle> mleader_styles{};  ///< v40: MLEADERSTYLE (empty: Standard only)
+    std::vector<hatch::Pattern> patterns{};      ///< v40: the drawing's own hatch patterns
     std::uint16_t current_mleader_style = 0;     ///< v40
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted

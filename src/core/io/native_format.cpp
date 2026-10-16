@@ -1366,6 +1366,26 @@ std::string serialize_native(const Document& doc) {
     // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
     // column widths, one of row heights, then per cell: "span_cols span_rows align" and
     // the raw text on the following line (it may contain spaces, so it cannot be a token).
+    // v40: PATTERN <name>, then a PATLINE angle ox oy dx dy [dashes...] for each family --
+    // the drawing's own hatch patterns.
+    for (const hatch::Pattern& p : doc.patterns) {
+        s += "PATTERN ";
+        s += enc(p.name);
+        s += '\n';
+        for (const hatch::PatternLine& l : p.lines) {
+            s += "PATLINE ";
+            append_double(s, l.angle);
+            s += ' ';
+            append_vec(s, l.origin);
+            s += ' ';
+            append_vec(s, l.delta);
+            for (const double d : l.dashes) {
+                s += ' ';
+                append_double(s, d);
+            }
+            s += '\n';
+        }
+    }
     // v40: DATALINK <name> <path> (spaces escaped as in PAGESETUP); a linked TABLE carries
     // the link's index as one more token.
     for (const DataLink& dl : doc.data_links) {
@@ -1759,6 +1779,27 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed POINTMODE");
             }
             doc.pdmode = static_cast<std::uint8_t>(std::min<std::uint64_t>(mode, 100));
+        } else if (key == "PATTERN") {
+            if (tok.size() != 2) {
+                return fail("malformed PATTERN");
+            }
+            hatch::Pattern p;
+            p.name = std::string(tok[1]);
+            for (char& ch : p.name) {
+                ch = ch == '\x1f' ? ' ' : ch;
+            }
+            doc.patterns.push_back(std::move(p));
+        } else if (key == "PATLINE") {
+            vals.clear();
+            if (doc.patterns.empty() || tok.size() < 6 || !parse_doubles(tok, 1, tok.size() - 1, vals)) {
+                return fail("malformed PATLINE");
+            }
+            hatch::PatternLine l;
+            l.angle = vals[0];
+            l.origin = {vals[1], vals[2]};
+            l.delta = {vals[3], vals[4]};
+            l.dashes.assign(vals.begin() + 5, vals.end());
+            doc.patterns.back().lines.push_back(std::move(l));
         } else if (key == "DATALINK") {
             if (tok.size() != 3) {
                 return fail("malformed DATALINK");

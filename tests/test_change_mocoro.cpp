@@ -2215,3 +2215,46 @@ TEST_CASE("A view saved with a layer snapshot keeps the layers' state; deleting 
     REQUIRE(wait_until(engine, [](const auto& s) { return s.layer_state_names.empty() && s.named_views.empty(); }));
     engine.stop();
 }
+
+TEST_CASE("A hatch pattern Musa CAD does not have comes with the drawing, from DXF and back") {
+    io::Document doc;
+    hatch::Pattern pat;
+    pat.name = "MYPAT";
+    hatch::PatternLine l;
+    l.angle = 45.0;
+    l.origin = {1.0, 0.0};
+    l.delta = {0.0, 0.5};
+    l.dashes = {0.25, -0.1};
+    pat.lines.push_back(l);
+    doc.patterns.push_back(pat);
+    io::DocHatch h;
+    h.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+    h.pattern_name = "MYPAT";
+    h.pattern_scale = 2.0;
+    h.pattern_angle = 0.5235987755982988; // 30 degrees
+    doc.hatches.push_back(h);
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_custom_pat.dxf").string();
+    REQUIRE(io::save_dxf(doc, path).ok);
+    io::Document back;
+    REQUIRE(io::load_dxf(path, back).ok);
+    std::filesystem::remove(path);
+    REQUIRE(back.patterns.size() == 1);
+    const hatch::PatternLine& b = back.patterns[0].lines.at(0);
+    REQUIRE(back.patterns[0].name == "MYPAT");
+    REQUIRE(b.angle == Approx(45.0));
+    REQUIRE(b.origin.x == Approx(1.0));
+    REQUIRE(b.origin.y == Approx(0.0).margin(1e-9));
+    REQUIRE(b.delta.x == Approx(0.0).margin(1e-9));
+    REQUIRE(b.delta.y == Approx(0.5));
+    REQUIRE(b.dashes.size() == 2);
+    REQUIRE(b.dashes[0] == Approx(0.25));
+
+    // Kept in the drawing and drawn: the store finds it by name.
+    GeometryStore store;
+    io::populate_store(store, back);
+    REQUIRE(store.pattern("mypat") != nullptr);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(io::document_from_store(store)), again).ok);
+    REQUIRE(again.patterns.size() == 1);
+    REQUIRE(again.patterns[0] == back.patterns[0]);
+}

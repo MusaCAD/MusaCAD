@@ -340,6 +340,33 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
     return EntityHandle{slot.index, slot.generation, EntityKind::Table};
 }
 
+namespace {
+bool same_name(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::toupper(static_cast<unsigned char>(x)) == std::toupper(static_cast<unsigned char>(y));
+           });
+}
+} // namespace
+
+void GeometryStore::add_custom_pattern(hatch::Pattern p) {
+    for (hatch::Pattern& q : custom_patterns_) {
+        if (same_name(q.name, p.name)) {
+            q = std::move(p);
+            return;
+        }
+    }
+    custom_patterns_.push_back(std::move(p));
+}
+
+const hatch::Pattern* GeometryStore::pattern(std::string_view name) const noexcept {
+    for (const hatch::Pattern& q : custom_patterns_) {
+        if (same_name(q.name, name)) {
+            return &q;
+        }
+    }
+    return hatch::builtin_pattern(name);
+}
+
 std::uint16_t GeometryStore::mleader_style_index(std::string_view name) const noexcept {
     for (std::size_t i = 0; i < mleader_styles_.size(); ++i) {
         const std::string& n = mleader_styles_[i].name;
