@@ -691,11 +691,26 @@ TEST_CASE("GATTE changes an attribute on every reference of a block; VPSCALE nee
     REQUIRE(h.out.prompt.starts_with("Pick internal point"));
 }
 
-TEST_CASE("EXPORTPDF and PUBLISH say so where there is no drawing window") {
+TEST_CASE("EXPORTPDF, PUBLISH and PAGESETUP say so where there is no window; a page setup is deleted by name") {
     H h;
     h.run({"EXPORTPDF"});
     REQUIRE(h.out.lines.back() == "EXPORTPDF needs the drawing window.");
     REQUIRE_FALSE(h.proc.has_active_command());
     h.run({"PUBLISH"});
     REQUIRE(h.out.lines.back() == "PUBLISH needs the drawing window.");
+    h.run({"PAGESETUP"});
+    REQUIRE(h.out.lines.back() == "PAGESETUP needs the drawing window.");
+
+    GeometryEngine engine;
+    engine.start();
+    PageSetup ps;
+    ps.name = "A3 sheet";
+    engine.submit(AddPageSetupCommand{ps});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.page_setups.size() == 1; }));
+    engine.submit(RemovePageSetupCommand{"A3 sheet"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Page setup \"A3 sheet\" deleted."; }));
+    REQUIRE(engine.snapshot().page_setups.empty());
+    engine.submit(RemovePageSetupCommand{"A3 sheet"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "No page setup is called \"A3 sheet\"."; }));
+    engine.stop();
 }

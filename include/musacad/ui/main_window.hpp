@@ -414,6 +414,7 @@ private:
     [[nodiscard]] PlotSpec current_plot_seed();
     void export_pdf(); ///< EXPORTPDF: the sheet in front to a PDF file
     void publish();    ///< PUBLISH: the sheets chosen, one PDF page each
+    void open_page_setup_manager(); ///< PAGESETUP
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
     /// false (with a message) if there's nothing to plot.
     [[nodiscard]] bool prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax);
@@ -500,6 +501,7 @@ private:
     QAction* polar_action_ = nullptr;
     QAction* otrack_action_ = nullptr;
     QAction* selcycle_action_ = nullptr; ///< SC: SELECTIONCYCLING, in step with Ctrl+W and the command
+    std::string current_page_setup_; ///< the Page Setup Manager's Set Current (empty: none)
     bool polar_restore_ = false; ///< listing_shot switched POLAR on for its picture
     bool tracking_restore_ = false; ///< ... and set its own polar increment
     command::TrackingSettings tracking_saved_{};

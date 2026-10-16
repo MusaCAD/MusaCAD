@@ -1324,6 +1324,10 @@ struct BuildPlotSnapshotCommand {
 struct AddPageSetupCommand {
     PageSetup setup;
 };
+/// The Page Setup Manager's Delete: the named page setup goes.
+struct RemovePageSetupCommand {
+    std::string name;
+};
 
 /// A quick leader: arrowhead at `tip`, line to `knee`, text label at `knee`.
 struct AddLeaderCommand {
@@ -2077,7 +2081,7 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,

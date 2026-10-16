@@ -1195,6 +1195,11 @@ public:
         }
         page_setups_.push_back(setup);
     }
+    /// PAGESETUP's Delete; false if there is no setup by that name.
+    bool remove_page_setup(std::string_view name) {
+        const auto n = std::erase_if(page_setups_, [&](const PageSetup& p) { return p.name == name; });
+        return n > 0;
+    }
 
     /// Adds a layer, or returns the existing index if the name is already taken
     /// (layer names are unique, AutoCAD-style).

@@ -919,7 +919,7 @@ void MainWindow::build_ribbon() {
         QWidget* col = plot->add_column();
         small(plot, col, QStringLiteral("Batch Plot"), "PUBLISH", "plot");
         small(plot, col, QStringLiteral("Preview"), "PREVIEW", "preview");
-        todo_small(plot, col, QStringLiteral("Page Setup Manager"), "pagesetup");
+        small(plot, col, QStringLiteral("Page Setup Manager"), "PAGESETUP", "pagesetup");
     }
     RibbonPanel* export_p = ribbon_->add_panel(output, QStringLiteral("Export to DWG/DXF/PDF"), 40);
     export_p->set_representative_icon(asset("export"));

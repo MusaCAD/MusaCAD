@@ -269,7 +269,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Queued: the command finishes first, then the window asks.
     viewport_->set_export_pdf_callbacks(
         [this] { QTimer::singleShot(0, this, [this] { export_pdf(); }); },
-        [this] { QTimer::singleShot(0, this, [this] { publish(); }); });
+        [this] { QTimer::singleShot(0, this, [this] { publish(); }); },
+        [this] { open_page_setup_manager(); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
@@ -2965,6 +2966,94 @@ void MainWindow::open_table_style_dialog() {
         const QString name = current_name(d);
         if (!name.isEmpty()) {
             engine_->submit(core::TableStyleCommand{Op::Delete, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+void MainWindow::open_page_setup_manager() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Page Setup Manager"));
+    d.dlg->setObjectName(QStringLiteral("PageSetupManager"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        d.list->clear();
+        for (const std::string& n : page_setup_names()) {
+            d.list->addItem(QString::fromStdString(n));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());
+        d.status->setText(d.list->count() == 0
+                              ? QStringLiteral("No page setups: New names the plot settings you choose.")
+                          : current_page_setup_.empty()
+                              ? QString()
+                              : QStringLiteral("Current: %1").arg(QString::fromStdString(current_page_setup_)));
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    // The plot settings of setup `name`, in the Plot window with OK in place of Plot.
+    const auto edit = [this, later](QWidget* parent, const std::string& name, const PlotSpec& seed) {
+        std::vector<std::string> printers;
+        for (const QPrinterInfo& pi : QPrinterInfo::availablePrinters()) {
+            printers.push_back(pi.printerName().toStdString());
+        }
+        PlotDialog dlg(seed, printers, page_setup_names(), parent);
+        dlg.setWindowTitle(QStringLiteral("Page Setup - %1").arg(QString::fromStdString(name)));
+        if (auto* box = dlg.findChild<QDialogButtonBox*>(); box != nullptr && box->button(QDialogButtonBox::Ok) != nullptr) {
+            box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("OK"));
+        }
+        connect(&dlg, &PlotDialog::previewRequested, this, [this, &dlg] { plot_preview(dlg.spec()); });
+        if (dlg.exec() == QDialog::Accepted) {
+            engine_->submit(core::AddPageSetupCommand{to_page_setup(dlg.spec(), name)});
+            later();
+        }
+    };
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* modify = new QPushButton(QStringLiteral("Modify..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, modify, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    connect(set_current, &QPushButton::clicked, d.dlg, [this, d, refill] {
+        PlotSpec s;
+        const std::string name = current_name(d).toStdString();
+        if (!name.empty() && recall_page_setup(name, s)) {
+            last_plot_spec_ = s; // what PLOT starts from in model space
+            current_page_setup_ = name;
+            command_widget_->append_line("Page setup \"" + name + "\" is current: PLOT starts from it in model space.");
+            refill();
+        }
+    });
+    connect(add, &QPushButton::clicked, d.dlg, [this, d, edit] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New Page Setup"), QStringLiteral("New page setup name:"),
+                                                   QLineEdit::Normal, QStringLiteral("Setup%1").arg(d.list->count() + 1), &ok)
+                                 .trimmed();
+        if (ok && !name.isEmpty()) {
+            edit(d.dlg, name.toStdString(), current_plot_seed());
+        }
+    });
+    connect(modify, &QPushButton::clicked, d.dlg, [this, d, edit] {
+        PlotSpec s;
+        const std::string name = current_name(d).toStdString();
+        if (!name.empty() && recall_page_setup(name, s)) {
+            edit(d.dlg, name, s);
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, modify, &QPushButton::click);
+    connect(remove, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const std::string name = current_name(d).toStdString();
+        if (!name.empty()) {
+            engine_->submit(core::RemovePageSetupCommand{name});
+            if (current_page_setup_ == name) {
+                current_page_setup_.clear();
+            }
             later();
         }
     });

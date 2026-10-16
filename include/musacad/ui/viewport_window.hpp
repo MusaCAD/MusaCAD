@@ -112,9 +112,12 @@ public:
     bool plot_preview() override;
     bool export_pdf() override;
     bool publish() override;
-    void set_export_pdf_callbacks(std::function<void()> export_pdf, std::function<void()> publish) {
+    bool page_setup_manager() override;
+    void set_export_pdf_callbacks(std::function<void()> export_pdf, std::function<void()> publish,
+                                  std::function<void()> page_setups) {
         export_pdf_callback_ = std::move(export_pdf);
         publish_callback_ = std::move(publish);
+        page_setup_callback_ = std::move(page_setups);
     }
     bool view_manager() override;
     bool layer_states_manager() override;
@@ -772,6 +775,7 @@ private:
     std::function<void()> plot_preview_callback_;
     std::function<void()> export_pdf_callback_;
     std::function<void()> publish_callback_;
+    std::function<void()> page_setup_callback_;
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
     std::function<int(core::DimInspectCommand&)> dim_inspect_callback_;

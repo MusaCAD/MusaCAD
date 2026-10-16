@@ -183,6 +183,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit a hatch: its pattern, scale and angle, or a new boundary round it.");
     reg({"EXPORTPDF"}, [] { return std::make_unique<WindowCommand>("EXPORTPDF", &ViewControl::export_pdf); },
         "assets/ribbon/export.svg", "Save the layout in front, or the model, as a PDF file.");
+    reg({"PAGESETUP"}, [] { return std::make_unique<WindowCommand>("PAGESETUP", &ViewControl::page_setup_manager); },
+        "assets/ribbon/settings.svg", "Name, change and delete page setups, and choose the one PLOT starts from.");
     reg({"PUBLISH"}, [] { return std::make_unique<WindowCommand>("PUBLISH", &ViewControl::publish); },
         "assets/ribbon/plot.svg", "Plot the model and the layouts chosen into one PDF, a page each.");
     reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",

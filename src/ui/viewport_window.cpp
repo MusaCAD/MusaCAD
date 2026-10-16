@@ -368,6 +368,14 @@ bool ViewportWindow::publish() {
     return true;
 }
 
+bool ViewportWindow::page_setup_manager() {
+    if (!page_setup_callback_) {
+        return false;
+    }
+    page_setup_callback_();
+    return true;
+}
+
 bool ViewportWindow::text_style_dialog() {
     if (!text_style_callback_) {
         return false;

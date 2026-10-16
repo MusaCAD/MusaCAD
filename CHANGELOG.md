@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **The Page Setup Manager** (#74) -- PAGESETUP names, changes and deletes page setups in the
+  Plot window's settings and sets the one PLOT starts from in model space.
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
   takes it away.
 - **DIMINSPECT** (#60) -- inspection dimensions: the value framed with round or angular ends,

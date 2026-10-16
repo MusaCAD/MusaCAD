@@ -263,6 +263,8 @@ public:
     /// each (false where there is no window to ask in).
     virtual bool export_pdf() { return false; }
     virtual bool publish() { return false; }
+    /// PAGESETUP: the Page Setup Manager.
+    virtual bool page_setup_manager() { return false; }
     /// VIEW: the View Manager; LAYERSTATE: the Layer States Manager (false where there is
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }

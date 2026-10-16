@@ -13769,6 +13769,15 @@ void GeometryEngine::apply_one(const Command& command) {
                 geom_dirty_ = true; // republish so the snapshot carries the new setup
                 report("Page setup \"" + c.setup.name + "\" saved.");
             }
+            if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
+                if (store_.remove_page_setup(c.name)) {
+                    dirty_ = true;
+                    geom_dirty_ = true; // republish without it
+                    report("Page setup \"" + c.name + "\" deleted.");
+                } else {
+                    report("No page setup is called \"" + c.name + "\".");
+                }
+            }
             if constexpr (std::is_same_v<T, VportsCommand>) {
                 using Op = VportsCommand::Op;
                 if (c.op == Op::Set) {
@@ -15101,6 +15110,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
                 edit = false; // a question
+            }
+            if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
+                edit = false; // marks the drawing changed itself, when there was one to delete
             }
             if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
                 edit = layerp_changed_;
