@@ -922,8 +922,8 @@ private:
 };
 
 /// LAYER (LA): the Layer Properties Manager; -LAYER (and LAYER without a window):
-/// `Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Freeze/Thaw/LOck/
-/// Unlock]:` again and again until Enter.
+/// `Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/
+/// LOck/Unlock/Description]:` again and again until Enter.
 class LayerCommand final : public ICommand {
 public:
     explicit LayerCommand(bool dialog) : dialog_(dialog) {}
@@ -932,6 +932,10 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// A description is typed with its spaces.
+    bool free_text() const override {
+        return state_ == State::Value && edit_.op == core::LayerEditCommand::Op::Description;
+    }
 
 private:
     enum class State : std::uint8_t { Option, Names, Value, RenameTo, SetPick };
@@ -1319,11 +1323,12 @@ private:
 /// PASTECLIP (Ctrl+V): what the clipboard holds, at `Specify insertion point:` -- Musa CAD
 /// objects (from this window or another; they follow the cursor), an image (embedded,
 /// its lower-left corner at the point) or text (an MTEXT). PASTEORIG: objects at their own
-/// coordinates, no point asked.
+/// coordinates, no point asked. PASTEBLOCK: the objects as one block (named A$C and eight
+/// hex digits, as AutoCAD names them) inserted at the point.
 class PasteClipCommand final : public ICommand {
 public:
-    explicit PasteClipCommand(bool original) : original_(original) {}
-    std::string name() const override { return original_ ? "PASTEORIG" : "PASTECLIP"; }
+    explicit PasteClipCommand(bool original, bool as_block = false) : original_(original), as_block_(as_block) {}
+    std::string name() const override { return as_block_ ? "PASTEBLOCK" : original_ ? "PASTEORIG" : "PASTECLIP"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -1331,6 +1336,7 @@ public:
 
 private:
     bool original_;
+    bool as_block_;
     std::string kind_;
     bool done_ = false;
 };

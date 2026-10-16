@@ -180,6 +180,10 @@ private:
         double current_celtscale = 1.0;
         bool timer_on = true;
         double timer_seconds = 0.0;
+        // Kept with the drawing across tab switches: the layers LAYISO turned off (for
+        // LAYUNISO) and DIMLAYER.
+        std::vector<std::uint16_t> layiso_off;
+        std::optional<std::uint16_t> dim_layer;
     };
     struct DocMeta {
         std::uint64_t id = 0;

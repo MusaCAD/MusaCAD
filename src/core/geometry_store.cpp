@@ -620,6 +620,7 @@ void GeometryStore::clear() noexcept {
     groups_.clear();
     units_ = DrawingUnits{};
     wipeout_frames_ = true;
+    wipeout_frames_plot_ = true;
     fillmode_ = true;
     pdmode_ = 0;
     pdsize_ = 0.0;

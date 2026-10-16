@@ -32,8 +32,10 @@ enum Col {
     kColor,
     kLinetype,
     kLineweight,
+    kPlot,
     kNewVpFreeze,
     kVpFreeze,
+    kDescription,
     kColCount
 };
 
@@ -68,7 +70,7 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 
     table_ = new QTableWidget(0, kColCount, this);
     table_->setHorizontalHeaderLabels({"Name", "On", "Frozen", "Locked", "Color", "Linetype",
-                                       "Lineweight", "New VP Freeze", "VP Freeze"});
+                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description"});
     table_->horizontalHeader()->setStretchLastSection(false);
     table_->horizontalHeader()->setSectionResizeMode(kName, QHeaderView::Stretch);
     table_->verticalHeader()->setVisible(false);
@@ -155,6 +157,8 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
         table_->setItem(row, kFrozen, check_item(l.frozen));
         table_->setItem(row, kLocked, check_item(l.locked));
         table_->setItem(row, kNewVpFreeze, check_item(l.vp_freeze_new));
+        table_->setItem(row, kPlot, check_item(l.plot));
+        table_->setItem(row, kDescription, new QTableWidgetItem(QString::fromStdString(l.description)));
         if (vp_frozen.has_value()) {
             const bool frozen_here = std::find(vp_frozen->begin(), vp_frozen->end(),
                                                static_cast<std::uint16_t>(row)) != vp_frozen->end();
@@ -242,6 +246,12 @@ core::Layer LayerDialog::layer_from_row(int row) const {
     }
     if (auto* nv = table_->item(row, kNewVpFreeze)) {
         l.vp_freeze_new = nv->checkState() == Qt::Checked;
+    }
+    if (auto* pl = table_->item(row, kPlot)) {
+        l.plot = pl->checkState() == Qt::Checked;
+    }
+    if (auto* de = table_->item(row, kDescription)) {
+        l.description = de->text().toStdString();
     }
     if (auto* lt = qobject_cast<QComboBox*>(table_->cellWidget(row, kLinetype))) {
         l.linetype = static_cast<core::Linetype>(lt->currentIndex());

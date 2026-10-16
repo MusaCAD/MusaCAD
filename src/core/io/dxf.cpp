@@ -526,7 +526,14 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_i(s, 62, l.on ? 7 : -7); // ACI; negative = layer off
         code_i(s, 420, true_color(l.color)); // exact RGB
         code(s, 6, linetype_name(l.linetype));
+        code_i(s, 290, l.plot ? 1 : 0); // plotted
         code_i(s, 370, l.lineweight);
+        if (!l.description.empty()) {
+            // The description goes where AutoCAD keeps it: the layer's AcAecLayerStandard XDATA.
+            code(s, 1001, "AcAecLayerStandard");
+            code(s, 1000, "");
+            code(s, 1000, l.description);
+        }
     }
     code(s, 0, "ENDTAB");
     // STYLE table (v26): Standard first, then the drawing's text styles -- name, font
@@ -1673,6 +1680,21 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         if (const std::string* lt = find(body, 6)) {
             l.linetype = linetype_from(*lt);
+        }
+        if (const std::string* pl = find(body, 290)) {
+            l.plot = to_l(*pl) != 0;
+        }
+        for (std::size_t k = 0; k < body.size(); ++k) {
+            // AcAecLayerStandard XDATA: an empty string, then the description.
+            if (body[k].code == 1001 && body[k].value == "AcAecLayerStandard") {
+                int strings = 0;
+                for (std::size_t j = k + 1; j < body.size() && body[j].code != 1001; ++j) {
+                    if (body[j].code == 1000 && ++strings == 2) {
+                        l.description = body[j].value;
+                        break;
+                    }
+                }
+            }
         }
         if (const std::string* lw = find(body, 370)) {
             // Only 0..211 are real widths; -1/-2/-3 (ByLayer/ByBlock/Default) and any
