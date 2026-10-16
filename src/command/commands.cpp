@@ -6000,6 +6000,16 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             prompt_option(ctx);
         }
         return;
+    case State::LtypeGen:
+        if (u == "ON" || u == "OFF" || t.empty()) {
+            op(22, {u == "ON" ? 1.0 : 0.0, 0.0});
+        } else {
+            ctx.echo("Enter ON or OFF.");
+            return;
+        }
+        state_ = State::Option;
+        prompt_option(ctx);
+        return;
     case State::Fuzz: {
         double fuzz = 0.0;
         if (!t.empty() && (!parse_number(t, fuzz) || fuzz < 0.0)) {
@@ -6048,7 +6058,9 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "D" || u == "DECURVE") {
             op(3);
         } else if (u == "L" || u == "LTYPE GEN" || u == "LTYPE") {
-            ctx.echo("Ltype gen is not supported yet.");
+            state_ = State::LtypeGen;
+            ctx.set_prompt("Enter polyline linetype generation option [ON/OFF] <Off>: ");
+            return;
         } else if (u == "R" || u == "REVERSE") {
             op(2);
         } else if (u == "U" || u == "UNDO") {

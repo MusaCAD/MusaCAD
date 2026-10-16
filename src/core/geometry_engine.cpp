@@ -10753,6 +10753,7 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
     std::vector<double> b;
     std::vector<double> w; // two per vertex, zeros for a plain polyline
     double elevation = 0.0;
+    bool ltype_gen = true;
     double thickness = 0.0;
     bool closed = false;
     EntityProps props{};
@@ -10769,6 +10770,7 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
             b.assign(bs.begin(), bs.end());
         }
         w.assign(ws.begin(), ws.end());
+        ltype_gen = pl->ltype_gen;
         elevation = pl->elevation;
         thickness = pl->thickness;
         closed = pl->closed;
@@ -10937,6 +10939,10 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         what = "Segment width set.";
         break;
     }
+    case 22: // Ltype gen: p1.x 1 on, 0 off
+        ltype_gen = c.p1.x != 0.0;
+        what = ltype_gen ? "Linetype generation on." : "Linetype generation off.";
+        break;
     case 10: { // Fit: arcs through the vertices, smooth at each (two per segment)
         if (!polyline_ops::fit_arcs(v, b, w, closed)) {
             say("PEDIT: Fit needs three vertices.");
@@ -10962,7 +10968,8 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
                                          cts,
                                          pline::has_width(w) ? w : std::vector<double>{},
                                          elevation,
-                                         thickness};
+                                         thickness,
+                                         ltype_gen};
     }
     const Command original = capture_entity(h);
     remove_indexed(h);

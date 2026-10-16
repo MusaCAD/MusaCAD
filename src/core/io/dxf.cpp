@@ -779,7 +779,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code_d(s, 48, p.celtscale);
         }
         code_i(s, 90, static_cast<long>(p.points.size()));
-        code_i(s, 70, p.closed ? 1 : 0);
+        code_i(s, 70, (p.closed ? 1 : 0) | (p.ltype_gen ? 128 : 0)); // 128: linetype generation
         emit_polyline_widths_header(s, p);
         const bool has_bulge = p.bulges.size() == p.points.size();
         for (std::size_t i = 0; i < p.points.size(); ++i) {
@@ -2275,6 +2275,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             DocPolyline pl;
             const std::string* flag = find(body, 70);
             pl.closed = flag != nullptr && (to_l(*flag) & 1) != 0;
+            pl.ltype_gen = flag != nullptr && (to_l(*flag) & 128) != 0; // off unless set, as AutoCAD reads it
             double x = 0.0;
             bool have_x = false;
             bool any_bulge = false;

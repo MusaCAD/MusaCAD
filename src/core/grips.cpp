@@ -47,7 +47,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                   store.celtscale(h),
                                   std::vector<double>(widths.begin(), widths.end()),
                                   p->elevation,
-                                  p->thickness};
+                                  p->thickness,
+                                  p->ltype_gen};
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
@@ -264,6 +265,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_polyline(c.points, c.bulges, c.closed, props_of(c.props), widths,
                                             c.elevation, c.thickness);
                 store.set_celtscale(handle, c.celtscale);
+                store.set_polyline_ltype_gen(handle, c.ltype_gen);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 handle = store.add_circle(c.center, c.radius, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);

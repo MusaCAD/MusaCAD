@@ -82,6 +82,9 @@ struct PolylineData {
     /// Elevation and thickness (DXF 38 / 39): kept and round-tripped; the view is 2D.
     double elevation = 0.0;
     double thickness = 0.0;
+    /// Linetype generation (PEDIT Ltype gen, DXF 70 bit 128): the dash pattern runs on
+    /// across the vertices; off, it starts again at each one. On unless set off.
+    bool ltype_gen = true;
 };
 
 struct SplineData {
@@ -525,6 +528,7 @@ public:
     bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
     bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
+    bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},

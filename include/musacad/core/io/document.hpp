@@ -136,6 +136,7 @@ struct DocPolyline {
     std::vector<double> widths = {}; ///< empty, or two per vertex (v37)
     double elevation = 0.0;          ///< DXF 38 (v37)
     double thickness = 0.0;          ///< DXF 39 (v37)
+    bool ltype_gen = true;           ///< v40: the dash pattern runs on across the vertices
     friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
 };
 struct DocSpline {

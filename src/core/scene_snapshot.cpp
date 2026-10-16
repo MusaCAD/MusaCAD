@@ -436,11 +436,34 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     // (its outline with FILLMODE off); a segment of no width stays ordinary line work.
     // The band is derived here from the vertices and widths, like every other display.
     std::vector<Vec2> band;
+    std::vector<Vec2> seg_left;
+    std::vector<Vec2> seg_right;
     for_each_live(store.polylines(), EntityKind::Polyline, [&](EntityHandle h) {
         const PolylineData* pl = store.polyline(h);
         const std::span<const double> widths = store.widths_of(*pl);
         if (!pline::has_width(widths)) {
-            emit_curve(h, pl->props);
+            const ResolvedProps rp = entity_resolved(store, pl->props);
+            if (pl->ltype_gen || rp.linetype == Linetype::Continuous) {
+                emit_curve(h, pl->props);
+                return;
+            }
+            if (!visible(store, pl->props)) {
+                return;
+            }
+            // Linetype generation off: the pattern starts again at every vertex.
+            const std::span<const Vec2> v = store.vertices_of(*pl);
+            const std::span<const double> b = store.bulges_of(*pl);
+            const std::size_t n = v.size();
+            const std::size_t nseg = n < 2 ? 0 : (pl->closed ? n : n - 1);
+            dashed.clear();
+            for (std::size_t i = 0; i < nseg; ++i) {
+                seg_left.clear();
+                seg_right.clear();
+                pline::detail::segment_rows(v[i], v[(i + 1) % n], i < b.size() ? b[i] : 0.0, 0.0, 0.0, tolerance,
+                                            seg_left, seg_right);
+                dash_polyline(seg_left, rp.linetype, ltscale * store.celtscale(h), dashed);
+            }
+            add_lines(rp.color, rp.lineweight, dashed);
             return;
         }
         if (!visible(store, pl->props)) {

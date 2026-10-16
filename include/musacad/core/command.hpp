@@ -440,6 +440,7 @@ struct AddPolylineCommand {
     std::vector<double> widths = {};
     double elevation = 0.0; ///< DXF 38
     double thickness = 0.0; ///< DXF 39
+    bool ltype_gen = true;  ///< PolylineData::ltype_gen
 };
 
 struct AddCircleCommand {

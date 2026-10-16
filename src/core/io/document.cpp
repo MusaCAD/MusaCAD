@@ -273,7 +273,7 @@ Document document_from_store(const GeometryStore& store) {
                 std::vector<Vec2>(v.begin(), v.end()), p.closed, p.props,
                 std::vector<double>(b.begin(), b.end()),
                 store.celtscale(EntityHandle{i, plines.generations()[i], EntityKind::Polyline}),
-                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness});
+                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness, p.ltype_gen});
         }
     }
     const auto& splines = store.splines();
@@ -688,9 +688,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
                             a.celtscale);
     }
     for (const DocPolyline& p : doc.polylines) {
-        store.set_celtscale(
-            store.add_polyline(p.points, p.bulges, p.closed, p.props, p.widths, p.elevation, p.thickness),
-            p.celtscale);
+        const EntityHandle ph =
+            store.add_polyline(p.points, p.bulges, p.closed, p.props, p.widths, p.elevation, p.thickness);
+        store.set_celtscale(ph, p.celtscale);
+        store.set_polyline_ltype_gen(ph, p.ltype_gen);
     }
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props);

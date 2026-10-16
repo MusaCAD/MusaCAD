@@ -2154,6 +2154,7 @@ private:
         Accept,      ///< a line or arc picked: `Do you want to turn it into one? <Y>`
         MultiSelect, ///< [Multiple]: `Select objects:`
         Fuzz,        ///< [Multiple] > [Join]: the fuzz distance
+        LtypeGen,    ///< [Ltype gen]: ON / OFF
         WidthVal,    ///< [Width]: one width for every segment
         VWidthStart, ///< [Edit vertex] > [Width]: the starting width of the segment leaving the X
         VWidthEnd,   ///< ... and its ending width

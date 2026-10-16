@@ -281,6 +281,9 @@ void append_polyline_extras(std::string& s, const DocPolyline& p) {
         s += ' ';
         append_double(s, p.thickness);
     }
+    if (!p.ltype_gen) {
+        s += " L"; // v40: the dash pattern starts again at each vertex
+    }
 }
 } // namespace
 
@@ -2750,7 +2753,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                 // v37: "W" and 2n widths, "Z" and elevation + thickness may end the record.
                 std::size_t end = tok.size();
                 for (std::size_t k = after; k < tok.size(); ++k) {
-                    if (tok[k] == "W" || tok[k] == "Z") {
+                    if (tok[k] == "W" || tok[k] == "Z" || tok[k] == "L") {
                         end = k;
                         break;
                     }
@@ -2763,11 +2766,15 @@ IoResult parse_native(std::string_view text, Document& out) {
                     k += 1 + n * 2;
                 }
                 if (k < tok.size() && tok[k] == "Z") {
-                    if (k + 3 != tok.size() || !to_double(tok[k + 1], pl.elevation) ||
+                    if (k + 3 > tok.size() || !to_double(tok[k + 1], pl.elevation) ||
                         !to_double(tok[k + 2], pl.thickness)) {
                         return fail("POLYLINE elevation malformed");
                     }
                     k += 3;
+                }
+                if (k < tok.size() && tok[k] == "L") {
+                    pl.ltype_gen = false;
+                    k += 1;
                 }
                 if (k != tok.size()) {
                     return fail("POLYLINE record malformed");

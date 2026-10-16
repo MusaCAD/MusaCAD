@@ -26,6 +26,17 @@ bool GeometryStore::set_dim_text(EntityHandle h, double text_angle, bool arc_lea
     return false;
 }
 
+bool GeometryStore::set_polyline_ltype_gen(EntityHandle h, bool on) noexcept {
+    if (h.kind != EntityKind::Polyline) {
+        return false;
+    }
+    if (PolylineData* p = polylines_.get(h.index, h.generation)) {
+        p->ltype_gen = on;
+        return true;
+    }
+    return false;
+}
+
 bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
     if (h.kind != EntityKind::Dimension) {
         return false;

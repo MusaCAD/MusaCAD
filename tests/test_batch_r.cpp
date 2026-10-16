@@ -84,3 +84,37 @@ TEST_CASE("A text style drawn Backwards or Upside down mirrors its text about th
     REQUIRE_FALSE(find("Back").upside_down);
     REQUIRE(find("Down").upside_down);
 }
+
+TEST_CASE("PEDIT Ltype gen: off, a polyline's dashes start again at every vertex; kept in the drawing and DXF") {
+    GeometryEngine engine;
+    engine.start();
+    EntityProps dashed;
+    dashed.linetype = Linetype::Dashed;
+    dashed.set_linetype_by_layer(false);
+    AddPolylineCommand pl;
+    pl.points = {{0, 0}, {7, 0}, {7, 7}, {14, 7}, {14, 14}};
+    pl.props = dashed;
+    pl.group = 1;
+    engine.submit(pl);
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    const std::size_t on = engine.snapshot().line_vertices.size();
+    engine.submit(PeditCommand{{3, 0}, 0.5, 22, {0, 0}, {}, 2}); // Ltype gen off
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Linetype generation off."; }));
+    REQUIRE(wait_until(engine, [on](const auto& s) { return !s.line_vertices.empty() && s.line_vertices.size() != on; }));
+    engine.stop();
+
+    io::Document doc;
+    io::DocPolyline p;
+    p.points = {{0, 0}, {10, 0}};
+    p.ltype_gen = false;
+    doc.polylines.push_back(p);
+    io::Document native;
+    REQUIRE(io::parse_native(io::serialize_native(doc), native).ok);
+    REQUIRE_FALSE(native.polylines[0].ltype_gen);
+    io::Document dxf;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
+    REQUIRE_FALSE(dxf.polylines[0].ltype_gen);
+    doc.polylines[0].ltype_gen = true;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
+    REQUIRE(dxf.polylines.back().ltype_gen);
+}
