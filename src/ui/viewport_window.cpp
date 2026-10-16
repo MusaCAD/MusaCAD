@@ -314,6 +314,10 @@ bool ViewportWindow::view_manager() {
     return true;
 }
 
+int ViewportWindow::dim_inspect_dialog(core::DimInspectCommand& io) {
+    return dim_inspect_callback_ ? dim_inspect_callback_(io) : -1;
+}
+
 bool ViewportWindow::layer_states_manager() {
     if (!layer_states_callback_) {
         return false;

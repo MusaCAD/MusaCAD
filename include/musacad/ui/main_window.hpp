@@ -294,6 +294,7 @@ private:
     void open_text_style_dialog(); ///< STYLE
     void open_view_manager();      ///< VIEW
     void open_layer_states_manager(); ///< LAYERSTATE
+    int open_dim_inspect_dialog(core::DimInspectCommand& io); ///< DIMINSPECT (1 OK, 0 cancelled)
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;

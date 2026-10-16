@@ -1574,6 +1574,36 @@ private:
     static inline double s_offset_ = 0.35;
 };
 
+/// DIMINSPECT and -DIMINSPECT: `Select dimensions:` (or the ones selected), then the
+/// Inspection Dimension window where there is one; otherwise, and always for -DIMINSPECT,
+/// `Add inspection data or [Remove] <Add>:`, `Enter shape option [Round/Angular/None]
+/// <Round>:`, `Enter label value or <None>:` (`.` for none) and `Enter inspection rate
+/// <100%>:`. The shape, label and rate are offered again the next time.
+class DimInspectUiCommand final : public ICommand {
+public:
+    explicit DimInspectUiCommand(bool dialog) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "DIMINSPECT" : "-DIMINSPECT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Option, Shape, Label, Rate };
+    void after(CommandContext& ctx);
+    void submit(CommandContext& ctx, bool remove);
+    bool dialog_;
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+    static inline std::uint8_t s_shape_ = 1;
+    static inline std::string s_label_{};
+    static inline std::string s_rate_ = "100%";
+};
+
 /// SPLINEDIT (SPE): `Select spline:`, then `Enter an option [Close/Join/Fit data/Edit vertex/
 /// convert to Polyline/Reverse/Undo/eXit] <eXit>:` -- Edit vertex (`[Add/Delete/Elevate
 /// order/Move/Weight/eXit]`: Add, Delete and Move the control points), convert to Polyline

@@ -389,6 +389,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Put a wipeout behind the selected text.");
     reg({"SPLINEDIT", "SPE"}, [] { return std::make_unique<SplineEditUiCommand>(); }, "",
         "Edit a spline: its control points, reverse it, or make it a polyline.");
+    reg({"DIMINSPECT"}, [] { return std::make_unique<DimInspectUiCommand>(true); }, "",
+        "Make the selected dimensions inspection dimensions: a frame, a label and an inspection rate.");
+    reg({"-DIMINSPECT"}, [] { return std::make_unique<DimInspectUiCommand>(false); }, "",
+        "Add or remove inspection data on dimensions from the command line.");
     reg({"DIMJOGLINE", "DJL"}, [] { return std::make_unique<DimJogLineCommand>(); }, "",
         "Add a jog to a linear or aligned dimension's line, or take one away.");
     reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },

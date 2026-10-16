@@ -14399,6 +14399,45 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, DimInspectCommand>) {
+                prune_selection();
+                std::vector<EntityHandle> made;
+                std::size_t dims = 0;
+                for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+                    const DimData* dd = h.kind == EntityKind::Dimension ? store_.dimension(h) : nullptr;
+                    if (dd == nullptr) {
+                        continue;
+                    }
+                    ++dims;
+                    if (c.remove && dd->inspect == 0) {
+                        made.push_back(h);
+                        continue;
+                    }
+                    Command cmd = capture_entity(h);
+                    if (auto* x = std::get_if<AddDimensionCommand>(&cmd)) {
+                        x->inspect = static_cast<std::uint8_t>(c.remove ? 0 : std::clamp<int>(c.shape, 1, 3));
+                        x->inspect_label = c.remove ? std::string() : c.label;
+                        x->inspect_rate = c.remove ? std::string() : c.rate;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        made.push_back(nh);
+                    }
+                }
+                if (dims == 0) {
+                    report("No dimensions selected.");
+                } else {
+                    selection_ = made;
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    const std::string n = std::to_string(dims) + (dims == 1 ? " dimension." : " dimensions.");
+                    report(c.remove ? "Inspection removed from " + n
+                                    : std::to_string(dims) + (dims == 1 ? " inspection dimension." : " inspection dimensions."));
+                }
+            }
             if constexpr (std::is_same_v<T, HatchBoundaryCommand>) {
                 prune_selection();
                 std::size_t made = 0;

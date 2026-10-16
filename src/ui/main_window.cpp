@@ -268,6 +268,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_plot_preview_callback([this] { plot_preview(last_plot_spec_); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
+    viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -2793,6 +2794,60 @@ void MainWindow::open_view_manager() {
     refill();
     d.dlg->resize(420, 320);
     d.dlg->show();
+}
+
+int MainWindow::open_dim_inspect_dialog(core::DimInspectCommand& io) {
+    // AutoCAD's Inspection Dimension window: the shape, the label and the inspection rate
+    // (each with its check box), and Remove Inspection.
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("DimInspectDialog"));
+    dlg.setWindowTitle(QStringLiteral("Inspection Dimension"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* shape = new QGroupBox(QStringLiteral("Shape"), &dlg);
+    auto* sl = new QVBoxLayout(shape);
+    auto* round = new QRadioButton(QStringLiteral("Round"), shape);
+    auto* angular = new QRadioButton(QStringLiteral("Angular"), shape);
+    auto* none = new QRadioButton(QStringLiteral("None"), shape);
+    (io.shape == 2 ? angular : io.shape == 3 ? none : round)->setChecked(true);
+    sl->addWidget(round);
+    sl->addWidget(angular);
+    sl->addWidget(none);
+    outer->addWidget(shape);
+    auto* fields = new QGroupBox(QStringLiteral("Label/Inspection rate"), &dlg);
+    auto* fl = new QGridLayout(fields);
+    auto* use_label = new QCheckBox(QStringLiteral("Label"), fields);
+    auto* label = new QLineEdit(QString::fromStdString(io.label), fields);
+    use_label->setChecked(!io.label.empty());
+    auto* use_rate = new QCheckBox(QStringLiteral("Inspection rate"), fields);
+    auto* rate = new QLineEdit(QString::fromStdString(io.rate.empty() ? std::string("100%") : io.rate), fields);
+    use_rate->setChecked(!io.rate.empty());
+    fl->addWidget(use_label, 0, 0);
+    fl->addWidget(label, 0, 1);
+    fl->addWidget(use_rate, 1, 0);
+    fl->addWidget(rate, 1, 1);
+    label->setEnabled(use_label->isChecked());
+    rate->setEnabled(use_rate->isChecked());
+    connect(use_label, &QCheckBox::toggled, label, &QWidget::setEnabled);
+    connect(use_rate, &QCheckBox::toggled, rate, &QWidget::setEnabled);
+    outer->addWidget(fields);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    QPushButton* remove = buttons->addButton(QStringLiteral("Remove Inspection"), QDialogButtonBox::ResetRole);
+    bool removing = false;
+    connect(remove, &QPushButton::clicked, &dlg, [&] {
+        removing = true;
+        dlg.accept();
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    io.remove = removing;
+    io.shape = static_cast<std::uint8_t>(angular->isChecked() ? 2 : none->isChecked() ? 3 : 1);
+    io.label = use_label->isChecked() ? label->text().trimmed().toStdString() : std::string();
+    io.rate = use_rate->isChecked() ? rate->text().trimmed().toStdString() : std::string();
+    return 1;
 }
 
 void MainWindow::open_layer_states_manager() {

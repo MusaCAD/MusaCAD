@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 //
-// CHANGE and HATCHEDIT (#55), MOCORO and FLATTEN (#77), -MTEXT (#43).
+// CHANGE and HATCHEDIT (#55), MOCORO and FLATTEN (#77), -MTEXT (#43), DIMINSPECT (#60).
 
 #include <chrono>
 #include <cmath>
@@ -421,4 +421,72 @@ TEST_CASE("BURST keeps the attribute values as text; TEXTMASK puts a wipeout beh
     REQUIRE_FALSE(h.proc.has_active_command());
     h.run({"BURST"});
     REQUIRE(h.last<ExplodeSelectionCommand>()->burst);
+}
+
+TEST_CASE("DIMINSPECT frames a dimension's value with a label and an inspection rate, kept with the drawing") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {100, 0}, {50, 10}, 0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(DimInspectCommand{false, 2, "A", "50%", 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 inspection dimension."; }));
+    io::Document doc = dump(engine, "musacad_diminspect.musa");
+    REQUIRE(doc.dims[0].inspect == 2);
+    REQUIRE(doc.dims[0].inspect_label == "A");
+    REQUIRE(doc.dims[0].inspect_rate == "50%");
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.dims[0] == doc.dims[0]);
+    engine.submit(SelectAllCommand{});
+    engine.submit(DimInspectCommand{true, 1, "", "", 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Inspection removed from 1 dimension."; }));
+    REQUIRE(dump(engine, "musacad_diminspect_removed.musa").dims[0].inspect == 0);
+    engine.stop();
+
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {100, 0};
+    d.line_pt = {50, 10};
+    const DimGeometry plain = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    d.inspect = 2; // Angular: top, bottom, two segments at each end, a divider each side of the value
+    const DimGeometry angular = compute_dim_geometry(d, DimStyle{}, Rgb{}, DimTextParts{{}, {}, {}, "A", "50%"});
+    REQUIRE(angular.label == "A  " + plain.label + "  50%");
+    REQUIRE(angular.dim_lines.size() == plain.dim_lines.size() + 2 * (2 + 4 + 2));
+    d.inspect = 1; // Round: half circles of twelve segments, one divider (no label)
+    const DimGeometry round = compute_dim_geometry(d, DimStyle{}, Rgb{}, DimTextParts{{}, {}, {}, "", "100%"});
+    REQUIRE(round.label == plain.label + "  100%");
+    REQUIRE(round.dim_lines.size() == plain.dim_lines.size() + 2 * (2 + 24 + 1));
+    d.inspect = 3; // None: side by side, unframed
+    const DimGeometry bare = compute_dim_geometry(d, DimStyle{}, Rgb{}, DimTextParts{{}, {}, {}, "A", ""});
+    REQUIRE(bare.label == "A  " + plain.label);
+    REQUIRE(bare.dim_lines.size() == plain.dim_lines.size());
+
+    H h;
+    h.run({"-DIMINSPECT"});
+    REQUIRE(h.out.prompt == "Select dimensions: ");
+    h.proc.set_selection_count(1);
+    h.run({""});
+    REQUIRE(h.out.prompt == "Add inspection data or [Remove] <Add>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Enter shape option [Round/Angular/None] <Round>: ");
+    h.run({"A"});
+    REQUIRE(h.out.prompt == "Enter label value or <None>: ");
+    h.run({"B2"});
+    REQUIRE(h.out.prompt == "Enter inspection rate, . for none <100%>: ");
+    h.run({"75%"});
+    const DimInspectCommand* c = h.last<DimInspectCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE_FALSE(c->remove);
+    REQUIRE(c->shape == 2);
+    REQUIRE(c->label == "B2");
+    REQUIRE(c->rate == "75%");
+    h.run({"DIMINSPECT", ""}); // preselected; no window here, so the command line asks
+    REQUIRE(h.out.prompt == "Enter shape option [Round/Angular/None] <Angular>: ");
+    h.run({"", "", "."});
+    REQUIRE(h.last<DimInspectCommand>()->label == "B2");
+    REQUIRE(h.last<DimInspectCommand>()->rate.empty());
+    h.run({"DIMINSPECT", "R"});
+    REQUIRE(h.last<DimInspectCommand>()->remove);
 }

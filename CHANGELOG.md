@@ -52,6 +52,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   and Output > Plot > Preview, with Plot from it.
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
   takes it away.
+- **DIMINSPECT** (#60) -- inspection dimensions: the value framed with round or angular ends,
+  or left unframed, a label on its left and an inspection rate on its right, set in the
+  Inspection Dimension window or with -DIMINSPECT, and Remove Inspection. Annotate >
+  Dimensions has Inspect in its slide-out.
 - **CHANGE** (#55) -- a change point for lines' ends and circles' radii; the insertion point,
   style, height, rotation and text of the selected texts; the insertion point and rotation of
   blocks; Properties as CHPROP.

@@ -805,6 +805,8 @@ std::string serialize_native(const Document& doc) {
         append_double(s, d.oblique);
         s += ' '; // v40: DIMJOGLINE's place along the line
         append_double(s, d.jog);
+        s += ' '; // v40: DIMINSPECT's frame; its label and rate follow the override line
+        append_uint(s, d.inspect);
         s += '\n';
         s += d.prefix;
         s += '\n';
@@ -812,6 +814,12 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += d.text_override;
         s += '\n';
+        if (d.inspect != 0) {
+            s += d.inspect_label;
+            s += '\n';
+            s += d.inspect_rate;
+            s += '\n';
+        }
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
     for (const DocLeader& l : doc.leaders) {
@@ -2093,8 +2101,10 @@ IoResult parse_native(std::string_view text, Document& out) {
             // 37 = v19 (the override block's 16 fields + decoration + the 2-token offset)
             // 38 = v23 (+ the aux datum)
             // 40 = v39 (+ the text angle and the arc-length leader), 41 (+ the oblique angle)
-            // 42 = v40 (+ the jog)
-            const bool has_jog = tok.size() == 42;
+            // 42 = v40 (+ the jog), 43 (+ the inspection frame, then its label and rate
+            // lines after the override line when there is one)
+            const bool has_inspect = tok.size() == 43;
+            const bool has_jog = tok.size() == 42 || has_inspect;
             const bool has_oblique = tok.size() == 41 || has_jog;
             const bool has_text_angle = tok.size() == 40 || has_oblique;
             const bool has_aux = tok.size() == 38 || has_text_angle;
@@ -2125,6 +2135,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::uint64_t dleader = 0;
             double doblique = 0.0;
             double djog = -1.0;
+            std::uint64_t dinspect = 0;
+            std::string dinspect_label;
+            std::string dinspect_rate;
             if (has_decor) {
                 // The decoration follows the override block, which is one field wider
                 // from v16 -- so its offset is keyed to the same discriminator.
@@ -2160,6 +2173,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                     if (has_jog && !to_double(tok[db + 9], djog)) {
                         return fail("DIM jog malformed");
                     }
+                    if (has_inspect && (!to_uint(tok[db + 10], dinspect) || dinspect > 3)) {
+                        return fail("DIM inspection malformed");
+                    }
+                    if (dinspect != 0 && (!read_line(dinspect_label) || !read_line(dinspect_rate))) {
+                        return fail("DIM missing inspection label/rate line");
+                    }
                 }
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
@@ -2178,7 +2197,10 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       dtext_angle,
                                       dleader != 0,
                                       doblique,
-                                      djog});
+                                      djog,
+                                      static_cast<std::uint8_t>(dinspect),
+                                      dinspect_label,
+                                      dinspect_rate});
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");

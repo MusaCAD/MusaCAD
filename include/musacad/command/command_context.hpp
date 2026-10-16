@@ -263,6 +263,13 @@ public:
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }
     virtual bool layer_states_manager() { return false; }
+    /// DIMINSPECT: the Inspection Dimension window, starting from `io` (shape, label, rate)
+    /// and leaving the choice in it (`remove` for Remove Inspection). 1 = OK, 0 = cancelled,
+    /// -1 = no window here (the command line asks).
+    virtual int dim_inspect_dialog(core::DimInspectCommand& io) {
+        (void)io;
+        return -1;
+    }
     /// HELP / F1: the command reference in the browser; false where there is none.
     virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI

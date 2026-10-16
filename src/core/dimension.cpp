@@ -729,6 +729,27 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const DimLabel label = compose_dim_label(d, style, parts);
     g.label = label.line1;
     g.label2 = label.line2;
+    // DIMINSPECT: the label, the value and the inspection rate side by side, two spaces
+    // apart -- one line, so the layout below fits and centres them as one, and finish_label
+    // frames them with a divider in each gap.
+    std::size_t insp_value_begin = 0; // where the value starts in g.label
+    std::size_t insp_value_end = 0;   // and ends
+    if (d.inspect != 0) {
+        const std::string ilabel = text::substitute_text(parts.inspect_label);
+        const std::string irate = text::substitute_text(parts.inspect_rate);
+        std::string s;
+        if (!ilabel.empty()) {
+            s = ilabel + "  ";
+        }
+        insp_value_begin = s.size();
+        s += g.label;
+        insp_value_end = s.size();
+        if (!irate.empty()) {
+            s += "  " + irate;
+        }
+        g.label = std::move(s);
+    }
+    const bool insp_framed = d.inspect == 1 || d.inspect == 2;
     bool arc_slid = false; // an angular label already slid along its arc (DIMTMOVE 0)
 
     /// Finishes the label once text_pos / rotation / justify are final: places the
@@ -762,13 +783,13 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         // A boxed label needs the FRAME, not the text, to clear the dimension line --
         // otherwise the box's lower edge lands exactly on it. Lift before placing the
         // second line so both stay inside the frame.
-        if (label.boxed) {
+        if (label.boxed || insp_framed) {
             g.text_pos = g.text_pos + ay * pad;
         }
         if (!g.label2.empty()) {
             g.label2_pos = g.text_pos - ay * line_gap; // the lower limit sits under the upper
         }
-        if (!label.boxed) {
+        if (!label.boxed && !insp_framed) {
             return;
         }
         const double w = std::max(text::text_width(g.label, h), text::text_width(g.label2, h));
@@ -776,6 +797,47 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                           : g.text_justify == text::Justify::Right ? -w
                                                                    : 0.0;
         const double y_bottom = g.label2.empty() ? 0.0 : -line_gap;
+        if (insp_framed) {
+            // The inspection frame: its ends half circles (Round) or right-angled points
+            // (Angular), as far out as the frame is half high; a divider in the middle of
+            // each two-space gap between the label, the value and the rate.
+            const double lo = y_bottom - pad;
+            const double hi = h + pad;
+            const double mid = (lo + hi) * 0.5;
+            const double rr = (hi - lo) * 0.5;
+            const auto at = [&](double x, double y) { return g.text_pos + ax * x + ay * y; };
+            seg(g.dim_lines, at(x0, hi), at(x0 + w, hi));
+            seg(g.dim_lines, at(x0, lo), at(x0 + w, lo));
+            if (d.inspect == 1) {
+                constexpr int kSteps = 12;
+                for (int i = 0; i < kSteps; ++i) {
+                    const double t0 = kPi * (0.5 + static_cast<double>(i) / kSteps);
+                    const double t1 = kPi * (0.5 + static_cast<double>(i + 1) / kSteps);
+                    seg(g.dim_lines, at(x0 + rr * std::cos(t0), mid + rr * std::sin(t0)),
+                        at(x0 + rr * std::cos(t1), mid + rr * std::sin(t1)));
+                    seg(g.dim_lines, at(x0 + w - rr * std::cos(t0), mid + rr * std::sin(t0)),
+                        at(x0 + w - rr * std::cos(t1), mid + rr * std::sin(t1)));
+                }
+            } else {
+                seg(g.dim_lines, at(x0, hi), at(x0 - rr, mid));
+                seg(g.dim_lines, at(x0 - rr, mid), at(x0, lo));
+                seg(g.dim_lines, at(x0 + w, hi), at(x0 + w + rr, mid));
+                seg(g.dim_lines, at(x0 + w + rr, mid), at(x0 + w, lo));
+            }
+            const auto divider = [&](std::size_t gap_begin) {
+                const double xa = text::text_width(g.label.substr(0, gap_begin), h);
+                const double xb = text::text_width(g.label.substr(0, gap_begin + 2), h);
+                const double x = x0 + (xa + xb) * 0.5;
+                seg(g.dim_lines, at(x, lo), at(x, hi));
+            };
+            if (insp_value_begin > 0) {
+                divider(insp_value_begin - 2);
+            }
+            if (insp_value_end < g.label.size()) {
+                divider(insp_value_end);
+            }
+            return;
+        }
         const Vec2 c0 = g.text_pos + ax * (x0 - pad) + ay * (y_bottom - pad);
         const Vec2 c1 = g.text_pos + ax * (x0 + w + pad) + ay * (y_bottom - pad);
         const Vec2 c2 = g.text_pos + ax * (x0 + w + pad) + ay * (h + pad);

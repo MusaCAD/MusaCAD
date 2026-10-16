@@ -750,6 +750,8 @@ void MainWindow::build_ribbon() {
         ds->setToolTip(QStringLiteral("Create and edit dimension styles."));
         connect(ds, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
         small(dims, c2, QStringLiteral("Jog Line"), "DJL", "dim");
+        QWidget* c3 = dims->add_column_to(out);
+        small(dims, c3, QStringLiteral("Inspect"), "DIMINSPECT", "dim");
     }
     dims->set_dialog_launcher(QStringLiteral("Dimension Style"), [this] { open_dimstyle_dialog(); });
     RibbonPanel* leaders = ribbon_->add_panel(annotate, QStringLiteral("Leaders"), 40);

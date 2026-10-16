@@ -48,6 +48,24 @@ bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
     return false;
 }
 
+bool GeometryStore::set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label,
+                                    std::string_view rate) {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    const auto loff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), label.begin(), label.end());
+    const auto roff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), rate.begin(), rate.end());
+    d->inspect = shape;
+    d->inspect_label_offset = loff;
+    d->inspect_label_len = static_cast<std::uint32_t>(label.size());
+    d->inspect_rate_offset = roff;
+    d->inspect_rate_len = static_cast<std::uint32_t>(rate.size());
+    return true;
+}
+
 bool GeometryStore::set_dim_oblique(EntityHandle h, double oblique) noexcept {
     if (h.kind != EntityKind::Dimension) {
         return false;

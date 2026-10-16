@@ -2667,6 +2667,16 @@ in pieces round a zigzag one and a half text heights tall; `dim_line_feet` gives
 the line to place it on. The value is a fraction of the line, so moving, rotating and
 mirroring a dimension keep it.
 
+DIMINSPECT adds `inspect` (0 none, 1 Round, 2 Angular, 3 unframed) and two char-pool ranges
+for the label and the inspection rate, taking `DimData` to **240 B**; `DimTextParts` carries
+the two strings to `compute_dim_geometry`, which puts them either side of the value two
+spaces apart -- one label line, so the fit and the text gap treat the three as one -- and,
+once the text is placed, draws the frame and a divider in each gap as dimension-line
+geometry (picked, bounded and plotted with the dimension). The `DIM` record's 43rd token is
+the frame; when it is not 0 the label and the rate follow the override line. The Inspection
+Dimension window is `ViewControl::dim_inspect_dialog` (synchronous: 1 OK, 0 cancelled, -1 no
+window, and the command line asks).
+
 CHANGE needs to know which kinds are selected before it asks the text and block prompts:
 the viewport sets a bit per `EntityKind` from the published selection, and the main window
 hands it to the command processor with the selection count (`selection_kinds()`; all bits

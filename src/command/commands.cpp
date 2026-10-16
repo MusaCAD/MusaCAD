@@ -16480,6 +16480,112 @@ void TextMaskUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void DimInspectUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx, "Select dimensions: ");
+}
+
+void DimInspectUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void DimInspectUiCommand::after(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    if (dialog_ && ctx.view() != nullptr) {
+        core::DimInspectCommand io{false, s_shape_, s_label_, s_rate_, 0};
+        const int r = ctx.view()->dim_inspect_dialog(io);
+        if (r >= 0) {
+            if (r == 1) {
+                s_shape_ = io.shape;
+                s_label_ = io.label;
+                s_rate_ = io.rate;
+                submit(ctx, io.remove);
+            }
+            done_ = true;
+            return;
+        }
+    }
+    step_ = Step::Option;
+    ctx.set_prompt("Add inspection data or [Remove] <Add>: ");
+}
+
+void DimInspectUiCommand::submit(CommandContext& ctx, bool remove) {
+    ctx.submit(core::DimInspectCommand{remove, s_shape_, s_label_, s_rate_, ctx.group_id()});
+    done_ = true;
+}
+
+void DimInspectUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Option:
+        if (u == "R" || u == "REMOVE") {
+            submit(ctx, true);
+            return;
+        }
+        if (!t.empty() && u != "A" && u != "ADD") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Shape;
+        ctx.set_prompt(std::string("Enter shape option [Round/Angular/None] <") +
+                       (s_shape_ == 2 ? "Angular" : s_shape_ == 3 ? "None" : "Round") + ">: ");
+        return;
+    case Step::Shape:
+        if (u == "R" || u == "ROUND") {
+            s_shape_ = 1;
+        } else if (u == "A" || u == "ANGULAR") {
+            s_shape_ = 2;
+        } else if (u == "N" || u == "NONE") {
+            s_shape_ = 3;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Label;
+        ctx.set_prompt(s_label_.empty() ? std::string("Enter label value or <None>: ")
+                                        : "Enter label value, . for none <" + s_label_ + ">: ");
+        return;
+    case Step::Label:
+        if (t == ".") {
+            s_label_.clear();
+        } else if (!t.empty()) {
+            s_label_ = t;
+        }
+        step_ = Step::Rate;
+        ctx.set_prompt("Enter inspection rate, . for none <" + (s_rate_.empty() ? std::string("None") : s_rate_) + ">: ");
+        return;
+    case Step::Rate:
+        if (t == ".") {
+            s_rate_.clear();
+        } else if (!t.empty()) {
+            s_rate_ = t;
+        }
+        submit(ctx, false);
+        return;
+    }
+}
+
+void DimInspectUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void SplineEditUiCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     ctx.set_prompt("Select spline: ");

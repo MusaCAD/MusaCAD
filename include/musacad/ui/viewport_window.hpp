@@ -110,6 +110,10 @@ public:
     bool plot_preview() override;
     bool view_manager() override;
     bool layer_states_manager() override;
+    int dim_inspect_dialog(core::DimInspectCommand& io) override;
+    void set_dim_inspect_callback(std::function<int(core::DimInspectCommand&)> cb) {
+        dim_inspect_callback_ = std::move(cb);
+    }
     bool units_dialog() override;
     void set_quick_select_callback(std::function<void(bool)> cb) { quick_select_callback_ = std::move(cb); }
     void set_purge_dialog_callback(std::function<void()> cb) { purge_dialog_callback_ = std::move(cb); }
@@ -758,6 +762,7 @@ private:
     std::function<void()> plot_preview_callback_;
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
+    std::function<int(core::DimInspectCommand&)> dim_inspect_callback_;
     std::function<void()> units_dialog_callback_;
     std::function<void()> quickcalc_callback_;
     std::function<void()> dwgprops_callback_;

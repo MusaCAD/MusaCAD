@@ -1234,6 +1234,9 @@ struct AddDimensionCommand {
     bool arc_leader = false;
     double oblique = 0.0; ///< DimData::oblique
     double jog = -1.0;    ///< DimData::jog
+    std::uint8_t inspect = 0;     ///< DimData::inspect
+    std::string inspect_label{};  ///< DIMINSPECT's label (raw)
+    std::string inspect_rate{};   ///< and its inspection rate
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1811,6 +1814,16 @@ struct TextMaskCommand {
     double offset = 0.35;
     std::uint64_t group = 0;
 };
+/// DIMINSPECT on the selected dimensions: `shape` (DimData::inspect: 1 Round, 2 Angular,
+/// 3 None) with `label` and `rate` (either may be empty), or `remove` the inspection.
+/// One undo step.
+struct DimInspectCommand {
+    bool remove = false;
+    std::uint8_t shape = 1;
+    std::string label{};
+    std::string rate{};
+    std::uint64_t group = 0;
+};
 /// FLATTEN: the selected polylines' elevation and thickness set to 0 (a drawing from
 /// elsewhere can carry them). One undo step.
 struct FlattenCommand {
@@ -1991,7 +2004,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
-                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, SplineEditCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, SplineEditCommand,
                  TextMaskCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
