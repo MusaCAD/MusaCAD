@@ -662,6 +662,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     tabs_->setObjectName(QStringLiteral("RibbonTabs"));
     tabs_->setExpanding(false);
     tabs_->setDrawBase(false); // no full-width base line under the tab row
+    tabs_->setMovable(true);   // tabs dragged into the order wanted (kept, see save_shown)
     tab_layout->addWidget(tabs_);
     minimize_btn_ = new QToolButton(tab_row);
     minimize_btn_->setObjectName(QStringLiteral("RibbonMinimize"));
@@ -699,6 +700,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     pages_->setMinimumHeight(94); // three small rows (or a large button) plus the title row
     root->addWidget(pages_);
 
+    connect(tabs_, &QTabBar::tabMoved, this, [this](int, int) { save_shown(); });
     // A right-click on the tabs or the panels: Show Tabs and Show Panels.
     tabs_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tabs_, &QWidget::customContextMenuRequested, this,
@@ -803,9 +805,17 @@ void RibbonBar::save_shown() const {
             }
         }
     }
+    QStringList order; // the fixed tabs as the user has arranged them
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page >= 0 && !is_contextual_page(page)) {
+            order << tabs_->tabText(i);
+        }
+    }
     QSettings s;
     s.setValue(QStringLiteral("ribbon/hidden_tabs"), tabs);
     s.setValue(QStringLiteral("ribbon/hidden_panels"), panels);
+    s.setValue(QStringLiteral("ribbon/tab_order"), order);
 }
 
 void RibbonBar::restore_shown() {
@@ -815,6 +825,23 @@ void RibbonBar::restore_shown() {
     const QSettings s;
     const QStringList tabs = s.value(QStringLiteral("ribbon/hidden_tabs")).toStringList();
     const QStringList panels = s.value(QStringLiteral("ribbon/hidden_panels")).toStringList();
+    // The order the tabs were dragged into: each named one moved to its place in turn (a tab
+    // this version does not have is passed over; a new one stays where it is).
+    const QStringList order = s.value(QStringLiteral("ribbon/tab_order")).toStringList();
+    {
+        const QSignalBlocker block(tabs_);
+        int place = 0;
+        for (const QString& name : order) {
+            for (int i = place; i < tabs_->count(); ++i) {
+                const int page = page_of_tab(i);
+                if (page >= 0 && !is_contextual_page(page) && tabs_->tabText(i) == name) {
+                    tabs_->moveTab(i, place);
+                    ++place;
+                    break;
+                }
+            }
+        }
+    }
     for (int i = 0; i < tabs_->count(); ++i) {
         const int page = page_of_tab(i);
         if (page < 0 || is_contextual_page(page)) {
