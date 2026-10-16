@@ -1336,6 +1336,9 @@ struct ImportDimStylesCommand {
     std::string path;
     bool overwrite = false;
 };
+/// UPDATEFIELD: the fields in the selected texts, multiline texts, attributes and table
+/// cells counted and worked out again (each is, every time the drawing is drawn).
+struct UpdateFieldsCommand {};
 /// TFRAMES: the frames of wipeouts and images turned off together, or on together when
 /// the wipeout frames are off.
 struct ToggleFramesCommand {};
@@ -2096,7 +2099,7 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand,
                  ExportDimStylesCommand, ImportDimStylesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,

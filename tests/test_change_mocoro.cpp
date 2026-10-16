@@ -475,9 +475,9 @@ TEST_CASE("DIMINSPECT frames a dimension's value with a label and an inspection 
     h.run({""});
     REQUIRE(h.out.prompt == "Enter shape option [Round/Angular/None] <Round>: ");
     h.run({"A"});
-    REQUIRE(h.out.prompt == "Enter label value or <None>: ");
+    REQUIRE(h.out.prompt == "Enter label data or <None>: ");
     h.run({"B2"});
-    REQUIRE(h.out.prompt == "Enter inspection rate, . for none <100%>: ");
+    REQUIRE(h.out.prompt == "Enter inspection rate <100%>: ");
     h.run({"75%"});
     const DimInspectCommand* c = h.last<DimInspectCommand>();
     REQUIRE(c != nullptr);
@@ -761,9 +761,17 @@ TEST_CASE("TFRAMES turns wipeout and image frames off and on together; UPDATEFIE
     GeometryEngine engine;
     engine.start();
     engine.submit(ToggleFramesCommand{});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Wipeout and image frames off."; }));
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "IMAGE/WIPEOUT frames are toggled OFF."; }));
     engine.submit(ToggleFramesCommand{});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Wipeout and image frames on."; }));
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "IMAGE/WIPEOUT frames are toggled ON."; }));
+    AddTextCommand t;
+    t.pos = {0, 0};
+    t.content = "Plotted %<\\AcVar Date>% by %<\\AcVar Login>%";
+    t.group = 1;
+    engine.submit(t);
+    engine.submit(SelectAllCommand{});
+    engine.submit(UpdateFieldsCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 field(s) found. 2 field(s) updated."; }));
     engine.stop();
 
     H h;
@@ -773,8 +781,7 @@ TEST_CASE("TFRAMES turns wipeout and image frames off and on together; UPDATEFIE
     REQUIRE(h.out.prompt == "Select objects: ");
     h.proc.set_selection_count(1);
     h.run({""});
-    REQUIRE(h.last<RegenCommand>() != nullptr);
-    REQUIRE(h.out.lines.back() == "Fields updated.");
+    REQUIRE(h.last<UpdateFieldsCommand>() != nullptr);
 }
 
 TEST_CASE("HATCH seTtings User defined: the angle, the spacing and Double") {
@@ -782,7 +789,7 @@ TEST_CASE("HATCH seTtings User defined: the angle, the spacing and Double") {
     h.run({"H", "T", "U"});
     REQUIRE(h.out.prompt.starts_with("Specify angle for crosshatch lines <"));
     h.run({"45", "2"});
-    REQUIRE(h.out.prompt == "Double hatch area? [Yes/No] <No>: ");
+    REQUIRE(h.out.prompt == "Double hatch area? [Yes/No] <N>: ");
     h.run({"Y", "5,5"});
     const HatchPickPointCommand* c = h.last<HatchPickPointCommand>();
     REQUIRE(c != nullptr);

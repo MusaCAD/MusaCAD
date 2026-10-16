@@ -1734,7 +1734,7 @@ private:
 /// DIMINSPECT and -DIMINSPECT: `Select dimensions:` (or the ones selected), then the
 /// Inspection Dimension window where there is one; otherwise, and always for -DIMINSPECT,
 /// `Add inspection data or [Remove] <Add>:`, `Enter shape option [Round/Angular/None]
-/// <Round>:`, `Enter label value or <None>:` (`.` for none) and `Enter inspection rate
+/// <Round>:`, `Enter label data or <None>:` (`.` for none) and `Enter inspection rate
 /// <100%>:`. The shape, label and rate are offered again the next time.
 class DimInspectUiCommand final : public ICommand {
 public:

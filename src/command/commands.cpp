@@ -2782,7 +2782,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         mode_ = Mode::UserDouble;
-        ctx.set_prompt(std::string("Double hatch area? [Yes/No] <") + (pattern_ == "_USERDOUBLE" ? "Yes" : "No") + ">: ");
+        ctx.set_prompt(std::string("Double hatch area? [Yes/No] <") + (pattern_ == "_USERDOUBLE" ? "Y" : "N") + ">: ");
         return;
     }
     case Mode::UserDouble:
@@ -6973,8 +6973,7 @@ void UpdateFieldCommand::input(CommandContext& ctx, const std::string& text) {
 
 void UpdateFieldCommand::after(CommandContext& ctx) {
     if (ctx.has_selection()) {
-        ctx.submit(core::RegenCommand{}); // a field is worked out each time it is drawn
-        ctx.echo("Fields updated.");
+        ctx.submit(core::UpdateFieldsCommand{}); // counts them; a field is worked out each time it is drawn
     }
     done_ = true;
 }
@@ -17014,7 +17013,7 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         step_ = Step::UserDouble;
-        ctx.set_prompt("Double hatch area? [Yes/No] <No>: ");
+        ctx.set_prompt("Double hatch area? [Yes/No] <N>: ");
         return;
     }
     case Step::UserDouble: {
@@ -17213,8 +17212,8 @@ void DimInspectUiCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         step_ = Step::Label;
-        ctx.set_prompt(s_label_.empty() ? std::string("Enter label value or <None>: ")
-                                        : "Enter label value, . for none <" + s_label_ + ">: ");
+        ctx.set_prompt(s_label_.empty() ? std::string("Enter label data or <None>: ")
+                                        : "Enter label data or <" + s_label_ + ">: ");
         return;
     case Step::Label:
         if (t == ".") {
@@ -17223,7 +17222,7 @@ void DimInspectUiCommand::input(CommandContext& ctx, const std::string& text) {
             s_label_ = t;
         }
         step_ = Step::Rate;
-        ctx.set_prompt("Enter inspection rate, . for none <" + (s_rate_.empty() ? std::string("None") : s_rate_) + ">: ");
+        ctx.set_prompt("Enter inspection rate <" + (s_rate_.empty() ? std::string("100%") : s_rate_) + ">: ");
         return;
     case Step::Rate:
         if (t == ".") {

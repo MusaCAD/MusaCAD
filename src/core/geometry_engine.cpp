@@ -15028,13 +15028,39 @@ void GeometryEngine::apply_one(const Command& command) {
                            std::to_string(kept) + " kept as they were.");
                 }
             }
+            if constexpr (std::is_same_v<T, UpdateFieldsCommand>) {
+                prune_selection();
+                std::size_t found = 0;
+                const auto count = [&found](std::string_view s) {
+                    for (std::size_t at = s.find("%<"); at != std::string_view::npos; at = s.find("%<", at + 2)) {
+                        ++found;
+                    }
+                };
+                for (const EntityHandle h : selection_) {
+                    if (h.kind == EntityKind::Text) {
+                        count(store_.string_of(*store_.text(h)));
+                    } else if (h.kind == EntityKind::MText) {
+                        count(store_.string_of(store_.mtext(h)->text));
+                    } else if (h.kind == EntityKind::Insert) {
+                        for (const std::string& v : store_.insert_attribs(*store_.insert(h))) {
+                            count(v);
+                        }
+                    } else if (h.kind == EntityKind::Table) {
+                        for (const TableCell& cell : store_.table_cells(*store_.table(h))) {
+                            count(store_.string_of(cell));
+                        }
+                    }
+                }
+                geom_dirty_ = true; // worked out again as the drawing is drawn
+                report(std::to_string(found) + " field(s) found. " + std::to_string(found) + " field(s) updated.");
+            }
             if constexpr (std::is_same_v<T, ToggleFramesCommand>) {
                 const bool on = !store_.wipeout_frames();
                 store_.set_wipeout_frames(on);
                 store_.set_image_frame(on ? 1 : 0);
                 dirty_ = true;
                 geom_dirty_ = true;
-                report(on ? "Wipeout and image frames on." : "Wipeout and image frames off.");
+                report(on ? "IMAGE/WIPEOUT frames are toggled ON." : "IMAGE/WIPEOUT frames are toggled OFF.");
             }
             if constexpr (std::is_same_v<T, SetPointDisplayCommand>) {
                 store_.set_point_display(c.mode, c.size);
@@ -15170,6 +15196,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
                 edit = false; // writes a file, changes nothing
+            }
+            if constexpr (std::is_same_v<T, UpdateFieldsCommand>) {
+                edit = false; // the fields' values are not stored
             }
             if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
                 edit = layerp_changed_;
