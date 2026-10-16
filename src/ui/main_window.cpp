@@ -865,6 +865,27 @@ void MainWindow::build_status_bar() {
     add_toggle(snap_action_);
     QToolButton* polar_btn = add_toggle(polar_action_);
     add_toggle(otrack_action_);
+    // LWT: lineweights shown or not (LWDISPLAY) -- the switch Home > Properties' Lineweight
+    // Display is, the two kept in step.
+    QAction* lwt = make_mode_action(QStringLiteral("LWT"), 0, true,
+                                    QStringLiteral("Show lineweights on screen (LWDISPLAY)."));
+    lwt->setObjectName(QStringLiteral("status.lwt"));
+    if (auto* ribbon_lwt = findChild<QToolButton*>(QStringLiteral("ribbon.lwt")); ribbon_lwt != nullptr) {
+        lwt->setChecked(ribbon_lwt->isChecked());
+        connect(ribbon_lwt, &QToolButton::toggled, lwt, [lwt](bool on) {
+            if (lwt->isChecked() != on) {
+                lwt->setChecked(on);
+            }
+        });
+        connect(lwt, &QAction::toggled, ribbon_lwt, [ribbon_lwt](bool on) {
+            if (ribbon_lwt->isChecked() != on) {
+                ribbon_lwt->setChecked(on); // its own handler tells the engine
+            }
+        });
+    } else {
+        connect(lwt, &QAction::toggled, this, [this](bool on) { engine_->submit(core::SetLineweightDisplayCommand{on}); });
+    }
+    add_toggle(lwt);
     add_toggle(dyn_action_);
     // The POLAR dropdown: AutoCAD's increment angles, the one in force ticked.
     auto* polar_menu = new QMenu(this);

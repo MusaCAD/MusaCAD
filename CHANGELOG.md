@@ -89,6 +89,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   with Properties and Select objects.
 - **PEDIT Ltype gen** (#52) -- off, a polyline's dash pattern starts again at every vertex, as
   AutoCAD draws it; a DXF polyline without the flag is read that way.
+- **LWT on the status bar** (#69) -- lineweights shown or not, kept in step with Home >
+  Properties' Lineweight Display.
 - **Style combos on Annotate** (#78) -- the Text panel's Text Style combo and the Dimensions
   panel's Dimension Style combo set the style new text and dimensions take; the Text panel's
   launcher opens the Text Style window. Find Text, Center Mark, Blend Curves, Delete Duplicate
