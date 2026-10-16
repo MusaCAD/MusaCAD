@@ -15127,6 +15127,69 @@ void GeometryEngine::apply_one(const Command& command) {
                            std::to_string(kept) + " kept as they were.");
                 }
             }
+            if constexpr (std::is_same_v<T, RenameObjectCommand>) {
+                using K = RenameObjectCommand::Kind;
+                static constexpr const char* kWhat[6] = {"Block", "Dimension style", "Layer", "Text style",
+                                                         "Table style", "View"};
+                bool ok = false;
+                if (!c.to.empty() && c.to != c.from) {
+                    switch (c.kind) {
+                    case K::Block:
+                        ok = store_.rename_block(c.from, c.to);
+                        break;
+                    case K::TextStyle:
+                        ok = store_.rename_text_style(c.from, c.to);
+                        break;
+                    case K::View:
+                        ok = store_.rename_named_view(c.from, c.to);
+                        break;
+                    case K::Layer: {
+                        const auto& ls = store_.layers();
+                        std::size_t at = ls.size();
+                        bool taken = false;
+                        for (std::size_t i = 0; i < ls.size(); ++i) {
+                            at = ls[i].name == c.from ? i : at;
+                            taken = taken || ls[i].name == c.to;
+                        }
+                        if (at != 0 && at < ls.size() && !taken) {
+                            Layer l = ls[at];
+                            l.name = c.to;
+                            store_.set_layer(static_cast<std::uint16_t>(at), l);
+                            ok = true;
+                        }
+                        break;
+                    }
+                    case K::DimStyle: {
+                        const std::uint16_t i = store_.dimstyle_index(c.from);
+                        if (i != 0 && i != 0xFFFF && store_.dimstyle_index(c.to) == 0xFFFF) {
+                            DimStyle st = store_.dimstyles()[i];
+                            st.name = c.to;
+                            ok = store_.set_dimstyle(i, st);
+                        }
+                        break;
+                    }
+                    case K::TableStyle: {
+                        const std::uint16_t i = store_.table_style_index(c.from);
+                        if (i != 0 && i != 0xFFFF && store_.table_style_index(c.to) == 0xFFFF) {
+                            TableStyle st = store_.table_styles()[i];
+                            st.name = c.to;
+                            ok = store_.set_table_style(i, st);
+                        }
+                        break;
+                    }
+                    }
+                }
+                const std::string what = kWhat[static_cast<int>(c.kind)];
+                if (ok) {
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    purge_cache_valid_ = false;
+                    report(what + " \"" + c.from + "\" renamed to \"" + c.to + "\".");
+                } else {
+                    report(what + " \"" + c.from + "\" was not renamed: there is none by that name, \"" + c.to +
+                           "\" is taken, or it keeps its name.");
+                }
+            }
             if constexpr (std::is_same_v<T, UpdateFieldsCommand>) {
                 prune_selection();
                 std::size_t found = 0;

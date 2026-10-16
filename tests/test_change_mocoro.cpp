@@ -1075,3 +1075,52 @@ TEST_CASE("-COLOR, CECOLOR, -LWEIGHT, CELWEIGHT, -LINETYPE and CELTYPE set what 
     h.run({"OFF"});
     REQUIRE_FALSE(h.last<SetLineweightDisplayCommand>()->on);
 }
+
+TEST_CASE("RENAME renames layers, styles, blocks and views; SETVAR runs a variable; the file commands need the window") {
+    using K = RenameObjectCommand::Kind;
+    GeometryEngine engine;
+    engine.start();
+    Layer walls;
+    walls.name = "Walls";
+    engine.submit(AddLayerCommand{walls});
+    engine.submit(RenameObjectCommand{K::Layer, "Walls", "A-WALL"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Layer \"Walls\" renamed to \"A-WALL\"."; }));
+    engine.submit(RenameObjectCommand{K::Layer, "0", "Zero"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.starts_with("Layer \"0\" was not renamed"); }));
+    TextStyle notes;
+    notes.name = "Notes";
+    engine.submit(SetTextStyleCommand{notes, false});
+    engine.submit(RenameObjectCommand{K::TextStyle, "Notes", "Callouts"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Text style \"Notes\" renamed to \"Callouts\"."; }));
+    const io::Document doc = dump(engine, "musacad_rename.musa");
+    REQUIRE(std::any_of(doc.layers.begin(), doc.layers.end(), [](const Layer& l) { return l.name == "A-WALL"; }));
+    REQUIRE(std::any_of(doc.text_styles.begin(), doc.text_styles.end(), [](const TextStyle& t) { return t.name == "Callouts"; }));
+    engine.stop();
+
+    H h;
+    h.run({"REN"});
+    REQUIRE(h.out.prompt.starts_with("Enter object type to rename [Block/Dimstyle/LAyer/"));
+    h.run({"LA"});
+    REQUIRE(h.out.prompt == "Enter old layer name: ");
+    h.run({"Walls"});
+    REQUIRE(h.out.prompt == "Enter new layer name: ");
+    h.run({"A-WALL"});
+    REQUIRE(h.last<RenameObjectCommand>()->to == "A-WALL");
+
+    h.run({"SETVAR"});
+    REQUIRE(h.out.prompt == "Enter variable name or [?]: ");
+    h.run({"PDMODE"});
+    REQUIRE(h.out.prompt.starts_with("Enter new value for PDMODE"));
+    h.run({"3"});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"SETVAR", "LINE"});
+    REQUIRE(h.out.lines.back() == "Unknown variable name.  Type SETVAR ? for a list of variables.");
+    h.run({""});
+
+    for (const char* name : {"QSAVE", "OPEN", "CLOSE"}) {
+        h.run({name});
+        REQUIRE(h.out.lines.back() == std::string(name) + " needs the drawing window.");
+    }
+    h.run({"REDRAW"});
+    REQUIRE(h.last<RegenCommand>() != nullptr);
+}

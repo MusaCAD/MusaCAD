@@ -1037,6 +1037,44 @@ public:
         text_styles_.push_back(ts);
         return static_cast<std::uint16_t>(text_styles_.size() - 1);
     }
+    /// RENAME: the block, text style or named view called `from` takes the name `to`; false
+    /// when there is none by that name, `to` is taken, or it is the Standard text style.
+    bool rename_block(std::string_view from, std::string_view to) {
+        BlockDef* hit = nullptr;
+        for (BlockDef& b : blocks_) {
+            if (b.name == to) {
+                return false;
+            }
+            hit = b.name == from ? &b : hit;
+        }
+        if (hit == nullptr) {
+            return false;
+        }
+        hit->name = std::string(to);
+        return true;
+    }
+    bool rename_text_style(std::string_view from, std::string_view to) {
+        const std::uint16_t i = text_style_index(from);
+        if (i == 0 || i == 0xFFFF || text_style_index(to) != 0xFFFF) {
+            return false;
+        }
+        text_styles_[i].name = std::string(to);
+        return true;
+    }
+    bool rename_named_view(std::string_view from, std::string_view to) {
+        NamedView* hit = nullptr;
+        for (NamedView& v : named_views_) {
+            if (v.name == to) {
+                return false;
+            }
+            hit = v.name == from ? &v : hit;
+        }
+        if (hit == nullptr) {
+            return false;
+        }
+        hit->name = std::string(to);
+        return true;
+    }
     [[nodiscard]] std::uint16_t text_style_index(std::string_view name) const noexcept {
         for (std::size_t i = 0; i < text_styles_.size(); ++i) {
             if (text_styles_[i].name == name) {

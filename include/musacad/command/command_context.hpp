@@ -293,6 +293,12 @@ public:
     virtual bool publish() { return false; }
     /// PAGESETUP: the Page Setup Manager.
     virtual bool page_setup_manager() { return false; }
+    /// The file commands the window carries out: NEW, OPEN, QSAVE, SAVEAS, CLOSE, CLOSEALL,
+    /// QUIT, IMPORT (DXFIN) and EXPORT (DXFOUT). False where there is no window.
+    virtual bool window_action(const std::string& action) {
+        (void)action;
+        return false;
+    }
     /// NAVBAR: the navigation bar shown or hidden; false where there is no window.
     virtual bool set_navbar(bool on) {
         (void)on;

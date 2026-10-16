@@ -274,6 +274,44 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         [this] { QTimer::singleShot(0, this, [this] { publish(); }); },
         [this] { open_page_setup_manager(); });
     viewport_->set_navbar_callback([this](bool on) { show_navbar(on); });
+    // The file commands typed at the command line: queued, so the command has ended first.
+    viewport_->set_window_action_callback([this](const std::string& action) {
+        void (MainWindow::*slot)() = nullptr;
+        if (action == "NEW") {
+            slot = &MainWindow::file_new;
+        } else if (action == "OPEN") {
+            slot = &MainWindow::file_open;
+        } else if (action == "QSAVE") {
+            slot = &MainWindow::file_save;
+        } else if (action == "SAVEAS") {
+            slot = &MainWindow::file_save_as;
+        } else if (action == "IMPORT") {
+            slot = &MainWindow::file_import_dxf;
+        } else if (action == "EXPORT") {
+            slot = &MainWindow::file_export_dxf;
+        }
+        if (slot != nullptr) {
+            QTimer::singleShot(0, this, slot);
+            return true;
+        }
+        if (action == "CLOSE") {
+            QTimer::singleShot(0, this, [this] { close_document_tab(viewport_->active_document_id()); });
+            return true;
+        }
+        if (action == "CLOSEALL") {
+            QTimer::singleShot(0, this, [this] {
+                for (const core::DocumentInfo& d : viewport_->documents()) {
+                    close_document_tab(d.id);
+                }
+            });
+            return true;
+        }
+        if (action == "QUIT") {
+            QTimer::singleShot(0, this, &MainWindow::close);
+            return true;
+        }
+        return false;
+    });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
     viewport_->set_property_dialogs([this](bool& by_layer, core::Rgb& c) { return open_select_color(by_layer, c); },

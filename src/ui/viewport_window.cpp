@@ -452,6 +452,10 @@ int ViewportWindow::insert_table_dialog(command::InsertTableSettings& io) {
     return insert_table_callback_ ? insert_table_callback_(io) : -1;
 }
 
+bool ViewportWindow::window_action(const std::string& action) {
+    return window_action_callback_ && window_action_callback_(action);
+}
+
 bool ViewportWindow::set_navbar(bool on) {
     if (!navbar_callback_) {
         return false;

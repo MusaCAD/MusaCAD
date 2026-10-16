@@ -1336,6 +1336,14 @@ struct ImportDimStylesCommand {
     std::string path;
     bool overwrite = false;
 };
+/// RENAME: the named object `from` of `kind` called `to` (a block, a dimension style, a
+/// layer -- not 0 --, a text style or table style -- not Standard --, or a named view).
+struct RenameObjectCommand {
+    enum class Kind : std::uint8_t { Block, DimStyle, Layer, TextStyle, TableStyle, View };
+    Kind kind = Kind::Layer;
+    std::string from;
+    std::string to;
+};
 /// UPDATEFIELD: the fields in the selected texts, multiline texts, attributes and table
 /// cells counted and worked out again (each is, every time the drawing is drawn).
 struct UpdateFieldsCommand {};
@@ -2110,7 +2118,7 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand, RenameObjectCommand,
                  ExportDimStylesCommand, ImportDimStylesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,

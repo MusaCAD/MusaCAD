@@ -114,6 +114,8 @@ public:
     bool publish() override;
     bool page_setup_manager() override;
     bool set_navbar(bool on) override;
+    bool window_action(const std::string& action) override;
+    void set_window_action_callback(std::function<bool(const std::string&)> cb) { window_action_callback_ = std::move(cb); }
     void set_navbar_callback(std::function<void(bool)> cb) { navbar_callback_ = std::move(cb); }
     int insert_table_dialog(command::InsertTableSettings& io) override;
     int qleader_settings_dialog(command::QLeaderSettings& io) override;
@@ -809,6 +811,7 @@ private:
     std::function<void()> publish_callback_;
     std::function<void()> page_setup_callback_;
     std::function<void(bool)> navbar_callback_;
+    std::function<bool(const std::string&)> window_action_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;
     std::function<int(command::QLeaderSettings&)> qleader_settings_callback_;
     std::function<int(bool&, core::Rgb&)> color_dialog_callback_;

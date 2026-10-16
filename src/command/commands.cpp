@@ -7265,6 +7265,110 @@ void LwDisplayCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void RenameCommand::start(CommandContext& ctx) {
+    step_ = Step::Kind;
+    ctx.set_prompt("Enter object type to rename "
+                   "[Block/Dimstyle/LAyer/LType/Material/multileadeRstyle/Plotstyle/textStyle/Tablestyle/Ucs/VPort/View]: ");
+}
+
+void RenameCommand::input(CommandContext& ctx, const std::string& text) {
+    using K = core::RenameObjectCommand::Kind;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Kind:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "B" || u == "BLOCK") {
+            c_.kind = K::Block;
+            what_ = "block";
+        } else if (u == "D" || u == "DIMSTYLE") {
+            c_.kind = K::DimStyle;
+            what_ = "dimension style";
+        } else if (u == "LA" || u == "LAYER") {
+            c_.kind = K::Layer;
+            what_ = "layer";
+        } else if (u == "S" || u == "TEXTSTYLE") {
+            c_.kind = K::TextStyle;
+            what_ = "text style";
+        } else if (u == "T" || u == "TABLESTYLE") {
+            c_.kind = K::TableStyle;
+            what_ = "table style";
+        } else if (u == "V" || u == "VIEW") {
+            c_.kind = K::View;
+            what_ = "view";
+        } else if (u == "LT" || u == "LTYPE" || u == "M" || u == "MATERIAL" || u == "R" || u == "MULTILEADERSTYLE" ||
+                   u == "P" || u == "PLOTSTYLE" || u == "U" || u == "UCS" || u == "VP" || u == "VPORT") {
+            ctx.echo("Those have no names to change here: the drawing has none of its own.");
+            return;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::From;
+        ctx.set_prompt("Enter old " + what_ + " name: ");
+        return;
+    case Step::From:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.from = t;
+        step_ = Step::To;
+        ctx.set_prompt("Enter new " + what_ + " name: ");
+        return;
+    case Step::To:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.to = t;
+        ctx.submit(c_);
+        done_ = true;
+        return;
+    }
+}
+
+void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
+    // The system variables there are commands for (each asks `Enter new value for X <..>:`).
+    static constexpr const char* kVariables[] = {
+        "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
+        "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS",         "LAYERPMODE",
+        "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
+        "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
+        "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
+        "TEXTEDITMODE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};
+    if (sub_) {
+        sub_->input(ctx, text);
+        done_ = sub_->done();
+        return;
+    }
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
+        done_ = true;
+        return;
+    }
+    if (u == "?") {
+        std::string list;
+        for (const char* v : kVariables) {
+            list += (list.empty() ? "" : ", ") + std::string(v);
+        }
+        ctx.echo(list);
+        return;
+    }
+    const bool known = std::any_of(std::begin(kVariables), std::end(kVariables), [&](const char* v) { return u == v; });
+    sub_ = known ? ctx.make_command(u) : nullptr;
+    if (!sub_) {
+        ctx.echo("Unknown variable name.  Type SETVAR ? for a list of variables.");
+        return;
+    }
+    sub_->start(ctx);
+    done_ = sub_->done();
+}
+
 void NavBarCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
     if (!u.empty() && u != "ON" && u != "OFF") {

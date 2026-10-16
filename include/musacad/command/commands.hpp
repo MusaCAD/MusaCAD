@@ -1475,6 +1475,74 @@ private:
 };
 
 /// PREVIEW (PRE): the plot preview, with the settings of the last plot.
+/// RENAME (REN) and -RENAME: `Enter object type to rename [Block/Dimstyle/LAyer/LType/
+/// Material/multileadeRstyle/Plotstyle/textStyle/Tablestyle/Ucs/VPort/View]:`, `Enter old
+/// <type> name:`, `Enter new <type> name:`.
+class RenameCommand final : public ICommand {
+public:
+    explicit RenameCommand(bool dash) : dash_(dash) {}
+    std::string name() const override { return dash_ ? "-RENAME" : "RENAME"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Kind, From, To };
+    bool dash_;
+    Step step_ = Step::Kind;
+    core::RenameObjectCommand c_{};
+    std::string what_;
+    bool done_ = false;
+};
+
+/// SETVAR: `Enter variable name or [?]:`, then the variable's own prompt (the system
+/// variables Musa CAD has: PICKBOX, LTSCALE, PDMODE, GRIPSIZE ...).
+class SetVarCommand final : public ICommand {
+public:
+    std::string name() const override { return "SETVAR"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter variable name or [?]: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        if (sub_) {
+            sub_->cancel(ctx);
+        } else {
+            ctx.echo("*Cancel*");
+        }
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    std::unique_ptr<ICommand> sub_;
+    bool done_ = false;
+};
+
+/// A file command the window carries out (NEW, OPEN, QSAVE, SAVEAS, CLOSE, CLOSEALL, QUIT,
+/// IMPORT, EXPORT); where there is no window it says so.
+class WindowActionCommand final : public ICommand {
+public:
+    WindowActionCommand(std::string name, std::string action) : name_(std::move(name)), action_(std::move(action)) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !ctx.view()->window_action(action_)) {
+            ctx.echo(name_ + " needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    std::string name_;
+    std::string action_;
+    bool done_ = false;
+};
+
 /// A command the drawing window carries out itself (EXPORTPDF, PUBLISH); where there is no
 /// window it says so.
 class WindowCommand final : public ICommand {

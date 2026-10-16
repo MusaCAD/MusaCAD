@@ -181,6 +181,22 @@ CommandRegistry CommandRegistry::make_default() {
         "Change lines' ends, circles' radii, texts and blocks by a point, or their properties.");
     reg({"HATCHEDIT", "HE"}, [] { return std::make_unique<HatchEditUiCommand>(); }, "",
         "Edit a hatch: its pattern, scale and angle, or a new boundary round it.");
+    // The file commands, as AutoCAD names them; the window carries them out.
+    const auto file_cmd = [&](std::initializer_list<std::string_view> names, const char* action, const char* icon,
+                              const char* what) {
+        const std::string name(*names.begin());
+        const std::string act(action);
+        reg(names, [name, act] { return std::make_unique<WindowActionCommand>(name, act); }, icon, what);
+    };
+    file_cmd({"NEW"}, "NEW", "assets/ribbon/new.svg", "Start a new drawing.");
+    file_cmd({"OPEN"}, "OPEN", "assets/ribbon/open.svg", "Open a drawing.");
+    file_cmd({"QSAVE"}, "QSAVE", "assets/ribbon/save.svg", "Save the drawing under its name (Save As the first time).");
+    file_cmd({"SAVEAS", "SAVE"}, "SAVEAS", "assets/ribbon/saveas.svg", "Save the drawing under a name you choose.");
+    file_cmd({"CLOSE"}, "CLOSE", "", "Close the drawing in front.");
+    file_cmd({"CLOSEALL"}, "CLOSEALL", "", "Close every open drawing.");
+    file_cmd({"QUIT", "EXIT"}, "QUIT", "", "Quit Musa CAD, asking to save what is not saved.");
+    file_cmd({"IMPORT", "IMP", "DXFIN"}, "IMPORT", "assets/ribbon/import.svg", "Bring a DXF file into the drawing.");
+    file_cmd({"EXPORT", "EXP", "DXFOUT"}, "EXPORT", "assets/ribbon/export.svg", "Write the drawing to a DXF file.");
     reg({"EXPORTPDF"}, [] { return std::make_unique<WindowCommand>("EXPORTPDF", &ViewControl::export_pdf); },
         "assets/ribbon/export.svg", "Save the layout in front, or the model, as a PDF file.");
     reg({"PAGESETUP"}, [] { return std::make_unique<WindowCommand>("PAGESETUP", &ViewControl::page_setup_manager); },
@@ -318,6 +334,12 @@ CommandRegistry CommandRegistry::make_default() {
         "The linetype new objects take.");
     reg({"LWDISPLAY"}, [] { return std::make_unique<LwDisplayCommand>(); }, "",
         "Lineweights shown on screen or not (LWT on the status bar).");
+    reg({"REN", "RENAME"}, [] { return std::make_unique<RenameCommand>(false); }, "",
+        "Change the name of a block, dimension style, layer, text style, table style or view.");
+    reg({"-RENAME", "-REN"}, [] { return std::make_unique<RenameCommand>(true); }, "",
+        "Change the name of a named object, on the command line.");
+    reg({"SETVAR", "SET"}, [] { return std::make_unique<SetVarCommand>(); }, "",
+        "Change a system variable by its name.");
     reg({"NAVBAR"}, [] { return std::make_unique<NavBarCommand>(); }, "assets/ribbon/pan.svg",
         "Show or hide the navigation bar: Pan and the Zoom tools at the drawing's right edge.");
     reg({"DIMEX"}, [] { return std::make_unique<DimStyleFileCommand>(false); }, "",
@@ -355,7 +377,7 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"P", "PAN"}, [] { return std::make_unique<PanCommand>(false); }, "", "Move the view with a drag.");
     reg({"-P", "-PAN"}, [] { return std::make_unique<PanCommand>(true); }, "",
         "Move the view by a displacement: a base point and a second point.");
-    reg({"RE", "REGEN", "REA", "REGENALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
+    reg({"RE", "REGEN", "REA", "REGENALL", "R", "REDRAW", "RA", "REDRAWALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
         "Rebuild and redraw the scene.");
     reg({"-ST", "-STYLE"}, [] { return std::make_unique<StyleCommand>(false); }, "",
         "Text styles at the command line: name, font, height, width factor and oblique angle.");
@@ -484,7 +506,7 @@ CommandRegistry CommandRegistry::make_default() {
         "How points are drawn: 0 a dot, 1 nothing, 2 a plus, 3 a cross, 4 a tick; +32 in a circle, +64 in a square.");
     reg({"PDSIZE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Size); }, "",
         "The size of point markers: in drawing units, or 0 or less for a size on screen.");
-    reg({"PTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
+    reg({"PTYPE", "DDPTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
         "The point display mode and size (PDMODE and PDSIZE).");
     reg({"LIMITS"}, [] { return std::make_unique<LimitsCommand>(); }, "",
         "The drawing's limits, and whether points outside them are refused.");
@@ -523,7 +545,7 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/hatch.svg", "Fill an enclosed area with a pattern or solid color.");
 
     // --- Annotation (Phase 13) ---
-    reg({"DT", "TEXT"}, [] { return std::make_unique<TextCommand>(); }, "assets/ribbon/text.svg",
+    reg({"DT", "TEXT", "DTEXT"}, [] { return std::make_unique<TextCommand>(); }, "assets/ribbon/text.svg",
         "Create a single-line text object.");
     reg({"DLI", "DIMLINEAR"},
         [] { return std::make_unique<LinearDimensionCommand>(core::DimType::Linear, "DIMLINEAR"); },
