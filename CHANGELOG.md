@@ -203,9 +203,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   second where it was, attribute values kept by tag. The first's definition stays until PURGE.
 - **The Block Editor tab** (#75) -- while BEDIT is open the ribbon shows its own Block Editor tab:
   Edit Block and Save Block, and Close Block Editor.
-- **Layer group filters** (#69) -- the Layer Properties Manager's New Group Filter makes a named
-  filter of the selected layers, listed after the built-in filters (Invert filter works on it
-  too); Delete Filter takes one away. Kept in the drawing.
+- **Layer group and property filters** (#69) -- the Layer Properties Manager's New Group Filter
+  makes a named filter of the selected layers; New Property Filter one of the layers whose name
+  matches a pattern and whose on, freeze, lock and plot settings are as asked. Listed after the
+  built-in filters (Invert filter works on them too); Delete Filter takes one away. Kept in the
+  drawing.
 - **Layer states Import and Export** (#69) -- the Layer States Manager's Import... and Export...
   and -LAYERSTATE's Import / EXport read and write AutoCAD's layer state files (.las): each
   layer's on, frozen, locked, plot and new-viewport settings, colour (a true colour too),

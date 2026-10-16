@@ -57,11 +57,19 @@ struct LayerState {
     friend bool operator==(const LayerState&, const LayerState&) = default;
 };
 
-/// A layer group filter (the Layer Properties Manager's New Group Filter): a named set of
-/// layers, by name, shown together.
+/// A layer filter of the drawing's own (the Layer Properties Manager): a group filter, a named
+/// set of layers by name; or, with `property`, a property filter -- the layers whose name matches
+/// `pattern` (* and ? wild cards; empty: any) and whose on, frozen, locked and plot settings
+/// are as asked (0 any, 1 yes, 2 no).
 struct LayerGroupFilter {
     std::string name;
     std::vector<std::string> layers;
+    bool property = false;
+    std::string pattern{};
+    std::uint8_t on = 0;
+    std::uint8_t frozen = 0;
+    std::uint8_t locked = 0;
+    std::uint8_t plot = 0;
     friend bool operator==(const LayerGroupFilter&, const LayerGroupFilter&) = default;
 };
 

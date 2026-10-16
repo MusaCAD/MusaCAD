@@ -8,6 +8,8 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -90,6 +92,11 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
     auto* new_filter = new QPushButton(QStringLiteral("New Group Filter"), this);
     new_filter->setObjectName(QStringLiteral("LayerNewGroupFilter"));
     new_filter->setToolTip(QStringLiteral("A filter of the selected layers, kept in the drawing."));
+    auto* new_pfilter = new QPushButton(QStringLiteral("New Property Filter"), this);
+    new_pfilter->setObjectName(QStringLiteral("LayerNewPropertyFilter"));
+    new_pfilter->setToolTip(QStringLiteral("A filter of the layers with a name and settings, kept in the drawing."));
+    toolbar->addWidget(new_pfilter);
+    connect(new_pfilter, &QPushButton::clicked, this, [this] { new_property_filter(); });
     auto* del_filter = new QPushButton(QStringLiteral("Delete Filter"), this);
     del_filter->setObjectName(QStringLiteral("LayerDeleteFilter"));
     toolbar->addWidget(new_filter);
@@ -232,6 +239,67 @@ void LayerDialog::new_group_filter() {
     apply_filter();
 }
 
+void LayerDialog::new_property_filter() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Layer Filter Properties"));
+    auto* form = new QFormLayout(&dlg);
+    auto* name = new QLineEdit(QStringLiteral("Properties Filter%1").arg(shown_filters_.size() + 1), &dlg);
+    auto* pattern = new QLineEdit(&dlg);
+    pattern->setPlaceholderText(QStringLiteral("e.g. A-* (empty: any)"));
+    const auto tri = [&dlg](const QString& yes, const QString& no) {
+        auto* c = new QComboBox(&dlg);
+        c->addItems({QStringLiteral("Any"), yes, no});
+        return c;
+    };
+    QComboBox* on = tri(QStringLiteral("On"), QStringLiteral("Off"));
+    QComboBox* frozen = tri(QStringLiteral("Frozen"), QStringLiteral("Thawed"));
+    QComboBox* locked = tri(QStringLiteral("Locked"), QStringLiteral("Unlocked"));
+    QComboBox* plot = tri(QStringLiteral("Plotted"), QStringLiteral("Not plotted"));
+    form->addRow(QStringLiteral("Filter name:"), name);
+    form->addRow(QStringLiteral("Layer name:"), pattern);
+    form->addRow(QStringLiteral("On:"), on);
+    form->addRow(QStringLiteral("Freeze:"), frozen);
+    form->addRow(QStringLiteral("Lock:"), locked);
+    form->addRow(QStringLiteral("Plot:"), plot);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(buttons);
+    if (dlg.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) {
+        return;
+    }
+    core::LayerGroupFilter rule;
+    rule.property = true;
+    rule.name = name->text().trimmed().toStdString();
+    rule.pattern = pattern->text().trimmed().toStdString();
+    rule.on = static_cast<std::uint8_t>(std::max(on->currentIndex(), 0));
+    rule.frozen = static_cast<std::uint8_t>(std::max(frozen->currentIndex(), 0));
+    rule.locked = static_cast<std::uint8_t>(std::max(locked->currentIndex(), 0));
+    rule.plot = static_cast<std::uint8_t>(std::max(plot->currentIndex(), 0));
+    std::vector<core::LayerGroupFilter> next = shown_filters_;
+    const auto same = std::find_if(next.begin(), next.end(), [&](const core::LayerGroupFilter& f) {
+        return QString::fromStdString(f.name).compare(QString::fromStdString(rule.name), Qt::CaseInsensitive) == 0;
+    });
+    if (same != next.end()) {
+        *same = rule;
+    } else {
+        next.push_back(rule);
+    }
+    submit_(core::SetLayerFiltersCommand{next});
+    shown_filters_ = next;
+    {
+        const QSignalBlocker block(filter_);
+        while (filter_->count() > kBuiltInFilters) {
+            filter_->removeItem(filter_->count() - 1);
+        }
+        for (const core::LayerGroupFilter& f : next) {
+            filter_->addItem(QString::fromStdString(f.name));
+        }
+        filter_->setCurrentText(QString::fromStdString(rule.name));
+    }
+    apply_filter();
+}
+
 void LayerDialog::delete_group_filter() {
     const int which = filter_->currentIndex() - kBuiltInFilters;
     if (which < 0 || static_cast<std::size_t>(which) >= shown_filters_.size()) {
@@ -290,7 +358,16 @@ void LayerDialog::apply_filter() {
             default:
                 if (which >= kBuiltInFilters && static_cast<std::size_t>(which - kBuiltInFilters) < shown_filters_.size()) {
                     const core::LayerGroupFilter& g = shown_filters_[static_cast<std::size_t>(which - kBuiltInFilters)];
-                    pass = std::find(g.layers.begin(), g.layers.end(), l.name) != g.layers.end();
+                    if (!g.property) {
+                        pass = std::find(g.layers.begin(), g.layers.end(), l.name) != g.layers.end();
+                    } else {
+                        const QString pat = QString::fromStdString(g.pattern);
+                        const QRegularExpression rx(QRegularExpression::wildcardToRegularExpression(pat.isEmpty() ? QStringLiteral("*") : pat),
+                                                    QRegularExpression::CaseInsensitiveOption);
+                        const auto rule = [](std::uint8_t want, bool is) { return want == 0 || (want == 1) == is; };
+                        pass = rx.match(QString::fromStdString(l.name)).hasMatch() && rule(g.on, l.on) &&
+                               rule(g.frozen, l.frozen) && rule(g.locked, l.locked) && rule(g.plot, l.plot);
+                    }
                 }
                 break;
             }

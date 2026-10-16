@@ -74,6 +74,7 @@ private:
     std::vector<core::LayerGroupFilter> shown_filters_; ///< the group filters in filter_, after the built-in ones
     void refill_filters();
     void new_group_filter();
+    void new_property_filter();
     void delete_group_filter();
     QComboBox* filter_ = nullptr;  ///< All, All Used Layers, On, Off, Frozen, Thawed, Locked, Unlocked
     QCheckBox* invert_ = nullptr;  ///< Invert filter

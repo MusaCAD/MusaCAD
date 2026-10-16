@@ -414,6 +414,19 @@ std::string serialize_native(const Document& doc) {
             }
             return out;
         };
+        if (f.property) {
+            // LAYERPFILTER name pattern on frozen locked plot: a property filter.
+            s += "LAYERPFILTER ";
+            s += word(f.name);
+            s += ' ';
+            s += word(f.pattern);
+            for (const unsigned v : {unsigned{f.on}, unsigned{f.frozen}, unsigned{f.locked}, unsigned{f.plot}}) {
+                s += ' ';
+                append_uint(s, v);
+            }
+            s += '\n';
+            continue;
+        }
         s += "LAYERFILTER ";
         s += word(f.name);
         for (const std::string& l : f.layers) {
@@ -2645,6 +2658,28 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("VPFRZNEW record malformed");
             }
             doc.layers[li].vp_freeze_new = true;
+        } else if (key == "LAYERPFILTER") {
+            std::uint64_t v[4] = {};
+            if (tok.size() != 7 || !to_uint(tok[3], v[0]) || !to_uint(tok[4], v[1]) || !to_uint(tok[5], v[2]) ||
+                !to_uint(tok[6], v[3]) || v[0] > 2 || v[1] > 2 || v[2] > 2 || v[3] > 2) {
+                return fail("malformed LAYERPFILTER");
+            }
+            const auto word = [](std::string_view t) {
+                std::string spelled(t);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            LayerGroupFilter rule;
+            rule.property = true;
+            rule.name = word(tok[1]);
+            rule.pattern = word(tok[2]);
+            rule.on = static_cast<std::uint8_t>(v[0]);
+            rule.frozen = static_cast<std::uint8_t>(v[1]);
+            rule.locked = static_cast<std::uint8_t>(v[2]);
+            rule.plot = static_cast<std::uint8_t>(v[3]);
+            doc.layer_filters.push_back(std::move(rule));
         } else if (key == "LAYERFILTER") {
             if (tok.size() < 2) {
                 return fail("malformed LAYERFILTER");

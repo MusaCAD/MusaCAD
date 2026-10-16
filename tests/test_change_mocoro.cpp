@@ -3511,3 +3511,17 @@ TEST_CASE("Layer group filters are kept with the drawing") {
     REQUIRE(out.layer_filters == doc.layer_filters);
     engine.stop();
 }
+
+TEST_CASE("Layer property filters -- a name pattern and settings -- are kept with the drawing") {
+    io::Document doc;
+    LayerGroupFilter rule;
+    rule.property = true;
+    rule.name = "Frozen A layers";
+    rule.pattern = "A-*";
+    rule.frozen = 1;
+    rule.plot = 2;
+    doc.layer_filters = {LayerGroupFilter{"Group", {"0"}}, rule};
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.layer_filters == doc.layer_filters);
+}
