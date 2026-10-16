@@ -581,7 +581,7 @@ private:
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
     void apply_revcloud_reverse(std::uint64_t group);
-    void apply_explode(std::uint64_t group);
+    void apply_explode(std::uint64_t group, bool burst = false);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);

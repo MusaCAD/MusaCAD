@@ -58,6 +58,9 @@ struct RevcloudReverseCommand {
 /// counted in the report.
 struct ExplodeSelectionCommand {
     std::uint64_t group = 0;
+    /// BURST: a block's attributes become text with the values the reference had (the
+    /// hidden ones go), instead of their definitions again.
+    bool burst = false;
 };
 
 /// PURGE (AutoCAD): drop symbol-table entries nothing refers to. Today that means
@@ -1801,6 +1804,12 @@ struct DimJogCommand {
     bool remove = false;
     std::uint64_t group = 0;
 };
+/// TEXTMASK: a wipeout behind each selected text, multiline text and attribute, `offset`
+/// text heights clear of it all round. One undo step.
+struct TextMaskCommand {
+    double offset = 0.35;
+    std::uint64_t group = 0;
+};
 /// FLATTEN: the selected polylines' elevation and thickness set to 0 (a drawing from
 /// elsewhere can carry them). One undo step.
 struct FlattenCommand {
@@ -1982,6 +1991,7 @@ using Command =
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
                  FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, SplineEditCommand,
+                 TextMaskCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

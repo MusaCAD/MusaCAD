@@ -8536,7 +8536,7 @@ void ExplodeCommand::start(CommandContext& ctx) {
 
 void ExplodeCommand::finish(CommandContext& ctx) {
     if (ctx.has_selection()) {
-        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id(), burst_});
     }
     done_ = true;
 }
@@ -16387,6 +16387,78 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void HatchEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextMaskUiCommand::prompt(CommandContext& ctx) {
+    ctx.echo("Current settings: Offset factor = " + fmt4(s_offset_) + ", Mask type = Wipeout");
+    step_ = Step::Select;
+    select_.begin(ctx, "Select text or [Masktype/Offset]: ");
+}
+
+void TextMaskUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    prompt(ctx);
+}
+
+void TextMaskUiCommand::after(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::TextMaskCommand{s_offset_, ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void TextMaskUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextMaskUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (u == "O" || u == "OFFSET") {
+            step_ = Step::Offset;
+            ctx.set_prompt("Enter offset factor relative to text height <" + fmt4(s_offset_) + ">: ");
+            return;
+        }
+        if (u == "M" || u == "MASKTYPE") {
+            step_ = Step::Masktype;
+            ctx.set_prompt("Specify entity type to use for mask [Wipeout/3dface/Solid/Color] <Wipeout>: ");
+            return;
+        }
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Offset: {
+        double v = 0.0;
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v < 0.0) {
+                ctx.echo("Requires an offset of zero or more.");
+                return;
+            }
+            s_offset_ = v;
+        }
+        prompt(ctx);
+        return;
+    }
+    case Step::Masktype:
+        if (!t.empty() && u != "W" && u != "WIPEOUT") {
+            ctx.echo("Only Wipeout masks are available here.");
+        }
+        prompt(ctx);
+        return;
+    }
+}
+
+void TextMaskUiCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

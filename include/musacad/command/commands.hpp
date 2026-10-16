@@ -1551,6 +1551,29 @@ private:
     bool done_ = false;
 };
 
+/// TEXTMASK (Express Tools): `Select text or [Masktype/Offset]:` -- a wipeout behind each
+/// text selected, the offset (text heights) clear of it.
+class TextMaskUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTMASK"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Offset, Masktype };
+    void prompt(CommandContext& ctx);
+    void after(CommandContext& ctx);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+    static inline double s_offset_ = 0.35;
+};
+
 /// SPLINEDIT (SPE): `Select spline:`, then `Enter an option [Close/Join/Fit data/Edit vertex/
 /// convert to Polyline/Reverse/Undo/eXit] <eXit>:` -- Edit vertex (`[Add/Delete/Elevate
 /// order/Move/Weight/eXit]`: Add, Delete and Move the control points), convert to Polyline
@@ -3012,7 +3035,9 @@ private:
 /// decides what each kind becomes and reports what it could not break.
 class ExplodeCommand final : public ICommand {
 public:
-    std::string name() const override { return "EXPLODE"; }
+    /// `burst`: BURST, whose blocks' attributes become their values as text.
+    explicit ExplodeCommand(bool burst = false) : burst_(burst) {}
+    std::string name() const override { return burst_ ? "BURST" : "EXPLODE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -3023,6 +3048,7 @@ public:
 
 private:
     void finish(CommandContext& ctx);
+    bool burst_ = false;
     SelectObjectsPhase select_;
     bool done_ = false;
 };

@@ -58,6 +58,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **SPLINEDIT** (#55) -- add, delete and move control points, reverse, or make a polyline.
 - **HATCHEDIT** (#41, #55) -- a hatch's pattern, scale and angle, or a polyline round each of
   its loops.
+- **BURST** and **TEXTMASK** (#77) -- blocks exploded with their attribute values as text;
+  a wipeout behind text.
 - **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
   elevation and thickness to 0.
 - **The View Manager and NEWVIEW** (#72) -- VIEW lists the saved views to make current, add

@@ -367,3 +367,58 @@ TEST_CASE("SPLINEDIT adds, deletes and moves control points, reverses, and makes
     REQUIRE(h.last<SplineEditCommand>()->op == Op::End);
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("BURST keeps the attribute values as text; TEXTMASK puts a wipeout behind text") {
+    GeometryEngine engine;
+    engine.start();
+    // A block with an attribute, inserted with the value "R-12".
+    AddAttDefCommand ad;
+    ad.text.pos = {0, 0};
+    ad.text.height = 2.5;
+    ad.text.content = "TAG"; // the tag
+    ad.def = "DEFAULT";
+    ad.group = 1;
+    engine.submit(ad);
+    engine.submit(AddLineCommand{{0, -1}, {10, -1}, 2});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(DefineBlockCommand{"B", {0, 0}, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.block_names.size() == 1; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{4});
+    InsertBlockCommand ins;
+    ins.name = "B";
+    ins.pos = {100, 100};
+    ins.group = 5;
+    ins.attribs = {"R-12"};
+    engine.submit(ins);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(ExplodeSelectionCommand{6, true});
+    io::Document doc = dump(engine, "musacad_burst.musa");
+    REQUIRE(doc.inserts.empty());
+    REQUIRE(doc.lines.size() == 1);
+    REQUIRE(doc.texts.size() == 1);
+    REQUIRE(doc.texts[0].content == "R-12");
+    REQUIRE(doc.attdefs.empty());
+
+    engine.submit(SelectAllCommand{});
+    engine.submit(TextMaskCommand{0.5, 7});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 text masked."; }));
+    doc = dump(engine, "musacad_textmask.musa");
+    REQUIRE(doc.hatches.size() == 1);
+    REQUIRE(doc.hatches[0].pattern_name == "WIPEOUT");
+    engine.stop();
+
+    H h;
+    h.run({"TEXTMASK"});
+    REQUIRE(h.out.prompt == "Select text or [Masktype/Offset]: ");
+    h.run({"O", "0.2"});
+    h.proc.set_selection_count(1);
+    h.run({""});
+    REQUIRE(h.last<TextMaskCommand>()->offset == 0.2);
+    h.run({"TEXTMASK"}); // preselected: masked at once
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"BURST"});
+    REQUIRE(h.last<ExplodeSelectionCommand>()->burst);
+}

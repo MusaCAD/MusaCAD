@@ -6050,7 +6050,7 @@ void GeometryEngine::apply_revcloud_reverse(std::uint64_t group) {
     report("Reversed the arc direction.");
 }
 
-void GeometryEngine::apply_explode(std::uint64_t group) {
+void GeometryEngine::apply_explode(std::uint64_t group, bool burst) {
     prune_selection();
     if (selection_.empty()) {
         report("Nothing selected to explode.");
@@ -6226,7 +6226,18 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
                 text(bt.content, xf(bt.pos), bt.height * us, bt.rotation + in->rotation, bt.justify,
                      std::string{}, bt.props, xf(bt.align), bt.width_factor);
             }
-            for (const BlockAttDef& ba : def.content.attdefs) {
+            const std::vector<std::string> values = burst ? store_.insert_attribs(*in) : std::vector<std::string>{};
+            for (std::size_t ai = 0; ai < def.content.attdefs.size(); ++ai) {
+                const BlockAttDef& ba = def.content.attdefs[ai];
+                if (burst) {
+                    // BURST: the attribute as text with this reference's value; a hidden one goes.
+                    if ((ba.flags & 1u) == 0) {
+                        text(ai < values.size() ? values[ai] : ba.def, xf(ba.text.pos), ba.text.height * us,
+                             ba.text.rotation + in->rotation, ba.text.justify, std::string{}, ba.text.props,
+                             xf(ba.text.align), ba.text.width_factor);
+                    }
+                    continue;
+                }
                 // As in AutoCAD, an exploded attribute is its definition again (the tag
                 // shows; the value is dropped).
                 AddAttDefCommand ac;
@@ -13341,7 +13352,7 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_revcloud_reverse(c.group);
             }
             if constexpr (std::is_same_v<T, ExplodeSelectionCommand>) {
-                apply_explode(c.group);
+                apply_explode(c.group, c.burst);
             }
             if constexpr (std::is_same_v<T, AddCircleTangentCommand>) {
                 apply_circle_tangent(c);
@@ -14312,6 +14323,44 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, SplineEditCommand>) {
                 apply_spline_edit(c);
+            }
+            if constexpr (std::is_same_v<T, TextMaskCommand>) {
+                prune_selection();
+                std::size_t made = 0;
+                for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+                    if (h.kind != EntityKind::Text && h.kind != EntityKind::MText && h.kind != EntityKind::AttDef) {
+                        continue;
+                    }
+                    Vec2 lo;
+                    Vec2 hi;
+                    const EntityProps* p = store_.props(h);
+                    if (p == nullptr || !entity_aabb(store_, h, lo, hi)) {
+                        continue;
+                    }
+                    double height = 2.5;
+                    if (h.kind == EntityKind::MText) {
+                        height = store_.mtext(h)->text.height;
+                    } else if (h.kind == EntityKind::Text) {
+                        height = store_.text(h)->height;
+                    }
+                    const double m = std::max(c.offset, 0.0) * height;
+                    AddHatchCommand mask;
+                    mask.loops = {{{lo.x - m, lo.y - m}, {hi.x + m, lo.y - m}, {hi.x + m, hi.y + m}, {lo.x - m, hi.y + m}}};
+                    mask.pattern_name = "WIPEOUT";
+                    mask.group = c.group;
+                    EntityProps mp = *p;
+                    mask.props = mp;
+                    const Command cmd = mask;
+                    push_create_item(c.group, create_indexed(cmd), cmd);
+                    ++made;
+                }
+                if (made > 0) {
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                }
+                report(made == 0 ? std::string("No text selected.")
+                                 : std::to_string(made) + (made == 1 ? " text masked." : " texts masked."));
             }
             if constexpr (std::is_same_v<T, DimJogCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.radius);
