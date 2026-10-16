@@ -16,6 +16,10 @@
 #include <QApplication>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCompleter>
+#include <QLineEdit>
+#include <QStringList>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QLayout>
 #include <QIcon>
@@ -26,6 +30,7 @@
 #include <QSignalBlocker>
 #include <QToolButton>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -943,6 +948,43 @@ void MainWindow::build_ribbon() {
 
     // Contextual tabs (hatch / text / block editor), shown reactively by the selection poll.
     build_contextual_tabs();
+
+    // ------------------------------------------------------------------ command search
+    // AutoCAD's InfoCenter field at the right of the strip: a few letters of a command's
+    // name or of what it does list the matches; Enter or a pick runs it.
+    {
+        auto* search = new QLineEdit;
+        search->setObjectName(QStringLiteral("CommandSearch"));
+        search->setPlaceholderText(QStringLiteral("Search commands"));
+        search->setClearButtonEnabled(true);
+        search->setMinimumWidth(180);
+        search->setMaximumWidth(280);
+        search->setToolTip(QStringLiteral("Type part of a command's name or of what it does; Enter runs it."));
+        QStringList entries;
+        std::set<std::string> seen;
+        for (const command::CommandSuggestion& s : processor_->registry().suggest("")) {
+            if (seen.insert(s.name).second) {
+                entries << QString::fromStdString(s.name + " - " + s.description);
+            }
+        }
+        entries.sort();
+        auto* completer = new QCompleter(entries, search);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setMaxVisibleItems(12);
+        search->setCompleter(completer);
+        const auto run = [this, search](const QString& text) {
+            const std::string name = text.section(QStringLiteral(" - "), 0, 0).trimmed().toStdString();
+            if (!name.empty() && processor_->registry().contains(name)) {
+                QTimer::singleShot(0, search, &QLineEdit::clear); // after the completer has written it
+                command_widget_->focus_input();
+                processor_->start_command(name);
+            }
+        };
+        connect(completer, qOverload<const QString&>(&QCompleter::activated), this, run);
+        connect(search, &QLineEdit::returnPressed, this, [search, run] { run(search->text()); });
+        ribbon_->add_strip_widget(search);
+    }
 
     setMenuWidget(ribbon_);
 }

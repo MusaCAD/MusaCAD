@@ -680,6 +680,11 @@ void RibbonBar::add_qat_action(QAction* action) {
     qat_layout_->insertWidget(qat_layout_->count() - 1, btn); // before the trailing stretch
 }
 
+void RibbonBar::add_strip_widget(QWidget* widget) {
+    widget->setParent(this);
+    qat_layout_->addWidget(widget); // after the trailing stretch: the right end
+}
+
 int RibbonBar::create_page() {
     auto* page = new QWidget;
     page->setObjectName(QStringLiteral("RibbonPage"));

@@ -163,6 +163,8 @@ public:
 
     QPushButton* app_button() const noexcept { return app_button_; }
     void add_qat_action(QAction* action);
+    /// A widget at the right end of the quick-access strip (the command search).
+    void add_strip_widget(QWidget* widget);
 
     /// Adds a fixed tab and returns its PAGE index (use it with add_panel).
     int add_tab(const QString& title);

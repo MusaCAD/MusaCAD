@@ -53,6 +53,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **Search commands** (#78) -- a field at the right of the quick-access strip, as AutoCAD's
+  InfoCenter: part of a command's name or of what it does lists the matches; Enter or a pick
+  runs it.
 - **Search for layer** (#69) -- the Layer Properties Manager's search field shows the layers
   whose name holds the text, or matches it with `*` and `?`.
 - **User-defined hatching** (#41) -- HATCH's, -HATCH's and HATCHEDIT's `User defined`: the
