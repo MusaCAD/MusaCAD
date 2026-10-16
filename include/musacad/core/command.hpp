@@ -1120,6 +1120,14 @@ struct HatchEditCommand {
     std::uint64_t group = 0;
 };
 
+/// -DWGUNITS's "scale objects in current drawing": every object (in model space, and in the
+/// layouts with `paper`) scaled by `factor` about the origin. One undo step.
+struct RescaleDrawingCommand {
+    double factor = 1.0;
+    bool paper = false;
+    std::uint64_t group = 0;
+};
+
 /// A hatch pattern found in a .pat file, brought into the drawing so its hatches draw with
 /// it and keep it (as AutoCAD keeps the pattern with the hatch).
 struct AddPatternCommand {
@@ -2348,7 +2356,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, RescaleDrawingCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
