@@ -147,7 +147,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                  m->props,
                                  std::string(store.font_name(m->text.font)),
                                  m->overrides,
-                                 mst != nullptr ? *mst : DimStyle{}};
+                                 mst != nullptr ? *mst : DimStyle{},
+                                 m->leader_flags};
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
@@ -364,6 +365,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 b.font = store.add_font(c.font); // label font travels as a name (like MTEXT)
                 handle = store.add_mleader(c.vertices, c.style, b, c.content, props_of(c.props),
                                            c.overrides);
+                if (c.leader_flags != 0) {
+                    store.set_mleader_flags(handle, c.leader_flags);
+                }
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
                                           props_of(c.props), c.attribs);

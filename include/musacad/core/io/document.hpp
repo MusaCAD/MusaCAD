@@ -230,6 +230,7 @@ struct DocMLeader {
     EntityProps props{};
     std::string font{}; ///< font name ("" = stroke "Standard"); maps to block.font index
     DimOverrides overrides{}; ///< per-leader arrow override (v13+; no overrides => ByStyle)
+    std::uint8_t leader_flags = 0; ///< v40: MLeaderData::leader_flags
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 

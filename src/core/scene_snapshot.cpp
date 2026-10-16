@@ -22,6 +22,7 @@
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 #include "musacad/core/text/text_codes.hpp"
@@ -729,13 +730,28 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         const Rgb arrow_c = s.arrow_color.resolve(r.color);
         const Rgb text_c = s.text_color.resolve(r.color);
         const std::span<const Vec2> v = store.vertices_of(*m);
-        for (std::size_t i = 1; i < v.size(); ++i) {
-            add_line(r.color, r.lineweight, v[i - 1], v[i]);
+        // The leader's path: its points, or a spline through them (the landing, the last
+        // segment, left straight); none at all for a leader type of None.
+        std::vector<Vec2> path(v.begin(), v.end());
+        const bool landing = (m->leader_flags & LeaderForm::kLanding) != 0;
+        if ((m->leader_flags & LeaderForm::kSpline) != 0 && v.size() >= (landing ? 4u : 3u)) {
+            const std::size_t through = landing ? v.size() - 1 : v.size();
+            const std::vector<Vec2> ctrl =
+                spline::fit_or_fallback(std::span<const Vec2>(v.data(), through), 3, spline::FitParam::Chord);
+            path.clear();
+            spline::tessellate(ctrl, 3, path);
+            if (landing) {
+                path.push_back(v.back());
+            }
         }
-        if (v.size() >= 2) {
+        const bool line = (m->leader_flags & LeaderForm::kNoLine) == 0;
+        for (std::size_t i = 1; line && i < path.size(); ++i) {
+            add_line(r.color, r.lineweight, path[i - 1], path[i]);
+        }
+        if (line && path.size() >= 2 && (m->leader_flags & LeaderForm::kNoArrow) == 0) {
             afill.clear();
             aline.clear();
-            append_arrowhead(afill, aline, v[0], v[1] - v[0], s.arrow_size,
+            append_arrowhead(afill, aline, path[0], path[1] - path[0], s.arrow_size,
                              static_cast<ArrowType>(s.arrow_type));
             add_fills(arrow_c, afill);
             add_lines(arrow_c, r.lineweight, aline);

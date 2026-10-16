@@ -1559,6 +1559,7 @@ struct AddMLeaderCommand {
     std::string font{}; ///< label font NAME ("" = stroke "Standard"); resolved to block.font
     DimOverrides overrides = {}; ///< per-leader arrow override (ByStyle unless set)
     DimStyle dim_style = {};      ///< resolved style snapshot for PR display only
+    std::uint8_t leader_flags = 0; ///< MLeaderData::leader_flags
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-

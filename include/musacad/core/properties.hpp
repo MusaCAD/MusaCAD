@@ -274,6 +274,16 @@ struct DimOverrides {
 
 /// Apply a dimension's overrides onto a copy of its style, producing the effective
 /// style. The ONE place override-vs-style is decided (called from compute_dim_geometry).
+/// A multileader's form (MLEADER's Leader type, LEADER's Format), as bits: a spline through
+/// the points (the landing, the last segment when kLanding, left straight), no leader line
+/// at all, no arrowhead.
+struct LeaderForm {
+    static constexpr std::uint8_t kSpline = 1u << 0;
+    static constexpr std::uint8_t kNoLine = 1u << 1;
+    static constexpr std::uint8_t kNoArrow = 1u << 2;
+    static constexpr std::uint8_t kLanding = 1u << 3;
+};
+
 /// The Text tab's Vertical position, DIMTAD: 0 Centered, 1 Above, 2 Outside, 3 JIS, 4 Below.
 [[nodiscard]] inline std::uint8_t dim_text_vpos(const DimStyle& s) noexcept {
     return s.text_vpos != 0 ? s.text_vpos : static_cast<std::uint8_t>(s.text_above ? 1 : 0);

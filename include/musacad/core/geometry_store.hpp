@@ -236,6 +236,7 @@ struct MLeaderData {
     std::uint32_t vtx_offset = 0; ///< first leader vertex in the polyline pool
     std::uint32_t vtx_count = 0;  ///< number of leader vertices (>= 1)
     std::uint16_t style = 0;      ///< dimstyle (arrow type/size + colours)
+    std::uint8_t leader_flags = 0; ///< the leader's form, LeaderForm bits
     MTextBlock text;              ///< the attached label (computed layout)
     EntityProps props{};
     DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
@@ -554,6 +555,7 @@ public:
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
     bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
     bool set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept;
+    bool set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept;
     bool set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);

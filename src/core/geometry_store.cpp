@@ -58,6 +58,15 @@ bool GeometryStore::set_dim_unassoc(EntityHandle h, bool unassoc) noexcept {
     return true;
 }
 
+bool GeometryStore::set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept {
+    MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+    if (m == nullptr) {
+        return false;
+    }
+    m->leader_flags = flags;
+    return true;
+}
+
 bool GeometryStore::set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept {
     DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
     if (d == nullptr) {

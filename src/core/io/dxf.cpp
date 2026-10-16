@@ -1052,9 +1052,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // format; through DXF it comes back as a leader line + MTEXT (association not
     // preserved -- stated fidelity gap).
     for (const DocMLeader& m : doc.mleaders) {
-        if (m.vertices.size() >= 2) {
+        if (m.vertices.size() >= 2 && (m.leader_flags & 2u) == 0) {
             code(s, 0, "LEADER");
             emit_props(s, doc, m.props);
+            code_i(s, 71, (m.leader_flags & 4u) != 0 ? 0 : 1); // arrowhead flag
+            code_i(s, 72, (m.leader_flags & 1u) != 0 ? 1 : 0); // path type: straight / spline
             code_i(s, 76, static_cast<long>(m.vertices.size()));
             for (const Vec2& v : m.vertices) {
                 code_d(s, 10, v.x);

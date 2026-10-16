@@ -14922,7 +14922,7 @@ void LeaderCommand::finish(CommandContext& ctx) {
         content += (i > 0 ? "\n" : "") + lines_[i];
     }
     const double h = current_dim_text_height(ctx);
-    if (pts_.size() == 2 && lines_.size() <= 1) {
+    if (pts_.size() == 2 && lines_.size() <= 1 && !spline_ && !no_arrow_) {
         ctx.submit(core::AddLeaderCommand{pts_[0], pts_[1], h, ctx.current_dim_style(), content, ctx.group_id()});
     } else {
         // The text beside the last point, on the side the leader comes in from.
@@ -14931,7 +14931,10 @@ void LeaderCommand::finish(CommandContext& ctx) {
         b.height = h;
         b.attach = right ? 3 : 5; // middle left / middle right
         b.pos = pts_.back() + core::Vec2{right ? h * 0.5 : -h * 0.5, 0.0};
-        ctx.submit(core::AddMLeaderCommand{pts_, ctx.current_dim_style(), b, content, ctx.group_id()});
+        core::AddMLeaderCommand ml{pts_, ctx.current_dim_style(), b, content, ctx.group_id()};
+        ml.leader_flags = static_cast<std::uint8_t>((spline_ ? core::LeaderForm::kSpline : 0) |
+                                                    (no_arrow_ ? core::LeaderForm::kNoArrow : 0));
+        ctx.submit(std::move(ml));
     }
     ctx.echo("Leader placed.");
     done_ = true;
@@ -14975,10 +14978,14 @@ void LeaderCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Format:
         if (u == "S" || u == "SPLINE") {
-            ctx.echo("Spline leaders are not available yet; the leader stays straight.");
+            spline_ = true;
+        } else if (u == "ST" || u == "STRAIGHT") {
+            spline_ = false;
         } else if (u == "N" || u == "NONE") {
-            ctx.echo("A leader here always has its arrowhead.");
-        } else if (!t.empty() && u != "ST" && u != "STRAIGHT" && u != "A" && u != "ARROW" && u != "E" && u != "EXIT") {
+            no_arrow_ = true;
+        } else if (u == "A" || u == "ARROW") {
+            no_arrow_ = false;
+        } else if (!t.empty() && u != "E" && u != "EXIT") {
             ctx.echo("Enter Spline, STraight, Arrow, None or Exit.");
             return;
         }
@@ -15097,6 +15104,9 @@ void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     c.overrides.arrow_size = style_.arrow_size;
     c.overrides.set(core::DimOverrides::kArrowType, true);
     c.overrides.set(core::DimOverrides::kArrowSize, true);
+    using F = core::LeaderForm;
+    c.leader_flags = static_cast<std::uint8_t>((s_leader_type_ == 1 ? F::kSpline : s_leader_type_ == 2 ? F::kNoLine : 0) |
+                                               (s_landing_ ? F::kLanding : 0));
     ctx.submit(std::move(c));
     ctx.echo("Multileader placed.");
     done_ = true;
@@ -15250,9 +15260,14 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
             }
         } else if (state_ == State::LeaderType) {
             if (u == "P" || u == "SPLINE") {
-                ctx.echo("Spline leaders are not available yet; the leader stays straight.");
+                s_leader_type_ = 1;
             } else if (u == "N" || u == "NONE") {
-                ctx.echo("A multileader here always has its leader line.");
+                s_leader_type_ = 2;
+            } else if (u == "S" || u == "STRAIGHT") {
+                s_leader_type_ = 0;
+            } else if (!t.empty()) {
+                ctx.echo("Enter Straight, sPline or None.");
+                return;
             }
         } else if (u == "Y" || u == "YES" || u == "N" || u == "NO") {
             s_landing_ = u[0] == 'Y';

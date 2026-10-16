@@ -3346,3 +3346,43 @@ TEST_CASE("A block redefined with its attributes in another order keeps each ref
     engine.stop();
     fs::remove(dp);
 }
+
+TEST_CASE("Spline leaders, leaders with no line and no arrowhead -- drawn so and kept in the file") {
+    const auto drawn = [](std::uint8_t flags) {
+        GeometryEngine engine;
+        engine.start();
+        AddMLeaderCommand ml;
+        ml.vertices = {{0, 0}, {10, 10}, {20, 5}, {25, 5}};
+        ml.content = "";
+        ml.leader_flags = flags;
+        ml.group = 1;
+        engine.submit(ml);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.document_version > 0 || !s.line_vertices.empty(); }));
+        engine.consume_snapshot();
+        const std::size_t n = engine.snapshot().line_vertices.size();
+        engine.stop();
+        return n;
+    };
+    const std::size_t straight = drawn(0);
+    REQUIRE(drawn(LeaderForm::kSpline | LeaderForm::kLanding) > straight); // the curve's many chords
+    REQUIRE(drawn(LeaderForm::kNoLine) < straight);                          // no leader at all
+
+    io::Document doc;
+    io::DocMLeader m;
+    m.vertices = {{0, 0}, {10, 10}};
+    m.leader_flags = LeaderForm::kSpline | LeaderForm::kNoArrow;
+    doc.mleaders.push_back(m);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.mleaders[0].leader_flags == (LeaderForm::kSpline | LeaderForm::kNoArrow));
+    const std::string dxf = io::serialize_dxf(doc);
+    REQUIRE(dxf.find("\n72\n1\n") != std::string::npos); // DXF's spline path type
+}
+
+TEST_CASE("LEADER's Format Spline and None; MLEADER's Leader type sPline") {
+    H h;
+    h.run({"LEADER", "0,0", "10,10", "F", "S", "F", "N", "20,10", "", "NOTE", ""});
+    const auto* ml = h.last<AddMLeaderCommand>();
+    REQUIRE(ml != nullptr);
+    REQUIRE(ml->leader_flags == (LeaderForm::kSpline | LeaderForm::kNoArrow));
+}

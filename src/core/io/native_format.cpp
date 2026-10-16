@@ -957,6 +957,11 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += m.font; // v10
         s += '\n';
+        if (m.leader_flags != 0) {
+            s += "MLEADERFORM "; // v40: the leader's form (spline, no line, no arrowhead, landing)
+            append_uint(s, m.leader_flags);
+            s += '\n';
+        }
     }
     // v14: HATCH. One line: loop count, then each loop (vertex count + x y pairs), then
     // scale, angle(radians), origin, props. The pattern name is on the next line.
@@ -2440,6 +2445,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 doc.dims.back().overrides.text_move = static_cast<std::uint8_t>(v);
                 doc.dims.back().overrides.set(DimOverrides::kTextMove, true);
             }
+        } else if (key == "MLEADERFORM") {
+            std::uint64_t v = 0;
+            if (doc.mleaders.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 15) {
+                return fail("malformed MLEADERFORM");
+            }
+            doc.mleaders.back().leader_flags = static_cast<std::uint8_t>(v);
         } else if (key == "HATCHNOASSOC") {
             if (doc.hatches.empty()) {
                 return fail("HATCHNOASSOC without a HATCH");

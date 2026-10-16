@@ -356,7 +356,7 @@ Document document_from_store(const GeometryStore& store) {
             doc.mleaders.push_back(DocMLeader{std::vector<Vec2>(v.begin(), v.end()), m.style,
                                               m.text, std::string(store.string_of(m.text)), m.props,
                                               std::string(store.font_name(m.text.font)),
-                                              m.overrides});
+                                              m.overrides, m.leader_flags});
         }
     }
     const auto& hatch_arena = store.hatches();
@@ -645,7 +645,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
     for (const DocMLeader& m : doc.mleaders) {
         MTextBlock b = m.block;
         b.font = store.add_font(m.font);
-        store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
+        const EntityHandle mh = store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
+        if (m.leader_flags != 0) {
+            store.set_mleader_flags(mh, m.leader_flags);
+        }
     }
     for (const DocHatch& h : doc.hatches) {
         const EntityHandle hh = store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle,

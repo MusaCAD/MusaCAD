@@ -4696,6 +4696,8 @@ private:
     State state_ = State::Start;
     std::vector<core::Vec2> pts_;
     std::vector<std::string> lines_;
+    bool spline_ = false;   ///< Format Spline: the leader a spline through its points
+    bool no_arrow_ = false; ///< Format None: no arrowhead
     bool done_ = false;
 };
 
@@ -4727,6 +4729,7 @@ private:
     static inline int s_max_points_ = 2;
     static inline bool s_content_ = true;
     static inline bool s_landing_ = true;
+    static inline int s_leader_type_ = 0; ///< Leader type: 0 Straight, 1 sPline, 2 None
     core::MLeaderStyle style_{}; ///< the current multileader style, taken at the start
 };
 
