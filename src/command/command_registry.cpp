@@ -397,6 +397,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit several polylines at once (PEDIT's Multiple).");
     reg({"DIMASSOC"}, [] { return std::make_unique<DimAssocUiCommand>(); }, "",
         "Whether the dimensions drawn follow the objects they measure.");
+    reg({"-DWGUNITS"}, [] { return std::make_unique<DwgUnitsCommand>(); }, "",
+        "The drawing's unit and its display, and the drawing scaled to a new unit.");
     reg({"BLOCKREPLACE"}, [] { return std::make_unique<BlockReplaceCommand>(true); }, "",
         "Replace every reference of one block by another.");
     reg({"-BLOCKREPLACE"}, [] { return std::make_unique<BlockReplaceCommand>(false); }, "",

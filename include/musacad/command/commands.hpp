@@ -3182,6 +3182,35 @@ private:
     bool done_ = false;
 };
 
+/// -DWGUNITS: the drawing's unit (Inches, Feet, Millimeters, Centimeters, Decimeters, Meters),
+/// its display format and precision, whether objects from other drawings are scaled on
+/// insertion and INSUNITS matched, and -- the unit changed -- whether the drawing is scaled to
+/// it (model space, and paper space too if asked).
+class DwgUnitsCommand final : public ICommand {
+public:
+    std::string name() const override { return "-DWGUNITS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step { Unit, Format, Precision, ScaleInsert, MatchInsunits, ScaleDrawing, PaperSpace };
+    void ask(CommandContext& ctx);
+    void apply(CommandContext& ctx, bool scale, bool paper);
+    Step step_ = Step::Unit;
+    core::DrawingUnits units_{};
+    int unit_ = 1;   ///< 1 Inches .. 6 Meters
+    int format_ = 2; ///< 1 Scientific .. 5 Fractional
+    int precision_ = 4;
+    bool scale_insert_ = true;
+    bool match_ = true;
+    bool done_ = false;
+};
+
 /// BLOCKREPLACE (Express Tools): the block to be replaced and the block to replace it, picked
 /// from lists (or, with no window -- -BLOCKREPLACE -- typed); every reference of the first
 /// becomes one of the second. The first's definition stays until PURGE.
