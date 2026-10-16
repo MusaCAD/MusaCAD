@@ -433,6 +433,13 @@ void RibbonPanel::style_buttons(bool compact) {
     }
 }
 
+void RibbonPanel::set_title_only(bool on) {
+    title_only_ = on;
+    if (flyout_btn_ != nullptr) {
+        flyout_btn_->setToolButtonStyle(on ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextUnderIcon);
+    }
+}
+
 void RibbonPanel::set_state(PanelState s) {
     if (s == state_ && s != PanelState::Full) {
         return; // Full is idempotent-safe to re-apply (re-styles after un-collapse)
@@ -474,6 +481,7 @@ void RibbonPanel::set_state(PanelState s) {
         flyout_btn_->setIcon(repr_icon_);
         flyout_btn_->setText(title_);
         flyout_btn_->setToolTip(title_);
+        flyout_btn_->setToolButtonStyle(title_only_ ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextUnderIcon);
         // The popout: a child frame of the top-level window so it overlays inline below the
         // tab strip (and is captured by a per-window screenshot, unlike a Qt::Popup menu).
         if (popout_ == nullptr) {
@@ -661,7 +669,12 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     tab_layout->addWidget(minimize_btn_);
     tab_layout->addStretch(1);
     root->addWidget(tab_row);
-    connect(minimize_btn_, &QToolButton::clicked, this, [this] { set_minimized(!minimized_); });
+    connect(minimize_btn_, &QToolButton::clicked, this, [this] {
+        // AutoCAD's cycle: tabs, panel titles, panel buttons, then the full ribbon again.
+        static constexpr MinimizeMode kNext[] = {MinimizeMode::Tabs, MinimizeMode::PanelTitles,
+                                                 MinimizeMode::PanelButtons, MinimizeMode::Full};
+        set_mode(kNext[static_cast<int>(mode_)]);
+    });
     connect(tabs_, &QTabBar::tabBarDoubleClicked, this, [this](int) {
         if (!just_restored_) { // not the second click of the one that brought the panels back
             set_minimized(!minimized_);
@@ -725,7 +738,31 @@ void RibbonBar::set_qat_below(bool below) {
     root_->insertWidget(below ? root_->count() : 0, qat_strip_);
 }
 
+void RibbonBar::set_mode(MinimizeMode m) {
+    const bool was_panels = mode_ == MinimizeMode::PanelTitles || mode_ == MinimizeMode::PanelButtons;
+    mode_ = m;
+    if (m == MinimizeMode::Tabs || m == MinimizeMode::Full) {
+        set_minimized(m == MinimizeMode::Tabs);
+    } else {
+        set_minimized(false);
+        mode_ = m; // set_minimized(false) reads it as the full ribbon
+    }
+    const bool panels = m == MinimizeMode::PanelTitles || m == MinimizeMode::PanelButtons;
+    minimize_btn_->setToolTip(m == MinimizeMode::Full           ? QStringLiteral("Minimize to tabs.")
+                              : m == MinimizeMode::Tabs         ? QStringLiteral("Minimize to panel titles.")
+                              : m == MinimizeMode::PanelTitles  ? QStringLiteral("Minimize to panel buttons.")
+                                                                : QStringLiteral("Show the full ribbon."));
+    if (panels || was_panels) {
+        schedule_relayout();
+    }
+}
+
 void RibbonBar::set_minimized(bool on) {
+    if (!on && mode_ == MinimizeMode::Tabs) {
+        mode_ = MinimizeMode::Full;
+    } else if (on) {
+        mode_ = MinimizeMode::Tabs;
+    }
     minimized_ = on;
     pages_->setVisible(!on);
     minimize_btn_->setText(on ? QStringLiteral("\u25BE") : QStringLiteral("\u25B4"));
@@ -856,7 +893,20 @@ void RibbonBar::relayout_page(int page_index) {
         }
     } guard{page, &in_fit_};
 
+    if (mode_ == MinimizeMode::PanelTitles || mode_ == MinimizeMode::PanelButtons) {
+        // Minimized to panel titles or buttons: every panel folds, whatever the width.
+        for (RibbonPanel* p : panels) {
+            p->set_title_only(mode_ == MinimizeMode::PanelTitles);
+            p->set_state(PanelState::Collapsed);
+        }
+        if (QLayout* lay = page->layout(); lay != nullptr) {
+            lay->invalidate();
+            lay->activate();
+        }
+        return;
+    }
     for (RibbonPanel* p : panels) {
+        p->set_title_only(false);
         p->set_state(PanelState::Full); // set_state force-settles each panel in-line
     }
     if (QLayout* lay = page->layout(); lay != nullptr) {

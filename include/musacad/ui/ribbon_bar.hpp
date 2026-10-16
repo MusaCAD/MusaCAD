@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -107,6 +108,9 @@ public:
 
     void set_state(PanelState s);
     [[nodiscard]] PanelState state() const { return state_; }
+    /// Collapsed as a title only (the ribbon's Minimize to Panel Titles) rather than the
+    /// icon with the title under it.
+    void set_title_only(bool on);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override; // click-outside dismiss
@@ -134,6 +138,7 @@ private:
     QIcon repr_icon_;
     int priority_ = 50;
     PanelState state_ = PanelState::Full;
+    bool title_only_ = false;
 
     struct Btn {
         QToolButton* btn;
@@ -217,6 +222,11 @@ private:
     QStackedWidget* pages_ = nullptr;
     QToolButton* minimize_btn_ = nullptr;
     bool minimized_ = false;
+    /// AutoCAD's minimize states, the minimize button stepping through them: the full
+    /// ribbon, its tabs only, the panels as titles, the panels as buttons.
+    enum class MinimizeMode : std::uint8_t { Full, Tabs, PanelTitles, PanelButtons };
+    MinimizeMode mode_ = MinimizeMode::Full;
+    void set_mode(MinimizeMode m);
     bool just_restored_ = false; ///< a click just brought the panels back (its double-click is not a toggle)
     std::vector<QHBoxLayout*> page_layouts_; // indexed by page index
     std::vector<QScrollArea*> page_scrolls_; // indexed by page index

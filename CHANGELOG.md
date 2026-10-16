@@ -122,6 +122,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **The ribbon's minimize states** (#78) -- the button after the tabs steps through Minimize to
+  Tabs, to Panel Titles and to Panel Buttons, then the full ribbon.
 - **LAYMRG and LAYDEL** (#55, #69) -- a layer's objects moved to a target layer, or erased, after
   AutoCAD's warning; one undo step. The emptied layer stays until PURGE.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
