@@ -3184,7 +3184,8 @@ int MainWindow::open_field_dialog(std::string& code) {
                               {QStringLiteral("Subject"), QStringLiteral("Document"), Kind::Text},
                               {QStringLiteral("Title"), QStringLiteral("Document"), Kind::Text},
                               {QStringLiteral("Login"), QStringLiteral("Other"), Kind::Text}};
-    for (const auto& [name, value] : core::text::field_context().custom) {
+    const core::text::FieldContext fc = core::text::field_context();
+    for (const auto& [name, value] : fc.custom) {
         fields.push_back({QStringLiteral("CustomDP.") + QString::fromStdString(name), QStringLiteral("Document"), Kind::Text});
     }
     static const char* const kDateFormats[] = {"M/d/yyyy",  "dd/MM/yyyy", "yyyy-MM-dd", "d MMM yyyy", "MMMM d, yyyy",
