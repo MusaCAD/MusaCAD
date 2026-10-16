@@ -113,6 +113,8 @@ public:
     bool export_pdf() override;
     bool publish() override;
     bool page_setup_manager() override;
+    bool set_navbar(bool on) override;
+    void set_navbar_callback(std::function<void(bool)> cb) { navbar_callback_ = std::move(cb); }
     int insert_table_dialog(command::InsertTableSettings& io) override;
     bool edit_text_at(core::Vec2 at) override;
     void set_insert_table_callback(std::function<int(command::InsertTableSettings&)> cb) {
@@ -791,6 +793,7 @@ private:
     std::function<void()> export_pdf_callback_;
     std::function<void()> publish_callback_;
     std::function<void()> page_setup_callback_;
+    std::function<void(bool)> navbar_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;
     /// The text or table cell nearest `world` within `pad` (what a double-click edits).
     bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline);

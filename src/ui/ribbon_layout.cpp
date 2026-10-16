@@ -29,6 +29,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QToolBar>
 #include <QToolButton>
 
 #include <set>
@@ -850,6 +851,46 @@ void MainWindow::build_ribbon() {
         connect(zext, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
         small(nav, col, QStringLiteral("Pan"), "P", "pan");
     }
+    // --- Viewport Tools: the navigation bar shown or hidden (the UCS icon and the ViewCube
+    // are not there yet).
+    RibbonPanel* vtools = ribbon_->add_panel(view, QStringLiteral("Viewport Tools"), 30);
+    vtools->set_representative_icon(asset("pan"));
+    {
+        // The bar itself: Pan and the Zoom tools, at the drawing's right edge.
+        navbar_ = new QToolBar(QStringLiteral("Navigation Bar"), this);
+        navbar_->setObjectName(QStringLiteral("NavigationBar"));
+        navbar_->setOrientation(Qt::Vertical);
+        navbar_->setMovable(false);
+        navbar_->setIconSize(QSize(20, 20));
+        const auto nav_action = [&](const char* icon, const QString& tip, auto fn) {
+            QAction* a = navbar_->addAction(asset(icon), tip);
+            a->setToolTip(tip);
+            connect(a, &QAction::triggered, this, fn);
+        };
+        nav_action("pan", QStringLiteral("Pan"), [this] {
+            command_widget_->focus_input();
+            processor_->start_command("P");
+        });
+        nav_action("zoom-extents", QStringLiteral("Zoom Extents"), [this] { viewport_->zoom_extents(); });
+        nav_action("zoom", QStringLiteral("Zoom Window"), [this] {
+            command_widget_->focus_input();
+            processor_->start_macro("Z", {"W"});
+        });
+        nav_action("zoom", QStringLiteral("Zoom Previous"), [this] { processor_->start_macro("Z", {"P"}); });
+        nav_action("zoom", QStringLiteral("Zoom In"), [this] { processor_->start_macro("Z", {"2x"}); });
+        nav_action("zoom", QStringLiteral("Zoom Out"), [this] { processor_->start_macro("Z", {"0.5x"}); });
+        addToolBar(Qt::RightToolBarArea, navbar_);
+        navbar_->setVisible(false);
+        navbar_toggle_ = vtools->add_button(asset("pan"), QStringLiteral("Navigation\nBar"), RibbonTier::Primary);
+        navbar_toggle_->setObjectName(QStringLiteral("ribbon.navbar"));
+        navbar_toggle_->setCheckable(true);
+        navbar_toggle_->setToolTip(QStringLiteral("<b>NAVBAR</b><br>Show or hide the navigation bar: Pan and the Zoom tools at "
+                                                  "the drawing's right edge."));
+        connect(navbar_toggle_, &QToolButton::toggled, this, [this](bool on) { show_navbar(on); });
+        vtools->add_placeholder(asset("view"), QStringLiteral("UCS\nIcon"), RibbonTier::Secondary);
+        vtools->add_placeholder(asset("view"), QStringLiteral("View\nCube"), RibbonTier::Secondary);
+    }
+
     RibbonPanel* named = ribbon_->add_panel(view, QStringLiteral("Named Views"), 50);
     named->set_representative_icon(asset("view"));
     large_split(named, QStringLiteral("Named\nViews"), "V",

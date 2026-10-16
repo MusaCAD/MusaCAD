@@ -34,6 +34,7 @@ class QEvent;
 class QObject;
 class QCloseEvent;
 class QTabBar;
+class QToolBar;
 class QPoint;
 
 namespace musacad::command {
@@ -416,6 +417,7 @@ private:
     void export_pdf(); ///< EXPORTPDF: the sheet in front to a PDF file
     void publish();    ///< PUBLISH: the sheets chosen, one PDF page each
     void open_page_setup_manager(); ///< PAGESETUP
+    void show_navbar(bool on);      ///< NAVBAR
     int open_insert_table_dialog(command::InsertTableSettings& io); ///< TABLE (1 OK, 0 cancelled)
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
     /// false (with a message) if there's nothing to plot.
@@ -504,6 +506,8 @@ private:
     QAction* polar_action_ = nullptr;
     QAction* otrack_action_ = nullptr;
     QAction* selcycle_action_ = nullptr; ///< SC: SELECTIONCYCLING, in step with Ctrl+W and the command
+    QToolBar* navbar_ = nullptr;          ///< the navigation bar (NAVBAR): Pan and the Zoom tools
+    QToolButton* navbar_toggle_ = nullptr; ///< View > Viewport Tools > Navigation Bar
     std::string current_page_setup_; ///< the Page Setup Manager's Set Current (empty: none)
     bool polar_restore_ = false; ///< listing_shot switched POLAR on for its picture
     bool tracking_restore_ = false; ///< ... and set its own polar increment

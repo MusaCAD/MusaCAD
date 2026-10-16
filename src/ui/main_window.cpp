@@ -272,6 +272,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         [this] { QTimer::singleShot(0, this, [this] { export_pdf(); }); },
         [this] { QTimer::singleShot(0, this, [this] { publish(); }); },
         [this] { open_page_setup_manager(); });
+    viewport_->set_navbar_callback([this](bool on) { show_navbar(on); });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
@@ -3114,6 +3115,17 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     io.title = title->isChecked();
     io.header = header->isChecked();
     return 1;
+}
+
+void MainWindow::show_navbar(bool on) {
+    if (navbar_ == nullptr) {
+        return;
+    }
+    navbar_->setVisible(on);
+    if (navbar_toggle_ != nullptr && navbar_toggle_->isChecked() != on) {
+        const QSignalBlocker block(navbar_toggle_);
+        navbar_toggle_->setChecked(on);
+    }
 }
 
 void MainWindow::open_page_setup_manager() {

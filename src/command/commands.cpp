@@ -6871,6 +6871,18 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void NavBarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (!u.empty() && u != "ON" && u != "OFF") {
+        ctx.echo("Enter ON or OFF.");
+        return;
+    }
+    if (ctx.view() == nullptr || !ctx.view()->set_navbar(u != "OFF")) {
+        ctx.echo("NAVBAR needs the drawing window.");
+    }
+    done_ = true;
+}
+
 void DimStyleFileCommand::start(CommandContext& ctx) {
     if (import_) {
         ask_file(ctx);

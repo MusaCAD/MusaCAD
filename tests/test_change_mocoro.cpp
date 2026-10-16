@@ -841,3 +841,14 @@ TEST_CASE("GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT ask their value; without a win
     h.run({""});
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("NAVBAR asks ON or OFF and needs the window") {
+    H h;
+    h.run({"NAVBAR"});
+    REQUIRE(h.out.prompt == "Enter an option [ON/OFF] <ON>: ");
+    h.run({"maybe"});
+    REQUIRE(h.out.lines.back() == "Enter ON or OFF.");
+    h.run({"OFF"});
+    REQUIRE(h.out.lines.back() == "NAVBAR needs the drawing window.");
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

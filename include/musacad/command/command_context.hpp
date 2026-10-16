@@ -278,6 +278,11 @@ public:
     virtual bool publish() { return false; }
     /// PAGESETUP: the Page Setup Manager.
     virtual bool page_setup_manager() { return false; }
+    /// NAVBAR: the navigation bar shown or hidden; false where there is no window.
+    virtual bool set_navbar(bool on) {
+        (void)on;
+        return false;
+    }
     /// TABLE: the Insert Table window over `io`, the choice left in it. 1 = OK, 0 =
     /// cancelled, -1 = no window here (the command line asks).
     virtual int insert_table_dialog(InsertTableSettings& io) {

@@ -425,6 +425,14 @@ int ViewportWindow::insert_table_dialog(command::InsertTableSettings& io) {
     return insert_table_callback_ ? insert_table_callback_(io) : -1;
 }
 
+bool ViewportWindow::set_navbar(bool on) {
+    if (!navbar_callback_) {
+        return false;
+    }
+    navbar_callback_(on);
+    return true;
+}
+
 bool ViewportWindow::page_setup_manager() {
     if (!page_setup_callback_) {
         return false;

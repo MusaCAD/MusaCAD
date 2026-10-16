@@ -293,6 +293,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
     reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+    reg({"NAVBAR"}, [] { return std::make_unique<NavBarCommand>(); }, "assets/ribbon/pan.svg",
+        "Show or hide the navigation bar: Pan and the Zoom tools at the drawing's right edge.");
     reg({"DIMEX"}, [] { return std::make_unique<DimStyleFileCommand>(false); }, "",
         "Write dimension styles to a file, for another drawing to take in with DIMIM.");
     reg({"DIMIM"}, [] { return std::make_unique<DimStyleFileCommand>(true); }, "",

@@ -2529,6 +2529,23 @@ private:
     bool done_ = false;
 };
 
+/// NAVBAR: `Enter an option [ON/OFF] <ON>:` -- the navigation bar at the drawing's right
+/// edge (Pan, the Zoom tools).
+class NavBarCommand final : public ICommand {
+public:
+    std::string name() const override { return "NAVBAR"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter an option [ON/OFF] <ON>: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// TFRAMES (Express Tools): the frames of wipeouts and images off, or on again.
 class ToggleFramesUiCommand final : public ICommand {
 public:

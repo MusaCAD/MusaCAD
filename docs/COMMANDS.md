@@ -42,6 +42,7 @@ commands (Ribbon Phase A):
 | HELP (?, F1) | Open this command reference in the browser. |
 | PREVIEW (PRE) | The plot as it will come out, with the last plot's settings: zoom, pan by dragging, Plot. |
 | EXPORTPDF | The layout in front (its sheet, 1:1) or the model (the last plot's settings) saved as a PDF file. Output > Export > PDF. |
+| NAVBAR | `Enter an option [ON/OFF] <ON>:` -- the navigation bar at the drawing's right edge: Pan, Zoom Extents, Zoom Window, Zoom Previous, Zoom In and Zoom Out. View > Viewport Tools > Navigation Bar. |
 | UPDATEFIELD | `Select objects:`; the fields in them worked out again (they are each time the drawing is drawn). Insert > Data > Update Fields. |
 | PAGESETUP | The Page Setup Manager: the drawing's page setups; New... names one and sets it in the Plot window (OK in place of Plot), Modify... changes one, Delete, and Set Current makes it what PLOT starts from in model space. Output > Plot > Page Setup Manager. |
 | PUBLISH | The Publish window: the model and every layout, ticked to publish; Publish... asks for a file and plots each sheet ticked as a page of one PDF, each page its own paper size. Output > Plot > Batch Plot. |
