@@ -6974,6 +6974,297 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+namespace {
+constexpr const char* kAciNames[8] = {"", "RED", "YELLOW", "GREEN", "CYAN", "BLUE", "MAGENTA", "WHITE"};
+constexpr const char* kLinetypeNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
+constexpr const char* kLinetypeDescriptions[4] = {"Solid line", "Dashed __ __ __ __", "Center ____ _ ____ _",
+                                                  "Hidden __ __ __ __ (shorter)"};
+/// A colour as AutoCAD names it: BYLAYER, a colour name for 1..7, else r,g,b.
+std::string color_text(const core::EntityProps& p) {
+    if (p.color_by_layer()) {
+        return "BYLAYER";
+    }
+    for (long i = 1; i <= 7; ++i) {
+        if (core::io::dxf_aci_to_rgb(i) == p.color) {
+            return kAciNames[i];
+        }
+    }
+    return std::to_string(p.color.r) + "," + std::to_string(p.color.g) + "," + std::to_string(p.color.b);
+}
+std::string lineweight_text(const core::EntityProps& p) {
+    if (p.lineweight_by_layer()) {
+        return "BYLAYER";
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.2f mm", p.lineweight / 100.0);
+    return buf;
+}
+/// AutoCAD's lineweights (1/100 mm): a typed one goes to the nearest of them.
+constexpr int kStdLineweights[] = {0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211};
+int nearest_lineweight(double hundredths) {
+    int best = 0;
+    for (const int w : kStdLineweights) {
+        if (std::abs(w - hundredths) < std::abs(best - hundredths)) {
+            best = w;
+        }
+    }
+    return best;
+}
+} // namespace
+
+void CurrentPropCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr) {
+        core::EntityProps p = ctx.current_props();
+        int r = -1;
+        if (kind_ == Kind::Color) {
+            bool by_layer = p.color_by_layer();
+            core::Rgb c = p.color;
+            r = ctx.view()->select_color_dialog(by_layer, c);
+            if (r == 1) {
+                p.set_color_by_layer(by_layer);
+                p.color = c;
+            }
+        } else if (kind_ == Kind::Lineweight) {
+            bool by_layer = p.lineweight_by_layer();
+            std::uint8_t lw = p.lineweight;
+            r = ctx.view()->lineweight_dialog(by_layer, lw);
+            if (r == 1) {
+                p.set_lineweight_by_layer(by_layer);
+                p.lineweight = lw;
+            }
+        } else {
+            r = ctx.view()->linetype_manager() ? 0 : -1;
+        }
+        if (r >= 0) {
+            if (r == 1) {
+                set(ctx, p);
+            }
+            done_ = true;
+            return;
+        }
+    }
+    ask(ctx);
+}
+
+void CurrentPropCommand::ask(CommandContext& ctx) {
+    const core::EntityProps p = ctx.current_props();
+    switch (kind_) {
+    case Kind::Color:
+        step_ = Step::Value;
+        if (name_ == "CECOLOR") {
+            ctx.set_prompt("Enter new value for CECOLOR <\"" + color_text(p) + "\">: ");
+        } else {
+            ctx.set_prompt("Enter default object color [Truecolor/COlorbook] <" + color_text(p) + ">: ");
+        }
+        return;
+    case Kind::Lineweight:
+        step_ = Step::Value;
+        if (name_ == "CELWEIGHT") {
+            ctx.set_prompt("Enter new value for CELWEIGHT <" +
+                           std::to_string(p.lineweight_by_layer() ? -1 : static_cast<int>(p.lineweight)) + ">: ");
+        } else {
+            ctx.echo("Current lineweight: " + lineweight_text(p));
+            ctx.set_prompt("Enter default lineweight for new objects or [?]: ");
+        }
+        return;
+    case Kind::Linetype:
+        if (name_ == "CELTYPE") {
+            step_ = Step::LtSet;
+            ctx.set_prompt(std::string("Enter new value for CELTYPE <\"") +
+                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + "\">: ");
+        } else {
+            step_ = Step::LtOption;
+            ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+        }
+        return;
+    }
+}
+
+void CurrentPropCommand::set(CommandContext& ctx, const core::EntityProps& p) {
+    ctx.submit(core::SetCurrentPropsCommand{p});
+}
+
+void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    std::string u = upper(t);
+    if (u.size() >= 2 && u.front() == '"' && u.back() == '"') {
+        u = u.substr(1, u.size() - 2); // CECOLOR "RED" as the prompt shows it
+    }
+    core::EntityProps p = ctx.current_props();
+    switch (step_) {
+    case Step::Value:
+        if (kind_ == Kind::Color) {
+            if (t.empty()) {
+                done_ = true;
+                return;
+            }
+            if (u == "T" || u == "TRUECOLOR") {
+                step_ = Step::TrueColor;
+                ctx.set_prompt("Red, Green, Blue: ");
+                return;
+            }
+            if (u == "CO" || u == "COLORBOOK") {
+                ctx.echo("Color books are not available; use a colour number or Truecolor.");
+                return;
+            }
+            if (u == "BYLAYER") {
+                p.set_color_by_layer(true);
+            } else if (u == "BYBLOCK") {
+                ctx.echo("ByBlock is not available yet; the colour stays " + color_text(p) + ".");
+                return;
+            } else {
+                long aci = 0;
+                for (long i = 1; i <= 7; ++i) {
+                    aci = u == kAciNames[i] ? i : aci;
+                }
+                if (aci == 0) {
+                    const std::optional<double> v = parse_number(t);
+                    if (!v || *v < 1.0 || *v > 255.0 || *v != std::floor(*v)) {
+                        ctx.echo("Enter a colour number from 1 to 255, a colour name, BYLAYER or Truecolor.");
+                        return;
+                    }
+                    aci = static_cast<long>(*v);
+                }
+                p.set_color_by_layer(false);
+                p.color = core::io::dxf_aci_to_rgb(aci);
+            }
+            set(ctx, p);
+            done_ = true;
+            return;
+        }
+        // Lineweight.
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            std::string list = "BYLAYER, DEFAULT";
+            for (const int w : kStdLineweights) {
+                char buf[16];
+                std::snprintf(buf, sizeof buf, ", %.2f", w / 100.0);
+                list += buf;
+            }
+            ctx.echo(list + " (mm)");
+            return;
+        }
+        if (u == "BYLAYER" || (name_ == "CELWEIGHT" && t == "-1")) {
+            p.set_lineweight_by_layer(true);
+        } else if (u == "DEFAULT" || (name_ == "CELWEIGHT" && t == "-3")) {
+            p.set_lineweight_by_layer(false);
+            p.lineweight = 25; // LWDEFAULT
+        } else if (u == "BYBLOCK" || (name_ == "CELWEIGHT" && t == "-2")) {
+            ctx.echo("ByBlock is not available yet.");
+            return;
+        } else {
+            const std::optional<double> v = parse_number(t);
+            const double hundredths = v ? (name_ == "CELWEIGHT" ? *v : *v * 100.0) : -1.0;
+            if (!v || hundredths < 0.0 || hundredths > 211.0) {
+                ctx.echo(name_ == "CELWEIGHT" ? "Requires -1, -3 or 0 to 211." : "Requires a lineweight from 0 to 2.11 mm.");
+                return;
+            }
+            p.set_lineweight_by_layer(false);
+            p.lineweight = static_cast<std::uint8_t>(nearest_lineweight(hundredths));
+        }
+        set(ctx, p);
+        done_ = true;
+        return;
+    case Step::TrueColor: {
+        int r = -1;
+        int g = -1;
+        int b = -1;
+        if (std::sscanf(t.c_str(), "%d,%d,%d", &r, &g, &b) != 3 || r < 0 || r > 255 || g < 0 || g > 255 || b < 0 ||
+            b > 255) {
+            ctx.echo("Enter red, green and blue, 0 to 255 each.");
+            return;
+        }
+        p.set_color_by_layer(false);
+        p.color = core::Rgb{static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g), static_cast<std::uint8_t>(b)};
+        set(ctx, p);
+        done_ = true;
+        return;
+    }
+    case Step::LtOption:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            step_ = Step::LtList;
+            ctx.set_prompt("Enter linetype(s) to list <*>: ");
+            return;
+        }
+        if (u == "S" || u == "SET") {
+            step_ = Step::LtSet;
+            ctx.set_prompt(std::string("Specify linetype name or [?] <") +
+                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + ">: ");
+            return;
+        }
+        if (u == "C" || u == "CREATE" || u == "L" || u == "LOAD") {
+            ctx.echo("Continuous, Dashed, Center and Hidden are loaded; other linetypes cannot be created or loaded yet.");
+            return;
+        }
+        ctx.echo("Invalid option keyword.");
+        return;
+    case Step::LtList:
+        ctx.echo("Name           Description");
+        for (int i = 0; i < 4; ++i) {
+            std::string line = kLinetypeNames[i];
+            line.resize(15, ' ');
+            ctx.echo(line + kLinetypeDescriptions[i]);
+        }
+        step_ = Step::LtOption;
+        ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+        return;
+    case Step::LtSet: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            ctx.echo("Linetypes: BYLAYER, Continuous, Dashed, Center, Hidden");
+            return;
+        }
+        if (u == "BYLAYER") {
+            p.set_linetype_by_layer(true);
+        } else {
+            int found = -1;
+            for (int i = 0; i < 4; ++i) {
+                found = u == upper(kLinetypeNames[i]) ? i : found;
+            }
+            if (found < 0) {
+                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+                return;
+            }
+            p.set_linetype_by_layer(false);
+            p.linetype = static_cast<core::Linetype>(found);
+        }
+        set(ctx, p);
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void LwDisplayCommand::start(CommandContext& ctx) {
+    const int on = ctx.view() != nullptr ? ctx.view()->selection_setting("LWDISPLAY") : 1;
+    ctx.set_prompt(std::string("Enter new value for LWDISPLAY <") + (on != 0 ? "ON" : "OFF") + ">: ");
+}
+
+void LwDisplayCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (!u.empty()) {
+        const bool on = u == "ON" || u == "1";
+        if (!on && u != "OFF" && u != "0") {
+            ctx.echo("Enter ON or OFF.");
+            return;
+        }
+        if (ctx.view() == nullptr || !ctx.view()->set_selection_setting("LWDISPLAY", on ? 1 : 0)) {
+            ctx.submit(core::SetLineweightDisplayCommand{on});
+        }
+    }
+    done_ = true;
+}
+
 void NavBarCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(trimmed(text));
     if (!u.empty() && u != "ON" && u != "OFF") {

@@ -298,6 +298,22 @@ public:
         (void)on;
         return false;
     }
+    /// COLOR: the Select Color window over `io` (ByLayer, an index colour or a true colour;
+    /// `by_layer` and `color`). 1 = OK, 0 = cancelled, -1 = no window here.
+    virtual int select_color_dialog(bool& by_layer, core::Rgb& color) {
+        (void)by_layer;
+        (void)color;
+        return -1;
+    }
+    /// LWEIGHT: the Lineweight Settings window over the current lineweight (`by_layer`,
+    /// `lineweight` in 1/100 mm). 1 = OK, 0 = cancelled, -1 = no window here.
+    virtual int lineweight_dialog(bool& by_layer, std::uint8_t& lineweight) {
+        (void)by_layer;
+        (void)lineweight;
+        return -1;
+    }
+    /// LINETYPE: the Linetype Manager. False where there is no window.
+    virtual bool linetype_manager() { return false; }
     /// QLEADER Settings: the Leader Settings window over `io`. 1 = OK, 0 = cancelled, -1 =
     /// no window here.
     virtual int qleader_settings_dialog(QLeaderSettings& io) {
@@ -477,6 +493,9 @@ public:
     /// The drawing's table styles and the current one (TABLESTYLE), which TABLE uses.
     [[nodiscard]] virtual std::vector<core::TableStyle> table_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_table_style() const { return 0; }
+    /// The colour, linetype and lineweight new objects take (CECOLOR, CELTYPE, CELWEIGHT),
+    /// as last published; COLOR, LINETYPE and LWEIGHT change them.
+    [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).

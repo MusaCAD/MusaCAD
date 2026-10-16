@@ -53,6 +53,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **COLOR, LWEIGHT and LINETYPE** (#68) -- the colour, lineweight and linetype new objects take:
+  the Select Color window (the index colours and true colour), Lineweight Settings and the
+  Linetype Manager, -COLOR, -LWEIGHT, -LINETYPE on the command line, CECOLOR, CELWEIGHT,
+  CELTYPE and LWDISPLAY.
 - **QLEADER as AutoCAD has it** (#61) -- `Specify first leader point, or [Settings]`, the points up
   to the number set, the text width and the lines of text; Settings opens the Leader Settings
   window (annotation, width, justification, arrowhead, number of points, angle constraints).

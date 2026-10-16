@@ -1039,3 +1039,39 @@ TEST_CASE("QLEADER asks as AutoCAD does: the points up to the maximum, the text 
     REQUIRE(m->block.width == 30.0);
     REQUIRE(m->block.pos == Vec2{20, 10});
 }
+
+TEST_CASE("-COLOR, CECOLOR, -LWEIGHT, CELWEIGHT, -LINETYPE and CELTYPE set what new objects take") {
+    H h;
+    h.run({"-COLOR"});
+    REQUIRE(h.out.prompt == "Enter default object color [Truecolor/COlorbook] <BYLAYER>: ");
+    h.run({"red"});
+    const SetCurrentPropsCommand* c = h.last<SetCurrentPropsCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE_FALSE(c->current.color_by_layer());
+    REQUIRE(c->current.color == Rgb{255, 0, 0});
+    h.run({"CECOLOR", "T", "10,20,30"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.color == Rgb{10, 20, 30});
+    h.run({"COLOR", "BYLAYER"}); // no window here: the command line asks
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.color_by_layer());
+
+    h.run({"-LWEIGHT"});
+    REQUIRE(h.out.lines.back() == "Current lineweight: BYLAYER");
+    REQUIRE(h.out.prompt == "Enter default lineweight for new objects or [?]: ");
+    h.run({"0.33"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.lineweight == 35); // the nearest of AutoCAD's
+    h.run({"CELWEIGHT", "50"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.lineweight == 50);
+
+    h.run({"-LINETYPE"});
+    REQUIRE(h.out.prompt == "Enter an option [?/Create/Load/Set]: ");
+    h.run({"S"});
+    REQUIRE(h.out.prompt == "Specify linetype name or [?] <BYLAYER>: ");
+    h.run({"hidden"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.linetype == Linetype::Hidden);
+    h.run({"CELTYPE", "Dashed"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.linetype == Linetype::Dashed);
+    h.run({"LWDISPLAY"});
+    REQUIRE(h.out.prompt == "Enter new value for LWDISPLAY <ON>: ");
+    h.run({"OFF"});
+    REQUIRE_FALSE(h.last<SetLineweightDisplayCommand>()->on);
+}

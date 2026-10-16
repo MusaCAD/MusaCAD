@@ -103,6 +103,7 @@
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/external_files.hpp"
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/core/snap.hpp"
@@ -275,6 +276,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_navbar_callback([this](bool on) { show_navbar(on); });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
+    viewport_->set_property_dialogs([this](bool& by_layer, core::Rgb& c) { return open_select_color(by_layer, c); },
+                                    [this](bool& by_layer, std::uint8_t& lw) { return open_lineweight_settings(by_layer, lw); },
+                                    [this] { open_linetype_manager(); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
@@ -400,6 +404,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
         processor_->set_table_styles(viewport_->table_styles(), viewport_->current_table_style());
+        processor_->set_current_props(viewport_->current_props());
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_purge_candidates(viewport_->purge_candidates());
@@ -3122,6 +3127,239 @@ void MainWindow::open_table_style_dialog() {
     refill();
     d.dlg->resize(420, 320);
     d.dlg->show();
+}
+
+int MainWindow::open_select_color(bool& by_layer, core::Rgb& color) {
+    // AutoCAD's Select Color: the Index Color tab (the 255 colours, ByLayer) and the True
+    // Color tab; the colour chosen shows at the foot.
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("SelectColorDialog"));
+    dlg.setWindowTitle(QStringLiteral("Select Color"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* tabs = new QTabWidget(&dlg);
+    bool chosen_by_layer = by_layer;
+    core::Rgb chosen = color;
+    auto* shown = new QLabel(&dlg);
+    const auto show = [&chosen_by_layer, &chosen, shown] {
+        if (chosen_by_layer) {
+            shown->setText(QStringLiteral("Color: ByLayer"));
+            return;
+        }
+        for (long i = 1; i <= 255; ++i) {
+            if (core::io::dxf_aci_to_rgb(i) == chosen) {
+                shown->setText(QStringLiteral("Color: %1  (index %2)").arg(i).arg(i));
+                return;
+            }
+        }
+        shown->setText(QStringLiteral("Color: %1,%2,%3").arg(chosen.r).arg(chosen.g).arg(chosen.b));
+    };
+    auto* index_tab = new QWidget(tabs);
+    auto* il = new QVBoxLayout(index_tab);
+    auto* grid = new QGridLayout;
+    grid->setSpacing(1);
+    const auto swatch = [&](long aci, int row, int col) {
+        const core::Rgb c = core::io::dxf_aci_to_rgb(aci);
+        auto* b = new QToolButton(index_tab);
+        b->setFixedSize(16, 16);
+        b->setToolTip(QStringLiteral("Index color %1 (%2,%3,%4)").arg(aci).arg(c.r).arg(c.g).arg(c.b));
+        b->setStyleSheet(QStringLiteral("background: rgb(%1,%2,%3); border: 1px solid #555;").arg(c.r).arg(c.g).arg(c.b));
+        connect(b, &QToolButton::clicked, &dlg, [&chosen_by_layer, &chosen, c, show] {
+            chosen_by_layer = false;
+            chosen = c;
+            show();
+        });
+        grid->addWidget(b, row, col);
+    };
+    // 10..249 as AutoCAD lays them out (24 columns of ten), then 1..9 and the greys 250..255.
+    for (long aci = 10; aci <= 249; ++aci) {
+        swatch(aci, static_cast<int>((aci - 10) % 10), static_cast<int>((aci - 10) / 10));
+    }
+    for (long aci = 1; aci <= 9; ++aci) {
+        swatch(aci, 11, static_cast<int>(aci - 1));
+    }
+    for (long aci = 250; aci <= 255; ++aci) {
+        swatch(aci, 11, static_cast<int>(aci - 250 + 12));
+    }
+    il->addLayout(grid);
+    auto* by_layer_btn = new QPushButton(QStringLiteral("ByLayer"), index_tab);
+    connect(by_layer_btn, &QPushButton::clicked, &dlg, [&chosen_by_layer, show] {
+        chosen_by_layer = true;
+        show();
+    });
+    il->addWidget(by_layer_btn, 0, Qt::AlignLeft);
+    tabs->addTab(index_tab, QStringLiteral("Index Color"));
+    auto* true_tab = new QColorDialog(QColor(color.r, color.g, color.b), tabs);
+    true_tab->setWindowFlags(Qt::Widget);
+    true_tab->setOptions(QColorDialog::NoButtons | QColorDialog::DontUseNativeDialog);
+    connect(true_tab, &QColorDialog::currentColorChanged, &dlg, [&chosen_by_layer, &chosen, show](const QColor& q) {
+        chosen_by_layer = false;
+        chosen = core::Rgb{static_cast<std::uint8_t>(q.red()), static_cast<std::uint8_t>(q.green()),
+                           static_cast<std::uint8_t>(q.blue())};
+        show();
+    });
+    tabs->addTab(true_tab, QStringLiteral("True Color"));
+    outer->addWidget(tabs);
+    outer->addWidget(shown);
+    show();
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    by_layer = chosen_by_layer;
+    color = chosen;
+    return 1;
+}
+
+int MainWindow::open_lineweight_settings(bool& by_layer, std::uint8_t& lw) {
+    // AutoCAD's Lineweight Settings: the lineweights (ByLayer, Default and the 24 values),
+    // the units they are listed in, Display Lineweight, and the default.
+    static constexpr int kWeights[] = {0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211};
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("LineweightSettingsDialog"));
+    dlg.setWindowTitle(QStringLiteral("Lineweight Settings"));
+    auto* outer = new QHBoxLayout(&dlg);
+    auto* list = new QListWidget(&dlg);
+    auto* inches = new QRadioButton(QStringLiteral("Inches (in)"), &dlg);
+    auto* mm = new QRadioButton(QStringLiteral("Millimeters (mm)"), &dlg);
+    mm->setChecked(true);
+    const auto fill = [list, inches, by_layer, lw] {
+        const int keep = list->currentRow();
+        list->clear();
+        list->addItem(QStringLiteral("ByLayer"));
+        list->addItem(QStringLiteral("Default"));
+        for (const int w : kWeights) {
+            list->addItem(inches->isChecked() ? QStringLiteral("%1\"").arg(w / 2540.0, 0, 'f', 3)
+                                              : QStringLiteral("%1 mm").arg(w / 100.0, 0, 'f', 2));
+        }
+        int row = keep;
+        if (row < 0) {
+            row = by_layer ? 0 : 1;
+            for (std::size_t i = 0; i < std::size(kWeights); ++i) {
+                if (!by_layer && kWeights[i] == lw) {
+                    row = static_cast<int>(i) + 2;
+                }
+            }
+        }
+        list->setCurrentRow(row);
+    };
+    fill();
+    outer->addWidget(list, 1);
+    auto* side = new QVBoxLayout;
+    auto* units = new QGroupBox(QStringLiteral("Units for Listing"), &dlg);
+    auto* ul = new QVBoxLayout(units);
+    ul->addWidget(mm);
+    ul->addWidget(inches);
+    connect(inches, &QRadioButton::toggled, &dlg, [fill](bool) { fill(); });
+    side->addWidget(units);
+    auto* display = new QCheckBox(QStringLiteral("Display Lineweight"), &dlg);
+    display->setChecked(viewport_->selection_setting("LWDISPLAY") != 0);
+    side->addWidget(display);
+    side->addWidget(new QLabel(QStringLiteral("Default: 0.25 mm"), &dlg));
+    side->addStretch(1);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Vertical, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    side->addWidget(buttons);
+    outer->addLayout(side);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    if ((viewport_->selection_setting("LWDISPLAY") != 0) != display->isChecked()) {
+        viewport_->set_selection_setting("LWDISPLAY", display->isChecked() ? 1 : 0);
+    }
+    const int row = list->currentRow();
+    by_layer = row <= 0;
+    lw = row == 1 ? std::uint8_t{25} : row >= 2 ? static_cast<std::uint8_t>(kWeights[row - 2]) : lw;
+    return 1;
+}
+
+void MainWindow::open_linetype_manager() {
+    // AutoCAD's Linetype Manager, over the linetypes Musa CAD has: Current, and the global and
+    // current object linetype scales; Load says what can be loaded.
+    static constexpr const char* kNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
+    static constexpr const char* kLooks[4] = {"Solid line", "__ __ __ __ __", "____ _ ____ _ ____", "_ _ _ _ _ _"};
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setObjectName(QStringLiteral("LinetypeManager"));
+    dlg->setWindowTitle(QStringLiteral("Linetype Manager"));
+    auto* outer = new QVBoxLayout(dlg);
+    auto* table = new QTableWidget(5, 2, dlg);
+    table->setHorizontalHeaderLabels({QStringLiteral("Linetype"), QStringLiteral("Appearance / Description")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->verticalHeader()->setVisible(false);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->setItem(0, 0, new QTableWidgetItem(QStringLiteral("ByLayer")));
+    table->setItem(0, 1, new QTableWidgetItem(QString()));
+    for (int i = 0; i < 4; ++i) {
+        table->setItem(i + 1, 0, new QTableWidgetItem(QString::fromLatin1(kNames[i])));
+        table->setItem(i + 1, 1, new QTableWidgetItem(QString::fromLatin1(kLooks[i])));
+    }
+    auto* current = new QLabel(dlg);
+    const auto show_current = [this, current] {
+        const core::EntityProps p = viewport_->current_props();
+        current->setText(QStringLiteral("Current Linetype: %1")
+                             .arg(p.linetype_by_layer() ? QStringLiteral("ByLayer")
+                                                        : QString::fromLatin1(kNames[static_cast<int>(p.linetype) & 3])));
+    };
+    show_current();
+    auto* buttons_row = new QHBoxLayout;
+    auto* load = new QPushButton(QStringLiteral("Load..."), dlg);
+    auto* set_current = new QPushButton(QStringLiteral("Current"), dlg);
+    buttons_row->addWidget(current, 1);
+    buttons_row->addWidget(load);
+    buttons_row->addWidget(set_current);
+    outer->addLayout(buttons_row);
+    outer->addWidget(table, 1);
+    auto* details = new QGroupBox(QStringLiteral("Details"), dlg);
+    auto* df = new QFormLayout(details);
+    auto* global = new QDoubleSpinBox(details);
+    global->setDecimals(4);
+    global->setRange(0.0001, 1e6);
+    global->setValue(viewport_->ltscale());
+    auto* object = new QDoubleSpinBox(details);
+    object->setDecimals(4);
+    object->setRange(0.0001, 1e6);
+    object->setValue(viewport_->current_celtscale());
+    df->addRow(QStringLiteral("Global scale factor:"), global);
+    df->addRow(QStringLiteral("Current object scale:"), object);
+    outer->addWidget(details);
+    connect(load, &QPushButton::clicked, dlg, [dlg] {
+        QMessageBox::information(dlg, QStringLiteral("Load Linetypes"),
+                                 QStringLiteral("Continuous, Dashed, Center and Hidden are loaded. Loading other "
+                                                "linetypes from a .lin file is not available yet."));
+    });
+    connect(set_current, &QPushButton::clicked, dlg, [this, table, show_current] {
+        const int row = table->currentRow();
+        if (row < 0) {
+            return;
+        }
+        core::EntityProps p = viewport_->current_props();
+        p.set_linetype_by_layer(row == 0);
+        if (row > 0) {
+            p.linetype = static_cast<core::Linetype>(row - 1);
+        }
+        engine_->submit(core::SetCurrentPropsCommand{p});
+        QTimer::singleShot(250, this, show_current);
+    });
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dlg);
+    connect(buttons, &QDialogButtonBox::accepted, dlg, [this, dlg, global, object] {
+        if (std::abs(global->value() - viewport_->ltscale()) > 1e-12) {
+            engine_->submit(core::SetLtscaleCommand{global->value()});
+        }
+        if (std::abs(object->value() - viewport_->current_celtscale()) > 1e-12) {
+            engine_->submit(core::SetCeltscaleCommand{object->value()});
+        }
+        dlg->accept();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    dlg->resize(480, 360);
+    dlg->show();
 }
 
 int MainWindow::open_qleader_settings(command::QLeaderSettings& io) {

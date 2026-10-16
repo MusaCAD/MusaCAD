@@ -117,6 +117,15 @@ public:
     void set_navbar_callback(std::function<void(bool)> cb) { navbar_callback_ = std::move(cb); }
     int insert_table_dialog(command::InsertTableSettings& io) override;
     int qleader_settings_dialog(command::QLeaderSettings& io) override;
+    int select_color_dialog(bool& by_layer, core::Rgb& color) override;
+    int lineweight_dialog(bool& by_layer, std::uint8_t& lineweight) override;
+    bool linetype_manager() override;
+    void set_property_dialogs(std::function<int(bool&, core::Rgb&)> color, std::function<int(bool&, std::uint8_t&)> lineweight,
+                              std::function<void()> linetypes) {
+        color_dialog_callback_ = std::move(color);
+        lineweight_dialog_callback_ = std::move(lineweight);
+        linetype_manager_callback_ = std::move(linetypes);
+    }
     void set_qleader_settings_callback(std::function<int(command::QLeaderSettings&)> cb) {
         qleader_settings_callback_ = std::move(cb);
     }
@@ -779,6 +788,7 @@ private:
     std::atomic<int> gripcolor_{0};
     std::atomic<int> griphot_{0};
     std::atomic<int> transparencydisplay_{1}; ///< TRANSPARENCYDISPLAY / TPY: layer transparency shown
+    std::atomic<int> lwdisplay_{1};           ///< LWDISPLAY as the drawing has it (from the snapshot)
     std::uint64_t pick_candidates_seen_ = 0;
     std::vector<core::RenderSnapshot::PickCandidate> pick_candidates_; ///< under layers_mutex_
     core::RenderSnapshot::PurgeCandidates purge_;                      ///< under layers_mutex_
@@ -801,6 +811,9 @@ private:
     std::function<void(bool)> navbar_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;
     std::function<int(command::QLeaderSettings&)> qleader_settings_callback_;
+    std::function<int(bool&, core::Rgb&)> color_dialog_callback_;
+    std::function<int(bool&, std::uint8_t&)> lineweight_dialog_callback_;
+    std::function<void()> linetype_manager_callback_;
     /// The text or table cell nearest `world` within `pad` (what a double-click edits).
     bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline);
     std::function<void()> view_manager_callback_;

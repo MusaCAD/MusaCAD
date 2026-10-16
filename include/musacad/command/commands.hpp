@@ -2558,6 +2558,53 @@ private:
     bool done_ = false;
 };
 
+/// The current colour, linetype or lineweight -- what new objects take. COLOR (COL) opens
+/// the Select Color window; -COLOR and CECOLOR ask `Enter default object color
+/// [Truecolor/COlorbook] <BYLAYER>:` (BYLAYER, a colour number 1 to 255 or a name, or
+/// Truecolor and `Red, Green, Blue:`). LWEIGHT (LW) opens Lineweight Settings; -LWEIGHT asks
+/// `Enter default lineweight for new objects or [?]:` (mm, BYLAYER or DEFAULT), CELWEIGHT
+/// its value (-1 ByLayer, -3 Default, or 1/100 mm). LINETYPE (LT) opens the Linetype
+/// Manager; -LINETYPE asks `Enter an option [?/Create/Load/Set]:`, CELTYPE the name.
+class CurrentPropCommand final : public ICommand {
+public:
+    enum class Kind : std::uint8_t { Color, Linetype, Lineweight };
+    CurrentPropCommand(Kind kind, std::string name, bool dialog) : kind_(kind), name_(std::move(name)), dialog_(dialog) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Value, TrueColor, LtOption, LtList, LtSet };
+    void ask(CommandContext& ctx);
+    void set(CommandContext& ctx, const core::EntityProps& p);
+    Kind kind_;
+    std::string name_;
+    bool dialog_;
+    Step step_ = Step::Value;
+    bool done_ = false;
+};
+
+/// LWDISPLAY: `Enter new value for LWDISPLAY <OFF>:` -- ON or OFF, as LWT on the status bar.
+class LwDisplayCommand final : public ICommand {
+public:
+    std::string name() const override { return "LWDISPLAY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// NAVBAR: `Enter an option [ON/OFF] <ON>:` -- the navigation bar at the drawing's right
 /// edge (Pan, the Zoom tools).
 class NavBarCommand final : public ICommand {

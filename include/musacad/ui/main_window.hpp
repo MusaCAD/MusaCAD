@@ -421,6 +421,9 @@ private:
     void show_navbar(bool on);      ///< NAVBAR
     int open_insert_table_dialog(command::InsertTableSettings& io); ///< TABLE (1 OK, 0 cancelled)
     int open_qleader_settings(command::QLeaderSettings& io);        ///< QLEADER Settings (1 OK, 0 cancelled)
+    int open_select_color(bool& by_layer, core::Rgb& color);         ///< COLOR: Select Color (1 OK, 0 cancelled)
+    int open_lineweight_settings(bool& by_layer, std::uint8_t& lw);  ///< LWEIGHT (1 OK, 0 cancelled)
+    void open_linetype_manager();                                    ///< LINETYPE
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
     /// false (with a message) if there's nothing to plot.
     [[nodiscard]] bool prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax);

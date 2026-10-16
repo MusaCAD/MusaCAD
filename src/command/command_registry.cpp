@@ -297,6 +297,27 @@ CommandRegistry CommandRegistry::make_default() {
         "The isometric plane: Left, Top or Right (F5 cycles them).");
     reg({"ISODRAFT"}, [] { return std::make_unique<IsoPlaneCommand>(true); }, "",
         "Isometric drafting on, in a plane (Left, Top, Right), or off (Orthographic).");
+    using CPK = CurrentPropCommand::Kind;
+    reg({"COL", "COLOR", "COLOUR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "COLOR", true); },
+        "assets/ribbon/color-swatch.svg", "The colour new objects take: the Select Color window.");
+    reg({"-COLOR", "-COL", "-COLOUR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "-COLOR", false); }, "",
+        "The colour new objects take, on the command line.");
+    reg({"CECOLOR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "CECOLOR", false); }, "",
+        "The colour new objects take: BYLAYER, a colour number or name.");
+    reg({"LW", "LWEIGHT", "LINEWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "LWEIGHT", true); },
+        "assets/ribbon/lwt.svg", "The lineweight new objects take, and whether lineweights show: Lineweight Settings.");
+    reg({"-LWEIGHT", "-LW"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "-LWEIGHT", false); }, "",
+        "The lineweight new objects take, on the command line.");
+    reg({"CELWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "CELWEIGHT", false); }, "",
+        "The lineweight new objects take: -1 ByLayer, -3 Default, or hundredths of a millimetre.");
+    reg({"LT", "LINETYPE", "LTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "LINETYPE", true); }, "",
+        "The Linetype Manager: the linetypes, the current one, and the linetype scales.");
+    reg({"-LINETYPE", "-LT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "-LINETYPE", false); }, "",
+        "Linetypes on the command line: ? lists them, Set makes one current.");
+    reg({"CELTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "CELTYPE", false); }, "",
+        "The linetype new objects take.");
+    reg({"LWDISPLAY"}, [] { return std::make_unique<LwDisplayCommand>(); }, "",
+        "Lineweights shown on screen or not (LWT on the status bar).");
     reg({"NAVBAR"}, [] { return std::make_unique<NavBarCommand>(); }, "assets/ribbon/pan.svg",
         "Show or hide the navigation bar: Pan and the Zoom tools at the drawing's right edge.");
     reg({"DIMEX"}, [] { return std::make_unique<DimStyleFileCommand>(false); }, "",

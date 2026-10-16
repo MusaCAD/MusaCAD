@@ -286,6 +286,7 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
     if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
     if (name == "TRANSPARENCYDISPLAY") return transparencydisplay_.load();
+    if (name == "LWDISPLAY") return lwdisplay_.load();
     return 0;
 }
 
@@ -317,6 +318,9 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         griphot_ = value;
     } else if (name == "TRANSPARENCYDISPLAY" && in(0, 1)) {
         transparencydisplay_ = value;
+    } else if (name == "LWDISPLAY" && in(0, 1)) {
+        lwdisplay_ = value;
+        engine_.submit(core::SetLineweightDisplayCommand{value != 0});
     } else {
         return false;
     }
@@ -421,6 +425,22 @@ bool ViewportWindow::edit_text_at(core::Vec2 at) {
         return false;
     }
     text_edit_callback_(TextEditRequest{at, pad, content, multiline});
+    return true;
+}
+
+int ViewportWindow::select_color_dialog(bool& by_layer, core::Rgb& color) {
+    return color_dialog_callback_ ? color_dialog_callback_(by_layer, color) : -1;
+}
+
+int ViewportWindow::lineweight_dialog(bool& by_layer, std::uint8_t& lineweight) {
+    return lineweight_dialog_callback_ ? lineweight_dialog_callback_(by_layer, lineweight) : -1;
+}
+
+bool ViewportWindow::linetype_manager() {
+    if (!linetype_manager_callback_) {
+        return false;
+    }
+    linetype_manager_callback_();
     return true;
 }
 
@@ -1603,6 +1623,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             limits_on_ = snap.limits_on;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
+            lwdisplay_ = snap.lineweight_display ? 1 : 0;
             dim_styles_ = snap.dimstyles;
             current_dim_style_ = snap.current_dimstyle;
             table_styles_ = snap.table_styles;
