@@ -3153,9 +3153,9 @@ private:
 };
 
 /// REVCLOUD (AutoCAD). Arc length, Object (with Reverse direction), Rectangular,
-/// Polygonal, and Freehand as a clicked path (the cursor is not tracked while a button
-/// is held here, so the path is picked point by point and Enter closes it). Style
-/// accepts Normal only; Modify is not offered. The lobes come from
+/// Polygonal, and Freehand: a press and drag draws the cloud along the cursor (closed when
+/// it ends back near its start), or the path is clicked point by point and Enter closes
+/// it. Style: Normal or Calligraphy; Modify is not offered. The lobes come from
 /// core::polyline_ops::revcloud_from_path, so an Object conversion and a drawn cloud
 /// produce identical arcs.
 class RevcloudCommand final : public ICommand {
@@ -3165,6 +3165,9 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// Freehand: a press and drag from the first point draws the cloud along the cursor.
+    bool wants_freehand() const override { return !done_ && s_type_ == 2 && state_ == State::Main; }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
 
 private:
     enum class State {

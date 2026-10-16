@@ -8387,6 +8387,27 @@ void RevcloudCommand::emit_cloud(CommandContext& ctx, const std::vector<core::Ve
     done_ = true;
 }
 
+void RevcloudCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) {
+    // Thin the drag to points an arc apart, then cloud it: closed when it ends back near
+    // where it started (within two arc lengths), open otherwise.
+    const double step = arc_len();
+    std::vector<core::Vec2> pts;
+    for (const core::Vec2& p : path) {
+        if (pts.empty() || core::distance(pts.back(), p) >= step) {
+            pts.push_back(p);
+        }
+    }
+    if (pts.size() < 2) {
+        ctx.echo("Drag further: the path is shorter than an arc.");
+        return;
+    }
+    const bool closed = pts.size() >= 3 && core::distance(pts.front(), path.back()) <= 2.0 * step;
+    if (!closed && core::distance(pts.back(), path.back()) > 1e-9) {
+        pts.push_back(path.back());
+    }
+    emit_cloud(ctx, pts, closed);
+}
+
 void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);

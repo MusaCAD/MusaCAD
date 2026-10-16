@@ -714,3 +714,28 @@ TEST_CASE("EXPORTPDF, PUBLISH and PAGESETUP say so where there is no window; a p
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "No page setup is called \"A3 sheet\"."; }));
     engine.stop();
 }
+
+TEST_CASE("REVCLOUD Freehand: a drag draws the cloud, closed when it comes back to its start") {
+    H h;
+    h.run({"REVCLOUD", "F"});
+    REQUIRE(h.proc.wants_freehand());
+    std::vector<Vec2> loop;
+    for (int i = 0; i <= 64; ++i) {
+        const double a = 2.0 * 3.141592653589793 * i / 64.0;
+        loop.push_back({10.0 * std::cos(a), 10.0 * std::sin(a)});
+    }
+    h.proc.submit_freehand(loop);
+    const AddPolylineCommand* c = h.last<AddPolylineCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->closed);
+    REQUIRE(c->points.size() > 20);
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    h.run({"REVCLOUD"});
+    std::vector<Vec2> line;
+    for (int i = 0; i <= 40; ++i) {
+        line.push_back({static_cast<double>(i), 0.0});
+    }
+    h.proc.submit_freehand(line);
+    REQUIRE_FALSE(h.last<AddPolylineCommand>()->closed);
+}

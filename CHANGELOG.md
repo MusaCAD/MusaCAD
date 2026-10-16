@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **REVCLOUD Freehand follows a drag** (#40) -- press at the start point and drag: the cloud
+  runs along the cursor, closed when the drag comes back to its start, open otherwise.
 - **The Page Setup Manager** (#74) -- PAGESETUP names, changes and deletes page setups in the
   Plot window's settings and sets the one PLOT starts from in model space.
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
