@@ -435,6 +435,7 @@ Document document_from_store(const GeometryStore& store) {
         bd.name = b->name;
         bd.base = b->base;
         bd.xref_path = b->xref_path;
+        bd.units = b->units;
         for (const LineData& l : b->content.lines) {
             bd.lines.push_back(DocLine{l.a, l.b, l.props});
         }
@@ -532,6 +533,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
             cb.name = bd.name;
             cb.base = bd.base;
             cb.xref_path = bd.xref_path;
+            cb.units = bd.units;
             for (const DocLine& l : bd.lines) {
                 cb.content.lines.push_back(LineData{l.a, l.b, l.props});
             }

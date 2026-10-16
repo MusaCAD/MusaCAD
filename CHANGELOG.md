@@ -101,6 +101,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **The UCS icon** (#72) -- X and Y arrows at the drawing's origin, or in the lower-left corner
   when the origin is off screen; the triangle in paper space. **UCSICON**
   (`[ON/OFF/All/Noorigin/ORigin]`) and View > Viewport Tools > UCS Icon turn it off and on.
+- **Block units** (#81) -- a block keeps the units it was made in (the drawing's, or those of
+  the drawing a file insert came from), and INSERT scales it to the drawing's: a block in
+  millimetres comes into a drawing in inches at 1/25.4. Kept in the drawing and in DXF (the
+  block record's insertion units).
 - **BASE, and drawings inserted as blocks** (#75) -- BASE (`Enter base point <0.0000,0.0000,0.0000>:`)
   sets the drawing's insertion base point (INSBASE), kept in the drawing and in DXF. At
   INSERT's block name, `~` chooses a drawing file and a path names one: it comes in as a

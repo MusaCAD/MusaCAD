@@ -271,6 +271,7 @@ struct DocBlockDef {
     std::vector<DocAttDef> attdefs; ///< attribute definitions (v28)
     std::vector<DocInsert> inserts; ///< nested block references
     std::string xref_path;          ///< XREF source drawing (v32); "" for an ordinary block
+    std::uint8_t units = 0;         ///< v40: the block unit (an INSUNITS code; 0 unitless)
     friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
 };
 

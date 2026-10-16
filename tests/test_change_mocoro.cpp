@@ -1730,3 +1730,43 @@ TEST_CASE("DIMBREAK asks for the dimension, then the object or Auto, Manual or R
     h.run({"DIMBREAK", "30,20", "R"});
     REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Remove);
 }
+
+TEST_CASE("A block's units scale its inserts, and travel with it in the drawing and in DXF") {
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "MM_PART";
+    b.units = 4; // millimetres
+    b.lines.push_back(io::DocLine{{0, 0}, {25.4, 0}, {}});
+    doc.block_defs.push_back(b);
+    const std::string native = io::serialize_native(doc);
+    io::Document back;
+    REQUIRE(io::parse_native(native, back).ok);
+    REQUIRE(back.block_defs.size() == 1);
+    REQUIRE(back.block_defs[0].units == 4);
+    const std::string dxf = (std::filesystem::temp_directory_path() / "musacad_block_units.dxf").string();
+    REQUIRE(io::save_dxf(doc, dxf).ok);
+    io::Document dback;
+    REQUIRE(io::load_dxf(dxf, dback).ok);
+    std::filesystem::remove(dxf);
+    const auto it = std::find_if(dback.block_defs.begin(), dback.block_defs.end(),
+                                 [](const io::DocBlockDef& d) { return d.name == "MM_PART"; });
+    REQUIRE(it != dback.block_defs.end());
+    REQUIRE(it->units == 4);
+
+    // Into a drawing in inches: the millimetre block comes in at 1/25.4.
+    GeometryEngine engine;
+    engine.start();
+    io::Document host;
+    host.display_units.insunits = 1; // inches
+    host.block_defs.push_back(b);
+    const std::string hp = (std::filesystem::temp_directory_path() / "musacad_block_units_host.musa").string();
+    REQUIRE(io::save_native(host, hp).ok);
+    engine.submit(OpenDocumentCommand{hp});
+    engine.submit(InsertBlockCommand{"MM_PART", {0, 0}, 2.0, 2.0, 0.0, 1, {}});
+    const io::Document out = dump(engine, "musacad_block_units_out.musa");
+    REQUIRE(out.inserts.size() == 1);
+    REQUIRE(out.inserts[0].scale_x == Approx(2.0 / 25.4));
+    REQUIRE(out.inserts[0].scale_y == Approx(2.0 / 25.4));
+    engine.stop();
+    std::filesystem::remove(hp);
+}

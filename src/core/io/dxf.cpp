@@ -629,17 +629,18 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     code(s, 0, "TABLE");
     code(s, 2, "BLOCK_RECORD");
     code_i(s, 70, static_cast<long>(doc.block_defs.size() + 2));
-    const auto block_record = [&](const std::string& name) {
+    const auto block_record = [&](const std::string& name, std::uint8_t units) {
         code(s, 0, "BLOCK_RECORD");
         emit_handle(s);
         code(s, 100, "AcDbSymbolTableRecord");
         code(s, 100, "AcDbBlockTableRecord");
         code(s, 2, name);
+        code_i(s, 70, units); // the block's insertion units
     };
-    block_record("*Model_Space");
-    block_record("*Paper_Space");
+    block_record("*Model_Space", 0);
+    block_record("*Paper_Space", 0);
     for (const DocBlockDef& b : doc.block_defs) {
-        block_record(b.name);
+        block_record(b.name, b.units);
     }
     code(s, 0, "ENDTAB");
     code(s, 0, "ENDSEC");
@@ -2623,6 +2624,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     &block.attdefs, nullptr}; // hatches / images not held inside block definitions
     bool in_block = false;
     std::string current_dimstyle_name; // $DIMSTYLE
+    std::map<std::string, std::uint8_t> block_units; // BLOCK_RECORD 70, by block name
 
     while (i < n) {
         const Pair& p = pairs[i];
@@ -2725,6 +2727,24 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 t.center = {getd(body, 12), getd(body, 22)};
                 t.height = getd(body, 40, 0.0);
                 doc.vports.push_back(t);
+            }
+            continue;
+        }
+        if (section == "TABLES" && p.value == "BLOCK_RECORD") {
+            // A block's insertion units (70), matched to its definition by name below.
+            std::string name;
+            long units = 0;
+            ++i;
+            while (i < n && pairs[i].code != 0) {
+                if (pairs[i].code == 2) {
+                    name = pairs[i].value;
+                } else if (pairs[i].code == 70) {
+                    units = to_l(pairs[i].value);
+                }
+                ++i;
+            }
+            if (!name.empty() && units > 0 && units <= 24) {
+                block_units[name] = static_cast<std::uint8_t>(units);
             }
             continue;
         }
@@ -2911,6 +2931,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     for (std::size_t k = 0; k < doc.dimstyles.size(); ++k) {
         if (!current_dimstyle_name.empty() && doc.dimstyles[k].name == current_dimstyle_name) {
             doc.current_dimstyle = static_cast<std::uint16_t>(k);
+        }
+    }
+    for (DocBlockDef& b : doc.block_defs) {
+        if (const auto it = block_units.find(b.name); it != block_units.end()) {
+            b.units = it->second;
         }
     }
     std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities on " +

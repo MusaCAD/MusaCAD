@@ -6883,6 +6883,7 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
     BlockDef def;
     def.name = c.name;
     def.base = c.base;
+    def.units = store_.units().insunits; // the Block unit: the drawing's
     std::vector<EntityHandle> taken;
     int skipped = 0;
     collect_block_content(selection_, def.content, taken, skipped);
@@ -8024,6 +8025,9 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     def.name = name;
     def.base = doc.insbase; // the drawing's INSBASE (BASE), as AutoCAD inserts and attaches it
     def.xref_path = xref_path;
+    if (bind) {
+        def.units = doc.display_units.insunits; // inserted at this drawing's units (an xref is scaled as attached)
+    }
     std::vector<EntityHandle> taken;
     int skipped = 0;
     collect_block_content_from(tmp, block_material(tmp), def.content, taken, skipped);
@@ -14406,7 +14410,10 @@ void GeometryEngine::apply_one(const Command& command) {
                 if (bi == 0xFFFF) {
                     report("Block \"" + c.name + "\" not found.");
                 } else {
-                    AddInsertCommand ins{bi, c.pos, c.scale_x, c.scale_y, c.rotation, 0, {}, {}};
+                    // The block's units to the drawing's (a block in millimetres into a drawing in
+                    // inches comes in at 1/25.4), as AutoCAD's Block unit scales it.
+                    const double f = units::insunits_factor(store_.block(bi)->units, store_.units().insunits);
+                    AddInsertCommand ins{bi, c.pos, c.scale_x * f, c.scale_y * f, c.rotation, 0, {}, {}};
                     ins.attribs = c.attribs;
                     const Command add = ins;
                     const EntityHandle nh = create_indexed(add);

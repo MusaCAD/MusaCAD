@@ -495,6 +495,9 @@ struct BlockDef {
     /// folder when inside it, else absolute); "" for an ordinary block. The content is
     /// the last read copy, re-read on open and on XREF Reload.
     std::string xref_path;
+    /// The block's units (an INSUNITS code; 0 unitless): an insert of it is scaled from
+    /// them to the drawing's, as AutoCAD's Block unit scales it.
+    std::uint8_t units = 0;
 };
 
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own

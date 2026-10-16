@@ -1132,6 +1132,10 @@ std::string serialize_native(const Document& doc) {
     for (const DocBlockDef& b : doc.block_defs) {
         s += "BLOCKDEF ";
         append_vec(s, b.base);
+        if (b.units != 0) {
+            s += ' '; // v40: the block unit
+            append_uint(s, b.units);
+        }
         s += '\n';
         s += escape(b.name);
         s += '\n';
@@ -3011,6 +3015,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             cur_block = DocBlockDef{};
             cur_block.name = unescape(name);
             cur_block.base = {vals[0], vals[1]};
+            if (std::uint64_t units = 0; tok.size() >= 4 && to_uint(tok[3], units)) {
+                cur_block.units = static_cast<std::uint8_t>(std::min<std::uint64_t>(units, 24));
+            }
             in_block = true;
             target_block();
         } else if (key == "XREFPATH") {
