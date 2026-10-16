@@ -29,6 +29,15 @@ struct TableStyle {
     friend bool operator==(const TableStyle&, const TableStyle&) = default;
 };
 
+/// DATALINK: a named link from tables to an outside file of data -- a CSV file (comma-
+/// separated values, as a spreadsheet saves them). A linked table takes the file's
+/// rows and columns; DATALINKUPDATE reads it again, or writes the table back to it.
+struct DataLink {
+    std::string name;
+    std::string path;
+    friend bool operator==(const DataLink&, const DataLink&) = default;
+};
+
 /// How a cell's text sits in its rectangle.
 enum class CellAlign : std::uint8_t { Left = 0, Center = 1, Right = 2 };
 

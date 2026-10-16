@@ -1725,6 +1725,32 @@ struct AddTableCommand {
     bool has_header = false;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::uint16_t link = 0xFFFF; ///< its data link (DATALINK), 0xFFFF: none
+};
+
+/// DATALINK: a data link `name` to the CSV file `path` made or changed; `remove` takes
+/// it away (the tables linked to it keep their contents, unlinked).
+struct SetDataLinkCommand {
+    std::string name;
+    std::string path;
+    bool remove = false;
+};
+/// A table from the data link `link`: the file's rows and columns, its top-left corner at
+/// `pos`, in the current table style; linked, so DATALINKUPDATE can read it again.
+struct InsertLinkedTableCommand {
+    std::string link;
+    Vec2 pos{};
+    std::uint64_t group = 0;
+    std::uint16_t style = 0xFFFF; ///< the table style; 0xFFFF: the current one
+};
+/// DATALINKUPDATE: the linked tables read again from their files (`write`: the tables
+/// written back to them). Which tables: the selection (`selection`), those linked to
+/// `link`, or every linked table (neither).
+struct DataLinkUpdateCommand {
+    bool write = false;
+    bool selection = false;
+    std::string link;
+    std::uint64_t group = 0;
 };
 
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
@@ -2161,6 +2187,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

@@ -324,6 +324,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
             return true;
         }
+        if (action == "DATALINK") {
+            QTimer::singleShot(0, this, &MainWindow::open_data_link_manager);
+            return true;
+        }
         if (action == "TOOLPALETTES" || action == "TOOLPALETTESCLOSE") {
             show_tool_palettes(action == "TOOLPALETTES");
             return true;
@@ -454,6 +458,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const auto [lo, hi, on] = viewport_->limits();
             processor_->set_limits(lo, hi, on);
             processor_->set_insbase(viewport_->insbase());
+            std::vector<std::string> links;
+            for (const core::DataLink& dl : viewport_->data_links()) {
+                if (!dl.name.empty()) {
+                    links.push_back(dl.name);
+                }
+            }
+            processor_->set_data_link_names(std::move(links));
         }
         {
             std::vector<core::TextStyle> tstyles = viewport_->text_styles();
@@ -4025,6 +4036,35 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     }
     style->setCurrentIndex(std::min<int>(io.style, style->count() - 1));
     form->addRow(QStringLiteral("Table style:"), style);
+    // Insert options: an empty table, or one from a data link (its file's rows and columns).
+    auto* from_empty = new QRadioButton(QStringLiteral("Start from empty table"), &dlg);
+    auto* from_link = new QRadioButton(QStringLiteral("From a data link"), &dlg);
+    from_empty->setChecked(true);
+    auto* link = new QComboBox(&dlg);
+    link->setObjectName(QStringLiteral("InsertTableLink"));
+    for (const core::DataLink& dl : viewport_->data_links()) {
+        if (!dl.name.empty()) {
+            link->addItem(QString::fromStdString(dl.name));
+        }
+    }
+    auto* manage = new QPushButton(QStringLiteral("Data Links..."), &dlg);
+    connect(manage, &QPushButton::clicked, &dlg, [this, link] {
+        open_data_link_manager();
+        const QString keep = link->currentText();
+        link->clear();
+        for (const core::DataLink& dl : pending_data_links_) {
+            if (!dl.name.empty()) {
+                link->addItem(QString::fromStdString(dl.name));
+            }
+        }
+        link->setCurrentText(keep);
+    });
+    auto* link_row = new QHBoxLayout;
+    link_row->addWidget(link, 1);
+    link_row->addWidget(manage);
+    form->addRow(QStringLiteral("Insert options:"), from_empty);
+    form->addRow(QString(), from_link);
+    form->addRow(QString(), link_row);
     auto* cols = new QSpinBox(&dlg);
     cols->setRange(1, 500);
     cols->setValue(io.cols);
@@ -4049,6 +4089,15 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     header->setChecked(io.header);
     form->addRow(title);
     form->addRow(header);
+    const auto sync_link = [=] {
+        const bool linked = from_link->isChecked();
+        link->setEnabled(linked);
+        for (QWidget* w : std::initializer_list<QWidget*>{cols, col_w, rows, row_h, title, header}) {
+            w->setEnabled(!linked); // the file decides the grid
+        }
+    };
+    connect(from_link, &QRadioButton::toggled, &dlg, sync_link);
+    sync_link();
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -4063,7 +4112,126 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     io.row_lines = row_h->value();
     io.title = title->isChecked();
     io.header = header->isChecked();
+    io.link = from_link->isChecked() ? link->currentText().toStdString() : std::string();
     return 1;
+}
+
+// DATALINK: the Data Link Manager -- the drawing's links to CSV files (a spreadsheet saves
+// one with Save As > CSV): a new one, another file for one, one deleted. Tables take a
+// link through Insert Table's "From a data link"; DATALINKUPDATE reads them again.
+void MainWindow::open_data_link_manager() {
+    pending_data_links_ = viewport_->data_links();
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("DataLinkManager"));
+    dlg.setWindowTitle(QStringLiteral("Data Link Manager"));
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->addWidget(new QLabel(QStringLiteral("CSV links:"), &dlg));
+    auto* list = new QListWidget(&dlg);
+    list->setObjectName(QStringLiteral("DataLinkList"));
+    lay->addWidget(list, 1);
+    auto* detail = new QLabel(&dlg);
+    detail->setWordWrap(true);
+    lay->addWidget(detail);
+    const auto refill = [&] {
+        const QString keep = list->currentItem() != nullptr ? list->currentItem()->text() : QString();
+        list->clear();
+        for (const core::DataLink& dl : pending_data_links_) {
+            if (!dl.name.empty()) {
+                auto* it = new QListWidgetItem(QString::fromStdString(dl.name), list);
+                it->setToolTip(QString::fromStdString(dl.path));
+            }
+        }
+        const QList<QListWidgetItem*> found = list->findItems(keep, Qt::MatchExactly);
+        if (!found.isEmpty()) {
+            list->setCurrentItem(found.front());
+        } else if (list->count() > 0) {
+            list->setCurrentRow(0);
+        }
+    };
+    const auto current = [&]() -> core::DataLink* {
+        if (list->currentItem() == nullptr) {
+            return nullptr;
+        }
+        for (core::DataLink& dl : pending_data_links_) {
+            if (QString::fromStdString(dl.name) == list->currentItem()->text()) {
+                return &dl;
+            }
+        }
+        return nullptr;
+    };
+    connect(list, &QListWidget::currentRowChanged, &dlg, [&] {
+        const core::DataLink* dl = current();
+        detail->setText(dl != nullptr ? QStringLiteral("File: %1").arg(QDir::toNativeSeparators(QString::fromStdString(dl->path)))
+                                      : QString());
+    });
+    const auto pick_file = [&dlg](const QString& start) {
+        return QFileDialog::getOpenFileName(&dlg, QStringLiteral("Data File"), start,
+                                            QStringLiteral("CSV files (*.csv);;Text files (*.txt);;All files (*)"));
+    };
+    auto* row = new QHBoxLayout;
+    auto* add = new QPushButton(QStringLiteral("New CSV Link..."), &dlg);
+    auto* change = new QPushButton(QStringLiteral("Change File..."), &dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), &dlg);
+    row->addWidget(add);
+    row->addWidget(change);
+    row->addWidget(remove);
+    lay->addLayout(row);
+    connect(add, &QPushButton::clicked, &dlg, [&] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(&dlg, QStringLiteral("New CSV Link"), QStringLiteral("Name:"),
+                                                   QLineEdit::Normal, QString(), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        for (const core::DataLink& dl : pending_data_links_) {
+            if (QString::fromStdString(dl.name).compare(name, Qt::CaseInsensitive) == 0) {
+                QMessageBox::information(&dlg, QStringLiteral("New CSV Link"),
+                                         QStringLiteral("There is a data link named \"%1\" already.").arg(name));
+                return;
+            }
+        }
+        const QString path = pick_file(QString());
+        if (path.isEmpty()) {
+            return;
+        }
+        engine_->submit(core::SetDataLinkCommand{name.toStdString(), path.toStdString(), false});
+        pending_data_links_.push_back(core::DataLink{name.toStdString(), path.toStdString()});
+        refill();
+        const QList<QListWidgetItem*> found = list->findItems(name, Qt::MatchExactly);
+        if (!found.isEmpty()) {
+            list->setCurrentItem(found.front());
+        }
+    });
+    connect(change, &QPushButton::clicked, &dlg, [&] {
+        core::DataLink* dl = current();
+        if (dl == nullptr) {
+            return;
+        }
+        const QString path = pick_file(QString::fromStdString(dl->path));
+        if (path.isEmpty()) {
+            return;
+        }
+        dl->path = path.toStdString();
+        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false});
+        list->setCurrentRow(list->currentRow()); // the file shown again
+        detail->setText(QStringLiteral("File: %1").arg(QDir::toNativeSeparators(path)));
+    });
+    connect(remove, &QPushButton::clicked, &dlg, [&] {
+        core::DataLink* dl = current();
+        if (dl == nullptr) {
+            return;
+        }
+        engine_->submit(core::SetDataLinkCommand{dl->name, {}, true});
+        *dl = core::DataLink{};
+        refill();
+    });
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(buttons);
+    refill();
+    dlg.resize(460, 340);
+    dlg.exec();
 }
 
 void MainWindow::cycle_isoplane() {

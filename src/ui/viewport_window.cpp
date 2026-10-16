@@ -203,6 +203,11 @@ core::Vec2 ViewportWindow::insbase() {
     return insbase_;
 }
 
+std::vector<core::DataLink> ViewportWindow::data_links() {
+    std::scoped_lock lock(layers_mutex_);
+    return data_links_;
+}
+
 std::vector<core::TextStyle> ViewportWindow::text_styles() {
     std::scoped_lock lock(layers_mutex_);
     return text_styles_;
@@ -1634,6 +1639,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             limits_max_ = snap.limits_max;
             limits_on_ = snap.limits_on;
             insbase_ = snap.insbase;
+            data_links_ = snap.data_links;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
             lwdisplay_ = snap.lineweight_display ? 1 : 0;

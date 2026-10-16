@@ -1248,6 +1248,7 @@ private:
     bool dialog_;
     bool title_ = true;
     bool header_ = true;
+    std::string link_; ///< the Insert Table window's data link, if one was chosen
     bool done_ = false;
     Mode mode_ = Mode::Cols;
     int rows_ = 1; ///< data rows; a title and a header row come with them
@@ -2865,6 +2866,31 @@ public:
 private:
     void after(CommandContext& ctx);
     SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// DATALINKUPDATE: `Select an option [Update data link/Write data link] <Update data link>:`
+/// then, to update, `Select objects or [Data link/all data linKs]:` (the tables picked,
+/// those of one link, or every linked table read again from its file); to write,
+/// `Select objects:` (the tables picked written back to their files).
+class DataLinkUpdateUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DATALINKUPDATE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    bool free_text() const override { return step_ == Step::LinkName; }
+
+private:
+    enum class Step : std::uint8_t { Option, Objects, LinkName };
+    void after_select(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    Step step_ = Step::Option;
+    bool write_ = false;
     bool done_ = false;
 };
 

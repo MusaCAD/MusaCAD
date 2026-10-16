@@ -304,7 +304,7 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
                                      const std::vector<double>& col_widths,
                                      const std::vector<double>& row_heights, Vec2 pos,
                                      double rotation, std::uint16_t style, bool has_title,
-                                     bool has_header, EntityProps props) {
+                                     bool has_header, EntityProps props, std::uint16_t link) {
     // Cells and sizes are variable-length, so they live in shared pools as (offset,count)
     // views -- the polyline/spline/FCF pattern. Cell TEXT is already in the char pool.
     const auto cell_offset = static_cast<std::uint32_t>(table_cell_pool_.size());
@@ -323,8 +323,22 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
     t.rotation = rotation;
     t.style = style;
     t.props = props;
+    t.link = link;
     const auto slot = tables_.insert(t);
     return EntityHandle{slot.index, slot.generation, EntityKind::Table};
+}
+
+std::uint16_t GeometryStore::data_link_index(std::string_view name) const noexcept {
+    for (std::size_t i = 0; i < data_links_.size(); ++i) {
+        const std::string& n = data_links_[i].name;
+        if (!n.empty() && n.size() == name.size() &&
+            std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return 0xFFFF;
 }
 
 std::uint16_t GeometryStore::add_table_style(const TableStyle& st) {

@@ -786,9 +786,20 @@ void MainWindow::build_ribbon() {
         QWidget* col = data->add_column();
         small(data, col, QStringLiteral("Table"), "TB");
         small(data, col, QStringLiteral("Update Fields"), "UPDATEFIELD", "field");
-        todo_small(data, col, QStringLiteral("Data Link"), "field");
+        small(data, col, QStringLiteral("Data Link"), "DATALINK", "table");
         QWidget* col2 = data->add_column();
         small(data, col2, QStringLiteral("Extract Data"), "DX", "table");
+        // AutoCAD's Linking & Extraction: every linked table read again from its file, or
+        // the tables picked written back to theirs.
+        QToolButton* down = data->add_small(col2, asset("table"), QStringLiteral("Download from Source"));
+        down->setToolTip(QStringLiteral("<b>DATALINKUPDATE</b><br>Read every linked table again from its file."));
+        connect(down, &QToolButton::clicked, this, [this] { processor_->start_macro("DATALINKUPDATE", {"U", "K"}); });
+        QToolButton* up = data->add_small(col2, asset("table"), QStringLiteral("Upload to Source"));
+        up->setToolTip(QStringLiteral("<b>DATALINKUPDATE</b><br>Write the tables you pick back to their files."));
+        connect(up, &QToolButton::clicked, this, [this] {
+            command_widget_->focus_input();
+            processor_->start_macro("DATALINKUPDATE", {"W"});
+        });
     }
 
     // ================================================================== Annotate

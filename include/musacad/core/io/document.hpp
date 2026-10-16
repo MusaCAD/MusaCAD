@@ -318,6 +318,7 @@ struct DocTable {
     std::vector<double> row_heights;
     std::vector<DocTableCell> cells; ///< row-major, rows*cols
     EntityProps props{};
+    std::uint16_t link = 0xFFFF; ///< v40: its data link (an index into data_links)
     friend bool operator==(const DocTable&, const DocTable&) = default;
 };
 
@@ -421,6 +422,7 @@ struct Document {
     std::vector<DocViewport> viewports;   ///< paper-space viewports (v31)
     std::vector<DocTable> tables;         ///< tables (v20)
     std::vector<TableStyle> table_styles; ///< table-style table (not in entity_count)
+    std::vector<DataLink> data_links;     ///< v40: DATALINK
     std::vector<DocImageDef> image_defs;  ///< image-definition table (not in entity_count)
     std::vector<DocInsert> inserts;        ///< model-space block references
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)

@@ -1320,6 +1320,15 @@ std::string serialize_native(const Document& doc) {
     // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
     // column widths, one of row heights, then per cell: "span_cols span_rows align" and
     // the raw text on the following line (it may contain spaces, so it cannot be a token).
+    // v40: DATALINK <name> <path> (spaces escaped as in PAGESETUP); a linked TABLE carries
+    // the link's index as one more token.
+    for (const DataLink& dl : doc.data_links) {
+        s += "DATALINK ";
+        s += enc(dl.name);
+        s += ' ';
+        s += enc(dl.path);
+        s += '\n';
+    }
     for (const DocTable& t : doc.tables) {
         s += "TABLE ";
         append_uint(s, t.rows);
@@ -1336,6 +1345,10 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, t.style);
         append_props(s, t.props);
+        if (t.link != 0xFFFF) {
+            s += ' ';
+            append_uint(s, t.link);
+        }
         s += '\n';
         for (std::size_t k = 0; k < t.col_widths.size(); ++k) {
             if (k != 0) {
@@ -1700,6 +1713,20 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed POINTMODE");
             }
             doc.pdmode = static_cast<std::uint8_t>(std::min<std::uint64_t>(mode, 100));
+        } else if (key == "DATALINK") {
+            if (tok.size() != 3) {
+                return fail("malformed DATALINK");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            doc.data_links.push_back(DataLink{dec(tok[1]), dec(tok[2])});
         } else if (key == "INSBASE") {
             vals.clear();
             if (tok.size() != 3 || !parse_doubles(tok, 1, 2, vals)) {
@@ -2283,10 +2310,11 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::uint64_t rows = 0, cols = 0, title = 0, header = 0, style = 0;
             vals.clear();
             EntityProps props;
-            if (tok.size() != 9 + 7 || !to_uint(tok[1], rows) || !to_uint(tok[2], cols) ||
+            std::uint64_t link = 0xFFFF;
+            if ((tok.size() != 9 + 7 && tok.size() != 9 + 7 + 1) || !to_uint(tok[1], rows) || !to_uint(tok[2], cols) ||
                 !to_uint(tok[3], title) || !to_uint(tok[4], header) ||
                 !parse_doubles(tok, 5, 3, vals) || !to_uint(tok[8], style) ||
-                !parse_props(tok, 9, props)) {
+                !parse_props(tok, 9, props) || (tok.size() == 17 && !to_uint(tok[16], link))) {
                 return fail("TABLE record malformed");
             }
             DocTable t;
@@ -2298,6 +2326,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             t.rotation = vals[2];
             t.style = static_cast<std::uint16_t>(style);
             t.props = props;
+            t.link = static_cast<std::uint16_t>(std::min<std::uint64_t>(link, 0xFFFF));
             const auto read_doubles = [&](std::size_t n, std::vector<double>& dest) {
                 std::string line;
                 if (!read_line(line)) {

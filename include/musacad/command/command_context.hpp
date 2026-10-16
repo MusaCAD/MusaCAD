@@ -217,6 +217,7 @@ struct InsertTableSettings {
     int row_lines = 1;
     bool title = true;
     bool header = true;
+    std::string link{}; ///< From a data link: its name (the table takes the file's rows and columns)
 };
 
 /// QLEADER's Leader Settings: the annotation (MText, or None), whether the text width is
@@ -578,6 +579,8 @@ public:
     [[nodiscard]] virtual Limits limits() const { return {}; }
     /// The drawing's insertion base point (INSBASE, BASE).
     [[nodiscard]] virtual core::Vec2 insbase() const { return {}; }
+    /// The names of the drawing's data links (DATALINK).
+    [[nodiscard]] virtual std::vector<std::string> data_link_names() const { return {}; }
     /// GRID's settings (GRIDUNIT, GRIDMAJOR, GRIDDISPLAY), kept here and handed to the view.
     [[nodiscard]] virtual core::GridSettings grid_settings() const { return {}; }
     virtual void set_grid_settings(const core::GridSettings& g) { (void)g; }

@@ -386,6 +386,7 @@ Document document_from_store(const GeometryStore& store) {
     for (const TableStyle& ts : store.table_styles()) {
         doc.table_styles.push_back(ts);
     }
+    doc.data_links = store.data_links();
     const auto& table_arena = store.tables();
     for (std::uint32_t i = 0; i < table_arena.slot_count(); ++i) {
         if (table_arena.alive(i)) {
@@ -399,6 +400,7 @@ Document document_from_store(const GeometryStore& store) {
             dt.rotation = t.rotation;
             dt.style = t.style;
             dt.props = t.props;
+            dt.link = t.link;
             const std::span<const double> cw = store.table_col_widths(t);
             const std::span<const double> rh = store.table_row_heights(t);
             dt.col_widths.assign(cw.begin(), cw.end());
@@ -656,6 +658,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_table_style_table(doc.table_styles);
     }
     store.set_current_table_style(doc.current_table_style);
+    store.set_data_links(doc.data_links);
     for (const DocTable& t : doc.tables) {
         std::vector<TableCell> cells;
         cells.reserve(t.cells.size());
@@ -669,7 +672,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
             cells.push_back(tc);
         }
         store.add_table(t.rows, t.cols, cells, t.col_widths, t.row_heights, t.pos, t.rotation,
-                        t.style, t.has_title, t.has_header, t.props);
+                        t.style, t.has_title, t.has_header, t.props,
+                        t.link < doc.data_links.size() ? t.link : std::uint16_t{0xFFFF});
     }
     for (const DocFcf& f : doc.fcfs) {
         store.add_fcf(f.cells, f.pos, f.rotation, f.style, f.props, f.overrides);

@@ -342,6 +342,7 @@ struct TableData {
     double rotation = 0.0;   ///< radians, CCW
     std::uint16_t style = 0; ///< index into the table-style table
     EntityProps props{};
+    std::uint16_t link = 0xFFFF; ///< index into the data-link table (DATALINK); 0xFFFF: none
 };
 
 /// A raster image DEFINITION, held in a table on the store parallel to the layer /
@@ -706,7 +707,7 @@ public:
                            const std::vector<double>& col_widths,
                            const std::vector<double>& row_heights, Vec2 pos, double rotation,
                            std::uint16_t style, bool has_title = false, bool has_header = false,
-                           EntityProps props = {});
+                           EntityProps props = {}, std::uint16_t link = 0xFFFF);
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {},
@@ -928,6 +929,12 @@ public:
     }
     /// The index of the style named `name` (any case), or 0xFFFF.
     [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
+    /// DATALINK: the drawing's data links (a link is never taken out from under a table:
+    /// removing one leaves its slot with an empty name, so table indices stay valid).
+    [[nodiscard]] const std::vector<DataLink>& data_links() const noexcept { return data_links_; }
+    void set_data_links(std::vector<DataLink> links) { data_links_ = std::move(links); }
+    /// The index of the link named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t data_link_index(std::string_view name) const noexcept;
 
     /// A table's cells / column widths / row heights, as spans into the shared pools.
     [[nodiscard]] std::span<const TableCell> table_cells(const TableData& t) const noexcept;
@@ -1293,6 +1300,7 @@ private:
     std::vector<double> table_size_pool_;     ///< column widths then row heights
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
     std::uint16_t current_table_style_ = 0;
+    std::vector<DataLink> data_links_; // DATALINK
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool

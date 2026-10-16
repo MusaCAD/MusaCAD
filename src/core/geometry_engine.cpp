@@ -21,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <span>
 #include <optional>
@@ -8035,6 +8036,268 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     return store_.add_block(def);
 }
 
+namespace {
+/// A CSV file's rows (RFC 4180: quoted fields may hold commas, quotes doubled, line
+/// breaks); false when it cannot be read.
+bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& rows) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    rows.clear();
+    std::vector<std::string> row;
+    std::string field;
+    bool quoted = false;
+    bool any = false; // the row has something (a lone line break ends no row)
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (quoted) {
+            if (ch == '"' && i + 1 < text.size() && text[i + 1] == '"') {
+                field += '"';
+                ++i;
+            } else if (ch == '"') {
+                quoted = false;
+            } else {
+                field += ch;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            quoted = true;
+            any = true;
+        } else if (ch == ',') {
+            row.push_back(std::move(field));
+            field.clear();
+            any = true;
+        } else if (ch == '\n' || ch == '\r') {
+            if (ch == '\r' && i + 1 < text.size() && text[i + 1] == '\n') {
+                ++i;
+            }
+            if (any || !field.empty()) {
+                row.push_back(std::move(field));
+                rows.push_back(std::move(row));
+            }
+            row.clear();
+            field.clear();
+            any = false;
+        } else {
+            field += ch;
+            any = true;
+        }
+    }
+    if (any || !field.empty()) {
+        row.push_back(std::move(field));
+        rows.push_back(std::move(row));
+    }
+    return true;
+}
+
+bool write_csv(const std::string& path, const std::vector<std::vector<std::string>>& rows) {
+    std::ofstream f(path, std::ios::binary);
+    const auto field = [](const std::string& v) {
+        if (v.find_first_of(",\"\r\n") == std::string::npos) {
+            return v;
+        }
+        std::string q = "\"";
+        for (const char ch : v) {
+            q += ch == '"' ? std::string("\"\"") : std::string(1, ch);
+        }
+        return q + "\"";
+    };
+    for (const auto& line : rows) {
+        for (std::size_t i = 0; i < line.size(); ++i) {
+            f << (i == 0 ? "" : ",") << field(line[i]);
+        }
+        f << "\r\n";
+    }
+    return f.good();
+}
+
+/// A table holding `grid` (rows of cells), sized for the style's data text.
+AddTableCommand table_from_grid(const std::vector<std::vector<std::string>>& grid, const TableStyle* st) {
+    std::size_t ncols = 1;
+    for (const auto& line : grid) {
+        ncols = std::max(ncols, line.size());
+    }
+    const double h = st != nullptr ? st->data_height : 2.5;
+    const double margin = st != nullptr ? st->margin : 0.4;
+    AddTableCommand t;
+    t.rows = static_cast<std::uint16_t>(std::min<std::size_t>(std::max<std::size_t>(grid.size(), 1), 0xFFFF));
+    t.cols = static_cast<std::uint16_t>(std::min<std::size_t>(ncols, 0xFFFF));
+    for (std::size_t col = 0; col < t.cols; ++col) {
+        std::size_t longest = 4;
+        for (const auto& line : grid) {
+            longest = std::max(longest, col < line.size() ? line[col].size() : std::size_t{0});
+        }
+        t.col_widths.push_back(h * 0.8 * static_cast<double>(longest) + 2.0 * margin * h + h);
+    }
+    t.row_heights.assign(t.rows, h * 3.6);
+    for (std::size_t r = 0; r < t.rows; ++r) {
+        for (std::size_t col = 0; col < t.cols; ++col) {
+            t.cells.push_back(TableCell{});
+            t.texts.push_back(r < grid.size() && col < grid[r].size() ? grid[r][col] : std::string());
+        }
+    }
+    return t;
+}
+} // namespace
+
+void GeometryEngine::apply_set_data_link(const SetDataLinkCommand& c) {
+    std::vector<DataLink> links = store_.data_links();
+    const std::uint16_t i = store_.data_link_index(c.name);
+    if (c.remove) {
+        if (i == 0xFFFF) {
+            report("Data link \"" + c.name + "\" not found.");
+            return;
+        }
+        links[i] = DataLink{}; // the slot stays, so other tables' links keep their places
+        report("Data link \"" + c.name + "\" deleted.");
+    } else {
+        if (c.name.empty()) {
+            report("A data link needs a name.");
+            return;
+        }
+        if (i != 0xFFFF) {
+            links[i].path = c.path;
+        } else {
+            links.push_back(DataLink{c.name, c.path});
+        }
+        report("Data link \"" + c.name + "\": " + c.path + ".");
+    }
+    store_.set_data_links(std::move(links));
+    geom_dirty_ = true;
+    dirty_ = true;
+}
+
+void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c) {
+    const std::uint16_t li = store_.data_link_index(c.link);
+    if (li == 0xFFFF) {
+        report("Data link \"" + c.link + "\" not found.");
+        return;
+    }
+    const DataLink link = store_.data_links()[li];
+    std::vector<std::vector<std::string>> grid;
+    if (!read_csv(link.path, grid)) {
+        report("Data link \"" + link.name + "\": cannot read " + link.path + ".");
+        return;
+    }
+    const std::uint16_t style = c.style < store_.table_styles().size() ? c.style : store_.current_table_style();
+    AddTableCommand t = table_from_grid(grid, store_.table_style(style));
+    t.pos = c.pos;
+    t.style = style;
+    t.group = c.group;
+    t.link = li;
+    const Command add = t;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Table from data link \"" + link.name + "\": " + std::to_string(t.rows) + " rows, " +
+           std::to_string(t.cols) + " columns.");
+}
+
+void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
+    const std::vector<DataLink>& links = store_.data_links();
+    const auto linked = [&](EntityHandle h) -> const DataLink* {
+        const TableData* td = h.kind == EntityKind::Table ? store_.table(h) : nullptr;
+        return td != nullptr && td->link < links.size() && !links[td->link].name.empty() ? &links[td->link] : nullptr;
+    };
+    std::vector<EntityHandle> targets;
+    if (c.selection) {
+        prune_selection();
+        for (const EntityHandle h : selection_) {
+            if (linked(h) != nullptr) {
+                targets.push_back(h);
+            }
+        }
+    } else {
+        const std::uint16_t want = c.link.empty() ? 0xFFFF : store_.data_link_index(c.link);
+        if (!c.link.empty() && want == 0xFFFF) {
+            report("Data link \"" + c.link + "\" not found.");
+            return;
+        }
+        for (const EntityHandle h : all_live()) {
+            if (const DataLink* l = linked(h); l != nullptr && (want == 0xFFFF || store_.table(h)->link == want)) {
+                targets.push_back(h);
+            }
+        }
+    }
+    if (targets.empty()) {
+        report("No tables with a data link.");
+        return;
+    }
+    int done = 0;
+    int failed = 0;
+    std::vector<EntityHandle> renewed;
+    for (const EntityHandle h : targets) {
+        const DataLink link = *linked(h);
+        const Command original = capture_entity(h);
+        const auto* was = std::get_if<AddTableCommand>(&original);
+        if (was == nullptr) {
+            continue;
+        }
+        if (c.write) {
+            std::vector<std::vector<std::string>> grid(was->rows);
+            for (std::size_t r = 0; r < was->rows; ++r) {
+                for (std::size_t col = 0; col < was->cols; ++col) {
+                    const std::size_t k = r * was->cols + col;
+                    grid[r].push_back(k < was->texts.size() ? was->texts[k] : std::string());
+                }
+            }
+            if (write_csv(link.path, grid)) {
+                ++done;
+            } else {
+                ++failed;
+            }
+            continue;
+        }
+        std::vector<std::vector<std::string>> grid;
+        if (!read_csv(link.path, grid)) {
+            ++failed;
+            continue;
+        }
+        AddTableCommand now = table_from_grid(grid, store_.table_style(was->style));
+        if (now.rows == was->rows && now.cols == was->cols) {
+            now = *was; // the same grid: only the contents change; sizes and merges stay
+            for (std::size_t k = 0; k < now.texts.size(); ++k) {
+                const std::size_t r = k / now.cols;
+                const std::size_t col = k % now.cols;
+                now.texts[k] = r < grid.size() && col < grid[r].size() ? grid[r][col] : std::string();
+            }
+        } else {
+            now.pos = was->pos;
+            now.rotation = was->rotation;
+            now.style = was->style;
+            now.props = was->props;
+            now.link = was->link;
+        }
+        now.group = c.group;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const Command add = now;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+        ++done;
+    }
+    if (!renewed.empty()) {
+        selection_ = renewed;
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    std::string said = std::to_string(done) + (c.write ? (done == 1 ? " data link written" : " data links written")
+                                                       : (done == 1 ? " table updated" : " tables updated"));
+    if (failed > 0) {
+        said += "; " + std::to_string(failed) + (failed == 1 ? " file" : " files") + " could not be " +
+                (c.write ? "written" : "read");
+    }
+    report(said + ".");
+}
+
 void GeometryEngine::apply_load_block_file(const LoadBlockFileCommand& c) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -15435,6 +15698,15 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, LoadBlockFileCommand>) {
                 apply_load_block_file(c);
+            }
+            if constexpr (std::is_same_v<T, SetDataLinkCommand>) {
+                apply_set_data_link(c);
+            }
+            if constexpr (std::is_same_v<T, InsertLinkedTableCommand>) {
+                apply_insert_linked_table(c);
+            }
+            if constexpr (std::is_same_v<T, DataLinkUpdateCommand>) {
+                apply_data_link_update(c);
             }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),

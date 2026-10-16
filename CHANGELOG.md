@@ -107,6 +107,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   block named after the file, at its base point, its own blocks with it (the drawing's own
   definitions kept; `Block "X" already exists. Redefine it?` before one is replaced). Xrefs
   are attached at their INSBASE too. Insert > Block > From Drawing and Set Base Point.
+- **Data links** (#71) -- **DATALINK** (DL) opens the Data Link Manager: links to CSV files
+  (a spreadsheet's Save As > CSV), made, pointed at another file or deleted; Insert Table's
+  **From a data link** makes a table of the file's rows and columns. **DATALINKUPDATE** (DLU)
+  -- `[Update data link/Write data link]`, then `Select objects or [Data link/all data
+  linKs]:` -- reads linked tables again (one undo step) or writes them back to their files.
+  Insert > Data: Data Link, Download from Source, Upload to Source. Kept in the drawing.
 - **The Field window** (#62, #71) -- FIELD opens it: Date, CreateDate and SaveDate with a date
   format (M/d/yyyy, MMMM d, yyyy, h:mm tt and the rest, or one of your own), Filename with or
   without its path or extension, the drawing's Title, Subject, Author, Keywords, Comments,

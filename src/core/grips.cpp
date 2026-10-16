@@ -206,6 +206,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         c.has_title = td->has_title;
         c.has_header = td->has_header;
         c.props = td->props;
+        c.link = td->link;
         return c;
     }
     case EntityKind::Viewport: {
@@ -371,7 +372,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 }
                 handle = store.add_table(c.rows, c.cols, cells, c.col_widths, c.row_heights,
                                          c.pos, c.rotation, c.style, c.has_title, c.has_header,
-                                         props_of(c.props));
+                                         props_of(c.props), c.link);
             } else if constexpr (std::is_same_v<T, AddViewportCommand>) {
                 handle = store.add_viewport(c.center, c.width, c.height, c.view_center, c.scale, c.on,
                                             props_of(c.props), c.frozen_layers);

@@ -7928,6 +7928,95 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void DataLinkUpdateUiCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Select an option [Update data link/Write data link] <Update data link>: ");
+}
+
+void DataLinkUpdateUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_select(ctx);
+    }
+}
+
+void DataLinkUpdateUiCommand::after_select(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        core::DataLinkUpdateCommand c;
+        c.write = write_;
+        c.selection = true;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
+void DataLinkUpdateUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Option:
+        if (u.empty() || u == "U" || u == "UPDATE" || u == "UPDATE DATA LINK") {
+            write_ = false;
+        } else if (u == "W" || u == "WRITE" || u == "WRITE DATA LINK") {
+            write_ = true;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            start(ctx);
+            return;
+        }
+        step_ = Step::Objects;
+        select_.begin(ctx, write_ ? "Select objects: " : "Select objects or [Data link/all data linKs]: ");
+        return;
+    case Step::Objects:
+        if (!write_ && (u == "D" || u == "DATA LINK")) {
+            step_ = Step::LinkName;
+            ctx.set_prompt("Enter data link name or [?]: ");
+            return;
+        }
+        if (!write_ && (u == "K" || u == "ALL DATA LINKS")) {
+            core::DataLinkUpdateCommand c;
+            c.group = ctx.group_id();
+            ctx.submit(std::move(c));
+            done_ = true;
+            return;
+        }
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_select(ctx);
+        }
+        return;
+    case Step::LinkName: {
+        const std::vector<std::string> names = ctx.data_link_names();
+        if (u == "?") {
+            ctx.echo(names.empty() ? std::string("No data links in this drawing.") : "Data links:");
+            for (const std::string& n : names) {
+                ctx.echo("  " + n);
+            }
+            ctx.set_prompt("Enter data link name or [?]: ");
+            return;
+        }
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (std::none_of(names.begin(), names.end(), [&](const std::string& n) { return upper(n) == u; })) {
+            ctx.echo("Data link \"" + t + "\" not found.");
+            ctx.set_prompt("Enter data link name or [?]: ");
+            return;
+        }
+        core::DataLinkUpdateCommand c;
+        c.link = t;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void DataLinkUpdateUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void ImageFrameCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter new value for IMAGEFRAME [0 hidden/1 shown and plotted/2 shown only] <1>: ");
 }
@@ -13075,6 +13164,7 @@ void TableCommand::start(CommandContext& ctx) {
             row_lines_ = std::max(io.row_lines, 1);
             title_ = io.title;
             header_ = io.header;
+            link_ = io.link;
             mode_ = Mode::DialogPlace;
             ctx.set_prompt("Specify insertion point: ");
             return;
@@ -13174,7 +13264,12 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Enter a table style name or [?] <" + table_style_name(ctx.table_styles(), style_) + ">: ");
             return;
         }
-        if (const auto p = read_point(ctx, text)) {
+        if (const auto p = read_point(ctx, text); p && !link_.empty()) {
+            // From a data link: the file's rows and columns, read by the engine.
+            ctx.submit(core::InsertLinkedTableCommand{link_, *p, ctx.group_id(), style_});
+            done_ = true;
+            return;
+        } else if (p) {
             // A title row and a header row above the data rows, as AutoCAD's Standard style
             // (the Insert Table window can leave either out).
             const int rows = rows_ + (title_ ? 1 : 0) + (header_ ? 1 : 0);

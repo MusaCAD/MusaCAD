@@ -224,6 +224,8 @@ public:
     }
     void set_limits(core::Vec2 lo, core::Vec2 hi, bool on) { limits_ = Limits{lo, hi, on}; }
     void set_insbase(core::Vec2 p) { insbase_ = p; }
+    void set_data_link_names(std::vector<std::string> names) { data_link_names_ = std::move(names); }
+    [[nodiscard]] std::vector<std::string> data_link_names() const override { return data_link_names_; }
     /// TEXTSIZE: the height TEXT offers (Annotate's text-height field).
     [[nodiscard]] double text_size() const;
     void set_text_size(double h);
@@ -497,6 +499,7 @@ private:
     double pdsize_ = 0.0;
     Limits limits_{};
     core::Vec2 insbase_{};
+    std::vector<std::string> data_link_names_;
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
     std::uint32_t selection_kinds_ = ~0u; ///< bit per EntityKind; all bits: not known

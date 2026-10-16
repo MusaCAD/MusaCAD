@@ -1559,3 +1559,84 @@ TEST_CASE("TEXTSIZE sets the height TEXT offers") {
     h.proc.cancel();
     h.proc.set_text_size(keep);
 }
+
+TEST_CASE("A table from a CSV data link, read again and written back by DATALINKUPDATE") {
+    namespace fs = std::filesystem;
+    const std::string csv = (fs::temp_directory_path() / "musacad_link.csv").string();
+    {
+        std::ofstream f(csv, std::ios::binary);
+        f << "Tag,Qty\r\nM8 bolt,\"1,200\"\r\n\"Say \"\"hi\"\"\",3\r\n";
+    }
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(SetDataLinkCommand{"Parts", csv, false});
+    engine.submit(InsertLinkedTableCommand{"parts", {0, 0}, 1});
+    io::Document doc = dump(engine, "musacad_link1.musa");
+    REQUIRE(doc.data_links.size() == 1);
+    REQUIRE(doc.data_links[0].name == "Parts");
+    REQUIRE(doc.tables.size() == 1);
+    REQUIRE(doc.tables[0].link == 0);
+    REQUIRE(doc.tables[0].rows == 3);
+    REQUIRE(doc.tables[0].cols == 2);
+    REQUIRE(doc.tables[0].cells[3].text == "1,200");
+    REQUIRE(doc.tables[0].cells[4].text == "Say \"hi\"");
+
+    { // the file changes: the same grid, new values
+        std::ofstream f(csv, std::ios::binary | std::ios::trunc);
+        f << "Tag,Qty\nM8 bolt,1300\nWasher,9\n";
+    }
+    DataLinkUpdateCommand all;
+    all.group = 2;
+    engine.submit(all);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 table updated."; }));
+    doc = dump(engine, "musacad_link2.musa");
+    REQUIRE(doc.tables[0].cells[3].text == "1300");
+    REQUIRE(doc.tables[0].cells[4].text == "Washer");
+    REQUIRE(doc.tables[0].link == 0);
+
+    // Undo brings the old values back; the update was one step.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_link3.musa");
+    REQUIRE(doc.tables[0].cells[3].text == "1,200");
+    engine.submit(RedoLastGroupCommand{});
+
+    DataLinkUpdateCommand write;
+    write.write = true;
+    write.link = "Parts";
+    engine.submit(write);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 data link written."; }));
+    {
+        std::ifstream f(csv, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        REQUIRE(text == "Tag,Qty\r\nM8 bolt,1300\r\nWasher,9\r\n");
+    }
+    engine.submit(SetDataLinkCommand{"PARTS", {}, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Data link \"PARTS\" deleted."; }));
+    engine.submit(DataLinkUpdateCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "No tables with a data link."; }));
+    engine.stop();
+    fs::remove(csv);
+}
+
+TEST_CASE("DATALINKUPDATE asks Update or Write, then the tables, a link or all of them") {
+    H h;
+    h.proc.set_data_link_names({"Parts"});
+    h.run({"DATALINKUPDATE"});
+    REQUIRE(h.out.prompt == "Select an option [Update data link/Write data link] <Update data link>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Select objects or [Data link/all data linKs]: ");
+    h.run({"D"});
+    REQUIRE(h.out.prompt == "Enter data link name or [?]: ");
+    h.run({"Nope"});
+    REQUIRE(h.out.lines.back() == "Data link \"Nope\" not found.");
+    h.run({"parts"});
+    REQUIRE(h.last<DataLinkUpdateCommand>()->link == "parts");
+    REQUIRE_FALSE(h.last<DataLinkUpdateCommand>()->write);
+    h.run({"DLU", "", "K"});
+    REQUIRE(h.last<DataLinkUpdateCommand>()->link.empty());
+    REQUIRE_FALSE(h.last<DataLinkUpdateCommand>()->selection);
+    h.run({"DLU", "W"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    REQUIRE(h.proc.has_active_command());
+    h.proc.cancel();
+}

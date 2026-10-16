@@ -308,6 +308,8 @@ private:
     void open_alias_editor();    ///< ALIASEDIT
     int open_tolerance_dialog(std::vector<std::string>& cells); ///< TOLERANCE (1 OK, 0 cancelled)
     int open_field_dialog(std::string& code);                   ///< FIELD (1 OK, 0 cancelled)
+    void open_data_link_manager();                              ///< DATALINK
+    std::vector<core::DataLink> pending_data_links_; ///< the Data Link Manager's list as edited
     bool user_aliases_applied_ = false;
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);

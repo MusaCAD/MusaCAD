@@ -575,6 +575,9 @@ private:
                                        const std::string& xref_path, std::string& err, std::uint8_t* src_insunits = nullptr,
                                        bool bind = false);
     void apply_load_block_file(const LoadBlockFileCommand& c);
+    void apply_set_data_link(const SetDataLinkCommand& c);
+    void apply_insert_linked_table(const InsertLinkedTableCommand& c);
+    void apply_data_link_update(const DataLinkUpdateCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);

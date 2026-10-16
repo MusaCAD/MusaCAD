@@ -588,6 +588,10 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"PTYPE", "DDPTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
         "The point display mode and size (PDMODE and PDSIZE).");
     reg({"TEXTSIZE"}, [] { return std::make_unique<TextSizeCommand>(); }, "", "The height TEXT offers for new text.");
+    file_cmd({"DATALINK", "DL"}, "DATALINK", "assets/ribbon/table.svg",
+             "Open the Data Link Manager: links from tables to CSV files of data.");
+    reg({"DATALINKUPDATE", "DLU"}, [] { return std::make_unique<DataLinkUpdateUiCommand>(); }, "assets/ribbon/table.svg",
+        "Read linked tables again from their files, or write them back.");
     reg({"BASE"}, [] { return std::make_unique<BaseCommand>(); }, "",
         "Set the drawing's insertion base point: where it sits when inserted into another drawing.");
     reg({"LIMITS"}, [] { return std::make_unique<LimitsCommand>(); }, "",
