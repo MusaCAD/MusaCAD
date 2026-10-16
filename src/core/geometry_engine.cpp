@@ -6098,6 +6098,23 @@ bool GeometryEngine::plan_extend_preview(Vec2 pick, double radius, std::vector<V
         }
         return true;
     }
+    if (h.kind == EntityKind::Spline) {
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid() || distance(cps.front(), cps.back()) < 1e-9) {
+            return false;
+        }
+        const bool at_end = length_squared(pick - cps.back()) <= length_squared(pick - cps.front());
+        const std::optional<Vec2> dir = spline::end_direction(curve, at_end);
+        const Vec2 e = at_end ? cps.back() : cps.front();
+        Vec2 target{};
+        if (!dir || !nearest_boundary_ahead(h, e - *dir, e, target)) {
+            return false;
+        }
+        added = {e, target};
+        return true;
+    }
     return false;
 }
 
@@ -6250,8 +6267,49 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         report("Extended.");
         return;
     }
+    if (h.kind == EntityKind::Spline) {
+        // As AutoCAD extends a spline: the curve as it was, then straight on along the
+        // direction it leaves by, to the first boundary ahead -- one spline.
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid() || distance(cps.front(), cps.back()) < 1e-9) {
+            report("Extend: a closed spline has no open end.");
+            return;
+        }
+        const bool at_end = length_squared(pick - cps.back()) <= length_squared(pick - cps.front());
+        const std::optional<Vec2> dir = spline::end_direction(curve, at_end);
+        if (!dir) {
+            report("Extend: that spline's end cannot be extended.");
+            return;
+        }
+        const Vec2 e = at_end ? cps.back() : cps.front();
+        Vec2 target{};
+        spline::Piece longer;
+        if (!nearest_boundary_ahead(h, e - *dir, e, target)) {
+            report("Extend: no boundary ahead of that end.");
+            return;
+        }
+        if (!spline::extended_straight(curve, at_end, target, longer)) {
+            report("Extend: that spline's end cannot be extended.");
+            return;
+        }
+        const Command original = capture_entity(h);
+        const Command extended =
+            AddSplineCommand{longer.ctrl, static_cast<std::uint32_t>(curve.degree), 0, sd->props, longer.knots};
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const EntityHandle nh = create_indexed(extended);
+        push_create_item(group, nh, extended);
+        note_trim_pieces(h, {nh});
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Extended.");
+        return;
+    }
     if (h.kind != EntityKind::Line) {
-        report("Extend: only lines, arcs, elliptical arcs and open polylines can be extended.");
+        report("Extend: only lines, arcs, elliptical arcs, splines and open polylines can be extended.");
         return;
     }
     const LineData* l = store_.line(h);
@@ -10547,11 +10605,70 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
                          : ellipse_length(e, e.start + total - new_total, e.start + total);
         break;
     }
-    case EntityKind::Spline:
-        report("Lengthen: splines are not lengthened yet (lines, arcs, polylines and elliptical arcs are).");
-        return;
+    case EntityKind::Spline: {
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid()) {
+            report("Lengthen: that spline has no length.");
+            return;
+        }
+        before = spline::length_between(curve, curve.lo(), curve.hi());
+        if (c.mode == Mode::Measure) {
+            say_length(before, std::nullopt);
+            return;
+        }
+        if (distance(cps.front(), cps.back()) < 1e-9) {
+            report("Lengthen: a closed spline has no end to move.");
+            return;
+        }
+        if (angle_mode) {
+            report("Lengthen: Angle is for arcs; a spline has a length.");
+            return;
+        }
+        // The end nearer the pick moves: shorter, along the curve; longer, straight on along
+        // the direction it leaves by (as EXTEND makes it).
+        const bool move_end = length_squared(c.pick - cps.back()) <= length_squared(c.pick - cps.front());
+        const std::optional<Vec2> dir = spline::end_direction(curve, move_end);
+        const Vec2 e = move_end ? cps.back() : cps.front();
+        double target = 0.0;
+        if (c.mode == Mode::Dynamic) {
+            const double u = spline::param_near(curve, c.to);
+            const double beyond = dir ? dot(c.to - e, *dir) : 0.0;
+            const bool past = move_end ? u >= curve.hi() - 1e-9 : u <= curve.lo() + 1e-9;
+            target = past && beyond > 0.0 ? before + beyond
+                     : move_end           ? spline::length_between(curve, curve.lo(), u)
+                                          : spline::length_between(curve, u, curve.hi());
+        } else {
+            target = resolve(before);
+        }
+        if (target <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        spline::Piece made;
+        if (target < before - 1e-9) {
+            spline::Piece head;
+            spline::Piece tail;
+            if (!spline::split(curve, spline::param_at_length(curve, target, move_end), head, tail)) {
+                report("Lengthen: that would leave nothing of the object.");
+                return;
+            }
+            made = move_end ? head : tail;
+        } else if (target > before + 1e-9) {
+            if (!dir || !spline::extended_straight(curve, move_end, e + *dir * (target - before), made)) {
+                report("Lengthen: that spline's end cannot be moved.");
+                return;
+            }
+        } else {
+            made = spline::Piece{std::vector<Vec2>(cps.begin(), cps.end()), curve.knots};
+        }
+        edited = AddSplineCommand{made.ctrl, static_cast<std::uint32_t>(curve.degree), 0, sd->props, made.knots};
+        after = target;
+        break;
+    }
     default:
-        report("Lengthen: only lines, arcs, polylines and elliptical arcs have an end to move.");
+        report("Lengthen: only lines, arcs, polylines, elliptical arcs and splines have an end to move.");
         return;
     }
 

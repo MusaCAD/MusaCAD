@@ -398,10 +398,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   evenly spaced (as nearly every spline AutoCAD draws through fit points is) now opens as a
   spline with its own knots, where it opened as a polyline, and is saved and written to DXF
   with them.
-- **TRIM and BREAK on splines** (#48, #52) -- a spline is trimmed at the edges that cross it
-  and broken between two points or at one, each piece the same curve over its part; a closed
-  spline trims and breaks open into one. SPLINEDIT adds a control point to such a spline
-  without changing its shape.
+- **TRIM, EXTEND, LENGTHEN and BREAK on splines** (#48, #52) -- a spline is trimmed at the
+  edges that cross it and broken between two points or at one, each piece the same curve over
+  its part; a closed spline trims and breaks open into one. EXTEND and LENGTHEN keep the curve
+  as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
+  spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
+  spline without changing its shape.
 - **BREAK on ellipses** (#52) -- an elliptical arc breaks between two points or at one, and a
   whole ellipse loses the part counter-clockwise from the first point to the second, as a
   circle does.

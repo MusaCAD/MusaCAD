@@ -361,6 +361,98 @@ inline Piece joined(const Piece& a, const Piece& b, int p) {
     return out;
 }
 
+/// Whether the curve begins and ends on its end control points (its end knots degree+1 deep).
+inline bool clamped(const Curve& c) noexcept {
+    if (!c.valid()) {
+        return false;
+    }
+    const auto p = static_cast<std::size_t>(c.degree);
+    const std::size_t m = c.knots.size() - 1;
+    for (std::size_t i = 1; i <= p; ++i) {
+        if (c.knots[i] != c.knots[0] || c.knots[m - i] != c.knots[m]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// The length along the curve between knot parameters a and b (a dense chord sum).
+inline double length_between(const Curve& c, double a, double b) {
+    if (!c.valid() || !(b > a)) {
+        return 0.0;
+    }
+    const int n = std::clamp(static_cast<int>(c.ctrl.size()) * 32, 128, 8192);
+    double sum = 0.0;
+    Vec2 prev = c.at(a);
+    for (int i = 1; i <= n; ++i) {
+        const Vec2 q = c.at(a + (b - a) * static_cast<double>(i) / static_cast<double>(n));
+        sum += distance(prev, q);
+        prev = q;
+    }
+    return sum;
+}
+
+/// The parameter `s` along the curve from its start (or, `from_start` false, back from its end).
+inline double param_at_length(const Curve& c, double s, bool from_start) {
+    double lo = c.lo();
+    double hi = c.hi();
+    for (int it = 0; it < 60; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        const double len = from_start ? length_between(c, c.lo(), mid) : length_between(c, mid, c.hi());
+        if ((len < s) == from_start) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0.5 * (lo + hi);
+}
+
+/// The unit direction the curve leaves by at its end (`at_end`) or start -- pointing out of
+/// it -- for a clamped curve: along its last (first) leg of distinct control points.
+inline std::optional<Vec2> end_direction(const Curve& c, bool at_end) {
+    if (!clamped(c)) {
+        return std::nullopt;
+    }
+    const std::size_t n = c.ctrl.size();
+    const Vec2 e = at_end ? c.ctrl[n - 1] : c.ctrl[0];
+    for (std::size_t k = 1; k < n; ++k) {
+        const Vec2 q = at_end ? c.ctrl[n - 1 - k] : c.ctrl[k];
+        const double d = distance(e, q);
+        if (d > 1e-12) {
+            return (e - q) / d;
+        }
+    }
+    return std::nullopt;
+}
+
+/// The curve with a straight run added at its end (`at_end`) or start, from there to `to`
+/// (on the line it leaves by): AutoCAD's spline extension -- the curve as it was, then a
+/// line tangent to it. One spline, its knots its own.
+inline bool extended_straight(const Curve& c, bool at_end, Vec2 to, Piece& out) {
+    if (!clamped(c)) {
+        return false;
+    }
+    const int p = c.degree;
+    const Vec2 e = at_end ? c.ctrl.back() : c.ctrl.front();
+    const double len = distance(e, to);
+    if (len <= 1e-12) {
+        return false;
+    }
+    const double total = length_between(c, c.lo(), c.hi());
+    const double span = (c.hi() - c.lo()) * (total > 1e-12 ? len / total : 1.0);
+    Piece line;
+    for (int k = 0; k <= p; ++k) {
+        const double f = static_cast<double>(k) / static_cast<double>(p);
+        line.ctrl.push_back(at_end ? e + (to - e) * f : to + (e - to) * f);
+    }
+    line.knots.assign(static_cast<std::size_t>(p) + 1, 0.0);
+    line.knots.insert(line.knots.end(), static_cast<std::size_t>(p) + 1, span);
+    const Piece self{std::vector<Vec2>(c.ctrl.begin(), c.ctrl.end()), c.knots};
+    out = at_end ? joined(self, line, p) : joined(line, self, p);
+    return out.ctrl.size() >= 2;
+}
+
 /// The knots of the same curve run the other way (its control points reversed).
 inline std::vector<double> reversed_knots(std::span<const double> k) {
     std::vector<double> out(k.size());

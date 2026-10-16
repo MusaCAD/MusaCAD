@@ -3723,3 +3723,57 @@ TEST_CASE("-HATCH Advanced: island style, retained boundaries, gap tolerance, bo
         engine.stop();
     }
 }
+
+TEST_CASE("EXTEND and LENGTHEN on splines: the curve kept, straight on along its end") {
+    const std::vector<Vec2> cp{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 10}, {50, 0}};
+    const std::vector<double> own{0, 0, 0, 0, 0.1, 0.7, 1, 1, 1, 1};
+    const spline::Curve curve(cp, 3, own);
+    const double whole = spline::length_between(curve, curve.lo(), curve.hi());
+    GeometryEngine engine;
+    engine.start();
+    AddSplineCommand s;
+    s.control_points = cp;
+    s.knots = own;
+    s.group = 1;
+    engine.submit(s);
+    engine.submit(AddLineCommand{{60, -30}, {60, 30}, 2}); // the boundary, ahead of the end
+    engine.submit(ExtendPickCommand{{50, 0}, 0.5, 3});
+    io::Document d = dump(engine, "musacad_extend_spline.mcad");
+    REQUIRE(d.splines.size() == 1);
+    {
+        const spline::Curve longer(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(distance(longer.at(longer.hi()), Vec2{60, -10}) < 1e-9); // straight on at 45 degrees down
+        REQUIRE(distance(longer.at(0.5), curve.at(0.5)) < 1e-9);           // the curve as it was
+    }
+    // LENGTHEN Total: shorter, along the curve, from the end picked.
+    LengthenCommand len;
+    len.pick = {0, 0};
+    len.pick_radius = 0.5;
+    len.mode = LengthenCommand::Mode::Total;
+    len.value = 40.0;
+    len.group = 4;
+    engine.submit(len);
+    d = dump(engine, "musacad_lengthen_spline.mcad");
+    REQUIRE(d.splines.size() == 1);
+    {
+        const spline::Curve shorter(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(spline::length_between(shorter, shorter.lo(), shorter.hi()) == Approx(40.0).margin(1e-3));
+        REQUIRE(distance(shorter.at(shorter.hi()), Vec2{60, -10}) < 1e-9); // the other end stays
+    }
+    // Delta: longer by 5, straight on from the start.
+    len.mode = LengthenCommand::Mode::Delta;
+    len.value = 5.0;
+    len.group = 5;
+    {
+        const spline::Curve now(d.splines[0].control_points, 3, d.splines[0].knots);
+        len.pick = now.at(now.lo());
+    }
+    engine.submit(len);
+    d = dump(engine, "musacad_lengthen_spline2.mcad");
+    {
+        const spline::Curve again(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(spline::length_between(again, again.lo(), again.hi()) == Approx(45.0).margin(1e-2));
+    }
+    REQUIRE(whole > 45.0);
+    engine.stop();
+}
