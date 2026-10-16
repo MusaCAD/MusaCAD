@@ -5195,6 +5195,7 @@ void DonutCommand::start(CommandContext& ctx) {
 
 void DonutCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.clear_preview();
     done_ = true;
 }
 
@@ -5214,6 +5215,22 @@ void DonutCommand::take_outer(CommandContext& ctx, double v) {
     s_inner_ = inner_;
     s_outer_ = outer_;
     state_ = State::Center;
+    // The donut rides on the cursor while its centre is asked for: both edges of the ring.
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Outline;
+    constexpr int kSteps = 48;
+    for (const double r : {inner_ * 0.5, outer_ * 0.5}) {
+        if (r <= 0.0) {
+            continue;
+        }
+        for (int i = 0; i < kSteps; ++i) {
+            const double a0 = 2.0 * 3.14159265358979323846 * i / kSteps;
+            const double a1 = 2.0 * 3.14159265358979323846 * (i + 1) / kSteps;
+            pv.points.push_back({r * std::cos(a0), r * std::sin(a0)});
+            pv.points.push_back({r * std::cos(a1), r * std::sin(a1)});
+        }
+    }
+    ctx.set_preview(std::move(pv));
     ctx.set_prompt("Specify center of donut or <exit>: ");
 }
 
@@ -5270,6 +5287,7 @@ void DonutCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Center: {
         if (t.empty()) {
+            ctx.clear_preview();
             done_ = true;
             return;
         }

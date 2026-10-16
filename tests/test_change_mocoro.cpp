@@ -2111,3 +2111,14 @@ TEST_CASE("A feature control frame's second row and datum identifier stand under
     REQUIRE(!back.fcfs.empty());
     REQUIRE(back.fcfs[0].cells == cells);
 }
+
+TEST_CASE("DONUT carries its ring at the cursor while the centre is asked for") {
+    H h;
+    h.run({"DONUT", "2", "4"});
+    REQUIRE(h.out.prompt == "Specify center of donut or <exit>: ");
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::Outline);
+    REQUIRE(h.proc.preview().points.size() == 2 * 2 * 48); // both edges
+    REQUIRE(h.proc.preview().points[0].x == Approx(1.0));  // the inner edge, radius 1
+    h.run({""});
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::None);
+}

@@ -122,6 +122,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **DONUT drags at the cursor** (#40) -- the ring follows the cursor while its centre is asked
+  for.
 - **Feature control frames in rows** (#62) -- the Geometric Tolerance window's Height, Projected
   Tolerance Zone and Datum Identifier, as rows under the frame; rows (AutoCAD's `^J`) in DXF
   too, and an AutoCAD frame's empty compartments are no longer drawn.
