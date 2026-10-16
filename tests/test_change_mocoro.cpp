@@ -3151,3 +3151,25 @@ TEST_CASE("Rescaling a drawing scales every model-space object about the origin,
     REQUIRE(doc.lines[0].a == Vec2{1, 1});
     engine.stop();
 }
+
+TEST_CASE("SPLINE's toLerance fits fewer control points within the tolerance, ends on the end points") {
+    std::vector<Vec2> pts;
+    for (int i = 0; i <= 20; ++i) {
+        const double x = i;
+        pts.push_back({x, 0.02 * std::sin(x * 7.0)}); // a wobbly straight run
+    }
+    const std::vector<Vec2> near = spline::fit_within(pts, 3, spline::FitParam::Chord, 0.1);
+    REQUIRE_FALSE(near.empty());
+    REQUIRE(near.size() < pts.size());
+    REQUIRE(near.front() == pts.front());
+    REQUIRE(near.back() == pts.back());
+    REQUIRE(spline::fit_within(pts, 3, spline::FitParam::Chord, 0.0).empty()); // 0: through them
+
+    H h;
+    h.run({"SPLINE", "M", "F", "0,0", "L"});
+    REQUIRE(h.out.prompt == "Specify fit tolerance <0.0000>: ");
+    h.run({"0.5", "5,0.1", "10,-0.1", "15,0.1", "20,0", "25,-0.1", ""});
+    const auto* sp = h.last<AddSplineCommand>();
+    REQUIRE(sp != nullptr);
+    REQUIRE(sp->control_points.size() < 6);
+}

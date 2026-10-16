@@ -358,6 +358,103 @@ inline bool fit_control_points_tangent(std::span<const Vec2> fit, int degree_in,
     return true;
 }
 
+/// SPLINE's toLerance: the fewest control points (from degree + 1 up) whose least-squares
+/// curve, its ends on the first and last fit points, passes within `tolerance` of every fit
+/// point; through all of them (interpolation) when nothing fewer does. Empty when there are
+/// too few points to fit.
+inline std::vector<Vec2> fit_within(std::span<const Vec2> fit, int degree_in, FitParam mode, double tolerance) {
+    const int m = static_cast<int>(fit.size());
+    if (m < 3 || !(tolerance > 0.0)) {
+        return {};
+    }
+    const std::vector<double> u = fit_parameters(fit, mode);
+    std::vector<double> basis;
+    for (int count = std::max(2, std::min(degree_in, m - 1) + 1); count < m; ++count) {
+        const int degree = effective_degree(count, degree_in);
+        const std::vector<double> knots = clamped_knots(count, degree);
+        const int inner = count - 2; // the control points between the two fixed ends
+        const auto K = static_cast<std::size_t>(inner);
+        std::vector<double> ata(K * K, 0.0);
+        std::vector<double> atx(K, 0.0);
+        std::vector<double> aty(K, 0.0);
+        for (int k = 1; k < m - 1; ++k) {
+            const double t = u[static_cast<std::size_t>(k)];
+            const int span = find_span(count - 1, degree, t, knots);
+            basis_functions(span, t, degree, knots, basis);
+            std::vector<double> row(static_cast<std::size_t>(count), 0.0);
+            for (int j = 0; j <= degree; ++j) {
+                row[static_cast<std::size_t>(span - degree + j)] = basis[static_cast<std::size_t>(j)];
+            }
+            const Vec2 r = fit[static_cast<std::size_t>(k)] - fit.front() * row.front() - fit.back() * row.back();
+            for (std::size_t i = 0; i < K; ++i) {
+                const double ni = row[i + 1];
+                if (ni == 0.0) {
+                    continue;
+                }
+                atx[i] += ni * r.x;
+                aty[i] += ni * r.y;
+                for (std::size_t j = 0; j < K; ++j) {
+                    ata[i * K + j] += ni * row[j + 1];
+                }
+            }
+        }
+        // Gaussian elimination with partial pivoting on the normal equations.
+        bool singular = false;
+        for (std::size_t c = 0; c < K && !singular; ++c) {
+            std::size_t piv = c;
+            for (std::size_t r = c + 1; r < K; ++r) {
+                if (std::abs(ata[r * K + c]) > std::abs(ata[piv * K + c])) {
+                    piv = r;
+                }
+            }
+            if (std::abs(ata[piv * K + c]) < 1e-14) {
+                singular = true;
+                break;
+            }
+            if (piv != c) {
+                for (std::size_t k = 0; k < K; ++k) {
+                    std::swap(ata[c * K + k], ata[piv * K + k]);
+                }
+                std::swap(atx[c], atx[piv]);
+                std::swap(aty[c], aty[piv]);
+            }
+            for (std::size_t r = c + 1; r < K; ++r) {
+                const double f = ata[r * K + c] / ata[c * K + c];
+                for (std::size_t k = c; k < K; ++k) {
+                    ata[r * K + k] -= f * ata[c * K + k];
+                }
+                atx[r] -= f * atx[c];
+                aty[r] -= f * aty[c];
+            }
+        }
+        if (singular) {
+            continue;
+        }
+        std::vector<Vec2> ctrl(static_cast<std::size_t>(count));
+        ctrl.front() = fit.front();
+        ctrl.back() = fit.back();
+        for (std::size_t i = K; i-- > 0;) {
+            double sx = atx[i];
+            double sy = aty[i];
+            for (std::size_t k = i + 1; k < K; ++k) {
+                sx -= ata[i * K + k] * ctrl[k + 1].x;
+                sy -= ata[i * K + k] * ctrl[k + 1].y;
+            }
+            ctrl[i + 1] = {sx / ata[i * K + i], sy / ata[i * K + i]};
+        }
+        double worst = 0.0;
+        for (int k = 0; k < m; ++k) {
+            const double t = u[static_cast<std::size_t>(k)];
+            const Vec2 c = de_boor(find_span(count - 1, degree, t, knots), t, degree, knots, ctrl);
+            worst = std::max(worst, length(c - fit[static_cast<std::size_t>(k)]));
+        }
+        if (worst <= tolerance) {
+            return ctrl;
+        }
+    }
+    return {}; // nothing fewer will do: the caller interpolates
+}
+
 /// Interpolate with the asked parameterisation, falling back to Uniform (always
 /// solvable) -- the SPLINE command's rule, so a preview and its commit agree.
 inline std::vector<Vec2> fit_or_fallback(std::span<const Vec2> fit, int degree, FitParam mode,

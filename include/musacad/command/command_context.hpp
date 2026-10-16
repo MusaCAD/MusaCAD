@@ -168,6 +168,7 @@ struct PreviewSpec {
     /// 1: the cursor gives the start tangent (from the first point), 2: the end tangent
     /// (from the last); the cursor is then not a fit point.
     int spline_tangent_cursor = 0;
+    double spline_tolerance = 0.0; ///< toLerance: the curve within this of its fit points
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor

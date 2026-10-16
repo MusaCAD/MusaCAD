@@ -2547,7 +2547,7 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class State { First, MethodPick, KnotsPick, DegreePick, Next, Object, StartTangent, EndTangent };
+    enum class State { First, MethodPick, KnotsPick, DegreePick, Next, Object, StartTangent, EndTangent, Tolerance };
     void convert_selection(CommandContext& ctx); ///< [Object]: the polylines picked, made splines
     SelectObjectsPhase select_;
     void prompt_first(CommandContext& ctx) const;
@@ -2565,6 +2565,7 @@ private:
     int knots_ = 0;
     std::vector<core::Vec2> pts_;
     std::optional<core::Vec2> start_tangent_; ///< start Tangency: the curve's direction at its start
+    double tolerance_ = 0.0; ///< toLerance: 0 through the points, else within this of them
     bool done_ = false;
 };
 

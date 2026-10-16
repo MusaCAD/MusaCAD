@@ -2976,9 +2976,16 @@ void ViewportWindow::rebuild_overlay() {
                 }
                 std::vector<core::Vec2> ctrl;
                 if (pv.spline_fit) {
-                    ctrl = core::spline::fit_or_fallback(
-                        through, pv.spline_degree,
-                        static_cast<core::spline::FitParam>(pv.spline_knots), start_dir, end_dir);
+                    if (pv.spline_tolerance > 0.0 && !start_dir && !end_dir) {
+                        ctrl = core::spline::fit_within(through, pv.spline_degree,
+                                                        static_cast<core::spline::FitParam>(pv.spline_knots),
+                                                        pv.spline_tolerance);
+                    }
+                    if (ctrl.empty()) {
+                        ctrl = core::spline::fit_or_fallback(
+                            through, pv.spline_degree,
+                            static_cast<core::spline::FitParam>(pv.spline_knots), start_dir, end_dir);
+                    }
                 } else {
                     ctrl = std::move(through);
                 }

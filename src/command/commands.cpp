@@ -5180,6 +5180,7 @@ void SplineCommand::refresh_preview(CommandContext& ctx) const {
     pv.spline_degree = degree_;
     pv.spline_knots = knots_;
     pv.spline_start_tangent = start_tangent_;
+    pv.spline_tolerance = tolerance_;
     pv.spline_tangent_cursor = state_ == State::StartTangent ? 1 : state_ == State::EndTangent ? 2 : 0;
     ctx.set_preview(std::move(pv));
 }
@@ -5238,9 +5239,14 @@ void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::
     }
     std::vector<core::Vec2> ctrl;
     if (fit_) {
-        ctrl = core::spline::fit_or_fallback(through, degree_, static_cast<core::spline::FitParam>(knots_),
-                                             close ? std::nullopt : start_tangent_,
-                                             close ? std::nullopt : end_tangent);
+        if (tolerance_ > 0.0 && !close && !start_tangent_ && !end_tangent) {
+            ctrl = core::spline::fit_within(through, degree_, static_cast<core::spline::FitParam>(knots_), tolerance_);
+        }
+        if (ctrl.empty()) {
+            ctrl = core::spline::fit_or_fallback(through, degree_, static_cast<core::spline::FitParam>(knots_),
+                                                 close ? std::nullopt : start_tangent_,
+                                                 close ? std::nullopt : end_tangent);
+        }
     } else {
         ctrl = std::move(through);
     }
@@ -5259,6 +5265,20 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             convert_selection(ctx);
         }
         return;
+    case State::Tolerance: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 0.0) {
+                ctx.echo("Requires a distance of zero or more.");
+                return;
+            }
+            tolerance_ = v;
+        }
+        state_ = State::Next;
+        refresh_preview(ctx);
+        prompt_next(ctx);
+        return;
+    }
     case State::StartTangent:
     case State::EndTangent: {
         const bool at_end = state_ == State::EndTangent;
@@ -5391,7 +5411,8 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (fit_ && (u == "L" || u == "TOLERANCE")) {
-            ctx.echo("Fit tolerance other than 0 is not supported yet.");
+            state_ = State::Tolerance;
+            ctx.set_prompt("Specify fit tolerance <" + fmt4(tolerance_) + ">: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
