@@ -113,6 +113,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   block named after the file, at its base point, its own blocks with it (the drawing's own
   definitions kept; `Block "X" already exists. Redefine it?` before one is replaced). Xrefs
   are attached at their INSBASE too. Insert > Block > From Drawing and Set Base Point.
+- **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
+  asked for, at the size it will be.
 - **DIMBREAK** (#60) -- `Select dimension to add/remove break or [Multiple]:` and `Select object to
   break dimension or [Auto/Manual/Remove] <Auto>:`: the dimension and extension lines broken
   where other objects cross them (3.75 for a 2.5 arrow), between two points, or the breaks

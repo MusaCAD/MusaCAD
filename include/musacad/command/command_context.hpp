@@ -44,6 +44,7 @@ enum class PreviewKind {
     Spline,     ///< SPLINE: the curve through/over points + cursor (see spline fields)
     Xline,      ///< XLINE / RAY: the construction line the click would make (xline_mode)
     Text,       ///< TEXT: the line being typed, where it will stand (see the text fields)
+    Outline,    ///< segment pairs in `points`, as offsets from the cursor (TABLE's grid)
 };
 
 /// The end of the last line or arc drawn and the heading there: what LINE and ARC

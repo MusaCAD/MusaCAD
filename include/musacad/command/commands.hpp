@@ -1245,6 +1245,7 @@ public:
 private:
     enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace };
     void place_prompt(CommandContext& ctx);
+    void outline(CommandContext& ctx) const; ///< the table's grid carried at the cursor
     bool dialog_;
     bool title_ = true;
     bool header_ = true;

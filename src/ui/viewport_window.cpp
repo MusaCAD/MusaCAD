@@ -3081,6 +3081,13 @@ void ViewportWindow::rebuild_overlay() {
             }
             break;
         }
+        case command::PreviewKind::Outline:
+            // An outline carried at the cursor (TABLE's grid at its insertion point).
+            for (std::size_t i = 0; i + 1 < pts.size(); i += 2) {
+                seg.push_back(cur + pts[i]);
+                seg.push_back(cur + pts[i + 1]);
+            }
+            break;
         case command::PreviewKind::None:
             break;
         }

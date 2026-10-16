@@ -7574,7 +7574,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
-        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET",         "LAYERPMODE",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
         "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
@@ -13166,6 +13166,7 @@ void TableCommand::start(CommandContext& ctx) {
             header_ = io.header;
             link_ = io.link;
             mode_ = Mode::DialogPlace;
+            outline(ctx);
             ctx.set_prompt("Specify insertion point: ");
             return;
         }
@@ -13175,8 +13176,33 @@ void TableCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter number of columns or [Auto] <" + std::to_string(cols_) + ">: ");
 }
 
+void TableCommand::outline(CommandContext& ctx) const {
+    if (!link_.empty()) {
+        return; // the file decides its size
+    }
+    const std::vector<core::TableStyle> styles = ctx.table_styles();
+    const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
+    const int rows = rows_ + (title_ ? 1 : 0) + (header_ ? 1 : 0);
+    const double w = col_w_ * cols_;
+    const double h = line * row_lines_;
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Outline;
+    for (int r = 0; r <= rows; ++r) { // the top-left corner at the cursor
+        pv.points.push_back({0.0, -h * r});
+        pv.points.push_back({w, -h * r});
+    }
+    for (int c = 0; c <= cols_; ++c) {
+        // The title row is one cell across: its column lines start below it.
+        const double top = (title_ && c > 0 && c < cols_) ? -h : 0.0;
+        pv.points.push_back({col_w_ * c, top});
+        pv.points.push_back({col_w_ * c, -h * rows});
+    }
+    ctx.set_preview(std::move(pv));
+}
+
 void TableCommand::place_prompt(CommandContext& ctx) {
     mode_ = Mode::Place;
+    outline(ctx);
     ctx.set_prompt("Specify insertion point or [Style/Width/Height]: ");
 }
 
@@ -13270,6 +13296,7 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
             done_ = true;
             return;
         } else if (p) {
+            ctx.set_preview({});
             // A title row and a header row above the data rows, as AutoCAD's Standard style
             // (the Insert Table window can leave either out).
             const int rows = rows_ + (title_ ? 1 : 0) + (header_ ? 1 : 0);
@@ -13299,6 +13326,7 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
 
 void TableCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.set_preview({});
     done_ = true;
 }
 
