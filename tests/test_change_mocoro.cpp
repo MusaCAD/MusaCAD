@@ -3292,3 +3292,57 @@ TEST_CASE("-DWGUNITS changes the drawing's unit and scales the drawing to it") {
     REQUIRE(u->units.linear_precision == 4);
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("A block redefined with its attributes in another order keeps each reference's values by tag") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef blk;
+    blk.name = "TAG2";
+    io::DocAttDef a;
+    a.text.content = "A";
+    io::DocAttDef b;
+    b.text.content = "B";
+    blk.attdefs = {a, b};
+    blk.lines.push_back(io::DocLine{{0, 0}, {1, 0}, {}});
+    doc.block_defs = {blk};
+    io::DocInsert in;
+    in.block_name = "TAG2";
+    in.attribs = {io::DocAttrib{"A", "one"}, io::DocAttrib{"B", "two"}};
+    doc.inserts = {in};
+    const std::string dp = (fs::temp_directory_path() / "musacad_redefine_tags.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    // The new definition: B first, then A, far from the reference.
+    AddAttDefCommand nb;
+    nb.text.pos = {100, 0};
+    nb.text.content = "B";
+    nb.group = 2;
+    AddAttDefCommand na;
+    na.text.pos = {100, 10};
+    na.text.content = "A";
+    na.group = 3;
+    engine.submit(nb);
+    engine.submit(na);
+    engine.submit(SelectPickCommand{{100.5, 0.5}, 1.0, false});
+    engine.submit(SelectPickCommand{{100.5, 10.5}, 1.0, true});
+    engine.submit(DefineBlockCommand{"TAG2", {100, 0}, 4});
+    const io::Document out = dump(engine, "musacad_redefine_tags_out.musa");
+    // The reference that was there (BLOCK put a second one where the attributes were).
+    const auto first = std::find_if(out.inserts.begin(), out.inserts.end(),
+                                    [](const io::DocInsert& x) { return x.pos == Vec2{0, 0}; });
+    REQUIRE(first != out.inserts.end());
+    const auto value = [&](const char* tag) {
+        for (const io::DocAttrib& x : first->attribs) {
+            if (x.tag == tag) {
+                return x.value;
+            }
+        }
+        return std::string("?");
+    };
+    REQUIRE(value("A") == "one");
+    REQUIRE(value("B") == "two");
+    engine.stop();
+    fs::remove(dp);
+}

@@ -531,6 +531,9 @@ private:
     void apply_dim_grip_menu(const DimGripMenuCommand& c);
     void apply_hatch_edit(const HatchEditCommand& c);
     void apply_replace_block(const ReplaceBlockCommand& c);
+    /// A block given a new definition, the references' attribute values carried by tag into
+    /// it (ATTSYNC's job in AutoCAD, done as the definition changes).
+    void redefine_block_by_tags(std::uint16_t index, const BlockDef& def);
     /// DIMASSOC 0: the dimensions the last command drew, exploded in its undo step.
     void explode_new_dimensions();
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides

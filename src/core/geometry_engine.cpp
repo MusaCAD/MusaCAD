@@ -2313,6 +2313,46 @@ void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
     }
 }
 
+void GeometryEngine::redefine_block_by_tags(std::uint16_t index, const BlockDef& def) {
+    const BlockDef* old = store_.block(index);
+    const std::vector<BlockAttDef> was = old != nullptr ? old->content.attdefs : std::vector<BlockAttDef>{};
+    store_.redefine_block(index, def);
+    const std::vector<BlockAttDef>& now = def.content.attdefs;
+    const auto lower = [](std::string t) {
+        for (char& ch : t) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return t;
+    };
+    bool same = was.size() == now.size();
+    for (std::size_t i = 0; same && i < was.size(); ++i) {
+        same = lower(was[i].tag) == lower(now[i].tag);
+    }
+    if (same) {
+        return; // the attributes as they were: every value still in its place
+    }
+    // The references' values follow their tags to where the new definition has them; a new
+    // attribute takes its default.
+    for (const EntityHandle h : all_live()) {
+        const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+        if (in == nullptr || in->block != index) {
+            continue;
+        }
+        const std::vector<std::string> values = store_.insert_attribs(*in);
+        std::vector<std::string> moved;
+        for (const BlockAttDef& nd : now) {
+            std::string v = nd.def;
+            for (std::size_t k = 0; k < was.size(); ++k) {
+                if (lower(was[k].tag) == lower(nd.tag) && k < values.size()) {
+                    v = values[k];
+                }
+            }
+            moved.push_back(std::move(v));
+        }
+        store_.set_insert_attribs(h, moved);
+    }
+}
+
 void GeometryEngine::apply_replace_block(const ReplaceBlockCommand& c) {
     const auto lower = [](std::string s) {
         for (char& ch : s) {
@@ -7717,7 +7757,7 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
     }
     const bool redefined = bi != 0xFFFF;
     if (redefined) {
-        store_.redefine_block(bi, def);
+        redefine_block_by_tags(bi, def);
     } else {
         bi = store_.add_block(def);
     }
@@ -8053,7 +8093,7 @@ void GeometryEngine::apply_refclose(const RefCloseCommand& c) {
                 ++saved;
             }
         }
-        store_.redefine_block(session.block, def);
+        redefine_block_by_tags(session.block, def);
     } else {
         for (const EntityHandle h : live) {
             if (was_added(h)) {
@@ -9188,7 +9228,7 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     remap_inserts(def.content);
     const std::uint16_t existing = find_block(name);
     if (existing != 0xFFFF) {
-        store_.redefine_block(existing, def);
+        redefine_block_by_tags(existing, def);
         return existing;
     }
     return store_.add_block(def);

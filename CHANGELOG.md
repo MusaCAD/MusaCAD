@@ -193,6 +193,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Meters), its display format and precision, whether objects from other drawings are scaled on
   insertion and INSUNITS matched, then -- the unit changed -- the drawing scaled to the new unit
   (paper space too if asked), in one undo step.
+- **Attribute values kept by tag when a block is redefined** (#75) -- BLOCK under the same name,
+  REFEDIT, the Block Editor and INSERT of a drawing file: each reference's values follow their
+  tags into the new definition.
 - **BLOCKREPLACE** (#75) -- the block to be replaced and the one to replace it, picked from
   lists (-BLOCKREPLACE: typed); every reference of the first, nested ones too, becomes one of the
   second where it was, attribute values kept by tag. The first's definition stays until PURGE.
