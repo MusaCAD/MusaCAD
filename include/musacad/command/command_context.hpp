@@ -65,10 +65,6 @@ struct PreviewSpec {
     // corner-to-corner rubber band. `rect_rotation` (radians) rotates it about points[0].
     // These parameterise the existing PreviewKind::Rectangle path -- not a new pipeline.
     double fixed_w = 0.0;
-    /// MTEXT's box (PreviewKind::Rectangle): the justification it hangs from (0..8: top,
-    /// middle, bottom rows of left, centre, right), shown as the way the text will flow;
-    /// -1: not a text box.
-    int mtext_attach = -1;
     double fixed_h = 0.0;
     double rect_rotation = 0.0;
     /// RECTANG's corner treatment (Fillet radius, or the two Chamfer distances), drawn on
@@ -76,6 +72,10 @@ struct PreviewSpec {
     double rect_fillet = 0.0;
     double rect_chamfer_d1 = 0.0;
     double rect_chamfer_d2 = 0.0;
+    /// MTEXT's box (PreviewKind::Rectangle): the justification it hangs from (0..8: top,
+    /// middle, bottom rows of left, centre, right), shown as the way the text will flow;
+    /// -1: not a text box.
+    int mtext_attach = -1;
     /// Polygon preview: how many sides, and whether the cursor distance is the
     /// circumradius (inscribed) or the apothem (circumscribed). Parameterises the
     /// PreviewKind::Polygon path the same way fixed_w/fixed_h parameterise Rectangle.
