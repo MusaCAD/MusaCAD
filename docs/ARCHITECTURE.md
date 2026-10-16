@@ -2679,6 +2679,12 @@ the frame; when it is not 0 the label and the rate follow the override line. The
 Dimension window is `ViewControl::dim_inspect_dialog` (synchronous: 1 OK, 0 cancelled, -1 no
 window, and the command line asks).
 
+TABLESTYLE: the store keeps `current_table_style_` beside the table-style table (PURGE and
+delete leave the current one alone; clearing the store resets both), saved as the native
+`CURTABLESTYLE` record when not Standard. `TableStyleCommand` adds, modifies, sets current
+and deletes by name; the snapshot publishes the styles and the current index, which the
+main window hands to the command processor for TABLE's Style option and default.
+
 CHANGE needs to know which kinds are selected before it asks the text and block prompts:
 the viewport sets a bit per `EntityKind` from the published selection, and the main window
 hands it to the command processor with the selection count (`selection_kinds()`; all bits

@@ -42,6 +42,7 @@
 #include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_run.hpp"
+#include "musacad/core/font_engine.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/table.hpp"
 
