@@ -24,6 +24,7 @@
 #include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
@@ -191,6 +192,41 @@ QString precision_sample(int places, QChar sep) {
         s += QString(places, QLatin1Char('0'));
     }
     return s;
+}
+
+/// The precision samples for a unit format (DIMLUNIT's codes): decimals, or the fractions
+/// of an inch for architectural and fractional.
+QString unit_sample(int unit, int places, QChar sep) {
+    const QString dec = precision_sample(places, sep);
+    switch (unit) {
+    case 1:
+        return dec + QStringLiteral("E+01");
+    case 3:
+        return QStringLiteral("0'-") + dec + QLatin1Char('"');
+    case 4:
+        return places == 0 ? QStringLiteral("0'-0\"") : QStringLiteral("0'-0 1/%1\"").arg(1 << places);
+    case 5:
+        return places == 0 ? QStringLiteral("0") : QStringLiteral("0 1/%1").arg(1 << places);
+    default:
+        return dec;
+    }
+}
+
+/// DIMPOST split at "<>" (or DIMAPOST at "[]"): the prefix and the suffix.
+std::pair<QString, QString> post_parts(const std::string& post, const char* mark) {
+    const QString p = QString::fromStdString(post);
+    const qsizetype at = p.indexOf(QLatin1String(mark));
+    if (at < 0) {
+        return {QString(), p};
+    }
+    return {p.left(at), p.mid(at + 2)};
+}
+
+std::string post_of(const QString& prefix, const QString& suffix, const char* mark) {
+    if (prefix.isEmpty() && suffix.isEmpty()) {
+        return {};
+    }
+    return (prefix + QLatin1String(mark) + suffix).toStdString();
 }
 
 QGroupBox* group(const QString& title, QLayout* body, QWidget* parent) {
@@ -488,21 +524,51 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     separator->addItems({QStringLiteral("'.' (Period)"), QStringLiteral("',' (Comma)")});
     separator->setCurrentIndex(style.decimal_separator == ',' ? 1 : 0);
     auto* precision = new QComboBox(this);
-    const auto fill_precision = [precision, separator](int keep) {
+    auto* unit = new QComboBox(this);
+    unit->addItems({QStringLiteral("Scientific"), QStringLiteral("Decimal"), QStringLiteral("Engineering"),
+                    QStringLiteral("Architectural"), QStringLiteral("Fractional")});
+    unit->setCurrentIndex(std::clamp(static_cast<int>(style.linear_unit == 6 ? 2 : style.linear_unit) - 1, 0, 4));
+    const auto fill_precision = [precision, separator, unit](int keep) {
         const QChar sep = separator->currentIndex() == 1 ? QLatin1Char(',') : QLatin1Char('.');
         precision->blockSignals(true);
         precision->clear();
         for (int places = 0; places <= 8; ++places) {
-            precision->addItem(precision_sample(places, sep));
+            precision->addItem(unit_sample(unit->currentIndex() + 1, places, sep));
         }
         precision->setCurrentIndex(std::clamp(keep, 0, 8));
         precision->blockSignals(false);
     };
     fill_precision(style.precision);
+    auto* fraction = new QComboBox(this);
+    fraction->addItems({QStringLiteral("Horizontal"), QStringLiteral("Diagonal"), QStringLiteral("Not stacked")});
+    fraction->setCurrentIndex(std::clamp(static_cast<int>(style.fraction_format), 0, 2));
+    QDoubleSpinBox* round_off = length_box(style.round_off, 0.0, this);
+    const auto [post_pre, post_suf] = post_parts(style.post, "<>");
+    auto* prefix = new QLineEdit(post_pre, this);
+    auto* suffix = new QLineEdit(post_suf, this);
+    QDoubleSpinBox* lfac = length_box(style.linear_factor, 0.0001, this);
     QFormLayout* lu = form();
-    row(lu, QStringLiteral("Unit format:"), new QLabel(QStringLiteral("Decimal"), this));
+    row(lu, QStringLiteral("Unit format:"), unit);
     row(lu, QStringLiteral("Precision:"), precision);
+    row(lu, QStringLiteral("Fraction format:"), fraction);
     row(lu, QStringLiteral("Decimal separator:"), separator);
+    row(lu, QStringLiteral("Round off:"), round_off);
+    row(lu, QStringLiteral("Prefix:"), prefix);
+    row(lu, QStringLiteral("Suffix:"), suffix);
+    row(lu, QStringLiteral("Measurement scale factor:"), lfac);
+    auto* angle_unit = new QComboBox(this);
+    angle_unit->addItems({QStringLiteral("Decimal Degrees"), QStringLiteral("Degrees Minutes Seconds"),
+                          QStringLiteral("Gradians"), QStringLiteral("Radians")});
+    angle_unit->setCurrentIndex(std::clamp(static_cast<int>(style.angular_unit), 0, 3));
+    auto* angle_precision = new QComboBox(this);
+    angle_precision->addItem(QStringLiteral("As linear"));
+    for (int places = 0; places <= 8; ++places) {
+        angle_precision->addItem(precision_sample(places, QLatin1Char('.')));
+    }
+    angle_precision->setCurrentIndex(std::clamp(static_cast<int>(style.angular_precision) + 1, 0, 9));
+    QFormLayout* au = form();
+    row(au, QStringLiteral("Units format:"), angle_unit);
+    row(au, QStringLiteral("Precision:"), angle_precision);
     auto* leading = new QCheckBox(QStringLiteral("Leading  (0.50 reads .50)"), this);
     leading->setChecked((style.zero_suppression & core::kDimZinLeading) != 0);
     auto* trailing = new QCheckBox(QStringLiteral("Trailing  (12.50 reads 12.5)"), this);
@@ -513,8 +579,46 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     zeros->addWidget(leading);
     zeros->addWidget(trailing);
     tabs->addTab(page(tabs, {group(QStringLiteral("Linear dimensions"), lu, this),
-                             group(QStringLiteral("Zero suppression"), zeros, this)}),
+                             group(QStringLiteral("Zero suppression"), zeros, this),
+                             group(QStringLiteral("Angular dimensions"), au, this)}),
                  QStringLiteral("Primary Units"));
+
+    // Alternate units: the length again, in brackets after it.
+    auto* alt_on = new QCheckBox(QStringLiteral("Display alternate units"), this);
+    alt_on->setChecked(style.alt);
+    auto* alt_unit = new QComboBox(this);
+    alt_unit->addItems({QStringLiteral("Scientific"), QStringLiteral("Decimal"), QStringLiteral("Engineering"),
+                        QStringLiteral("Architectural"), QStringLiteral("Fractional")});
+    alt_unit->setCurrentIndex(std::clamp(static_cast<int>(style.alt_unit == 6 ? 2 : style.alt_unit) - 1, 0, 4));
+    auto* alt_precision = new QComboBox(this);
+    const auto fill_alt_precision = [alt_precision, alt_unit](int keep) {
+        alt_precision->blockSignals(true);
+        alt_precision->clear();
+        for (int places = 0; places <= 8; ++places) {
+            alt_precision->addItem(unit_sample(alt_unit->currentIndex() + 1, places, QLatin1Char('.')));
+        }
+        alt_precision->setCurrentIndex(std::clamp(keep, 0, 8));
+        alt_precision->blockSignals(false);
+    };
+    fill_alt_precision(style.alt_precision);
+    QDoubleSpinBox* alt_factor = length_box(style.alt_factor, 0.0001, this);
+    QDoubleSpinBox* alt_round = length_box(style.alt_round, 0.0, this);
+    const auto [apost_pre, apost_suf] = post_parts(style.alt_post, "[]");
+    auto* alt_prefix = new QLineEdit(apost_pre, this);
+    auto* alt_suffix = new QLineEdit(apost_suf, this);
+    QFormLayout* alt = form();
+    row(alt, QStringLiteral("Unit format:"), alt_unit);
+    row(alt, QStringLiteral("Precision:"), alt_precision);
+    row(alt, QStringLiteral("Multiplier for alt units:"), alt_factor);
+    row(alt, QStringLiteral("Round distances to:"), alt_round);
+    row(alt, QStringLiteral("Prefix:"), alt_prefix);
+    row(alt, QStringLiteral("Suffix:"), alt_suffix);
+    auto* alt_head = new QVBoxLayout;
+    alt_head->setContentsMargins(12, 12, 12, 12);
+    alt_head->addWidget(alt_on);
+    tabs->addTab(page(tabs, {group(QStringLiteral("Alternate units"), alt_head, this),
+                             group(QStringLiteral("Alternate units format"), alt, this)}),
+                 QStringLiteral("Alternate Units"));
 
     auto* preview = new DimStylePreview(this);
     read_ = [=, this] {
@@ -536,13 +640,42 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.decimal_separator = separator->currentIndex() == 1 ? ',' : '.';
         s.zero_suppression = static_cast<std::uint8_t>((leading->isChecked() ? core::kDimZinLeading : 0) |
                                                        (trailing->isChecked() ? core::kDimZinTrailing : 0));
+        s.linear_unit = static_cast<std::uint8_t>(unit->currentIndex() + 1);
+        s.fraction_format = static_cast<std::uint8_t>(std::max(0, fraction->currentIndex()));
+        s.round_off = round_off->value();
+        s.post = post_of(prefix->text(), suffix->text(), "<>");
+        s.linear_factor = lfac->value();
+        s.angular_unit = static_cast<std::uint8_t>(std::max(0, angle_unit->currentIndex()));
+        s.angular_precision = static_cast<std::int8_t>(angle_precision->currentIndex() - 1);
+        s.alt = alt_on->isChecked();
+        s.alt_unit = static_cast<std::uint8_t>(alt_unit->currentIndex() + 1);
+        s.alt_precision = static_cast<std::uint8_t>(std::max(0, alt_precision->currentIndex()));
+        s.alt_factor = alt_factor->value();
+        s.alt_round = alt_round->value();
+        s.alt_post = post_of(alt_prefix->text(), alt_suffix->text(), "[]");
         return s;
     };
     const auto refresh_preview = [preview, this] { preview->set_style(read_()); };
     refresh_preview();
-    for (QComboBox* c : {dim_color, lineweight, ext_color, arrow_type, arrow_color, text_color, vertical, precision}) {
+    for (QComboBox* c : {dim_color, lineweight, ext_color, arrow_type, arrow_color, text_color, vertical, precision,
+                         fraction, angle_unit, angle_precision, alt_precision}) {
         connect(c, &QComboBox::currentIndexChanged, this, refresh_preview);
     }
+    connect(unit, &QComboBox::currentIndexChanged, this, [=] {
+        fill_precision(precision->currentIndex());
+        refresh_preview();
+    });
+    connect(alt_unit, &QComboBox::currentIndexChanged, this, [=] {
+        fill_alt_precision(alt_precision->currentIndex());
+        refresh_preview();
+    });
+    for (QDoubleSpinBox* b : {round_off, lfac, alt_factor, alt_round}) {
+        connect(b, &QDoubleSpinBox::valueChanged, this, refresh_preview);
+    }
+    for (QLineEdit* e : {prefix, suffix, alt_prefix, alt_suffix}) {
+        connect(e, &QLineEdit::textChanged, this, refresh_preview);
+    }
+    connect(alt_on, &QCheckBox::toggled, this, refresh_preview);
     connect(separator, &QComboBox::currentIndexChanged, this, [=] {
         fill_precision(precision->currentIndex());
         refresh_preview();

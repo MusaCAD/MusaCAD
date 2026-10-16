@@ -139,9 +139,11 @@ void orient_linear_dim(DimData& d, std::optional<double> fixed, bool circle = fa
 /// line, 1 alone with a leader, 2 alone), DIMLWD (lineweight, 1/100 mm), DIMCLRD /
 /// DIMCLRE / DIMCLRT (dimension line and arrowheads, extension lines, text: an ACI
 /// colour, 256 or 0 ByLayer).
-inline constexpr const char* kDimVars[] = {"DIMTXT", "DIMASZ", "DIMBLK", "DIMDEC",  "DIMDSEP",  "DIMZIN",
-                                           "DIMEXO", "DIMEXE", "DIMTAD", "DIMATFIT", "DIMTMOVE", "DIMLWD",
-                                           "DIMCLRD", "DIMCLRE", "DIMCLRT"};
+inline constexpr const char* kDimVars[] = {"DIMTXT",  "DIMASZ",   "DIMBLK",  "DIMDEC",  "DIMDSEP",  "DIMZIN",
+                                           "DIMEXO",  "DIMEXE",   "DIMTAD",  "DIMATFIT", "DIMTMOVE", "DIMLWD",
+                                           "DIMCLRD", "DIMCLRE",  "DIMCLRT", "DIMLUNIT", "DIMFRAC",  "DIMRND",
+                                           "DIMLFAC", "DIMAUNIT", "DIMADEC", "DIMALT",   "DIMALTU",  "DIMALTD",
+                                           "DIMALTF", "DIMALTRND"};
 
 /// Sets `var` (one of kDimVars, any case) on `style`; false for an unknown variable or a
 /// value out of its range, `style` then unchanged.

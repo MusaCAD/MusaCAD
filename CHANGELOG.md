@@ -38,6 +38,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Aspect]`: a spacing, the snap spacing or a multiple of it, a major line every so many,
   fewer lines zoomed out and more zoomed in, the grid kept within the limits, and different
   horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
+- **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
+  the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
+  Decimal), the fraction format, round off, a prefix and suffix and the measurement scale
+  factor, and angles in degrees, minutes and seconds, gradians or radians; the new
+  **Alternate Units** tab shows the length again in brackets (`25.00 [0.98]`). The same
+  settings as DIMLUNIT, DIMFRAC, DIMRND, DIMLFAC, DIMAUNIT, DIMADEC, DIMALT, DIMALTU,
+  DIMALTD, DIMALTF and DIMALTRND at the command line; kept in the drawing and in DXF.
 - **Units across drawings** (#81) -- copying between drawings in different units, or
   attaching one as a reference, scales the objects into the drawing's own units
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.

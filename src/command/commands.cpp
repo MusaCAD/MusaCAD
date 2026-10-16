@@ -12526,7 +12526,8 @@ void LtscaleVarCommand::cancel(CommandContext& ctx) {
 namespace {
 std::string dim_value_text(std::string_view var, double v) {
     const std::string u = upper(std::string(var));
-    if (u == "DIMTXT" || u == "DIMASZ" || u == "DIMEXO" || u == "DIMEXE") {
+    if (u == "DIMTXT" || u == "DIMASZ" || u == "DIMEXO" || u == "DIMEXE" || u == "DIMRND" || u == "DIMLFAC" ||
+        u == "DIMALTF" || u == "DIMALTRND") {
         return fmt4(v);
     }
     if (u == "DIMDSEP") {
@@ -12564,6 +12565,17 @@ const char* dim_var_meaning(std::string_view var) {
     if (u == "DIMLWD") return "Dimension lineweight (1/100 mm)";
     if (u == "DIMCLRD") return "Dimension line and arrowhead colour (ACI, 256 BYLAYER)";
     if (u == "DIMCLRE") return "Extension line colour";
+    if (u == "DIMLUNIT") return "Linear units: 1 scientific, 2 decimal, 3 engineering, 4 architectural, 5 fractional";
+    if (u == "DIMFRAC") return "Fractions: 0 horizontal, 1 diagonal, 2 not stacked";
+    if (u == "DIMRND") return "Rounding of lengths (0 none)";
+    if (u == "DIMLFAC") return "Measurement scale factor";
+    if (u == "DIMAUNIT") return "Angles: 0 degrees, 1 deg/min/sec, 2 grads, 3 radians";
+    if (u == "DIMADEC") return "Angular decimal places (-1 as DIMDEC)";
+    if (u == "DIMALT") return "Alternate units shown";
+    if (u == "DIMALTU") return "Alternate units format";
+    if (u == "DIMALTD") return "Alternate units decimal places";
+    if (u == "DIMALTF") return "Alternate units multiplier";
+    if (u == "DIMALTRND") return "Rounding of alternate units";
     return "Text colour";
 }
 } // namespace

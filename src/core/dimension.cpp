@@ -11,6 +11,7 @@
 
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/units.hpp"
 
 namespace musacad::core {
 
@@ -292,6 +293,28 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.ext_color = color_of_aci(v);
     } else if (same_var(var, "DIMCLRT") && whole(0, 256)) {
         s.text_color = color_of_aci(v);
+    } else if (same_var(var, "DIMLUNIT") && whole(1, 6)) {
+        s.linear_unit = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMFRAC") && whole(0, 2)) {
+        s.fraction_format = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMRND") && v >= 0.0) {
+        s.round_off = v;
+    } else if (same_var(var, "DIMLFAC") && v > 0.0) {
+        s.linear_factor = v;
+    } else if (same_var(var, "DIMAUNIT") && whole(0, 3)) {
+        s.angular_unit = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMADEC") && whole(-1, 8)) {
+        s.angular_precision = static_cast<std::int8_t>(v);
+    } else if (same_var(var, "DIMALT") && whole(0, 1)) {
+        s.alt = v != 0.0;
+    } else if (same_var(var, "DIMALTU") && whole(1, 6)) {
+        s.alt_unit = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMALTD") && whole(0, 8)) {
+        s.alt_precision = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMALTF") && v > 0.0) {
+        s.alt_factor = v;
+    } else if (same_var(var, "DIMALTRND") && v >= 0.0) {
+        s.alt_round = v;
     } else {
         return false;
     }
@@ -383,11 +406,46 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
     if (same_var(var, "DIMCLRT")) {
         return aci_of(s.text_color);
     }
+    if (same_var(var, "DIMLUNIT")) {
+        return s.linear_unit;
+    }
+    if (same_var(var, "DIMFRAC")) {
+        return s.fraction_format;
+    }
+    if (same_var(var, "DIMRND")) {
+        return s.round_off;
+    }
+    if (same_var(var, "DIMLFAC")) {
+        return s.linear_factor;
+    }
+    if (same_var(var, "DIMAUNIT")) {
+        return s.angular_unit;
+    }
+    if (same_var(var, "DIMADEC")) {
+        return s.angular_precision;
+    }
+    if (same_var(var, "DIMALT")) {
+        return s.alt ? 1.0 : 0.0;
+    }
+    if (same_var(var, "DIMALTU")) {
+        return s.alt_unit;
+    }
+    if (same_var(var, "DIMALTD")) {
+        return s.alt_precision;
+    }
+    if (same_var(var, "DIMALTF")) {
+        return s.alt_factor;
+    }
+    if (same_var(var, "DIMALTRND")) {
+        return s.alt_round;
+    }
     return std::nullopt;
 }
 
-std::string format_dim_value(double value, const DimStyle& style) {
-    std::string s = format_measurement(value, style.precision);
+namespace {
+/// A decimal value with `precision` places, DIMZIN and DIMDSEP.
+std::string decimal_text(double value, int precision, const DimStyle& style) {
+    std::string s = format_measurement(value, static_cast<std::uint8_t>(std::clamp(precision, 0, 8)));
     if (s.find_first_of("123456789") == std::string::npos && !s.empty() && s[0] == '-') {
         s.erase(0, 1); // a value that rounds to nothing is 0, not -0
     }
@@ -416,6 +474,83 @@ std::string format_dim_value(double value, const DimStyle& style) {
     return s;
 }
 
+double rounded_to(double v, double step) { return step > 0.0 ? std::round(v / step) * step : v; }
+
+/// A length in the unit format `unit` (DIMLUNIT's codes) with `precision`.
+std::string length_text(double value, std::uint8_t unit, int precision, const DimStyle& style) {
+    if (unit == 1 || unit == 3 || unit == 4 || unit == 5) {
+        DrawingUnits u;
+        u.linear = static_cast<LinearFormat>(unit);
+        u.linear_precision = static_cast<std::uint8_t>(std::clamp(precision, 0, 8));
+        std::string s = units::format_length(value, u);
+        if (style.decimal_separator == ',') {
+            for (char& c : s) {
+                c = c == '.' ? ',' : c;
+            }
+        }
+        return s;
+    }
+    return decimal_text(value, precision, style);
+}
+
+/// An angle in degrees as DIMAUNIT and DIMADEC write it, with its unit mark.
+std::string angle_text(double deg, const DimStyle& style) {
+    const int p = std::clamp(style.angular_precision >= 0 ? static_cast<int>(style.angular_precision)
+                                                           : static_cast<int>(style.precision),
+                             0, 8);
+    char buf[64];
+    switch (style.angular_unit) {
+    case 1: {
+        // Degrees, minutes and seconds, rounded as a whole first (never 29'60"): precision 0
+        // degrees, 1 and 2 minutes, 3 and up seconds with p - 3 decimals.
+        const double a = std::abs(deg);
+        const char* sign = deg < 0.0 ? "-" : "";
+        if (p == 0) {
+            std::snprintf(buf, sizeof(buf), "%s%.0f°", sign, std::round(a));
+        } else if (p <= 2) {
+            const long m = std::lround(a * 60.0);
+            std::snprintf(buf, sizeof(buf), "%s%ld°%ld'", sign, m / 60, m % 60);
+        } else {
+            const int sp = p - 3;
+            const double unit = std::pow(10.0, sp);
+            const double total = std::round(a * 3600.0 * unit) / unit; // seconds
+            const long d = static_cast<long>(std::floor(total / 3600.0 + 1e-9));
+            const long m = static_cast<long>(std::floor((total - static_cast<double>(d) * 3600.0) / 60.0 + 1e-9));
+            const double sec = std::max(0.0, total - static_cast<double>(d) * 3600.0 - static_cast<double>(m) * 60.0);
+            std::snprintf(buf, sizeof(buf), "%s%ld°%ld'%.*f\"", sign, d, m, sp, sec);
+        }
+        return buf;
+    }
+    case 2:
+        std::snprintf(buf, sizeof(buf), "%.*fg", p, deg * (200.0 / 180.0));
+        return buf;
+    case 3:
+        std::snprintf(buf, sizeof(buf), "%.*fr", p, to_radians(deg));
+        return buf;
+    default:
+        break;
+    }
+    return decimal_text(deg, p, style) + "°";
+}
+
+/// DIMPOST / DIMAPOST: the text before and after `mark` ("<>" or "[]"); without the mark,
+/// all of it is a suffix.
+void split_post(const std::string& post, const char* mark, std::string& pre, std::string& suf) {
+    const std::size_t at = post.find(mark);
+    if (at == std::string::npos) {
+        pre.clear();
+        suf = post;
+        return;
+    }
+    pre = post.substr(0, at);
+    suf = post.substr(at + 2);
+}
+} // namespace
+
+std::string format_dim_value(double value, const DimStyle& style) {
+    return length_text(rounded_to(value, style.round_off), style.linear_unit, style.precision, style);
+}
+
 namespace {
 
 /// The type-specific decoration the measured value always carries (R, the diameter
@@ -423,23 +558,28 @@ namespace {
 /// passed in rather than measured here so the Limits mode can format its two limits
 /// through exactly the same per-type rule.
 std::string measured_text_for(DimType type, const DimStyle& style, double value) {
-    const std::string v = format_dim_value(value, style);
-    switch (type) {
-    case DimType::Radius:
-    case DimType::Jogged:
-        return "R" + v;
-    case DimType::Ordinate:
-    case DimType::ArcLength:
-        return v;
-    case DimType::Diameter:
-        return "⌀" + v; // U+2300
-    case DimType::Angular:
-        return v + "°"; // U+00B0
-    case DimType::Linear:
-    case DimType::Aligned:
-        break;
+    if (type == DimType::Angular) {
+        return angle_text(value, style); // DIMAUNIT, DIMADEC; DIMLFAC and DIMALT are for lengths
     }
-    return v;
+    const double length = value * style.linear_factor;
+    std::string deco;
+    if (type == DimType::Radius || type == DimType::Jogged) {
+        deco = "R";
+    } else if (type == DimType::Diameter) {
+        deco = "⌀"; // U+2300
+    }
+    std::string pre;
+    std::string suf;
+    split_post(style.post, "<>", pre, suf);
+    std::string out = (pre.empty() ? deco : pre) + format_dim_value(length, style) + suf;
+    if (style.alt) {
+        const double a = rounded_to(length * style.alt_factor, style.alt_round);
+        std::string apre;
+        std::string asuf;
+        split_post(style.alt_post, "[]", apre, asuf);
+        out += " [" + apre + length_text(a, style.alt_unit, style.alt_precision, style) + asuf + "]";
+    }
+    return out;
 }
 
 std::string measured_text(const DimData& d, const DimStyle& style) {
