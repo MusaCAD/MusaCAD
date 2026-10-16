@@ -749,6 +749,7 @@ void MainWindow::build_ribbon() {
                     menu_of({action("EATTEDIT", QStringLiteral("Single")), action("ATTEDIT", QStringLiteral("Command line")),
                              action("ATTDISP", QStringLiteral("Attribute Display"))}));
         small(blockdef, col, QStringLiteral("Manage Attributes"), "BATTMAN");
+        small(blockdef, col, QStringLiteral("Block Editor"), "BE", "block");
         small(blockdef, col, QStringLiteral("Edit Reference"), "REFEDIT");
     }
     RibbonPanel* reference = ribbon_->add_panel(insert, QStringLiteral("Reference"), 50);

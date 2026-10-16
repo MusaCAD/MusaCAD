@@ -327,6 +327,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
             return true;
         }
+        if (action == "BEDIT") {
+            QTimer::singleShot(0, this, &MainWindow::open_block_editor_dialog);
+            return true;
+        }
         if (action == "MLEADERSTYLE") {
             QTimer::singleShot(0, this, &MainWindow::open_mleader_style_dialog);
             return true;
@@ -3901,6 +3905,29 @@ void MainWindow::open_table_style_dialog() {
     refill();
     d.dlg->resize(420, 320);
     d.dlg->show();
+}
+
+// BEDIT: the Edit Block Definition window -- the drawing's blocks; OK opens the Block
+// Editor on the one picked.
+void MainWindow::open_block_editor_dialog() {
+    QStringList names;
+    for (const std::string& n : viewport_->block_names()) {
+        if (!n.empty() && n.front() != '*') {
+            names << QString::fromStdString(n);
+        }
+    }
+    if (names.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Edit Block Definition"), QStringLiteral("The drawing has no blocks."));
+        return;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, QStringLiteral("Edit Block Definition"),
+                                               QStringLiteral("Block to edit:"), names, 0, false, &ok);
+    if (ok && !name.isEmpty()) {
+        engine_->submit(core::BlockEditCommand{core::BlockEditCommand::Op::Open, name.toStdString(), true,
+                                               processor_->new_group()});
+        command_widget_->append_line("Block Editor: \"" + name.toStdString() + "\" -- BCLOSE when done.");
+    }
 }
 
 // MLEADERSTYLE: the Multileader Style Manager -- the styles, Set Current, New (from the one

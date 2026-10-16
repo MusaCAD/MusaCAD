@@ -146,6 +146,8 @@ private:
         AddInsertCommand insert;
         std::vector<EntityHandle> working_set;
         std::vector<EntityHandle> added;
+        bool bedit = false;                ///< the Block Editor's session (BEDIT)
+        std::vector<EntityHandle> hidden;  ///< what BEDIT hid, shown again at BCLOSE
     };
     /// LAYERP: the layer settings before a change to them, and the current layer's name.
     struct LayerpState {
@@ -577,6 +579,8 @@ private:
     void apply_load_block_file(const LoadBlockFileCommand& c);
     void apply_set_data_link(const SetDataLinkCommand& c);
     void apply_dim_break(const DimBreakCommand& c);
+    bool open_refedit(EntityHandle h, std::uint64_t group); ///< REFEDIT on `h` (and BEDIT's reference)
+    void apply_block_edit(const BlockEditCommand& c);
     void apply_attout(const AttOutCommand& c);
     void apply_vpsync(const VpSyncCommand& c);
     void apply_extrim(const ExtrimCommand& c);

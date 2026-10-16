@@ -2945,6 +2945,30 @@ private:
     bool done_ = false;
 };
 
+/// BEDIT / -BEDIT: the Block Editor on a block -- `Enter block name or [?]:` (BEDIT picks it
+/// in the Edit Block Definition window where there is one). BCLOSE: `Save changes to block?
+/// [Yes/No] <Yes>:`, then the drawing back. BSAVE: the block saved, the editor kept open.
+class BlockEditUiCommand final : public ICommand {
+public:
+    enum class Mode : std::uint8_t { Open, OpenTyped, Close, Save };
+    explicit BlockEditUiCommand(Mode mode) : mode_(mode) {}
+    std::string name() const override {
+        return mode_ == Mode::Close ? "BCLOSE" : mode_ == Mode::Save ? "BSAVE" : mode_ == Mode::OpenTyped ? "-BEDIT" : "BEDIT";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return mode_ == Mode::OpenTyped || mode_ == Mode::Open; }
+
+private:
+    Mode mode_;
+    bool done_ = false;
+};
+
 /// EXTRIM (Express Tools): `Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for
 /// cutting edge..`, then `Specify the side to trim on:` -- everything crossing the edge is
 /// trimmed away on that side.

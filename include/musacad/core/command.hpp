@@ -1531,6 +1531,17 @@ struct RefCloseCommand {
     bool save = true;
     std::uint64_t group = 0;
 };
+/// BEDIT / BCLOSE / BSAVE: the Block Editor. Open: the block `name`'s objects laid out at
+/// its own coordinates for editing, everything else hidden. Close: `save` makes what is
+/// shown the block's content (else it is dropped), and the drawing comes back. Save: the
+/// same, and the Block Editor stays open.
+struct BlockEditCommand {
+    enum class Op : std::uint8_t { Open, Close, Save };
+    Op op = Op::Open;
+    std::string name;
+    bool save = true;
+    std::uint64_t group = 0;
+};
 /// A polyline grip's menu (AutoCAD's multi-functional grips): at grip `index` of the
 /// polyline `handle`, add a vertex, remove the vertex, or turn the segment into an arc
 /// or a line. `pos` is where the new vertex goes for AddVertex (the grip when unset).
@@ -2252,7 +2263,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

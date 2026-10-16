@@ -2135,3 +2135,55 @@ TEST_CASE("SPLINE's Object makes the polylines picked into splines") {
     REQUIRE(c->selection);
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("The Block Editor: a block's objects to edit, the rest hidden; BCLOSE saves what is shown as the block") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "BOX";
+    b.base = {5, 5};
+    b.lines.push_back(io::DocLine{{0, 0}, {10, 0}, {}});
+    doc.block_defs.push_back(b);
+    io::DocInsert ins;
+    ins.block_name = "BOX";
+    ins.pos = {100, 100};
+    doc.inserts.push_back(ins);
+    doc.circles.push_back(io::DocCircle{{50, 50}, 3.0, {}});
+    const std::string dp = (fs::temp_directory_path() / "musacad_bedit.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    engine.submit(BlockEditCommand{BlockEditCommand::Op::Open, "box", true, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Block Editor: \"BOX\" is open", 0) == 0; }));
+    engine.submit(SaveDocumentCommand{dp, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Close the Block Editor", 0) == 0; }));
+    engine.submit(AddLineCommand{{0, 10}, {10, 10}, 3}); // drawn in the Block Editor
+    engine.submit(BlockEditCommand{BlockEditCommand::Op::Close, {}, true, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Block \"BOX\" saved."; }));
+    const io::Document out = dump(engine, "musacad_bedit_out.musa");
+    const auto it = std::find_if(out.block_defs.begin(), out.block_defs.end(), [](const auto& d) { return d.name == "BOX"; });
+    REQUIRE(it != out.block_defs.end());
+    REQUIRE(it->lines.size() == 2);       // the new line is in the block
+    REQUIRE(it->base == Vec2{5, 5});
+    REQUIRE(out.inserts.size() == 1);      // the drawing's reference, and no other
+    REQUIRE(out.circles.size() == 1);      // shown again
+    REQUIRE(out.lines.empty());            // nothing left loose
+    engine.stop();
+    fs::remove(dp);
+}
+
+TEST_CASE("-BEDIT asks for the block; BCLOSE asks whether to save") {
+    H h;
+    h.run({"-BEDIT"});
+    REQUIRE(h.out.prompt == "Enter block name or [?]: ");
+    h.run({"Door A"});
+    REQUIRE(h.last<BlockEditCommand>()->name == "Door A");
+    REQUIRE(h.last<BlockEditCommand>()->op == BlockEditCommand::Op::Open);
+    h.run({"BCLOSE"});
+    REQUIRE(h.out.prompt == "Save changes to block? [Yes/No] <Yes>: ");
+    h.run({"N"});
+    REQUIRE_FALSE(h.last<BlockEditCommand>()->save);
+    h.run({"BSAVE"});
+    REQUIRE(h.last<BlockEditCommand>()->op == BlockEditCommand::Op::Save);
+}

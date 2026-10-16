@@ -7977,6 +7977,70 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void BlockEditUiCommand::start(CommandContext& ctx) {
+    using Op = core::BlockEditCommand::Op;
+    switch (mode_) {
+    case Mode::Open:
+        if (ctx.view() != nullptr && ctx.view()->window_action("BEDIT")) {
+            done_ = true; // the Edit Block Definition window asks
+            return;
+        }
+        [[fallthrough]];
+    case Mode::OpenTyped:
+        ctx.set_prompt("Enter block name or [?]: ");
+        return;
+    case Mode::Close:
+        ctx.set_prompt("Save changes to block? [Yes/No] <Yes>: ");
+        return;
+    case Mode::Save: {
+        core::BlockEditCommand c;
+        c.op = Op::Save;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void BlockEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::BlockEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (mode_ == Mode::Close) {
+        if (!u.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        core::BlockEditCommand c;
+        c.op = Op::Close;
+        c.save = !(u == "N" || u == "NO");
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    if (u == "?") {
+        std::string list;
+        for (const std::string& n : ctx.block_names()) {
+            list += (list.empty() ? "" : ", ") + n;
+        }
+        ctx.echo(list.empty() ? std::string("No blocks in this drawing.") : list);
+        ctx.set_prompt("Enter block name or [?]: ");
+        return;
+    }
+    core::BlockEditCommand c;
+    c.op = Op::Open;
+    c.name = t;
+    c.group = ctx.group_id();
+    ctx.submit(std::move(c));
+    done_ = true;
+}
+
 void ExtrimUiCommand::input(CommandContext& ctx, const std::string& text) {
     if (trimmed(text).empty()) {
         done_ = true;

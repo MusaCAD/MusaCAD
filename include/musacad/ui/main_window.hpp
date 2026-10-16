@@ -303,6 +303,7 @@ private:
     int open_dim_inspect_dialog(core::DimInspectCommand& io); ///< DIMINSPECT (1 OK, 0 cancelled)
     void open_table_style_dialog(); ///< TABLESTYLE
     void open_mleader_style_dialog(); ///< MLEADERSTYLE
+    void open_block_editor_dialog();  ///< BEDIT: Edit Block Definition
     // The user's own command aliases, a PGP file in the settings folder (ALIASEDIT, REINIT).
     static QString user_pgp_path();
     QString load_user_aliases(); ///< reads the file again; says what it found

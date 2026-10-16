@@ -6971,18 +6971,21 @@ void GeometryEngine::apply_refedit(const RefEditCommand& c) {
         report("A reference is already being edited; REFCLOSE it first.");
         return;
     }
-    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    open_refedit(pick_nearest(c.pick, c.pick_radius), c.group);
+}
+
+bool GeometryEngine::open_refedit(EntityHandle h, std::uint64_t group) {
     const InsertData* in = store_.insert(h);
     const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
     if (bd == nullptr) {
         report("REFEDIT: select a block reference.");
-        return;
+        return false;
     }
     // The working set is mapped back into the definition's frame on save, which
     // needs an invertible, shape-preserving transform: a positive uniform scale.
     if (!(in->scale_x > 0.0) || std::abs(in->scale_x - in->scale_y) > 1e-9) {
         report("REFEDIT needs a reference with a positive, uniform scale.");
-        return;
+        return false;
     }
     RefEditSession session;
     session.block = in->block;
@@ -6991,18 +6994,109 @@ void GeometryEngine::apply_refedit(const RefEditCommand& c) {
     // Its members become ordinary objects at the reference's place (EXPLODE's path, so
     // nested references stay references and attributes become their definitions).
     selection_ = {h};
+    const std::string name = bd->name;
     const std::size_t before = undo_.size();
-    apply_explode(c.group);
-    if (!store_.is_valid(h) && (undo_.size() > before || (!undo_.empty() && undo_.back().id == c.group))) {
+    apply_explode(group);
+    if (!store_.is_valid(h) && (undo_.size() > before || (!undo_.empty() && undo_.back().id == group))) {
         session.working_set = selection_;
         session.active = true;
         refedit_ = std::move(session);
-        report("Reference \"" + bd->name + "\" open for editing: " +
-               std::to_string(refedit_.working_set.size()) +
+        report("Reference \"" + name + "\" open for editing: " + std::to_string(refedit_.working_set.size()) +
                " object(s) in the working set. REFSET adds or removes objects; REFCLOSE saves "
                "or discards.");
-    } else {
-        report("REFEDIT: that reference has nothing to edit.");
+        return true;
+    }
+    report("REFEDIT: that reference has nothing to edit.");
+    return false;
+}
+
+void GeometryEngine::apply_block_edit(const BlockEditCommand& c) {
+    using Op = BlockEditCommand::Op;
+    if (c.op == Op::Open) {
+        if (refedit_.active) {
+            report(refedit_.bedit ? "The Block Editor is open: BCLOSE it first." : "A reference is being edited: REFCLOSE it first.");
+            return;
+        }
+        std::uint16_t bi = 0xFFFF;
+        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+            const std::string& n = store_.block(i)->name;
+            if (n.size() == c.name.size() && std::equal(n.begin(), n.end(), c.name.begin(), [](char a, char b) {
+                    return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                })) {
+                bi = i;
+            }
+        }
+        if (bi == 0xFFFF) {
+            report("Block \"" + c.name + "\" not found.");
+            return;
+        }
+        if (!store_.block(bi)->xref_path.empty()) {
+            report("\"" + c.name + "\" is an xref: edit its drawing, then XREF Reload.");
+            return;
+        }
+        // A reference at the base point shows the objects at their own coordinates; REFEDIT
+        // opens it, and everything else is hidden while the block is edited.
+        const Command add = AddInsertCommand{bi, store_.block(bi)->base, 1.0, 1.0, 0.0, 0, {}, {}};
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        if (!open_refedit(nh, c.group)) {
+            return;
+        }
+        refedit_.bedit = true;
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            if (p == nullptr || p->hidden() || p->space() != store_.active_space() ||
+                std::find(refedit_.working_set.begin(), refedit_.working_set.end(), h) != refedit_.working_set.end()) {
+                continue;
+            }
+            EntityProps np = *p;
+            np.set_hidden(true);
+            store_.set_props(h, np);
+            refedit_.hidden.push_back(h);
+        }
+        selection_.clear();
+        geom_dirty_ = true;
+        report("Block Editor: \"" + store_.block(bi)->name + "\" is open. BCLOSE saves or discards it; BSAVE saves it.");
+        return;
+    }
+    if (!refedit_.active || !refedit_.bedit) {
+        report("The Block Editor is not open (BEDIT first).");
+        return;
+    }
+    const std::string name = store_.block(refedit_.block) != nullptr ? store_.block(refedit_.block)->name : std::string();
+    // What is shown is the block: the objects edited, moved or drawn while it was open.
+    std::vector<EntityHandle> shown;
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* p = store_.props(h);
+        if (p != nullptr && !p->hidden() && p->space() == store_.active_space()) {
+            shown.push_back(h);
+        }
+    }
+    refedit_.working_set = shown;
+    refedit_.added.clear();
+    for (const EntityHandle h : refedit_.hidden) {
+        if (const EntityProps* p = store_.props(h); p != nullptr && p->hidden()) {
+            EntityProps np = *p;
+            np.set_hidden(false);
+            store_.set_props(h, np);
+        }
+    }
+    const bool save = c.op == Op::Save || c.save;
+    apply_refclose(RefCloseCommand{save, c.group});
+    // REFCLOSE puts the reference back: BEDIT's own goes.
+    if (!selection_.empty() && selection_.front().kind == EntityKind::Insert && store_.is_valid(selection_.front())) {
+        const EntityHandle ref = selection_.front();
+        const Command original = capture_entity(ref);
+        remove_indexed(ref);
+        push_erase_item(c.group, ref, original);
+        selection_.clear();
+    }
+    report(save ? "Block \"" + name + "\" saved." : "Block \"" + name + "\": changes discarded.");
+    if (c.op == Op::Save) {
+        BlockEditCommand again;
+        again.name = name;
+        again.group = c.group;
+        apply_block_edit(again); // BSAVE: the Block Editor stays open
     }
 }
 
@@ -14357,6 +14451,10 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_match_apply(c.point, c.radius, c.filter, c.group);
             }
             if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
+                if (refedit_.bedit) {
+                    report("Close the Block Editor (BCLOSE) before saving: the drawing's other objects are hidden while it is open.");
+                    return;
+                }
                 if (!c.dxf) {
                     tick_edit_time(); // TIME: the total editing time and the last-saved time go in the file
                     DrawingTimes t = store_.times();
@@ -14818,7 +14916,14 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_refset(c);
             }
             if constexpr (std::is_same_v<T, RefCloseCommand>) {
-                apply_refclose(c);
+                if (refedit_.bedit) {
+                    report("The Block Editor is open: BCLOSE closes it.");
+                } else {
+                    apply_refclose(c);
+                }
+            }
+            if constexpr (std::is_same_v<T, BlockEditCommand>) {
+                apply_block_edit(c);
             }
             if constexpr (std::is_same_v<T, PolylineVertexCommand>) {
                 apply_polyline_vertex(c);
