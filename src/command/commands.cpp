@@ -7980,6 +7980,117 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void LayerMergeUiCommand::ask_source(CommandContext& ctx) {
+    step_ = Step::Source;
+    const bool some = !cmd_.sources.empty() || !cmd_.source_picks.empty();
+    ctx.set_prompt(std::string("Select object on layer to ") + (erase_ ? "delete" : "merge") +
+                   (some ? " or [Name/Undo]: " : " or [Name]: "));
+}
+
+void LayerMergeUiCommand::ask_confirm(CommandContext& ctx) {
+    step_ = Step::Confirm;
+    const std::size_t count = cmd_.sources.size() + cmd_.source_picks.size();
+    // Named layers are named in the warning, as AutoCAD's; picked ones the engine finds.
+    std::string which;
+    if (cmd_.source_picks.empty()) {
+        for (const std::string& s : cmd_.sources) {
+            which += (which.empty() ? "\"" : ", \"") + s + "\"";
+        }
+    }
+    ctx.echo("******** WARNING ********");
+    if (erase_) {
+        ctx.echo("You are about to delete " + (which.empty() ? std::string("the layers picked") : "layer " + which) +
+                 " from this drawing.");
+    } else {
+        const std::string into = cmd_.target_pick ? std::string("the target layer") : "layer \"" + cmd_.target + "\"";
+        ctx.echo("You are about to merge " + (which.empty() ? std::to_string(count) + " layer(s)" : which) + " into " + into +
+                 ".");
+    }
+    ctx.set_prompt("Do you wish to continue? [Yes/No] <No>: ");
+}
+
+void LayerMergeUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Source:
+        if (t.empty()) {
+            if (cmd_.sources.empty() && cmd_.source_picks.empty()) {
+                done_ = true;
+                return;
+            }
+            if (erase_) {
+                ask_confirm(ctx);
+            } else {
+                step_ = Step::Target;
+                ctx.set_prompt("Select object on target layer or [Name]: ");
+            }
+            return;
+        }
+        if (u == "N" || u == "NAME") {
+            step_ = Step::SourceName;
+            ctx.set_prompt("Enter layer name: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!cmd_.source_picks.empty()) {
+                cmd_.source_picks.pop_back();
+            } else if (!cmd_.sources.empty()) {
+                cmd_.sources.pop_back();
+            }
+            ask_source(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.source_picks.push_back(*p);
+            ask_source(ctx);
+        }
+        return;
+    case Step::SourceName:
+    case Step::TargetName:
+        if (!t.empty()) {
+            if (step_ == Step::SourceName) {
+                cmd_.sources.push_back(t);
+            } else {
+                cmd_.target = t;
+                ask_confirm(ctx);
+                return;
+            }
+        }
+        if (step_ == Step::SourceName) {
+            ask_source(ctx);
+        } else {
+            step_ = Step::Target;
+            ctx.set_prompt("Select object on target layer or [Name]: ");
+        }
+        return;
+    case Step::Target:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "N" || u == "NAME") {
+            step_ = Step::TargetName;
+            ctx.set_prompt("Enter layer name: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.target_pick = *p;
+            ask_confirm(ctx);
+        }
+        return;
+    case Step::Confirm:
+        if (u == "Y" || u == "YES") {
+            cmd_.erase = erase_;
+            cmd_.pick_radius = ctx.pick_radius();
+            cmd_.group = ctx.group_id();
+            ctx.submit(cmd_);
+        }
+        done_ = true;
+        return;
+    }
+}
+
 void BlockEditUiCommand::start(CommandContext& ctx) {
     using Op = core::BlockEditCommand::Op;
     switch (mode_) {

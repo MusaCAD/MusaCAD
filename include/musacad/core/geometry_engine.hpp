@@ -581,6 +581,7 @@ private:
     void apply_dim_break(const DimBreakCommand& c);
     bool open_refedit(EntityHandle h, std::uint64_t group); ///< REFEDIT on `h` (and BEDIT's reference)
     void apply_block_edit(const BlockEditCommand& c);
+    void apply_layer_merge(const LayerMergeCommand& c);
     void apply_attout(const AttOutCommand& c);
     void apply_vpsync(const VpSyncCommand& c);
     void apply_extrim(const ExtrimCommand& c);

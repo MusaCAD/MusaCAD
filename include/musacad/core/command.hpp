@@ -2152,6 +2152,19 @@ struct LayerToolCommand {
     double radius = 0.0;
     std::uint64_t group = 0;
 };
+/// LAYMRG / LAYDEL: every object on the source layers -- named in `sources`, or the layers
+/// of the objects at `source_picks` -- moved to the target layer (`target`, or the layer of
+/// the object at `target_pick`), or erased when there is no target (LAYDEL). One undo step.
+/// The emptied layers stay for PURGE: taking a layer out would cost UNDO the objects' layers.
+struct LayerMergeCommand {
+    std::vector<std::string> sources;
+    std::vector<Vec2> source_picks;
+    std::string target;
+    std::optional<Vec2> target_pick;
+    bool erase = false; ///< LAYDEL
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
 /// -LAYER: one option on the layers `names` lists (comma separated, `*` and `?` wild
 /// cards, any case; empty: the current layer). List reports them; New adds each one not
 /// there; Make adds the one layer if need be and makes it current; Set makes it current;
@@ -2263,7 +2276,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

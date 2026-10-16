@@ -2258,3 +2258,62 @@ TEST_CASE("A hatch pattern Musa CAD does not have comes with the drawing, from D
     REQUIRE(again.patterns.size() == 1);
     REQUIRE(again.patterns[0] == back.patterns[0]);
 }
+
+TEST_CASE("LAYMRG moves a layer's objects to another; LAYDEL erases them; one undo step each") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLayerCommand{Layer{"Walls"}});
+    engine.submit(AddLayerCommand{Layer{"Doors"}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layers.size() == 3; }));
+    AddLineCommand a{{0, 0}, {10, 0}, 1};
+    a.props = EntityProps{};
+    a.props->layer = 1; // Walls
+    engine.submit(a);
+    AddLineCommand b{{0, 5}, {10, 5}, 1};
+    b.props = EntityProps{};
+    b.props->layer = 2; // Doors
+    engine.submit(b);
+    LayerMergeCommand merge;
+    merge.sources = {"doors"};
+    merge.target = "Walls";
+    merge.group = 2;
+    engine.submit(merge);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("1 object merged from \"Doors\" into \"Walls\"", 0) == 0; }));
+    io::Document doc = dump(engine, "musacad_laymrg.musa");
+    REQUIRE(doc.lines.size() == 2);
+    REQUIRE(doc.lines[0].props.layer == 1);
+    REQUIRE(doc.lines[1].props.layer == 1);
+    LayerMergeCommand del;
+    del.sources = {"Walls"};
+    del.erase = true;
+    del.group = 3;
+    engine.submit(del);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("2 objects deleted from \"Walls\"", 0) == 0; }));
+    doc = dump(engine, "musacad_laydel.musa");
+    REQUIRE(doc.lines.empty());
+    REQUIRE(doc.layers.size() == 3); // the layers stay for PURGE
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_laydel_undo.musa");
+    REQUIRE(doc.lines.size() == 2);
+    engine.stop();
+}
+
+TEST_CASE("LAYMRG and LAYDEL ask for the layers, then warn") {
+    H h;
+    h.run({"LAYMRG"});
+    REQUIRE(h.out.prompt == "Select object on layer to merge or [Name]: ");
+    h.run({"N", "Doors"});
+    REQUIRE(h.out.prompt == "Select object on layer to merge or [Name/Undo]: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Select object on target layer or [Name]: ");
+    h.run({"N", "Walls"});
+    REQUIRE(h.out.prompt == "Do you wish to continue? [Yes/No] <No>: ");
+    REQUIRE(h.out.lines.back() == "You are about to merge \"Doors\" into layer \"Walls\".");
+    h.run({"Y"});
+    REQUIRE(h.last<LayerMergeCommand>()->sources == std::vector<std::string>{"Doors"});
+    REQUIRE(h.last<LayerMergeCommand>()->target == "Walls");
+    h.run({"LAYDEL", "N", "Old", ""});
+    REQUIRE(h.out.lines.back() == "You are about to delete layer \"Old\" from this drawing.");
+    h.run({""}); // No
+    REQUIRE(h.last<LayerMergeCommand>()->target == "Walls"); // nothing new submitted
+}

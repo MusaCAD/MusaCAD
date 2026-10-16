@@ -7010,6 +7010,85 @@ bool GeometryEngine::open_refedit(EntityHandle h, std::uint64_t group) {
     return false;
 }
 
+void GeometryEngine::apply_layer_merge(const LayerMergeCommand& c) {
+    const auto& layers = store_.layers();
+    const auto index_of = [&](const std::string& name) -> int {
+        for (std::size_t i = 0; i < layers.size(); ++i) {
+            const std::string& n = layers[i].name;
+            if (n.size() == name.size() && std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                    return std::toupper(static_cast<unsigned char>(a)) == std::toupper(static_cast<unsigned char>(b));
+                })) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    const auto layer_at = [&](Vec2 p) -> int {
+        const EntityProps* pr = store_.props(pick_nearest(p, c.pick_radius));
+        return pr != nullptr ? static_cast<int>(pr->layer) : -1;
+    };
+    std::vector<std::uint16_t> sources;
+    const auto add_source = [&](int i) {
+        if (i >= 0 && std::find(sources.begin(), sources.end(), static_cast<std::uint16_t>(i)) == sources.end()) {
+            sources.push_back(static_cast<std::uint16_t>(i));
+        }
+    };
+    for (const std::string& n : c.sources) {
+        add_source(index_of(n));
+    }
+    for (const Vec2& p : c.source_picks) {
+        add_source(layer_at(p));
+    }
+    const int target = c.erase ? -1 : (c.target_pick ? layer_at(*c.target_pick) : index_of(c.target));
+    if (sources.empty()) {
+        report("No layers found to " + std::string(c.erase ? "delete." : "merge."));
+        return;
+    }
+    if (!c.erase && target < 0) {
+        report("Target layer not found.");
+        return;
+    }
+    for (const std::uint16_t s : sources) {
+        if (s == 0 || s == store_.current_layer() || static_cast<int>(s) == target) {
+            report(s == 0 ? "Layer \"0\" cannot be " + std::string(c.erase ? "deleted." : "merged.")
+                   : s == store_.current_layer() ? "The current layer cannot be " + std::string(c.erase ? "deleted." : "merged.")
+                                                  : "A layer cannot be merged into itself.");
+            return;
+        }
+    }
+    std::size_t n = 0;
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* pr = store_.props(h);
+        if (pr == nullptr || std::find(sources.begin(), sources.end(), pr->layer) == sources.end()) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        if (!c.erase) {
+            Command moved = original;
+            modify_cmd_props(moved, [&](EntityProps& p) { p.layer = static_cast<std::uint16_t>(target); });
+            push_create_item(c.group, create_indexed(moved), moved);
+        }
+        ++n;
+    }
+    if (n > 0) {
+        prune_selection();
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    std::string names;
+    for (const std::uint16_t s : sources) {
+        names += (names.empty() ? "\"" : ", \"") + layers[s].name + "\"";
+    }
+    report(c.erase ? std::to_string(n) + (n == 1 ? " object" : " objects") + " deleted from " + names +
+                         ". The empty layer stays until PURGE (so UNDO can bring the objects back)."
+                   : std::to_string(n) + (n == 1 ? " object" : " objects") + " merged from " + names + " into \"" +
+                         layers[static_cast<std::size_t>(target)].name +
+                         "\". The empty layer stays until PURGE (so UNDO can bring the objects back).");
+}
+
 void GeometryEngine::apply_block_edit(const BlockEditCommand& c) {
     using Op = BlockEditCommand::Op;
     if (c.op == Op::Open) {
@@ -14932,6 +15011,9 @@ void GeometryEngine::apply_one(const Command& command) {
                 } else {
                     apply_refclose(c);
                 }
+            }
+            if constexpr (std::is_same_v<T, LayerMergeCommand>) {
+                apply_layer_merge(c);
             }
             if constexpr (std::is_same_v<T, BlockEditCommand>) {
                 apply_block_edit(c);

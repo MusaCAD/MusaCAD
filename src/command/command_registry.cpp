@@ -371,6 +371,10 @@ CommandRegistry CommandRegistry::make_default() {
         "The running object snaps as a bit sum (1 END, 2 MID, 4 CEN, 8 NOD, 16 QUA, 32 INT, ...).");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
+    reg({"LAYMRG", "-LAYMRG"}, [] { return std::make_unique<LayerMergeUiCommand>(false); }, "assets/ribbon/layer-props.svg",
+        "Merge layers: their objects moved to a target layer.");
+    reg({"LAYDEL", "-LAYDEL"}, [] { return std::make_unique<LayerMergeUiCommand>(true); }, "assets/ribbon/layer-props.svg",
+        "Delete the objects on layers.");
     reg({"BEDIT", "BE"}, [] { return std::make_unique<BlockEditUiCommand>(BlockEditUiCommand::Mode::Open); },
         "assets/ribbon/block.svg", "Open the Block Editor on a block: its objects to edit, the rest of the drawing hidden.");
     reg({"-BEDIT"}, [] { return std::make_unique<BlockEditUiCommand>(BlockEditUiCommand::Mode::OpenTyped); }, "",

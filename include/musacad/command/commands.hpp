@@ -2947,6 +2947,33 @@ private:
     bool done_ = false;
 };
 
+/// LAYMRG / LAYDEL: `Select object on layer to merge or [Name]:` (or `... to delete ...`)
+/// again and again, Enter ending; LAYMRG then `Select object on target layer or [Name]:`;
+/// then AutoCAD's warning and `Do you wish to continue? [Yes/No] <No>:`. The objects move to
+/// the target layer, or are erased; the emptied layers stay for PURGE.
+class LayerMergeUiCommand final : public ICommand {
+public:
+    explicit LayerMergeUiCommand(bool erase) : erase_(erase) {}
+    std::string name() const override { return erase_ ? "LAYDEL" : "LAYMRG"; }
+    void start(CommandContext& ctx) override { ask_source(ctx); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::SourceName || step_ == Step::TargetName; }
+
+private:
+    enum class Step : std::uint8_t { Source, SourceName, Target, TargetName, Confirm };
+    void ask_source(CommandContext& ctx);
+    void ask_confirm(CommandContext& ctx);
+    bool erase_;
+    Step step_ = Step::Source;
+    core::LayerMergeCommand cmd_;
+    bool done_ = false;
+};
+
 /// BEDIT / -BEDIT: the Block Editor on a block -- `Enter block name or [?]:` (BEDIT picks it
 /// in the Edit Block Definition window where there is one). BCLOSE: `Save changes to block?
 /// [Yes/No] <Yes>:`, then the drawing back. BSAVE: the block saved, the editor kept open.
