@@ -2200,3 +2200,18 @@ TEST_CASE("-TABLE's Auto fits the columns and the data rows to a window") {
     REQUIRE(t->pos == Vec2{0, 100});             // the top-left corner
     REQUIRE(t->rows == 11);                      // 100 / 9 lines, title and header among them
 }
+
+TEST_CASE("A view saved with a layer snapshot keeps the layers' state; deleting the view deletes it") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(SaveNamedViewCommand{NamedView{"Plan", {0, 0}, 1.0, "*VIEW|Plan"}});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.layer_state_names.size() == 1 && s.layer_state_names[0] == "*VIEW|Plan";
+    }));
+    const io::Document doc = dump(engine, "musacad_view_snapshot.musa");
+    REQUIRE(doc.views.size() == 1);
+    REQUIRE(doc.views[0].layer_state == "*VIEW|Plan");
+    engine.submit(DeleteNamedViewCommand{"Plan"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layer_state_names.empty() && s.named_views.empty(); }));
+    engine.stop();
+}

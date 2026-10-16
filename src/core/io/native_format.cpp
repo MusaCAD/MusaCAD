@@ -1253,6 +1253,10 @@ std::string serialize_native(const Document& doc) {
         append_double(s, v.scale);
         s += ' ';
         s += enc(v.name);
+        if (!v.layer_state.empty()) {
+            s += ' '; // v40: the layer snapshot
+            s += enc(v.layer_state);
+        }
         s += '\n';
     }
     // v35: VPORTS -- the model window's tiles, then the saved configurations.
@@ -1893,7 +1897,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             doc.saved_vports.push_back(VportConfig{name == "-" ? std::string() : name, {}});
         } else if (key == "VIEW") {
-            if (tok.size() != 5) {
+            if (tok.size() != 5 && tok.size() != 6) {
                 return fail("malformed VIEW");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1911,6 +1915,9 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed VIEW");
             }
             v.name = dec(tok[4]);
+            if (tok.size() == 6) {
+                v.layer_state = dec(tok[5]);
+            }
             doc.views.push_back(std::move(v));
         } else if (key == "GROUP") {
             std::uint64_t sel = 0;

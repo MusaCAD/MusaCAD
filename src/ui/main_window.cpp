@@ -3094,19 +3094,37 @@ void MainWindow::open_view_manager() {
         for (const core::NamedView& v : viewport_->named_views()) {
             if (v.name == name) {
                 viewport_->set_view(v.center, v.scale);
+                if (!v.layer_state.empty()) { // its layer snapshot too
+                    engine_->submit(core::LayerStateCommand{core::LayerStateCommand::Op::Restore, v.layer_state, {}});
+                }
             }
         }
     });
     connect(d.list, &QListWidget::itemDoubleClicked, set_current, &QPushButton::click);
     connect(add, &QPushButton::clicked, d.dlg, [this, d, later] {
-        bool ok = false;
-        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New View"), QStringLiteral("View name:"),
-                                                   QLineEdit::Normal, QString(), &ok)
-                                 .trimmed();
+        // New View: the name, and the layers saved with it (AutoCAD's Save layer snapshot).
+        QDialog nv(d.dlg);
+        nv.setWindowTitle(QStringLiteral("New View"));
+        auto* form = new QFormLayout(&nv);
+        auto* name_edit = new QLineEdit(&nv);
+        auto* snapshot = new QCheckBox(QStringLiteral("Save layer snapshot with view"), &nv);
+        snapshot->setChecked(true);
+        form->addRow(QStringLiteral("View name:"), name_edit);
+        form->addRow(snapshot);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &nv);
+        connect(buttons, &QDialogButtonBox::accepted, &nv, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &nv, &QDialog::reject);
+        form->addRow(buttons);
+        const bool ok = nv.exec() == QDialog::Accepted;
+        const QString name = name_edit->text().trimmed();
         core::Vec2 center;
         double scale = 0.0;
         if (ok && !name.isEmpty() && viewport_->current_view(center, scale)) {
-            engine_->submit(core::SaveNamedViewCommand{core::NamedView{name.toStdString(), center, scale}});
+            core::NamedView v{name.toStdString(), center, scale};
+            if (snapshot->isChecked()) {
+                v.layer_state = "*VIEW|" + v.name;
+            }
+            engine_->submit(core::SaveNamedViewCommand{v});
             later();
         }
     });
@@ -5157,7 +5175,9 @@ void MainWindow::open_layer_states_manager() {
         const QString keep = current_name(d);
         d.list->clear();
         for (const std::string& n : viewport_->layer_state_names()) {
-            d.list->addItem(QString::fromStdString(n));
+            if (n.rfind("*VIEW|", 0) != 0) { // a view's layer snapshot belongs to the view
+                d.list->addItem(QString::fromStdString(n));
+            }
         }
         const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
         d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());

@@ -14790,12 +14790,23 @@ void GeometryEngine::apply_one(const Command& command) {
                 }
             }
             if constexpr (std::is_same_v<T, SaveNamedViewCommand>) {
+                if (!c.view.layer_state.empty()) {
+                    // The layer snapshot: the layers as they are now, under the view's own state.
+                    apply_layer_state(LayerStateCommand{LayerStateCommand::Op::Save, c.view.layer_state, {}});
+                }
                 store_.add_named_view(c.view);
                 dirty_ = true;
                 geom_dirty_ = true; // republish the VIEW table
                 report("View \"" + c.view.name + "\" saved.");
             }
             if constexpr (std::is_same_v<T, DeleteNamedViewCommand>) {
+                std::string snapshot;
+                for (const NamedView& v : store_.named_views()) {
+                    snapshot = v.name == c.name ? v.layer_state : snapshot;
+                }
+                if (!snapshot.empty()) {
+                    apply_layer_state(LayerStateCommand{LayerStateCommand::Op::Delete, snapshot, {}}); // its snapshot goes too
+                }
                 if (store_.remove_named_view(c.name)) {
                     dirty_ = true;
                     geom_dirty_ = true;

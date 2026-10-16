@@ -5487,6 +5487,9 @@ void ViewCommand::input(CommandContext& ctx, const std::string& text) {
                 if (ctx.view() != nullptr) {
                     ctx.view()->set_view(v.center, v.scale);
                 }
+                if (!v.layer_state.empty()) { // and the layers as they were saved with it
+                    ctx.submit(core::LayerStateCommand{core::LayerStateCommand::Op::Restore, v.layer_state, {}});
+                }
                 ctx.echo("View \"" + t + "\" restored.");
                 done_ = true;
                 return;
@@ -19158,7 +19161,8 @@ void NewViewCommand::input(CommandContext& ctx, const std::string& text) {
         done_ = true;
         return;
     }
-    ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale}});
+    // As the New View window saves it: with a snapshot of the layers.
+    ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale, "*VIEW|" + t}});
     done_ = true;
 }
 
