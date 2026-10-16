@@ -21,6 +21,8 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QSettings>
+#include <QStringList>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -697,6 +699,14 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     pages_->setMinimumHeight(94); // three small rows (or a large button) plus the title row
     root->addWidget(pages_);
 
+    // A right-click on the tabs or the panels: Show Tabs and Show Panels.
+    tabs_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabs_, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint& at) { show_customize_menu(tabs_->mapToGlobal(at)); });
+    pages_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(pages_, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint& at) { show_customize_menu(pages_->mapToGlobal(at)); });
+
     // Tab index is decoupled from page (stack) index via tabData -- contextual tabs can
     // appear/disappear without renumbering the stable pages behind them.
     connect(tabs_, &QTabBar::currentChanged, this, [this](int tab) {
@@ -736,6 +746,86 @@ void RibbonBar::set_qat_menu(QMenu* menu) {
 void RibbonBar::set_qat_below(bool below) {
     root_->removeWidget(qat_strip_);
     root_->insertWidget(below ? root_->count() : 0, qat_strip_);
+}
+
+void RibbonBar::show_customize_menu(const QPoint& global) {
+    QMenu menu(this);
+    QMenu* tabs_menu = menu.addMenu(QStringLiteral("Show Tabs"));
+    int shown = 0;
+    for (int i = 0; i < tabs_->count(); ++i) {
+        shown += tabs_->isTabVisible(i) ? 1 : 0;
+    }
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page < 0 || is_contextual_page(page)) {
+            continue; // contextual tabs come and go with the selection
+        }
+        QAction* a = tabs_menu->addAction(tabs_->tabText(i));
+        a->setCheckable(true);
+        a->setChecked(tabs_->isTabVisible(i));
+        a->setEnabled(!(tabs_->isTabVisible(i) && shown <= 1)); // one tab always stays
+        connect(a, &QAction::toggled, this, [this, i](bool on) {
+            tabs_->setTabVisible(i, on);
+            save_shown();
+        });
+    }
+    QMenu* panels_menu = menu.addMenu(QStringLiteral("Show Panels"));
+    for (RibbonPanel* p : panels_of(pages_->currentIndex())) {
+        QAction* a = panels_menu->addAction(p->title());
+        a->setCheckable(true);
+        a->setChecked(!p->isHidden());
+        connect(a, &QAction::toggled, this, [this, p](bool on) {
+            p->setVisible(on);
+            schedule_relayout();
+            save_shown();
+        });
+    }
+    menu.exec(global);
+}
+
+void RibbonBar::save_shown() const {
+    if (!persist_) {
+        return;
+    }
+    QStringList tabs;
+    QStringList panels;
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page < 0 || is_contextual_page(page)) {
+            continue;
+        }
+        if (!tabs_->isTabVisible(i)) {
+            tabs << tabs_->tabText(i);
+        }
+        for (RibbonPanel* p : panels_of(page)) {
+            if (p->isHidden()) {
+                panels << tabs_->tabText(i) + QLatin1Char('/') + p->title();
+            }
+        }
+    }
+    QSettings s;
+    s.setValue(QStringLiteral("ribbon/hidden_tabs"), tabs);
+    s.setValue(QStringLiteral("ribbon/hidden_panels"), panels);
+}
+
+void RibbonBar::restore_shown() {
+    if (!persist_) {
+        return;
+    }
+    const QSettings s;
+    const QStringList tabs = s.value(QStringLiteral("ribbon/hidden_tabs")).toStringList();
+    const QStringList panels = s.value(QStringLiteral("ribbon/hidden_panels")).toStringList();
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page < 0 || is_contextual_page(page)) {
+            continue;
+        }
+        tabs_->setTabVisible(i, !tabs.contains(tabs_->tabText(i)));
+        for (RibbonPanel* p : panels_of(page)) {
+            p->setVisible(!panels.contains(tabs_->tabText(i) + QLatin1Char('/') + p->title()));
+        }
+    }
+    schedule_relayout();
 }
 
 void RibbonBar::set_mode(MinimizeMode m) {

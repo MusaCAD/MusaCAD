@@ -111,6 +111,7 @@ public:
     /// Collapsed as a title only (the ribbon's Minimize to Panel Titles) rather than the
     /// icon with the title under it.
     void set_title_only(bool on);
+    [[nodiscard]] const QString& title() const noexcept { return title_; }
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override; // click-outside dismiss
@@ -178,6 +179,10 @@ public:
     /// Minimized to tabs: the panels hidden, the tab row alone (the toggle after the tabs,
     /// or a double-click on a tab); a click on a tab brings the panels back.
     [[nodiscard]] bool minimized() const noexcept { return minimized_; }
+    /// AutoCAD's ribbon right-click: Show Tabs and Show Panels, each one ticked on or off;
+    /// with `persist` the choice is kept in the settings and put back by restore_shown().
+    void set_persist(bool persist) { persist_ = persist; }
+    void restore_shown();
     void set_minimized(bool on);
 
     /// Adds a fixed tab and returns its PAGE index (use it with add_panel).
@@ -222,6 +227,9 @@ private:
     QStackedWidget* pages_ = nullptr;
     QToolButton* minimize_btn_ = nullptr;
     bool minimized_ = false;
+    bool persist_ = false;
+    void show_customize_menu(const QPoint& global);
+    void save_shown() const;
     /// AutoCAD's minimize states, the minimize button stepping through them: the full
     /// ribbon, its tabs only, the panels as titles, the panels as buttons.
     enum class MinimizeMode : std::uint8_t { Full, Tabs, PanelTitles, PanelButtons };

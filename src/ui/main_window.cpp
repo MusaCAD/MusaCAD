@@ -456,6 +456,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     build_ribbon();
     build_status_bar();
     build_tool_palettes();
+    ribbon_->set_persist(!developer_hook_active()); // the tabs and panels shown (ribbon right-click)
+    ribbon_->restore_shown();
     init_workspaces();
     if (!developer_hook_active()) {
         apply_user_shortcuts(); // the keyboard shortcuts of the user's own (CUI)
