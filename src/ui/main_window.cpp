@@ -4500,6 +4500,61 @@ int MainWindow::open_qleader_settings(command::QLeaderSettings& io) {
     return 1;
 }
 
+namespace {
+/// The Insert Table window's preview: the table style's look -- a title row across, header
+/// cells, data cells -- at its text heights, in its grid and text colours.
+QPixmap table_preview(const core::TableStyle& st, bool title, bool header, int cols, int rows) {
+    constexpr int kW = 260;
+    constexpr int kH = 170;
+    QPixmap pm(kW, kH);
+    pm.fill(Qt::white);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const auto color = [](const core::ElementColor& c) {
+        return c.by_layer ? QColor(Qt::black) : QColor(c.color.r, c.color.g, c.color.b);
+    };
+    const int nc = std::clamp(cols, 1, 5);
+    const int nr = std::clamp(rows, 1, 6);
+    const auto row_h = [&](double text) { return text * (1.0 + 2.0 * st.margin) * 1.4; };
+    std::vector<std::pair<double, int>> rows_h; // height, kind: 0 title, 1 header, 2 data
+    if (title) {
+        rows_h.emplace_back(row_h(st.title_height), 0);
+    }
+    if (header) {
+        rows_h.emplace_back(row_h(st.header_height), 1);
+    }
+    for (int i = 0; i < nr; ++i) {
+        rows_h.emplace_back(row_h(st.data_height), 2);
+    }
+    double total = 0.0;
+    for (const auto& r : rows_h) {
+        total += r.first;
+    }
+    const double margin = 10.0;
+    const double s = std::min((kH - 2.0 * margin) / std::max(total, 1e-9), 12.0);
+    const double w = kW - 2.0 * margin;
+    p.setPen(QPen(color(st.line_color), 1.0));
+    double y = margin;
+    for (const auto& [h, kind] : rows_h) {
+        const double hh = h * s;
+        const int cells = kind == 0 ? 1 : nc;
+        for (int c = 0; c < cells; ++c) {
+            const QRectF cell(margin + w * c / cells, y, w / cells, hh);
+            p.setPen(QPen(color(st.line_color), 1.0));
+            p.drawRect(cell);
+            QFont f = p.font();
+            f.setPixelSize(std::max(4, static_cast<int>((kind == 0 ? st.title_height : kind == 1 ? st.header_height : st.data_height) * s)));
+            p.setFont(f);
+            p.setPen(color(st.text_color));
+            p.drawText(cell, Qt::AlignCenter,
+                       kind == 0 ? QStringLiteral("Title") : kind == 1 ? QStringLiteral("Header") : QStringLiteral("Data"));
+        }
+        y += hh;
+    }
+    return pm;
+}
+} // namespace
+
 int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     // AutoCAD's Insert Table window: the table style, the columns and rows, and the cell
     // styles of the first two rows; the insertion point is asked for after it.
@@ -4569,6 +4624,23 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     header->setChecked(io.header);
     form->addRow(title);
     form->addRow(header);
+    // The preview, redrawn as the style and the rows change.
+    auto* preview = new QLabel(&dlg);
+    preview->setObjectName(QStringLiteral("InsertTablePreview"));
+    const std::vector<core::TableStyle> styles = viewport_->table_styles();
+    const auto redraw = [=] {
+        const int i = style->currentIndex();
+        const core::TableStyle st =
+            i >= 0 && static_cast<std::size_t>(i) < styles.size() ? styles[static_cast<std::size_t>(i)] : core::TableStyle{};
+        preview->setPixmap(table_preview(st, title->isChecked(), header->isChecked(), cols->value(), rows->value()));
+    };
+    connect(style, &QComboBox::currentIndexChanged, &dlg, redraw);
+    connect(title, &QCheckBox::toggled, &dlg, redraw);
+    connect(header, &QCheckBox::toggled, &dlg, redraw);
+    connect(cols, &QSpinBox::valueChanged, &dlg, redraw);
+    connect(rows, &QSpinBox::valueChanged, &dlg, redraw);
+    redraw();
+    form->insertRow(1, QStringLiteral("Preview:"), preview);
     const auto sync_link = [=] {
         const bool linked = from_link->isChecked();
         link->setEnabled(linked);
