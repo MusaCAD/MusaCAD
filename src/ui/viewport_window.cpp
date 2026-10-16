@@ -686,6 +686,10 @@ std::string ViewportWindow::open_file_dialog(const std::string& filter) {
     return open_file_dialog_ ? open_file_dialog_(filter) : std::string();
 }
 
+std::string ViewportWindow::save_file_dialog(const std::string& filter, const std::string& suggested) {
+    return save_file_dialog_ ? save_file_dialog_(filter, suggested) : std::string();
+}
+
 void ViewportWindow::set_typed_text(std::string text) {
     if (text == typed_text_) {
         return;

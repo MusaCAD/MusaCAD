@@ -321,6 +321,10 @@ public:
     [[nodiscard]] virtual std::string image_file_dialog() { return {}; }
     /// A generic open-file picker (XREF Attach); `filter` is a Qt-style filter string.
     [[nodiscard]] virtual std::string open_file_dialog(const std::string& /*filter*/) { return {}; }
+    /// A file to write (DIMEX): the path chosen, or empty when cancelled or there is no window.
+    [[nodiscard]] virtual std::string save_file_dialog(const std::string& /*filter*/, const std::string& /*suggested*/) {
+        return {};
+    }
     /// Toggle the Properties palette (PR). Default no-op (headless/tests).
     virtual void open_properties() {}
     /// DWG import/export via the external converter. Default no-op (headless/tests).

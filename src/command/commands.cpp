@@ -6871,6 +6871,74 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void DimStyleFileCommand::start(CommandContext& ctx) {
+    if (import_) {
+        ask_file(ctx);
+        return;
+    }
+    step_ = Step::Names;
+    ctx.set_prompt("Dimension styles to export <*>: ");
+}
+
+void DimStyleFileCommand::ask_file(CommandContext& ctx) {
+    step_ = Step::File;
+    if (ctx.view() != nullptr) {
+        const std::string filter = "Dimension styles (*.dim);;All files (*)";
+        const std::string path =
+            import_ ? ctx.view()->open_file_dialog(filter) : ctx.view()->save_file_dialog(filter, "styles.dim");
+        if (!path.empty()) {
+            got_file(ctx, path);
+            return;
+        }
+    }
+    ctx.set_prompt(import_ ? "Import filename: " : "Export filename: ");
+}
+
+void DimStyleFileCommand::got_file(CommandContext& ctx, const std::string& path) {
+    path_ = path;
+    if (!import_) {
+        if (path_.size() < 4 || upper(path_.substr(path_.size() - 4)) != ".DIM") {
+            path_ += ".dim";
+        }
+        ctx.submit(core::ExportDimStylesCommand{path_, names_ == "*" ? std::string() : names_});
+        done_ = true;
+        return;
+    }
+    step_ = Step::Overwrite;
+    ctx.set_prompt("Existing styles of the same name [Keep/Overwrite] <Keep>: ");
+}
+
+void DimStyleFileCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Names:
+        names_ = t.empty() ? std::string("*") : t;
+        ask_file(ctx);
+        return;
+    case Step::File:
+        if (t.empty()) {
+            done_ = true; // no file: nothing done
+            return;
+        }
+        got_file(ctx, t);
+        return;
+    case Step::Overwrite:
+        if (!t.empty() && u != "K" && u != "KEEP" && u != "O" && u != "OVERWRITE") {
+            ctx.echo("Enter Keep or Overwrite.");
+            return;
+        }
+        ctx.submit(core::ImportDimStylesCommand{path_, u == "O" || u == "OVERWRITE"});
+        done_ = true;
+        return;
+    }
+}
+
+void DimStyleFileCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void UpdateFieldCommand::start(CommandContext& ctx) {
     if (ctx.has_selection()) {
         after(ctx);

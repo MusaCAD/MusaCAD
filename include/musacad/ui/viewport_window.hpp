@@ -244,6 +244,10 @@ public:
     [[nodiscard]] std::string image_file_dialog() override;
     [[nodiscard]] std::string open_file_dialog(const std::string& filter) override;
     void set_open_file_dialog(std::function<std::string(const std::string&)> cb) { open_file_dialog_ = std::move(cb); }
+    [[nodiscard]] std::string save_file_dialog(const std::string& filter, const std::string& suggested) override;
+    void set_save_file_dialog(std::function<std::string(const std::string&, const std::string&)> cb) {
+        save_file_dialog_ = std::move(cb);
+    }
     void set_image_file_dialog(std::function<std::string()> cb) { image_file_dialog_ = std::move(cb); }
     void set_osnap_settings_callback(std::function<void()> cb) { osnap_settings_callback_ = std::move(cb); }
     /// What stands in the command line's input field (TEXT draws its line from it; the
@@ -931,6 +935,7 @@ private:
     std::function<void()> osnap_settings_callback_;
     std::function<std::string()> image_file_dialog_;
     std::function<std::string(const std::string&)> open_file_dialog_;
+    std::function<std::string(const std::string&, const std::string&)> save_file_dialog_;
     QtImageDecoder image_decoder_; ///< raster decoding for the renderer's texture cache
     int dialog_ghost_mode_ = 0;
     core::Vec2 dialog_ghost_a_{};

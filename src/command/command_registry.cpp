@@ -293,6 +293,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
     reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+    reg({"DIMEX"}, [] { return std::make_unique<DimStyleFileCommand>(false); }, "",
+        "Write dimension styles to a file, for another drawing to take in with DIMIM.");
+    reg({"DIMIM"}, [] { return std::make_unique<DimStyleFileCommand>(true); }, "",
+        "Take in the dimension styles of a file DIMEX wrote.");
     reg({"TFRAMES"}, [] { return std::make_unique<ToggleFramesUiCommand>(); }, "",
         "Turn the frames of wipeouts and images off, or on again.");
     reg({"UPDATEFIELD"}, [] { return std::make_unique<UpdateFieldCommand>(); }, "",

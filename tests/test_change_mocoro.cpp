@@ -790,3 +790,44 @@ TEST_CASE("HATCH seTtings User defined: the angle, the spacing and Double") {
     REQUIRE(c->pattern_scale == Approx(2.0));
     REQUIRE(c->pattern_angle == Approx(3.141592653589793 / 4.0));
 }
+
+TEST_CASE("DIMEX writes dimension styles to a file and DIMIM takes them in, keeping or overwriting") {
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_dimex_test.dim").string();
+    {
+        GeometryEngine engine;
+        engine.start();
+        DimStyle arch;
+        arch.name = "Arch";
+        arch.text_height = 3.5;
+        engine.submit(AddDimStyleCommand{arch});
+        engine.submit(ExportDimStylesCommand{path, "ar*"});
+        REQUIRE(wait_until(engine, [&](const auto& s) { return s.status == "1 dimension style exported to " + path + "."; }));
+        engine.submit(ImportDimStylesCommand{path, false});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "0 added, 0 overwritten, 1 kept as they were."; }));
+        engine.stop();
+    }
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(ImportDimStylesCommand{path, true});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 added, 0 overwritten, 0 kept as they were."; }));
+        const auto& styles = engine.snapshot().dimstyles;
+        REQUIRE(std::any_of(styles.begin(), styles.end(),
+                            [](const DimStyle& d) { return d.name == "Arch" && d.text_height == 3.5; }));
+        engine.stop();
+    }
+    std::filesystem::remove(path);
+
+    H h;
+    h.run({"DIMEX"});
+    REQUIRE(h.out.prompt == "Dimension styles to export <*>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Export filename: "); // no window here
+    h.run({"/tmp/house"});
+    REQUIRE(h.last<ExportDimStylesCommand>()->path == "/tmp/house.dim");
+    REQUIRE(h.last<ExportDimStylesCommand>()->names.empty());
+    h.run({"DIMIM", "/tmp/house.dim"});
+    REQUIRE(h.out.prompt == "Existing styles of the same name [Keep/Overwrite] <Keep>: ");
+    h.run({"O"});
+    REQUIRE(h.last<ImportDimStylesCommand>()->overwrite);
+}

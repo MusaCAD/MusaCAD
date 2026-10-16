@@ -997,6 +997,11 @@ void MainWindow::build_status_bar() {
                                             QString::fromStdString(filter))
             .toStdString();
     });
+    viewport_->set_save_file_dialog([this](const std::string& filter, const std::string& suggested) {
+        const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save"), QString::fromStdString(suggested),
+                                                          QString::fromStdString(filter));
+        return path.isEmpty() ? std::string() : path.toStdString();
+    });
     viewport_->set_image_file_dialog([this] {
         return QFileDialog::getOpenFileName(
                    this, QStringLiteral("Attach image"), QString(),

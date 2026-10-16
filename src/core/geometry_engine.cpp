@@ -14982,6 +14982,52 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
             }
+            if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
+                io::Document doc;
+                doc.dimstyles.clear();
+                for (const DimStyle& ds : store_.dimstyles()) {
+                    if (c.names.empty() || glob_match(c.names, ds.name)) {
+                        doc.dimstyles.push_back(ds);
+                    }
+                }
+                if (doc.dimstyles.empty()) {
+                    report("No dimension style is called \"" + c.names + "\".");
+                } else if (const io::IoResult r = io::save_native(doc, c.path); !r.ok) {
+                    report("DIMEX: " + r.message);
+                } else {
+                    const std::size_t n = doc.dimstyles.size();
+                    report(std::to_string(n) + (n == 1 ? " dimension style" : " dimension styles") + " exported to " +
+                           c.path + ".");
+                }
+            }
+            if constexpr (std::is_same_v<T, ImportDimStylesCommand>) {
+                io::Document doc;
+                if (const io::IoResult r = io::load_native(c.path, doc); !r.ok) {
+                    report("DIMIM: " + r.message);
+                } else {
+                    std::size_t added = 0;
+                    std::size_t replaced = 0;
+                    std::size_t kept = 0;
+                    for (const DimStyle& ds : doc.dimstyles) {
+                        const std::uint16_t i = store_.dimstyle_index(ds.name);
+                        if (i == 0xFFFF) {
+                            store_.add_dimstyle(ds);
+                            ++added;
+                        } else if (c.overwrite) {
+                            store_.set_dimstyle(i, ds);
+                            ++replaced;
+                        } else {
+                            ++kept;
+                        }
+                    }
+                    if (added + replaced > 0) {
+                        purge_cache_valid_ = false;
+                        geom_dirty_ = true; // dimensions in a replaced style are drawn again
+                    }
+                    report(std::to_string(added) + " added, " + std::to_string(replaced) + " overwritten, " +
+                           std::to_string(kept) + " kept as they were.");
+                }
+            }
             if constexpr (std::is_same_v<T, ToggleFramesCommand>) {
                 const bool on = !store_.wipeout_frames();
                 store_.set_wipeout_frames(on);
@@ -15121,6 +15167,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
                 edit = false; // marks the drawing changed itself, when there was one to delete
+            }
+            if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
+                edit = false; // writes a file, changes nothing
             }
             if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
                 edit = layerp_changed_;

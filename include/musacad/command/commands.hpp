@@ -2506,6 +2506,29 @@ private:
 };
 
 /// IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown on screen only.
+/// DIMEX (Express Tools): `Dimension styles to export <*>:`, then the file (a Save window,
+/// or `Export filename:` on the command line). DIMIM: the file (an Open window, or `Import
+/// filename:`), then `Existing styles of the same name [Keep/Overwrite] <Keep>:`.
+class DimStyleFileCommand final : public ICommand {
+public:
+    explicit DimStyleFileCommand(bool import) : import_(import) {}
+    std::string name() const override { return import_ ? "DIMIM" : "DIMEX"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Names, File, Overwrite };
+    void ask_file(CommandContext& ctx);
+    void got_file(CommandContext& ctx, const std::string& path);
+    bool import_;
+    Step step_ = Step::Names;
+    std::string names_;
+    std::string path_;
+    bool done_ = false;
+};
+
 /// TFRAMES (Express Tools): the frames of wipeouts and images off, or on again.
 class ToggleFramesUiCommand final : public ICommand {
 public:

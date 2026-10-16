@@ -1324,6 +1324,18 @@ struct BuildPlotSnapshotCommand {
 struct AddPageSetupCommand {
     PageSetup setup;
 };
+/// DIMEX: the dimension styles matching `names` (* and ? wild cards; empty: all) written
+/// to the file at `path`, in Musa CAD's text format.
+struct ExportDimStylesCommand {
+    std::string path;
+    std::string names;
+};
+/// DIMIM: the dimension styles in the file at `path` added to the drawing; one whose name
+/// the drawing has already is kept, or replaced with `overwrite`.
+struct ImportDimStylesCommand {
+    std::string path;
+    bool overwrite = false;
+};
 /// TFRAMES: the frames of wipeouts and images turned off together, or on together when
 /// the wipeout frames are off.
 struct ToggleFramesCommand {};
@@ -2084,7 +2096,8 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, JoinPickCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand,
+                 ExportDimStylesCommand, ImportDimStylesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
