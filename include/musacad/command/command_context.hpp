@@ -227,6 +227,7 @@ struct InsertTableSettings {
     bool title = true;
     bool header = true;
     std::string link{}; ///< From a data link: its name (the table takes the file's rows and columns)
+    bool window = false; ///< Insertion behavior Specify window: the columns' width and the rows from it
 };
 
 /// QLEADER's Leader Settings: the annotation (MText, or None), whether the text width is

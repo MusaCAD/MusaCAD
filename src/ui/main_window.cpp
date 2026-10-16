@@ -33,6 +33,7 @@
 #include <QWindow>
 #include <QCoreApplication>
 #include <QColorDialog>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QDoubleValidator>
 #include <QCheckBox>
@@ -4600,6 +4601,18 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     form->addRow(QStringLiteral("Insert options:"), from_empty);
     form->addRow(QString(), from_link);
     form->addRow(QString(), link_row);
+    // Insertion behavior: a point (the table at the sizes set) or a window it fills.
+    auto* at_point = new QRadioButton(QStringLiteral("Specify insertion point"), &dlg);
+    auto* in_window = new QRadioButton(QStringLiteral("Specify window"), &dlg);
+    auto* behavior = new QButtonGroup(&dlg);
+    behavior->addButton(at_point);
+    behavior->addButton(in_window);
+    auto* source = new QButtonGroup(&dlg); // two choices of their own, apart from the behavior
+    source->addButton(from_empty);
+    source->addButton(from_link);
+    (io.window ? in_window : at_point)->setChecked(true);
+    form->addRow(QStringLiteral("Insertion behavior:"), at_point);
+    form->addRow(QString(), in_window);
     auto* cols = new QSpinBox(&dlg);
     cols->setRange(1, 500);
     cols->setValue(io.cols);
@@ -4665,6 +4678,7 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     io.title = title->isChecked();
     io.header = header->isChecked();
     io.link = from_link->isChecked() ? link->currentText().toStdString() : std::string();
+    io.window = in_window->isChecked();
     return 1;
 }
 

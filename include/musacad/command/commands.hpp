@@ -1252,6 +1252,7 @@ public:
 private:
     enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace, AutoFirst, AutoSecond };
     bool auto_cols_ = false; ///< [Auto] at the columns prompt (else at the data rows one)
+    bool window_cols_ = false; ///< the Insert Table window's Specify window: the columns' width from it
     core::Vec2 auto_corner_{};
     void place_prompt(CommandContext& ctx);
     void outline(CommandContext& ctx) const; ///< the table's grid carried at the cursor

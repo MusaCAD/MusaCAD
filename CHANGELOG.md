@@ -175,8 +175,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
   line families DXF carries with each hatch) and draw; kept in the drawing and written back.
-- **The Insert Table window's preview** (#44) -- the table style's title, header and data rows,
-  at its text heights and in its colours, redrawn as the style and the rows change.
+- **The Insert Table window's preview and Specify window** (#44) -- the table style's title,
+  header and data rows, at its text heights and in its colours, redrawn as the style and the
+  rows change; Insertion behavior Specify window fits the columns' width and the data rows to a
+  window.
 - **The Block Editor tab** (#75) -- while BEDIT is open the ribbon shows its own Block Editor tab:
   Edit Block and Save Block, and Close Block Editor.
 - **Layer states Import and Export** (#69) -- the Layer States Manager's Import... and Export...

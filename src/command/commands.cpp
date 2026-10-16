@@ -14236,6 +14236,14 @@ void TableCommand::start(CommandContext& ctx) {
             title_ = io.title;
             header_ = io.header;
             link_ = io.link;
+            if (io.window && link_.empty()) {
+                // Specify window: the columns as set, their width from the window's, and the
+                // data rows that fit its height.
+                window_cols_ = true;
+                mode_ = Mode::AutoFirst;
+                ctx.set_prompt("Specify first corner: ");
+                return;
+            }
             mode_ = Mode::DialogPlace;
             outline(ctx);
             ctx.set_prompt("Specify insertion point: ");
@@ -14369,6 +14377,8 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         if (auto_cols_) {
             cols_ = std::clamp(static_cast<int>(std::lround(w / std::max(col_w_, 1e-9))), 1, 500);
             col_w_ = w > 1e-9 ? w / cols_ : col_w_;
+        } else if (window_cols_ && w > 1e-9) {
+            col_w_ = w / cols_;
         }
         const int fixed = (title_ ? 1 : 0) + (header_ ? 1 : 0);
         rows_ = std::clamp(static_cast<int>(std::floor(h / (line * row_lines_) + 1e-9)) - fixed, 1, 500);
