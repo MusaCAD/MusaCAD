@@ -1370,7 +1370,7 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, doc.current_table_style);
         s += '\n';
     }
-    // v40: MLEADERSTYLE arrow size landing distance text_height gap max_points text <name>
+    // v40: MLEADERSTYLE arrow size landing distance text_height gap max_points text leader_type <name>
     // (written only when there is more than Standard as it starts).
     if (!(doc.mleader_styles.empty() || (doc.mleader_styles.size() == 1 && doc.mleader_styles[0] == MLeaderStyle{}))) {
         for (const MLeaderStyle& ms : doc.mleader_styles) {
@@ -1390,6 +1390,8 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, ms.max_points);
             s += ' ';
             append_uint(s, ms.text ? 1 : 0);
+            s += ' ';
+            append_uint(s, ms.leader_type);
             s += ' ';
             s += ms.name; // absorbs the rest of the line
             s += '\n';
@@ -1878,20 +1880,21 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             doc.current_dimstyle = static_cast<std::uint16_t>(i);
         } else if (key == "MLEADERSTYLE") {
-            std::uint64_t arrow = 0, landing = 1, maxp = 2, txt = 1;
+            std::uint64_t arrow = 0, landing = 1, maxp = 2, txt = 1, ltype = 0;
             MLeaderStyle ms;
-            if (tok.size() < 10 || !to_uint(tok[1], arrow) || !to_double(tok[2], ms.arrow_size) ||
+            if (tok.size() < 11 || !to_uint(tok[1], arrow) || !to_double(tok[2], ms.arrow_size) ||
                 !to_uint(tok[3], landing) || !to_double(tok[4], ms.landing_distance) ||
                 !to_double(tok[5], ms.text_height) || !to_double(tok[6], ms.landing_gap) || !to_uint(tok[7], maxp) ||
-                !to_uint(tok[8], txt)) {
+                !to_uint(tok[8], txt) || !to_uint(tok[9], ltype) || ltype > 2) {
                 return fail("malformed MLEADERSTYLE");
             }
+            ms.leader_type = static_cast<std::uint8_t>(ltype);
             ms.arrow = static_cast<std::uint8_t>(std::min<std::uint64_t>(arrow, 3));
             ms.landing = landing != 0;
             ms.max_points = static_cast<std::uint8_t>(std::min<std::uint64_t>(maxp, 99));
             ms.text = txt != 0;
-            ms.name = std::string(tok[9]);
-            for (std::size_t i = 10; i < tok.size(); ++i) {
+            ms.name = std::string(tok[10]);
+            for (std::size_t i = 11; i < tok.size(); ++i) {
                 ms.name += ' ';
                 ms.name += std::string(tok[i]);
             }

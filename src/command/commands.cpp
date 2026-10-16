@@ -14873,6 +14873,7 @@ void MLeaderCommand::start(CommandContext& ctx) {
     s_max_points_ = style_.max_points;
     s_content_ = style_.text;
     s_landing_ = style_.landing;
+    s_leader_type_ = style_.leader_type;
     first_prompt(ctx);
 }
 

@@ -238,6 +238,7 @@ struct MLeaderStyle {
     double landing_gap = 1.25;       ///< between the landing and the text
     std::uint8_t max_points = 2;     ///< leader points before the text (0: no limit)
     bool text = true;                ///< Multileader type: MText (false: None)
+    std::uint8_t leader_type = 0;    ///< Leader Format > Type: 0 Straight, 1 Spline, 2 None
     friend bool operator==(const MLeaderStyle&, const MLeaderStyle&) = default;
 };
 

@@ -3481,3 +3481,16 @@ TEST_CASE("An Excel workbook's first sheet as rows of cells, for a data link") {
     REQUIRE_FALSE(io::parse_xlsx(zip, rows, error)); // a zip, but no workbook in it
     REQUIRE(error == "not an Excel workbook (.xlsx)");
 }
+
+TEST_CASE("A multileader style's Leader type is kept, and MLEADER starts from it") {
+    io::Document doc;
+    MLeaderStyle st;
+    st.name = "Curvy";
+    st.leader_type = 1;
+    doc.mleader_styles = {MLeaderStyle{}, st};
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.mleader_styles.size() == 2);
+    REQUIRE(again.mleader_styles[1].leader_type == 1);
+    REQUIRE(again.mleader_styles[1].name == "Curvy");
+}

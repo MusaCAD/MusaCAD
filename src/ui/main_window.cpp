@@ -4126,6 +4126,9 @@ void MainWindow::open_mleader_style_dialog() {
                          QStringLiteral("Dot")});
         arrow->setCurrentIndex(std::min<int>(st.arrow, 3));
         QDoubleSpinBox* arrow_size = spin(st.arrow_size, 0.0001, 1e6);
+        auto* leader_type = new QComboBox(&dlg);
+        leader_type->addItems({QStringLiteral("Straight"), QStringLiteral("Spline"), QStringLiteral("None")});
+        leader_type->setCurrentIndex(std::min<int>(st.leader_type, 2));
         auto* max_points = new QSpinBox(&dlg);
         max_points->setRange(0, 99);
         max_points->setSpecialValueText(QStringLiteral("No limit"));
@@ -4138,6 +4141,7 @@ void MainWindow::open_mleader_style_dialog() {
         content->setCurrentIndex(st.text ? 0 : 1);
         QDoubleSpinBox* text_height = spin(st.text_height, 0.0001, 1e6);
         QDoubleSpinBox* gap = spin(st.landing_gap, 0.0, 1e6);
+        form->addRow(QStringLiteral("Leader type:"), leader_type);
         form->addRow(QStringLiteral("Arrowhead symbol:"), arrow);
         form->addRow(QStringLiteral("Arrowhead size:"), arrow_size);
         form->addRow(QStringLiteral("Maximum leader points:"), max_points);
@@ -4154,6 +4158,7 @@ void MainWindow::open_mleader_style_dialog() {
             return false;
         }
         st.arrow = static_cast<std::uint8_t>(std::max(0, arrow->currentIndex()));
+        st.leader_type = static_cast<std::uint8_t>(std::max(0, leader_type->currentIndex()));
         st.arrow_size = arrow_size->value();
         st.max_points = static_cast<std::uint8_t>(max_points->value());
         st.landing = landing->isChecked();

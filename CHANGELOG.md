@@ -193,8 +193,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   sheet: text, numbers and booleans, cell for cell, as from a CSV file; DATALINKUPDATE reads it
   again. Writing back goes to CSV links only -- a workbook is never overwritten.
 - **Spline leaders** (#61) -- MLEADER's Leader type sPline (the landing left straight) and None
-  (no leader line), LEADER's Format Spline and None (no arrowhead); kept in the drawing and
-  written to DXF's leader path type and arrowhead flag.
+  (no leader line), also a multileader style's Leader type; LEADER's Format Spline and None (no
+  arrowhead); kept in the drawing and written to DXF's leader path type and arrowhead flag.
 - **Attribute values kept by tag when a block is redefined** (#75) -- BLOCK under the same name,
   REFEDIT, the Block Editor and INSERT of a drawing file: each reference's values follow their
   tags into the new definition.
