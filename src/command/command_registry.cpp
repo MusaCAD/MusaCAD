@@ -163,6 +163,16 @@ CommandRegistry CommandRegistry::make_default() {
         "Move, rotate and scale the selection in one command, with copies if asked.");
     reg({"TABLESTYLE", "TS"}, [] { return std::make_unique<TableStyleUiCommand>(); }, "",
         "Create, change and set the current table style.");
+    reg({"GD", "GRADIENT"}, [] { return std::make_unique<HatchCommand>(false, true); }, "assets/ribbon/gradient.svg",
+        "Fill an enclosed area or selected objects with a gradient.");
+    reg({"TCOUNT"}, [] { return std::make_unique<TextCountUiCommand>(); }, "",
+        "Number texts in order: the number before, after or instead of the text, or in place of a search string.");
+    reg({"TEXTFIT"}, [] { return std::make_unique<TextFitUiCommand>(); }, "",
+        "Stretch or shrink a text between two points by its width factor.");
+    reg({"GATTE"}, [] { return std::make_unique<GlobalAttEditUiCommand>(); }, "",
+        "Change an attribute's value on every reference of a block.");
+    reg({"VPSCALE"}, [] { return std::make_unique<VpScaleUiCommand>(); }, "",
+        "Report the scale of a layout viewport.");
     reg({"TXTEXP"}, [] { return std::make_unique<TextExplodeUiCommand>(); }, "",
         "Turn text into polylines: the strokes of its letters, or their outlines in a TrueType font.");
     reg({"FLATTEN"}, [] { return std::make_unique<FlattenUiCommand>(); }, "",

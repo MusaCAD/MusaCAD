@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 //
-// CHANGE and HATCHEDIT (#55), MOCORO and FLATTEN (#77), -MTEXT (#43), DIMINSPECT (#60), TABLESTYLE (#44).
+// CHANGE and HATCHEDIT (#55), MOCORO, FLATTEN, TCOUNT, TEXTFIT, GATTE and VPSCALE (#77), -MTEXT (#43),
+// DIMINSPECT (#60), TABLESTYLE (#44), GRADIENT (#41).
 
 #include <algorithm>
 #include <chrono>
@@ -23,6 +24,7 @@
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/native_format.hpp"
+#include "musacad/core/text/text_frame.hpp"
 
 using namespace musacad::core;
 using musacad::command::CommandOutput;
@@ -559,4 +561,132 @@ TEST_CASE("TABLESTYLE adds, changes, makes current and deletes table styles; TAB
     const AddTableCommand* t = h.last<AddTableCommand>();
     REQUIRE(t->style == 1);
     REQUIRE(t->row_heights[0] == Approx(9.0 * 6.0 / 2.5)); // a line of the style's data text
+}
+
+TEST_CASE("TCOUNT numbers texts in order; TEXTFIT stretches a text to a point by its width factor") {
+    using Sort = TextCountCommand::Sort;
+    using Place = TextCountCommand::Place;
+    GeometryEngine engine;
+    engine.start();
+    const auto add_text = [&](Vec2 at, const char* content, std::uint64_t g) {
+        AddTextCommand t;
+        t.pos = at;
+        t.height = 5.0;
+        t.content = content;
+        t.group = g;
+        engine.submit(t);
+    };
+    add_text({30, 0}, "A", 1);
+    add_text({10, 0}, "B", 2);
+    add_text({20, 0}, "C", 3);
+    engine.submit(SelectAllCommand{});
+    engine.submit(TextCountCommand{Sort::X, 5, 2, Place::Prefix, "", 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "3 texts numbered."; }));
+    io::Document doc = dump(engine, "musacad_tcount.musa");
+    std::vector<std::string> got;
+    for (const io::DocText& t : doc.texts) {
+        got.push_back(t.content);
+    }
+    std::sort(got.begin(), got.end());
+    REQUIRE(got == std::vector<std::string>{"5 B", "7 C", "9 A"});
+    engine.submit(SelectAllCommand{});
+    engine.submit(TextCountCommand{Sort::Y, 1, 1, Place::Replace, " ", 5});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "3 texts numbered."; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{6});
+
+    add_text({0, 0}, "ABC", 7);
+    const double w = text::frame_of("ABC", 0, {0, 0}, {}, 5.0, 0.0, 1.0).width();
+    engine.submit(TextFitCommand{{1, 1}, 3.0, {2 * w, 0}, std::nullopt, 8});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Text width factor 2."; }));
+    engine.submit(TextFitCommand{{1, 1}, 3.0, {10 + w, 0}, Vec2{10, 0}, 9});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Text width factor 1."; }));
+    doc = dump(engine, "musacad_textfit.musa");
+    REQUIRE(doc.texts.size() == 1);
+    REQUIRE(doc.texts[0].pos.x == Approx(10.0));
+    REQUIRE(doc.texts[0].width_factor == Approx(1.0));
+    engine.submit(TextFitCommand{{50, 50}, 1.0, {60, 50}, std::nullopt, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Select a single-line text."; }));
+    engine.stop();
+
+    H h;
+    h.run({"TCOUNT"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    h.proc.set_selection_count(2);
+    h.run({""});
+    REQUIRE(h.out.prompt == "Sort selected objects by [X/Y/Select-order] <Select-order>: ");
+    h.run({"Y"});
+    REQUIRE(h.out.prompt == "Specify starting number and increment (Start,increment) <1,1>: ");
+    h.run({"10,5"});
+    REQUIRE(h.out.prompt == "Placement of numbers in text [Overwrite/Prefix/Suffix/Find&replace..] <Prefix>: ");
+    h.run({"F", "#"});
+    const TextCountCommand* c = h.last<TextCountCommand>();
+    REQUIRE(c->sort == Sort::Y);
+    REQUIRE(c->start == 10);
+    REQUIRE(c->step == 5);
+    REQUIRE(c->place == Place::Replace);
+    REQUIRE(c->find == "#");
+    h.run({"TEXTFIT", "1,1", "S", "5,0", "40,0"});
+    REQUIRE(h.last<TextFitCommand>()->start == Vec2{5, 0});
+    REQUIRE(h.last<TextFitCommand>()->end == Vec2{40, 0});
+}
+
+TEST_CASE("GATTE changes an attribute on every reference of a block; VPSCALE needs a layout") {
+    GeometryEngine engine;
+    engine.start();
+    AddAttDefCommand ad;
+    ad.text.pos = {0, 0};
+    ad.text.height = 2.5;
+    ad.text.content = "TAG";
+    ad.def = "DEFAULT";
+    ad.group = 1;
+    engine.submit(ad);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DefineBlockCommand{"B", {0, 0}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.block_names.size() == 1; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{3});
+    for (int i = 0; i < 3; ++i) {
+        InsertBlockCommand ins;
+        ins.name = "B";
+        ins.pos = {100.0 * i, 0};
+        ins.group = 4 + static_cast<std::uint64_t>(i);
+        ins.attribs = {"OLD"};
+        engine.submit(ins);
+    }
+    engine.submit(GlobalAttEditCommand{std::nullopt, 0.0, "b", "tag", "NEW", true, 10});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "3 attributes changed."; }));
+    engine.submit(GlobalAttEditCommand{Vec2{100, 0}, 2.0, "", "TAG", "ONE", false, 11});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 attribute changed."; }));
+    const io::Document doc = dump(engine, "musacad_gatte.musa");
+    std::vector<std::string> values;
+    for (const io::DocInsert& in : doc.inserts) {
+        values.push_back(in.attribs.at(0).value);
+    }
+    std::sort(values.begin(), values.end());
+    REQUIRE(values == std::vector<std::string>{"NEW", "NEW", "ONE"});
+    engine.submit(GlobalAttEditCommand{std::nullopt, 0.0, "B", "NOPE", "X", true, 12});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Block \"B\" has no attribute tagged \"NOPE\"."; }));
+    engine.submit(VpScaleQueryCommand{{0, 0}, 1.0});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "VPSCALE works on a layout: select a viewport there."; }));
+    engine.stop();
+
+    H h;
+    h.run({"GATTE", "B"});
+    REQUIRE(h.out.prompt == "Enter block name: ");
+    h.run({"X"}); // no blocks known here
+    REQUIRE(h.out.lines.back() == "Block \"X\" not found.");
+    h.run({""});
+    h.run({"GATTE", "100,0", "TAG", "V2", "N"});
+    const GlobalAttEditCommand* g = h.last<GlobalAttEditCommand>();
+    REQUIRE(g != nullptr);
+    REQUIRE(g->pick.has_value());
+    REQUIRE(g->tag == "TAG");
+    REQUIRE(g->value == "V2");
+    REQUIRE_FALSE(g->all);
+    h.run({"VPSCALE", "5,5"});
+    REQUIRE(h.last<VpScaleQueryCommand>()->pick == Vec2{5, 5});
+    h.run({"GRADIENT"});
+    REQUIRE(h.out.prompt.starts_with("Pick internal point"));
 }

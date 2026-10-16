@@ -66,6 +66,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   a wipeout behind text.
 - **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
   elevation and thickness to 0.
+- **TCOUNT, TEXTFIT, GATTE and VPSCALE** (#77) -- texts numbered in order (before, after or
+  instead of the text, or in place of a search string); a text stretched or shrunk to a point
+  by its width factor; an attribute's value changed on every reference of a block; a layout
+  viewport's scale.
+- **GRADIENT** (#41) -- HATCH with the gradient fill, from the command line and Home > Draw.
 - **TXTEXP** (#77) -- text turned into polylines as it is drawn: along the strokes of the
   built-in font, or round the outlines of a TrueType font's letters.
 - **The View Manager and NEWVIEW** (#72) -- VIEW lists the saved views to make current, add

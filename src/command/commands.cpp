@@ -2659,6 +2659,10 @@ void HatchCommand::main_prompt(CommandContext& ctx) {
 }
 
 void HatchCommand::start(CommandContext& ctx) {
+    if (gradient_ && pattern_ != "GRADIENT") {
+        pattern_ = "GRADIENT"; // GRADIENT: HATCH with the gradient fill, its colours and angle as last set
+        ctx.echo("Pattern: GRADIENT");
+    }
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
     if (ctx.has_selection()) {
@@ -16112,6 +16116,293 @@ void MocoroCommand::input(CommandContext& ctx, const std::string& text) {
 void MocoroCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     ctx.clear_preview();
+    done_ = true;
+}
+
+void TextCountUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx, "Select objects: ");
+}
+
+void TextCountUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextCountUiCommand::after(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    step_ = Step::Sort;
+    using S = core::TextCountCommand::Sort;
+    ctx.set_prompt(std::string("Sort selected objects by [X/Y/Select-order] <") +
+                   (s_.sort == S::X ? "X" : s_.sort == S::Y ? "Y" : "Select-order") + ">: ");
+}
+
+void TextCountUiCommand::submit(CommandContext& ctx) {
+    core::TextCountCommand c = s_;
+    c.group = ctx.group_id();
+    ctx.submit(std::move(c));
+    done_ = true;
+}
+
+void TextCountUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    using S = core::TextCountCommand::Sort;
+    using P = core::TextCountCommand::Place;
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Sort:
+        if (u == "X") {
+            s_.sort = S::X;
+        } else if (u == "Y") {
+            s_.sort = S::Y;
+        } else if (u == "S" || u == "SELECT-ORDER") {
+            s_.sort = S::Selected;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Numbers;
+        ctx.set_prompt("Specify starting number and increment (Start,increment) <" + std::to_string(s_.start) + "," +
+                       std::to_string(s_.step) + ">: ");
+        return;
+    case Step::Numbers:
+        if (!t.empty()) {
+            long long a = 0;
+            long long b = 1;
+            char tail = 0;
+            const int got = std::sscanf(t.c_str(), "%lld , %lld %c", &a, &b, &tail);
+            if (got < 1 || got > 2) {
+                ctx.echo("Enter the starting number, or the starting number and the increment, as whole numbers.");
+                return;
+            }
+            s_.start = a;
+            if (got == 2) {
+                s_.step = b;
+            }
+        }
+        step_ = Step::Place;
+        ctx.set_prompt(std::string("Placement of numbers in text [Overwrite/Prefix/Suffix/Find&replace..] <") +
+                       (s_.place == P::Overwrite ? "Overwrite"
+                        : s_.place == P::Suffix  ? "Suffix"
+                        : s_.place == P::Replace ? "Find&replace.."
+                                                 : "Prefix") +
+                       ">: ");
+        return;
+    case Step::Place:
+        if (u == "O" || u == "OVERWRITE") {
+            s_.place = P::Overwrite;
+        } else if (u == "P" || u == "PREFIX") {
+            s_.place = P::Prefix;
+        } else if (u == "S" || u == "SUFFIX") {
+            s_.place = P::Suffix;
+        } else if (u == "F" || u.starts_with("FIND")) {
+            s_.place = P::Replace;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        if (s_.place == P::Replace) {
+            step_ = Step::Find;
+            ctx.set_prompt(s_.find.empty() ? std::string("Enter search string: ")
+                                           : "Enter search string <" + s_.find + ">: ");
+            return;
+        }
+        submit(ctx);
+        return;
+    case Step::Find:
+        if (!t.empty()) {
+            s_.find = t;
+        }
+        if (s_.find.empty()) {
+            ctx.echo("Enter the text the numbers replace.");
+            return;
+        }
+        submit(ctx);
+        return;
+    }
+}
+
+void TextCountUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextFitUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select Text to stretch or shrink: ");
+}
+
+void TextFitUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.pick = *p;
+            c_.radius = ctx.pick_radius();
+            step_ = Step::End;
+            ctx.set_prompt("Specify end point or [Start point]: ");
+        }
+        return;
+    case Step::End:
+    case Step::EndAfterStart:
+        if (step_ == Step::End && (u == "S" || u == "START" || u == "START POINT")) {
+            step_ = Step::Start;
+            ctx.set_prompt("Specify new starting point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.end = *p;
+            c_.group = ctx.group_id();
+            ctx.submit(c_);
+            done_ = true;
+        }
+        return;
+    case Step::Start:
+        if (const auto p = read_point(ctx, text)) {
+            c_.start = *p;
+            step_ = Step::EndAfterStart;
+            ctx.set_prompt("Specify end point: ");
+        }
+        return;
+    }
+}
+
+void TextFitUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void GlobalAttEditUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select block or attribute [Block name]: ");
+}
+
+void GlobalAttEditUiCommand::ask_tag(CommandContext& ctx) {
+    step_ = Step::Tag;
+    if (!c_.block.empty()) {
+        std::string tags;
+        for (const core::BlockAttDefInfo& a : ctx.block_attdefs(c_.block)) {
+            tags += " " + a.tag;
+        }
+        ctx.echo("Known tag names for block:" + (tags.empty() ? std::string(" (none)") : tags));
+    }
+    ctx.set_prompt("Select attribute or type attribute name: ");
+}
+
+void GlobalAttEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "B" || u == "BLOCK" || u == "BLOCK NAME") {
+            step_ = Step::BlockName;
+            ctx.set_prompt("Enter block name: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.pick = *p;
+            c_.radius = ctx.pick_radius();
+            ask_tag(ctx);
+        }
+        return;
+    case Step::BlockName: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        bool known = false;
+        for (const std::string& n : ctx.block_names()) {
+            if (upper(n) == u) {
+                c_.block = n;
+                known = true;
+            }
+        }
+        if (!known) {
+            ctx.echo("Block \"" + t + "\" not found.");
+            return;
+        }
+        ask_tag(ctx);
+        return;
+    }
+    case Step::Tag:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.tag = t;
+        step_ = Step::Value;
+        ctx.set_prompt("Enter new text: ");
+        return;
+    case Step::Value:
+        c_.value = t;
+        if (!c_.pick) {
+            c_.group = ctx.group_id(); // by name: every reference
+            ctx.submit(c_);
+            done_ = true;
+            return;
+        }
+        step_ = Step::All;
+        ctx.set_prompt("Process all of them? [Yes/No] <Yes>: ");
+        return;
+    case Step::All:
+        if (u == "N" || u == "NO") {
+            c_.all = false;
+        } else if (!t.empty() && u != "Y" && u != "YES") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        c_.group = ctx.group_id();
+        ctx.submit(c_);
+        done_ = true;
+        return;
+    }
+}
+
+void GlobalAttEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void VpScaleUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select the viewport to list the scale: ");
+}
+
+void VpScaleUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::VpScaleQueryCommand{*p, ctx.pick_radius()});
+        done_ = true;
+    }
+}
+
+void VpScaleUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
     done_ = true;
 }
 

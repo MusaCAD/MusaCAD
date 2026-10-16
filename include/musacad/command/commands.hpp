@@ -531,8 +531,8 @@ public:
 /// pattern, scale and angle are remembered (HPNAME, HPSCALE, HPANG).
 class HatchCommand final : public ICommand {
 public:
-    explicit HatchCommand(bool typed = false) : typed_(typed) {}
-    std::string name() const override { return typed_ ? "-HATCH" : "HATCH"; }
+    explicit HatchCommand(bool typed = false, bool gradient = false) : typed_(typed), gradient_(gradient) {}
+    std::string name() const override { return gradient_ ? "GRADIENT" : typed_ ? "-HATCH" : "HATCH"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -546,6 +546,7 @@ private:
     void main_prompt(CommandContext& ctx);
     void fill_selection(CommandContext& ctx);
     bool typed_;
+    bool gradient_; ///< GRADIENT: HATCH with the gradient fill
     bool done_ = false;
     int picks_ = 0;
     Mode mode_ = Mode::PickPoint;
@@ -1493,6 +1494,80 @@ private:
     bool copy_ = false;
     bool new_base_ = false;
     int ops_ = 0;
+    bool done_ = false;
+};
+
+/// TCOUNT (Express Tools): `Select objects:`, `Sort selected objects by [X/Y/Select-order]
+/// <Select-order>:`, `Specify starting number and increment (Start,increment) <1,1>:` and
+/// `Placement of numbers in text [Overwrite/Prefix/Suffix/Find&replace..] <Prefix>:`
+/// (Find&replace asks `Enter search string:`). The answers are offered again next time.
+class TextCountUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TCOUNT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Sort, Numbers, Place, Find };
+    void after(CommandContext& ctx);
+    void submit(CommandContext& ctx);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+    static inline core::TextCountCommand s_{};
+};
+
+/// TEXTFIT (Express Tools): `Select Text to stretch or shrink:`, then `Specify end point or
+/// [Start point]:` (Start point: `Specify new starting point:` and `Specify end point:`).
+class TextFitUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTFIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, End, Start, EndAfterStart };
+    Step step_ = Step::Pick;
+    core::TextFitCommand c_{};
+    bool done_ = false;
+};
+
+/// GATTE (Express Tools): `Select block or attribute [Block name]:` (Block name: `Enter block
+/// name:`), `Select attribute or type attribute name:` (the known tags listed), `Enter new
+/// text:`, then `Process all of them? [Yes/No] <Yes>:` -- No changes the picked reference only.
+class GlobalAttEditUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "GATTE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, BlockName, Tag, Value, All };
+    void ask_tag(CommandContext& ctx);
+    Step step_ = Step::Pick;
+    core::GlobalAttEditCommand c_{};
+    bool done_ = false;
+};
+
+/// VPSCALE (Express Tools): `Select the viewport to list the scale:`.
+class VpScaleUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "VPSCALE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 

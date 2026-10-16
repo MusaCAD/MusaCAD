@@ -1833,6 +1833,46 @@ struct TableStyleCommand {
     std::string name;
     TableStyle style{};
 };
+/// TCOUNT: numbers the selected texts and multiline texts in `sort` order -- by X left to
+/// right, by Y top to bottom, or as they were selected -- from `start` by `step`: the number
+/// replaces the text (Overwrite), goes before or after it with a space (Prefix, Suffix), or
+/// replaces each `find` in it (Replace). One undo step.
+struct TextCountCommand {
+    enum class Sort : std::uint8_t { X, Y, Selected };
+    enum class Place : std::uint8_t { Overwrite, Prefix, Suffix, Replace };
+    Sort sort = Sort::Selected;
+    std::int64_t start = 1;
+    std::int64_t step = 1;
+    Place place = Place::Prefix;
+    std::string find{};
+    std::uint64_t group = 0;
+};
+/// TEXTFIT: the single-line text at `pick` takes the width factor that makes it end at `end`
+/// (along its baseline), starting where it starts or at `start`. One undo step.
+struct TextFitCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    Vec2 end{};
+    std::optional<Vec2> start{};
+    std::uint64_t group = 0;
+};
+/// GATTE: the attribute tagged `tag` set to `value` on every reference of a block -- the
+/// block of the reference at `pick`, else the one named `block` -- or, without `all`, on
+/// the picked reference only. One undo step.
+struct GlobalAttEditCommand {
+    std::optional<Vec2> pick{};
+    double radius = 0.0;
+    std::string block{};
+    std::string tag{};
+    std::string value{};
+    bool all = true;
+    std::uint64_t group = 0;
+};
+/// VPSCALE: says the scale of the layout viewport at `pick`.
+struct VpScaleQueryCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+};
 /// TXTEXP: the selected texts, multiline texts and attribute definitions turned into the
 /// geometry they are drawn with -- polylines along the stroke font's strokes, closed
 /// polylines round an outline font's glyphs -- on their layer, with their colour. One undo
@@ -2020,7 +2060,8 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
-                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, TextExplodeCommand, TableStyleCommand, SplineEditCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, TextExplodeCommand, TableStyleCommand,
+                 TextCountCommand, TextFitCommand, GlobalAttEditCommand, VpScaleQueryCommand, SplineEditCommand,
                  TextMaskCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,

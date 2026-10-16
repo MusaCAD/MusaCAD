@@ -315,7 +315,7 @@ void MainWindow::build_ribbon() {
                              macro(QStringLiteral("Elliptical Arc"), "EL", {"A"})}));
         small_split(draw, col, QStringLiteral("Hatch"), "H",
                     menu_of({action("H", QStringLiteral("Hatch")),
-                             macro(QStringLiteral("Gradient"), "H", {"G"}, "gradient")}));
+                             action("GRADIENT", QStringLiteral("Gradient"), "gradient")}));
     }
     {
         QWidget* out = draw->expander();
