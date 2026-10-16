@@ -18653,6 +18653,124 @@ void DimJogLineCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Select dimension to add jog or [Remove]: ");
 }
 
+void DimBreakUiCommand::submit(CommandContext& ctx, core::DimBreakCommand c) {
+    c.pick = pick_;
+    c.pick_radius = ctx.pick_radius();
+    c.group = ctx.group_id();
+    ctx.submit(std::move(c));
+}
+
+void DimBreakUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_select(ctx);
+    }
+}
+
+void DimBreakUiCommand::after_select(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    step_ = Step::MultipleOption;
+    ctx.set_prompt("Enter an option [Auto/Remove] <Auto>: ");
+}
+
+void DimBreakUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Mode = core::DimBreakCommand::Mode;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Dim:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "M" || u == "MULTIPLE") {
+            step_ = Step::Multiple;
+            select_.begin(ctx, "Select dimensions: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            step_ = Step::Object;
+            ctx.set_prompt("Select object to break dimension or [Auto/Manual/Remove] <Auto>: ");
+        }
+        return;
+    case Step::Object:
+        if (t.empty()) {
+            if (!broke_) {
+                core::DimBreakCommand c; // Enter: Auto
+                submit(ctx, c);
+            }
+            done_ = true;
+            return;
+        }
+        if (!broke_ && (u == "A" || u == "AUTO")) {
+            submit(ctx, core::DimBreakCommand{});
+            done_ = true;
+            return;
+        }
+        if (!broke_ && (u == "R" || u == "REMOVE")) {
+            core::DimBreakCommand c;
+            c.mode = Mode::Remove;
+            submit(ctx, c);
+            done_ = true;
+            return;
+        }
+        if (!broke_ && (u == "M" || u == "MANUAL")) {
+            step_ = Step::First;
+            ctx.set_prompt("Specify first break point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            core::DimBreakCommand c;
+            c.mode = Mode::Object;
+            c.object = *p;
+            submit(ctx, c);
+            broke_ = true;
+            ctx.set_prompt("Select object to break dimension: ");
+        }
+        return;
+    case Step::First:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Second;
+            ctx.set_prompt("Specify second break point: ");
+        }
+        return;
+    case Step::Second:
+        if (const auto p = read_point(ctx, text)) {
+            core::DimBreakCommand c;
+            c.mode = Mode::Manual;
+            c.p1 = first_;
+            c.p2 = *p;
+            submit(ctx, c);
+            done_ = true;
+        }
+        return;
+    case Step::Multiple:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_select(ctx);
+        }
+        return;
+    case Step::MultipleOption: {
+        if (!u.empty() && u != "A" && u != "AUTO" && u != "R" && u != "REMOVE") {
+            ctx.echo("Invalid option keyword.");
+            ctx.set_prompt("Enter an option [Auto/Remove] <Auto>: ");
+            return;
+        }
+        core::DimBreakCommand c;
+        c.selection = true;
+        c.mode = (u == "R" || u == "REMOVE") ? Mode::Remove : Mode::Auto;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    }
+}
+
 void DimJogLineCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);

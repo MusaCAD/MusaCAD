@@ -178,6 +178,8 @@ struct DimData {
     double text_angle = 0.0;
     /// An arc-length dimension's Leader option (v39): a radial leader from the text to the arc.
     bool arc_leader = false;
+    std::uint16_t brk_count = 0;  ///< DIMBREAK: its breaks, pairs in the dim-break pool
+    std::uint32_t brk_offset = 0; ///< (in the padding after arc_leader: the size stays 240)
     /// DIMEDIT Oblique (v39, DXF 52): a linear or aligned dimension's extension lines at this
     /// angle (radians from the x axis) instead of square to the dimension line; 0 = square.
     double oblique = 0.0;
@@ -783,8 +785,16 @@ public:
         return {string_pool_.data() + d.inspect_rate_offset, d.inspect_rate_len};
     }
     [[nodiscard]] DimTextParts dim_text_parts(const DimData& d) const noexcept {
-        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d), dim_inspect_label(d), dim_inspect_rate(d)};
+        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d), dim_inspect_label(d), dim_inspect_rate(d),
+                            dim_breaks(d)};
     }
+    /// DIMBREAK: a dimension's breaks (pairs; see DimTextParts::breaks).
+    [[nodiscard]] std::span<const Vec2> dim_breaks(const DimData& d) const noexcept {
+        return d.brk_count == 0 ? std::span<const Vec2>{}
+                                : std::span<const Vec2>{dim_break_pool_.data() + d.brk_offset, d.brk_count};
+    }
+    /// Replaces a dimension's breaks (`pts` in pairs; empty: none).
+    bool set_dim_breaks(EntityHandle h, std::span<const Vec2> pts);
     /// Content of a paragraph-text block (MTEXT entity or QLEADER label).
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
     /// Leader-polyline vertices of an MLeader.
@@ -1306,6 +1316,7 @@ private:
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool
 
     std::vector<Vec2> polyline_pool_;
+    std::vector<Vec2> dim_break_pool_; // DIMBREAK
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<double> width_pool_; // polyline widths, two per vertex
     std::vector<Vec2> spline_pool_;

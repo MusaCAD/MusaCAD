@@ -4,9 +4,12 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "musacad/core/math/vec2.hpp"
 
 namespace musacad::core {
 
@@ -102,6 +105,10 @@ struct DimTextParts {
     /// DIMINSPECT's label and inspection rate (DimData::inspect says whether they show).
     std::string_view inspect_label{};
     std::string_view inspect_rate{};
+    /// DIMBREAK's breaks, as pairs: two equal points are a break centred there (an object
+    /// crossing; the gap is the style's break size), two different ones the stretch
+    /// between them (Manual).
+    std::span<const Vec2> breaks{};
 };
 
 /// Where a dimension's value is placed when it does not fit between the extension

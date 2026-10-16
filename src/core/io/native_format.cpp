@@ -845,6 +845,16 @@ std::string serialize_native(const Document& doc) {
             s += d.inspect_rate;
             s += '\n';
         }
+        if (!d.breaks.empty()) {
+            // v40: DIMBREAKS n x y ... -- the breaks of the DIM just written.
+            s += "DIMBREAKS ";
+            append_uint(s, d.breaks.size());
+            for (const Vec2& p : d.breaks) {
+                s += ' ';
+                append_vec(s, p);
+            }
+            s += '\n';
+        }
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
     for (const DocLeader& l : doc.leaders) {
@@ -2275,6 +2285,16 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       static_cast<std::uint8_t>(dinspect),
                                       dinspect_label,
                                       dinspect_rate});
+        } else if (key == "DIMBREAKS") {
+            std::uint64_t n = 0;
+            vals.clear();
+            if (doc.dims.empty() || tok.size() < 2 || !to_uint(tok[1], n) || n % 2 != 0 || tok.size() != 2 + 2 * n ||
+                !parse_doubles(tok, 2, 2 * n, vals)) {
+                return fail("malformed DIMBREAKS");
+            }
+            for (std::size_t k = 0; k + 1 < vals.size(); k += 2) {
+                doc.dims.back().breaks.push_back({vals[k], vals[k + 1]});
+            }
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");

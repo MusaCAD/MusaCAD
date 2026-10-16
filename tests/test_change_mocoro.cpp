@@ -1640,3 +1640,93 @@ TEST_CASE("DATALINKUPDATE asks Update or Write, then the tables, a link or all o
     REQUIRE(h.proc.has_active_command());
     h.proc.cancel();
 }
+
+TEST_CASE("DIMBREAK breaks a dimension's lines where a line crosses them, by hand, and takes the breaks away") {
+    GeometryEngine engine;
+    engine.start();
+    // A horizontal dimension 0..100 with its line at y=20; a vertical line crosses it at x=50.
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {100, 0}, {50, 20}, 0, 1});
+    engine.submit(AddLineCommand{{50, -10}, {50, 40}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    DimBreakCommand brk;
+    brk.pick = {30, 20};
+    brk.pick_radius = 1.0;
+    brk.group = 2;
+    engine.submit(brk);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 object modified."; }));
+    io::Document doc = dump(engine, "musacad_dimbreak1.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].breaks.size() == 2);
+    REQUIRE(doc.dims[0].breaks[0].x == Approx(50.0));
+    REQUIRE(doc.dims[0].breaks[0].y == Approx(20.0));
+
+    // The dimension line now stops short of x=50 on both sides, by half the break (3.75).
+    GeometryStore store;
+    io::populate_store(store, doc);
+    const DimData* d = nullptr;
+    for (std::uint32_t i = 0; i < store.dimensions().slot_count(); ++i) {
+        if (store.dimensions().alive(i)) {
+            d = &store.dimensions().data()[i];
+        }
+    }
+    REQUIRE(d != nullptr);
+    const DimGeometry g = compute_dim_geometry(*d, *store.dimstyle(d->style), Rgb{}, store.dim_text_parts(*d));
+    bool gap = true;
+    for (std::size_t i = 0; i + 1 < g.dim_lines.size(); i += 2) {
+        const double x0 = std::min(g.dim_lines[i].x, g.dim_lines[i + 1].x);
+        const double x1 = std::max(g.dim_lines[i].x, g.dim_lines[i + 1].x);
+        if (std::abs(g.dim_lines[i].y - 20.0) < 1e-9 && x0 < 50.0 - 1.8 && x1 > 50.0 + 1.8) {
+            gap = false; // one piece runs through the crossing
+        }
+    }
+    REQUIRE(gap);
+
+    // Undo takes the breaks away again; Remove does too.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_dimbreak2.musa");
+    REQUIRE(doc.dims[0].breaks.empty());
+    DimBreakCommand manual;
+    manual.mode = DimBreakCommand::Mode::Manual;
+    manual.pick = {30, 20};
+    manual.pick_radius = 1.0;
+    manual.p1 = {10, 21};
+    manual.p2 = {20, 19};
+    manual.group = 3;
+    engine.submit(manual);
+    doc = dump(engine, "musacad_dimbreak3.musa");
+    REQUIRE(doc.dims[0].breaks.size() == 2);
+    REQUIRE(doc.dims[0].breaks[0].x == Approx(10.0));
+    REQUIRE(doc.dims[0].breaks[0].y == Approx(20.0)); // onto the line
+    REQUIRE(doc.dims[0].breaks[1].x == Approx(20.0));
+    DimBreakCommand remove;
+    remove.mode = DimBreakCommand::Mode::Remove;
+    remove.pick = {30, 20};
+    remove.pick_radius = 1.0;
+    engine.submit(remove);
+    doc = dump(engine, "musacad_dimbreak4.musa");
+    REQUIRE(doc.dims[0].breaks.empty());
+    engine.stop();
+}
+
+TEST_CASE("DIMBREAK asks for the dimension, then the object or Auto, Manual or Remove") {
+    H h;
+    h.run({"DIMBREAK"});
+    REQUIRE(h.out.prompt == "Select dimension to add/remove break or [Multiple]: ");
+    h.run({"30,20"});
+    REQUIRE(h.out.prompt == "Select object to break dimension or [Auto/Manual/Remove] <Auto>: ");
+    h.run({""});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Auto);
+    REQUIRE(h.last<DimBreakCommand>()->pick == Vec2{30, 20});
+    h.run({"DIMBREAK", "30,20", "M"});
+    REQUIRE(h.out.prompt == "Specify first break point: ");
+    h.run({"10,20", "20,20"});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Manual);
+    REQUIRE(h.last<DimBreakCommand>()->p2 == Vec2{20, 20});
+    h.run({"DIMBREAK", "30,20", "50,0"});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Object);
+    REQUIRE(h.out.prompt == "Select object to break dimension: ");
+    h.run({""});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"DIMBREAK", "30,20", "R"});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Remove);
+}

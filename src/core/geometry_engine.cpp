@@ -8143,6 +8143,143 @@ AddTableCommand table_from_grid(const std::vector<std::vector<std::string>>& gri
 }
 } // namespace
 
+namespace {
+/// The point of segment ab nearest p.
+Vec2 nearest_on_segment(Vec2 p, Vec2 a, Vec2 b) {
+    const Vec2 ab = b - a;
+    const double len2 = dot(ab, ab);
+    if (len2 < 1e-24) {
+        return a;
+    }
+    const double t = std::clamp(dot(p - a, ab) / len2, 0.0, 1.0);
+    return a + ab * t;
+}
+} // namespace
+
+void GeometryEngine::apply_dim_break(const DimBreakCommand& c) {
+    using Mode = DimBreakCommand::Mode;
+    std::vector<EntityHandle> dims;
+    if (c.selection) {
+        prune_selection();
+        for (const EntityHandle h : selection_) {
+            if (h.kind == EntityKind::Dimension) {
+                dims.push_back(h);
+            }
+        }
+    } else if (const EntityHandle h = pick_nearest(c.pick, c.pick_radius); h.kind == EntityKind::Dimension && !h.is_null()) {
+        dims.push_back(h);
+    }
+    if (dims.empty()) {
+        report("Select a dimension.");
+        return;
+    }
+    EntityHandle breaker = EntityHandle::null();
+    if (c.mode == Mode::Object) {
+        breaker = pick_nearest(c.object, c.pick_radius);
+        if (breaker.is_null() || breaker == dims.front()) {
+            report("Select an object that crosses the dimension.");
+            return;
+        }
+    }
+    int changed = 0;
+    std::vector<EntityHandle> renewed;
+    for (const EntityHandle h : dims) {
+        const Command original = capture_entity(h);
+        const auto* was = std::get_if<AddDimensionCommand>(&original);
+        const DimData* d = store_.dimension(h);
+        if (was == nullptr || d == nullptr) {
+            continue;
+        }
+        std::vector<Vec2> brk = c.mode == Mode::Remove ? std::vector<Vec2>{} : was->breaks;
+        if (c.mode != Mode::Remove) {
+            // The dimension's own lines, as they are with no breaks.
+            const DimStyle* st = store_.dimstyle(d->style);
+            DimTextParts parts = store_.dim_text_parts(*d);
+            parts.breaks = {};
+            const DimGeometry g = compute_dim_geometry(*d, st != nullptr ? *st : DimStyle{}, Rgb{}, parts);
+            std::vector<Vec2> segs = g.dim_lines;
+            segs.insert(segs.end(), g.ext_lines.begin(), g.ext_lines.end());
+            if (c.mode == Mode::Manual) {
+                // Both points onto the line nearest the first.
+                std::size_t best = segs.size();
+                double best_d = std::numeric_limits<double>::infinity();
+                for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+                    const double dd = distance(c.p1, nearest_on_segment(c.p1, segs[i], segs[i + 1]));
+                    if (dd < best_d) {
+                        best_d = dd;
+                        best = i;
+                    }
+                }
+                if (best < segs.size()) {
+                    brk.push_back(nearest_on_segment(c.p1, segs[best], segs[best + 1]));
+                    brk.push_back(nearest_on_segment(c.p2, segs[best], segs[best + 1]));
+                }
+            } else {
+                Vec2 lo{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+                Vec2 hi{-lo.x, -lo.y};
+                for (const Vec2& p : segs) {
+                    lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+                    hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+                }
+                const std::vector<EntityHandle> others =
+                    c.mode == Mode::Object ? std::vector<EntityHandle>{breaker} : all_live();
+                std::vector<Vec2> tess;
+                for (const EntityHandle o : others) {
+                    if (o == h || o.kind == EntityKind::Text || o.kind == EntityKind::MText) {
+                        continue;
+                    }
+                    Vec2 omin;
+                    Vec2 omax;
+                    if (entity_aabb(store_, o, omin, omax) &&
+                        (omax.x < lo.x || omin.x > hi.x || omax.y < lo.y || omin.y > hi.y)) {
+                        continue; // nowhere near
+                    }
+                    tess.clear();
+                    kernel_.tessellate(store_, o, kDefaultTessTolerance, tess);
+                    const bool pairs = o.kind == EntityKind::Insert || o.kind == EntityKind::Dimension;
+                    const std::size_t step = pairs ? 2 : 1;
+                    for (std::size_t j = 0; j + 1 < tess.size(); j += step) {
+                        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+                            Vec2 x;
+                            if (!segment_intersection(segs[i], segs[i + 1], tess[j], tess[j + 1], x)) {
+                                continue;
+                            }
+                            bool known = false;
+                            for (std::size_t k = 0; k + 1 < brk.size(); k += 2) {
+                                known = known || distance(brk[k], x) < 1e-6;
+                            }
+                            if (!known) {
+                                brk.push_back(x); // a break centred on the crossing
+                                brk.push_back(x);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (brk == was->breaks) {
+            continue;
+        }
+        AddDimensionCommand edited = *was;
+        edited.breaks = std::move(brk);
+        edited.group = c.group;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const Command add = edited;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+        ++changed;
+    }
+    if (!renewed.empty()) {
+        selection_ = renewed;
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    report(std::to_string(changed) + (changed == 1 ? " object modified." : " objects modified."));
+}
+
 void GeometryEngine::apply_set_data_link(const SetDataLinkCommand& c) {
     std::vector<DataLink> links = store_.data_links();
     const std::uint16_t i = store_.data_link_index(c.name);
@@ -15701,6 +15838,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, SetDataLinkCommand>) {
                 apply_set_data_link(c);
+            }
+            if constexpr (std::is_same_v<T, DimBreakCommand>) {
+                apply_dim_break(c);
             }
             if constexpr (std::is_same_v<T, InsertLinkedTableCommand>) {
                 apply_insert_linked_table(c);

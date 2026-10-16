@@ -49,6 +49,18 @@ bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
     return false;
 }
 
+bool GeometryStore::set_dim_breaks(EntityHandle h, std::span<const Vec2> pts) {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    const std::size_t n = std::min<std::size_t>(pts.size() / 2 * 2, 0xFFFE);
+    d->brk_offset = static_cast<std::uint32_t>(dim_break_pool_.size());
+    d->brk_count = static_cast<std::uint16_t>(n);
+    dim_break_pool_.insert(dim_break_pool_.end(), pts.begin(), pts.begin() + static_cast<std::ptrdiff_t>(n));
+    return true;
+}
+
 bool GeometryStore::set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label,
                                     std::string_view rate) {
     DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;

@@ -395,6 +395,21 @@ struct SetLimitsCommand {
     bool on = false;
     bool corners = true; ///< false: ON / OFF only, the corners kept
 };
+/// DIMBREAK: breaks in a dimension's lines where objects cross them. `mode` Auto: every
+/// object crossing; Object: the one at `object`; Manual: the stretch from `p1` to `p2`
+/// (taken onto the line nearest them); Remove: every break taken away. The dimension is
+/// the one at `pick`, or with `selection` (Multiple) every selected one. One undo step.
+struct DimBreakCommand {
+    enum class Mode : std::uint8_t { Auto, Object, Manual, Remove };
+    Mode mode = Mode::Auto;
+    bool selection = false;
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    Vec2 object{};
+    Vec2 p1{};
+    Vec2 p2{};
+    std::uint64_t group = 0;
+};
 /// BASE: the drawing's insertion base point (INSBASE).
 struct SetInsBaseCommand {
     Vec2 base{};
@@ -1252,6 +1267,7 @@ struct AddDimensionCommand {
     std::uint8_t inspect = 0;     ///< DimData::inspect
     std::string inspect_label{};  ///< DIMINSPECT's label (raw)
     std::string inspect_rate{};   ///< and its inspection rate
+    std::vector<Vec2> breaks{};   ///< DIMBREAK's breaks (pairs; DimTextParts::breaks)
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -2187,7 +2203,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

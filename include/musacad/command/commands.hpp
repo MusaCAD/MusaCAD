@@ -1944,6 +1944,39 @@ private:
     bool done_ = false;
 };
 
+/// DIMBREAK: `Select dimension to add/remove break or [Multiple]:`, then `Select object to
+/// break dimension or [Auto/Manual/Remove] <Auto>:` -- a picked object breaks the
+/// dimension where it crosses (asked again until Enter); Auto breaks it at every object
+/// crossing it; Manual asks for two points on it; Remove takes the breaks away. Multiple:
+/// `Select dimensions:`, then `Enter an option [Auto/Remove] <Auto>:`.
+class DimBreakUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMBREAK"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Select dimension to add/remove break or [Multiple]: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Multiple && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Dim, Object, First, Second, Multiple, MultipleOption };
+    void submit(CommandContext& ctx, core::DimBreakCommand c);
+    void after_select(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    Step step_ = Step::Dim;
+    core::Vec2 pick_{};
+    core::Vec2 first_{};
+    bool broke_ = false; ///< an object picked already: the prompt loses its options
+    bool done_ = false;
+};
+
 /// DIMJOGLINE (DJL): `Select dimension to add jog or [Remove]:`, `Specify jog location (or
 /// press ENTER):` -- a zigzag in a linear or aligned dimension's line; Remove takes one away.
 class DimJogLineCommand final : public ICommand {

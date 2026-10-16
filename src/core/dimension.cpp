@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/text/text_codes.hpp"
@@ -725,12 +728,82 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
 static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle& style,
                                                Rgb base_color, DimTextParts parts);
 
+// DIMBREAK: the gaps cut out of segment pairs `lines`. A break given as two equal points
+// is centred where an object crosses (`gap` wide); two different points cut the stretch
+// between them. A break applies to the segments it lies on.
+static void cut_dim_breaks(std::vector<Vec2>& lines, std::span<const Vec2> breaks, double gap) {
+    std::vector<Vec2> out;
+    out.reserve(lines.size());
+    for (std::size_t i = 0; i + 1 < lines.size(); i += 2) {
+        const Vec2 p = lines[i];
+        const Vec2 q = lines[i + 1];
+        const Vec2 dir = q - p;
+        const double len = length(dir);
+        if (len < 1e-12) {
+            continue;
+        }
+        const Vec2 u = dir / len;
+        const double tol = std::max(1e-6, len * 1e-9);
+        // Distance along the segment of a point on it, or nothing when it is off it.
+        const auto along = [&](Vec2 x) -> std::optional<double> {
+            const Vec2 r = x - p;
+            const double t = dot(r, u);
+            if (std::abs(cross(u, r)) > tol || t < -tol || t > len + tol) {
+                return std::nullopt;
+            }
+            return t;
+        };
+        std::vector<std::pair<double, double>> cuts;
+        for (std::size_t k = 0; k + 1 < breaks.size(); k += 2) {
+            const auto ta = along(breaks[k]);
+            const auto tb = along(breaks[k + 1]);
+            if (!ta || !tb) {
+                continue;
+            }
+            if (distance(breaks[k], breaks[k + 1]) < 1e-9) {
+                cuts.emplace_back(*ta - gap * 0.5, *ta + gap * 0.5);
+            } else {
+                cuts.emplace_back(std::min(*ta, *tb), std::max(*ta, *tb));
+            }
+        }
+        if (cuts.empty()) {
+            out.push_back(p);
+            out.push_back(q);
+            continue;
+        }
+        std::sort(cuts.begin(), cuts.end());
+        double from = 0.0;
+        for (const auto& [lo, hi] : cuts) {
+            if (lo > from + 1e-9) {
+                out.push_back(p + u * from);
+                out.push_back(p + u * std::min(lo, len));
+            }
+            from = std::max(from, hi);
+            if (from >= len) {
+                break;
+            }
+        }
+        if (from < len - 1e-9) {
+            out.push_back(p + u * from);
+            out.push_back(q);
+        }
+    }
+    lines = std::move(out);
+}
+
 DimGeometry compute_dim_geometry(const DimData& d, const DimStyle& style, Rgb base_color,
                                  DimTextParts parts) {
     // The single resolution point: per-dimension overrides win over the style
     // (the Ph12 ByLayer/override shape), then the body reads the effective style.
-    return compute_dim_geometry_styled(d, apply_dim_overrides(style, d.overrides), base_color,
-                                       parts);
+    const DimStyle eff = apply_dim_overrides(style, d.overrides);
+    DimGeometry g = compute_dim_geometry_styled(d, eff, base_color, parts);
+    if (!parts.breaks.empty()) {
+        // AutoCAD's break size: 3.75 for a 2.5 arrow, in proportion to it.
+        const double gap = 1.5 * eff.arrow_size;
+        cut_dim_breaks(g.dim_lines, parts.breaks, gap);
+        cut_dim_breaks(g.ext_lines, parts.breaks, gap);
+    }
+    return g;
 }
 
 static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle& style,

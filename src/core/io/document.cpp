@@ -322,6 +322,8 @@ Document document_from_store(const GeometryStore& store) {
                                       dd.aux, dd.text_angle, dd.arc_leader, dd.oblique, dd.jog,
                                       dd.inspect, std::string(store.dim_inspect_label(dd)),
                                       std::string(store.dim_inspect_rate(dd))});
+            const std::span<const Vec2> brk = store.dim_breaks(dd);
+            doc.dims.back().breaks.assign(brk.begin(), brk.end());
         }
     }
     const auto& leaders = store.leaders();
@@ -612,6 +614,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_dim_jog(dh, d.jog);
         if (d.inspect != 0) {
             store.set_dim_inspect(dh, d.inspect, d.inspect_label, d.inspect_rate);
+        }
+        if (!d.breaks.empty()) {
+            store.set_dim_breaks(dh, d.breaks);
         }
     }
     for (const DocLeader& l : doc.leaders) {

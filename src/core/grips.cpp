@@ -88,28 +88,31 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
         const DimStyle* st = store.dimstyle(d->style);
-        return AddDimensionCommand{static_cast<std::uint8_t>(d->type),
-                                   d->a,
-                                   d->b,
-                                   d->line_pt,
-                                   d->style,
-                                   0,
-                                   d->props,
-                                   d->overrides,
-                                   st != nullptr ? *st : DimStyle{},
-                                   std::string(store.dim_prefix(*d)),
-                                   std::string(store.dim_suffix(*d)),
-                                   d->tol,
-                                   std::string(store.dim_override(*d)),
-                                   d->text_offset,
-                                   d->aux,
-                                   d->text_angle,
-                                   d->arc_leader,
-                                   d->oblique,
-                                   d->jog,
-                                   d->inspect,
-                                   std::string(store.dim_inspect_label(*d)),
-                                   std::string(store.dim_inspect_rate(*d))};
+        AddDimensionCommand dc{static_cast<std::uint8_t>(d->type),
+                              d->a,
+                              d->b,
+                              d->line_pt,
+                              d->style,
+                              0,
+                              d->props,
+                              d->overrides,
+                              st != nullptr ? *st : DimStyle{},
+                              std::string(store.dim_prefix(*d)),
+                              std::string(store.dim_suffix(*d)),
+                              d->tol,
+                              std::string(store.dim_override(*d)),
+                              d->text_offset,
+                              d->aux,
+                              d->text_angle,
+                              d->arc_leader,
+                              d->oblique,
+                              d->jog,
+                              d->inspect,
+                              std::string(store.dim_inspect_label(*d)),
+                              std::string(store.dim_inspect_rate(*d))};
+        const std::span<const Vec2> brk = store.dim_breaks(*d);
+        dc.breaks.assign(brk.begin(), brk.end());
+        return dc;
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -336,6 +339,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 store.set_dim_jog(handle, c.jog);
                 if (c.inspect != 0) {
                     store.set_dim_inspect(handle, c.inspect, c.inspect_label, c.inspect_rate);
+                }
+                if (!c.breaks.empty()) {
+                    store.set_dim_breaks(handle, c.breaks);
                 }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,

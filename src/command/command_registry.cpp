@@ -559,6 +559,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Make the selected dimensions inspection dimensions: a frame, a label and an inspection rate.");
     reg({"-DIMINSPECT"}, [] { return std::make_unique<DimInspectUiCommand>(false); }, "",
         "Add or remove inspection data on dimensions from the command line.");
+    reg({"DIMBREAK"}, [] { return std::make_unique<DimBreakUiCommand>(); }, "assets/ribbon/dim.svg",
+        "Break a dimension's lines where objects cross them, or take the breaks away.");
     reg({"DIMJOGLINE", "DJL"}, [] { return std::make_unique<DimJogLineCommand>(); }, "",
         "Add a jog to a linear or aligned dimension's line, or take one away.");
     reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },
