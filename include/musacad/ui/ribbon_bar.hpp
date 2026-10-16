@@ -166,6 +166,11 @@ public:
     /// A widget at the right end of the quick-access strip (the command search).
     void add_strip_widget(QWidget* widget);
 
+    /// Minimized to tabs: the panels hidden, the tab row alone (the toggle after the tabs,
+    /// or a double-click on a tab); a click on a tab brings the panels back.
+    [[nodiscard]] bool minimized() const noexcept { return minimized_; }
+    void set_minimized(bool on);
+
     /// Adds a fixed tab and returns its PAGE index (use it with add_panel).
     int add_tab(const QString& title);
 
@@ -204,6 +209,9 @@ private:
     QHBoxLayout* qat_layout_ = nullptr;
     QTabBar* tabs_ = nullptr;
     QStackedWidget* pages_ = nullptr;
+    QToolButton* minimize_btn_ = nullptr;
+    bool minimized_ = false;
+    bool just_restored_ = false; ///< a click just brought the panels back (its double-click is not a toggle)
     std::vector<QHBoxLayout*> page_layouts_; // indexed by page index
     std::vector<QScrollArea*> page_scrolls_; // indexed by page index
 

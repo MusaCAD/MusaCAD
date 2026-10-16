@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **Minimize the ribbon** (#78) -- the toggle after the last tab, or a double-click on a tab,
+  leaves the tab row alone; a click on a tab brings the panels back.
 - **Search commands** (#78) -- a field at the right of the quick-access strip, as AutoCAD's
   InfoCenter: part of a command's name or of what it does lists the matches; Enter or a pick
   runs it.
