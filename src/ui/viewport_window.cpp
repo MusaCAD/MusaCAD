@@ -2032,7 +2032,25 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             processor_->set_ctrl_held(false);
             processor_->set_shift_held(false);
             rebuild_overlay();
-        } else if (const int gi = grip_at(world, pick_aperture(dpr, scale)); gi >= 0) {
+        } else if (const int gi = grip_at(world, pick_aperture(dpr, scale)); gi >= 0 &&
+                                                                             (event->modifiers() & Qt::ShiftModifier) != 0) {
+            // Shift + click on a grip: one more hot grip (or, on a hot one, one less). A click
+            // on a grip then drags them all with it.
+            core::GripInfo ginfo;
+            {
+                std::scoped_lock lock(grips_mutex_);
+                ginfo = grips_cache_[static_cast<std::size_t>(gi)];
+            }
+            const auto it = std::find_if(hot_grips_.begin(), hot_grips_.end(), [&](const core::GripInfo& g) {
+                return g.handle == ginfo.handle && g.index == ginfo.index;
+            });
+            if (it != hot_grips_.end()) {
+                hot_grips_.erase(it);
+            } else {
+                hot_grips_.push_back(ginfo);
+            }
+            rebuild_overlay();
+        } else if (gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
             // drag. ORTHO/POLAR resolve relative to the grip's origin.
             core::GripInfo ginfo;
@@ -2040,14 +2058,20 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 std::scoped_lock lock(grips_mutex_);
                 ginfo = grips_cache_[static_cast<std::size_t>(gi)];
             }
+            core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, ginfo.handle, ginfo.index, {}, 0};
+            for (const core::GripInfo& g : hot_grips_) {
+                if (!(g.handle == ginfo.handle && g.index == ginfo.index)) {
+                    begin.also.emplace_back(g.handle, g.index);
+                }
+            }
+            hot_grips_.clear();
             dragging_grip_ = true;
             grip_origin_ = ginfo.pos;
             grip_press_screen_ = screen_px;
             grip_pressed_ = ginfo;
             processor_->set_pick_radius(pick_aperture(dpr, scale));
             processor_->set_last_point(ginfo.pos);
-            engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
-                                                 ginfo.index, {}, 0});
+            engine_.submit(std::move(begin));
         } else if (pickfirst_ != 0) {
             // Idle: begin a selection drag (single click or window/crossing box). If a
             // selection already exists, this drag may instead be a tab-to-tab transfer
@@ -2605,6 +2629,18 @@ void ViewportWindow::rebuild_overlay() {
     }
 
     ov.hide_selection = highlight_ == 0;
+    if (!hot_grips_.empty()) {
+        // Shift's hot grips, while their objects are still selected with them there.
+        std::scoped_lock lock(grips_mutex_);
+        std::erase_if(hot_grips_, [&](const core::GripInfo& h) {
+            return std::none_of(grips_cache_.begin(), grips_cache_.end(), [&](const core::GripInfo& g) {
+                return g.handle == h.handle && g.index == h.index && g.pos == h.pos;
+            });
+        });
+        for (const core::GripInfo& h : hot_grips_) {
+            ov.hot_grips.push_back(h.pos);
+        }
+    }
     if (freehand_active_) {
         ov.lasso = freehand_world_;
         ov.lasso_mode = 3; // drawn as a fence: an open path

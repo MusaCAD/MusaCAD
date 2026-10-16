@@ -2525,3 +2525,72 @@ TEST_CASE("The dimension grip menu: Flip Arrow, Above Dim Line, Center Verticall
     REQUIRE(doc.dims[0].text_offset == Vec2{});
     engine.stop();
 }
+
+TEST_CASE("A grip the selected objects share drags them all; grips made hot with Shift move together") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 2});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grips.size() >= 6; }));
+    const auto grip_at = [&](Vec2 p, Vec2 other_end) {
+        // The grip at `p` of the line whose other end is `other_end`.
+        GripInfo found{};
+        std::vector<GripInfo> all = engine.snapshot().grips;
+        for (const GripInfo& g : all) {
+            if (g.pos == p && g.handle.kind == EntityKind::Line) {
+                for (const GripInfo& o : all) {
+                    if (o.handle == g.handle && o.pos == other_end) {
+                        found = g;
+                    }
+                }
+            }
+        }
+        return found;
+    };
+    // The corner both lines have: one drag moves both ends.
+    const GripInfo corner = grip_at({10, 0}, {0, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, corner.handle, corner.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {12, 2}, 3});
+    io::Document doc = dump(engine, "musacad_grips_shared.musa");
+    REQUIRE(doc.lines.size() == 2);
+    for (const io::DocLine& l : doc.lines) {
+        REQUIRE((l.a == Vec2{12, 2} || l.b == Vec2{12, 2}));
+    }
+    // Shift's hot grips: the first line's start and the second line's end go with the drag.
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        return std::any_of(s.grips.begin(), s.grips.end(), [](const GripInfo& g) { return g.pos == Vec2{12, 2}; });
+    }));
+    const GripInfo start = grip_at({0, 0}, {12, 2});
+    const GripInfo top = grip_at({10, 10}, {12, 2});
+    GripDragCommand begin{GripDragCommand::Phase::Begin, start.handle, start.index, {}, 0};
+    begin.also = {{top.handle, top.index}};
+    engine.submit(begin);
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {1, 1}, 4});
+    doc = dump(engine, "musacad_grips_hot.musa");
+    const bool first_is_bottom = doc.lines[0].a == Vec2{1, 1} || doc.lines[0].b == Vec2{1, 1};
+    const io::DocLine& bottom = first_is_bottom ? doc.lines[0] : doc.lines[1];
+    const io::DocLine& side = first_is_bottom ? doc.lines[1] : doc.lines[0];
+    REQUIRE((bottom.a == Vec2{1, 1} && bottom.b == Vec2{12, 2}));
+    REQUIRE((side.a == Vec2{12, 2} && side.b == Vec2{11, 11}));
+    // Both ends of one line hot: it moves whole.
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        return std::any_of(s.grips.begin(), s.grips.end(), [](const GripInfo& g) { return g.pos == Vec2{11, 11}; });
+    }));
+    const GripInfo s0 = grip_at({1, 1}, {12, 2});
+    const GripInfo s1 = grip_at({12, 2}, {1, 1});
+    engine.submit(ClearSelectionCommand{});
+    engine.submit(SelectPickCommand{{6, 1.5}, 0.5, false}); // the bottom line alone
+    GripDragCommand both{GripDragCommand::Phase::Begin, s0.handle, s0.index, {}, 0};
+    both.also = {{s1.handle, s1.index}};
+    engine.submit(both);
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {1, -9}, 5});
+    doc = dump(engine, "musacad_grips_whole.musa");
+    const bool moved_first = doc.lines[0].a == Vec2{1, -9};
+    const io::DocLine& moved = moved_first ? doc.lines[0] : doc.lines[1];
+    REQUIRE(moved.a == Vec2{1, -9});
+    REQUIRE(moved.b == Vec2{12, -8});
+    engine.stop();
+}

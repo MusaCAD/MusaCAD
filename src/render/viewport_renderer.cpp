@@ -1274,8 +1274,12 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
         std::vector<core::Vec2> hot;
         for (std::size_t i = 0; i < snapshot.grips.size(); ++i) {
             const core::Vec2 s = camera.world_to_screen(snapshot.grips[i].pos);
+            const std::vector<core::Vec2>& shift_hot = overlay().hot_grips;
             std::vector<core::Vec2>& dst =
-                (static_cast<int>(i) == snapshot.hot_grip) ? hot : normal;
+                (static_cast<int>(i) == snapshot.hot_grip ||
+                 std::find(shift_hot.begin(), shift_hot.end(), snapshot.grips[i].pos) != shift_hot.end())
+                    ? hot
+                    : normal;
             const core::Vec2 a{s.x - hpx, s.y - hpx};
             const core::Vec2 b{s.x + hpx, s.y - hpx};
             const core::Vec2 c{s.x + hpx, s.y + hpx};

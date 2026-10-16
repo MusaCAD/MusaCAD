@@ -1378,6 +1378,8 @@ struct GripDragCommand {
     /// Begin: a dimension's text grip dragged as the grip menu's Move with Dim Line (0),
     /// Move Text Only (2) or Move with Leader (1); -1, as the dimension moves its text.
     std::int8_t text_move = -1;
+    /// Begin: the other grips made hot with Shift, moved by the same delta.
+    std::vector<std::pair<EntityHandle, std::uint32_t>> also{};
 };
 
 /// The dimension grip menu's one-step choices on dimension `dim`, its grip at `at`: Flip

@@ -138,6 +138,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Stretch, Move with Dim Line, Move Text Only, Move with Leader (the dimension keeps that text
   movement), Above Dim Line, Center Vertically and Reset Text Position; on its other grips,
   Stretch, Continue Dimension, Baseline Dimension (from that extension line) and Flip Arrow.
+- **Shared grips and several hot grips** (#54) -- a grip that selected objects share (two lines'
+  common end) drags all of them; Shift + click makes several grips hot, and a click on one then
+  moves them all together (both ends of a line: the whole line).
 - **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the

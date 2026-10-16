@@ -10265,46 +10265,162 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
     report("Dimension created from object.");
 }
 
+std::vector<std::pair<EntityHandle, Command>> GeometryEngine::grip_edits() const {
+    std::vector<std::pair<EntityHandle, Command>> out;
+    if (!store_.is_valid(grip_handle_)) {
+        return out;
+    }
+    // The grips that move, by object (the dragged one's first): it, the selected objects'
+    // grips at the same point, and the grips made hot with Shift -- all by the same delta.
+    struct Moved {
+        EntityHandle h;
+        std::vector<std::pair<std::uint32_t, Vec2>> grips;
+    };
+    std::vector<Moved> objs{{grip_handle_, {{grip_index_, grip_pos_}}}};
+    const Vec2 delta = grip_pos_ - grip_origin_;
+    for (const GripPeer& p : grip_peers_) {
+        if (!store_.is_valid(p.handle)) {
+            continue;
+        }
+        auto it = std::find_if(objs.begin(), objs.end(), [&](const Moved& m) { return m.h == p.handle; });
+        if (it == objs.end()) {
+            objs.push_back({p.handle, {}});
+            it = objs.end() - 1;
+        }
+        it->grips.emplace_back(p.index, p.origin + delta);
+    }
+    for (const Moved& m : objs) {
+        if (m.grips.size() == 1) {
+            out.emplace_back(m.h, edit_for_grip_drag(store_, m.h, m.grips[0].first, m.grips[0].second,
+                                                     m.h == grip_handle_ ? grip_text_move_ : -1));
+            continue;
+        }
+        // Several hot grips of one object: each edit made on the one before, on a scratch store.
+        const EntityProps* ep = store_.props(m.h);
+        const EntityProps props = ep != nullptr ? *ep : EntityProps{store_.current_layer()};
+        GeometryStore scratch;
+        Command c = capture_entity(m.h);
+        for (const auto& [index, pos] : m.grips) {
+            scratch.clear();
+            scratch.set_layer_table(store_.layers(), store_.current_layer());
+            scratch.set_dimstyle_table(store_.dimstyles());
+            const EntityHandle sh = add_command_to_store(scratch, c, props);
+            c = edit_for_grip_drag(scratch, sh, index, pos, m.h == grip_handle_ ? grip_text_move_ : -1);
+        }
+        out.emplace_back(m.h, std::move(c));
+    }
+    return out;
+}
+
+void GeometryEngine::begin_grip_drag(const GripDragCommand& c) {
+    // Arm the drag only if the entity is selectable (layer on/unlocked).
+    grip_active_ = store_.is_valid(c.handle) && selectable(c.handle);
+    grip_handle_ = c.handle;
+    grip_index_ = c.grip;
+    grip_text_move_ = c.text_move;
+    grip_peers_.clear();
+    if (!grip_active_) {
+        return;
+    }
+    std::vector<Grip> gs;
+    grips_of(store_, c.handle, gs);
+    grip_origin_ = {};
+    for (const Grip& g : gs) {
+        if (g.index == c.grip) {
+            grip_origin_ = g.pos;
+        }
+    }
+    const auto add = [&](EntityHandle h, std::uint32_t index, Vec2 at) {
+        const bool dup = (h == c.handle && index == c.grip) ||
+                         std::any_of(grip_peers_.begin(), grip_peers_.end(),
+                                     [&](const GripPeer& p) { return p.handle == h && p.index == index; });
+        if (!dup) {
+            grip_peers_.push_back({h, index, at});
+        }
+    };
+    // Shift's hot grips.
+    for (const auto& [h, index] : c.also) {
+        if (!store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        gs.clear();
+        grips_of(store_, h, gs);
+        for (const Grip& g : gs) {
+            if (g.index == index) {
+                add(h, index, g.pos);
+            }
+        }
+    }
+    // The other selected objects with a grip where the dragged one is: they share it.
+    const double tol = 1e-9 * (1.0 + std::max(std::abs(grip_origin_.x), std::abs(grip_origin_.y)));
+    for (const EntityHandle h : selection_) {
+        if (h == c.handle || !store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        gs.clear();
+        grips_of(store_, h, gs);
+        for (const Grip& g : gs) {
+            if (distance(g.pos, grip_origin_) <= tol) {
+                add(h, g.index, g.pos);
+                break;
+            }
+        }
+    }
+}
+
 void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     if (!grip_active_ || !store_.is_valid(grip_handle_)) {
         return;
     }
+    const std::vector<std::pair<EntityHandle, Command>> edits = grip_edits();
     if (copy) {
-        // STRETCH's Copy: the original stays (and keeps its grips); the stretched one is new.
-        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_, grip_text_move_);
-        const EntityHandle nh = create_indexed(edited);
-        push_create_item(group, nh, edited);
+        // STRETCH's Copy: the originals stay (and keep their grips); the stretched ones are new.
+        for (const auto& [h, edited] : edits) {
+            const EntityHandle nh = create_indexed(edited);
+            push_create_item(group, nh, edited);
+        }
         redo_.clear();
         geom_dirty_ = true;
         dirty_ = true;
         report("Copied.");
         return;
     }
-    // Erase the original and create the grip-edited entity as ONE undo group --
-    // exactly the move/property-edit pattern. The edit is parametric (no baking).
-    const Command original = capture_entity(grip_handle_);
-    const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_, grip_text_move_);
-    const std::vector<DimFollow> follows = dims_on({grip_handle_});
-    std::vector<Grip> before;
-    grips_of(store_, grip_handle_, before);
-    remove_indexed(grip_handle_);
-    push_erase_item(group, grip_handle_, original);
-    const EntityHandle nh = create_indexed(edited);
-    push_create_item(group, nh, edited);
+    // Erase each original and create its grip-edited one as ONE undo group -- exactly the
+    // move/property-edit pattern. The edit is parametric (no baking).
+    std::vector<EntityHandle> was;
+    for (const auto& e : edits) {
+        was.push_back(e.first);
+    }
+    const std::vector<DimFollow> follows = dims_on(was);
+    std::vector<std::vector<Grip>> before(edits.size());
+    std::vector<EntityHandle> made;
+    for (std::size_t i = 0; i < edits.size(); ++i) {
+        const EntityHandle h = edits[i].first;
+        grips_of(store_, h, before[i]);
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const EntityHandle nh = create_indexed(edits[i].second);
+        push_create_item(group, nh, edits[i].second);
+        made.push_back(nh);
+    }
     if (!follows.empty()) {
-        // The associative dimensions on it (#59): a point at one of its grips goes where that
-        // grip now is; one elsewhere on it, to the nearest point of what it has become. When
-        // every grip moved alike (the object was dragged whole), they all just move along.
-        std::vector<Grip> after;
-        grips_of(store_, nh, after);
+        // The associative dimensions on them (#59): a point at one of their grips goes where
+        // that grip now is; one elsewhere on them, to the nearest point of what they have
+        // become. When every grip moved alike (dragged whole), they all just move along.
+        std::vector<std::vector<Grip>> after(made.size());
         std::optional<Vec2> delta;
-        bool same = before.size() == after.size();
-        for (std::size_t k = 0; same && k < before.size(); ++k) {
-            const Vec2 dk = after[k].pos - before[k].pos;
-            if (!delta) {
-                delta = dk;
+        bool same = true;
+        for (std::size_t i = 0; i < made.size(); ++i) {
+            grips_of(store_, made[i], after[i]);
+            same = same && before[i].size() == after[i].size();
+            for (std::size_t k = 0; same && k < before[i].size(); ++k) {
+                const Vec2 dk = after[i][k].pos - before[i][k].pos;
+                if (!delta) {
+                    delta = dk;
+                }
+                same = distance(dk, *delta) <= assoc_tol(after[i][k].pos);
             }
-            same = distance(dk, *delta) <= assoc_tol(after[k].pos);
         }
         if (same && delta) {
             const Vec2 dv = *delta;
@@ -10314,22 +10430,32 @@ void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
             follow_dims(
                 follows,
                 [&](Vec2 p) {
-                    for (const Grip& g : before) {
-                        if (distance(g.pos, p) <= assoc_tol(p)) {
-                            for (const Grip& h : after) {
-                                if (h.index == g.index && h.kind == g.kind) {
-                                    return h.pos;
+                    for (std::size_t i = 0; i < made.size(); ++i) {
+                        for (const Grip& g : before[i]) {
+                            if (distance(g.pos, p) <= assoc_tol(p)) {
+                                for (const Grip& n : after[i]) {
+                                    if (n.index == g.index && n.kind == g.kind) {
+                                        return n.pos;
+                                    }
                                 }
                             }
                         }
                     }
-                    Vec2 q;
-                    return kernel_.closest_point(store_, nh, p, q) ? q : p;
+                    Vec2 best = p;
+                    double best_d = std::numeric_limits<double>::infinity();
+                    for (const EntityHandle nh : made) {
+                        Vec2 q;
+                        if (kernel_.closest_point(store_, nh, p, q) && distance(q, p) < best_d) {
+                            best_d = distance(q, p);
+                            best = q;
+                        }
+                    }
+                    return best;
                 },
                 {}, group);
         }
     }
-    selection_ = {nh}; // keep the edited entity selected (grips follow)
+    selection_ = made; // the edited objects stay selected (their grips follow)
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
@@ -14872,11 +14998,7 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, GripDragCommand>) {
                 using P = GripDragCommand::Phase;
                 if (c.phase == P::Begin) {
-                    // Arm the drag only if the entity is selectable (layer on/unlocked).
-                    grip_active_ = store_.is_valid(c.handle) && selectable(c.handle);
-                    grip_handle_ = c.handle;
-                    grip_index_ = c.grip;
-                    grip_text_move_ = c.text_move;
+                    begin_grip_drag(c);
                 } else if (c.phase == P::Move) {
                     grip_pos_ = c.pos; // preview recomputed in rebuild_and_publish
                 } else if (c.phase == P::Commit) {
@@ -17124,6 +17246,8 @@ void GeometryEngine::reset_active_state() {
     grip_active_ = false;
     grip_handle_ = EntityHandle{};
     grip_index_ = 0;
+    grip_peers_.clear();
+    grip_text_move_ = -1;
     grip_preview_store_.clear();
     forget_stretch_windows();
     stretch_preview_active_ = false;
@@ -17240,6 +17364,7 @@ void GeometryEngine::load_active(DocState& d) {
     grip_handle_ = d.grip_handle;
     grip_index_ = d.grip_index;
     grip_pos_ = d.grip_pos;
+    grip_peers_.clear(); // a drag left under way in the other drawing goes on with its own grip only
     grip_preview_store_ = std::move(d.grip_preview_store);
     stretch_windows_ = std::move(d.stretch_windows);
     stretch_windows_sel_ = std::move(d.stretch_windows_sel);
@@ -17699,13 +17824,14 @@ void GeometryEngine::rebuild_and_publish() {
     buf.grip_preview_segments.clear();
     buf.grip_preview_fills.clear();
     if (grip_active_ && store_.is_valid(grip_handle_)) {
-        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_, grip_text_move_);
         grip_preview_store_.clear();
         grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
         grip_preview_store_.set_dimstyle_table(store_.dimstyles());
-        const EntityProps* ep = store_.props(grip_handle_);
-        add_command_to_store(grip_preview_store_, edited,
-                             ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+        for (const auto& [h, edited] : grip_edits()) {
+            const EntityProps* ep = store_.props(h);
+            add_command_to_store(grip_preview_store_, edited,
+                                 ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+        }
         RenderSnapshot tmp;
         build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
         buf.grip_preview_segments = std::move(tmp.line_vertices);
