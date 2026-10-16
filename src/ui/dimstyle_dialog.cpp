@@ -473,8 +473,13 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     QFormLayout* ta = form();
     row(ta, QStringLiteral("Text height:"), text_height);
     row(ta, QStringLiteral("Text colour:"), text_color);
+    auto* horizontal = new QComboBox(this);
+    horizontal->addItems({QStringLiteral("Centered"), QStringLiteral("At Ext Line 1"), QStringLiteral("At Ext Line 2"),
+                          QStringLiteral("Over Ext Line 1"), QStringLiteral("Over Ext Line 2")});
+    horizontal->setCurrentIndex(style.text_just); // DIMJUST's order
     QFormLayout* tp = form();
     row(tp, QStringLiteral("Vertical:"), vertical);
+    row(tp, QStringLiteral("Horizontal:"), horizontal);
     tabs->addTab(page(tabs, {group(QStringLiteral("Text appearance"), ta, this),
                              group(QStringLiteral("Text placement"), tp, this)}),
                  QStringLiteral("Text"));
@@ -682,6 +687,7 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.text_above = vertical->currentIndex() != 0 && vertical->currentIndex() != 4;
         s.text_vpos = vertical->currentIndex() >= 2 ? static_cast<std::uint8_t>(vertical->currentIndex())
                                                     : std::uint8_t{0};
+        s.text_just = static_cast<std::uint8_t>(std::max(horizontal->currentIndex(), 0));
         s.text_fit = static_cast<std::uint8_t>(std::max(0, fits->checkedId()));
         s.text_move = static_cast<std::uint8_t>(std::max(0, moves->checkedId()));
         s.precision = static_cast<std::uint8_t>(std::max(0, precision->currentIndex()));

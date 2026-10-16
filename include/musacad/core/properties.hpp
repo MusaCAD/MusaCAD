@@ -156,6 +156,9 @@ struct DimStyle {
     /// DIMTAD beyond Centered and Above: 2 Outside (on the side away from what is measured),
     /// 3 JIS, 4 Below; 0 leaves it to text_above. dim_text_vpos() reads the two together.
     std::uint8_t text_vpos = 0;
+    /// DIMJUST, the Text tab's Horizontal: 0 Centered, 1 At Ext Line 1, 2 At Ext Line 2,
+    /// 3 Over Ext Line 1, 4 Over Ext Line 2 (linear and aligned dimensions).
+    std::uint8_t text_just = 0;
     std::uint8_t dim_lineweight = 25; ///< dimension/extension line weight (hundredths mm)
     std::uint8_t text_fit = 0;   ///< TextFit: narrow-dimension value placement (Auto)
 

@@ -481,6 +481,16 @@ std::string serialize_native(const Document& doc) {
         s += ds.name;
         s += '\n';
     }
+    // v40: DIMJUST idx just -- a style whose text is not centred along its line.
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        if (doc.dimstyles[i].text_just != 0) {
+            s += "DIMJUST ";
+            append_uint(s, i);
+            s += ' ';
+            append_uint(s, doc.dimstyles[i].text_just);
+            s += '\n';
+        }
+    }
     // v40: DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost
     // (the two texts with spaces as 0x1f, "-" for none) -- for a style whose units differ
     // from the defaults.
@@ -2663,6 +2673,13 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.tol_upper = up;
             ds.tol_lower = lo;
             ds.tol_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(prec, 9)) - 1);
+        } else if (key == "DIMJUST") {
+            std::uint64_t idx = 0;
+            std::uint64_t v = 0;
+            if (tok.size() != 3 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size() || !to_uint(tok[2], v) || v > 4) {
+                return fail("malformed DIMJUST");
+            }
+            doc.dimstyles[idx].text_just = static_cast<std::uint8_t>(v);
         } else if (key == "DIMUNITS") {
             // DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost (v40)
             std::uint64_t idx = 0;

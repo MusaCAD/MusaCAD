@@ -3187,3 +3187,28 @@ TEST_CASE("SPLINE's Close makes the fitted spline smooth across its seam") {
     REQUIRE(std::abs(out.x * in.y - out.y * in.x) < 1e-9);
     REQUIRE(out.x * in.x + out.y * in.y > 0.0);
 }
+
+TEST_CASE("The Text tab's Horizontal placement: beside or over an extension line") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {100, 0};
+    d.line_pt = {50, 10};
+    DimStyle st;
+    const DimGeometry centred = compute_dim_geometry(d, st, Rgb{});
+    REQUIRE(centred.text_pos.x == Approx(50.0));
+    REQUIRE(apply_dim_var(st, "DIMJUST", 1));
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.x < 20.0); // by the first extension line
+    REQUIRE(apply_dim_var(st, "DIMJUST", 2));
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.x > 80.0); // by the second
+    REQUIRE(apply_dim_var(st, "DIMJUST", 3));
+    const DimGeometry over = compute_dim_geometry(d, st, Rgb{});
+    REQUIRE(over.text_pos.y > 10.0);                                // past the dimension line
+    REQUIRE(std::abs(std::cos(over.text_rotation)) < 1e-9);         // along the extension line
+    REQUIRE(std::abs(over.text_pos.x) < st.text_height * 1.5);      // over the first one
+    io::Document doc;
+    doc.dimstyles.push_back(st);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.dimstyles.back().text_just == 3);
+}

@@ -291,6 +291,8 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.ext_offset = v;
     } else if (same_var(var, "DIMEXE") && v >= 0.0) {
         s.ext_extension = v;
+    } else if (same_var(var, "DIMJUST") && whole(0, 4)) {
+        s.text_just = static_cast<std::uint8_t>(v);
     } else if (same_var(var, "DIMTAD") && whole(0, 4)) {
         s.text_above = v != 0.0 && v != 4.0;
         s.text_vpos = v >= 2.0 ? static_cast<std::uint8_t>(v) : std::uint8_t{0};
@@ -404,6 +406,9 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
     }
     if (same_var(var, "DIMTAD")) {
         return dim_text_vpos(s);
+    }
+    if (same_var(var, "DIMJUST")) {
+        return s.text_just;
     }
     if (same_var(var, "DIMATFIT")) {
         return s.text_fit;
@@ -1491,7 +1496,28 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                        : above   ? style.text_height * 0.4
                                  : -style.text_height * 1.4;
     if (text_inside) {
-        g.text_pos = mid + text_up * off;
+        // DIMJUST: centred, or along the line beside an extension line (clear of its
+        // arrowhead), or over one -- the text along the extension line, past the dimension line.
+        const double half = label_w * 0.5;
+        Vec2 at = mid;
+        if (style.text_just == 1 || style.text_just == 2) {
+            const double in = style.arrow_size + gap + half;
+            at = style.text_just == 1 ? fa + u * in : fb - u * in;
+        }
+        g.text_pos = at + text_up * off;
+        if (style.text_just == 3 || style.text_just == 4) {
+            const Vec2 foot = style.text_just == 3 ? fa : fb;
+            Vec2 n = foot - (style.text_just == 3 ? d.a : d.b);
+            const double nl = length(n);
+            n = nl > 1e-12 ? n / nl : Vec2{-u.y, u.x};
+            double rot = std::atan2(n.y, n.x);
+            if (rot > 1.5708 || rot < -1.5708) {
+                rot += kPi; // kept readable
+            }
+            g.text_rotation = rot;
+            const Vec2 beside{-std::sin(rot), std::cos(rot)};
+            g.text_pos = foot + n * (gap + half) + beside * (style.text_height * 0.4);
+        }
     } else {
         // Outside: on the dimension line's own extension, past the second extension
         // line, clearing the outside arrowhead + stub when there is one, then the gap.
