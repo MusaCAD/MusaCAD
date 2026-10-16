@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -226,8 +227,8 @@ double get_height(const Command& c) {
                 v = x.height;
             } else if constexpr (requires { x.block.height; }) {
                 v = x.block.height; // MTEXT + MLeader label
-            } else if constexpr (requires { x.text_height; }) {
-                v = x.text_height; // flat LEADER label
+            } else if constexpr (requires { { x.text_height } -> std::convertible_to<double>; }) {
+                v = x.text_height; // flat LEADER label (not CHANGE's optional one)
             }
         },
         c);
@@ -240,8 +241,8 @@ void set_height(Command& c, double v) {
                 x.height = v;
             } else if constexpr (requires { x.block.height; }) {
                 x.block.height = v; // MTEXT + MLeader label
-            } else if constexpr (requires { x.text_height; }) {
-                x.text_height = v; // flat LEADER label
+            } else if constexpr (requires { { x.text_height } -> std::convertible_to<double>; }) {
+                x.text_height = v; // flat LEADER label (not CHANGE's optional one)
             }
         },
         c);
