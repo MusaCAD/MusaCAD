@@ -1928,11 +1928,20 @@ struct HatchBoundaryCommand {
 /// MLEADERALIGN: the selected multileaders' text (with its landing) moved onto the line
 /// through the text of the multileader at `base_pick`, toward `toward`; each keeps its place
 /// along the line, and the arrowheads stay where they are. One undo step.
+/// The Options: Spacing puts the content `spacing` apart along the line (between the
+/// extents of their text), Distribute spaces the content evenly between `from` and `to`
+/// (no multileader to align to), Parallel makes each last leader segment parallel to the
+/// one at `base_pick` (no direction).
 struct MLeaderAlignCommand {
+    enum class Mode : std::uint8_t { UseCurrent, Spacing, Distribute, Parallel };
     Vec2 base_pick{};
     double radius = 0.0;
     Vec2 toward{};
     std::uint64_t group = 0;
+    Mode mode = Mode::UseCurrent;
+    double spacing = 0.0;
+    Vec2 from{};
+    Vec2 to{};
 };
 /// -DWGUNITS: every model-space object (on any layer, locked or not) and the limits scaled
 /// by `factor` about the origin, one undo step -- the drawing taken to another unit.

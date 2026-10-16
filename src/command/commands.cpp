@@ -16139,8 +16139,14 @@ void MLeaderAlignUiCommand::start(CommandContext& ctx) {
 }
 
 void MLeaderAlignUiCommand::base_prompt(CommandContext& ctx) {
+    static constexpr const char* kModes[4] = {"Use current spacing", "Specify spacing", "Distribute", "Parallel"};
+    ctx.echo(std::string("Current mode: ") + kModes[static_cast<int>(s_mode_)]);
+    if (s_mode_ == Mode::Distribute) {
+        step_ = Step::First;
+        ctx.set_prompt("Specify first point or [Options]: ");
+        return;
+    }
     step_ = Step::Base;
-    ctx.echo("Current mode: Use current spacing");
     ctx.set_prompt("Select multileader to align to or [Options]: ");
 }
 
@@ -16167,26 +16173,87 @@ void MLeaderAlignUiCommand::input(CommandContext& ctx, const std::string& text) 
         }
         return;
     case Step::Base:
+    case Step::First:
         if (u.empty()) {
             done_ = true;
             return;
         }
         if (u == "O" || u == "OPTIONS") {
-            ctx.echo("Only Use current spacing is available here.");
+            step_ = Step::Option;
+            ctx.set_prompt("Enter an option [Distribute/make leader segments Parallel/specify Spacing/Use current] "
+                           "<Use current>: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
-            base_ = *p;
             ctx.set_last_point(*p);
+            if (step_ == Step::First) {
+                first_ = *p;
+                step_ = Step::Second;
+                ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+                ctx.set_prompt("Specify second point: ");
+                return;
+            }
+            base_ = *p;
+            if (s_mode_ == Mode::Parallel) {
+                core::MLeaderAlignCommand c{base_, ctx.pick_radius(), {}, ctx.group_id()};
+                c.mode = Mode::Parallel;
+                ctx.submit(c);
+                done_ = true;
+                return;
+            }
             step_ = Step::Direction;
             ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
             ctx.set_prompt("Specify direction: ");
         }
         return;
+    case Step::Option:
+        if (u == "D" || u == "DISTRIBUTE") {
+            s_mode_ = Mode::Distribute;
+        } else if (u == "P" || u == "PARALLEL") {
+            s_mode_ = Mode::Parallel;
+        } else if (u == "S" || u == "SPACING") {
+            step_ = Step::Spacing;
+            ctx.set_prompt("Specify spacing <" + fmt4(s_spacing_) + ">: ");
+            return;
+        } else if (u.empty() || u == "U" || u == "USE CURRENT") {
+            s_mode_ = Mode::UseCurrent;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        base_prompt(ctx);
+        return;
+    case Step::Spacing:
+        if (!u.empty()) {
+            const std::optional<double> v = parse_number(u);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a spacing of zero or more.");
+                return;
+            }
+            s_spacing_ = *v;
+        }
+        s_mode_ = Mode::Spacing;
+        base_prompt(ctx);
+        return;
+    case Step::Second:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.clear_preview();
+            core::MLeaderAlignCommand c{};
+            c.mode = Mode::Distribute;
+            c.from = first_;
+            c.to = *p;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+            done_ = true;
+        }
+        return;
     case Step::Direction:
         if (const auto p = read_point(ctx, text)) {
             ctx.clear_preview();
-            ctx.submit(core::MLeaderAlignCommand{base_, ctx.pick_radius(), *p, ctx.group_id()});
+            core::MLeaderAlignCommand c{base_, ctx.pick_radius(), *p, ctx.group_id()};
+            c.mode = s_mode_;
+            c.spacing = s_spacing_;
+            ctx.submit(c);
             done_ = true;
         }
         return;

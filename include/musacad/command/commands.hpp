@@ -2882,12 +2882,16 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Step : std::uint8_t { Select, Base, Direction };
+    enum class Step : std::uint8_t { Select, Base, Direction, Option, Spacing, First, Second };
+    using Mode = core::MLeaderAlignCommand::Mode;
     void base_prompt(CommandContext& ctx);
     Step step_ = Step::Select;
     SelectObjectsPhase select_;
     core::Vec2 base_{};
+    core::Vec2 first_{};
     bool done_ = false;
+    static inline Mode s_mode_ = Mode::UseCurrent; ///< remembered, as AutoCAD does
+    static inline double s_spacing_ = 0.0;
 };
 
 /// -DWGUNITS: the drawing's unit (`Unit for length <3>:` from Inches, Feet, Millimeters,

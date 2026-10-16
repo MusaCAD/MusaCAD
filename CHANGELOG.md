@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **MLEADERALIGN's Options** (#61) -- Distribute between two points, make leader segments
+  Parallel, specify Spacing, and Use current; the choice is kept for the next time.
 - **Isometric drafting** (#65, #39) -- ISODRAFT, ISOPLANE, SNAP Style Isometric, F5 / Ctrl+E and
   ISO on the status bar: the snap lattice, the grid and the crosshair on the isometric axes,
   ORTHO along the isoplane's two axes, and ELLIPSE's Isocircle.

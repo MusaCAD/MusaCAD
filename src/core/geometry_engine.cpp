@@ -14832,55 +14832,140 @@ void GeometryEngine::apply_one(const Command& command) {
                                  : std::to_string(made) + (made == 1 ? " boundary created." : " boundaries created."));
             }
             if constexpr (std::is_same_v<T, MLeaderAlignCommand>) {
-                const EntityHandle base = pick_nearest(c.base_pick, c.radius);
-                if (base.is_null() || base.kind != EntityKind::MLeader) {
+                using Mode = MLeaderAlignCommand::Mode;
+                // The text, and the landing (a level last segment) with it, moved by `delta`;
+                // the arrowhead and the rest of the leader stay.
+                const auto shift = [](AddMLeaderCommand& m, Vec2 delta) {
+                    const std::size_t n = m.vertices.size();
+                    const bool landing = n >= 3 && std::abs(m.vertices[n - 1].y - m.vertices[n - 2].y) < 1e-9;
+                    m.vertices[n - 1] += delta;
+                    if (landing) {
+                        m.vertices[n - 2] += delta;
+                    }
+                    m.block.pos += delta;
+                };
+                // The last leader segment (before the landing, if any): where it starts and ends.
+                const auto has_landing = [](const std::vector<Vec2>& v) {
+                    const std::size_t n = v.size();
+                    return n >= 3 && std::abs(v[n - 1].y - v[n - 2].y) < 1e-9;
+                };
+                const auto segment_start = [&](const std::vector<Vec2>& v) {
+                    const std::size_t n = v.size();
+                    return has_landing(v) ? v[n - 3] : (n >= 2 ? v[n - 2] : v[0]);
+                };
+                const auto segment_end = [&](const std::vector<Vec2>& v) {
+                    return has_landing(v) ? v[v.size() - 2] : v.back();
+                };
+                // How far the text reaches along `d`.
+                const auto extent = [this](const AddMLeaderCommand& m, Vec2 d) {
+                    const text::MTextLayout lay =
+                        text::layout_mtext(m.block, m.content, font_engine_, m.font);
+                    return std::abs(d.x) * (lay.max.x - lay.min.x) + std::abs(d.y) * (lay.max.y - lay.min.y);
+                };
+                prune_selection();
+                const EntityHandle base = c.mode == Mode::Distribute ? EntityHandle::null() : pick_nearest(c.base_pick, c.radius);
+                std::vector<std::pair<EntityHandle, Command>> items;
+                for (const EntityHandle h : selection_) {
+                    if (h == base || h.kind != EntityKind::MLeader || !selectable(h)) {
+                        continue;
+                    }
+                    Command cmd = capture_entity(h);
+                    if (const auto* m = std::get_if<AddMLeaderCommand>(&cmd); m != nullptr && !m->vertices.empty()) {
+                        items.emplace_back(h, std::move(cmd));
+                    }
+                }
+                std::vector<Vec2> deltas(items.size(), Vec2{});
+                const auto anchor_of = [&](std::size_t i) { return std::get<AddMLeaderCommand>(items[i].second).vertices.back(); };
+                bool ok = true;
+                if (c.mode == Mode::Distribute) {
+                    const Vec2 span = c.to - c.from;
+                    const double len = length(span);
+                    if (len < 1e-12 || items.empty()) {
+                        ok = false;
+                        report("Specify two points apart, and select multileaders.");
+                    } else {
+                        const Vec2 d = span / len;
+                        std::vector<std::size_t> order(items.size());
+                        for (std::size_t i = 0; i < order.size(); ++i) {
+                            order[i] = i;
+                        }
+                        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                            return dot(anchor_of(a) - c.from, d) < dot(anchor_of(b) - c.from, d);
+                        });
+                        const double n = static_cast<double>(order.size());
+                        for (std::size_t k = 0; k < order.size(); ++k) {
+                            const double f = n > 1.0 ? static_cast<double>(k) / (n - 1.0) : 0.0;
+                            deltas[order[k]] = c.from + span * f - anchor_of(order[k]);
+                        }
+                    }
+                } else if (base.is_null() || base.kind != EntityKind::MLeader) {
+                    ok = false;
                     report("Select a multileader to align to.");
                 } else {
-                    const auto bv = store_.vertices_of(*store_.mleader(base));
-                    const Vec2 origin = bv.empty() ? c.base_pick : bv.back();
-                    const Vec2 d = normalized(c.toward - origin);
-                    std::size_t moved = 0;
-                    if (length(c.toward - origin) > 1e-12) {
-                        prune_selection();
-                        const std::vector<EntityHandle> sel = selection_;
-                        std::vector<EntityHandle> made;
-                        for (const EntityHandle h : sel) {
-                            if (h == base || h.kind != EntityKind::MLeader || !selectable(h)) {
-                                continue;
-                            }
-                            Command cmd = capture_entity(h);
-                            auto* m = std::get_if<AddMLeaderCommand>(&cmd);
-                            if (m == nullptr || m->vertices.empty()) {
-                                continue;
-                            }
-                            const Vec2 anchor = m->vertices.back();
-                            const Vec2 target = origin + d * dot(anchor - origin, d);
-                            const Vec2 delta = target - anchor;
-                            if (length(delta) < 1e-12) {
-                                continue;
-                            }
-                            // The landing (a level last segment) moves with the text; the rest stays.
-                            const std::size_t n = m->vertices.size();
-                            const bool landing = n >= 3 && std::abs(m->vertices[n - 1].y - m->vertices[n - 2].y) < 1e-9;
-                            m->vertices[n - 1] += delta;
-                            if (landing) {
-                                m->vertices[n - 2] += delta;
-                            }
-                            m->block.pos += delta;
-                            const Command original = capture_entity(h);
-                            remove_indexed(h);
-                            push_erase_item(c.group, h, original);
-                            const EntityHandle nh = create_indexed(cmd);
-                            push_create_item(c.group, nh, cmd);
-                            made.push_back(nh);
-                            ++moved;
+                    const Command base_cmd = capture_entity(base);
+                    const auto& bm = std::get<AddMLeaderCommand>(base_cmd);
+                    const Vec2 origin = bm.vertices.empty() ? c.base_pick : bm.vertices.back();
+                    if (c.mode == Mode::Parallel) {
+                        const Vec2 bd = normalized(segment_end(bm.vertices) - segment_start(bm.vertices));
+                        for (std::size_t i = 0; i < items.size(); ++i) {
+                            const auto& m = std::get<AddMLeaderCommand>(items[i].second);
+                            const Vec2 s0 = segment_start(m.vertices);
+                            const Vec2 s1 = segment_end(m.vertices);
+                            deltas[i] = s0 + bd * length(s1 - s0) - s1;
                         }
-                        if (moved > 0) {
-                            selection_ = made;
-                            redo_.clear();
-                            geom_dirty_ = true;
-                            dirty_ = true;
+                    } else if (length(c.toward - origin) <= 1e-12) {
+                        ok = false;
+                        report("Specify a direction away from the multileader.");
+                    } else {
+                        const Vec2 d = normalized(c.toward - origin);
+                        if (c.mode == Mode::Spacing) {
+                            // One after another along the line from the base, `spacing` apart.
+                            std::vector<std::size_t> order(items.size());
+                            for (std::size_t i = 0; i < order.size(); ++i) {
+                                order[i] = i;
+                            }
+                            std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                                return dot(anchor_of(a) - origin, d) < dot(anchor_of(b) - origin, d);
+                            });
+                            double at = 0.0;
+                            double prev = extent(bm, d);
+                            for (const std::size_t i : order) {
+                                const auto& m = std::get<AddMLeaderCommand>(items[i].second);
+                                at += prev + c.spacing;
+                                prev = extent(m, d);
+                                deltas[i] = origin + d * at - anchor_of(i);
+                            }
+                        } else {
+                            for (std::size_t i = 0; i < items.size(); ++i) {
+                                deltas[i] = origin + d * dot(anchor_of(i) - origin, d) - anchor_of(i);
+                            }
                         }
+                    }
+                }
+                std::size_t moved = 0;
+                if (ok) {
+                    std::vector<EntityHandle> made;
+                    for (std::size_t i = 0; i < items.size(); ++i) {
+                        if (length(deltas[i]) < 1e-12) {
+                            made.push_back(items[i].first);
+                            continue;
+                        }
+                        Command cmd = items[i].second;
+                        shift(std::get<AddMLeaderCommand>(cmd), deltas[i]);
+                        const EntityHandle h = items[i].first;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        made.push_back(nh);
+                        ++moved;
+                    }
+                    if (moved > 0) {
+                        selection_ = made;
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
                     }
                     report(std::to_string(moved) + (moved == 1 ? " multileader aligned." : " multileaders aligned."));
                 }

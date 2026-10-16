@@ -929,3 +929,88 @@ TEST_CASE("Isometric drafting: the snap lattice, ORTHO on the isoplane's axes, I
     h.run({"ELLIPSE"});
     REQUIRE(h.out.prompt == "Specify axis endpoint of ellipse or [Arc/Center]: ");
 }
+
+TEST_CASE("MLEADERALIGN Options: Distribute between two points, Parallel last segments, a Spacing") {
+    using Mode = MLeaderAlignCommand::Mode;
+    const auto two_leaders = [](GeometryEngine& engine) {
+        MTextBlock a;
+        a.pos = {16, 10};
+        a.attach = 3;
+        engine.submit(AddMLeaderCommand{{{0, 0}, {10, 10}, {15, 10}}, 0, a, "A", 1});
+        MTextBlock b;
+        b.pos = {18, -5};
+        b.attach = 3;
+        engine.submit(AddMLeaderCommand{{{0, -20}, {12, -5}, {17, -5}}, 0, b, "B", 2});
+        engine.submit(SelectAllCommand{});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    };
+    const auto find = [](const io::Document& doc, const char* text) {
+        for (const auto& m : doc.mleaders) {
+            if (m.content == text) {
+                return m;
+            }
+        }
+        FAIL("multileader not found");
+        return doc.mleaders.front();
+    };
+    {
+        GeometryEngine engine;
+        engine.start();
+        two_leaders(engine);
+        MLeaderAlignCommand c{};
+        c.mode = Mode::Distribute;
+        c.from = {20, 0};
+        c.to = {20, 40};
+        c.group = 3;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 multileaders aligned."; }));
+        const io::Document doc = dump(engine, "musacad_mla_distribute.musa");
+        REQUIRE(find(doc, "B").vertices.back() == Vec2{20, 0}); // lowest first
+        REQUIRE(find(doc, "A").vertices.back() == Vec2{20, 40});
+        REQUIRE(find(doc, "A").vertices.front() == Vec2{0, 0}); // the arrowhead stays
+        engine.stop();
+    }
+    {
+        GeometryEngine engine;
+        engine.start();
+        two_leaders(engine);
+        MLeaderAlignCommand c{{12, 10}, 0.5, {}, 3};
+        c.mode = Mode::Parallel;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 multileader aligned."; }));
+        const auto b = find(dump(engine, "musacad_mla_parallel.musa"), "B");
+        const Vec2 seg = b.vertices[1] - b.vertices[0];
+        REQUIRE(seg.y / seg.x == Approx(1.0)); // as A's (0,0)-(10,10)
+        engine.stop();
+    }
+    {
+        GeometryEngine engine;
+        engine.start();
+        two_leaders(engine);
+        MLeaderAlignCommand c{{12, 10}, 0.5, {15, -30}, 3};
+        c.mode = Mode::Spacing;
+        c.spacing = 4.0;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 multileader aligned."; }));
+        const auto b = find(dump(engine, "musacad_mla_spacing.musa"), "B");
+        REQUIRE(b.vertices.back().x == Approx(15.0));
+        REQUIRE(b.vertices.back().y < 10.0 - 4.0);
+        engine.stop();
+    }
+
+    H h;
+    h.proc.set_selection_count(2);
+    h.run({"MLEADERALIGN", "O"});
+    REQUIRE(h.out.prompt == "Enter an option [Distribute/make leader segments Parallel/specify Spacing/Use current] <Use current>: ");
+    h.run({"D"});
+    REQUIRE(h.out.prompt == "Specify first point or [Options]: ");
+    h.run({"20,0", "20,40"});
+    REQUIRE(h.last<MLeaderAlignCommand>()->mode == Mode::Distribute);
+    REQUIRE(h.last<MLeaderAlignCommand>()->to == Vec2{20, 40});
+    h.run({"MLEADERALIGN", "O", "S", "4"});
+    REQUIRE(h.out.prompt == "Select multileader to align to or [Options]: ");
+    h.run({"12,10", "15,-30"});
+    REQUIRE(h.last<MLeaderAlignCommand>()->mode == Mode::Spacing);
+    REQUIRE(h.last<MLeaderAlignCommand>()->spacing == 4.0);
+    h.run({"MLEADERALIGN", "O", "U"});
+}
