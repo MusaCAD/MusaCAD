@@ -16441,6 +16441,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.current_text_style = store_.current_text_style();
     buf.table_styles = store_.table_styles();
     buf.current_table_style = store_.current_table_style();
+    buf.page_setups = store_.page_setups(); // PAGESETUP, the Plot window's saved setups
     buf.insbase = store_.insbase();       // BASE
     buf.data_links = store_.data_links(); // DATALINK
     buf.layer_used = layer_used_;

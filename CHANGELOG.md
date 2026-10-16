@@ -259,6 +259,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.
 
 ### Fixed
+- **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now
+  list the setups saved with the drawing; they were saved but never shown.
 - DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other
   dimension command does, instead of the previous dimension's.
 - LAYUNISO works after switching to another drawing tab and back; LAYISO's list and
