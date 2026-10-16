@@ -13438,7 +13438,11 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
     case Mode::Cols:
     case Mode::Rows: {
         if (u == "A" || u == "AUTO") {
-            ctx.echo("Auto sizing from a window is not available yet; enter a number.");
+            // A window the table fills: the columns from its width (or the data rows from its
+            // height), placed at its top-left corner.
+            auto_cols_ = mode_ == Mode::Cols;
+            mode_ = Mode::AutoFirst;
+            ctx.set_prompt("Specify first corner: ");
             return;
         }
         double v = mode_ == Mode::Cols ? cols_ : rows_;
@@ -13486,6 +13490,36 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         }
         place_prompt(ctx);
         return;
+    case Mode::AutoFirst:
+        if (const auto p = read_point(ctx, text)) {
+            auto_corner_ = *p;
+            ctx.set_last_point(*p);
+            mode_ = Mode::AutoSecond;
+            ctx.set_preview({PreviewKind::Rectangle, {*p}});
+            ctx.set_prompt("Specify second corner: ");
+        }
+        return;
+    case Mode::AutoSecond: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        const double w = std::abs(p->x - auto_corner_.x);
+        const double h = std::abs(p->y - auto_corner_.y);
+        const std::vector<core::TableStyle> styles = ctx.table_styles();
+        const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
+        if (auto_cols_) {
+            cols_ = std::clamp(static_cast<int>(std::lround(w / std::max(col_w_, 1e-9))), 1, 500);
+            col_w_ = w > 1e-9 ? w / cols_ : col_w_;
+        }
+        const int fixed = (title_ ? 1 : 0) + (header_ ? 1 : 0);
+        rows_ = std::clamp(static_cast<int>(std::floor(h / (line * row_lines_) + 1e-9)) - fixed, 1, 500);
+        mode_ = Mode::Place;
+        // The table hangs from the window's top-left corner.
+        const core::Vec2 top_left{std::min(p->x, auto_corner_.x), std::max(p->y, auto_corner_.y)};
+        input(ctx, std::to_string(top_left.x) + "," + std::to_string(top_left.y));
+        return;
+    }
     case Mode::DialogPlace:
     case Mode::Place:
         if (mode_ == Mode::Place && (u == "W" || u == "WIDTH")) {

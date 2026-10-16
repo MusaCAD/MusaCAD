@@ -2187,3 +2187,16 @@ TEST_CASE("-BEDIT asks for the block; BCLOSE asks whether to save") {
     h.run({"BSAVE"});
     REQUIRE(h.last<BlockEditCommand>()->op == BlockEditCommand::Op::Save);
 }
+
+TEST_CASE("-TABLE's Auto fits the columns and the data rows to a window") {
+    H h;
+    h.run({"-TABLE", "A"});
+    REQUIRE(h.out.prompt == "Specify first corner: ");
+    h.run({"0,100", "200,0"});
+    const auto* t = h.last<AddTableCommand>();
+    REQUIRE(t != nullptr);
+    REQUIRE(t->cols == 3);                       // 200 / 63.5, rounded
+    REQUIRE(t->col_widths[0] == Approx(200.0 / 3.0));
+    REQUIRE(t->pos == Vec2{0, 100});             // the top-left corner
+    REQUIRE(t->rows == 11);                      // 100 / 9 lines, title and header among them
+}

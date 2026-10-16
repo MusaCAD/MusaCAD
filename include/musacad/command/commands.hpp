@@ -1243,7 +1243,9 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace };
+    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace, AutoFirst, AutoSecond };
+    bool auto_cols_ = false; ///< [Auto] at the columns prompt (else at the data rows one)
+    core::Vec2 auto_corner_{};
     void place_prompt(CommandContext& ctx);
     void outline(CommandContext& ctx) const; ///< the table's grid carried at the cursor
     bool dialog_;

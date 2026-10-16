@@ -3833,6 +3833,29 @@ void MainWindow::open_table_style_dialog() {
         form->addRow(QStringLiteral("Data text height:"), data_h);
         form->addRow(QStringLiteral("Cell margin (x text height):"), margin);
         form->addRow(QStringLiteral("Lineweight:"), lw);
+        // The border and text colours: ByLayer, or one picked in the Select Color window.
+        core::ElementColor line_c = st.line_color;
+        core::ElementColor text_c = st.text_color;
+        const auto color_button = [this, &dlg](core::ElementColor& ec) {
+            auto* b = new QPushButton(&dlg);
+            const auto show = [b, &ec] {
+                b->setText(ec.by_layer ? QStringLiteral("ByLayer")
+                                       : QStringLiteral("RGB %1,%2,%3").arg(ec.color.r).arg(ec.color.g).arg(ec.color.b));
+            };
+            show();
+            connect(b, &QPushButton::clicked, &dlg, [this, &ec, show] {
+                bool by_layer = ec.by_layer;
+                core::Rgb c = ec.color;
+                if (open_select_color(by_layer, c) == 1) {
+                    ec.by_layer = by_layer;
+                    ec.color = c;
+                    show();
+                }
+            });
+            return b;
+        };
+        form->addRow(QStringLiteral("Grid color:"), color_button(line_c));
+        form->addRow(QStringLiteral("Text color:"), color_button(text_c));
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
         connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -3840,6 +3863,8 @@ void MainWindow::open_table_style_dialog() {
         if (dlg.exec() != QDialog::Accepted) {
             return false;
         }
+        st.line_color = line_c;
+        st.text_color = text_c;
         st.title_height = title_h->value();
         st.header_height = header_h->value();
         st.data_height = data_h->value();

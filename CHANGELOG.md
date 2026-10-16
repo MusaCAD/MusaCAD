@@ -122,6 +122,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **-TABLE's Auto and table style colours** (#44) -- the columns and data rows fitted to a
+  window; the Table Style window's grid and text colours.
 - **The Block Editor** (#75) -- BEDIT (BE; Insert > Block Definition > Block Editor) and -BEDIT:
   a block's objects at its own coordinates to edit, the rest of the drawing hidden; BCLOSE
   saves what is shown as the block (or discards it), BSAVE saves and stays.
