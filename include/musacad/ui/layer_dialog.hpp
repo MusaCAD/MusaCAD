@@ -15,6 +15,8 @@
 
 class QTableWidget;
 class QLineEdit;
+class QComboBox;
+class QCheckBox;
 
 namespace musacad::ui {
 
@@ -34,8 +36,11 @@ public:
     /// current -- the "VP Freeze" column follows it.
     using VpFrozenGetter = std::function<std::optional<std::vector<std::uint16_t>>()>;
 
+    /// Per layer: whether an entity is on it (All Used Layers).
+    using UsedGetter = std::function<std::vector<std::uint8_t>()>;
+
     LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit,
-                QWidget* parent = nullptr, VpFrozenGetter vp_frozen = {});
+                QWidget* parent = nullptr, VpFrozenGetter vp_frozen = {}, UsedGetter used = {});
 
     /// Rebuilds the table from the current layer list (skips while the user is
     /// editing a cell, and only when the list actually changed).
@@ -61,6 +66,9 @@ private:
     CurrentGetter current_;
     Submit submit_;
     VpFrozenGetter vp_frozen_;
+    UsedGetter used_;
+    QComboBox* filter_ = nullptr;  ///< All, All Used Layers, On, Off, Frozen, Thawed, Locked, Unlocked
+    QCheckBox* invert_ = nullptr;  ///< Invert filter
     std::optional<std::vector<std::uint16_t>> shown_vp_; // last rendered VP Freeze state
     QTableWidget* table_ = nullptr;
     QLineEdit* search_ = nullptr;

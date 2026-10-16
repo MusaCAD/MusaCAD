@@ -455,6 +455,11 @@ public:
         std::scoped_lock lock(layers_mutex_);
         return layers_;
     }
+    /// Per layer: 1 when an entity is on it (All Used Layers).
+    [[nodiscard]] std::vector<std::uint8_t> layer_used() const {
+        std::scoped_lock lock(layers_mutex_);
+        return layer_used_;
+    }
     [[nodiscard]] std::uint16_t current_layer() const noexcept {
         return current_layer_.load(std::memory_order_relaxed);
     }
@@ -980,6 +985,7 @@ private:
     bool limits_on_ = false;
     core::Vec2 insbase_{0.0, 0.0};              ///< INSBASE, under layers_mutex_
     std::vector<core::DataLink> data_links_;    ///< DATALINK, under layers_mutex_
+    std::vector<std::uint8_t> layer_used_;      ///< under layers_mutex_
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
     std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_

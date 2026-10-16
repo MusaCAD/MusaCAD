@@ -213,6 +213,7 @@ struct RenderSnapshot {
     bool limits_on = false;             // LIMCHECK
     Vec2 insbase{0.0, 0.0};             // INSBASE (BASE)
     std::vector<DataLink> data_links;   // DATALINK
+    std::vector<std::uint8_t> layer_used; // per layer: 1 when an entity is on it
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer

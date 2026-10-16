@@ -138,6 +138,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **The Geometric Tolerance window** (#62) -- TOLERANCE opens it as AutoCAD does: the
   characteristic picked from the fourteen symbols, two tolerances with the diameter symbol
   and a material condition, three datums with theirs; then `Enter tolerance location:`.
+- **Layer filters** (#69) -- the Layer Properties Manager's Filter: All, All Used Layers, Layers
+  On / Off, Frozen / Thawed, Locked / Unlocked, and Invert filter; with the search.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **Grip modes' Copy and Reference** (#54) -- STRETCH's Copy leaves the object where it is and

@@ -16372,6 +16372,13 @@ void GeometryEngine::rebuild_and_publish() {
         // stored geometry stays parametric -- only this render payload is sampled.
         text::set_field_context(field_context_now());
         build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_, store_.ltscale());
+        // Which layers hold something (the Layer Properties Manager's All Used Layers).
+        layer_used_.assign(store_.layer_count(), 0);
+        for (const EntityHandle h : all_live()) {
+            if (const EntityProps* p = store_.props(h); p != nullptr && p->layer < layer_used_.size()) {
+                layer_used_[p->layer] = 1;
+            }
+        }
         geom_dirty_ = false;
         ++geom_version_;
         ++geom_cache_id_; // never reset, so a slot stamp cannot collide across documents
@@ -16434,6 +16441,9 @@ void GeometryEngine::rebuild_and_publish() {
     buf.current_text_style = store_.current_text_style();
     buf.table_styles = store_.table_styles();
     buf.current_table_style = store_.current_table_style();
+    buf.insbase = store_.insbase();       // BASE
+    buf.data_links = store_.data_links(); // DATALINK
+    buf.layer_used = layer_used_;
     buf.current_dimstyle = store_.current_dimstyle();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {

@@ -1640,6 +1640,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             limits_on_ = snap.limits_on;
             insbase_ = snap.insbase;
             data_links_ = snap.data_links;
+            layer_used_ = snap.layer_used;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
             lwdisplay_ = snap.lineweight_display ? 1 : 0;

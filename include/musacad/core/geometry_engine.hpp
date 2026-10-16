@@ -621,6 +621,7 @@ private:
 
     GeometryStore store_;
     NativeKernel2D kernel_;
+    std::vector<std::uint8_t> layer_used_; ///< per layer: holds an entity (set on each geometry rebuild)
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;
