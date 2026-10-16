@@ -9457,8 +9457,19 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
     report("Dimension created from object.");
 }
 
-void GeometryEngine::apply_grip_commit(std::uint64_t group) {
+void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     if (!grip_active_ || !store_.is_valid(grip_handle_)) {
+        return;
+    }
+    if (copy) {
+        // STRETCH's Copy: the original stays (and keeps its grips); the stretched one is new.
+        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(group, nh, edited);
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Copied.");
         return;
     }
     // Erase the original and create the grip-edited entity as ONE undo group --
@@ -13963,7 +13974,7 @@ void GeometryEngine::apply_one(const Command& command) {
                     grip_pos_ = c.pos; // preview recomputed in rebuild_and_publish
                 } else if (c.phase == P::Commit) {
                     grip_pos_ = c.pos;
-                    apply_grip_commit(c.group);
+                    apply_grip_commit(c.group, c.copy);
                     grip_active_ = false;
                 } else { // Cancel
                     grip_active_ = false;

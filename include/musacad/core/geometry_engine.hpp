@@ -704,7 +704,7 @@ private:
     // Active grip drag (direct manipulation). While armed, the dragged entity is
     // previewed on `grip_preview_store_` and published; the real store is untouched
     // until commit. Commit applies the edit as one undo group; cancel drops it.
-    void apply_grip_commit(std::uint64_t group);
+    void apply_grip_commit(std::uint64_t group, bool copy = false);
     // Edit a text entity's content in place (TEXT/MTEXT/QLEADER label), preserving
     // all other fields, as one undo group. Used by double-click + TEXTEDIT.
     void apply_text_edit(Vec2 at, double pick_radius, const std::string& content,

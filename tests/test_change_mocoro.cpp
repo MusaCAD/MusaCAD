@@ -1791,3 +1791,26 @@ TEST_CASE("The command list CUI shows has every command once, by name, in order"
     REQUIRE(std::count_if(all.begin(), all.end(), [](const auto& c) { return c.name == "LINE"; }) == 1);
     REQUIRE(std::none_of(all.begin(), all.end(), [](const auto& c) { return c.name == "L"; }));
 }
+
+TEST_CASE("STRETCH's Copy leaves the original where it is and adds the stretched one") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(SelectPickCommand{{5, 0}, 1.0, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.grips.empty(); }));
+    GripInfo gb{};
+    for (const GripInfo& g : engine.snapshot().grips) {
+        if (g.index == 1) {
+            gb = g;
+        }
+    }
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, gb.handle, gb.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {10, 10}, 7, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Copied."; }));
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, gb.handle, gb.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {10, -10}, 8, true});
+    const io::Document doc = dump(engine, "musacad_grip_copy.musa");
+    REQUIRE(doc.lines.size() == 3);
+    REQUIRE(doc.lines[0].b == Vec2{10, 0}); // the original
+    engine.stop();
+}

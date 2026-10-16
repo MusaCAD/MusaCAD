@@ -1428,6 +1428,8 @@ private:
     bool asking_base_ = false;
     bool stretching_ = false; ///< the engine's grip drag is under way
     int copies_ = 0;
+    int ref_step_ = 0;        ///< Reference: 1 the reference angle or length asked, 2 the new one
+    double ref_value_ = 0.0;
     bool done_ = false;
 };
 

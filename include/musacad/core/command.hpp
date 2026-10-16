@@ -1338,6 +1338,7 @@ struct GripDragCommand {
     std::uint32_t grip = 0;  ///< Begin: which grip index
     Vec2 pos;                ///< Move/Commit: resolved drag target
     std::uint64_t group = 0; ///< Commit: undo group id
+    bool copy = false;       ///< Commit: STRETCH's Copy -- the original stays, the stretched one is new
 };
 
 /// View scale (world units per pixel) for zoom-adaptive curve tessellation. Sent

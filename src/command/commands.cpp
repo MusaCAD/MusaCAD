@@ -16983,7 +16983,7 @@ void GripModeCommand::apply(CommandContext& ctx, core::Vec2 p, std::optional<dou
     const std::uint64_t group = ctx.new_group();
     switch (mode_) {
     case Mode::Stretch:
-        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, p, group});
+        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, p, group, copy_});
         stretching_ = false;
         break;
     case Mode::Move:
@@ -17055,11 +17055,43 @@ void GripModeCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Specify base point: ");
         return;
     }
-    if (u == "C" || u == "COPY") {
-        if (mode_ == Mode::Stretch) {
-            ctx.echo("Copy with STRETCH is not available yet; cycle to MOVE, ROTATE, SCALE or MIRROR.");
+    if (ref_step_ != 0) {
+        // Reference: the angle or length there is, then the one wanted -- typed, or a point
+        // (its angle or distance from the base point).
+        const bool rot = mode_ == Mode::Rotate;
+        double v = 0.0;
+        if (t.empty()) {
+            v = ref_step_ == 1 ? (rot ? 0.0 : 1.0) : ref_value_;
+        } else if (t.find(',') == std::string::npos && !ctx.input_is_pick() && parse_number(t, v)) {
+            // typed
+        } else if (const auto p = read_point(ctx, text)) {
+            v = rot ? core::to_degrees(std::atan2(p->y - base_.y, p->x - base_.x)) : core::distance(*p, base_);
+        } else {
             return;
         }
+        if (ref_step_ == 1) {
+            if (!rot && v <= 0.0) {
+                ctx.echo("Requires a positive length.");
+                return;
+            }
+            ref_value_ = v;
+            ref_step_ = 2;
+            ctx.set_prompt(rot ? "Specify new angle <0>: " : "Specify new length <1.0000>: ");
+            return;
+        }
+        ref_step_ = 0;
+        if (!rot && v <= 0.0) {
+            ctx.echo("Requires a positive length.");
+            prompt(ctx);
+            return;
+        }
+        apply(ctx, base_, rot ? v - ref_value_ : v / ref_value_);
+        if (!done_) {
+            prompt(ctx);
+        }
+        return;
+    }
+    if (u == "C" || u == "COPY") {
         copy_ = true;
         prompt(ctx);
         return;
@@ -17074,8 +17106,9 @@ void GripModeCommand::input(CommandContext& ctx, const std::string& text) {
         prompt(ctx);
         return;
     }
-    if (u == "R" || u == "REFERENCE") {
-        ctx.echo("Reference is not available with grips yet.");
+    if ((u == "R" || u == "REFERENCE") && (mode_ == Mode::Rotate || mode_ == Mode::Scale)) {
+        ref_step_ = 1;
+        ctx.set_prompt(mode_ == Mode::Rotate ? "Specify reference angle <0>: " : "Specify reference length <1.0000>: ");
         return;
     }
     if ((mode_ == Mode::Rotate || mode_ == Mode::Scale) && t.find(',') == std::string::npos && !ctx.input_is_pick()) {

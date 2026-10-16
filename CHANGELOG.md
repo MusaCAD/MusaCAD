@@ -140,6 +140,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   and a material condition, three datums with theirs; then `Enter tolerance location:`.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
+- **Grip modes' Copy and Reference** (#54) -- STRETCH's Copy leaves the object where it is and
+  adds a stretched copy at each pick; ROTATE's and SCALE's Reference ask the angle or length
+  there is, then the one wanted (typed, or a point's angle or distance from the base point).
 - **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and
   their colour and the hot grip's.
 - **Plotting in inches** (#81) -- the Plot window's scale and offset in millimetres or inches,
