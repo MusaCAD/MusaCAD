@@ -383,6 +383,8 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"-V", "-VIEW"}, [] { return std::make_unique<ViewCommand>(false); }, "",
         "Named views at the command line: ?, Delete, Restore, Save, Window.");
     reg({"NEWVIEW"}, [] { return std::make_unique<NewViewCommand>(); }, "", "Save the current view under a name.");
+    reg({"SPLINEDIT", "SPE"}, [] { return std::make_unique<SplineEditUiCommand>(); }, "",
+        "Edit a spline: its control points, reverse it, or make it a polyline.");
     reg({"DIMJOGLINE", "DJL"}, [] { return std::make_unique<DimJogLineCommand>(); }, "",
         "Add a jog to a linear or aligned dimension's line, or take one away.");
     reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },

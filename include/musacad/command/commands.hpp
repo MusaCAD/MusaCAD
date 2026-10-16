@@ -1551,6 +1551,31 @@ private:
     bool done_ = false;
 };
 
+/// SPLINEDIT (SPE): `Select spline:`, then `Enter an option [Close/Join/Fit data/Edit vertex/
+/// convert to Polyline/Reverse/Undo/eXit] <eXit>:` -- Edit vertex (`[Add/Delete/Elevate
+/// order/Move/Weight/eXit]`: Add, Delete and Move the control points), convert to Polyline
+/// (`Specify a precision <10>:`), Reverse and Undo.
+class SplineEditUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "SPLINEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, Option, Precision, Vertex, Add, Delete, MoveFrom, MoveTo };
+    void options(CommandContext& ctx);
+    void vertex_options(CommandContext& ctx);
+    void edit(CommandContext& ctx, core::SplineEditCommand::Op op, core::Vec2 p1 = {}, core::Vec2 p2 = {}, int precision = 10);
+    void finish(CommandContext& ctx);
+    Step step_ = Step::Pick;
+    core::Vec2 pick_{};
+    core::Vec2 from_{};
+    int edits_ = 0;
+    bool done_ = false;
+};
+
 /// DIMJOGLINE (DJL): `Select dimension to add jog or [Remove]:`, `Specify jog location (or
 /// press ENTER):` -- a zigzag in a linear or aligned dimension's line; Remove takes one away.
 class DimJogLineCommand final : public ICommand {

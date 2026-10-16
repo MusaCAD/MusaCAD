@@ -1777,6 +1777,21 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// SPLINEDIT: Begin takes the spline at `pick` (the later steps work on it, whatever they
+/// do to its curve); AddVertex puts a control point at `p1` into the nearest leg of the
+/// control polygon; DeleteVertex removes the one nearest `p1` (a spline keeps degree + 1);
+/// MoveVertex moves the one nearest `p1` to `p2`; Reverse turns it round; ToPolyline makes
+/// it a polyline of `precision` segments a span. Each edit one undo step; End stops.
+struct SplineEditCommand {
+    enum class Op : std::uint8_t { Begin, AddVertex, DeleteVertex, MoveVertex, Reverse, ToPolyline, End };
+    Op op = Op::Begin;
+    Vec2 pick{};
+    double radius = 0.0;
+    Vec2 p1{};
+    Vec2 p2{};
+    int precision = 10;
+    std::uint64_t group = 0;
+};
 /// DIMJOGLINE: a jog in the line of the linear or aligned dimension at `pick`, where `at`
 /// falls along it (unset: a quarter of the way along); `remove` takes it away. One undo step.
 struct DimJogCommand {
@@ -1966,7 +1981,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
-                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, SplineEditCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

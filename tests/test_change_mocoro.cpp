@@ -322,3 +322,48 @@ TEST_CASE("DIMJOGLINE puts a jog in a dimension's line where asked, kept with th
     h.run({"DJL", "R", "5,10"});
     REQUIRE(h.last<DimJogCommand>()->remove);
 }
+
+TEST_CASE("SPLINEDIT adds, deletes and moves control points, reverses, and makes a polyline") {
+    using Op = SplineEditCommand::Op;
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddSplineCommand{{{0, 0}, {10, 10}, {20, 0}, {30, 10}}, 3, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    io::Document doc = dump(engine, "musacad_splinedit0.musa");
+    // A point on the curve to pick it by: its start.
+    const Vec2 on = doc.splines[0].control_points[0];
+    engine.submit(SplineEditCommand{Op::Begin, on, 0.5, {}, {}, 10, 0});
+    engine.submit(SplineEditCommand{Op::AddVertex, {}, 0.0, {15, 6}, {}, 10, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Control point added."; }));
+    engine.submit(SplineEditCommand{Op::MoveVertex, {}, 0.0, {30, 10}, {30, 20}, 10, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Control point moved."; }));
+    engine.submit(SplineEditCommand{Op::DeleteVertex, {}, 0.0, {15, 6}, {}, 10, 4});
+    engine.submit(SplineEditCommand{Op::Reverse, {}, 0.0, {}, {}, 10, 5});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Spline reversed."; }));
+    doc = dump(engine, "musacad_splinedit1.musa");
+    REQUIRE(doc.splines[0].control_points.size() == 4);
+    REQUIRE(doc.splines[0].control_points[0] == Vec2{30, 20}); // moved, then reversed to the front
+    engine.submit(SplineEditCommand{Op::DeleteVertex, {}, 0.0, {0, 0}, {}, 10, 6});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("keeps 4 control points") != std::string::npos; }));
+    engine.submit(SplineEditCommand{Op::ToPolyline, {}, 0.0, {}, {}, 10, 7});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Converted to a polyline."; }));
+    doc = dump(engine, "musacad_splinedit2.musa");
+    REQUIRE(doc.splines.empty());
+    REQUIRE(doc.polylines.size() == 1);
+    REQUIRE(doc.polylines[0].points.size() > 10);
+    engine.stop();
+
+    H h;
+    h.run({"SPE", "1,1"});
+    REQUIRE(h.last<SplineEditCommand>()->op == Op::Begin);
+    REQUIRE(h.out.prompt ==
+            "Enter an option [Close/Join/Fit data/Edit vertex/convert to Polyline/Reverse/Undo/eXit] <eXit>: ");
+    h.run({"E", "M", "10,10", "12,14"});
+    REQUIRE(h.last<SplineEditCommand>()->op == Op::MoveVertex);
+    REQUIRE(h.last<SplineEditCommand>()->p2 == Vec2{12, 14});
+    h.run({"A", "5,5", ""});
+    REQUIRE(h.out.prompt == "Enter a vertex editing option [Add/Delete/Elevate order/Move/Weight/eXit] <eXit>: ");
+    h.run({"", "P", "20"});
+    REQUIRE(h.last<SplineEditCommand>()->op == Op::End);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

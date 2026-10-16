@@ -16391,6 +16391,151 @@ void HatchEditUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void SplineEditUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select spline: ");
+}
+
+void SplineEditUiCommand::options(CommandContext& ctx) {
+    step_ = Step::Option;
+    ctx.set_prompt("Enter an option [Close/Join/Fit data/Edit vertex/convert to Polyline/Reverse/Undo/eXit] <eXit>: ");
+}
+
+void SplineEditUiCommand::vertex_options(CommandContext& ctx) {
+    step_ = Step::Vertex;
+    ctx.set_prompt("Enter a vertex editing option [Add/Delete/Elevate order/Move/Weight/eXit] <eXit>: ");
+}
+
+void SplineEditUiCommand::edit(CommandContext& ctx, core::SplineEditCommand::Op op, core::Vec2 p1, core::Vec2 p2,
+                               int precision) {
+    ctx.submit(core::SplineEditCommand{op, pick_, ctx.pick_radius(), p1, p2, precision, ctx.new_group()});
+    ++edits_;
+}
+
+void SplineEditUiCommand::finish(CommandContext& ctx) {
+    ctx.submit(core::SplineEditCommand{core::SplineEditCommand::Op::End, {}, 0.0, {}, {}, 10, 0});
+    done_ = true;
+}
+
+void SplineEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::SplineEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::optional<core::EntityKind> kind = ctx.hovered_kind();
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (ctx.input_is_pick() && kind && *kind != core::EntityKind::Spline) {
+            ctx.echo("The object selected is not a spline.");
+            return;
+        }
+        pick_ = *p;
+        ctx.submit(core::SplineEditCommand{Op::Begin, pick_, ctx.pick_radius(), {}, {}, 10, 0});
+        options(ctx);
+        return;
+    }
+    case Step::Option:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            finish(ctx);
+        } else if (u == "E" || u == "EDIT VERTEX") {
+            vertex_options(ctx);
+        } else if (u == "P" || u == "CONVERT TO POLYLINE") {
+            step_ = Step::Precision;
+            ctx.set_prompt("Specify a precision <10>: ");
+        } else if (u == "R" || u == "REVERSE") {
+            edit(ctx, Op::Reverse);
+            options(ctx);
+        } else if (u == "U" || u == "UNDO") {
+            if (edits_ == 0) {
+                ctx.echo("Nothing to undo.");
+            } else {
+                ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+                --edits_;
+                // The spline as it was is a new object: take it again where it was picked.
+                ctx.submit(core::SplineEditCommand{Op::Begin, pick_, ctx.pick_radius(), {}, {}, 10, 0});
+            }
+            options(ctx);
+        } else if (u == "C" || u == "CLOSE" || u == "J" || u == "JOIN" || u == "F" || u == "FIT DATA") {
+            ctx.echo("That option is not available yet: Edit vertex, convert to Polyline, Reverse and Undo are.");
+            options(ctx);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            options(ctx);
+        }
+        return;
+    case Step::Precision: {
+        double v = 10.0;
+        if (!t.empty() && (!parse_number(t, v) || v < 0.0 || v > 99.0)) {
+            ctx.echo("Requires a precision from 0 to 99.");
+            return;
+        }
+        edit(ctx, Op::ToPolyline, {}, {}, static_cast<int>(v));
+        finish(ctx); // the spline is a polyline now
+        return;
+    }
+    case Step::Vertex:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            options(ctx);
+        } else if (u == "A" || u == "ADD") {
+            step_ = Step::Add;
+            ctx.set_prompt("Specify a control point location on the spline <exit>: ");
+        } else if (u == "D" || u == "DELETE") {
+            step_ = Step::Delete;
+            ctx.set_prompt("Specify control point <exit>: ");
+        } else if (u == "M" || u == "MOVE") {
+            step_ = Step::MoveFrom;
+            ctx.set_prompt("Specify control point to move: ");
+        } else if (u == "E" || u == "ELEVATE ORDER" || u == "W" || u == "WEIGHT") {
+            ctx.echo("Elevate order and Weight are not available yet.");
+            vertex_options(ctx);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            vertex_options(ctx);
+        }
+        return;
+    case Step::Add:
+    case Step::Delete:
+        if (t.empty()) {
+            vertex_options(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            edit(ctx, step_ == Step::Add ? Op::AddVertex : Op::DeleteVertex, *p);
+        }
+        return; // the same prompt, for another
+    case Step::MoveFrom:
+        if (t.empty()) {
+            vertex_options(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            from_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::MoveTo;
+            ctx.set_prompt("Specify new location: ");
+        }
+        return;
+    case Step::MoveTo:
+        if (const auto p = read_point(ctx, text)) {
+            edit(ctx, Op::MoveVertex, from_, *p);
+            vertex_options(ctx);
+        }
+        return;
+    }
+}
+
+void SplineEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    finish(ctx);
+}
+
 void DimJogLineCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     ctx.set_prompt("Select dimension to add jog or [Remove]: ");

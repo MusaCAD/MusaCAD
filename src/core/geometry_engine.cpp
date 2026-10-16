@@ -10393,6 +10393,111 @@ void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
 // PEDIT: every option is "capture the polyline, change the vertex list, re-create it"
 // as one undo group, so undo, redo and the file see an ordinary polyline edit. A line
 // or arc under the pick becomes a polyline first (AutoCAD's "turn it into one?").
+void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
+    using Op = SplineEditCommand::Op;
+    if (c.op == Op::Begin) {
+        const EntityHandle h = pick_nearest(c.pick, c.radius);
+        splinedit_ = h.kind == EntityKind::Spline ? h : EntityHandle::null();
+        if (splinedit_.is_null()) {
+            report("Select a spline.");
+        }
+        return;
+    }
+    if (c.op == Op::End || !store_.is_valid(splinedit_)) {
+        splinedit_ = EntityHandle::null();
+        return;
+    }
+    Command cmd = capture_entity(splinedit_);
+    auto* sp = std::get_if<AddSplineCommand>(&cmd);
+    if (sp == nullptr) {
+        return;
+    }
+    std::vector<Vec2>& cp = sp->control_points;
+    const auto nearest = [&](Vec2 p) {
+        std::size_t best = 0;
+        for (std::size_t i = 1; i < cp.size(); ++i) {
+            if (length_squared(cp[i] - p) < length_squared(cp[best] - p)) {
+                best = i;
+            }
+        }
+        return best;
+    };
+    std::optional<Command> replacement;
+    std::string what;
+    switch (c.op) {
+    case Op::AddVertex: {
+        // Into the leg of the control polygon nearest the point.
+        std::size_t leg = 0;
+        double best = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i + 1 < cp.size(); ++i) {
+            const Vec2 d = cp[i + 1] - cp[i];
+            const double l2 = std::max(length_squared(d), 1e-24);
+            const double t = std::clamp(dot(c.p1 - cp[i], d) / l2, 0.0, 1.0);
+            const double dist = length_squared(cp[i] + d * t - c.p1);
+            if (dist < best) {
+                best = dist;
+                leg = i;
+            }
+        }
+        cp.insert(cp.begin() + static_cast<std::ptrdiff_t>(leg + 1), c.p1);
+        what = "Control point added.";
+        break;
+    }
+    case Op::DeleteVertex:
+        if (cp.size() <= sp->degree + 1) {
+            report("A spline of degree " + std::to_string(sp->degree) + " keeps " + std::to_string(sp->degree + 1) +
+                   " control points.");
+            return;
+        }
+        cp.erase(cp.begin() + static_cast<std::ptrdiff_t>(nearest(c.p1)));
+        what = "Control point deleted.";
+        break;
+    case Op::MoveVertex:
+        cp[nearest(c.p1)] = c.p2;
+        what = "Control point moved.";
+        break;
+    case Op::Reverse:
+        std::reverse(cp.begin(), cp.end());
+        what = "Spline reversed.";
+        break;
+    case Op::ToPolyline: {
+        // `precision` segments a span of the control polygon, as a tessellation tolerance.
+        Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+        Vec2 hi{-lo.x, -lo.y};
+        for (const Vec2& p : cp) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        }
+        const double extent = std::max(length(hi - lo), 1e-9);
+        const double spans = static_cast<double>(std::max<std::size_t>(cp.size() - 1, 1));
+        const double tol = extent / (spans * std::clamp(c.precision, 1, 99) * 8.0);
+        std::vector<Vec2> pts;
+        kernel_.tessellate(store_, splinedit_, tol, pts);
+        if (pts.size() < 2) {
+            report("The spline could not be converted.");
+            return;
+        }
+        replacement = AddPolylineCommand{pts, false, 0, sp->props};
+        what = "Converted to a polyline.";
+        break;
+    }
+    default:
+        return;
+    }
+    const Command original = capture_entity(splinedit_);
+    remove_indexed(splinedit_);
+    push_erase_item(c.group, splinedit_, original);
+    const Command made = replacement ? *replacement : cmd;
+    const EntityHandle nh = create_indexed(made);
+    push_create_item(c.group, nh, made);
+    splinedit_ = replacement ? EntityHandle::null() : nh;
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(what);
+}
+
 void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
     if (c.op == 11) {
         const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
@@ -14205,6 +14310,9 @@ void GeometryEngine::apply_one(const Command& command) {
                     report(std::to_string(changed) + (changed == 1 ? " object changed." : " objects changed."));
                 }
             }
+            if constexpr (std::is_same_v<T, SplineEditCommand>) {
+                apply_spline_edit(c);
+            }
             if constexpr (std::is_same_v<T, DimJogCommand>) {
                 const EntityHandle h = pick_nearest(c.pick, c.radius);
                 const DimData* dd = h.kind == EntityKind::Dimension ? store_.dimension(h) : nullptr;
@@ -14563,6 +14671,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, PropsFromPickCommand>) {
                 edit = false; // the current properties: a setting, not an edit
             }
+            if constexpr (std::is_same_v<T, SplineEditCommand>) {
+                edit = c.op != SplineEditCommand::Op::Begin && c.op != SplineEditCommand::Op::End;
+            }
             if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 edit = c.op == ChainDimensionCommand::Op::Add; // Start, Select, Back: bookkeeping
             }
@@ -14687,6 +14798,7 @@ void GeometryEngine::forget_document_state() {
     layerp_.clear();
     pv_handle_ = EntityHandle::null(); // PEDIT's vertex editor
     pv_mark_.reset();
+    splinedit_ = EntityHandle::null();
 }
 
 void GeometryEngine::park_active(DocState& d) {

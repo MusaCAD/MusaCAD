@@ -55,6 +55,7 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **CHANGE** (#55) -- a change point for lines' ends and circles' radii; the insertion point,
   style, height, rotation and text of the selected texts; the insertion point and rotation of
   blocks; Properties as CHPROP.
+- **SPLINEDIT** (#55) -- add, delete and move control points, reverse, or make a polyline.
 - **HATCHEDIT** (#41, #55) -- a hatch's pattern, scale and angle, or a polyline round each of
   its loops.
 - **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
