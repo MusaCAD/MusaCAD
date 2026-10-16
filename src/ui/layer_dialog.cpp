@@ -11,6 +11,7 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QRegularExpression>
 #include <QString>
 #include <QTableWidget>
@@ -37,6 +38,7 @@ enum Col {
     kNewVpFreeze,
     kVpFreeze,
     kDescription,
+    kTransparency, // 0..90 percent
     kColCount
 };
 
@@ -78,7 +80,7 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 
     table_ = new QTableWidget(0, kColCount, this);
     table_->setHorizontalHeaderLabels({"Name", "On", "Frozen", "Locked", "Color", "Linetype",
-                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description"});
+                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description", "Transparency"});
     table_->horizontalHeader()->setStretchLastSection(false);
     table_->horizontalHeader()->setSectionResizeMode(kName, QHeaderView::Stretch);
     table_->verticalHeader()->setVisible(false);
@@ -239,6 +241,18 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
             }
         });
         table_->setCellWidget(row, kLineweight, lw);
+
+        auto* tpy = new QSpinBox(this);
+        tpy->setRange(0, 90);
+        tpy->setSuffix(QStringLiteral(" %"));
+        tpy->setValue(l.transparency);
+        tpy->setToolTip(QStringLiteral("How see-through the layer's objects are on screen, 0 to 90 percent."));
+        connect(tpy, &QSpinBox::valueChanged, this, [this, row] {
+            if (!building_) {
+                submit_row(row);
+            }
+        });
+        table_->setCellWidget(row, kTransparency, tpy);
     }
     building_ = false;
     apply_filter(); // a rebuilt table keeps the search
@@ -281,6 +295,9 @@ core::Layer LayerDialog::layer_from_row(int row) const {
     }
     if (auto* lw = qobject_cast<QComboBox*>(table_->cellWidget(row, kLineweight))) {
         l.lineweight = static_cast<std::uint8_t>(lw->currentData().toInt());
+    }
+    if (auto* tpy = qobject_cast<QSpinBox*>(table_->cellWidget(row, kTransparency))) {
+        l.transparency = static_cast<std::uint8_t>(tpy->value());
     }
     return l;
 }

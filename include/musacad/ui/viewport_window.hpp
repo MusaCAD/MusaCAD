@@ -774,6 +774,7 @@ private:
     std::atomic<int> gripsize_{5}; // AutoCAD's default
     std::atomic<int> gripcolor_{0};
     std::atomic<int> griphot_{0};
+    std::atomic<int> transparencydisplay_{1}; ///< TRANSPARENCYDISPLAY / TPY: layer transparency shown
     std::uint64_t pick_candidates_seen_ = 0;
     std::vector<core::RenderSnapshot::PickCandidate> pick_candidates_; ///< under layers_mutex_
     core::RenderSnapshot::PurgeCandidates purge_;                      ///< under layers_mutex_

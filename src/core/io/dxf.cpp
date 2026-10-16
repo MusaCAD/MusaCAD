@@ -534,6 +534,13 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
             code(s, 1000, "");
             code(s, 1000, l.description);
         }
+        if (l.transparency != 0) {
+            // Where AutoCAD keeps a layer's transparency: AcCmTransparency XDATA, the alpha
+            // (0..255) flagged 0x02000000 "by alpha".
+            const long alpha = std::lround(255.0 * (100.0 - std::min<int>(l.transparency, 90)) / 100.0);
+            code(s, 1001, "AcCmTransparency");
+            code_i(s, 1071, 0x02000000L | alpha);
+        }
     }
     code(s, 0, "ENDTAB");
     // STYLE table (v26): Standard first, then the drawing's text styles -- name, font
@@ -1725,6 +1732,19 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         for (std::size_t k = 0; k < body.size(); ++k) {
             // AcAecLayerStandard XDATA: an empty string, then the description.
+            if (body[k].code == 1001 && body[k].value == "AcCmTransparency") {
+                for (std::size_t j = k + 1; j < body.size() && body[j].code != 1001; ++j) {
+                    if (body[j].code == 1071) {
+                        const long v = to_l(body[j].value);
+                        if ((v & 0x02000000L) != 0) { // by alpha
+                            const double alpha = static_cast<double>(v & 0xFF);
+                            l.transparency = static_cast<std::uint8_t>(
+                                std::clamp(std::lround(100.0 - alpha * 100.0 / 255.0), 0L, 90L));
+                        }
+                        break;
+                    }
+                }
+            }
             if (body[k].code == 1001 && body[k].value == "AcAecLayerStandard") {
                 int strings = 0;
                 for (std::size_t j = k + 1; j < body.size() && body[j].code != 1001; ++j) {

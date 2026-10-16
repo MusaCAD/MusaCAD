@@ -506,6 +506,7 @@ private:
     QAction* polar_action_ = nullptr;
     QAction* otrack_action_ = nullptr;
     QAction* selcycle_action_ = nullptr; ///< SC: SELECTIONCYCLING, in step with Ctrl+W and the command
+    QAction* tpy_action_ = nullptr;      ///< TPY: TRANSPARENCYDISPLAY
     QToolBar* navbar_ = nullptr;          ///< the navigation bar (NAVBAR): Pan and the Zoom tools
     QToolButton* navbar_toggle_ = nullptr; ///< View > Viewport Tools > Navigation Bar
     std::string current_page_setup_; ///< the Page Setup Manager's Set Current (empty: none)

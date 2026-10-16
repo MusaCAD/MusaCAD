@@ -859,3 +859,19 @@ TEST_CASE("NAVBAR asks ON or OFF and needs the window") {
     REQUIRE(h.out.lines.back() == "NAVBAR needs the drawing window.");
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("-LAYER TRansparency: the value, then the layers") {
+    H h;
+    h.run({"-LAYER", "TR"});
+    REQUIRE(h.out.prompt == "Enter transparency value (0-90): ");
+    h.run({"95"});
+    REQUIRE(h.out.lines.back() == "Requires a whole number from 0 to 90.");
+    h.run({"40"});
+    REQUIRE(h.out.prompt == "Enter name list of layer(s) for transparency 40% <current>: ");
+    h.run({"Glass"});
+    const LayerEditCommand* c = h.last<LayerEditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == LayerEditCommand::Op::Transparency);
+    REQUIRE(c->transparency == 40);
+    REQUIRE(c->names == "Glass");
+}

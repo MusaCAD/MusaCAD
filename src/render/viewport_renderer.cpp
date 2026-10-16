@@ -619,7 +619,8 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             // taper the text weight to the glyph's on-screen size.
             const float world_to_px = static_cast<float>(camera.scale());
             const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
-                                        std::uint32_t count, bool is_text, float text_height) {
+                                        std::uint32_t count, bool is_text, float text_height,
+                                        float alpha = 1.0f) {
                 // Single-stroke TEXT gets a dedicated, heavier screen weight so it reads crisp
                 // and present (not the 1px hairline that looked dull) -- independent of the
                 // LWDISPLAY toggle, since text carries no real lineweight to display/suppress.
@@ -640,7 +641,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
                 cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
                 cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
                                        static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
-                                       1.0f);
+                                       alpha);
                 cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 4);
                 cmd_->draw_instanced(4, count); // 4-vertex triangle strip per segment
                 ++stats_.draw_calls;
@@ -655,7 +656,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             } else {
                 for (const core::ColorBatch& b : line_batches_) {
                     if (b.is_text == text_pass) {
-                        draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height);
+                        draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height, batch_alpha(b));
                     }
                 }
             }
@@ -670,7 +671,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
         for (const core::ColorBatch& b : fill_batches_) {
             cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
                                    static_cast<float>(b.color.g) / 255.0f,
-                                   static_cast<float>(b.color.b) / 255.0f, 1.0f);
+                                   static_cast<float>(b.color.b) / 255.0f, batch_alpha(b));
             cmd_->bind_vertex_buffer(0, *fill_buffer_, b.first * sizeof(float) * 2);
             cmd_->draw_instanced(b.count, 1); // b.count vertices, GL_TRIANGLES
             ++stats_.draw_calls;
@@ -720,7 +721,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             for (const core::ColorBatch& b : point_batches_) {
                 cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
                                        static_cast<float>(b.color.g) / 255.0f,
-                                       static_cast<float>(b.color.b) / 255.0f, 1.0f);
+                                       static_cast<float>(b.color.b) / 255.0f, batch_alpha(b));
                 cmd_->bind_vertex_buffer(0, *point_instances_, b.first * sizeof(float) * 2);
                 cmd_->draw_instanced(1, b.count);
                 ++stats_.draw_calls;

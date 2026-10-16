@@ -215,3 +215,32 @@ TEST_CASE("User-defined hatching: lines a spacing apart, crossed when double, th
     REQUIRE(back.hatches[1].pattern_scale == Catch::Approx(2.0));
     REQUIRE(back.hatches[1].pattern_angle == Catch::Approx(0.5));
 }
+
+TEST_CASE("A layer's transparency reaches the drawn batches, the native file and DXF") {
+    GeometryEngine engine;
+    engine.start();
+    Layer glass;
+    glass.name = "Glass";
+    glass.transparency = 50;
+    engine.submit(AddLayerCommand{glass});
+    EntityProps on_glass;
+    on_glass.layer = 1;
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, on_glass});
+    engine.submit(AddLineCommand{{0, 5}, {10, 5}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_batches.size() >= 2; }));
+    const auto& batches = engine.snapshot().line_batches;
+    REQUIRE(std::any_of(batches.begin(), batches.end(), [](const ColorBatch& b) { return b.alpha == 128; }));
+    REQUIRE(std::any_of(batches.begin(), batches.end(), [](const ColorBatch& b) { return b.alpha == 255; }));
+    engine.stop();
+
+    io::Document doc;
+    doc.layers.push_back(glass);
+    io::Document native;
+    REQUIRE(io::parse_native(io::serialize_native(doc), native).ok);
+    REQUIRE(native.layers.back().transparency == 50);
+    io::Document dxf;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
+    const auto it = std::find_if(dxf.layers.begin(), dxf.layers.end(), [](const Layer& l) { return l.name == "Glass"; });
+    REQUIRE(it != dxf.layers.end());
+    REQUIRE(it->transparency == 50);
+}

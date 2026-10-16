@@ -3260,6 +3260,9 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
         case Op::Description:
             l.description = c.description;
             break;
+        case Op::Transparency:
+            l.transparency = std::min<std::uint8_t>(c.transparency, 90);
+            break;
         default:
             break;
         }

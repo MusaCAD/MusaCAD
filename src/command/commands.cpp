@@ -14902,7 +14902,9 @@ void LayerCommand::option_prompt(CommandContext& ctx) {
     edit_ = {};
     value_text_.clear();
     ctx.set_prompt(
-        "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/LOck/Unlock/Description]: ");
+        "Enter an option "
+        "[?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/LOck/Unlock/stAte/"
+        "Description/rEconcile/Xref]: ");
 }
 
 void LayerCommand::names_prompt(CommandContext& ctx) {
@@ -14945,6 +14947,7 @@ void LayerCommand::names_prompt(CommandContext& ctx) {
     case Op::Color:
     case Op::Ltype:
     case Op::LWeight:
+    case Op::Transparency:
         ctx.set_prompt("Enter name list of layer(s) for " + value_text_ + " <current>: ");
         return;
     case Op::Plot:
@@ -14978,7 +14981,20 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
                                        {"LTYPE", "L", Op::Ltype},     {"LWEIGHT", "LW", Op::LWeight},
                                        {"FREEZE", "F", Op::Freeze},   {"THAW", "T", Op::Thaw},
                                        {"LOCK", "LO", Op::Lock},      {"UNLOCK", "U", Op::Unlock},
-                                       {"PLOT", "P", Op::Plot},       {"DESCRIPTION", "D", Op::Description}};
+                                       {"PLOT", "P", Op::Plot},       {"DESCRIPTION", "D", Op::Description},
+                                       {"TRANSPARENCY", "TR", Op::Transparency}};
+        if (u == "MAT" || u == "MATERIAL" || u == "E" || u == "RECONCILE" || u == "X" || u == "XREF") {
+            ctx.echo(u.front() == 'M' ? "Layers carry no materials here: drawings are 2D."
+                     : u.front() == 'E' ? "Every layer counts as reconciled: new layers are not tracked."
+                                         : "Xref layers are set through the xref, not here yet.");
+            option_prompt(ctx);
+            return;
+        }
+        if (u == "A" || u == "STATE") {
+            ctx.echo("Layer states: -LAYERSTATE on the command line, LAYERSTATE for the Layer States Manager.");
+            option_prompt(ctx);
+            return;
+        }
         const Kw* hit = nullptr;
         for (const Kw& k : kKeys) {
             if (u == k.full || u == k.abbr) {
@@ -15006,6 +15022,9 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (hit->op == Op::Description) {
             state_ = State::Value;
             ctx.set_prompt("Enter layer description: ");
+        } else if (hit->op == Op::Transparency) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter transparency value (0-90): ");
         } else {
             names_prompt(ctx);
         }
@@ -15060,6 +15079,14 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
             }
         } else if (edit_.op == Op::Description) {
             edit_.description = trimmed(text); // as typed, capitals and all
+        } else if (edit_.op == Op::Transparency) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0 || *v > 90.0 || *v != std::floor(*v)) {
+                ctx.echo("Requires a whole number from 0 to 90.");
+                return;
+            }
+            edit_.transparency = static_cast<std::uint8_t>(*v);
+            value_text_ = "transparency " + std::to_string(edit_.transparency) + "%";
         } else {
             const std::optional<double> v = parse_number(t);
             if (!v || *v < 0.0 || *v > 2.11) {

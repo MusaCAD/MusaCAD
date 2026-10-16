@@ -285,6 +285,7 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "GRIPSIZE") return gripsize_.load();
     if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
     if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
+    if (name == "TRANSPARENCYDISPLAY") return transparencydisplay_.load();
     return 0;
 }
 
@@ -314,6 +315,8 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         gripcolor_ = value;
     } else if (name == "GRIPHOT" && in(1, 255)) {
         griphot_ = value;
+    } else if (name == "TRANSPARENCYDISPLAY" && in(0, 1)) {
+        transparencydisplay_ = value;
     } else {
         return false;
     }
@@ -1695,6 +1698,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             };
             renderer.set_grip_style(grips_on_.load() == 0 ? 0.0 : static_cast<double>(gripsize_.load()),
                                     rgb_of(gripcolor_.load()), rgb_of(griphot_.load()));
+            renderer.set_transparency_display(transparencydisplay_.load() != 0);
         }
         // VPORTS: in model space with more than one tile, every tile draws through its own
         // camera (a tile never framed yet is fitted to the drawing first).

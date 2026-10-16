@@ -428,6 +428,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 selcycle_action_->setChecked(on);
             }
         }
+        if (tpy_action_ != nullptr) {
+            const bool on = viewport_->selection_setting("TRANSPARENCYDISPLAY") != 0;
+            if (tpy_action_->isChecked() != on) {
+                const QSignalBlocker block(tpy_action_);
+                tpy_action_->setChecked(on);
+            }
+        }
         sync_properties_panel();
         sync_ribbon_context();  // show/hide contextual ribbon tabs per the selection
         refresh_property_combos(); // the ribbon's colour / linetype / lineweight controls
@@ -903,6 +910,14 @@ void MainWindow::build_status_bar() {
         connect(lwt, &QAction::toggled, this, [this](bool on) { engine_->submit(core::SetLineweightDisplayCommand{on}); });
     }
     add_toggle(lwt);
+    // TPY: layer transparency shown on screen or not (TRANSPARENCYDISPLAY); plots stay opaque.
+    tpy_action_ = make_mode_action(QStringLiteral("TPY"), 0, viewport_->selection_setting("TRANSPARENCYDISPLAY") != 0,
+                                   QStringLiteral("Show the layers' transparency on screen (TRANSPARENCYDISPLAY)."));
+    tpy_action_->setObjectName(QStringLiteral("status.tpy"));
+    connect(tpy_action_, &QAction::toggled, this, [this](bool on) {
+        viewport_->set_selection_setting("TRANSPARENCYDISPLAY", on ? 1 : 0);
+    });
+    add_toggle(tpy_action_);
     // SC: selection cycling -- a pick over objects on top of one another offers the list
     // (SELECTIONCYCLING; Ctrl+W toggles it too).
     selcycle_action_ = make_mode_action(QStringLiteral("SC"), 0, viewport_->selection_setting("SELECTIONCYCLING") != 0,

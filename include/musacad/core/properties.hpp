@@ -41,6 +41,7 @@ struct Layer {
     bool vp_freeze_new = false;   ///< frozen in every viewport created later (VPLAYER Vpvisdflt)
     bool plot = true;             ///< plotted (the manager's Plot column; DXF 290)
     std::string description{};    ///< the manager's Description column
+    std::uint8_t transparency = 0; ///< 0..90 percent (the manager's Transparency column, -LAYER TRansparency)
     friend bool operator==(const Layer&, const Layer&) = default;
 };
 

@@ -54,9 +54,17 @@ Rgb unpack_rgb(std::uint32_t v) {
 // renderer can give it a heavier on-screen weight, never merged with same-colour geometry);
 // the height bucket (1/8-unit quanta, 0 for non-text) further splits text by cap height so the
 // renderer can taper that weight to the glyph's on-screen size.
+/// The opacity the entity being emitted takes from its layer's transparency, set by
+/// visible() as each entity is checked (255 = opaque).
+thread_local std::uint8_t t_alpha = 255;
+/// Bits 49-56 of a line key, bits 24-31 of a colour key: the transparency (255 - alpha),
+/// so an opaque batch keeps the key it always had.
 std::uint64_t line_key(Rgb c, std::uint8_t lw, bool is_text, std::uint64_t height_bucket) {
-    return (height_bucket << 33) | (static_cast<std::uint64_t>(pack_rgb(c)) << 9) |
-           (static_cast<std::uint64_t>(is_text) << 8) | lw;
+    return (static_cast<std::uint64_t>(255 - t_alpha) << 49) | (height_bucket << 33) |
+           (static_cast<std::uint64_t>(pack_rgb(c)) << 9) | (static_cast<std::uint64_t>(is_text) << 8) | lw;
+}
+std::uint32_t color_key(Rgb c) {
+    return (static_cast<std::uint32_t>(255 - t_alpha) << 24) | pack_rgb(c);
 }
 // Quantise a world cap height to a batch-key bucket (1/8-unit resolution; 0 == non-text).
 std::uint64_t height_bucket(double h) {
@@ -81,6 +89,9 @@ bool vp_frozen(std::uint16_t layer) {
 }
 bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
+    if (l != nullptr) {
+        t_alpha = static_cast<std::uint8_t>(std::lround(255.0 * (100.0 - std::min<int>(l->transparency, 90)) / 100.0));
+    }
     return l != nullptr && l->on && !l->frozen && !p.hidden() && p.space() == t_build_space &&
            !vp_frozen(p.layer);
 }
@@ -203,6 +214,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                               RenderSnapshot& out, double tolerance, double ltscale,
                               std::uint8_t space, bool with_viewports) {
     t_build_space = space;
+    t_alpha = 255;
     const IFontEngine* fonts = store.font_engine();
     out.points.clear();
     out.line_vertices.clear();
@@ -250,11 +262,11 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         v.insert(v.end(), segs.begin(), segs.end());
     };
     const auto add_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
-        auto& v = fill_groups[pack_rgb(c)];
+        auto& v = fill_groups[color_key(c)];
         v.insert(v.end(), tris.begin(), tris.end());
     };
     const auto add_gradient_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
-        auto& v = gradient_groups[pack_rgb(c)];
+        auto& v = gradient_groups[color_key(c)];
         v.insert(v.end(), tris.begin(), tris.end());
     };
 
@@ -302,7 +314,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             return;
         }
         if (shape == 0 && (pdmode & 96) == 0) {
-            point_groups[pack_rgb(r.color)].push_back(d->p);
+            point_groups[color_key(r.color)].push_back(d->p);
             return;
         }
         marker.clear();
@@ -878,7 +890,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             add_line(s.color, s.lineweight, s.a, s.b);
         }
         for (const InsertFill& f : ifills) {
-            auto& v = fill_groups[pack_rgb(f.color)];
+            auto& v = fill_groups[color_key(f.color)];
             v.push_back(f.a);
             v.push_back(f.b);
             v.push_back(f.c);
@@ -941,6 +953,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     model_src = &own;
                 }
                 const RenderSnapshot& mdl = *model_src;
+                (void)visible(store, v->props); // the frame's own layer transparency (a model build ran since)
                 const ResolvedProps rp = entity_resolved(store, v->props);
                 const double x0 = v->center.x - v->width * 0.5;
                 const double x1 = v->center.x + v->width * 0.5;
@@ -959,6 +972,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                                 v->center.y + (m.y - v->view_center.y) * sc};
                 };
                 for (const ColorBatch& b : mdl.line_batches) {
+                    t_alpha = b.alpha; // the model's own transparency, through the viewport
                     segs.clear();
                     for_each_line_segment(mdl, b, [&](const Vec2& ma, const Vec2& mb) {
                         Vec2 a = to_paper(ma);
@@ -974,10 +988,11 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     }
                 }
                 for (const ColorBatch& b : mdl.point_batches) {
+                    t_alpha = b.alpha;
                     for (std::uint32_t i = b.first; i < b.first + b.count; ++i) {
                         const Vec2 p = to_paper(mdl.points[i]);
                         if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
-                            point_groups[pack_rgb(b.color)].push_back(p);
+                            point_groups[color_key(b.color)].push_back(p);
                         }
                     }
                 }
@@ -995,6 +1010,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     }
                 };
                 for (const ColorBatch& b : mdl.fill_batches) {
+                    t_alpha = b.alpha;
                     clipped_tris(mdl.fill_vertices, b.first, b.count, tris);
                     if (tris.empty()) {
                         continue;
@@ -1026,30 +1042,35 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     }
 
     // Flatten groups into contiguous batches over the payload arrays.
+    const auto alpha_of = [](std::uint64_t transparency) { return static_cast<std::uint8_t>(255 - (transparency & 0xFFu)); };
     for (auto& [key, verts] : line_groups) {
-        out.line_batches.push_back(
-            ColorBatch{unpack_rgb(static_cast<std::uint32_t>(key >> 9)),
-                       static_cast<std::uint32_t>(out.line_vertices.size() / 2),
-                       static_cast<std::uint32_t>(verts.size() / 2),
-                       static_cast<std::uint8_t>(key & 0xff), ((key >> 8) & 1u) != 0,
-                       static_cast<float>((key >> 33) & 0xFFFFu) / 8.0f});
+        ColorBatch b{unpack_rgb(static_cast<std::uint32_t>((key >> 9) & 0xFFFFFFu)),
+                     static_cast<std::uint32_t>(out.line_vertices.size() / 2),
+                     static_cast<std::uint32_t>(verts.size() / 2),
+                     static_cast<std::uint8_t>(key & 0xff), ((key >> 8) & 1u) != 0,
+                     static_cast<float>((key >> 33) & 0xFFFFu) / 8.0f};
+        b.alpha = alpha_of(key >> 49);
+        out.line_batches.push_back(b);
         out.line_vertices.insert(out.line_vertices.end(), verts.begin(), verts.end());
     }
     for (auto& [key, pts] : point_groups) {
-        out.point_batches.push_back(ColorBatch{unpack_rgb(key),
-                                               static_cast<std::uint32_t>(out.points.size()),
-                                               static_cast<std::uint32_t>(pts.size()), 0});
+        ColorBatch b{unpack_rgb(key & 0xFFFFFFu), static_cast<std::uint32_t>(out.points.size()),
+                     static_cast<std::uint32_t>(pts.size()), 0};
+        b.alpha = alpha_of(key >> 24);
+        out.point_batches.push_back(b);
         out.points.insert(out.points.end(), pts.begin(), pts.end());
     }
     for (auto& [key, verts] : fill_groups) {
-        out.fill_batches.push_back(ColorBatch{unpack_rgb(key),
-                                              static_cast<std::uint32_t>(out.fill_vertices.size()),
-                                              static_cast<std::uint32_t>(verts.size()), 0});
+        ColorBatch b{unpack_rgb(key & 0xFFFFFFu), static_cast<std::uint32_t>(out.fill_vertices.size()),
+                     static_cast<std::uint32_t>(verts.size()), 0};
+        b.alpha = alpha_of(key >> 24);
+        out.fill_batches.push_back(b);
         out.fill_vertices.insert(out.fill_vertices.end(), verts.begin(), verts.end());
     }
     for (auto& [key, verts] : gradient_groups) {
-        ColorBatch b{unpack_rgb(key), static_cast<std::uint32_t>(out.fill_vertices.size()),
+        ColorBatch b{unpack_rgb(key & 0xFFFFFFu), static_cast<std::uint32_t>(out.fill_vertices.size()),
                      static_cast<std::uint32_t>(verts.size()), 0};
+        b.alpha = alpha_of(key >> 24);
         b.computed_color = true;
         out.fill_batches.push_back(b);
         out.fill_vertices.insert(out.fill_vertices.end(), verts.begin(), verts.end());

@@ -95,6 +95,9 @@ struct ColorBatch {
     /// "near-white means the default pen, plot it black" rule is about the screen
     /// convention for entity colours and would punch a black band into a gradient.
     bool computed_color = false;
+    /// The batch's opacity, 255 = opaque, from its layer's transparency. The viewport draws
+    /// it while TRANSPARENCYDISPLAY is on; PLOT prints opaque, as AutoCAD's default does.
+    std::uint8_t alpha = 255;
 };
 
 /// An immutable (from the renderer's perspective) view of the scene, produced

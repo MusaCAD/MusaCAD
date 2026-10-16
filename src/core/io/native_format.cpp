@@ -386,6 +386,13 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, i);
             s += '\n';
         }
+        if (doc.layers[i].transparency != 0) { // v40: LAYERTPY idx percent
+            s += "LAYERTPY ";
+            append_uint(s, i);
+            s += ' ';
+            append_uint(s, doc.layers[i].transparency);
+            s += '\n';
+        }
         if (!doc.layers[i].description.empty()) {
             s += "LAYERDESC ";
             append_uint(s, i);
@@ -2449,6 +2456,14 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("NOPLOT record malformed");
             }
             doc.layers[li].plot = false;
+        } else if (key == "LAYERTPY") {
+            // LAYERTPY idx percent (v40): the layer's transparency, 0..90.
+            std::uint64_t li = 0;
+            std::uint64_t pct = 0;
+            if (tok.size() != 3 || !to_uint(tok[1], li) || li >= doc.layers.size() || !to_uint(tok[2], pct)) {
+                return fail("LAYERTPY record malformed");
+            }
+            doc.layers[li].transparency = static_cast<std::uint8_t>(std::min<std::uint64_t>(pct, 90));
         } else if (key == "LAYERDESC") {
             // LAYERDESC idx text (v40): the layer's description, spaces as 0x1f.
             std::uint64_t li = 0;

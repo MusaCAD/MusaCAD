@@ -2008,7 +2008,8 @@ struct LayerToolCommand {
 /// Plot sets whether they are plotted (`plot`); Description gives them `description`.
 struct LayerEditCommand {
     enum class Op : std::uint8_t {
-        List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight, Plot, Description
+        List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight, Plot, Description,
+        Transparency
     };
     Op op = Op::List;
     std::string names;
@@ -2018,6 +2019,7 @@ struct LayerEditCommand {
     std::uint8_t lineweight = 25;
     bool plot = true;
     std::string description;
+    std::uint8_t transparency = 0; ///< TRansparency: percent, 0..90
 };
 /// Move every selected entity to layer `index` (one undo group).
 struct SetEntityLayerCommand {

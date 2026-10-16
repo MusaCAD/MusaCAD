@@ -53,6 +53,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **Layer transparency** (#69) -- the Layer Properties Manager's Transparency column and -LAYER's
+  TRansparency (0 to 90 percent): the layer's objects drawn see-through, TPY on the status bar
+  (TRANSPARENCYDISPLAY) turning it off; plots print them opaque, as AutoCAD does by default.
+  Kept in the drawing and in DXF (the layer's AcCmTransparency data).
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and
