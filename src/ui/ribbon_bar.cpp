@@ -618,10 +618,12 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_StyledBackground, true);
 
     auto* root = new QVBoxLayout(this);
+    root_ = root;
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
     auto* qat = new QWidget(this);
+    qat_strip_ = qat;
     qat->setObjectName(QStringLiteral("QatStrip"));
     qat->setAttribute(Qt::WA_StyledBackground, true);
     qat_layout_ = new QHBoxLayout(qat);
@@ -699,11 +701,28 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     });
 }
 
-void RibbonBar::add_qat_action(QAction* action) {
+QToolButton* RibbonBar::add_qat_action(QAction* action) {
     auto* btn = new QToolButton(this);
     btn->setDefaultAction(action);
     btn->setAutoRaise(true);
     qat_layout_->insertWidget(qat_layout_->count() - 1, btn); // before the trailing stretch
+    return btn;
+}
+
+void RibbonBar::set_qat_menu(QMenu* menu) {
+    auto* btn = new QToolButton(this);
+    btn->setObjectName(QStringLiteral("QatCustomize"));
+    btn->setAutoRaise(true);
+    btn->setText(QStringLiteral("\u25BE"));
+    btn->setToolTip(QStringLiteral("Customize Quick Access Toolbar"));
+    btn->setMenu(menu);
+    btn->setPopupMode(QToolButton::InstantPopup);
+    qat_layout_->insertWidget(qat_layout_->count() - 1, btn); // the last thing before the stretch
+}
+
+void RibbonBar::set_qat_below(bool below) {
+    root_->removeWidget(qat_strip_);
+    root_->insertWidget(below ? root_->count() : 0, qat_strip_);
 }
 
 void RibbonBar::set_minimized(bool on) {

@@ -28,6 +28,7 @@
 #include <QMenu>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QToolBar>
 #include <QToolButton>
@@ -133,6 +134,7 @@ void MainWindow::build_ribbon() {
     }
 
     // ------------------------------------------------------------------ the Quick Access Toolbar
+    std::vector<std::pair<QString, QToolButton*>> qat_items; // for its drop-down
     const auto qat = [&](const QString& icon, const QString& tip, const QKeySequence& shortcut,
                          void (MainWindow::*slot)()) {
         auto* a = new QAction(ribbon_icon(icon), tip, this);
@@ -142,7 +144,7 @@ void MainWindow::build_ribbon() {
             addAction(a); // the shortcut works app-wide
         }
         connect(a, &QAction::triggered, this, slot);
-        ribbon_->add_qat_action(a);
+        qat_items.emplace_back(tip, ribbon_->add_qat_action(a));
         return a;
     };
     qat(QStringLiteral("assets/ribbon/new.svg"), QStringLiteral("New"), QKeySequence::New, &MainWindow::file_new);
@@ -154,13 +156,87 @@ void MainWindow::build_ribbon() {
     qat_undo->setShortcut(QKeySequence::Undo);
     qat_undo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_undo, &QAction::triggered, this, [this] { processor_->undo(); });
-    ribbon_->add_qat_action(qat_undo);
+    qat_items.emplace_back(QStringLiteral("Undo"), ribbon_->add_qat_action(qat_undo));
     auto* qat_redo = new QAction(ribbon_icon(QStringLiteral("assets/ribbon/redo.svg")), QStringLiteral("Redo"), this);
     qat_redo->setShortcut(QKeySequence::Redo);
     qat_redo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_redo, &QAction::triggered, this, [this] { processor_->redo(); });
-    ribbon_->add_qat_action(qat_redo);
+    qat_items.emplace_back(QStringLiteral("Redo"), ribbon_->add_qat_action(qat_redo));
     qat(QStringLiteral("assets/ribbon/plot.svg"), QStringLiteral("Plot"), QKeySequence::Print, &MainWindow::open_plot_dialog);
+    // AutoCAD's Customize Quick Access Toolbar drop-down: tick the tools shown -- the ones
+    // above, and commands it can add -- and Show Below the Ribbon. Kept in the settings
+    // (except under the self-test and dump harnesses, which run with the defaults).
+    {
+        const struct Extra {
+            const char* name;
+            const char* alias;
+            const char* icon;
+        } kExtras[] = {{"Plot Preview", "PREVIEW", "assets/ribbon/preview.svg"},
+                       {"Batch Plot", "PUBLISH", "assets/ribbon/plot.svg"},
+                       {"Match Properties", "MA", "assets/ribbon/matchprop.svg"},
+                       {"Layer", "LA", "assets/ribbon/layer-props.svg"},
+                       {"Properties", "PR", "assets/ribbon/properties.svg"},
+                       {"Data Extraction", "DX", "assets/ribbon/table.svg"}};
+        std::vector<QString> defaults;
+        for (const auto& [name, btn] : qat_items) {
+            defaults.push_back(name);
+        }
+        for (const Extra& e : kExtras) {
+            auto* a = new QAction(ribbon_icon(QString::fromLatin1(e.icon)), QString::fromLatin1(e.name), this);
+            const std::string alias = e.alias;
+            connect(a, &QAction::triggered, this, [this, alias] {
+                command_widget_->focus_input();
+                processor_->start_command(alias);
+            });
+            QToolButton* b = ribbon_->add_qat_action(a);
+            b->setVisible(false);
+            qat_items.emplace_back(QString::fromLatin1(e.name), b);
+        }
+        const bool harness = qEnvironmentVariableIsSet("MUSACAD_SELFTEST") || qEnvironmentVariableIsSet("MUSACAD_DUMP_UI") ||
+                             qEnvironmentVariableIsSet("MUSACAD_SMOKE");
+        QSettings settings;
+        QStringList shown;
+        for (const QString& d : defaults) {
+            shown << d;
+        }
+        if (!harness && settings.contains(QStringLiteral("qat/shown"))) {
+            shown = settings.value(QStringLiteral("qat/shown")).toStringList();
+        }
+        auto* menu = new QMenu(this);
+        menu->setTitle(QStringLiteral("Customize Quick Access Toolbar"));
+        for (const auto& [name, btn] : qat_items) {
+            QAction* tick = menu->addAction(name);
+            tick->setCheckable(true);
+            tick->setChecked(shown.contains(name));
+            btn->setVisible(tick->isChecked());
+            QToolButton* button = btn;
+            connect(tick, &QAction::toggled, this, [this, button, menu, harness](bool on) {
+                button->setVisible(on);
+                if (!harness) {
+                    QStringList now;
+                    for (QAction* a : menu->actions()) {
+                        if (a->isCheckable() && a->isChecked() && a->data().toString() != QStringLiteral("below")) {
+                            now << a->text();
+                        }
+                    }
+                    QSettings().setValue(QStringLiteral("qat/shown"), now);
+                }
+            });
+        }
+        menu->addSeparator();
+        QAction* below = menu->addAction(QStringLiteral("Show Below the Ribbon"));
+        below->setCheckable(true);
+        below->setData(QStringLiteral("below"));
+        below->setChecked(!harness && settings.value(QStringLiteral("qat/below"), false).toBool());
+        ribbon_->set_qat_below(below->isChecked());
+        connect(below, &QAction::toggled, this, [this, harness](bool on) {
+            ribbon_->set_qat_below(on);
+            if (!harness) {
+                QSettings().setValue(QStringLiteral("qat/below"), on);
+            }
+        });
+        ribbon_->set_qat_menu(menu);
+    }
 
     // Multi-document and clipboard shortcuts (app-wide).
     const auto add_app_shortcut = [this](const QKeySequence& seq, auto slot) {

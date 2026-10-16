@@ -162,7 +162,11 @@ public:
     explicit RibbonBar(QWidget* parent = nullptr);
 
     QPushButton* app_button() const noexcept { return app_button_; }
-    void add_qat_action(QAction* action);
+    QToolButton* add_qat_action(QAction* action);
+    /// The Quick Access Toolbar's own drop-down, at its end (Customize Quick Access Toolbar).
+    void set_qat_menu(QMenu* menu);
+    /// Show the Quick Access Toolbar below the ribbon (true) or above it, as it starts.
+    void set_qat_below(bool below);
     /// A widget at the right end of the quick-access strip (the command search).
     void add_strip_widget(QWidget* widget);
 
@@ -207,6 +211,8 @@ private:
 
     QPushButton* app_button_ = nullptr;
     QHBoxLayout* qat_layout_ = nullptr;
+    QWidget* qat_strip_ = nullptr;
+    QVBoxLayout* root_ = nullptr;
     QTabBar* tabs_ = nullptr;
     QStackedWidget* pages_ = nullptr;
     QToolButton* minimize_btn_ = nullptr;

@@ -80,6 +80,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   TRansparency (0 to 90 percent): the layer's objects drawn see-through, TPY on the status bar
   (TRANSPARENCYDISPLAY) turning it off; plots print them opaque, as AutoCAD does by default.
   Kept in the drawing and in DXF (the layer's AcCmTransparency data).
+- **The Quick Access Toolbar's drop-down** (#73) -- Customize Quick Access Toolbar: each tool
+  ticked on or off, Plot Preview, Batch Plot, Match Properties, Layer, Properties and Data
+  Extraction to add, and Show Below the Ribbon; the choice is kept for the next session.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and
