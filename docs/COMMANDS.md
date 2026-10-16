@@ -182,7 +182,7 @@ commands (Ribbon Phase A):
 | LEADER | Draw a leader line with an arrowhead and annotation. |
 | MLEADER (MLD) | Draw a multileader: arrowhead, leader line, landing and text. |
 | MTEXT (MT) | Create a multiline (paragraph) text object. |
-| QLEADER (LE) | Draw a quick leader with an arrowhead and annotation. |
+| QLEADER (LE) | `Specify first leader point, or [Settings] <Settings>:`, `Specify next point:` up to the number of points set (3), `Specify text width <0.0000>:`, `Enter first line of annotation text <Mtext>:` and the next lines until Enter. Settings opens the Leader Settings window: the annotation (MText or None), Prompt for width, Always left justify, the arrowhead, the number of points (or No limit) and the angle constraints of the first two segments. |
 | TEXTEDIT (ED) | Edit the contents of text objects, one after another (`[Undo/Mode]`; `TEXTEDITMODE` 1 edits one and ends). |
 | PROPERTIES (PR) | Open the Properties palette to view and edit object properties. |
 | DWGIN | Import geometry from a DWG file. |

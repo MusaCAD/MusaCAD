@@ -274,6 +274,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         [this] { open_page_setup_manager(); });
     viewport_->set_navbar_callback([this](bool on) { show_navbar(on); });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
+    viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
@@ -3123,6 +3124,82 @@ void MainWindow::open_table_style_dialog() {
     d.dlg->show();
 }
 
+int MainWindow::open_qleader_settings(command::QLeaderSettings& io) {
+    // AutoCAD's Leader Settings: the Annotation tab and the Leader Line & Arrow tab.
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("LeaderSettingsDialog"));
+    dlg.setWindowTitle(QStringLiteral("Leader Settings"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* tabs = new QTabWidget(&dlg);
+    auto* ann = new QWidget(tabs);
+    auto* al = new QVBoxLayout(ann);
+    auto* type_box = new QGroupBox(QStringLiteral("Annotation Type"), ann);
+    auto* tl = new QVBoxLayout(type_box);
+    auto* mtext = new QRadioButton(QStringLiteral("MText"), type_box);
+    auto* none = new QRadioButton(QStringLiteral("None"), type_box);
+    (io.mtext ? mtext : none)->setChecked(true);
+    tl->addWidget(mtext);
+    tl->addWidget(none);
+    al->addWidget(type_box);
+    auto* opt_box = new QGroupBox(QStringLiteral("MText options"), ann);
+    auto* ol = new QVBoxLayout(opt_box);
+    auto* width = new QCheckBox(QStringLiteral("Prompt for width"), opt_box);
+    width->setChecked(io.prompt_width);
+    auto* left = new QCheckBox(QStringLiteral("Always left justify"), opt_box);
+    left->setChecked(io.left_justify);
+    ol->addWidget(width);
+    ol->addWidget(left);
+    al->addWidget(opt_box);
+    connect(mtext, &QRadioButton::toggled, opt_box, &QWidget::setEnabled);
+    opt_box->setEnabled(io.mtext);
+    tabs->addTab(ann, QStringLiteral("Annotation"));
+    auto* line = new QWidget(tabs);
+    auto* lf = new QFormLayout(line);
+    auto* arrow = new QComboBox(line);
+    arrow->addItems({QStringLiteral("From the dimension style"), QStringLiteral("Closed filled"), QStringLiteral("Architectural tick"),
+                     QStringLiteral("Open"), QStringLiteral("Dot")});
+    arrow->setCurrentIndex(io.arrow == 255 ? 0 : io.arrow + 1);
+    lf->addRow(QStringLiteral("Arrowhead:"), arrow);
+    auto* no_limit = new QCheckBox(QStringLiteral("No limit"), line);
+    no_limit->setChecked(io.max_points == 0);
+    auto* points = new QSpinBox(line);
+    points->setRange(2, 100);
+    points->setValue(io.max_points == 0 ? 3 : io.max_points);
+    points->setEnabled(io.max_points != 0);
+    connect(no_limit, &QCheckBox::toggled, points, [points](bool on) { points->setEnabled(!on); });
+    auto* points_row = new QHBoxLayout;
+    points_row->addWidget(no_limit);
+    points_row->addWidget(points);
+    lf->addRow(QStringLiteral("Number of points:"), points_row);
+    const QStringList angles{QStringLiteral("Any angle"), QStringLiteral("Horizontal"), QStringLiteral("90"),
+                             QStringLiteral("45"), QStringLiteral("30"), QStringLiteral("15")};
+    auto* first = new QComboBox(line);
+    first->addItems(angles);
+    first->setCurrentIndex(std::min<int>(io.first_angle, 5));
+    auto* second = new QComboBox(line);
+    second->addItems(angles);
+    second->setCurrentIndex(std::min<int>(io.second_angle, 5));
+    lf->addRow(QStringLiteral("First segment:"), first);
+    lf->addRow(QStringLiteral("Second segment:"), second);
+    tabs->addTab(line, QStringLiteral("Leader Line && Arrow"));
+    outer->addWidget(tabs);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    io.mtext = mtext->isChecked();
+    io.prompt_width = width->isChecked();
+    io.left_justify = left->isChecked();
+    io.max_points = no_limit->isChecked() ? 0 : points->value();
+    io.arrow = arrow->currentIndex() == 0 ? std::uint8_t{255} : static_cast<std::uint8_t>(arrow->currentIndex() - 1);
+    io.first_angle = static_cast<std::uint8_t>(first->currentIndex());
+    io.second_angle = static_cast<std::uint8_t>(second->currentIndex());
+    return 1;
+}
+
 int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     // AutoCAD's Insert Table window: the table style, the columns and rows, and the cell
     // styles of the first two rows; the insertion point is asked for after it.
@@ -4019,7 +4096,9 @@ bool MainWindow::selftest_mtext() {
     type("0,0");
     type("10,8");
     type(""); // finish the vertex chain
+    type(""); // the text width: unwrapped
     type("SEE NOTE");
+    type(""); // no next line
     const bool leader_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
     std::printf("[selftest] QLEADER command renders (arrow + line + text): %s\n",
                 leader_ok ? "PASS" : "FAIL");

@@ -1014,3 +1014,28 @@ TEST_CASE("MLEADERALIGN Options: Distribute between two points, Parallel last se
     REQUIRE(h.last<MLeaderAlignCommand>()->spacing == 4.0);
     h.run({"MLEADERALIGN", "O", "U"});
 }
+
+TEST_CASE("QLEADER asks as AutoCAD does: the points up to the maximum, the text width, the lines") {
+    H h;
+    h.run({"LE"});
+    REQUIRE(h.out.prompt == "Specify first leader point, or [Settings] <Settings>: ");
+    h.run({""}); // Settings: no window here
+    REQUIRE(h.out.lines.back() == "Leader Settings need the drawing window.");
+    REQUIRE(h.out.prompt == "Specify first leader point, or [Settings] <Settings>: ");
+    h.run({"0,0"});
+    REQUIRE(h.out.prompt == "Specify next point: ");
+    h.run({"10,10", "20,10"}); // the third point: as many as the settings take
+    REQUIRE(h.out.prompt == "Specify text width <0.0000>: ");
+    h.run({"30"});
+    REQUIRE(h.out.prompt == "Enter first line of annotation text <Mtext>: ");
+    REQUIRE(h.proc.wants_free_text());
+    h.run({"PART 4"});
+    REQUIRE(h.out.prompt == "Enter next line of annotation text: ");
+    h.run({"SEE NOTE 2", ""});
+    const AddMLeaderCommand* m = h.last<AddMLeaderCommand>();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->vertices.size() == 3);
+    REQUIRE(m->content == "PART 4\nSEE NOTE 2");
+    REQUIRE(m->block.width == 30.0);
+    REQUIRE(m->block.pos == Vec2{20, 10});
+}

@@ -3988,12 +3988,17 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool free_text() const override { return !done_ && state_ == State::Content; }
+    bool free_text() const override { return !done_ && (state_ == State::FirstLine || state_ == State::NextLine); }
 
 private:
-    enum class State { Arrow, Vertices, Content } state_ = State::Arrow;
+    enum class State { Arrow, Vertices, Width, FirstLine, NextLine } state_ = State::Arrow;
+    void after_points(CommandContext& ctx);
+    void finish(CommandContext& ctx);
     std::vector<core::Vec2> verts_;
+    std::vector<std::string> lines_;
+    double width_ = 0.0;
     bool done_ = false;
+    static inline QLeaderSettings s_{}; ///< the Leader Settings, kept for the session
 };
 
 /// TEXTEDIT / DDEDIT (ED): pick a text-bearing entity (TEXT / MTEXT / QLEADER

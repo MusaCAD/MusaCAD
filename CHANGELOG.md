@@ -53,6 +53,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **QLEADER as AutoCAD has it** (#61) -- `Specify first leader point, or [Settings]`, the points up
+  to the number set, the text width and the lines of text; Settings opens the Leader Settings
+  window (annotation, width, justification, arrowhead, number of points, angle constraints).
 - **MLEADERALIGN's Options** (#61) -- Distribute between two points, make leader segments
   Parallel, specify Spacing, and Use current; the choice is kept for the next time.
 - **Isometric drafting** (#65, #39) -- ISODRAFT, ISOPLANE, SNAP Style Isometric, F5 / Ctrl+E and

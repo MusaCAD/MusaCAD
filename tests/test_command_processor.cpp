@@ -515,7 +515,9 @@ TEST_CASE("Processor: QLEADER arrow + vertex + text emits AddMLeaderCommand") {
     h.proc.submit_line("0,0");
     h.proc.submit_line("10,8");
     h.proc.submit_line(""); // finish chain
+    h.proc.submit_line(""); // the text width: unwrapped
     h.proc.submit_line("SEE NOTE");
+    h.proc.submit_line(""); // no next line
     REQUIRE(h.cmds.size() == 1);
     const auto* m = std::get_if<musacad::core::AddMLeaderCommand>(&h.cmds[0]);
     REQUIRE(m != nullptr);

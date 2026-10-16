@@ -219,6 +219,21 @@ struct InsertTableSettings {
     bool header = true;
 };
 
+/// QLEADER's Leader Settings: the annotation (MText, or None), whether the text width is
+/// asked and the text always left-justified, how many leader points before the text (0: no
+/// limit, Enter ends), the arrowhead (core::ArrowType; 255: the dimension style's), and the
+/// angle constraints of the first and second segments (0 any, 1 horizontal, 2 90, 3 45,
+/// 4 30, 5 15 degrees).
+struct QLeaderSettings {
+    bool mtext = true;
+    bool prompt_width = true;
+    bool left_justify = false;
+    int max_points = 3;
+    std::uint8_t arrow = 255;
+    std::uint8_t first_angle = 0;
+    std::uint8_t second_angle = 0;
+};
+
 /// View operations a command may request (ZOOM). Implemented by the viewport;
 /// kept on the render/UI side so it never involves the geometry thread.
 class ViewControl {
@@ -282,6 +297,12 @@ public:
     virtual bool set_navbar(bool on) {
         (void)on;
         return false;
+    }
+    /// QLEADER Settings: the Leader Settings window over `io`. 1 = OK, 0 = cancelled, -1 =
+    /// no window here.
+    virtual int qleader_settings_dialog(QLeaderSettings& io) {
+        (void)io;
+        return -1;
     }
     /// TABLE: the Insert Table window over `io`, the choice left in it. 1 = OK, 0 =
     /// cancelled, -1 = no window here (the command line asks).

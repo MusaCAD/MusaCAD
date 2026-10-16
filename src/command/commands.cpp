@@ -13143,39 +13143,124 @@ void MTextCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void QLeaderCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify leader arrow point: ");
+    ctx.set_prompt("Specify first leader point, or [Settings] <Settings>: ");
+}
+
+void QLeaderCommand::after_points(CommandContext& ctx) {
+    ctx.clear_preview();
+    if (!s_.mtext) {
+        finish(ctx); // annotation None: the leader alone
+        return;
+    }
+    if (s_.prompt_width) {
+        state_ = State::Width;
+        ctx.set_prompt("Specify text width <" + fmt4(width_) + ">: ");
+        return;
+    }
+    state_ = State::FirstLine;
+    ctx.set_prompt("Enter first line of annotation text <Mtext>: ");
+}
+
+void QLeaderCommand::finish(CommandContext& ctx) {
+    std::string content;
+    for (std::size_t i = 0; i < lines_.size(); ++i) {
+        content += (i == 0 ? "" : "\n") + lines_[i];
+    }
+    core::MTextBlock b;
+    b.pos = verts_.back(); // the text at the last point
+    b.height = current_dim_text_height(ctx);
+    b.width = width_;
+    // Text to the right of a leader coming from the left, to the left of one from the right
+    // (Always left justify: to the right whichever way it comes).
+    const bool leftward = verts_.size() >= 2 && verts_.back().x < verts_[verts_.size() - 2].x;
+    b.attach = (leftward && !s_.left_justify) ? 2 : 0; // TR or TL
+    core::AddMLeaderCommand m{verts_, ctx.current_dim_style(), b, content, ctx.group_id()};
+    if (s_.arrow != 255) {
+        m.overrides.arrow_type = s_.arrow;
+        m.overrides.set(core::DimOverrides::kArrowType, true);
+    }
+    ctx.submit(std::move(m));
+    ctx.echo("Leader placed.");
+    done_ = true;
 }
 
 void QLeaderCommand::input(CommandContext& ctx, const std::string& text) {
-    if (state_ == State::Content) {
-        core::MTextBlock b;
-        b.pos = verts_.empty() ? core::Vec2{} : verts_.back(); // landing = text anchor
-        b.height = current_dim_text_height(ctx);
-        b.attach = 0;
-        ctx.submit(core::AddMLeaderCommand{verts_, ctx.current_dim_style(), b, text, ctx.group_id()});
-        ctx.echo("Leader placed.");
-        ctx.clear_preview();
-        done_ = true;
-        return;
-    }
-    // Empty input finishes the vertex chain (needs an arrow + at least one vertex).
-    if (state_ == State::Vertices && text.empty()) {
-        if (verts_.size() >= 2) {
-            state_ = State::Content;
-            ctx.clear_preview();
-            ctx.set_prompt("Enter annotation text: ");
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Arrow:
+        if (t.empty() || u == "S" || u == "SETTINGS") {
+            QLeaderSettings io = s_;
+            const int r = ctx.view() != nullptr ? ctx.view()->qleader_settings_dialog(io) : -1;
+            if (r == 1) {
+                s_ = io;
+            } else if (r < 0) {
+                ctx.echo("Leader Settings need the drawing window.");
+            }
+            start(ctx);
+            return;
         }
+        break;
+    case State::Vertices:
+        if (t.empty()) {
+            if (verts_.size() >= 2) {
+                after_points(ctx);
+            }
+            return;
+        }
+        break;
+    case State::Width: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (parse_number(t, v) && v >= 0.0) {
+                width_ = v;
+            } else if (const auto p = read_point(ctx, text)) {
+                width_ = core::distance(*p, verts_.back());
+            } else {
+                return;
+            }
+        }
+        state_ = State::FirstLine;
+        ctx.set_prompt("Enter first line of annotation text <Mtext>: ");
         return;
     }
-    const auto p = read_point(ctx, text);
+    case State::FirstLine:
+    case State::NextLine:
+        if (text.empty()) {
+            finish(ctx); // the lines typed so far (none: the leader alone)
+            return;
+        }
+        lines_.push_back(text);
+        state_ = State::NextLine;
+        ctx.set_prompt("Enter next line of annotation text: ");
+        return;
+    }
+    auto p = read_point(ctx, text);
     if (!p) {
         return;
+    }
+    // Angle constraints: the first and second segments held to multiples of the angle set.
+    const std::size_t seg = verts_.size(); // 1: the first segment, 2: the second
+    if (seg == 1 || seg == 2) {
+        static constexpr double kStep[6] = {0.0, 180.0, 90.0, 45.0, 30.0, 15.0};
+        const std::uint8_t c = seg == 1 ? s_.first_angle : s_.second_angle;
+        if (c > 0 && c < 6) {
+            const core::Vec2 d = *p - verts_.back();
+            const double len = core::length(d);
+            const double step = core::to_radians(kStep[c]);
+            const double a = std::round(std::atan2(d.y, d.x) / step) * step;
+            p = verts_.back() + core::Vec2{std::cos(a), std::sin(a)} * len;
+        }
     }
     verts_.push_back(*p);
     ctx.set_last_point(*p);
     state_ = State::Vertices;
+    if (s_.max_points > 0 && static_cast<int>(verts_.size()) >= s_.max_points) {
+        after_points(ctx); // as many points as the settings take
+        return;
+    }
     ctx.set_preview(PreviewSpec{PreviewKind::Polyline, verts_});
-    ctx.set_prompt("Specify next leader point (Enter to finish): ");
+    ctx.set_prompt("Specify next point: ");
 }
 
 void QLeaderCommand::cancel(CommandContext& ctx) {

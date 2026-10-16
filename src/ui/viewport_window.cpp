@@ -424,6 +424,10 @@ bool ViewportWindow::edit_text_at(core::Vec2 at) {
     return true;
 }
 
+int ViewportWindow::qleader_settings_dialog(command::QLeaderSettings& io) {
+    return qleader_settings_callback_ ? qleader_settings_callback_(io) : -1;
+}
+
 int ViewportWindow::insert_table_dialog(command::InsertTableSettings& io) {
     return insert_table_callback_ ? insert_table_callback_(io) : -1;
 }
