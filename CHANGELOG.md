@@ -148,6 +148,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   ROTate items, Method, Align items and Base point, the preview following, until eXit. Numbers
   can be Expressions. **-ARRAY** asks AutoCAD's classic prompts: rows (---) and columns (|||),
   the distance between rows or a unit cell, and polar's items, angle to fill or angle between.
+- **HATCHEDIT's Disassociate, separate Hatches, hatch COlor and LAyer** (#41) -- separate Hatches
+  makes each area of a hatch (with its islands) a hatch of its own.
 - **Curved boundaries from a selection** (#41) -- HATCH's Select objects takes circles, whole
   ellipses, closed splines and closed polylines with arcs, the curves followed.
 - **Hatch patterns from .pat files** (#41) -- a pattern name HATCH, -HATCH or HATCHEDIT does not

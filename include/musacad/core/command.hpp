@@ -1107,6 +1107,19 @@ struct ArrayPathCommand {
     bool auto_spacing = false;
 };
 
+/// -HATCHEDIT on the selected hatches: Disassociate (they no longer follow their
+/// boundaries), separate Hatches (each outer loop, with the islands inside it, a hatch of
+/// its own), hatch COlor (ByLayer when `by_layer`), LAyer (`layer`; empty: the current one).
+/// One undo step.
+struct HatchEditCommand {
+    enum class Op : std::uint8_t { Disassociate, Separate, Color, Layer };
+    Op op = Op::Disassociate;
+    Rgb color{};
+    bool by_layer = true;
+    std::string layer{};
+    std::uint64_t group = 0;
+};
+
 /// A hatch pattern found in a .pat file, brought into the drawing so its hatches draw with
 /// it and keep it (as AutoCAD keeps the pattern with the hatch).
 struct AddPatternCommand {
@@ -2335,7 +2348,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

@@ -1868,7 +1868,8 @@ private:
 /// HATCHEDIT (HE): `Select hatch object:`, then `Enter hatch option [Disassociate/Style/
 /// Properties/DRaw order/ADd boundaries/Remove boundaries/recreate Boundary/ASsociative/
 /// separate Hatches/Origin/ANnotative/hatch COlor/LAyer/Transparency] <Properties>:` --
-/// Properties (the pattern, scale and angle) and recreate Boundary.
+/// Properties (the pattern, scale and angle), recreate Boundary, Disassociate, separate
+/// Hatches, hatch COlor and LAyer.
 class HatchEditUiCommand final : public ICommand {
 public:
     std::string name() const override { return "HATCHEDIT"; }
@@ -1876,9 +1877,10 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::Layer; } // a layer name may have spaces
 
 private:
-    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble };
+    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble, Color, Layer };
     double user_angle_ = 0.0;   ///< User defined: the lines' angle, degrees
     double user_spacing_ = 1.0; ///< and the distance between them
     void options(CommandContext& ctx);

@@ -3053,3 +3053,48 @@ TEST_CASE("Hatching a selection takes circles, whole ellipses, closed splines an
     }
     engine.stop();
 }
+
+TEST_CASE("HATCHEDIT separates a hatch's areas, disassociates it, and sets its colour and layer") {
+    GeometryEngine engine;
+    engine.start();
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}},      // an area ...
+                  {{3, 3}, {7, 3}, {7, 7}, {3, 7}},          // ... with an island
+                  {{20, 0}, {30, 0}, {30, 10}, {20, 10}}};   // and another area
+    fill.group = 1;
+    engine.submit(fill);
+    engine.submit(SelectAllCommand{});
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Separate, {}, true, {}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 hatch separated."; }));
+    io::Document doc = dump(engine, "musacad_hatchedit_1.musa");
+    REQUIRE(doc.hatches.size() == 2);
+    const auto& holed = doc.hatches[0].loops.size() == 2 ? doc.hatches[0] : doc.hatches[1];
+    REQUIRE(holed.loops.size() == 2); // the island stays with its area
+    engine.submit(SelectAllCommand{});
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Disassociate, {}, true, {}, 3});
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Color, Rgb{255, 0, 0}, false, {}, 4});
+    doc = dump(engine, "musacad_hatchedit_2.musa");
+    for (const auto& h : doc.hatches) {
+        REQUIRE(h.unassoc);
+        REQUIRE_FALSE(h.props.color_by_layer());
+        REQUIRE(h.props.color == Rgb{255, 0, 0});
+    }
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Layer, {}, true, "NOSUCH", 5});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Cannot find layer \"NOSUCH\"."; }));
+    engine.stop();
+}
+
+TEST_CASE("HATCHEDIT's Disassociate, separate Hatches, hatch COlor and LAyer") {
+    H h;
+    h.run({"HATCHEDIT", "5,5", "CO", "1"});
+    const auto* c = h.last<HatchEditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == HatchEditCommand::Op::Color);
+    REQUIRE_FALSE(c->by_layer);
+    h.run({"HATCHEDIT", "5,5", "LA", "Hatch fill"});
+    REQUIRE(h.last<HatchEditCommand>()->layer == "Hatch fill");
+    h.run({"HATCHEDIT", "5,5", "H"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Separate);
+    h.run({"HATCHEDIT", "5,5", "D"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Disassociate);
+}

@@ -529,6 +529,7 @@ private:
     std::vector<Command>* array_sink_ = nullptr;
     std::vector<Command> array_preview_; ///< ArrayPreviewCommand's copies, drawn as a preview
     void apply_dim_grip_menu(const DimGripMenuCommand& c);
+    void apply_hatch_edit(const HatchEditCommand& c);
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
                                 std::uint64_t group);

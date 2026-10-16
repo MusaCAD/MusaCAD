@@ -2313,6 +2313,115 @@ void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
     }
 }
 
+void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
+    using Op = HatchEditCommand::Op;
+    prune_selection();
+    std::uint16_t layer = store_.current_layer();
+    if (c.op == Op::Layer && !c.layer.empty()) {
+        const auto lower = [](std::string s) {
+            for (char& ch : s) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return s;
+        };
+        bool found = false;
+        for (std::size_t i = 0; i < store_.layers().size(); ++i) {
+            if (lower(store_.layers()[i].name) == lower(c.layer)) {
+                layer = static_cast<std::uint16_t>(i);
+                found = true;
+            }
+        }
+        if (!found) {
+            report("Cannot find layer \"" + c.layer + "\".");
+            return;
+        }
+    }
+    std::vector<EntityHandle> keep;
+    int edited = 0;
+    for (const EntityHandle h : selection_) {
+        if (h.kind != EntityKind::Hatch || !store_.is_valid(h) || !selectable(h)) {
+            keep.push_back(h);
+            continue;
+        }
+        const Command original = capture_entity(h);
+        AddHatchCommand x = std::get<AddHatchCommand>(original);
+        EntityProps props = x.props.value_or(EntityProps{store_.current_layer()});
+        std::vector<AddHatchCommand> made;
+        switch (c.op) {
+        case Op::Disassociate:
+            x.unassoc = true;
+            made.push_back(x);
+            break;
+        case Op::Color:
+            props.set_color_by_layer(c.by_layer);
+            if (!c.by_layer) {
+                props.color = c.color;
+            }
+            x.props = props;
+            made.push_back(x);
+            break;
+        case Op::Layer:
+            props.layer = layer;
+            x.props = props;
+            made.push_back(x);
+            break;
+        case Op::Separate: {
+            // How many loops each loop is inside: the outer ones (an even count) each make a
+            // hatch, with the loops one level in from it as its islands.
+            const std::size_t n = x.loops.size();
+            std::vector<std::size_t> depth(n, 0);
+            const auto inside = [&](std::size_t a, std::size_t b) {
+                return a != b && !x.loops[a].empty() && x.loops[b].size() >= 3 &&
+                       point_in_polygon(x.loops[b], x.loops[a].front());
+            };
+            for (std::size_t a = 0; a < n; ++a) {
+                for (std::size_t b = 0; b < n; ++b) {
+                    depth[a] += inside(a, b) ? 1u : 0u;
+                }
+            }
+            for (std::size_t a = 0; a < n; ++a) {
+                if (depth[a] % 2 != 0) {
+                    continue;
+                }
+                AddHatchCommand one = x;
+                one.loops = {x.loops[a]};
+                for (std::size_t b = 0; b < n; ++b) {
+                    if (depth[b] == depth[a] + 1 && inside(b, a)) {
+                        one.loops.push_back(x.loops[b]);
+                    }
+                }
+                made.push_back(std::move(one));
+            }
+            if (made.size() < 2) {
+                keep.push_back(h); // one area: nothing to separate
+                continue;
+            }
+            break;
+        }
+        }
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        for (const AddHatchCommand& m : made) {
+            const Command add = m;
+            const EntityHandle nh = create_indexed(add);
+            push_create_item(c.group, nh, add);
+            keep.push_back(nh);
+        }
+        ++edited;
+    }
+    selection_ = keep;
+    if (edited == 0) {
+        report(c.op == Op::Separate ? "Nothing to separate: the hatch has one area." : "No hatch selected.");
+        return;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    if (c.op == Op::Separate) {
+        report(std::to_string(edited) + (edited == 1 ? " hatch" : " hatches") + " separated.");
+    }
+}
+
 void GeometryEngine::apply_dim_grip_menu(const DimGripMenuCommand& c) {
     using Op = DimGripMenuCommand::Op;
     const DimData* d = c.dim.kind == EntityKind::Dimension ? store_.dimension(c.dim) : nullptr;
@@ -15212,6 +15321,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, DimGripMenuCommand>) {
                 apply_dim_grip_menu(c);
+            }
+            if constexpr (std::is_same_v<T, HatchEditCommand>) {
+                apply_hatch_edit(c);
             }
             if constexpr (std::is_same_v<T, AddPatternCommand>) {
                 if (!c.pattern.name.empty() && !c.pattern.lines.empty()) {

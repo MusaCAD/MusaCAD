@@ -19394,10 +19394,43 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "B" || u == "RECREATE BOUNDARY" || u == "BOUNDARY") {
             step_ = Step::BoundaryType;
             ctx.set_prompt("Enter type of boundary object [Region/Polyline] <Polyline>: ");
+        } else if (u == "D" || u == "DISASSOCIATE") {
+            ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Disassociate, {}, true, {}, ctx.group_id()});
+            done_ = true;
+        } else if (u == "H" || u == "SEPARATE HATCHES") {
+            ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Separate, {}, true, {}, ctx.group_id()});
+            done_ = true;
+        } else if (u == "CO" || u == "HATCH COLOR" || u == "COLOR") {
+            step_ = Step::Color;
+            ctx.set_prompt("Enter new color for hatch objects or [. (use current)] <BYLAYER>: ");
+        } else if (u == "LA" || u == "LAYER") {
+            step_ = Step::Layer;
+            ctx.set_prompt("Enter layer name or [. (use current)] <use current>: ");
         } else {
-            ctx.echo("That option is not available yet; Properties and recreate Boundary are.");
+            ctx.echo("That option is not available yet; Disassociate, Properties, recreate Boundary, separate Hatches, "
+                     "hatch COlor and LAyer are.");
             options(ctx);
         }
+        return;
+    case Step::Color: {
+        core::HatchEditCommand c{core::HatchEditCommand::Op::Color, {}, true, {}, ctx.group_id()};
+        if (!(t.empty() || t == "." || u == "BYLAYER")) {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 1.0 || v > 255.0 || v != std::floor(v)) {
+                ctx.echo("Enter a colour number from 1 to 255, BYLAYER or . for the current one.");
+                return;
+            }
+            c.by_layer = false;
+            c.color = core::io::dxf_aci_to_rgb(static_cast<long>(v));
+        }
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    case Step::Layer:
+        ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Layer, {}, true,
+                                          t == "." ? std::string() : t, ctx.group_id()});
+        done_ = true;
         return;
     case Step::Pattern: {
         if (t == "?") {
