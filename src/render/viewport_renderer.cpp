@@ -1189,8 +1189,8 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
 
     // Grips of the selected set: small filled squares at a constant pixel size, the
     // grabbed/hovered one in the hot colour. Batched: at most two fill draws.
-    if (!snapshot.grips.empty()) {
-        const double hpx = theme::kGripHalfPx * device_pixel_ratio_; // physical-consistent
+    if (!snapshot.grips.empty() && grip_half_px_ > 0.0) {
+        const double hpx = grip_half_px_ * device_pixel_ratio_; // physical-consistent
         std::vector<core::Vec2> normal;
         std::vector<core::Vec2> hot;
         for (std::size_t i = 0; i < snapshot.grips.size(); ++i) {
@@ -1222,8 +1222,21 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
             cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
             ++stats_.draw_calls;
         };
-        draw_squares(normal, kGripColor);
-        draw_squares(hot, kHotGripColor);
+        // GRIPCOLOR / GRIPHOT when set, the theme's colours otherwise.
+        const auto rgba = [](std::uint32_t rgb, const float (&theme_col)[4], float (&out)[4]) -> const float (&)[4] {
+            if (rgb == 0) {
+                return theme_col;
+            }
+            out[0] = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            out[1] = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            out[2] = static_cast<float>(rgb & 0xFF) / 255.0f;
+            out[3] = 1.0f;
+            return out;
+        };
+        float normal_col[4];
+        float hot_col[4];
+        draw_squares(normal, rgba(grip_rgb_, kGripColor, normal_col));
+        draw_squares(hot, rgba(hot_grip_rgb_, kHotGripColor, hot_col));
     }
 }
 

@@ -102,6 +102,14 @@ public:
         }
     }
 
+    /// The grips (GRIPS, GRIPSIZE, GRIPCOLOR, GRIPHOT): their half size in logical pixels
+    /// (0: not drawn) and their colours, packed 0xRRGGBB (0: the theme's).
+    void set_grip_style(double half_px, std::uint32_t normal_rgb, std::uint32_t hot_rgb) {
+        grip_half_px_ = half_px;
+        grip_rgb_ = normal_rgb;
+        hot_grip_rgb_ = hot_rgb;
+    }
+
     /// Transient interaction overlay (preview, selection rect, ghost), composed
     /// on the UI thread and handed in each frame.
     /// The overlay is shared, immutable, and referenced -- not copied -- per frame.
@@ -160,6 +168,9 @@ private:
     core::GridSettings grid_settings_{};
     float device_px_per_mm_ = 96.0f / 25.4f; // ~3.78 px/mm @ 96 DPI (AutoCAD default)
     float device_pixel_ratio_ = 1.0f;        // Qt devicePixelRatio (HiDPI scaling)
+    double grip_half_px_ = 4.0;              // GRIPSIZE; 0 = GRIPS off
+    std::uint32_t grip_rgb_ = 0;             // GRIPCOLOR as 0xRRGGBB, 0 = the theme's
+    std::uint32_t hot_grip_rgb_ = 0;         // GRIPHOT
     std::shared_ptr<const RenderOverlay> overlay_ptr_;
     [[nodiscard]] const RenderOverlay& overlay() const {
         static const RenderOverlay kEmpty{};

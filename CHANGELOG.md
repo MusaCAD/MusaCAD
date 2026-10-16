@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and
+  their colour and the hot grip's.
 - **Plotting in inches** (#81) -- the Plot window's scale and offset in millimetres or inches,
   inches to begin with on an ANSI or ARCH sheet.
 - **State icons in the layer combo** (#78) -- each layer with its bulb, sun or snowflake,

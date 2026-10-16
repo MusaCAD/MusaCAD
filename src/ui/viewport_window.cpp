@@ -58,6 +58,7 @@
 #include "musacad/render/frame_stats.hpp"
 #include "musacad/render/gl_backend.hpp"
 #include "musacad/render/viewport_renderer.hpp"
+#include "musacad/core/io/dxf.hpp"
 
 namespace musacad::ui {
 
@@ -280,6 +281,10 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "HIGHLIGHT") return highlight_;
     if (name == "SELECTIONPREVIEW") return selectionpreview_;
     if (name == "SELECTIONCYCLING") return selectioncycling_;
+    if (name == "GRIPS") return grips_on_.load();
+    if (name == "GRIPSIZE") return gripsize_.load();
+    if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
+    if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
     return 0;
 }
 
@@ -301,6 +306,14 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         selectionpreview_ = value;
     } else if (name == "SELECTIONCYCLING" && in(-2, 2)) {
         selectioncycling_ = value;
+    } else if (name == "GRIPS" && in(0, 2)) {
+        grips_on_ = value;
+    } else if (name == "GRIPSIZE" && in(1, 255)) {
+        gripsize_ = value;
+    } else if (name == "GRIPCOLOR" && in(1, 255)) {
+        gripcolor_ = value;
+    } else if (name == "GRIPHOT" && in(1, 255)) {
+        griphot_ = value;
     } else {
         return false;
     }
@@ -1663,6 +1676,18 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 static_cast<float>(scr->physicalDotsPerInch() / 25.4));
         }
         renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
+        {
+            const auto rgb_of = [](int aci) -> std::uint32_t {
+                if (aci <= 0) {
+                    return 0; // the theme's colour
+                }
+                const core::Rgb c = core::io::dxf_aci_to_rgb(aci);
+                const std::uint32_t v = (std::uint32_t{c.r} << 16) | (std::uint32_t{c.g} << 8) | c.b;
+                return v == 0 ? 1 : v; // black stays black, not "the theme's"
+            };
+            renderer.set_grip_style(grips_on_.load() == 0 ? 0.0 : static_cast<double>(gripsize_.load()),
+                                    rgb_of(gripcolor_.load()), rgb_of(griphot_.load()));
+        }
         // VPORTS: in model space with more than one tile, every tile draws through its own
         // camera (a tile never framed yet is fitted to the drawing first).
         std::vector<render::ViewportRenderer::TileView> tile_views;
@@ -2410,6 +2435,9 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
 }
 
 int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
+    if (grips_on_.load() == 0) {
+        return -1; // GRIPS 0: none shown, none to grab
+    }
     std::scoped_lock lock(grips_mutex_);
     int best = -1;
     double best_d2 = radius_world * radius_world;

@@ -398,6 +398,14 @@ CommandRegistry CommandRegistry::make_default() {
         "Rollover and box preview highlighting: 0 off, 1 when no command is active, 2 when a command asks, 3 both.");
     reg({"SELECTIONCYCLING"}, [] { return std::make_unique<SelectionSettingCommand>("SELECTIONCYCLING"); }, "",
         "Overlapping objects under a pick: 2 offers the list (Ctrl+W toggles), 0 picks the nearest.");
+    reg({"GRIPS"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPS"); }, "",
+        "Grips on the selected objects: 1 shown, 0 none.");
+    reg({"GRIPSIZE"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPSIZE"); }, "",
+        "The size of a grip, in pixels from its centre to its edge (1 to 255).");
+    reg({"GRIPCOLOR"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPCOLOR"); }, "",
+        "The colour of the grips, an AutoCAD colour number (1 to 255).");
+    reg({"GRIPHOT"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPHOT"); }, "",
+        "The colour of a grip picked or under the cursor, an AutoCAD colour number (1 to 255).");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
         "Check the drawing for bad references and structure; optionally fix them.");
     reg({"FILL"}, [] { return std::make_unique<FillCommand>(false); }, "",

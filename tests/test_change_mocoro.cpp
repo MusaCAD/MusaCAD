@@ -831,3 +831,13 @@ TEST_CASE("DIMEX writes dimension styles to a file and DIMIM takes them in, keep
     h.run({"O"});
     REQUIRE(h.last<ImportDimStylesCommand>()->overwrite);
 }
+
+TEST_CASE("GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT ask their value; without a window it is out of reach") {
+    H h;
+    h.run({"GRIPSIZE"});
+    REQUIRE(h.out.prompt == "Enter new value for GRIPSIZE <0>: ");
+    h.run({"6"});
+    REQUIRE(h.out.lines.back() == "Value out of range for GRIPSIZE.");
+    h.run({""});
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

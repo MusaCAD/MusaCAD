@@ -37,6 +37,7 @@ commands (Ribbon Phase A):
 | DWGPROPS | The drawing's properties: General, Summary (title, subject, author, keywords, comments, hyperlink base), Statistics and Custom fields, saved with the drawing. |
 | ISOLATEOBJECTS / HIDEOBJECTS / UNISOLATEOBJECTS | Hide everything but the selection, hide the selection, show everything again. Hidden objects are neither drawn nor pickable; the flag is saved with the drawing. |
 | PICKBOX, PICKFIRST, PICKADD, PICKAUTO, PICKDRAG, HIGHLIGHT, SELECTIONPREVIEW, SELECTIONCYCLING | The selection system variables, `Enter new value for X <current>:`. |
+| GRIPS, GRIPSIZE, GRIPCOLOR, GRIPHOT | The grip variables: grips shown (1) or not (0), their size in pixels from centre to edge, and their colour and the hot grip's as AutoCAD colour numbers. |
 | UNDO (U) | Reverse the most recent action. |
 | HELP (?, F1) | Open this command reference in the browser. |
 | PREVIEW (PRE) | The plot as it will come out, with the last plot's settings: zoom, pan by dragging, Plot. |

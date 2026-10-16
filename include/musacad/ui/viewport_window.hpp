@@ -766,6 +766,12 @@ private:
     int highlight_ = 1;
     int selectionpreview_ = 3;
     int selectioncycling_ = 2;
+    // The grip variables: GRIPS (0 none, 1 shown), GRIPSIZE (half a grip in pixels), and
+    // GRIPCOLOR / GRIPHOT as ACI numbers (0 here: the theme's own colours until set).
+    std::atomic<int> grips_on_{1};
+    std::atomic<int> gripsize_{4};
+    std::atomic<int> gripcolor_{0};
+    std::atomic<int> griphot_{0};
     std::uint64_t pick_candidates_seen_ = 0;
     std::vector<core::RenderSnapshot::PickCandidate> pick_candidates_; ///< under layers_mutex_
     core::RenderSnapshot::PurgeCandidates purge_;                      ///< under layers_mutex_
