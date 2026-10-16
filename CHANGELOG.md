@@ -141,6 +141,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   and a material condition, three datums with theirs; then `Enter tolerance location:`.
 - **Layer filters** (#69) -- the Layer Properties Manager's Filter: All, All Used Layers, Layers
   On / Off, Frozen / Thawed, Locked / Unlocked, and Invert filter; with the search.
+- **The Interface panel** (#72) -- View > Interface: File Tabs, Layout Tabs and Status Bar shown
+  or hidden.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **Grip modes' Copy and Reference** (#54) -- STRETCH's Copy leaves the object where it is and

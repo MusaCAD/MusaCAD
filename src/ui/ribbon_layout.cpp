@@ -31,9 +31,12 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QStatusBar>
+#include <QTabBar>
 #include <QToolBar>
 #include <QToolButton>
 
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -1078,6 +1081,32 @@ void MainWindow::build_ribbon() {
         tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
         connect(tp, &QToolButton::clicked, this,
                 [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
+    }
+
+    // --- Interface: the drawing tabs, the Model/layout tabs and the status bar, shown or not.
+    RibbonPanel* iface = ribbon_->add_panel(view, QStringLiteral("Interface"), 35);
+    iface->set_representative_icon(asset("view"));
+    {
+        const auto toggle = [&](QWidget* col, const QString& label, const char* name, const QString& tip,
+                                std::function<QWidget*()> target) {
+            QToolButton* b = iface->add_small(col, asset("view"), label);
+            b->setObjectName(QString::fromLatin1(name));
+            b->setCheckable(true);
+            b->setChecked(true);
+            b->setToolTip(tip);
+            connect(b, &QToolButton::toggled, this, [target](bool on) {
+                if (QWidget* w = target(); w != nullptr) {
+                    w->setVisible(on);
+                }
+            });
+        };
+        QWidget* col = iface->add_column();
+        toggle(col, QStringLiteral("File Tabs"), "ribbon.file_tabs", QStringLiteral("Show or hide the drawing tabs."),
+               [this]() -> QWidget* { return file_tabs_ != nullptr ? file_tabs_->parentWidget() : nullptr; });
+        toggle(col, QStringLiteral("Layout Tabs"), "ribbon.layout_tabs", QStringLiteral("Show or hide the Model and layout tabs."),
+               [this]() -> QWidget* { return layout_tabs_; });
+        toggle(col, QStringLiteral("Status Bar"), "ribbon.status_bar", QStringLiteral("Show or hide the status bar."),
+               [this]() -> QWidget* { return statusBar(); });
     }
 
     // ================================================================== Manage
