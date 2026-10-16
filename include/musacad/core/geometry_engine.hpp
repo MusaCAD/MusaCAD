@@ -638,6 +638,7 @@ private:
     void apply_attin(const AttInCommand& c);
     void apply_insert_linked_table(const InsertLinkedTableCommand& c);
     void apply_data_link_update(const DataLinkUpdateCommand& c);
+    void apply_table_export(const TableExportCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);

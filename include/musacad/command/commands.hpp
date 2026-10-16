@@ -1286,6 +1286,24 @@ private:
 
 /// TABLEEDIT: `Pick a table cell:` -- the cell's text editor, as a double-click opens it;
 /// without a window, `Enter new text:`.
+/// TABLEEXPORT: `Select a table:`, then the file -- the table's cells written as CSV.
+class TableExportUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLEEXPORT"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select a table: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return pick_.has_value(); } // the file name
+
+private:
+    std::optional<core::Vec2> pick_;
+    bool done_ = false;
+};
+
 class TableEditCommand final : public ICommand {
 public:
     std::string name() const override { return "TABLEEDIT"; }

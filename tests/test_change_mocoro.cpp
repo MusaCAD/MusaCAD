@@ -3829,3 +3829,36 @@ TEST_CASE("FILLET with a spline or an ellipse: an arc tangent to both, each cut 
         engine.stop();
     }
 }
+
+TEST_CASE("TABLEEXPORT writes a table's cells as CSV") {
+    H h;
+    h.run({"TABLEEXPORT"});
+    REQUIRE(h.out.prompt == "Select a table: ");
+    h.run({"20,100"});
+    REQUIRE(h.out.prompt == "Enter file name: ");
+    h.run({"parts list.csv"});
+    REQUIRE(h.last<TableExportCommand>()->path == "parts list.csv");
+    REQUIRE(h.last<TableExportCommand>()->pick == Vec2{20, 100});
+
+    GeometryEngine engine;
+    engine.start();
+    AddTableCommand tc;
+    tc.rows = 2;
+    tc.cols = 2;
+    tc.cells.assign(4, TableCell{});
+    tc.texts = {"ITEM", "QTY", "Bolt, M6", "4"};
+    tc.col_widths = {40.0, 40.0};
+    tc.row_heights = {8.0, 8.0};
+    tc.pos = {0.0, 100.0};
+    tc.group = 1;
+    engine.submit(tc);
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_tableexport.csv";
+    engine.submit(TableExportCommand{{20, 100}, 0.5, p.string()});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Table exported to ", 0) == 0; }));
+    std::ifstream in(p, std::ios::binary);
+    const std::string csv((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE(csv == "ITEM,QTY\r\n\"Bolt, M6\",4\r\n");
+    in.close();
+    std::filesystem::remove(p);
+    engine.stop();
+}

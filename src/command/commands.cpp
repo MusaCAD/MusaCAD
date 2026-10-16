@@ -8718,6 +8718,31 @@ void AttFileCommand::ask_file(CommandContext& ctx) {
     ctx.set_prompt("Enter file name: ");
 }
 
+void TableExportUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!pick_) {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        pick_ = *p;
+        if (ctx.view() != nullptr) {
+            const std::string path = ctx.view()->save_file_dialog("Comma delimited (*.csv)", "table.csv");
+            if (!path.empty()) {
+                ctx.submit(core::TableExportCommand{*pick_, ctx.pick_radius(), path});
+            }
+            done_ = true;
+            return;
+        }
+        ctx.set_prompt("Enter file name: ");
+        return;
+    }
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        ctx.submit(core::TableExportCommand{*pick_, ctx.pick_radius(), t});
+    }
+    done_ = true;
+}
+
 void AttFileCommand::finish(CommandContext& ctx, const std::string& path) {
     if (in_) {
         ctx.submit(core::AttInCommand{path, ctx.group_id()});

@@ -9766,6 +9766,28 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
            std::to_string(t.cols) + " columns.");
 }
 
+void GeometryEngine::apply_table_export(const TableExportCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.radius);
+    if (h.kind != EntityKind::Table) {
+        report("That is not a table.");
+        return;
+    }
+    const Command cmd = capture_entity(h);
+    const auto* t = std::get_if<AddTableCommand>(&cmd);
+    if (t == nullptr) {
+        return;
+    }
+    std::vector<std::vector<std::string>> grid(t->rows);
+    for (std::size_t r = 0; r < t->rows; ++r) {
+        for (std::size_t col = 0; col < t->cols; ++col) {
+            const std::size_t k = r * t->cols + col;
+            grid[r].push_back(k < t->texts.size() ? t->texts[k] : std::string());
+        }
+    }
+    report(write_csv(c.path, grid) ? "Table exported to " + c.path + "."
+                                   : "Could not write " + c.path + ".");
+}
+
 void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
     const std::vector<DataLink>& links = store_.data_links();
     const auto linked = [&](EntityHandle h) -> const DataLink* {
@@ -18485,6 +18507,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DataLinkUpdateCommand>) {
                 apply_data_link_update(c);
             }
+            if constexpr (std::is_same_v<T, TableExportCommand>) {
+                apply_table_export(c);
+            }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),
                                   c.on);
@@ -18599,6 +18624,7 @@ void GeometryEngine::apply_one(const Command& command) {
                 std::is_same_v<T, MeasureQueryCommand> || std::is_same_v<T, MassPropQueryCommand> ||
                 std::is_same_v<T, TimeCommand> || std::is_same_v<T, StatusQueryCommand> ||
                 std::is_same_v<T, AttOutCommand> ||           // writes a file, not the drawing
+                std::is_same_v<T, TableExportCommand> ||      // writes a file, not the drawing
                 std::is_same_v<T, SetUnitsDefaultsCommand> || // a setting, not an edit
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             bool edit = !view_or_io;

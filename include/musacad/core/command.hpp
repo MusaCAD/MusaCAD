@@ -1899,6 +1899,12 @@ struct InsertLinkedTableCommand {
 /// DATALINKUPDATE: the linked tables read again from their files (`write`: the tables
 /// written back to them). Which tables: the selection (`selection`), those linked to
 /// `link`, or every linked table (neither).
+/// TABLEEXPORT: the cells of the table under `pick`, written to `path` as CSV.
+struct TableExportCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    std::string path;
+};
 struct DataLinkUpdateCommand {
     bool write = false;
     bool selection = false;
@@ -2395,7 +2401,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

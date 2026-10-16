@@ -816,6 +816,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Insert a table, asking its columns, rows and place on the command line.");
     reg({"TABLEEDIT"}, [] { return std::make_unique<TableEditCommand>(); }, "assets/ribbon/table.svg",
         "Edit the text of a table cell.");
+    reg({"TABLEEXPORT"}, [] { return std::make_unique<TableExportUiCommand>(); }, "assets/ribbon/table.svg",
+        "Write a table's cells to a CSV file.");
     reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(true); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");
