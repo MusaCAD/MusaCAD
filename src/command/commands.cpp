@@ -13992,7 +13992,9 @@ void MTextCommand::start(CommandContext& ctx) {
 
 void MTextCommand::corner_prompt(CommandContext& ctx) {
     state_ = State::Second;
-    ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
+    PreviewSpec pv{PreviewKind::Rectangle, {c1_}};
+    pv.mtext_attach = attach_; // the box shows the way the text will flow
+    ctx.set_preview(std::move(pv));
     ctx.set_prompt("Specify opposite corner or [Height/Justify/Line spacing/Rotation/Style/Width/Columns]: ");
 }
 

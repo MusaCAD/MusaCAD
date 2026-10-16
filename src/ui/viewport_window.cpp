@@ -2712,6 +2712,35 @@ void ViewportWindow::rebuild_overlay() {
                     append_bulge_segment(seg, c[i], c[(i + 1) % c.size()],
                                          i < bulges.size() ? bulges[i] : 0.0);
                 }
+                if (pv.mtext_attach >= 0) {
+                    // MTEXT: an arrow the way the text flows from where it hangs -- down from a
+                    // top justification, up from a bottom one, both ways from the middle.
+                    const double x0 = std::min(a.x, b.x);
+                    const double x1 = std::max(a.x, b.x);
+                    const double y0 = std::min(a.y, b.y);
+                    const double y1 = std::max(a.y, b.y);
+                    const double len = std::min(x1 - x0, y1 - y0) * 0.25;
+                    const double cx = (x0 + x1) * 0.5;
+                    const auto arrow = [&](double from_y, double to_y) {
+                        if (len <= 1e-9) {
+                            return;
+                        }
+                        const double dir = to_y < from_y ? -1.0 : 1.0;
+                        seg.push_back({cx, from_y});
+                        seg.push_back({cx, to_y});
+                        seg.push_back({cx, to_y});
+                        seg.push_back({cx - len * 0.3, to_y - dir * len * 0.4});
+                        seg.push_back({cx, to_y});
+                        seg.push_back({cx + len * 0.3, to_y - dir * len * 0.4});
+                    };
+                    const int row = pv.mtext_attach / 3;
+                    if (row != 2) {
+                        arrow(y0 + len * 1.2, y0 + len * 0.2); // down, at the foot
+                    }
+                    if (row != 0) {
+                        arrow(y1 - len * 1.2, y1 - len * 0.2); // up, at the head
+                    }
+                }
             }
             break;
         case command::PreviewKind::Circle:
