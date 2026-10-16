@@ -409,6 +409,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             b->setEnabled(sel > 0);
         }
         sync_layer_combo();
+        sync_style_combos();
         sync_properties_panel();
         sync_ribbon_context();  // show/hide contextual ribbon tabs per the selection
         refresh_property_combos(); // the ribbon's colour / linetype / lineweight controls
@@ -1564,6 +1565,47 @@ void MainWindow::sync_layer_combo() {
     if (cur >= 0 && cur < layer_combo_->count() && layer_combo_->currentIndex() != cur) {
         const QSignalBlocker block(layer_combo_);
         layer_combo_->setCurrentIndex(cur);
+    }
+}
+
+void MainWindow::sync_style_combos() {
+    if (viewport_ == nullptr) {
+        return;
+    }
+    // A combo listing `names` with `cur` showing; refilled only when the names change, and
+    // left alone while it is open or has the focus.
+    const auto sync = [](QComboBox* box, const std::vector<std::string>& names, int cur) {
+        if (box == nullptr || box->view()->isVisible()) {
+            return;
+        }
+        bool changed = static_cast<int>(names.size()) != box->count();
+        for (int i = 0; !changed && i < static_cast<int>(names.size()); ++i) {
+            changed = box->itemText(i).toStdString() != names[i];
+        }
+        const QSignalBlocker block(box);
+        if (changed) {
+            box->clear();
+            for (const std::string& n : names) {
+                box->addItem(QString::fromStdString(n));
+            }
+        }
+        if (cur >= 0 && cur < box->count() && box->currentIndex() != cur) {
+            box->setCurrentIndex(cur);
+        }
+    };
+    if (text_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::TextStyle& st : viewport_->text_styles()) {
+            names.push_back(st.name);
+        }
+        sync(text_style_combo_, names, viewport_->current_text_style());
+    }
+    if (dim_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::DimStyle& st : viewport_->dim_styles()) {
+            names.push_back(st.name);
+        }
+        sync(dim_style_combo_, names, viewport_->current_dim_style());
     }
 }
 

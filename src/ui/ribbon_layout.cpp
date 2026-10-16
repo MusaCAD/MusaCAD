@@ -401,8 +401,8 @@ void MainWindow::build_ribbon() {
         small(modify, c2, QStringLiteral("Align"), "AL");
         QWidget* c3 = modify->add_column_to(out);
         small(modify, c3, QStringLiteral("Match Properties"), "MA");
-        todo_small(modify, c3, QStringLiteral("Blend Curves"), "blend");
-        todo_small(modify, c3, QStringLiteral("Delete Duplicate Objects"), "overkill");
+        small(modify, c3, QStringLiteral("Blend Curves"), "BLEND", "blend");
+        small(modify, c3, QStringLiteral("Delete Duplicate Objects"), "OVERKILL", "overkill");
     }
     // Move / Copy / Mirror / Rotate / Scale / Array ask "Select objects:" when nothing is
     // selected (issue #46), so they stay enabled, as AutoCAD's do.
@@ -697,16 +697,39 @@ void MainWindow::build_ribbon() {
     large_split(text, QStringLiteral("Multiline\nText"), "MT",
                 menu_of({action("MT", QStringLiteral("Multiline Text")), action("DT", QStringLiteral("Single Line"))}));
     {
+        // The Text Style combo over Edit Text and Find Text; the panel's launcher opens the
+        // Text Style window.
         QWidget* col = text->add_column();
-        small(text, col, QStringLiteral("Text Style"), "ST", "text-style");
+        text_style_combo_ = new QComboBox(col);
+        text_style_combo_->setObjectName(QStringLiteral("ribbon.text_style"));
+        text_style_combo_->setToolTip(QStringLiteral("Text Style: the style new text takes."));
+        text_style_combo_->setMinimumWidth(130);
+        connect(text_style_combo_, &QComboBox::activated, this, [this](int index) {
+            if (index >= 0) {
+                engine_->submit(core::SetCurrentTextStyleCommand{text_style_combo_->itemText(index).toStdString()});
+            }
+        });
+        col->layout()->addWidget(text_style_combo_);
         small(text, col, QStringLiteral("Edit Text"), "ED", "text");
-        todo_small(text, col, QStringLiteral("Find Text"), "find");
+        small(text, col, QStringLiteral("Find Text"), "FIND", "find");
     }
+    text->set_dialog_launcher(QStringLiteral("Text Style"), [this] { open_text_style_dialog(); });
     RibbonPanel* dims = ribbon_->add_panel(annotate, QStringLiteral("Dimensions"), 55);
     dims->set_representative_icon(asset("dim"));
     large(dims, QStringLiteral("Dimension"), "DIM");
     {
+        // The Dimension Style combo over the dimension types and Continue.
         QWidget* col = dims->add_column();
+        dim_style_combo_ = new QComboBox(col);
+        dim_style_combo_->setObjectName(QStringLiteral("ribbon.dim_style"));
+        dim_style_combo_->setToolTip(QStringLiteral("Dimension Style: the style new dimensions take."));
+        dim_style_combo_->setMinimumWidth(130);
+        connect(dim_style_combo_, &QComboBox::activated, this, [this](int index) {
+            if (index >= 0) {
+                engine_->submit(core::SetCurrentDimStyleCommand{dim_style_combo_->itemText(index).toStdString(), false});
+            }
+        });
+        col->layout()->addWidget(dim_style_combo_);
         small_split(dims, col, QStringLiteral("Linear"), "DLI",
                     menu_of({action("DLI", QStringLiteral("Linear")), action("DAL", QStringLiteral("Aligned")),
                              action("DAN", QStringLiteral("Angular")), action("DAR", QStringLiteral("Arc Length")),
@@ -714,17 +737,19 @@ void MainWindow::build_ribbon() {
                              action("DJO", QStringLiteral("Jogged")), action("DOR", QStringLiteral("Ordinate"))}));
         small_split(dims, col, QStringLiteral("Continue"), "DCO",
                     menu_of({action("DCO", QStringLiteral("Continue")), action("DBA", QStringLiteral("Baseline"))}));
-        QToolButton* ds = dims->add_small(col, asset("dim-style"), QStringLiteral("Dimension Style"));
-        ds->setObjectName(QStringLiteral("ribbon.dimstyle2"));
-        ds->setToolTip(QStringLiteral("Create and edit dimension styles."));
-        connect(ds, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
     }
     {
         QWidget* out = dims->expander();
         QWidget* c1 = dims->add_column_to(out);
         small(dims, c1, QStringLiteral("Tolerance"), "TOL");
         small(dims, c1, QStringLiteral("Datum"), "DIMDATUM", "datum");
-        todo_small(dims, c1, QStringLiteral("Center Mark"), "centermark");
+        small(dims, c1, QStringLiteral("Center Mark"), "CM", "centermark");
+        QWidget* c2 = dims->add_column_to(out);
+        QToolButton* ds = dims->add_small(c2, asset("dim-style"), QStringLiteral("Dimension Style"));
+        ds->setObjectName(QStringLiteral("ribbon.dimstyle2"));
+        ds->setToolTip(QStringLiteral("Create and edit dimension styles."));
+        connect(ds, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
+        small(dims, c2, QStringLiteral("Jog Line"), "DJL", "dim");
     }
     dims->set_dialog_launcher(QStringLiteral("Dimension Style"), [this] { open_dimstyle_dialog(); });
     RibbonPanel* leaders = ribbon_->add_panel(annotate, QStringLiteral("Leaders"), 40);
@@ -795,7 +820,7 @@ void MainWindow::build_ribbon() {
         zext->setObjectName(QStringLiteral("ribbon.zoom_extents"));
         zext->setToolTip(QStringLiteral("Zoom to show the full drawing extents."));
         connect(zext, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
-        todo_small(nav, col, QStringLiteral("Pan"), "pan");
+        small(nav, col, QStringLiteral("Pan"), "P", "pan");
     }
     RibbonPanel* named = ribbon_->add_panel(view, QStringLiteral("Named Views"), 50);
     named->set_representative_icon(asset("view"));

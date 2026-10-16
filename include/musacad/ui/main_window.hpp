@@ -326,6 +326,7 @@ private:
     void open_layer_dialog();
     void set_selection_color();
     void sync_layer_combo();
+    void sync_style_combos(); ///< Annotate's Text Style and Dimension Style combos
     void toggle_properties();      ///< PR: show/hide the Properties palette dock
     void sync_properties_panel();  ///< push the latest selection summary to the panel
     void set_dyn_enabled(bool on); ///< F12: enable/disable Dynamic Input (persisted)
@@ -477,6 +478,8 @@ private:
     bool tick_constrained_pending_ = false;
     QString coord_text_shown_;
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
+    QComboBox* text_style_combo_ = nullptr; // Annotate > Text: the current text style
+    QComboBox* dim_style_combo_ = nullptr;  // Annotate > Dimensions: the current dimension style
     QComboBox* color_combo_ = nullptr;      // ribbon Properties panel: colour / linetype /
     QComboBox* linetype_combo_ = nullptr;   // lineweight of the selection, or the current
     QComboBox* lineweight_combo_ = nullptr; // entity properties when nothing is selected
