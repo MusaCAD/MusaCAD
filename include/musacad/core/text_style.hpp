@@ -17,6 +17,8 @@ struct TextStyle {
     double height = 0.0;        ///< 0 = not fixed
     double width_factor = 1.0;  ///< horizontal scale
     double oblique = 0.0;       ///< radians, positive slants to the right
+    bool backwards = false;     ///< mirrored left to right about the insertion point (DXF 71 bit 2)
+    bool upside_down = false;   ///< mirrored about the baseline (DXF 71 bit 4)
     friend bool operator==(const TextStyle&, const TextStyle&) = default;
 };
 

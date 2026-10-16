@@ -2846,10 +2846,10 @@ void MainWindow::open_text_style_dialog() {
     form->addRow(QStringLiteral("Height:"), height);
     form->addRow(QStringLiteral("Width factor:"), width);
     form->addRow(QStringLiteral("Oblique angle:"), oblique);
-    auto* effects = new QLabel(QStringLiteral("Upside down, Backwards and Vertical are not available yet."), dlg);
-    effects->setWordWrap(true);
-    effects->setEnabled(false);
-    form->addRow(QString(), effects);
+    auto* upside = new QCheckBox(QStringLiteral("Upside down"), dlg);
+    auto* backwards = new QCheckBox(QStringLiteral("Backwards"), dlg);
+    form->addRow(QStringLiteral("Effects:"), upside);
+    form->addRow(QString(), backwards);
     auto* current_label = new QLabel(dlg);
     auto* set_current = new QPushButton(QStringLiteral("Set Current"), dlg);
     auto* new_style = new QPushButton(QStringLiteral("New..."), dlg);
@@ -2887,6 +2887,8 @@ void MainWindow::open_text_style_dialog() {
         height->setValue(s.height);
         width->setValue(s.width_factor);
         oblique->setValue(core::to_degrees(s.oblique));
+        upside->setChecked(s.upside_down);
+        backwards->setChecked(s.backwards);
     };
     const auto fill = [=, this](const std::string& select) {
         list->clear();
@@ -2916,6 +2918,8 @@ void MainWindow::open_text_style_dialog() {
         s.height = height->value();
         s.width_factor = width->value();
         s.oblique = core::to_radians(oblique->value());
+        s.upside_down = upside->isChecked();
+        s.backwards = backwards->isChecked();
         return s;
     };
     connect(apply, &QPushButton::clicked, dlg, [=, this] {

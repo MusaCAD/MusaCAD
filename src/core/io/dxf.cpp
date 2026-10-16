@@ -559,6 +559,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 40, ts.height);
         code_d(s, 41, ts.width_factor);
         code_d(s, 50, to_degrees(ts.oblique));
+        code_i(s, 71, (ts.backwards ? 2 : 0) | (ts.upside_down ? 4 : 0)); // generation flags
         code(s, 3, ts.font.empty() ? "txt" : ts.font);
     }
     code(s, 0, "ENDTAB");
@@ -1643,6 +1644,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             ts.height = getd(body, 40, 0.0);
             ts.width_factor = getd(body, 41, 1.0);
             ts.oblique = to_radians(getd(body, 50, 0.0));
+            if (const std::string* g = find(body, 71)) {
+                ts.backwards = (to_l(*g) & 2) != 0;
+                ts.upside_down = (to_l(*g) & 4) != 0;
+            }
             text_style_index[*name] = static_cast<std::uint16_t>(doc.text_styles.size());
             doc.text_styles.push_back(std::move(ts));
         }

@@ -81,6 +81,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   seTtings asks the pattern (`?` lists them), its scale and angle, and they are kept for the
   next hatch, ANSI31 to begin with as in AutoCAD; Undo takes the last pick back; **-HATCH**
   with Properties and Select objects.
+- **Text drawn Backwards and Upside down** (#62) -- the text style effects, in the Text Style
+  window and at -STYLE, kept in the drawing and in DXF.
 - **The Text Style window** (#62) -- STYLE lists the styles with their font, height, width
   factor and oblique angle, with Set Current, New and Apply; -STYLE keeps the command line.
 - **FIND** (#62) -- find and replace text in text, multiline text, leaders, table cells,

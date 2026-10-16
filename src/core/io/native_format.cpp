@@ -1138,6 +1138,8 @@ std::string serialize_native(const Document& doc) {
         s += enc(ts.name);
         s += ' ';
         s += enc(ts.font);
+        s += ' '; // v40: the generation flags, 2 backwards, 4 upside down
+        append_uint(s, (ts.backwards ? 2u : 0u) | (ts.upside_down ? 4u : 0u));
         s += '\n';
     }
     s += "CURTEXTSTYLE ";
@@ -1600,7 +1602,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             doc.psltscale = ps != 0;
             doc.msltscale = ms != 0;
         } else if (key == "TEXTSTYLE") {
-            if (tok.size() != 6) {
+            if (tok.size() != 6 && tok.size() != 7) {
                 return fail("malformed TEXTSTYLE");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1619,6 +1621,14 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             ts.name = dec(tok[4]);
             ts.font = dec(tok[5]);
+            if (tok.size() == 7) {
+                std::uint64_t gen = 0;
+                if (!to_uint(tok[6], gen)) {
+                    return fail("malformed TEXTSTYLE flags");
+                }
+                ts.backwards = (gen & 2u) != 0;
+                ts.upside_down = (gen & 4u) != 0;
+            }
             doc.text_styles.push_back(std::move(ts));
         } else if (key == "IMAGEFRAME") {
             std::uint64_t mode = 1;

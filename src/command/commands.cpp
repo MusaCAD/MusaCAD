@@ -7854,11 +7854,16 @@ void StyleCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Backwards:
     case State::Upside:
     case State::Vertical:
-        if (u == "Y" || u == "YES") {
-            ctx.echo("That option is not supported yet; the style keeps normal orientation.");
-        } else if (!t.empty() && u != "N" && u != "NO") {
+        if (!t.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
             ctx.echo("Enter Yes or No.");
             return;
+        }
+        if (state_ == State::Backwards) {
+            ts_.backwards = u == "Y" || u == "YES";
+        } else if (state_ == State::Upside) {
+            ts_.upside_down = u == "Y" || u == "YES";
+        } else if (u == "Y" || u == "YES") {
+            ctx.echo("Vertical text is not available yet; the style stays horizontal.");
         }
         if (state_ == State::Backwards) {
             state_ = State::Upside;

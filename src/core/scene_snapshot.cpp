@@ -272,6 +272,25 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                                    const TextStyle* ts = nullptr) {
         const double wf = ts != nullptr ? ts->width_factor : 1.0;
         const double ob = ts != nullptr ? ts->oblique : 0.0;
+        const bool flip_x = ts != nullptr && ts->backwards;
+        const bool flip_y = ts != nullptr && ts->upside_down;
+        // Backwards / Upside down: mirrored in the text's own frame, about the insertion
+        // point (left to right) and the baseline (top to bottom).
+        const auto mirror = [&](std::vector<Vec2>& pts) {
+            if (!flip_x && !flip_y) {
+                return;
+            }
+            const double c = std::cos(rotation);
+            const double s = std::sin(rotation);
+            for (Vec2& p : pts) {
+                const Vec2 d = p - origin;
+                double lx = d.x * c + d.y * s;
+                double ly = -d.x * s + d.y * c;
+                lx = flip_x ? -lx : lx;
+                ly = flip_y ? -ly : ly;
+                p = origin + Vec2{lx * c - ly * s, lx * s + ly * c};
+            }
+        };
         // Expand control codes at render time (storage stays raw). `vis` drives every metric
         // and glyph; the over/under-line toggles become decoration bars below.
         const text::SubstitutedText sub = text::substitute_text_codes(raw);
@@ -293,11 +312,13 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             trun.clear();
             fonts->glyph_fills(fname, str, o, height, rotation, trun);
             text::apply_text_style(trun, origin, rotation, wf, ob); // STYLE width/oblique
+            mirror(trun);
             add_fills(color, trun);
         } else {
             trun.clear();
             text::append_text_segments(str, o, height, rotation, text::Justify::Left, trun);
             text::apply_text_style(trun, origin, rotation, wf, ob);
+            mirror(trun);
             add_lines(color, lineweight, trun, /*is_text=*/true, height);
         }
         // Overline (%%o) / underline (%%u): a horizontal stroke spanning each toggled run,
@@ -310,6 +331,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     std::vector<Vec2> bar_pts{{o.x + x0 * cs - ly * sn, o.y + x0 * sn + ly * cs},
                                               {o.x + x1 * cs - ly * sn, o.y + x1 * sn + ly * cs}};
                     text::apply_text_style(bar_pts, origin, rotation, wf, ob);
+                    mirror(bar_pts);
                     add_line(color, lineweight, bar_pts[0], bar_pts[1], /*is_text=*/true, height);
                 }
             };
