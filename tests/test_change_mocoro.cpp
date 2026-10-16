@@ -1783,3 +1783,11 @@ TEST_CASE("INSUNITSDEFSOURCE and INSUNITSDEFTARGET are asked for and handed to t
     h.run({"INSUNITSDEFSOURCE", "4"}); // as it was, for the other tests
     REQUIRE(h.last<SetUnitsDefaultsCommand>()->source == 4);
 }
+
+TEST_CASE("The command list CUI shows has every command once, by name, in order") {
+    const auto all = musacad::command::CommandRegistry::make_default().commands();
+    REQUIRE(all.size() > 100);
+    REQUIRE(std::is_sorted(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.name < b.name; }));
+    REQUIRE(std::count_if(all.begin(), all.end(), [](const auto& c) { return c.name == "LINE"; }) == 1);
+    REQUIRE(std::none_of(all.begin(), all.end(), [](const auto& c) { return c.name == "L"; }));
+}
