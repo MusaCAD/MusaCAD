@@ -3173,3 +3173,17 @@ TEST_CASE("SPLINE's toLerance fits fewer control points within the tolerance, en
     REQUIRE(sp != nullptr);
     REQUIRE(sp->control_points.size() < 6);
 }
+
+TEST_CASE("SPLINE's Close makes the fitted spline smooth across its seam") {
+    H h;
+    h.run({"SPLINE", "M", "F", "0,0", "10,0", "10,10", "0,10", "C"});
+    const auto* sp = h.last<AddSplineCommand>();
+    REQUIRE(sp != nullptr);
+    const std::vector<Vec2>& c = sp->control_points;
+    REQUIRE(c.front() == c.back()); // closed
+    // The legs either side of the seam lie on one line (the same direction at the start and end).
+    const Vec2 out = c[1] - c.front();
+    const Vec2 in = c.back() - c[c.size() - 2];
+    REQUIRE(std::abs(out.x * in.y - out.y * in.x) < 1e-9);
+    REQUIRE(out.x * in.x + out.y * in.y > 0.0);
+}

@@ -5234,8 +5234,12 @@ void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::
         return;
     }
     std::vector<core::Vec2> through = pts_;
+    std::optional<core::Vec2> seam; // Close: the same direction leaving and arriving at the start
     if (close) {
-        through.push_back(pts_.front()); // back to the start (C0 at the seam)
+        through.push_back(pts_.front()); // back to the start
+        if (fit_ && pts_.size() >= 3) {
+            seam = pts_[1] - pts_.back(); // the curve smooth across its seam, not a corner there
+        }
     }
     std::vector<core::Vec2> ctrl;
     if (fit_) {
@@ -5244,8 +5248,7 @@ void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::
         }
         if (ctrl.empty()) {
             ctrl = core::spline::fit_or_fallback(through, degree_, static_cast<core::spline::FitParam>(knots_),
-                                                 close ? std::nullopt : start_tangent_,
-                                                 close ? std::nullopt : end_tangent);
+                                                 close ? seam : start_tangent_, close ? seam : end_tangent);
         }
     } else {
         ctrl = std::move(through);

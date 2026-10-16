@@ -142,7 +142,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   first point and `Specify end tangent:` (which ends it) once there are two: the fitted spline
   leaves and arrives in those directions, the preview turning with the cursor. toLerance
   (`Specify fit tolerance <0.0000>:`) fits the spline near its points rather than through them,
-  with as few control points as keep it within the tolerance.
+  with as few control points as keep it within the tolerance. Close makes a fitted spline smooth
+  across its seam.
 - **ARRAY's prompts and preview** (#51) -- ARRAYRECT draws 4 columns by 3 rows at once (spaced
   one and a half times the objects' size), ARRAYPOLAR 6 items round the centre, ARRAYPATH items
   all along the path; then `Select grip to edit array or [...]` changes COUnt, Spacing (or a
