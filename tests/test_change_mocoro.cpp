@@ -3494,3 +3494,20 @@ TEST_CASE("A multileader style's Leader type is kept, and MLEADER starts from it
     REQUIRE(again.mleader_styles[1].leader_type == 1);
     REQUIRE(again.mleader_styles[1].name == "Curvy");
 }
+
+TEST_CASE("Layer group filters are kept with the drawing") {
+    io::Document doc;
+    doc.layer_filters = {LayerGroupFilter{"Walls and doors", {"A-WALL", "A DOOR"}}, LayerGroupFilter{"Empty", {}}};
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.layer_filters == doc.layer_filters);
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(SetLayerFiltersCommand{doc.layer_filters});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layer_filters.size() == 2; }));
+    REQUIRE(engine.snapshot().layer_filters[0].layers[1] == "A DOOR");
+    const io::Document out = dump(engine, "musacad_layer_filters.musa");
+    REQUIRE(out.layer_filters == doc.layer_filters);
+    engine.stop();
+}

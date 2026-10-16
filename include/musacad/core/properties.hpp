@@ -57,6 +57,14 @@ struct LayerState {
     friend bool operator==(const LayerState&, const LayerState&) = default;
 };
 
+/// A layer group filter (the Layer Properties Manager's New Group Filter): a named set of
+/// layers, by name, shown together.
+struct LayerGroupFilter {
+    std::string name;
+    std::vector<std::string> layers;
+    friend bool operator==(const LayerGroupFilter&, const LayerGroupFilter&) = default;
+};
+
 /// Dimension subtype. Linear/Aligned are fully implemented; the rest are staged.
 enum class DimType : std::uint8_t {
     Linear = 0,  ///< horizontal, vertical or rotated: its line's angle is DimData::aux

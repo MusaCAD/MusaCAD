@@ -1226,6 +1226,8 @@ public:
 
     [[nodiscard]] const std::vector<LayerState>& layer_states() const noexcept { return layer_states_; }
     void set_layer_states(std::vector<LayerState> s) { layer_states_ = std::move(s); }
+    [[nodiscard]] const std::vector<LayerGroupFilter>& layer_filters() const noexcept { return layer_filters_; }
+    void set_layer_filters(std::vector<LayerGroupFilter> f) { layer_filters_ = std::move(f); }
     [[nodiscard]] const std::vector<NamedView>& named_views() const noexcept { return named_views_; }
     void set_named_views(std::vector<NamedView> views) { named_views_ = std::move(views); }
     /// Adds or replaces (by name).
@@ -1391,6 +1393,7 @@ private:
     std::uint16_t current_dimstyle_ = 0;
     bool wipeout_frames_ = true;
     std::vector<LayerState> layer_states_; ///< LAYERSTATE
+    std::vector<LayerGroupFilter> layer_filters_; ///< the Layer Properties Manager's group filters
     bool wipeout_frames_plot_ = true;
     bool fillmode_ = true;
     std::uint8_t pdmode_ = 0;

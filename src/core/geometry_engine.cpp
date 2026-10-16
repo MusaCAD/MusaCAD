@@ -15531,6 +15531,10 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, ReplaceBlockCommand>) {
                 apply_replace_block(c);
             }
+            if constexpr (std::is_same_v<T, SetLayerFiltersCommand>) {
+                store_.set_layer_filters(c.filters);
+                dirty_ = true;
+            }
             if constexpr (std::is_same_v<T, AddPatternCommand>) {
                 if (!c.pattern.name.empty() && !c.pattern.lines.empty()) {
                     store_.add_custom_pattern(c.pattern);
@@ -17890,6 +17894,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimAssocCommand>) {
                 edit = false; // a setting, or marks the drawing changed itself
             }
+            if constexpr (std::is_same_v<T, SetLayerFiltersCommand>) {
+                edit = false; // marks the drawing changed itself, with no geometry to rebuild
+            }
             if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
                 edit = false; // marks the drawing changed itself, when there was one to delete
             }
@@ -18332,6 +18339,7 @@ void GeometryEngine::rebuild_and_publish() {
     for (const LayerState& st : store_.layer_states()) {
         buf.layer_state_names.push_back(st.name);
     }
+    buf.layer_filters = store_.layer_filters(); // the Layer Properties Manager's group filters
     buf.vports = store_.vports();           // VPORTS: the UI follows vports_version
     buf.vports_active = store_.vports_active();
     buf.vports_version = store_.vports_version();

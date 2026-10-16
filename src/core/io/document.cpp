@@ -181,6 +181,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.page_setups = store.page_setups();
     doc.views = store.named_views();
     doc.layer_states = store.layer_states();
+    doc.layer_filters = store.layer_filters();
     doc.vports = store.vports();
     doc.vports_active = store.vports_active();
     doc.saved_vports = store.saved_vports();
@@ -739,6 +740,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     store.set_named_views(doc.views);
     store.set_layer_states(doc.layer_states);
+    store.set_layer_filters(doc.layer_filters);
     store.set_vports(doc.vports, doc.vports_active);
     store.set_saved_vports(doc.saved_vports);
     store.set_units(doc.display_units);

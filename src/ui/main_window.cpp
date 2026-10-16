@@ -3040,7 +3040,8 @@ void MainWindow::open_layer_dialog() {
                                 [this] { return viewport_->current_layer(); },
                                 [this](core::Command c) { engine_->submit(std::move(c)); }, this,
                                 [this] { return viewport_->mspace_frozen_layers(); },
-                                [this] { return viewport_->layer_used(); });
+                                [this] { return viewport_->layer_used(); },
+                                [this] { return viewport_->layer_filters(); });
     dlg->setObjectName(QStringLiteral("LayerManager"));
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
     dlg->show();

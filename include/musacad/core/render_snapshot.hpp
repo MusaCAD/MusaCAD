@@ -238,6 +238,7 @@ struct RenderSnapshot {
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
     std::vector<std::string> custom_patterns; // the drawing's own hatch pattern names
     std::vector<std::string> layer_state_names; // LAYERSTATE (for the Layer States Manager)
+    std::vector<LayerGroupFilter> layer_filters; // the Layer Properties Manager's group filters
     std::vector<TiledViewport> vports;  // VPORTS: the model window's tiles (fewer than two = one)
     int vports_active = 0;
     std::uint32_t vports_version = 0;   // a change = the UI applies `vports`
@@ -411,6 +412,7 @@ struct RenderSnapshot {
         page_setups.clear();
         named_views.clear();
         layer_state_names.clear();
+        layer_filters.clear();
         vports.clear();
         vports_active = 0;
         vports_version = 0;

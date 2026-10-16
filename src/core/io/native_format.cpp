@@ -403,6 +403,25 @@ std::string serialize_native(const Document& doc) {
             s += '\n';
         }
     }
+    // v40: LAYERFILTER name layer... (spaces as 0x1f): a layer group filter.
+    for (const LayerGroupFilter& f : doc.layer_filters) {
+        const auto word = [](const std::string& in) {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& ch : out) {
+                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                    ch = '\x1f';
+                }
+            }
+            return out;
+        };
+        s += "LAYERFILTER ";
+        s += word(f.name);
+        for (const std::string& l : f.layers) {
+            s += ' ';
+            s += word(l);
+        }
+        s += '\n';
+    }
     // v40: LAYERSTATE name current (spaces as 0x1f, "-" = empty), then one LSLAYER per
     // layer: r g b linetype lineweight on frozen locked plot vpfreeze name...
     for (const LayerState& st : doc.layer_states) {
@@ -2626,6 +2645,23 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("VPFRZNEW record malformed");
             }
             doc.layers[li].vp_freeze_new = true;
+        } else if (key == "LAYERFILTER") {
+            if (tok.size() < 2) {
+                return fail("malformed LAYERFILTER");
+            }
+            const auto word = [](std::string_view t) {
+                std::string spelled(t);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            LayerGroupFilter group;
+            group.name = word(tok[1]);
+            for (std::size_t i = 2; i < tok.size(); ++i) {
+                group.layers.push_back(word(tok[i]));
+            }
+            doc.layer_filters.push_back(std::move(group));
         } else if (key == "LAYERSTATE") {
             // LAYERSTATE name current (v40); its layers follow as LSLAYER records.
             if (tok.size() != 3) {

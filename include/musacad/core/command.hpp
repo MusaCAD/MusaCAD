@@ -1130,6 +1130,11 @@ struct ReplaceBlockCommand {
     std::uint64_t group = 0;
 };
 
+/// The Layer Properties Manager's group filters, as they now are (New Group Filter, Delete).
+struct SetLayerFiltersCommand {
+    std::vector<LayerGroupFilter> filters;
+};
+
 /// A hatch pattern found in a .pat file, brought into the drawing so its hatches draw with
 /// it and keep it (as AutoCAD keeps the pattern with the hatch).
 struct AddPatternCommand {
@@ -2364,7 +2369,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
