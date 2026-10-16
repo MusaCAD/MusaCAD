@@ -3112,12 +3112,12 @@ QString MainWindow::load_user_aliases() {
     const QByteArray bytes = f.readAll();
     int loaded = 0;
     QStringList unknown;
-    for (const auto& [alias, command] :
+    for (const auto& [alias, target] :
          command::parse_pgp(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())))) {
-        if (processor_->registry().add_alias(alias, command)) {
+        if (processor_->registry().add_alias(alias, target)) {
             ++loaded;
         } else {
-            unknown << QString::fromStdString(alias + " (" + command + ")");
+            unknown << QString::fromStdString(alias + " (" + target + ")");
         }
     }
     user_aliases_applied_ = true;
@@ -3484,9 +3484,9 @@ void MainWindow::open_alias_editor() {
             return false;
         }
         const QByteArray bytes = f.readAll();
-        for (const auto& [alias, command] :
+        for (const auto& [alias, target] :
              command::parse_pgp(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())))) {
-            set_row(QString::fromStdString(alias), QString::fromStdString(command));
+            set_row(QString::fromStdString(alias), QString::fromStdString(target));
         }
         return true;
     };
