@@ -961,7 +961,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 30, 0.0);
         std::string text;
         for (std::size_t i = 0; i < f.cells.size(); ++i) {
-            if (i > 0) {
+            if (f.cells[i] == "^J") {
+                text += "^J"; // the next row, as AutoCAD writes it
+                continue;
+            }
+            if (i > 0 && f.cells[i - 1] != "^J") {
                 text += "%%v";
             }
             text += gdt_to_dxf(f.cells[i]);
@@ -2188,16 +2192,32 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
             const std::string* tol_ptr = find(body, 1);
             const std::string tol_text = tol_ptr != nullptr ? *tol_ptr : std::string{};
-            // Cells are separated by %%v; symbols come back as \U+ escapes.
-            std::size_t start = 0;
+            // Rows are separated by ^J and cells by %%v; symbols come back as \U+ escapes.
+            std::size_t row_start = 0;
             for (;;) {
-                const std::size_t sep = tol_text.find("%%v", start);
-                f.cells.push_back(gdt_from_dxf(
-                    tol_text.substr(start, sep == std::string::npos ? std::string::npos : sep - start)));
-                if (sep == std::string::npos) {
+                const std::size_t row_end = tol_text.find("^J", row_start);
+                const std::string row =
+                    tol_text.substr(row_start, row_end == std::string::npos ? std::string::npos : row_end - row_start);
+                std::size_t start = 0;
+                for (;;) {
+                    const std::size_t sep = row.find("%%v", start);
+                    std::string cell = gdt_from_dxf(row.substr(start, sep == std::string::npos ? std::string::npos : sep - start));
+                    if (!cell.empty()) { // an empty compartment is not drawn, as in AutoCAD
+                        f.cells.push_back(std::move(cell));
+                    }
+                    if (sep == std::string::npos) {
+                        break;
+                    }
+                    start = sep + 3;
+                }
+                if (row_end == std::string::npos) {
                     break;
                 }
-                start = sep + 3;
+                f.cells.push_back("^J");
+                row_start = row_end + 2;
+            }
+            while (!f.cells.empty() && f.cells.back() == "^J") {
+                f.cells.pop_back(); // no row after the last break
             }
             sink.fcfs->push_back(std::move(f));
             return;

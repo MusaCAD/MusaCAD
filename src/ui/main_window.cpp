@@ -3436,6 +3436,24 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
         grid->addLayout(box, 1, 3 + i);
         datums.emplace_back(value, mc);
     }
+    // The second row (a projected tolerance zone's height and its symbol) and the datum
+    // identifier, each drawn as a row under the frame.
+    auto* extra = new QFormLayout;
+    auto* height = new QLineEdit(&dlg);
+    height->setObjectName(QStringLiteral("ToleranceHeight"));
+    auto* projected = new QToolButton(&dlg);
+    projected->setCheckable(true);
+    projected->setFixedSize(34, 34);
+    projected->setIconSize(QSize(24, 24));
+    projected->setIcon(gdt_icon("\\U+24C5", ink));
+    projected->setToolTip(QStringLiteral("Projected tolerance zone"));
+    auto* datum_id = new QLineEdit(&dlg);
+    datum_id->setObjectName(QStringLiteral("ToleranceDatumId"));
+    datum_id->setMaximumWidth(60);
+    extra->addRow(QStringLiteral("Height:"), height);
+    extra->addRow(QStringLiteral("Projected Tolerance Zone:"), projected);
+    extra->addRow(QStringLiteral("Datum Identifier:"), datum_id);
+    lay->addLayout(extra);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     lay->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -3462,6 +3480,15 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
         if (!v.empty() || !m.empty()) {
             cells.push_back(v + m);
         }
+    }
+    const std::string hv = height->text().trimmed().toStdString();
+    if (!hv.empty() || projected->isChecked()) {
+        cells.push_back("^J"); // the next row
+        cells.push_back(hv + (projected->isChecked() ? (hv.empty() ? "" : " ") + std::string("\\U+24C5") : std::string()));
+    }
+    if (const std::string id = datum_id->text().trimmed().toUpper().toStdString(); !id.empty()) {
+        cells.push_back("^J");
+        cells.push_back("-" + id + "-"); // AutoCAD's datum identifier
     }
     return 1;
 }

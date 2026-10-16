@@ -24,6 +24,7 @@
 #include "musacad/command/commands.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/gdt.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
@@ -2079,4 +2080,34 @@ TEST_CASE("PAGESETUP's Set Current in a layout gives the layout that page setup"
     REQUIRE(doc.layouts.front().page.name == "A3 landscape");
     REQUIRE(doc.layouts.front().page.paper_w_mm == 420.0);
     engine.stop();
+}
+
+TEST_CASE("A feature control frame's second row and datum identifier stand under it, and travel through DXF") {
+    DimStyle s;
+    s.text_height = 2.5;
+    const std::vector<std::string> cells = {"\\U+2316", "0.1", "A", "^J", "6 \\U+24C5", "^J", "-B-"};
+    std::vector<std::string_view> views(cells.begin(), cells.end());
+    FcfData f;
+    f.pos = {0.0, 0.0};
+    f.cell_count = static_cast<std::uint32_t>(cells.size());
+    const FcfGeometry g = compute_fcf_geometry(f, views, s, Rgb{255, 255, 255});
+    REQUIRE(g.cell_quads.size() == cells.size());
+    REQUIRE(g.text_pos.size() == cells.size());
+    const double box = 2.0 * s.text_height;
+    REQUIRE(g.cell_quads[0][0].y == Approx(0.0));        // the first row
+    REQUIRE(g.cell_quads[4][0].y == Approx(-box));       // the projected zone, under it
+    REQUIRE(g.cell_quads[6][0].y == Approx(-2.0 * box)); // the datum identifier, under that
+    REQUIRE(g.cell_text[3].empty());
+
+    io::Document doc;
+    io::DocFcf d;
+    d.cells = cells;
+    doc.fcfs.push_back(d);
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_fcf_rows.dxf").string();
+    REQUIRE(io::save_dxf(doc, path).ok);
+    io::Document back;
+    REQUIRE(io::load_dxf(path, back).ok);
+    std::filesystem::remove(path);
+    REQUIRE(!back.fcfs.empty());
+    REQUIRE(back.fcfs[0].cells == cells);
 }

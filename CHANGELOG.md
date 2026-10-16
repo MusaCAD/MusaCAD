@@ -122,6 +122,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **Feature control frames in rows** (#62) -- the Geometric Tolerance window's Height, Projected
+  Tolerance Zone and Datum Identifier, as rows under the frame; rows (AutoCAD's `^J`) in DXF
+  too, and an AutoCAD frame's empty compartments are no longer drawn.
 - **A page setup for each layout** (#74) -- in a layout, the Page Setup Manager's Set Current
   gives the layout that setup: its paper, orientation and plot settings.
 - **Multileader styles** (#61, #78) -- MLEADERSTYLE (MLS): the Multileader Style Manager -- the
