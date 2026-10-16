@@ -1265,3 +1265,91 @@ TEST_CASE("A user alias starts its command, in place of a built-in one", "[alias
     REQUIRE(r.contains("ALIASEDIT"));
     REQUIRE(r.contains("REINIT"));
 }
+
+namespace {
+struct WorkspaceView : musacad::command::ViewControl {
+    std::vector<std::string> names{"Drafting & Annotation", "Mine"};
+    std::string current = "Drafting & Annotation";
+    std::vector<std::string> ops;
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    std::vector<std::string> workspaces() const override { return names; }
+    std::string current_workspace() const override { return current; }
+    bool workspace_op(const std::string& op, const std::string& name, const std::string& to) override {
+        ops.push_back(op + ":" + name + ":" + to);
+        if (op == "current") {
+            current = name;
+        } else if (op == "saveas") {
+            if (name == names.front()) {
+                return false;
+            }
+            names.push_back(name);
+            current = name;
+        } else if (op == "delete" && name == current) {
+            return false;
+        }
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("WORKSPACE makes a workspace current, saves, renames and deletes one; WSCURRENT asks for it") {
+    WorkspaceView view;
+    Out out;
+    CommandProcessor proc{[](Command) {}, &view, out};
+    proc.submit_line("WORKSPACE");
+    REQUIRE(out.prompt == "Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>: ");
+    proc.submit_line("");
+    REQUIRE(out.prompt == "Enter name of workspace to make current [?] <Drafting & Annotation>: ");
+    proc.submit_line("mine"); // any case
+    REQUIRE(view.current == "Mine");
+    REQUIRE_FALSE(proc.has_active_command());
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("SA");
+    REQUIRE(out.prompt == "Enter name of workspace to save [?] <Mine>: ");
+    proc.submit_line("Plan view"); // a name with a space
+    REQUIRE(view.ops.back() == "saveas:Plan view:");
+    REQUIRE(view.current == "Plan view");
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("SA");
+    proc.submit_line("Mine");
+    REQUIRE(out.prompt == "Workspace \"Mine\" already exists. Replace it? [Yes/No] <N>: ");
+    proc.submit_line("");
+    REQUIRE(view.ops.back() == "saveas:Plan view:"); // nothing replaced
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("R");
+    REQUIRE(out.prompt == "Enter name of workspace to rename [?]: ");
+    proc.submit_line("Drafting & Annotation");
+    REQUIRE(out.lines.back() == "\"Drafting & Annotation\" is built in: it cannot be renamed or deleted.");
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("R");
+    proc.submit_line("Mine");
+    REQUIRE(out.prompt == "Enter new name for workspace \"Mine\": ");
+    proc.submit_line("Sections");
+    REQUIRE(view.ops.back() == "rename:Mine:Sections");
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("D");
+    proc.submit_line("Plan view");
+    REQUIRE(out.lines.back() == "The current workspace cannot be deleted.");
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("?");
+    REQUIRE(out.lines.back() == "  * Plan view");
+    REQUIRE(out.prompt == "Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>: ");
+    proc.submit_line("C");
+    proc.submit_line("Nowhere");
+    REQUIRE(out.lines.back() == "Workspace \"Nowhere\" not found.");
+    proc.submit_line("");
+    REQUIRE_FALSE(proc.has_active_command());
+
+    proc.submit_line("WSCURRENT");
+    REQUIRE(out.prompt == "Enter new value for WSCURRENT <\"Plan view\">: ");
+    proc.submit_line("Drafting & Annotation");
+    REQUIRE(view.current == "Drafting & Annotation");
+    proc.submit_line("WSSAVE");
+    REQUIRE(view.ops.back() == "dialog::");
+}

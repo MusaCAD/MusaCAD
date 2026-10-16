@@ -13,6 +13,8 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <QPoint>
 #include <QWindow>
@@ -115,6 +117,20 @@ public:
     bool page_setup_manager() override;
     bool set_navbar(bool on) override;
     bool window_action(const std::string& action) override;
+    std::vector<std::string> workspaces() const override {
+        return workspace_list_callback_ ? workspace_list_callback_().first : std::vector<std::string>{};
+    }
+    std::string current_workspace() const override {
+        return workspace_list_callback_ ? workspace_list_callback_().second : std::string{};
+    }
+    bool workspace_op(const std::string& op, const std::string& name, const std::string& to) override {
+        return workspace_op_callback_ && workspace_op_callback_(op, name, to);
+    }
+    void set_workspace_callbacks(std::function<std::pair<std::vector<std::string>, std::string>()> list,
+                                 std::function<bool(const std::string&, const std::string&, const std::string&)> op) {
+        workspace_list_callback_ = std::move(list);
+        workspace_op_callback_ = std::move(op);
+    }
     void set_window_action_callback(std::function<bool(const std::string&)> cb) { window_action_callback_ = std::move(cb); }
     void set_navbar_callback(std::function<void(bool)> cb) { navbar_callback_ = std::move(cb); }
     int insert_table_dialog(command::InsertTableSettings& io) override;
@@ -812,6 +828,8 @@ private:
     std::function<void()> page_setup_callback_;
     std::function<void(bool)> navbar_callback_;
     std::function<bool(const std::string&)> window_action_callback_;
+    std::function<std::pair<std::vector<std::string>, std::string>()> workspace_list_callback_;
+    std::function<bool(const std::string&, const std::string&, const std::string&)> workspace_op_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;
     std::function<int(command::QLeaderSettings&)> qleader_settings_callback_;
     std::function<int(bool&, core::Rgb&)> color_dialog_callback_;

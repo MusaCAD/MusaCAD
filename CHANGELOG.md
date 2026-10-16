@@ -87,6 +87,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   an alias for any command, or one of Musa CAD's given to another command, added, removed or
   loaded from another PGP file such as AutoCAD's acad.pgp; kept in `musacaduser.pgp` in the
   settings folder and read at start-up. **REINIT** reads the file again.
+- **Workspaces** (#73) -- **WORKSPACE** (`[setCurrent/SAveas/Rename/Delete/?]`), **WSCURRENT**,
+  **WSSAVE** and Workspace Switching on the status bar: the palettes, the ribbon and the Quick
+  Access Toolbar saved under a name and put back; Drafting & Annotation is the window as it
+  starts. The current one comes back at the next start.
 - **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
   Zoom tools at the drawing's right edge.
 - **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and

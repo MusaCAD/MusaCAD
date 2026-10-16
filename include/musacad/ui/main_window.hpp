@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <QVariant>
+#include <QMap>
 #include <QMainWindow>
 #include <QImage>
 #include <QByteArray>
@@ -35,6 +36,7 @@ class QObject;
 class QCloseEvent;
 class QTabBar;
 class QToolBar;
+class QMenu;
 class QPoint;
 
 namespace musacad::command {
@@ -424,6 +426,20 @@ private:
     void publish();    ///< PUBLISH: the sheets chosen, one PDF page each
     void open_page_setup_manager(); ///< PAGESETUP
     void show_navbar(bool on);      ///< NAVBAR
+    // Workspaces (WORKSPACE, WSCURRENT, WSSAVE, the status bar's Workspace Switching): the
+    // palettes, the ribbon and the Quick Access Toolbar as they were saved.
+    QVariantMap capture_workspace() const;
+    void apply_workspace(const QVariantMap& w);
+    QStringList workspace_names() const; ///< the built-in one first
+    bool workspace_op(const std::string& op, const QString& name, const QString& to);
+    void open_save_workspace(); ///< WSSAVE: Save Workspace
+    void init_workspaces();
+    QMenu* qat_menu_ = nullptr;   ///< Customize Quick Access Toolbar
+    QStringList qat_default_shown_;
+    QVariantMap default_workspace_;
+    QVariantMap saved_workspaces_; ///< name -> workspace
+    QString current_workspace_;
+    bool workspace_harness_ = false; ///< under a developer hook: nothing read or kept
     int open_insert_table_dialog(command::InsertTableSettings& io); ///< TABLE (1 OK, 0 cancelled)
     int open_qleader_settings(command::QLeaderSettings& io);        ///< QLEADER Settings (1 OK, 0 cancelled)
     int open_select_color(bool& by_layer, core::Rgb& color);         ///< COLOR: Select Color (1 OK, 0 cancelled)

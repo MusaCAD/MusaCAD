@@ -2779,6 +2779,36 @@ private:
     bool done_ = false;
 };
 
+/// WORKSPACE: `Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>:` -- a
+/// workspace (the window's palettes, the ribbon and the Quick Access Toolbar as they were
+/// saved) made current, saved, renamed, deleted or listed. WSCURRENT asks for the one to
+/// make current; WSSAVE opens Save Workspace.
+class WorkspaceCommand final : public ICommand {
+public:
+    enum class Mode : std::uint8_t { Workspace, Current, Save };
+    explicit WorkspaceCommand(Mode mode = Mode::Workspace) : mode_(mode) {}
+    std::string name() const override {
+        return mode_ == Mode::Current ? "WSCURRENT" : mode_ == Mode::Save ? "WSSAVE" : "WORKSPACE";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ != Step::Option && step_ != Step::Replace; }
+
+private:
+    enum class Step : std::uint8_t { Option, Current, SaveAs, Replace, Rename, RenameTo, Delete };
+    void ask(CommandContext& ctx, Step step);
+    void list(CommandContext& ctx) const;
+    Mode mode_;
+    Step step_ = Step::Option;
+    std::string name_;
+    bool done_ = false;
+};
+
 /// TFRAMES (Express Tools): the frames of wipeouts and images off, or on again.
 class ToggleFramesUiCommand final : public ICommand {
 public:

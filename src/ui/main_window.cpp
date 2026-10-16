@@ -426,6 +426,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     build_ribbon();
     build_status_bar();
+    init_workspaces();
 
     title_timer_ = new QTimer(this);
     connect(title_timer_, &QTimer::timeout, this, [this] {
@@ -3732,6 +3733,195 @@ void MainWindow::cycle_isoplane() {
     g.isoplane = static_cast<std::uint8_t>((g.isoplane + 1) % 3);
     processor_->set_grid_settings(g);
     command_widget_->append_line(std::string("<Isoplane ") + kNames[g.isoplane] + ">");
+}
+
+namespace {
+const QString kBuiltinWorkspace = QStringLiteral("Drafting & Annotation");
+} // namespace
+
+QVariantMap MainWindow::capture_workspace() const {
+    QVariantMap w;
+    w.insert(QStringLiteral("docks"), saveState());
+    w.insert(QStringLiteral("ribbon_minimized"), ribbon_->minimized());
+    QStringList shown;
+    bool below = false;
+    if (qat_menu_ != nullptr) {
+        for (QAction* a : qat_menu_->actions()) {
+            if (!a->isCheckable()) {
+                continue;
+            }
+            if (a->data().toString() == QStringLiteral("below")) {
+                below = a->isChecked();
+            } else if (a->isChecked()) {
+                shown << a->text();
+            }
+        }
+    }
+    w.insert(QStringLiteral("qat_shown"), shown);
+    w.insert(QStringLiteral("qat_below"), below);
+    return w;
+}
+
+void MainWindow::apply_workspace(const QVariantMap& w) {
+    const QByteArray docks = w.value(QStringLiteral("docks")).toByteArray();
+    if (!docks.isEmpty()) {
+        restoreState(docks);
+    }
+    if (navbar_ != nullptr) {
+        show_navbar(navbar_->isVisible()); // the ribbon's toggle in step
+    }
+    ribbon_->set_minimized(w.value(QStringLiteral("ribbon_minimized")).toBool());
+    if (qat_menu_ != nullptr) {
+        const QStringList shown = w.value(QStringLiteral("qat_shown")).toStringList();
+        for (QAction* a : qat_menu_->actions()) {
+            if (!a->isCheckable()) {
+                continue;
+            }
+            a->setChecked(a->data().toString() == QStringLiteral("below") ? w.value(QStringLiteral("qat_below")).toBool()
+                                                                          : shown.contains(a->text()));
+        }
+    }
+}
+
+QStringList MainWindow::workspace_names() const {
+    QStringList names{kBuiltinWorkspace};
+    names << saved_workspaces_.keys();
+    return names;
+}
+
+bool MainWindow::workspace_op(const std::string& op, const QString& name, const QString& to) {
+    const auto keep = [this] {
+        if (!workspace_harness_) {
+            QSettings s;
+            s.setValue(QStringLiteral("workspaces/saved"), saved_workspaces_);
+            s.setValue(QStringLiteral("workspaces/current"), current_workspace_);
+        }
+    };
+    const bool builtin = name.compare(kBuiltinWorkspace, Qt::CaseInsensitive) == 0;
+    if (op == "current") {
+        if (!builtin && !saved_workspaces_.contains(name)) {
+            return false;
+        }
+        apply_workspace(builtin ? default_workspace_ : saved_workspaces_.value(name).toMap());
+        current_workspace_ = builtin ? kBuiltinWorkspace : name;
+        keep();
+        return true;
+    }
+    if (op == "saveas") {
+        if (builtin || name.trimmed().isEmpty()) {
+            return false;
+        }
+        saved_workspaces_.insert(name, capture_workspace());
+        current_workspace_ = name;
+        keep();
+        return true;
+    }
+    if (op == "rename") {
+        if (builtin || !saved_workspaces_.contains(name) || to.trimmed().isEmpty()) {
+            return false;
+        }
+        const QVariant w = saved_workspaces_.take(name);
+        saved_workspaces_.insert(to, w);
+        if (current_workspace_ == name) {
+            current_workspace_ = to;
+        }
+        keep();
+        return true;
+    }
+    if (op == "delete") {
+        if (builtin || name == current_workspace_ || !saved_workspaces_.contains(name)) {
+            return false;
+        }
+        saved_workspaces_.remove(name);
+        keep();
+        return true;
+    }
+    if (op == "dialog") {
+        QTimer::singleShot(0, this, &MainWindow::open_save_workspace);
+        return true;
+    }
+    return false;
+}
+
+void MainWindow::open_save_workspace() {
+    QInputDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("SaveWorkspaceDialog"));
+    dlg.setWindowTitle(QStringLiteral("Save Workspace"));
+    dlg.setLabelText(QStringLiteral("Name:"));
+    dlg.setComboBoxItems(saved_workspaces_.keys());
+    dlg.setComboBoxEditable(true);
+    dlg.setTextValue(QString());
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString name = dlg.textValue().trimmed();
+    if (name.isEmpty()) {
+        return;
+    }
+    if (name.compare(kBuiltinWorkspace, Qt::CaseInsensitive) == 0) {
+        QMessageBox::information(this, QStringLiteral("Save Workspace"),
+                                 QStringLiteral("\"%1\" is built in: save the workspace under another name.").arg(kBuiltinWorkspace));
+        return;
+    }
+    if (saved_workspaces_.contains(name) &&
+        QMessageBox::question(this, QStringLiteral("Save Workspace"),
+                              QStringLiteral("Workspace \"%1\" already exists. Replace it?").arg(name)) != QMessageBox::Yes) {
+        return;
+    }
+    (void)workspace_op("saveas", name, {});
+}
+
+// The built-in workspace is the window as it starts; the saved ones are read from the
+// settings, and the one current when the program last closed is put back.
+void MainWindow::init_workspaces() {
+    workspace_harness_ = developer_hook_active();
+    default_workspace_ = capture_workspace();
+    default_workspace_.insert(QStringLiteral("qat_shown"), qat_default_shown_);
+    default_workspace_.insert(QStringLiteral("qat_below"), false);
+    default_workspace_.insert(QStringLiteral("ribbon_minimized"), false);
+    current_workspace_ = kBuiltinWorkspace;
+    if (!workspace_harness_) {
+        QSettings s;
+        saved_workspaces_ = s.value(QStringLiteral("workspaces/saved")).toMap();
+        const QString cur = s.value(QStringLiteral("workspaces/current")).toString();
+        if (saved_workspaces_.contains(cur)) {
+            apply_workspace(saved_workspaces_.value(cur).toMap());
+            current_workspace_ = cur;
+        }
+    }
+    viewport_->set_workspace_callbacks(
+        [this] {
+            std::vector<std::string> names;
+            for (const QString& n : workspace_names()) {
+                names.push_back(n.toStdString());
+            }
+            return std::make_pair(names, current_workspace_.toStdString());
+        },
+        [this](const std::string& op, const std::string& name, const std::string& to) {
+            return workspace_op(op, QString::fromStdString(name), QString::fromStdString(to));
+        });
+    // Workspace Switching, on the status bar: the workspaces, Save Current As.
+    auto* btn = new QToolButton(this);
+    btn->setObjectName(QStringLiteral("WorkspaceSwitch"));
+    btn->setAutoRaise(true);
+    btn->setFocusPolicy(Qt::NoFocus);
+    btn->setIcon(ribbon_icon(QStringLiteral("assets/ribbon/settings.svg")));
+    btn->setToolTip(QStringLiteral("Workspace Switching"));
+    btn->setPopupMode(QToolButton::InstantPopup);
+    auto* menu = new QMenu(btn);
+    btn->setMenu(menu);
+    connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+        menu->clear();
+        for (const QString& n : workspace_names()) {
+            QAction* a = menu->addAction(n);
+            a->setCheckable(true);
+            a->setChecked(n == current_workspace_);
+            connect(a, &QAction::triggered, this, [this, n] { (void)workspace_op("current", n, {}); });
+        }
+        menu->addSeparator();
+        menu->addAction(QStringLiteral("Save Current As\u2026"), this, &MainWindow::open_save_workspace);
+    });
+    statusBar()->addPermanentWidget(btn);
 }
 
 void MainWindow::show_navbar(bool on) {

@@ -299,6 +299,19 @@ public:
         (void)action;
         return false;
     }
+    /// Workspaces (WORKSPACE, WSCURRENT, WSSAVE): the names, the built-in one first, and the
+    /// current one; empty where there is no window.
+    [[nodiscard]] virtual std::vector<std::string> workspaces() const { return {}; }
+    [[nodiscard]] virtual std::string current_workspace() const { return {}; }
+    /// A workspace made current ("current"), saved from the window as it is ("saveas"),
+    /// renamed ("rename", to `to`) or deleted ("delete"); "dialog" opens WSSAVE's Save
+    /// Workspace. False when it is not done.
+    virtual bool workspace_op(const std::string& op, const std::string& name, const std::string& to) {
+        (void)op;
+        (void)name;
+        (void)to;
+        return false;
+    }
     /// NAVBAR: the navigation bar shown or hidden; false where there is no window.
     virtual bool set_navbar(bool on) {
         (void)on;

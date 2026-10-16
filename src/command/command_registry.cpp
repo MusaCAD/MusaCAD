@@ -254,6 +254,12 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
              "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
+    reg({"WORKSPACE"}, [] { return std::make_unique<WorkspaceCommand>(); }, "",
+        "Make a workspace current, or save, rename, delete or list them.");
+    reg({"WSCURRENT"}, [] { return std::make_unique<WorkspaceCommand>(WorkspaceCommand::Mode::Current); }, "",
+        "The current workspace.");
+    reg({"WSSAVE"}, [] { return std::make_unique<WorkspaceCommand>(WorkspaceCommand::Mode::Save); }, "",
+        "Save the palettes, the ribbon and the Quick Access Toolbar as they are, as a workspace.");
     file_cmd({"CLOSEALL"}, "CLOSEALL", "", "Close every open drawing.");
     file_cmd({"QUIT", "EXIT"}, "QUIT", "", "Quit Musa CAD, asking to save what is not saved.");
     file_cmd({"IMPORT", "IMP", "DXFIN"}, "IMPORT", "assets/ribbon/import.svg", "Bring a DXF file into the drawing.");

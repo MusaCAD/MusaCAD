@@ -7573,6 +7573,171 @@ void NavBarCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void WorkspaceCommand::start(CommandContext& ctx) {
+    if (ctx.view() == nullptr || ctx.view()->workspaces().empty()) {
+        ctx.echo(name() + " needs the drawing window.");
+        done_ = true;
+        return;
+    }
+    if (mode_ == Mode::Save) {
+        (void)ctx.view()->workspace_op("dialog", {}, {});
+        done_ = true;
+        return;
+    }
+    ask(ctx, mode_ == Mode::Current ? Step::Current : Step::Option);
+}
+
+void WorkspaceCommand::ask(CommandContext& ctx, Step step) {
+    step_ = step;
+    const std::string cur = ctx.view()->current_workspace();
+    switch (step) {
+    case Step::Option:
+        ctx.set_prompt("Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>: ");
+        break;
+    case Step::Current:
+        ctx.set_prompt(mode_ == Mode::Current ? "Enter new value for WSCURRENT <\"" + cur + "\">: "
+                                              : "Enter name of workspace to make current [?] <" + cur + ">: ");
+        break;
+    case Step::SaveAs:
+        ctx.set_prompt("Enter name of workspace to save [?] <" + cur + ">: ");
+        break;
+    case Step::Replace:
+        ctx.set_prompt("Workspace \"" + name_ + "\" already exists. Replace it? [Yes/No] <N>: ");
+        break;
+    case Step::Rename:
+        ctx.set_prompt("Enter name of workspace to rename [?]: ");
+        break;
+    case Step::RenameTo:
+        ctx.set_prompt("Enter new name for workspace \"" + name_ + "\": ");
+        break;
+    case Step::Delete:
+        ctx.set_prompt("Enter name of workspace to delete [?]: ");
+        break;
+    }
+}
+
+void WorkspaceCommand::list(CommandContext& ctx) const {
+    const std::string cur = ctx.view()->current_workspace();
+    ctx.echo("Workspaces:");
+    for (const std::string& w : ctx.view()->workspaces()) {
+        ctx.echo((w == cur ? "  * " : "    ") + w);
+    }
+}
+
+void WorkspaceCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const std::vector<std::string> names = ctx.view()->workspaces();
+    // A name as the user typed it, matched to a workspace whatever its case.
+    const auto known = [&](const std::string& n) -> std::string {
+        for (const std::string& w : names) {
+            if (upper(w) == upper(n)) {
+                return w;
+            }
+        }
+        return {};
+    };
+    if (u == "?" && step_ != Step::Replace && step_ != Step::RenameTo) {
+        list(ctx);
+        ask(ctx, step_);
+        return;
+    }
+    switch (step_) {
+    case Step::Option:
+        if (u.empty() || u == "C" || u == "SETCURRENT") {
+            ask(ctx, Step::Current);
+        } else if (u == "SA" || u == "SAVEAS") {
+            ask(ctx, Step::SaveAs);
+        } else if (u == "R" || u == "RENAME") {
+            ask(ctx, Step::Rename);
+        } else if (u == "D" || u == "DELETE") {
+            ask(ctx, Step::Delete);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            ask(ctx, Step::Option);
+        }
+        return;
+    case Step::Current: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::string w = known(t);
+        if (w.empty()) {
+            ctx.echo("Workspace \"" + t + "\" not found.");
+            ask(ctx, Step::Current);
+            return;
+        }
+        (void)ctx.view()->workspace_op("current", w, {});
+        done_ = true;
+        return;
+    }
+    case Step::SaveAs:
+        name_ = t.empty() ? ctx.view()->current_workspace() : t;
+        if (const std::string w = known(name_); !w.empty()) {
+            name_ = w;
+            if (!t.empty()) {
+                ask(ctx, Step::Replace);
+                return;
+            }
+        }
+        if (!ctx.view()->workspace_op("saveas", name_, {})) {
+            ctx.echo("\"" + name_ + "\" is built in: save the workspace under another name.");
+        }
+        done_ = true;
+        return;
+    case Step::Replace:
+        if (u == "Y" || u == "YES") {
+            if (!ctx.view()->workspace_op("saveas", name_, {})) {
+                ctx.echo("\"" + name_ + "\" is built in: save the workspace under another name.");
+            }
+        }
+        done_ = true;
+        return;
+    case Step::Rename:
+    case Step::Delete: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::string w = known(t);
+        if (w.empty()) {
+            ctx.echo("Workspace \"" + t + "\" not found.");
+            ask(ctx, step_);
+            return;
+        }
+        if (w == names.front()) {
+            ctx.echo("\"" + w + "\" is built in: it cannot be renamed or deleted.");
+            done_ = true;
+            return;
+        }
+        name_ = w;
+        if (step_ == Step::Rename) {
+            ask(ctx, Step::RenameTo);
+            return;
+        }
+        if (!ctx.view()->workspace_op("delete", name_, {})) {
+            ctx.echo("The current workspace cannot be deleted.");
+        }
+        done_ = true;
+        return;
+    }
+    case Step::RenameTo:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (!known(t).empty() && upper(t) != upper(name_)) {
+            ctx.echo("Workspace \"" + t + "\" already exists.");
+            ask(ctx, Step::RenameTo);
+            return;
+        }
+        (void)ctx.view()->workspace_op("rename", name_, t);
+        done_ = true;
+        return;
+    }
+}
+
 void DimStyleFileCommand::start(CommandContext& ctx) {
     if (import_) {
         ask_file(ctx);

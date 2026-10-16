@@ -180,6 +180,7 @@ void MainWindow::build_ribbon() {
         std::vector<QString> defaults;
         for (const auto& [name, btn] : qat_items) {
             defaults.push_back(name);
+            qat_default_shown_ << name;
         }
         for (const Extra& e : kExtras) {
             auto* a = new QAction(ribbon_icon(QString::fromLatin1(e.icon)), QString::fromLatin1(e.name), this);
@@ -236,6 +237,7 @@ void MainWindow::build_ribbon() {
             }
         });
         ribbon_->set_qat_menu(menu);
+        qat_menu_ = menu;
     }
 
     // Multi-document and clipboard shortcuts (app-wide).
