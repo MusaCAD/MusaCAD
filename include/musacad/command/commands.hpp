@@ -2547,7 +2547,9 @@ private:
 /// Decurve, Reverse, Undo. Width, Fit and Ltype gen are reported as not supported.
 class PeditCommand final : public ICommand {
 public:
-    std::string name() const override { return "PEDIT"; }
+    /// `multiple`: MPEDIT (Express Tools) -- PEDIT's Multiple from the start.
+    explicit PeditCommand(bool multiple = false) : mpedit_(multiple) {}
+    std::string name() const override { return mpedit_ ? "MPEDIT" : "PEDIT"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -2570,6 +2572,7 @@ private:
         VWidthEnd,   ///< ... and its ending width
     };
     double vw_start_ = 0.0;
+    bool mpedit_ = false;
     bool multiple_ = false;
     SelectObjectsPhase select_;
     void prompt_option(CommandContext& ctx) const;
@@ -2901,6 +2904,50 @@ public:
 
 private:
     void after(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// DIMREASSOC (Express Tools): `Select dimension objects:` -- each one's text override taken
+/// away, so it shows its measurement again.
+class DimReassocCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMREASSOC"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.has_selection()) {
+            after(ctx);
+            return;
+        }
+        select_.begin(ctx, "Select dimension objects: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+
+private:
+    void after(CommandContext& ctx) {
+        if (ctx.has_selection()) {
+            core::DimEditCommand c;
+            c.op = core::DimEditCommand::Op::New; // an empty override: the measurement
+            c.group = ctx.group_id();
+            ctx.submit(std::move(c));
+        }
+        done_ = true;
+    }
     SelectObjectsPhase select_;
     bool done_ = false;
 };

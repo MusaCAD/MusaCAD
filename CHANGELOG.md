@@ -120,6 +120,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **MPEDIT** and **DIMREASSOC** (#77) -- PEDIT's Multiple from the start; dimensions' text
+  overrides taken away so they show their measurements again.
 - **DIMBREAK** (#60) -- `Select dimension to add/remove break or [Multiple]:` and `Select object to
   break dimension or [Auto/Manual/Remove] <Auto>:`: the dimension and extension lines broken
   where other objects cross them (3.75 for a 2.5 arrow), between two points, or the breaks

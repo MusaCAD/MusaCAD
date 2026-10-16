@@ -1814,3 +1814,17 @@ TEST_CASE("STRETCH's Copy leaves the original where it is and adds the stretched
     REQUIRE(doc.lines[0].b == Vec2{10, 0}); // the original
     engine.stop();
 }
+
+TEST_CASE("MPEDIT starts at PEDIT's Multiple; DIMREASSOC takes dimension text overrides away") {
+    H h;
+    h.run({"MPEDIT"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    h.proc.cancel();
+    h.proc.set_selection_count(2);
+    h.run({"DIMREASSOC"});
+    const auto* c = h.last<DimEditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == DimEditCommand::Op::New);
+    REQUIRE(c->text.empty());
+    REQUIRE_FALSE(c->pick.has_value());
+}

@@ -369,6 +369,10 @@ CommandRegistry CommandRegistry::make_default() {
         "The running object snaps as a bit sum (1 END, 2 MID, 4 CEN, 8 NOD, 16 QUA, 32 INT, ...).");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
+    reg({"MPEDIT"}, [] { return std::make_unique<PeditCommand>(true); }, "",
+        "Edit several polylines at once (PEDIT's Multiple).");
+    reg({"DIMREASSOC"}, [] { return std::make_unique<DimReassocCommand>(); }, "",
+        "Take the text overrides off dimensions so they show their measurements again.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
         "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },

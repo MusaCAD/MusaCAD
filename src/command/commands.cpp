@@ -6091,6 +6091,10 @@ void PeditCommand::prompt_vertex(CommandContext& ctx) const {
 void PeditCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Select;
+    if (mpedit_) {
+        input(ctx, "M"); // MPEDIT: Multiple from the start
+        return;
+    }
     ctx.set_prompt("Select polyline or [Multiple]: ");
 }
 
