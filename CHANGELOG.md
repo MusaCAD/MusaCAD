@@ -189,6 +189,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   header and data rows, at its text heights and in its colours, redrawn as the style and the
   rows change; Insertion behavior Specify window fits the columns' width and the data rows to a
   window.
+- **Spline leaders** (#61) -- MLEADER's Leader type sPline (the landing left straight) and None
+  (no leader line), LEADER's Format Spline and None (no arrowhead); kept in the drawing and
+  written to DXF's leader path type and arrowhead flag.
 - **Attribute values kept by tag when a block is redefined** (#75) -- BLOCK under the same name,
   REFEDIT, the Block Editor and INSERT of a drawing file: each reference's values follow their
   tags into the new definition.
