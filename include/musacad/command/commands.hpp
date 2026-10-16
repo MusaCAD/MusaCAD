@@ -2940,6 +2940,36 @@ private:
     bool done_ = false;
 };
 
+/// XLIST (Express Tools): `Select nested xref or block object to list:` -- the object inside a
+/// block reference under the pick: what it is, the block, and its layer, colour and linetype.
+class XListCommand final : public ICommand {
+public:
+    std::string name() const override { return "XLIST"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select nested xref or block object to list: "); }
+    void input(CommandContext& ctx, const std::string& text) override {
+        if (trimmed_empty(text)) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = pick_point(ctx, text)) {
+            core::NestedCopyCommand c{*p, ctx.pick_radius(), {}, 0};
+            c.list = true;
+            ctx.submit(std::move(c));
+            done_ = true;
+        }
+    }
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    static bool trimmed_empty(const std::string& t);
+    static std::optional<core::Vec2> pick_point(CommandContext& ctx, const std::string& text);
+    bool done_ = false;
+};
+
 /// DIMREASSOC (Express Tools): `Select dimension objects:` -- each one's text override taken
 /// away, so it shows its measurement again.
 class DimReassocCommand final : public ICommand {

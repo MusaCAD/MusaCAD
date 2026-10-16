@@ -1882,3 +1882,31 @@ TEST_CASE("ATTOUT writes attribute values to a tab-separated file; ATTIN reads t
     fs::remove(path);
     fs::remove(dp);
 }
+
+TEST_CASE("XLIST says what an object inside a block reference is, and its properties") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "PLATE";
+    b.lines.push_back(io::DocLine{{0, 0}, {10, 0}, {}});
+    doc.block_defs.push_back(b);
+    io::DocInsert ins;
+    ins.block_name = "PLATE";
+    ins.pos = {100, 100};
+    doc.inserts.push_back(ins);
+    const std::string dp = (fs::temp_directory_path() / "musacad_xlist.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    NestedCopyCommand x{{105, 100}, 1.0, {}, 0};
+    x.list = true;
+    engine.submit(x);
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "Object: Line  Block name: PLATE  Layer: 0  Color: BYLAYER  Linetype: BYLAYER";
+    }));
+    const io::Document out = dump(engine, "musacad_xlist_out.musa");
+    REQUIRE(out.lines.empty()); // nothing copied
+    engine.stop();
+    fs::remove(dp);
+}

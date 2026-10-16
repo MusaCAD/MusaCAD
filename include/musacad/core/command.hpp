@@ -1393,6 +1393,7 @@ struct NestedCopyCommand {
     double radius = 0.0;
     Vec2 offset{};
     std::uint64_t group = 0;
+    bool list = false; ///< XLIST: the nested object's kind, block, layer, colour and linetype said, nothing copied
 };
 /// DATAEXTRACTION: the block references -- the selected ones, or every one with `all` --
 /// counted by name and attribute values (one row each, Count and Name then a column per

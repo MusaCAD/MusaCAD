@@ -7932,6 +7932,14 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+bool XListCommand::trimmed_empty(const std::string& t) {
+    return trimmed(t).empty();
+}
+
+std::optional<core::Vec2> XListCommand::pick_point(CommandContext& ctx, const std::string& text) {
+    return read_point(ctx, text);
+}
+
 void AttFileCommand::start(CommandContext& ctx) {
     if (in_ || ctx.has_selection()) {
         ask_file(ctx);

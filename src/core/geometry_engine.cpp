@@ -6430,6 +6430,45 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
             report("No object inside the block reference there.");
             return;
         }
+        if (ncopy->list) {
+            // XLIST: what the object is, and its properties as the block holds them.
+            Command probe = parts[best];
+            std::string kind = "Object";
+            std::visit(
+                [&](const auto& x) {
+                    using P = std::decay_t<decltype(x)>;
+                    if constexpr (std::is_same_v<P, AddLineCommand>) {
+                        kind = "Line";
+                    } else if constexpr (std::is_same_v<P, AddCircleCommand>) {
+                        kind = "Circle";
+                    } else if constexpr (std::is_same_v<P, AddArcCommand>) {
+                        kind = "Arc";
+                    } else if constexpr (std::is_same_v<P, AddPolylineCommand>) {
+                        kind = "Polyline";
+                    } else if constexpr (std::is_same_v<P, AddTextCommand>) {
+                        kind = "Text";
+                    } else if constexpr (std::is_same_v<P, AddMTextCommand>) {
+                        kind = "MText";
+                    } else if constexpr (std::is_same_v<P, AddInsertCommand>) {
+                        kind = "Block Reference";
+                    }
+                },
+                probe);
+            EntityProps pr{};
+            modify_cmd_props(probe, [&](EntityProps& p) { pr = p; });
+            static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
+            const InsertData* in = store_.insert(exploded.front());
+            const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+            const std::string layer = pr.layer < store_.layers().size() ? store_.layers()[pr.layer].name : "0";
+            const std::string color = pr.color_by_layer() ? "BYLAYER"
+                                                          : std::to_string(pr.color.r) + "," + std::to_string(pr.color.g) +
+                                                                "," + std::to_string(pr.color.b);
+            const std::string ltype =
+                pr.linetype_by_layer() ? "BYLAYER" : kLt[std::min<std::size_t>(static_cast<std::size_t>(pr.linetype), 3)];
+            report("Object: " + kind + "  Block name: " + (bd != nullptr ? bd->name : std::string()) + "  Layer: " + layer +
+                   "  Color: " + color + "  Linetype: " + ltype);
+            return;
+        }
         Command part = parts[best];
         translate_cmd(part, ncopy->offset);
         const EntityHandle nh = create_indexed(part);
