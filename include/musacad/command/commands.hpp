@@ -2940,6 +2940,27 @@ private:
     bool done_ = false;
 };
 
+/// EXTRIM (Express Tools): `Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for
+/// cutting edge..`, then `Specify the side to trim on:` -- everything crossing the edge is
+/// trimmed away on that side.
+class ExtrimUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "EXTRIM"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for cutting edge..");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    std::optional<core::Vec2> edge_;
+    bool done_ = false;
+};
+
 /// VPSYNC (Express Tools): `Select master viewport:`, then `Select viewports to be aligned to
 /// master viewport:` -- they take its scale and line up with it.
 class VpSyncUiCommand final : public ICommand {

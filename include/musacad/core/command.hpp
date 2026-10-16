@@ -410,6 +410,15 @@ struct DimBreakCommand {
     Vec2 p2{};
     std::uint64_t group = 0;
 };
+/// EXTRIM (Express Tools): every object crossing the cutting edge at `edge` (a line, arc,
+/// circle, ellipse or polyline) trimmed away on the side `side` is on -- inside or outside
+/// a closed edge. One undo step.
+struct ExtrimCommand {
+    Vec2 edge{};
+    Vec2 side{};
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
 /// ATTOUT (Express Tools): the attribute values of the selected block references written to
 /// `path` as tab-separated text -- HANDLE, BLOCKNAME and a column per tag ("<>" where a
 /// block has no such tag) -- for a spreadsheet. ATTIN reads such a file back and sets the
@@ -2230,7 +2239,7 @@ using Command =
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
                  SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
-                 SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand,
+                 SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

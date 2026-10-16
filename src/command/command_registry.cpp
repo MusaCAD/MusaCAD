@@ -369,6 +369,8 @@ CommandRegistry CommandRegistry::make_default() {
         "The running object snaps as a bit sum (1 END, 2 MID, 4 CEN, 8 NOD, 16 QUA, 32 INT, ...).");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
+    reg({"EXTRIM"}, [] { return std::make_unique<ExtrimUiCommand>(); }, "",
+        "Trim everything crossing a cutting edge on one side of it.");
     reg({"VPSYNC"}, [] { return std::make_unique<VpSyncUiCommand>(); }, "",
         "Line layout viewports up with a master viewport, at its scale.");
     reg({"XLIST"}, [] { return std::make_unique<XListCommand>(); }, "",

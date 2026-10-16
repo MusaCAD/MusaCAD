@@ -1922,3 +1922,35 @@ TEST_CASE("VPSYNC asks for the master viewport, then the viewports to line up wi
     REQUIRE(h.last<VpSyncCommand>() != nullptr);
     REQUIRE(h.last<VpSyncCommand>()->master == Vec2{10, 10});
 }
+
+TEST_CASE("EXTRIM trims everything crossing a cutting edge on the side picked") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 10, 1});                // the cutting edge
+    engine.submit(AddLineCommand{{-20, 0}, {20, 0}, 1});           // crosses it twice
+    engine.submit(AddLineCommand{{0, -20}, {0, 5}, 1});            // crosses it once
+    engine.submit(AddLineCommand{{30, 30}, {40, 40}, 1});          // nowhere near
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(ExtrimCommand{{7.0710678, 7.0710678}, {0, 1}, 0.5, 2}); // the circle; inside goes
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 objects trimmed."; }));
+    const io::Document doc = dump(engine, "musacad_extrim.musa");
+    REQUIRE(doc.circles.size() == 1);
+    REQUIRE(doc.lines.size() == 4); // the long line in two, the short one cut back, the far one
+    for (const auto& l : doc.lines) {
+        const double mx = (l.a.x + l.b.x) * 0.5;
+        const double my = (l.a.y + l.b.y) * 0.5;
+        REQUIRE(std::hypot(mx, my) > 9.9); // nothing left inside
+    }
+    engine.stop();
+}
+
+TEST_CASE("EXTRIM asks for the cutting edge, then the side") {
+    H h;
+    h.run({"EXTRIM"});
+    REQUIRE(h.out.prompt == "Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for cutting edge..");
+    h.run({"10,0"});
+    REQUIRE(h.out.prompt == "Specify the side to trim on:");
+    h.run({"0,1"});
+    REQUIRE(h.last<ExtrimCommand>()->edge == Vec2{10, 0});
+    REQUIRE(h.last<ExtrimCommand>()->side == Vec2{0, 1});
+}

@@ -7168,7 +7168,8 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
                     aci = u == kAciNames[i] ? i : aci;
                 }
                 if (aci == 0) {
-                    const std::optional<double> v = parse_number(t);
+                    double n = 0.0;
+                    const std::optional<double> v = parse_number(t, n) ? std::optional<double>(n) : std::nullopt;
                     if (!v || *v < 1.0 || *v > 255.0 || *v != std::floor(*v)) {
                         ctx.echo("Enter a colour number from 1 to 255, a colour name, BYLAYER or Truecolor.");
                         return;
@@ -7206,7 +7207,8 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.echo("ByBlock is not available yet.");
             return;
         } else {
-            const std::optional<double> v = parse_number(t);
+            double n = 0.0;
+            const std::optional<double> v = parse_number(t, n) ? std::optional<double>(n) : std::nullopt;
             const double hundredths = v ? (name_ == "CELWEIGHT" ? *v : *v * 100.0) : -1.0;
             if (!v || hundredths < 0.0 || hundredths > 211.0) {
                 ctx.echo(name_ == "CELWEIGHT" ? "Requires -1, -3 or 0 to 211." : "Requires a lineweight from 0 to 2.11 mm.");
@@ -7929,6 +7931,24 @@ void UpdateFieldCommand::after(CommandContext& ctx) {
 
 void UpdateFieldCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ExtrimUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (!edge_) {
+        edge_ = *p;
+        ctx.set_prompt("Specify the side to trim on:");
+        return;
+    }
+    ctx.submit(core::ExtrimCommand{*edge_, *p, ctx.pick_radius(), ctx.group_id()});
     done_ = true;
 }
 

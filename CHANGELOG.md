@@ -122,6 +122,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **EXTRIM** (#77) -- everything crossing a cutting edge trimmed away on the side picked, inside
+  or outside a closed edge.
 - **VPSYNC** (#77) -- layout viewports lined up with a master viewport, at its scale.
 - **XLIST** (#77) -- an object inside a block reference: what it is, the block, and its layer,
   colour and linetype.

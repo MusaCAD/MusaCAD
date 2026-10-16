@@ -94,6 +94,7 @@
 #include <functional>
 #include <set>
 #include <QPainter>
+#include <QToolBar>
 #include <QToolButton>
 #include <QToolTip>
 #include <QVariant>
@@ -143,6 +144,7 @@ namespace musacad::ui {
 
 namespace {
 QIcon hatch_swatch(const std::string& name, const QColor& ink); // a pattern's swatch (Tool Palettes, Hatch Editor)
+QIcon layer_state_icon(const core::Layer& l);                   // the layer combo's state icons
 
 /// Dynamic Input ships ON: Musa CAD is canvas-first out of the box (on-canvas command
 /// entry, sub-prompts and dimension fields), with F12 as the fallback to the classic
@@ -4419,11 +4421,11 @@ QIcon hatch_swatch(const std::string& name, const QColor& ink) {
     }
     const double side = (spacing > 0.0 ? spacing : 1.0) * 5.0;
     const std::vector<std::vector<core::Vec2>> loops{{{0, 0}, {side, 0}, {side, side}, {0, side}}};
-    std::vector<core::Segment> segs;
+    std::vector<core::hatch::Segment> segs;
     core::hatch::generate_pattern_segments(loops, *pat, 1.0, 0.0, {}, segs);
     const double k = 28.0 / side;
     p.setPen(QPen(ink, 1.0));
-    for (const core::Segment& s : segs) {
+    for (const core::hatch::Segment& s : segs) {
         p.drawLine(QPointF(2 + s.a.x * k, 30 - s.a.y * k), QPointF(2 + s.b.x * k, 30 - s.b.y * k));
     }
     QColor frame = ink;

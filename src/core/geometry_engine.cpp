@@ -7607,6 +7607,130 @@ void GeometryEngine::apply_create_viewport(const CreateViewportCommand& c) {
                                                 : " (the model is empty)."));
 }
 
+namespace {
+Vec2 nearest_on_segment(Vec2 p, Vec2 a, Vec2 b); // below, with DIMBREAK
+} // namespace
+
+void GeometryEngine::apply_extrim(const ExtrimCommand& c) {
+    const EntityHandle e = pick_nearest(c.edge, c.pick_radius);
+    if (e.is_null() || (e.kind != EntityKind::Line && e.kind != EntityKind::Arc && e.kind != EntityKind::Circle &&
+                        e.kind != EntityKind::Polyline && e.kind != EntityKind::Ellipse)) {
+        report("Pick a polyline, line, circle, arc or ellipse for the cutting edge.");
+        return;
+    }
+    std::vector<Vec2> edge_pts;
+    kernel_.tessellate(store_, e, kDefaultTessTolerance, edge_pts);
+    if (edge_pts.size() < 2) {
+        return;
+    }
+    bool closed = e.kind == EntityKind::Circle;
+    if (const PolylineData* pl = e.kind == EntityKind::Polyline ? store_.polyline(e) : nullptr; pl != nullptr) {
+        closed = pl->closed;
+    }
+    if (e.kind == EntityKind::Ellipse) {
+        closed = distance(edge_pts.front(), edge_pts.back()) < 1e-9;
+    }
+    // Which side of the edge a point is on: inside or outside a closed one; left or right
+    // of an open one, where it passes nearest.
+    const auto side_of = [&](Vec2 p) -> int {
+        if (closed) {
+            bool in = false;
+            for (std::size_t i = 0, j = edge_pts.size() - 1; i < edge_pts.size(); j = i++) {
+                const Vec2 a = edge_pts[i];
+                const Vec2 b = edge_pts[j];
+                if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+                    in = !in;
+                }
+            }
+            return in ? 1 : -1;
+        }
+        std::size_t best = 0;
+        double best_d = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i + 1 < edge_pts.size(); ++i) {
+            const double dd = distance(p, nearest_on_segment(p, edge_pts[i], edge_pts[i + 1]));
+            if (dd < best_d) {
+                best_d = dd;
+                best = i;
+            }
+        }
+        return cross(edge_pts[best + 1] - edge_pts[best], p - edge_pts[best]) >= 0.0 ? 1 : -1;
+    };
+    const int want = side_of(c.side);
+    // A pick on each crossing object just past each crossing, on the side wanted.
+    std::vector<Vec2> picks;
+    std::vector<Vec2> hits;
+    std::vector<Vec2> tess;
+    for (const EntityHandle o : all_live()) {
+        if (o == e || (o.kind != EntityKind::Line && o.kind != EntityKind::Arc && o.kind != EntityKind::Circle &&
+                       o.kind != EntityKind::Polyline && o.kind != EntityKind::Ellipse)) {
+            continue;
+        }
+        hits.clear();
+        kernel_.intersect(store_, o, e, hits);
+        if (hits.empty()) {
+            continue;
+        }
+        tess.clear();
+        kernel_.tessellate(store_, o, kDefaultTessTolerance, tess);
+        Vec2 lo;
+        Vec2 hi;
+        const double size = entity_aabb(store_, o, lo, hi) ? distance(lo, hi) : 1.0;
+        const double step = std::max(size * 1e-4, 1e-7);
+        for (const Vec2& x : hits) {
+            std::size_t seg = tess.size();
+            double best_d = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i + 1 < tess.size(); ++i) {
+                const double dd = distance(x, nearest_on_segment(x, tess[i], tess[i + 1]));
+                if (dd < best_d) {
+                    best_d = dd;
+                    seg = i;
+                }
+            }
+            if (seg >= tess.size() || distance(tess[seg], tess[seg + 1]) < 1e-12) {
+                continue;
+            }
+            const Vec2 t = (tess[seg + 1] - tess[seg]) / distance(tess[seg], tess[seg + 1]);
+            for (const Vec2 p : {x + t * step, x - t * step}) {
+                if (side_of(p) == want) {
+                    picks.push_back(p);
+                }
+            }
+        }
+    }
+    // TRIM's own planning, with this edge as the only cutting edge.
+    const std::vector<EntityHandle> kept_edges = trim_edges_;
+    const bool kept_set = trim_edges_set_;
+    const bool kept_extend = trim_edge_extend_;
+    trim_edges_ = {e};
+    trim_edges_set_ = true;
+    trim_edge_extend_ = false;
+    int trimmed = 0;
+    for (const Vec2& p : picks) {
+        TrimPlan plan;
+        const double r = std::max(c.pick_radius * 1e-3, 1e-6);
+        if (!plan_trim(p, r, plan) || plan.h == e) {
+            continue;
+        }
+        const Command original = capture_entity(plan.h);
+        remove_indexed(plan.h);
+        push_erase_item(c.group, plan.h, original);
+        for (const Command& piece : plan.pieces) {
+            push_create_item(c.group, create_indexed(piece), piece);
+        }
+        ++trimmed;
+    }
+    trim_edges_ = kept_edges;
+    trim_edges_set_ = kept_set;
+    trim_edge_extend_ = kept_extend;
+    if (trimmed > 0) {
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    report(trimmed == 0 ? "Nothing crosses the cutting edge on that side."
+                        : std::to_string(trimmed) + (trimmed == 1 ? " object trimmed." : " objects trimmed."));
+}
+
 void GeometryEngine::apply_vpsync(const VpSyncCommand& c) {
     const EntityHandle mh = pick_nearest(c.master, c.pick_radius);
     const ViewportData* m = store_.viewport(mh);
@@ -16102,6 +16226,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
             }
+            if constexpr (std::is_same_v<T, ExtrimCommand>) {
+                apply_extrim(c);
+            }
             if constexpr (std::is_same_v<T, VpSyncCommand>) {
                 apply_vpsync(c);
             }
@@ -16226,6 +16353,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 std::is_same_v<T, AreaQueryCommand> || std::is_same_v<T, ListQueryCommand> ||
                 std::is_same_v<T, MeasureQueryCommand> || std::is_same_v<T, MassPropQueryCommand> ||
                 std::is_same_v<T, TimeCommand> || std::is_same_v<T, StatusQueryCommand> ||
+                std::is_same_v<T, AttOutCommand> ||           // writes a file, not the drawing
+                std::is_same_v<T, SetUnitsDefaultsCommand> || // a setting, not an edit
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             bool edit = !view_or_io;
             if constexpr (std::is_same_v<T, PasteDocumentCommand>) {
@@ -16233,6 +16362,12 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, LayerToolCommand>) {
                 edit = layer_tool_changed_; // "No object found." changes nothing
+            }
+            if constexpr (std::is_same_v<T, NestedCopyCommand>) {
+                edit = !c.list; // XLIST only says what is there
+            }
+            if constexpr (std::is_same_v<T, DataLinkUpdateCommand>) {
+                edit = !c.write; // Write data link writes the files, not the drawing
             }
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 edit = layer_edit_changed_; // ? lists; a name not found changes nothing
