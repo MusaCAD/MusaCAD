@@ -14935,6 +14935,10 @@ void GeometryEngine::apply(const Command& command) {
         layerp_before = LayerpState{store_.layers(), store_.layers()[store_.current_layer()].name};
     }
     apply_one(command);
+    if (dimassoc_ == 0 && !std::holds_alternative<UndoLastGroupCommand>(command) &&
+        !std::holds_alternative<RedoLastGroupCommand>(command)) {
+        explode_new_dimensions(); // DIMASSOC 0: dimensions are drawn exploded
+    }
     if (layerp_before && (layerp_before->layers != store_.layers() ||
                           layerp_before->current != store_.layers()[store_.current_layer()].name)) {
         layerp_.push_back(std::move(*layerp_before));
@@ -14942,6 +14946,38 @@ void GeometryEngine::apply(const Command& command) {
             layerp_.erase(layerp_.begin());
         }
     }
+}
+
+void GeometryEngine::explode_new_dimensions() {
+    if (undo_.empty()) {
+        return;
+    }
+    // The dimensions just drawn (a fresh draw carries no props; an edit's capture does).
+    std::vector<EntityHandle> fresh;
+    for (const Item& it : undo_.back().items) {
+        if (!it.is_create || it.handle.kind != EntityKind::Dimension || !store_.is_valid(it.handle)) {
+            continue;
+        }
+        if (const auto* d = std::get_if<AddDimensionCommand>(&it.data); d != nullptr && !d->props) {
+            fresh.push_back(it.handle);
+        }
+    }
+    if (fresh.empty()) {
+        return;
+    }
+    const std::vector<EntityHandle> sel = selection_;
+    const std::string status = status_;
+    const auto status_version = status_version_;
+    selection_ = fresh;
+    apply_explode(undo_.back().id, false, nullptr); // in the same undo step
+    selection_.clear();
+    for (const EntityHandle h : sel) {
+        if (store_.is_valid(h)) {
+            selection_.push_back(h);
+        }
+    }
+    status_ = status;
+    status_version_ = status_version;
 }
 
 void GeometryEngine::apply_one(const Command& command) {

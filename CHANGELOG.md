@@ -133,8 +133,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   take its points along, and it measures again; TRIM, EXTEND, LENGTHEN, BREAK, FILLET and
   CHAMFER too (a point at a trimmed end goes to the new end). A linear dimension keeps its direction. A point
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
-  dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
-  with the drawing (format v40).
+  dimensions drawn are associative; 1, not; 0, drawn exploded), **DIMDISASSOCIATE** and
+  **DIMREASSOCIATE**; saved with the drawing (format v40).
 - **The dimension text's Vertical position** (#58) -- the Text tab's Centered, Above, Outside
   (on the side of the line away from what is measured), JIS and Below: DIMTAD 0 to 4, read from
   and written to DXF.

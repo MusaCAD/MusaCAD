@@ -3117,3 +3117,19 @@ TEST_CASE("TEXTFIT fits Aligned and Fit text by moving its two points") {
     REQUIRE(doc.texts[0].align == Vec2{25, 0});
     engine.stop();
 }
+
+TEST_CASE("DIMASSOC 0 draws dimensions exploded, in the same undo step") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Variable, 0, 0});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {20, 0}, {10, 10}, 0, 1});
+    io::Document doc = dump(engine, "musacad_dimassoc0.musa");
+    REQUIRE(doc.dims.empty());
+    REQUIRE(doc.lines.size() >= 3); // the dimension line and the two extension lines
+    REQUIRE_FALSE(doc.texts.empty());
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_dimassoc0_undo.musa");
+    REQUIRE(doc.dims.empty());
+    REQUIRE(doc.lines.empty());
+    engine.stop();
+}

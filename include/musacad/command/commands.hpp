@@ -3141,8 +3141,8 @@ private:
 };
 
 /// DIMASSOC: `Enter new value for DIMASSOC <2>:` -- 2, the dimensions drawn follow the
-/// objects their points are on; 1, they do not (0 is taken as 1: dimensions are not drawn
-/// exploded).
+/// objects their points are on; 1, they do not; 0, they are drawn exploded (lines, solids
+/// and text).
 class DimAssocUiCommand final : public ICommand {
 public:
     std::string name() const override { return "DIMASSOC"; }
