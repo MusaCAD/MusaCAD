@@ -200,6 +200,7 @@ struct DocDim {
     std::string inspect_label{};
     std::string inspect_rate{};
     std::vector<Vec2> breaks{}; ///< v40: DIMBREAK's breaks (pairs)
+    bool unassoc = false;       ///< v40: not associative (DimData::unassoc)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

@@ -179,6 +179,9 @@ struct DimData {
     double text_angle = 0.0;
     /// An arc-length dimension's Leader option (v39): a radial leader from the text to the arc.
     bool arc_leader = false;
+    /// Not associative (DIMASSOC 1 when drawn, DIMDISASSOCIATE): it does not follow the
+    /// objects its points are on when they are moved or reshaped (#59).
+    bool unassoc = false;
     std::uint16_t brk_count = 0;  ///< DIMBREAK: its breaks, pairs in the dim-break pool
     std::uint32_t brk_offset = 0; ///< (in the padding after arc_leader: the size stays 240)
     /// DIMEDIT Oblique (v39, DXF 52): a linear or aligned dimension's extension lines at this
@@ -543,6 +546,7 @@ public:
     bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
     bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
+    bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
     bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;

@@ -49,6 +49,15 @@ bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
     return false;
 }
 
+bool GeometryStore::set_dim_unassoc(EntityHandle h, bool unassoc) noexcept {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    d->unassoc = unassoc;
+    return true;
+}
+
 bool GeometryStore::set_dim_breaks(EntityHandle h, std::span<const Vec2> pts) {
     DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
     if (d == nullptr) {

@@ -395,6 +395,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Read attribute values back from a file ATTOUT wrote, and set them.");
     reg({"MPEDIT"}, [] { return std::make_unique<PeditCommand>(true); }, "",
         "Edit several polylines at once (PEDIT's Multiple).");
+    reg({"DIMASSOC"}, [] { return std::make_unique<DimAssocUiCommand>(); }, "",
+        "Whether the dimensions drawn follow the objects they measure.");
+    reg({"DIMDISASSOCIATE", "DDA"}, [] { return std::make_unique<DimDisassociateCommand>(); }, "",
+        "Dimensions no longer follow the objects they measure.");
+    reg({"DIMREASSOCIATE", "DRE"}, [] { return std::make_unique<DimDisassociateCommand>(true); }, "",
+        "Dimensions follow the objects they measure again.");
     reg({"DIMREASSOC"}, [] { return std::make_unique<DimReassocCommand>(); }, "",
         "Take the text overrides off dimensions so they show their measurements again.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",

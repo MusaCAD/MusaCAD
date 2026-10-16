@@ -901,6 +901,20 @@ struct MirrorSelectionCommand {
     std::uint64_t group = 0;
 };
 
+/// DIMASSOC, DIMDISASSOCIATE and DIMREASSOCIATE (#59). A dimension is associative when the
+/// points it measures follow the objects they are on: MOVE, ROTATE, SCALE, MIRROR (erasing the
+/// source) and grip edits of those objects take the dimension's points along.
+struct DimAssocCommand {
+    enum class Op : std::uint8_t {
+        Variable,     ///< DIMASSOC: whether new dimensions are (2) or not (0, 1)
+        Disassociate, ///< the selected dimensions no longer follow
+        Reassociate,  ///< the selected dimensions follow again
+    };
+    Op op = Op::Variable;
+    std::uint8_t value = 2;
+    std::uint64_t group = 0;
+};
+
 /// MIRRTEXT: whether MIRROR reflects text (1) or keeps it readable (0, the default).
 struct SetMirrtextCommand {
     bool mirror_text = false;
@@ -1294,6 +1308,7 @@ struct AddDimensionCommand {
     std::string inspect_label{};  ///< DIMINSPECT's label (raw)
     std::string inspect_rate{};   ///< and its inspection rate
     std::vector<Vec2> breaks{};   ///< DIMBREAK's breaks (pairs; DimTextParts::breaks)
+    bool unassoc = false;         ///< DimData::unassoc
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -2274,7 +2289,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, SetCurrentPropsCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

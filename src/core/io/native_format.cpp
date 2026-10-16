@@ -845,6 +845,9 @@ std::string serialize_native(const Document& doc) {
             s += d.inspect_rate;
             s += '\n';
         }
+        if (d.unassoc) {
+            s += "DIMNOASSOC\n"; // v40: the DIM just written is not associative
+        }
         if (!d.breaks.empty()) {
             // v40: DIMBREAKS n x y ... -- the breaks of the DIM just written.
             s += "DIMBREAKS ";
@@ -2394,6 +2397,11 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       static_cast<std::uint8_t>(dinspect),
                                       dinspect_label,
                                       dinspect_rate});
+        } else if (key == "DIMNOASSOC") {
+            if (doc.dims.empty()) {
+                return fail("DIMNOASSOC without a DIM");
+            }
+            doc.dims.back().unassoc = true;
         } else if (key == "DIMBREAKS") {
             std::uint64_t n = 0;
             vals.clear();

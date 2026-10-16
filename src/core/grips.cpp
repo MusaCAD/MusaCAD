@@ -112,6 +112,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                               std::string(store.dim_inspect_rate(*d))};
         const std::span<const Vec2> brk = store.dim_breaks(*d);
         dc.breaks.assign(brk.begin(), brk.end());
+        dc.unassoc = d->unassoc;
         return dc;
     }
     case EntityKind::Leader: {
@@ -342,6 +343,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 }
                 if (!c.breaks.empty()) {
                     store.set_dim_breaks(handle, c.breaks);
+                }
+                if (c.unassoc) {
+                    store.set_dim_unassoc(handle, true);
                 }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,

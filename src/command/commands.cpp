@@ -2285,6 +2285,21 @@ void MirrtextCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void DimAssocUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1" && t != "2") {
+            ctx.echo("Requires an integer between 0 and 2.");
+            return;
+        }
+        s_value_ = t[0] - '0';
+        core::DimAssocCommand c;
+        c.value = static_cast<std::uint8_t>(s_value_);
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
 void MirrtextCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
@@ -7709,7 +7724,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
+        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",

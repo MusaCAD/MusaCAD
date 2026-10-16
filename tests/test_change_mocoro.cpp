@@ -2356,3 +2356,122 @@ TEST_CASE("-HATCH's Origin, hatch COlor and LAyer go with the hatches made") {
     REQUIRE(doc.layers[doc.hatches[0].props.layer].name == "Hatching");
     engine.stop();
 }
+
+TEST_CASE("Associative dimensions follow MOVE, SCALE and grip edits of what they measure; DIMDISASSOCIATE stops that") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {20, 0}, 1});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Aligned), {0, 0}, {20, 0}, {10, 5}, 0, 2});
+    engine.submit(AddCircleCommand{{50, 0}, 5, 3});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Radius), {50, 0}, {55, 0}, {58, 0}, 0, 4});
+    // MOVE the line: its dimension goes along, whole.
+    engine.submit(SelectPickCommand{{10, 0}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{5, 3}, 5});
+    io::Document doc = dump(engine, "musacad_assoc_1.musa");
+    REQUIRE(doc.dims.size() == 2);
+    const auto aligned = [&]() -> const io::DocDim& {
+        return doc.dims[0].type == static_cast<std::uint8_t>(DimType::Aligned) ? doc.dims[0] : doc.dims[1];
+    };
+    const auto radius = [&]() -> const io::DocDim& {
+        return doc.dims[0].type == static_cast<std::uint8_t>(DimType::Radius) ? doc.dims[0] : doc.dims[1];
+    };
+    REQUIRE(aligned().a == Vec2{5, 3});
+    REQUIRE(aligned().b == Vec2{25, 3});
+    REQUIRE(aligned().line_pt == Vec2{15, 8});
+    REQUIRE(radius().a == Vec2{50, 0}); // the circle stayed
+    // One undo puts the line and its dimension back.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_assoc_2.musa");
+    REQUIRE(aligned().a == Vec2{0, 0});
+    REQUIRE(doc.lines[0].a == Vec2{0, 0});
+    engine.submit(RedoLastGroupCommand{});
+    // SCALE the circle about its centre: the radius dimension's point on it goes out with it.
+    engine.submit(SelectPickCommand{{50, 5}, 0.5, false});
+    engine.submit(ScaleSelectionCommand{{50, 0}, 2.0, 6});
+    doc = dump(engine, "musacad_assoc_3.musa");
+    REQUIRE(radius().a == Vec2{50, 0});
+    REQUIRE(std::abs(radius().b.x - 60.0) < 1e-9);
+    // A grip edit of the line's end: only the point there follows.
+    engine.submit(SelectPickCommand{{15, 3}, 0.5, false});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return std::any_of(s.grips.begin(), s.grips.end(),
+                           [](const GripInfo& g) { return g.handle.kind == EntityKind::Line; });
+    }));
+    GripInfo end{};
+    for (const GripInfo& g : engine.snapshot().grips) {
+        if (g.handle.kind == EntityKind::Line && g.index == 1) {
+            end = g;
+        }
+    }
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, end.handle, end.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {35, 3}, 7});
+    doc = dump(engine, "musacad_assoc_4.musa");
+    REQUIRE(aligned().a == Vec2{5, 3});
+    REQUIRE(aligned().b == Vec2{35, 3});
+    REQUIRE(aligned().line_pt == Vec2{15, 8});
+    // DIMDISASSOCIATE: the dimensions stay where they are when the line moves again.
+    engine.submit(SelectAllCommand{});
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Disassociate, 2, 8});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 disassociated."; }));
+    engine.submit(SelectPickCommand{{20, 3}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, 10}, 9});
+    doc = dump(engine, "musacad_assoc_5.musa");
+    REQUIRE(aligned().a == Vec2{5, 3});
+    REQUIRE(aligned().unassoc);
+    REQUIRE(radius().unassoc);
+    REQUIRE(doc.lines[0].a == Vec2{5, 13});
+    // DIMREASSOCIATE: they follow again.
+    engine.submit(SelectAllCommand{});
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Reassociate, 2, 10});
+    engine.submit(SelectPickCommand{{50, 10}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, 10}, 11});
+    doc = dump(engine, "musacad_assoc_6.musa");
+    REQUIRE_FALSE(radius().unassoc);
+    REQUIRE(radius().a == Vec2{50, 10});
+    engine.stop();
+}
+
+TEST_CASE("A dimension point where another object stays does not follow; DIMASSOC 1 draws them not associative") {
+    GeometryEngine engine;
+    engine.start();
+    // Two lines meeting at the origin; the dimension is to the corner and the first line's end.
+    engine.submit(AddLineCommand{{0, 0}, {20, 0}, 1});
+    engine.submit(AddLineCommand{{0, 0}, {0, 20}, 2});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Aligned), {0, 0}, {20, 0}, {10, -5}, 0, 3});
+    engine.submit(SelectPickCommand{{10, 0}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, -2}, 4});
+    io::Document doc = dump(engine, "musacad_assoc_7.musa");
+    REQUIRE(doc.dims[0].a == Vec2{0, 0});  // the corner: the other line is still there
+    REQUIRE(doc.dims[0].b == Vec2{20, -2}); // the line's own end
+    // DIMASSOC 1: a dimension drawn now does not follow.
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Variable, 1, 0});
+    engine.submit(AddCircleCommand{{50, 0}, 5, 5});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Radius), {50, 0}, {55, 0}, {58, 0}, 0, 6});
+    engine.submit(SelectPickCommand{{50, 5}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, 10}, 7});
+    doc = dump(engine, "musacad_assoc_8.musa");
+    const io::DocDim& r = doc.dims[0].type == static_cast<std::uint8_t>(DimType::Radius) ? doc.dims[0] : doc.dims[1];
+    REQUIRE(r.unassoc);
+    REQUIRE(r.a == Vec2{50, 0});
+    engine.stop();
+}
+
+TEST_CASE("DIMASSOC asks for 0 to 2; DIMDISASSOCIATE and DIMREASSOCIATE take the dimensions selected") {
+    H h;
+    h.run({"DIMASSOC"});
+    REQUIRE(h.out.prompt == "Enter new value for DIMASSOC <2>: ");
+    h.run({"3"});
+    REQUIRE(h.out.lines.back() == "Requires an integer between 0 and 2.");
+    h.run({"1"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 1);
+    h.run({"DIMASSOC", "2"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 2);
+    h.run({"DDA"});
+    REQUIRE(h.out.prompt == "Select dimensions to disassociate: ");
+    h.proc.cancel();
+    h.proc.set_selection_count(1);
+    h.run({"DIMDISASSOCIATE"});
+    REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::Disassociate);
+    h.run({"DRE"});
+    REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::Reassociate);
+}

@@ -128,6 +128,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Tabs, to Panel Titles and to Panel Buttons, then the full ribbon.
 - **LAYMRG and LAYDEL** (#55, #69) -- a layer's objects moved to a target layer, or erased, after
   AutoCAD's warning; one undo step. The emptied layer stays until PURGE.
+- **Associative dimensions** (#59) -- a dimension follows the objects its points are on: MOVE,
+  ROTATE, SCALE, MIRROR (erasing the source) and grip edits of a line, arc, circle or polyline
+  take its points along, and it measures again. A linear dimension keeps its direction. A point
+  at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
+  dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
+  with the drawing (format v40).
 - **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <chrono>
@@ -490,6 +491,20 @@ private:
     /// An edit may touch it: valid, on a layer that is on, thawed and unlocked.
     [[nodiscard]] bool editable_entity(EntityHandle h) const { return store_.is_valid(h) && selectable(h); }
     bool mirrtext_ = false; ///< MIRRTEXT: 0 keeps mirrored text readable (the default)
+    std::uint8_t dimassoc_ = 2; ///< DIMASSOC: 2, new dimensions are associative; 0 or 1, not
+    /// An associative dimension with points on objects about to be edited (#59): which of
+    /// its def points (a, b, line_pt) are on them and follow them.
+    struct DimFollow {
+        EntityHandle dim;
+        std::array<bool, 3> on{};
+    };
+    /// The associative dimensions, not among `edited`, with points on `edited`.
+    [[nodiscard]] std::vector<DimFollow> dims_on(const std::vector<EntityHandle>& edited) const;
+    /// Takes each one's following points through `map`; when all of them follow and `whole` is
+    /// given, the dimension is transformed as a whole instead (as if it had been selected).
+    void follow_dims(const std::vector<DimFollow>& follows, const std::function<Vec2(Vec2)>& map,
+                     const std::function<void(Command&)>& whole, std::uint64_t group);
+    void apply_dim_assoc(const DimAssocCommand& c);
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
                                 std::uint64_t group);

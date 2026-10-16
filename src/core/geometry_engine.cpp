@@ -150,7 +150,12 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
             return add_command_to_store(store_, Command{std::move(with)}, fresh);
         }
     }
-    return add_command_to_store(store_, add_command, fresh);
+    const EntityHandle h = add_command_to_store(store_, add_command, fresh);
+    if (const auto* dc = std::get_if<AddDimensionCommand>(&add_command);
+        dc != nullptr && !dc->props && dimassoc_ < 2) {
+        store_.set_dim_unassoc(h, true); // DIMASSOC 0 or 1: drawn not associative
+    }
+    return h;
 }
 
 void GeometryEngine::inherit_polyline(const Command& original) {
@@ -1866,9 +1871,212 @@ void scale_cmd(Command& c, Vec2 base, double f) {
 
 } // namespace
 
+namespace {
+/// Which of a dimension's def points (a, b, line_pt) are on the objects it measures. The
+/// third is where its line goes, except on an angular one (a point on the second ray); an
+/// ordinate one's b is where its leader ends.
+std::array<bool, 3> assoc_slots(DimType t) {
+    switch (t) {
+    case DimType::Angular: return {true, true, true};
+    case DimType::Ordinate: return {true, false, false};
+    default: return {true, true, false};
+    }
+}
+/// The kinds a dimension's points can be on (geometry, not annotation).
+bool assoc_target(EntityKind k) {
+    switch (k) {
+    case EntityKind::Point:
+    case EntityKind::Line:
+    case EntityKind::Polyline:
+    case EntityKind::Circle:
+    case EntityKind::Arc:
+    case EntityKind::Spline:
+    case EntityKind::Insert:
+    case EntityKind::Xline:
+    case EntityKind::Ellipse: return true;
+    default: return false;
+    }
+}
+double assoc_tol(Vec2 p) { return 1e-6 * (1.0 + std::max(std::abs(p.x), std::abs(p.y))); }
+std::uint64_t handle_key(EntityHandle h) {
+    return (static_cast<std::uint64_t>(h.kind) << 32) | h.index;
+}
+} // namespace
+
+std::vector<GeometryEngine::DimFollow> GeometryEngine::dims_on(const std::vector<EntityHandle>& edited) const {
+    std::vector<DimFollow> out;
+    std::unordered_set<std::uint64_t> in_edit;
+    bool targets = false;
+    for (const EntityHandle h : edited) {
+        if (store_.is_valid(h)) {
+            in_edit.insert(handle_key(h));
+            targets = targets || assoc_target(h.kind);
+        }
+    }
+    if (!targets) {
+        return out;
+    }
+    std::vector<EntityHandle> cand;
+    std::vector<Grip> grips;
+    const auto& dims = store_.dimensions();
+    for (std::uint32_t i = 0; i < dims.slot_count(); ++i) {
+        if (!dims.alive(i)) {
+            continue;
+        }
+        const DimData& d = dims.data()[i];
+        if (d.unassoc) {
+            continue;
+        }
+        const EntityHandle dh{i, dims.generations()[i], EntityKind::Dimension};
+        if (in_edit.count(handle_key(dh)) != 0) {
+            continue; // edited itself, as selected
+        }
+        const std::array<bool, 3> slots = assoc_slots(d.type);
+        const std::array<Vec2, 3> pts{d.a, d.b, d.line_pt};
+        DimFollow f{dh, {}};
+        bool any = false;
+        for (std::size_t s = 0; s < 3; ++s) {
+            if (!slots[s]) {
+                continue;
+            }
+            const Vec2 p = pts[s];
+            const double tol = assoc_tol(p);
+            cand.clear();
+            grid_.query({p.x - tol, p.y - tol}, {p.x + tol, p.y + tol}, cand);
+            // On an edited object (Eg: at one of its grips), on another one (Ng: at its grip).
+            bool e = false;
+            bool eg = false;
+            bool n = false;
+            bool ng = false;
+            for (const EntityHandle c : cand) {
+                if (!assoc_target(c.kind) || !store_.is_valid(c)) {
+                    continue;
+                }
+                const EntityProps* cp = store_.props(c);
+                if (cp == nullptr || cp->space() != d.props.space()) {
+                    continue;
+                }
+                grips.clear();
+                grips_of(store_, c, grips);
+                const bool at_grip = std::any_of(grips.begin(), grips.end(),
+                                                 [&](const Grip& g) { return distance(g.pos, p) <= tol; });
+                Vec2 q;
+                const bool on = at_grip || (kernel_.closest_point(store_, c, p, q) && distance(q, p) <= tol);
+                if (!on) {
+                    continue;
+                }
+                if (in_edit.count(handle_key(c)) != 0) {
+                    e = true;
+                    eg = eg || at_grip;
+                } else {
+                    n = true;
+                    ng = ng || at_grip;
+                }
+            }
+            // A point also on an object that stays follows only when it is a key point of the
+            // edited one and not of the other (a line's end where another line merely passes).
+            f.on[s] = e && (!n || (eg && !ng));
+            any = any || f.on[s];
+        }
+        if (any) {
+            out.push_back(f);
+        }
+    }
+    return out;
+}
+
+void GeometryEngine::follow_dims(const std::vector<DimFollow>& follows, const std::function<Vec2(Vec2)>& map,
+                                 const std::function<void(Command&)>& whole, std::uint64_t group) {
+    for (const DimFollow& f : follows) {
+        if (!store_.is_valid(f.dim)) {
+            continue;
+        }
+        const Command original = capture_entity(f.dim);
+        Command edited = original;
+        auto* x = std::get_if<AddDimensionCommand>(&edited);
+        if (x == nullptr) {
+            continue;
+        }
+        const auto type = static_cast<DimType>(x->type);
+        const std::array<bool, 3> slots = assoc_slots(type);
+        bool all = true;
+        for (std::size_t s = 0; s < 3; ++s) {
+            all = all && (!slots[s] || f.on[s]);
+        }
+        if (all && whole && type != DimType::Linear && type != DimType::Ordinate) {
+            whole(edited); // the whole dimension goes with its object
+        } else if (type == DimType::ArcLength && !all) {
+            continue; // its arc's angles would need measuring again
+        } else {
+            // A linear dimension keeps its direction (a horizontal one stays horizontal), and
+            // an ordinate one its leader's end, as AutoCAD's do.
+            if (f.on[0]) {
+                x->a = map(x->a);
+            }
+            if (f.on[1] && slots[1]) {
+                x->b = map(x->b);
+            }
+            if (slots[2] ? f.on[2] : (all && whole && type != DimType::Ordinate)) {
+                x->line_pt = map(x->line_pt);
+            }
+        }
+        if (const auto* y = std::get_if<AddDimensionCommand>(&edited);
+            y != nullptr && y->a == std::get<AddDimensionCommand>(original).a &&
+            y->b == std::get<AddDimensionCommand>(original).b &&
+            y->line_pt == std::get<AddDimensionCommand>(original).line_pt &&
+            y->aux == std::get<AddDimensionCommand>(original).aux) {
+            continue; // nothing moved
+        }
+        remove_indexed(f.dim);
+        push_erase_item(group, f.dim, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(group, nh, edited);
+    }
+}
+
+void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
+    using Op = DimAssocCommand::Op;
+    if (c.op == Op::Variable) {
+        dimassoc_ = std::min<std::uint8_t>(c.value, 2);
+        return;
+    }
+    prune_selection();
+    const bool to = c.op == Op::Disassociate;
+    std::size_t n = 0;
+    std::vector<EntityHandle> keep;
+    for (const EntityHandle h : selection_) {
+        const DimData* d = h.kind == EntityKind::Dimension ? store_.dimension(h) : nullptr;
+        if (d == nullptr || d->unassoc == to) {
+            keep.push_back(h);
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command edited = original;
+        std::get<AddDimensionCommand>(edited).unassoc = to;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        keep.push_back(nh);
+        ++n;
+    }
+    selection_ = keep;
+    if (n > 0) {
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    if (to) {
+        report(std::to_string(n) + " disassociated.");
+    } else {
+        report(std::to_string(n) + (n == 1 ? " dimension" : " dimensions") + " associated with the objects their points are on.");
+    }
+}
+
 void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
+    const std::vector<DimFollow> follows = copy ? std::vector<DimFollow>{} : dims_on(sel);
     std::vector<EntityHandle> moved;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -1885,6 +2093,8 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
         push_create_item(group, nh, result);
         moved.push_back(nh);
     }
+    follow_dims(
+        follows, [&](Vec2 p) { return p + delta; }, [&](Command& c) { translate_cmd(c, delta); }, group);
     if (!copy && !moved.empty()) {
         selection_ = moved; // the moved entities stay selected
     }
@@ -4494,6 +4704,7 @@ void GeometryEngine::apply_paste_document(const PasteDocumentCommand& c) {
 void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
+    const std::vector<DimFollow> follows = erase_source ? dims_on(sel) : std::vector<DimFollow>{};
     std::vector<EntityHandle> result_handles;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -4510,6 +4721,18 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
         push_create_item(group, nh, mirrored);
         result_handles.push_back(nh);
     }
+    {
+        const Vec2 u = b - a;
+        const double L2 = length_squared(u);
+        const auto refl = [&](Vec2 p) {
+            if (L2 <= 0.0) {
+                return p;
+            }
+            const Vec2 foot = a + u * (dot(p - a, u) / L2);
+            return foot * 2.0 - p;
+        };
+        follow_dims(follows, refl, [&](Command& c) { mirror_cmd(c, a, b, mirrtext_); }, group);
+    }
     if (erase_source && !result_handles.empty()) {
         selection_ = result_handles;
     }
@@ -4520,6 +4743,7 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
 void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, bool copy) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
+    const std::vector<DimFollow> follows = copy ? std::vector<DimFollow>{} : dims_on(sel);
     std::vector<EntityHandle> out;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -4536,6 +4760,17 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, 
         push_create_item(group, nh, result);
         out.push_back(nh);
     }
+    {
+        const double cs = std::cos(angle);
+        const double sn = std::sin(angle);
+        follow_dims(
+            follows,
+            [&](Vec2 p) {
+                const Vec2 d = p - base;
+                return Vec2{base.x + d.x * cs - d.y * sn, base.y + d.x * sn + d.y * cs};
+            },
+            [&](Command& c) { rotate_cmd(c, base, angle); }, group);
+    }
     if (!out.empty()) {
         selection_ = out;
     }
@@ -4549,6 +4784,7 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, 
         return;
     }
     const std::vector<EntityHandle> sel = selection_;
+    const std::vector<DimFollow> follows = copy ? std::vector<DimFollow>{} : dims_on(sel);
     std::vector<EntityHandle> out;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -4565,6 +4801,9 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, 
         push_create_item(group, nh, result);
         out.push_back(nh);
     }
+    follow_dims(
+        follows, [&](Vec2 p) { return base + (p - base) * factor; },
+        [&](Command& c) { scale_cmd(c, base, factor); }, group);
     if (!out.empty()) {
         selection_ = out;
     }
@@ -10010,10 +10249,51 @@ void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     // exactly the move/property-edit pattern. The edit is parametric (no baking).
     const Command original = capture_entity(grip_handle_);
     const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+    const std::vector<DimFollow> follows = dims_on({grip_handle_});
+    std::vector<Grip> before;
+    grips_of(store_, grip_handle_, before);
     remove_indexed(grip_handle_);
     push_erase_item(group, grip_handle_, original);
     const EntityHandle nh = create_indexed(edited);
     push_create_item(group, nh, edited);
+    if (!follows.empty()) {
+        // The associative dimensions on it (#59): a point at one of its grips goes where that
+        // grip now is; one elsewhere on it, to the nearest point of what it has become. When
+        // every grip moved alike (the object was dragged whole), they all just move along.
+        std::vector<Grip> after;
+        grips_of(store_, nh, after);
+        std::optional<Vec2> delta;
+        bool same = before.size() == after.size();
+        for (std::size_t k = 0; same && k < before.size(); ++k) {
+            const Vec2 dk = after[k].pos - before[k].pos;
+            if (!delta) {
+                delta = dk;
+            }
+            same = distance(dk, *delta) <= assoc_tol(after[k].pos);
+        }
+        if (same && delta) {
+            const Vec2 dv = *delta;
+            follow_dims(
+                follows, [&](Vec2 p) { return p + dv; }, [&](Command& c) { translate_cmd(c, dv); }, group);
+        } else {
+            follow_dims(
+                follows,
+                [&](Vec2 p) {
+                    for (const Grip& g : before) {
+                        if (distance(g.pos, p) <= assoc_tol(p)) {
+                            for (const Grip& h : after) {
+                                if (h.index == g.index && h.kind == g.kind) {
+                                    return h.pos;
+                                }
+                            }
+                        }
+                    }
+                    Vec2 q;
+                    return kernel_.closest_point(store_, nh, p, q) ? q : p;
+                },
+                {}, group);
+        }
+    }
     selection_ = {nh}; // keep the edited entity selected (grips follow)
     redo_.clear();
     geom_dirty_ = true;
@@ -14376,6 +14656,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SetMirrtextCommand>) {
                 mirrtext_ = c.mirror_text;
             }
+            if constexpr (std::is_same_v<T, DimAssocCommand>) {
+                apply_dim_assoc(c);
+            }
             if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
                 current_props_ = c.current;
                 current_props_.layer = 0; // the current layer applies at creation
@@ -16689,6 +16972,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
                 edit = false; // a question
+            }
+            if constexpr (std::is_same_v<T, DimAssocCommand>) {
+                edit = false; // a setting, or marks the drawing changed itself
             }
             if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
                 edit = false; // marks the drawing changed itself, when there was one to delete

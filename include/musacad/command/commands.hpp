@@ -3128,6 +3128,74 @@ private:
     bool done_ = false;
 };
 
+/// DIMASSOC: `Enter new value for DIMASSOC <2>:` -- 2, the dimensions drawn follow the
+/// objects their points are on; 1, they do not (0 is taken as 1: dimensions are not drawn
+/// exploded).
+class DimAssocUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMASSOC"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Enter new value for DIMASSOC <" + std::to_string(s_value_) + ">: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    inline static int s_value_ = 2; ///< the session's DIMASSOC
+
+private:
+    bool done_ = false;
+};
+
+/// DIMDISASSOCIATE: `Select dimensions to disassociate:` -- they no longer follow the objects
+/// their points are on. DIMREASSOCIATE: `Select dimensions to reassociate:` -- they follow
+/// them again.
+class DimDisassociateCommand final : public ICommand {
+public:
+    explicit DimDisassociateCommand(bool reassociate = false) : reassociate_(reassociate) {}
+    std::string name() const override { return reassociate_ ? "DIMREASSOCIATE" : "DIMDISASSOCIATE"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.has_selection()) {
+            after(ctx);
+            return;
+        }
+        select_.begin(ctx, reassociate_ ? "Select dimensions to reassociate: " : "Select dimensions to disassociate: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+
+private:
+    void after(CommandContext& ctx) {
+        if (ctx.has_selection()) {
+            core::DimAssocCommand c;
+            c.op = reassociate_ ? core::DimAssocCommand::Op::Reassociate : core::DimAssocCommand::Op::Disassociate;
+            c.group = ctx.group_id();
+            ctx.submit(std::move(c));
+        }
+        done_ = true;
+    }
+    bool reassociate_ = false;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// DATALINKUPDATE: `Select an option [Update data link/Write data link] <Update data link>:`
 /// then, to update, `Select objects or [Data link/all data linKs]:` (the tables picked,
 /// those of one link, or every linked table read again from its file); to write,
