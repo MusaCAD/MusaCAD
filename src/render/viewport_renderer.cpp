@@ -730,11 +730,77 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
     }
 
     draw_construction_lines(*cmd_, snapshot, camera);
+    draw_ucs_icon(*cmd_, vw, vh, camera);
     draw_selection_and_interaction(*cmd_, snapshot, view);
     if (overlays) {
         draw_crosshair_and_snap(*cmd_, vw, vh, snapshot, camera);
         draw_dyn_labels(*cmd_, vw, vh, camera);
         draw_canvas_command(*cmd_, vw, vh);
+    }
+}
+
+void ViewportRenderer::draw_ucs_icon(GpuCommandBuffer& cmd, int width, int height, const Camera2D& camera) {
+    if ((ucs_icon_ & 1) == 0) {
+        return;
+    }
+    // Window pixels, y down. The X axis to the right and the Y axis up, each with its
+    // arrow and letter; the square at the corner says the UCS is the world's. In paper
+    // space, AutoCAD's triangle.
+    const double k = static_cast<double>(device_pixel_ratio_);
+    const double len = 34.0 * k;
+    const double margin = 12.0 * k;
+    const double reach = len + 12.0 * k; // the axis and its letter
+    core::Vec2 o{margin + 2.0 * k, static_cast<double>(height) - margin - 2.0 * k};
+    if ((ucs_icon_ & 2) != 0 && !ucs_paper_) {
+        const core::Vec2 w0 = camera.world_to_screen({0.0, 0.0});
+        if (w0.x >= margin && w0.x + reach <= static_cast<double>(width) - margin && w0.y - reach >= margin &&
+            w0.y <= static_cast<double>(height) - margin) {
+            o = w0; // the whole icon fits there
+        }
+    }
+    const double ah = 7.0 * k; // arrow length and half width
+    const double aw = 3.0 * k;
+    const double s = 3.5 * k; // letter half size
+    std::vector<core::Vec2> xs;
+    std::vector<core::Vec2> ys;
+    const core::Vec2 xe{o.x + len, o.y};
+    const core::Vec2 ye{o.x, o.y - len};
+    edge(xs, o, xe);
+    edge(ys, o, ye);
+    if (ucs_paper_) {
+        edge(xs, xe, ye);
+    } else {
+        edge(xs, xe, {xe.x - ah, xe.y - aw});
+        edge(xs, xe, {xe.x - ah, xe.y + aw});
+        edge(ys, ye, {ye.x - aw, ye.y + ah});
+        edge(ys, ye, {ye.x + aw, ye.y + ah});
+        const double b = 6.0 * k; // the world's square
+        edge(xs, {o.x, o.y - b}, {o.x + b, o.y - b});
+        edge(xs, {o.x + b, o.y - b}, {o.x + b, o.y});
+    }
+    const core::Vec2 xl{xe.x + 2.0 * k + s, xe.y + s + 3.0 * k}; // "X" just past the tip, below
+    edge(xs, {xl.x - s, xl.y - s}, {xl.x + s, xl.y + s});
+    edge(xs, {xl.x - s, xl.y + s}, {xl.x + s, xl.y - s});
+    const core::Vec2 yl{ye.x + s + 4.0 * k, ye.y + s}; // "Y" beside the tip
+    edge(ys, {yl.x - s, yl.y - s}, yl);
+    edge(ys, {yl.x + s, yl.y - s}, yl);
+    edge(ys, yl, {yl.x, yl.y + s});
+    cmd.bind_pipeline(*line_pipeline_);
+    cmd.set_uniform_mat3("u_transform", screen_to_ndc(width, height));
+    const auto draw = [&](const std::vector<core::Vec2>& seg, float r, float g, float bl) {
+        const std::size_t n = pack_segments(seg, scratch_);
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", r, g, bl, 1.0f);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    };
+    if (ucs_paper_) {
+        xs.insert(xs.end(), ys.begin(), ys.end());
+        draw(xs, kCrosshairColor[0], kCrosshairColor[1], kCrosshairColor[2]);
+    } else {
+        draw(xs, 0.90f, 0.32f, 0.32f); // X red, Y green, as AutoCAD draws them
+        draw(ys, 0.36f, 0.78f, 0.36f);
     }
 }
 

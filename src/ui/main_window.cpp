@@ -499,6 +499,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 iso_action_->setChecked(on);
             }
         }
+        if (ucsicon_toggle_ != nullptr) {
+            const bool on = (viewport_->selection_setting("UCSICON") & 1) != 0;
+            if (ucsicon_toggle_->isChecked() != on) {
+                const QSignalBlocker block(ucsicon_toggle_);
+                ucsicon_toggle_->setChecked(on);
+            }
+        }
         if (tpy_action_ != nullptr) {
             const bool on = viewport_->selection_setting("TRANSPARENCYDISPLAY") != 0;
             if (tpy_action_->isChecked() != on) {

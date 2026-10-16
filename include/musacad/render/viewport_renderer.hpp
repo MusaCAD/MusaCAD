@@ -102,6 +102,14 @@ public:
         }
     }
 
+    /// UCSICON: 0 not drawn; bit 1 drawn; bit 2 at the origin when it is on screen, in the
+    /// lower-left corner otherwise. `paper`: the paper-space triangle. Off until set, so the
+    /// renderer's own tests and harnesses draw only what they ask for.
+    void set_ucs_icon(int mode, bool paper) {
+        ucs_icon_ = mode;
+        ucs_paper_ = paper;
+    }
+
     /// TRANSPARENCYDISPLAY / TPY: layer transparency drawn (on) or every batch opaque.
     void set_transparency_display(bool on) { transparency_display_ = on; }
 
@@ -128,6 +136,7 @@ private:
     /// `vh` pixels through `camera`; the cursor-bound surfaces only when `overlays`.
     void render_view(const core::RenderSnapshot& snapshot, const Camera2D& camera, int vw, int vh,
                      bool overlays);
+    void draw_ucs_icon(GpuCommandBuffer& cmd, int width, int height, const Camera2D& camera);
     void draw_tile_borders(GpuCommandBuffer& cmd, int width, int height,
                            const std::vector<TileView>& tiles);
     void draw_overlay(GpuCommandBuffer& cmd, int width, int height);
@@ -173,6 +182,8 @@ private:
     float device_pixel_ratio_ = 1.0f;        // Qt devicePixelRatio (HiDPI scaling)
     double grip_half_px_ = 5.0;              // GRIPSIZE; 0 = GRIPS off
     bool transparency_display_ = true;       // TRANSPARENCYDISPLAY
+    int ucs_icon_ = 0;                       // UCSICON (bits: 1 on, 2 at the origin)
+    bool ucs_paper_ = false;
     [[nodiscard]] float batch_alpha(const core::ColorBatch& b) const noexcept {
         return transparency_display_ ? static_cast<float>(b.alpha) / 255.0f : 1.0f;
     }

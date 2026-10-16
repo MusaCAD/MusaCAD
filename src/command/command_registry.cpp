@@ -257,6 +257,8 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
              "Open the Tool Palettes: commands, hatches and the drawing's blocks a click away (Ctrl+3).");
     file_cmd({"TOOLPALETTESCLOSE"}, "TOOLPALETTESCLOSE", "", "Close the Tool Palettes.");
+    reg({"UCSICON"}, [] { return std::make_unique<UcsIconCommand>(); }, "assets/ribbon/view.svg",
+        "Show or hide the UCS icon, at the origin or in the lower-left corner.");
     reg({"WORKSPACE"}, [] { return std::make_unique<WorkspaceCommand>(); }, "",
         "Make a workspace current, or save, rename, delete or list them.");
     reg({"WSCURRENT"}, [] { return std::make_unique<WorkspaceCommand>(WorkspaceCommand::Mode::Current); }, "",

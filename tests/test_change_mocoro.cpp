@@ -1353,3 +1353,41 @@ TEST_CASE("WORKSPACE makes a workspace current, saves, renames and deletes one; 
     proc.submit_line("WSSAVE");
     REQUIRE(view.ops.back() == "dialog::");
 }
+
+namespace {
+struct UcsView : musacad::command::ViewControl {
+    int ucsicon = 3;
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    int selection_setting(const std::string& name) const override { return name == "UCSICON" ? ucsicon : 0; }
+    bool set_selection_setting(const std::string& name, int value) override {
+        if (name != "UCSICON") {
+            return false;
+        }
+        ucsicon = value;
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("UCSICON turns the icon off and on, and keeps it at the origin or in the corner") {
+    UcsView view;
+    Out out;
+    CommandProcessor proc{[](Command) {}, &view, out};
+    proc.submit_line("UCSICON");
+    REQUIRE(out.prompt == "Enter an option [ON/OFF/All/Noorigin/ORigin] <ON>: ");
+    proc.submit_line("OFF");
+    REQUIRE(view.ucsicon == 2);
+    proc.submit_line("UCSICON");
+    REQUIRE(out.prompt == "Enter an option [ON/OFF/All/Noorigin/ORigin] <OFF>: ");
+    proc.submit_line("A");
+    REQUIRE(out.prompt == "Enter an option [ON/OFF/Noorigin/ORigin] <OFF>: ");
+    proc.submit_line("N");
+    REQUIRE(view.ucsicon == 0);
+    proc.submit_line("UCSICON");
+    proc.submit_line("ON");
+    proc.submit_line("UCSICON");
+    proc.submit_line("OR");
+    REQUIRE(view.ucsicon == 3);
+    REQUIRE_FALSE(proc.has_active_command());
+}

@@ -806,6 +806,7 @@ private:
     std::atomic<int> gripcolor_{0};
     std::atomic<int> griphot_{0};
     std::atomic<int> transparencydisplay_{1}; ///< TRANSPARENCYDISPLAY / TPY: layer transparency shown
+    std::atomic<int> ucsicon_{3};             ///< UCSICON: bit 1 on, bit 2 at the origin
     std::atomic<int> lwdisplay_{1};           ///< LWDISPLAY as the drawing has it (from the snapshot)
     std::uint64_t pick_candidates_seen_ = 0;
     std::vector<core::RenderSnapshot::PickCandidate> pick_candidates_; ///< under layers_mutex_

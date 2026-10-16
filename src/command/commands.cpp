@@ -7573,6 +7573,50 @@ void NavBarCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void UcsIconCommand::start(CommandContext& ctx) {
+    if (ctx.view() == nullptr) {
+        ctx.echo("UCSICON needs the drawing window.");
+        done_ = true;
+        return;
+    }
+    ask(ctx);
+}
+
+void UcsIconCommand::ask(CommandContext& ctx) {
+    const bool on = (ctx.view()->selection_setting("UCSICON") & 1) != 0;
+    ctx.set_prompt(std::string("Enter an option [ON/OFF/") + (all_ ? "" : "All/") + "Noorigin/ORigin] <" +
+                   (on ? "ON" : "OFF") + ">: ");
+}
+
+void UcsIconCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    int v = ctx.view()->selection_setting("UCSICON");
+    if (u.empty()) {
+        done_ = true;
+        return;
+    }
+    if ((u == "A" || u == "ALL") && !all_) {
+        all_ = true;
+        ask(ctx);
+        return;
+    }
+    if (u == "ON") {
+        v |= 1;
+    } else if (u == "OFF") {
+        v &= ~1;
+    } else if (u == "N" || u == "NOORIGIN") {
+        v &= ~2;
+    } else if (u == "OR" || u == "ORIGIN") {
+        v |= 2;
+    } else {
+        ctx.echo("Invalid option keyword.");
+        ask(ctx);
+        return;
+    }
+    (void)ctx.view()->set_selection_setting("UCSICON", v);
+    done_ = true;
+}
+
 void WorkspaceCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || ctx.view()->workspaces().empty()) {
         ctx.echo(name() + " needs the drawing window.");

@@ -286,6 +286,7 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
     if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
     if (name == "TRANSPARENCYDISPLAY") return transparencydisplay_.load();
+    if (name == "UCSICON") return ucsicon_.load();
     if (name == "LWDISPLAY") return lwdisplay_.load();
     return 0;
 }
@@ -318,6 +319,8 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         griphot_ = value;
     } else if (name == "TRANSPARENCYDISPLAY" && in(0, 1)) {
         transparencydisplay_ = value;
+    } else if (name == "UCSICON" && in(0, 3)) {
+        ucsicon_ = value;
     } else if (name == "LWDISPLAY" && in(0, 1)) {
         lwdisplay_ = value;
         engine_.submit(core::SetLineweightDisplayCommand{value != 0});
@@ -1728,6 +1731,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             renderer.set_grip_style(grips_on_.load() == 0 ? 0.0 : static_cast<double>(gripsize_.load()),
                                     rgb_of(gripcolor_.load()), rgb_of(griphot_.load()));
             renderer.set_transparency_display(transparencydisplay_.load() != 0);
+            renderer.set_ucs_icon(ucsicon_.load(), snap.active_space != 0);
         }
         // VPORTS: in model space with more than one tile, every tile draws through its own
         // camera (a tile never framed yet is fitted to the drawing first).

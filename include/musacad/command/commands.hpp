@@ -2779,6 +2779,26 @@ private:
     bool done_ = false;
 };
 
+/// UCSICON: `Enter an option [ON/OFF/All/Noorigin/ORigin] <ON>:` -- the UCS icon shown or
+/// not, at the origin when it is on screen or always in the lower-left corner. All is
+/// taken (every viewport shares the setting) and the options asked again without it.
+class UcsIconCommand final : public ICommand {
+public:
+    std::string name() const override { return "UCSICON"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    void ask(CommandContext& ctx);
+    bool all_ = false;
+    bool done_ = false;
+};
+
 /// WORKSPACE: `Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>:` -- a
 /// workspace (the window's palettes, the ribbon and the Quick Access Toolbar as they were
 /// saved) made current, saved, renamed, deleted or listed. WSCURRENT asks for the one to

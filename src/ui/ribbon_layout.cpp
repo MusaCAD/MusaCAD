@@ -968,7 +968,15 @@ void MainWindow::build_ribbon() {
         navbar_toggle_->setToolTip(QStringLiteral("<b>NAVBAR</b><br>Show or hide the navigation bar: Pan and the Zoom tools at "
                                                   "the drawing's right edge."));
         connect(navbar_toggle_, &QToolButton::toggled, this, [this](bool on) { show_navbar(on); });
-        vtools->add_placeholder(asset("view"), QStringLiteral("UCS\nIcon"), RibbonTier::Secondary);
+        ucsicon_toggle_ = vtools->add_button(asset("view"), QStringLiteral("UCS\nIcon"), RibbonTier::Secondary);
+        ucsicon_toggle_->setObjectName(QStringLiteral("ribbon.ucsicon"));
+        ucsicon_toggle_->setCheckable(true);
+        ucsicon_toggle_->setChecked(true);
+        ucsicon_toggle_->setToolTip(QStringLiteral("<b>UCSICON</b><br>Show or hide the UCS icon."));
+        connect(ucsicon_toggle_, &QToolButton::toggled, this, [this](bool on) {
+            const int v = viewport_->selection_setting("UCSICON");
+            viewport_->set_selection_setting("UCSICON", on ? (v | 1) : (v & ~1));
+        });
         vtools->add_placeholder(asset("view"), QStringLiteral("View\nCube"), RibbonTier::Secondary);
     }
 

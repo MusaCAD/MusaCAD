@@ -544,6 +544,7 @@ private:
     void cycle_isoplane();               ///< F5 / Ctrl+E: Left, Top, Right
     QToolBar* navbar_ = nullptr;          ///< the navigation bar (NAVBAR): Pan and the Zoom tools
     QToolButton* navbar_toggle_ = nullptr; ///< View > Viewport Tools > Navigation Bar
+    QToolButton* ucsicon_toggle_ = nullptr; ///< View > Viewport Tools > UCS Icon
     std::string current_page_setup_; ///< the Page Setup Manager's Set Current (empty: none)
     bool polar_restore_ = false; ///< listing_shot switched POLAR on for its picture
     bool tracking_restore_ = false; ///< ... and set its own polar increment
