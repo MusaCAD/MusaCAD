@@ -122,6 +122,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **Zero feet and zero inches** (#58) -- the Primary Units tab's 0 feet and 0 inches (DIMZIN):
+  `0'-6"` reads `6"` and `1'-0"` reads `1'`, as AutoCAD's imperial drawings show them; in DXF
+  too. Drawings saved before keep showing both.
 - **Alternate units below the primary value** (#58, #81) -- the Alternate Units tab's Placement:
   After primary value or Below primary value (`\X` in DIMAPOST, as AutoCAD writes it).
 - **EXTRIM** (#77) -- everything crossing a cutting edge trimmed away on the side picked, inside

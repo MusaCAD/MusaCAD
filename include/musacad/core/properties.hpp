@@ -208,6 +208,10 @@ struct DimStyle {
 /// DIMZIN's two decimal bits.
 inline constexpr std::uint8_t kDimZinLeading = 4;  ///< "0.50" is written ".50"
 inline constexpr std::uint8_t kDimZinTrailing = 8; ///< "12.50" is written "12.5", "12.00" "12"
+/// DIMZIN's feet-and-inches bits (Engineering, Architectural), AutoCAD's values: 0 both zero
+/// feet and zero inches left out (6", 1'), 1 both kept (0'-6", 1'-0"), 2 zero feet kept
+/// and zero inches left out, 3 zero inches kept and zero feet left out.
+inline constexpr std::uint8_t kDimZinFeetInches = 3;
 
 /// Per-dimension property overrides (AutoCAD's PR "this dimension only"). Mirrors
 /// the ByLayer/override pattern: a bit in `mask` means "this field is overridden;

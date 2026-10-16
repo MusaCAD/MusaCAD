@@ -1981,3 +1981,42 @@ TEST_CASE("Alternate units below the primary value when DIMAPOST starts with \\X
     REQUIRE(lim.line1.find('\x1f') == std::string::npos);
     REQUIRE(lim.line2.find('\x1f') == std::string::npos);
 }
+
+TEST_CASE("Feet and inches drop zero feet and zero inches as DIMZIN says") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.line_pt = {3, 10};
+    DimStyle st;
+    st.linear_unit = 4; // Architectural
+    st.precision = 4;
+    const auto text = [&](double inches, int mode) {
+        d.b = {inches, 0};
+        st.zero_suppression = static_cast<std::uint8_t>(mode);
+        return compose_dim_label(d, st, {}).line1;
+    };
+    REQUIRE(text(6, 1) == "0'-6\"");
+    REQUIRE(text(12, 1) == "1'-0\"");
+    REQUIRE(text(6, 0) == "6\"");
+    REQUIRE(text(12, 0) == "1'");
+    REQUIRE(text(18, 0) == "1'-6\"");
+    REQUIRE(text(6, 2) == "0'-6\"");
+    REQUIRE(text(12, 2) == "1'");
+    REQUIRE(text(6, 3) == "6\"");
+    REQUIRE(text(12, 3) == "1'-0\"");
+
+    // A drawing saved before v40 keeps showing both.
+    io::Document doc;
+    DimStyle old;
+    old.name = "Imperial";
+    old.zero_suppression = 0;
+    doc.dimstyles.push_back(old);
+    doc.format_version = 39;
+    io::Document back;
+    REQUIRE(io::parse_native(io::serialize_native(doc), back).ok);
+    REQUIRE((back.dimstyles.back().zero_suppression & kDimZinFeetInches) == 1);
+    doc.format_version = 40;
+    io::Document now;
+    REQUIRE(io::parse_native(io::serialize_native(doc), now).ok);
+    REQUIRE((now.dimstyles.back().zero_suppression & kDimZinFeetInches) == 0);
+}

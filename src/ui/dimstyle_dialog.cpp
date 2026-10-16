@@ -573,11 +573,19 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     leading->setChecked((style.zero_suppression & core::kDimZinLeading) != 0);
     auto* trailing = new QCheckBox(QStringLiteral("Trailing  (12.50 reads 12.5)"), this);
     trailing->setChecked((style.zero_suppression & core::kDimZinTrailing) != 0);
+    // Feet and inches (Engineering, Architectural): AutoCAD's 0 feet and 0 inches boxes.
+    const int fi = style.zero_suppression & core::kDimZinFeetInches;
+    auto* zero_feet = new QCheckBox(QStringLiteral("0 feet  (0'-6\" reads 6\")"), this);
+    zero_feet->setChecked(fi == 0 || fi == 3);
+    auto* zero_inches = new QCheckBox(QStringLiteral("0 inches  (1'-0\" reads 1')"), this);
+    zero_inches->setChecked(fi == 0 || fi == 2);
     auto* zeros = new QVBoxLayout;
     zeros->setContentsMargins(12, 12, 12, 12);
     zeros->setSpacing(8);
     zeros->addWidget(leading);
     zeros->addWidget(trailing);
+    zeros->addWidget(zero_feet);
+    zeros->addWidget(zero_inches);
     tabs->addTab(page(tabs, {group(QStringLiteral("Linear dimensions"), lu, this),
                              group(QStringLiteral("Zero suppression"), zeros, this),
                              group(QStringLiteral("Angular dimensions"), au, this)}),
@@ -675,8 +683,9 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.text_move = static_cast<std::uint8_t>(std::max(0, moves->checkedId()));
         s.precision = static_cast<std::uint8_t>(std::max(0, precision->currentIndex()));
         s.decimal_separator = separator->currentIndex() == 1 ? ',' : '.';
+        const int feet_inches = zero_feet->isChecked() ? (zero_inches->isChecked() ? 0 : 3) : (zero_inches->isChecked() ? 2 : 1);
         s.zero_suppression = static_cast<std::uint8_t>((leading->isChecked() ? core::kDimZinLeading : 0) |
-                                                       (trailing->isChecked() ? core::kDimZinTrailing : 0));
+                                                       (trailing->isChecked() ? core::kDimZinTrailing : 0) | feet_inches);
         s.linear_unit = static_cast<std::uint8_t>(unit->currentIndex() + 1);
         s.fraction_format = static_cast<std::uint8_t>(std::max(0, fraction->currentIndex()));
         s.round_off = round_off->value();

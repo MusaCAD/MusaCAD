@@ -1842,7 +1842,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             ds.text_above = to_l(*v) != 0;
         }
         if (const std::string* v = find(body, 78)) {
-            ds.zero_suppression = static_cast<std::uint8_t>(to_l(*v) & (kDimZinLeading | kDimZinTrailing));
+            ds.zero_suppression = static_cast<std::uint8_t>(to_l(*v) & 0x0F); // the feet/inch bits too
         }
         if (const std::string* v = find(body, 278)) {
             ds.decimal_separator = to_l(*v) == ',' ? ',' : '.';

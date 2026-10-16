@@ -496,6 +496,25 @@ std::string length_text(double value, std::uint8_t unit, int precision, const Di
         u.linear = static_cast<LinearFormat>(unit);
         u.linear_precision = static_cast<std::uint8_t>(std::clamp(precision, 0, 8));
         std::string s = units::format_length(value, u);
+        if (unit == 3 || unit == 4) {
+            // Feet and inches: DIMZIN's zero feet / zero inches, as AutoCAD drops them.
+            const std::size_t tick = s.find("'-");
+            if (tick != std::string::npos && !s.empty() && s.back() == '"') {
+                const std::string sign = s.front() == '-' ? "-" : "";
+                const std::string ft = s.substr(sign.size(), tick - sign.size());
+                const std::string in = s.substr(tick + 2, s.size() - tick - 3);
+                const bool zero_ft = ft == "0";
+                const bool zero_in = in.find_first_not_of("0.,") == std::string::npos;
+                const int mode = style.zero_suppression & kDimZinFeetInches;
+                const bool drop_ft = zero_ft && !zero_in && (mode == 0 || mode == 3);
+                const bool drop_in = zero_in && !zero_ft && (mode == 0 || mode == 2);
+                if (drop_ft) {
+                    s = sign + in + "\"";
+                } else if (drop_in) {
+                    s = sign + ft + "'";
+                }
+            }
+        }
         if (style.decimal_separator == ',') {
             for (char& c : s) {
                 c = c == '.' ? ',' : c;

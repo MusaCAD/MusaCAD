@@ -2080,7 +2080,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                     to_uint(tok[27], zin);
                     to_uint(tok[28], tmove);
                     ds.decimal_separator = sep == ',' ? ',' : '.';
-                    ds.zero_suppression = static_cast<std::uint8_t>(zin & (kDimZinLeading | kDimZinTrailing));
+                    ds.zero_suppression = static_cast<std::uint8_t>(zin & 0x0F);
                     ds.text_move = static_cast<std::uint8_t>(std::min<std::uint64_t>(tmove, 2));
                     name_at = 29;
                 }
@@ -2091,6 +2091,10 @@ IoResult parse_native(std::string_view text, Document& out) {
                 name += std::string(tok[i]);
             }
             ds.name = name;
+            if (version < 40) {
+                // Before v40 feet and inches always showed both (0'-6", 1'-0"): DIMZIN 1.
+                ds.zero_suppression = static_cast<std::uint8_t>((ds.zero_suppression & ~kDimZinFeetInches) | 1u);
+            }
             doc.dimstyles.push_back(std::move(ds));
         } else if (key == "TEXT") {
             // params: px py height rotation justify <props7>; content on next line.
