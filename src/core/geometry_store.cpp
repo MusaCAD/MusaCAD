@@ -828,6 +828,7 @@ void GeometryStore::clear() noexcept {
     drawing_props_ = DrawingProps{};
     times_ = DrawingTimes{};
     blocks_.clear();
+    ++blocks_serial_;
     fonts_.assign(1, std::string{}); // reset to just the stroke font
 }
 
@@ -1330,14 +1331,19 @@ std::uint16_t GeometryStore::add_block(const BlockDef& def) {
         }
     }
     blocks_.push_back(def);
+    ++blocks_serial_;
     return static_cast<std::uint16_t>(blocks_.size() - 1);
 }
-void GeometryStore::set_block_table(std::vector<BlockDef> blocks) { blocks_ = std::move(blocks); }
+void GeometryStore::set_block_table(std::vector<BlockDef> blocks) {
+    blocks_ = std::move(blocks);
+    ++blocks_serial_;
+}
 bool GeometryStore::redefine_block(std::uint16_t index, const BlockDef& def) {
     if (index >= blocks_.size()) {
         return false;
     }
     blocks_[index] = def;
+    ++blocks_serial_;
     return true;
 }
 
@@ -1615,6 +1621,7 @@ bool GeometryStore::remove_block(std::uint16_t index) {
         return false;
     }
     blocks_.erase(blocks_.begin() + index);
+    ++blocks_serial_;
     for_each_live_mut(inserts_, [&](InsertData& i) {
         if (i.block > index) {
             --i.block;

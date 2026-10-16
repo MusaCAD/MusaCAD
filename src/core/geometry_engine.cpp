@@ -31,6 +31,7 @@
 #include <utility>
 #include <variant>
 
+#include "musacad/core/block_resolve.hpp"
 #include "musacad/core/entity_bounds.hpp"
 #include "musacad/core/grips.hpp"
 #include "musacad/core/hatch.hpp"
@@ -19287,6 +19288,33 @@ void GeometryEngine::rebuild_and_publish() {
             infos.push_back(BlockAttDefInfo{a.tag, a.prompt, a.def, a.flags, a.text.height});
         }
         buf.block_attdefs.push_back(std::move(infos)); // INSERT's attribute prompts
+    }
+    // The Insert gallery's pictures: each block's geometry about its base point, made again
+    // only when the blocks (or the drawing in front) change.
+    {
+        const std::uint64_t doc = active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].id : 0;
+        if (!block_previews_ || block_previews_serial_ != store_.blocks_serial() || block_previews_doc_ != doc) {
+            auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
+            std::vector<InsertSeg> segs;
+            for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
+                InsertData ins{};
+                ins.block = bi;
+                segs.clear();
+                resolve_insert(store_, ins, kDefaultTessTolerance, segs);
+                std::vector<Vec2> pairs;
+                const std::size_t n = std::min<std::size_t>(segs.size(), 20000);
+                pairs.reserve(n * 2);
+                for (std::size_t i = 0; i < n; ++i) {
+                    pairs.push_back(segs[i].a);
+                    pairs.push_back(segs[i].b);
+                }
+                previews->push_back(std::move(pairs));
+            }
+            block_previews_ = std::move(previews);
+            block_previews_serial_ = store_.blocks_serial();
+            block_previews_doc_ = doc;
+        }
+        buf.block_previews = block_previews_;
     }
     // Image definitions for the renderer's texture cache: embedded payloads by shared
     // pointer (re-made when the version changes), external ones by relative path.

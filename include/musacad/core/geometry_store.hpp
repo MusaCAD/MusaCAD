@@ -905,6 +905,8 @@ public:
     // plenty. Indices are stable for a session.
     [[nodiscard]] const std::vector<BlockDef>& blocks() const noexcept { return blocks_; }
     [[nodiscard]] std::size_t block_count() const noexcept { return blocks_.size(); }
+    /// Goes up whenever a block definition is added, changed, renamed or removed.
+    [[nodiscard]] std::uint64_t blocks_serial() const noexcept { return blocks_serial_; }
     [[nodiscard]] const BlockDef* block(std::uint16_t index) const noexcept;
     /// Adds a block definition, or returns the existing index if the name is taken.
     std::uint16_t add_block(const BlockDef& def);
@@ -1144,6 +1146,7 @@ public:
             return false;
         }
         hit->name = std::string(to);
+        ++blocks_serial_;
         return true;
     }
     bool rename_text_style(std::string_view from, std::string_view to) {
@@ -1441,6 +1444,7 @@ private:
     double mspace_paper_px_per_mm_ = 1.0;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
+    std::uint64_t blocks_serial_ = 0;                       // blocks_serial()
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
     const IFontEngine* font_engine_ = nullptr;             // non-owning; injected service
 };

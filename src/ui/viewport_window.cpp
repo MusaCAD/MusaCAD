@@ -264,6 +264,11 @@ std::vector<std::string> ViewportWindow::block_names() {
     return block_names_;
 }
 
+std::shared_ptr<const std::vector<std::vector<core::Vec2>>> ViewportWindow::block_previews() {
+    std::scoped_lock lock(layers_mutex_);
+    return block_previews_;
+}
+
 std::vector<std::vector<core::BlockAttDefInfo>> ViewportWindow::block_attdefs() {
     std::scoped_lock lock(layers_mutex_);
     return block_attdefs_;
@@ -1695,6 +1700,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             current_mleader_style_ = snap.current_mleader_style;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
+            block_previews_ = snap.block_previews;
             layouts_ = snap.layouts;
             purge_ = snap.purge;
             ltscale_ = snap.ltscale;

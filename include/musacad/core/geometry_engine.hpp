@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -717,6 +718,10 @@ private:
     RenderSnapshot::PurgeCandidates purge_cache_;
     bool purge_cache_valid_ = false;
     std::uint64_t purge_cache_serial_ = 0;
+    // The Insert gallery's block pictures (RenderSnapshot::block_previews), and what they show.
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> block_previews_;
+    std::uint64_t block_previews_serial_ = 0;
+    std::uint64_t block_previews_doc_ = 0;
     bool any_hidden_ = false;
     RefEditSession refedit_;
 

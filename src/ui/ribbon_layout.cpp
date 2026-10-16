@@ -20,6 +20,10 @@
 #include <QCompleter>
 #include <QDockWidget>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QPainter>
+#include <QPen>
+#include <QWidgetAction>
 #include <QStringList>
 #include <QTimer>
 #include <QHBoxLayout>
@@ -36,6 +40,7 @@
 #include <QToolBar>
 #include <QToolButton>
 
+#include <algorithm>
 #include <functional>
 #include <set>
 #include <string>
@@ -72,6 +77,32 @@ constexpr int kLineweights[] = {0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53,
 QIcon swatch_icon(core::Rgb c) {
     QPixmap px(16, 16);
     px.fill(QColor(c.r, c.g, c.b));
+    return QIcon(px);
+}
+
+/// A block's picture for the Insert gallery: its segments fitted into a square, in `ink`.
+QIcon block_picture(const std::vector<core::Vec2>& pairs, const QColor& ink, int size) {
+    QPixmap px(size, size);
+    px.fill(Qt::transparent);
+    if (pairs.size() >= 2) {
+        core::Vec2 lo = pairs.front();
+        core::Vec2 hi = pairs.front();
+        for (const core::Vec2& p : pairs) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        }
+        const double span = std::max({hi.x - lo.x, hi.y - lo.y, 1e-9});
+        const double k = (size - 6) / span;
+        const double ox = (size - (hi.x - lo.x) * k) * 0.5;
+        const double oy = (size - (hi.y - lo.y) * k) * 0.5;
+        const auto at = [&](core::Vec2 p) { return QPointF(ox + (p.x - lo.x) * k, size - oy - (p.y - lo.y) * k); };
+        QPainter g(&px);
+        g.setRenderHint(QPainter::Antialiasing);
+        g.setPen(QPen(ink, 1.0));
+        for (std::size_t i = 0; i + 1 < pairs.size(); i += 2) {
+            g.drawLine(at(pairs[i]), at(pairs[i + 1]));
+        }
+    }
     return QIcon(px);
 }
 
@@ -361,6 +392,57 @@ void MainWindow::build_ribbon() {
         }
         return m;
     };
+    // Insert's drop-down, as AutoCAD's: the drawing's blocks in a gallery of pictures -- a pick
+    // inserts that block, at the point asked next -- then the Insert window and a drawing file.
+    const auto block_gallery = [&]() {
+        auto* m = new QMenu(this);
+        auto* list = new QListWidget(m);
+        list->setObjectName(QStringLiteral("ribbon.block_gallery"));
+        list->setViewMode(QListView::IconMode);
+        list->setFlow(QListView::LeftToRight);
+        list->setWrapping(true);
+        list->setResizeMode(QListView::Adjust);
+        list->setMovement(QListView::Static);
+        list->setIconSize(QSize(64, 64));
+        list->setGridSize(QSize(96, 92));
+        list->setUniformItemSizes(true);
+        list->setFixedSize(96 * 4 + 24, 92 * 3 + 8);
+        auto* holder = new QWidgetAction(m);
+        holder->setDefaultWidget(list);
+        m->addAction(holder);
+        m->addSeparator();
+        m->addAction(action("I", QStringLiteral("More Options...")));
+        m->addAction(macro(QStringLiteral("From Drawing..."), "-INSERT", {"~"}, "insert"));
+        connect(m, &QMenu::aboutToShow, this, [this, list] {
+            list->clear();
+            const std::vector<std::string> names = viewport_->block_names();
+            const auto previews = viewport_->block_previews();
+            const QColor ink = palette().color(QPalette::Text);
+            for (std::size_t i = 0; i < names.size(); ++i) {
+                if (names[i].empty() || names[i].front() == '*') {
+                    continue; // anonymous blocks are not offered
+                }
+                static const std::vector<core::Vec2> kNone;
+                const std::vector<core::Vec2>& pairs = previews && i < previews->size() ? (*previews)[i] : kNone;
+                auto* item = new QListWidgetItem(block_picture(pairs, ink, 64), QString::fromStdString(names[i]), list);
+                item->setToolTip(QString::fromStdString(names[i]));
+            }
+            if (list->count() == 0) {
+                auto* none = new QListWidgetItem(QStringLiteral("No blocks in this drawing"), list);
+                none->setFlags(Qt::NoItemFlags);
+            }
+        });
+        connect(list, &QListWidget::itemClicked, this, [this, m](QListWidgetItem* item) {
+            if ((item->flags() & Qt::ItemIsEnabled) == 0) {
+                return;
+            }
+            const std::string name = item->text().toStdString();
+            m->close();
+            command_widget_->focus_input();
+            processor_->start_macro("-INSERT", {name});
+        });
+        return m;
+    };
     // A disabled small placeholder for a tool Musa CAD does not have yet (tracked as an issue).
     const auto todo_small = [&](RibbonPanel* panel, QWidget* col, const QString& label, const char* icon_name) {
         return panel->add_small(col, asset(icon_name), label, /*enabled=*/false);
@@ -590,7 +672,7 @@ void MainWindow::build_ribbon() {
     // --- Block: Insert large; Create / Edit / Define Attributes stacked.
     RibbonPanel* block = ribbon_->add_panel(home, QStringLiteral("Block"), 45);
     block->set_representative_icon(asset("insert"));
-    large(block, QStringLiteral("Insert"), "I");
+    large_split(block, QStringLiteral("Insert"), "I", block_gallery());
     {
         QWidget* col = block->add_column(/*icon_only=*/true);
         small_split(block, col, QStringLiteral("Create"), "B",
@@ -722,7 +804,7 @@ void MainWindow::build_ribbon() {
     const int insert = ribbon_->add_tab(QStringLiteral("Insert"));
     RibbonPanel* iblock = ribbon_->add_panel(insert, QStringLiteral("Block"), 60);
     iblock->set_representative_icon(asset("insert"));
-    large(iblock, QStringLiteral("Insert"), "I");
+    large_split(iblock, QStringLiteral("Insert"), "I", block_gallery());
     {
         QWidget* col = iblock->add_column();
         small_split(iblock, col, QStringLiteral("Create"), "B",

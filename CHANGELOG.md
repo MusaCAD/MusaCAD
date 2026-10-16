@@ -404,6 +404,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
   spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
   spline without changing its shape.
+- **The block gallery** (#78) -- Insert's drop-down on Home > Block and Insert > Block shows
+  the drawing's blocks as pictures, as AutoCAD's gallery does; a pick inserts that block.
+  More Options... opens the Insert window, From Drawing... inserts a drawing file.
 - **MLEADEREDIT** (#61) -- `Select a multileader:`, then `Specify leader arrowhead location or
   [Remove leaders]:` for each leader to add, straight to the landing with its own arrowhead,
   or `Specify leaders to remove or [Add leaders]:`. Annotate > Leaders has Add Leader and

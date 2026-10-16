@@ -85,6 +85,8 @@ public:
     std::uint16_t current_mleader_style();
     std::vector<std::string> block_names();
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
+    /// Per block (as block_names): its geometry as segment pairs (the Insert gallery).
+    std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews();
     std::vector<core::LayoutInfo> layouts();
     std::uint8_t active_space();
     /// Image definitions whose pixels are embedded in the drawing (a DXF export writes
@@ -1037,6 +1039,7 @@ private:
     std::uint16_t current_table_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
+    std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews_; ///< under layers_mutex_
     std::vector<core::LayoutInfo> layouts_;   ///< under layers_mutex_
     std::uint8_t active_space_ = 0;           ///< under layers_mutex_
     std::size_t embedded_images_ = 0;         ///< under layers_mutex_

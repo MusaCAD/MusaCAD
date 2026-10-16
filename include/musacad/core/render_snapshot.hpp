@@ -246,6 +246,10 @@ struct RenderSnapshot {
     std::vector<std::string> group_names; // GROUP table names (for GROUP ?)
     std::vector<std::string> block_names; // block-definition names (INSERT ?)
     std::vector<std::vector<BlockAttDefInfo>> block_attdefs; // per block: its attributes (INSERT prompts)
+    /// Per block (as block_names): its geometry as segment pairs, at its own scale about its
+    /// base point -- the Insert gallery's pictures. Shared, and made again only when the
+    /// blocks change.
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> block_previews;
     DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
     std::vector<TextStyle> text_styles;    // STYLE table (TEXT, the palette)
     std::uint16_t current_text_style = 0;
@@ -420,6 +424,7 @@ struct RenderSnapshot {
         group_names.clear();
         block_names.clear();
         block_attdefs.clear();
+        block_previews.reset();
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;
