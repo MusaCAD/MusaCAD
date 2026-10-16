@@ -534,6 +534,24 @@ std::string serialize_native(const Document& doc) {
         s += word(ds.alt_post);
         s += '\n';
     }
+    // v40: DIMTOL idx method upper lower precision+1 -- a style's Tolerances tab, when set.
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        const DimStyle& ds = doc.dimstyles[i];
+        if (ds.tol_method == 0 && ds.tol_upper == 0.0 && ds.tol_lower == 0.0 && ds.tol_precision < 0) {
+            continue;
+        }
+        s += "DIMTOL ";
+        append_uint(s, i);
+        s += ' ';
+        append_uint(s, ds.tol_method);
+        s += ' ';
+        append_double(s, ds.tol_upper);
+        s += ' ';
+        append_double(s, ds.tol_lower);
+        s += ' ';
+        append_uint(s, static_cast<std::uint64_t>(ds.tol_precision + 1));
+        s += '\n';
+    }
 
     // PAGESETUP <name> <paper> <target> pw ph land area wminx wminy wmaxx wmaxy fit
     //           snum sden center offx offy plw style  -- the three strings have their
@@ -2165,7 +2183,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                     !to_double(tok[db + 2], tol.lower)) {
                     return fail("DIM decoration malformed");
                 }
-                tol.mode = static_cast<TolMode>(std::min<std::uint64_t>(mode, 4));
+                tol.mode = static_cast<TolMode>(std::min<std::uint64_t>(mode, 5));
                 // The two raw strings follow on their own lines (they may be empty and
                 // may contain spaces, so they cannot be tokens).
                 if (!read_line(dprefix) || !read_line(dsuffix)) {
@@ -2414,6 +2432,22 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             l.name = std::move(name);
             doc.layer_states.back().layers.push_back(std::move(l));
+        } else if (key == "DIMTOL") {
+            // DIMTOL idx method upper lower precision+1 (v40): the Tolerances tab.
+            std::uint64_t idx = 0;
+            std::uint64_t method = 0;
+            std::uint64_t prec = 0;
+            double up = 0.0;
+            double lo = 0.0;
+            if (tok.size() != 6 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size() || !to_uint(tok[2], method) ||
+                !to_double(tok[3], up) || !to_double(tok[4], lo) || !to_uint(tok[5], prec)) {
+                return fail("malformed DIMTOL");
+            }
+            DimStyle& ds = doc.dimstyles[idx];
+            ds.tol_method = static_cast<std::uint8_t>(std::min<std::uint64_t>(method, 4));
+            ds.tol_upper = up;
+            ds.tol_lower = lo;
+            ds.tol_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(prec, 9)) - 1);
         } else if (key == "DIMUNITS") {
             // DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost (v40)
             std::uint64_t idx = 0;

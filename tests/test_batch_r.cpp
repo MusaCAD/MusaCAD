@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "musacad/core/command.hpp"
+#include "musacad/core/dimension.hpp"
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/hatch_pattern.hpp"
@@ -243,4 +244,51 @@ TEST_CASE("A layer's transparency reaches the drawn batches, the native file and
     const auto it = std::find_if(dxf.layers.begin(), dxf.layers.end(), [](const Layer& l) { return l.name == "Glass"; });
     REQUIRE(it != dxf.layers.end());
     REQUIRE(it->transparency == 50);
+}
+
+TEST_CASE("A dimension style's Tolerances: Symmetrical, Deviation, Limits and Basic, through the native file and DXF") {
+    DimData d;
+    d.type = DimType::Aligned;
+    d.a = {0, 0};
+    d.b = {50, 0};
+    d.line_pt = {25, 10};
+    DimStyle st;
+    st.precision = 2;
+    st.tol_upper = 0.1;
+    st.tol_lower = 0.05;
+    st.tol_method = 1;
+    REQUIRE(compose_dim_label(d, st, {}).line1 == "50.00 ±0.10");
+    st.tol_method = 2;
+    const DimLabel dev = compose_dim_label(d, st, {});
+    REQUIRE(dev.line1 == "50.00 +0.10");
+    REQUIRE(dev.line2 == "-0.05");
+    REQUIRE(dev.stack_at == 6);
+    st.tol_method = 3;
+    const DimLabel lim = compose_dim_label(d, st, {});
+    REQUIRE(lim.line1 == "50.10");
+    REQUIRE(lim.line2 == "49.95");
+    st.tol_method = 4;
+    REQUIRE(compose_dim_label(d, st, {}).boxed);
+    st.tol_precision = 3;
+    st.tol_method = 1;
+    REQUIRE(compose_dim_label(d, st, {}).line1 == "50.00 ±0.100");
+    d.tol.mode = TolMode::Reference; // the dimension's own wins
+    REQUIRE(compose_dim_label(d, st, {}).line1 == "(50.00)");
+
+    io::Document doc;
+    st.name = "Machined";
+    st.tol_method = 2;
+    doc.dimstyles.push_back(st);
+    io::Document native;
+    REQUIRE(io::parse_native(io::serialize_native(doc), native).ok);
+    REQUIRE(native.dimstyles.back().tol_method == 2);
+    REQUIRE(native.dimstyles.back().tol_precision == 3);
+    REQUIRE(native.dimstyles.back().tol_lower == Catch::Approx(0.05));
+    io::Document dxf;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
+    const auto it = std::find_if(dxf.dimstyles.begin(), dxf.dimstyles.end(), [](const DimStyle& s) { return s.name == "Machined"; });
+    REQUIRE(it != dxf.dimstyles.end());
+    REQUIRE(it->tol_method == 2);
+    REQUIRE(it->tol_upper == Catch::Approx(0.1));
+    REQUIRE(it->tol_lower == Catch::Approx(0.05));
 }

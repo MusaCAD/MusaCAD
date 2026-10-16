@@ -605,6 +605,20 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_i(s, 275, ds.angular_unit);      // DIMAUNIT
         code_i(s, 276, ds.fraction_format);   // DIMFRAC
         code_i(s, 277, ds.linear_unit);       // DIMLUNIT
+        if (ds.tol_method != 0) {
+            // The Tolerances tab: DIMTOL / DIMLIM, the values, and a basic dimension's
+            // negative DIMGAP.
+            code_i(s, 71, ds.tol_method == 1 || ds.tol_method == 2 ? 1 : 0); // DIMTOL
+            code_i(s, 72, ds.tol_method == 3 ? 1 : 0);                      // DIMLIM
+            code_d(s, 47, ds.tol_upper);                                    // DIMTP
+            code_d(s, 48, ds.tol_method == 1 ? ds.tol_upper : ds.tol_lower); // DIMTM
+            if (ds.tol_method == 4) {
+                code_d(s, 147, -0.625); // DIMGAP < 0: the text boxed
+            }
+        }
+        if (ds.tol_precision >= 0) {
+            code_i(s, 272, ds.tol_precision); // DIMTDEC
+        }
     }
     code(s, 0, "ENDTAB");
     // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
@@ -1852,6 +1866,16 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         ranged(170, 0, 1, [&](long x) { ds.alt = x != 0; });
         ranged(273, 1, 6, [&](long x) { ds.alt_unit = static_cast<std::uint8_t>(x); });
         ranged(171, 0, 8, [&](long x) { ds.alt_precision = static_cast<std::uint8_t>(x); });
+        // The Tolerances tab.
+        const double tp = find(body, 47) != nullptr ? to_d(*find(body, 47)) : 0.0;
+        const double tm = find(body, 48) != nullptr ? to_d(*find(body, 48)) : 0.0;
+        const bool dimlim = find(body, 72) != nullptr && to_l(*find(body, 72)) != 0;
+        const bool dimtol = find(body, 71) != nullptr && to_l(*find(body, 71)) != 0;
+        const bool basic = find(body, 147) != nullptr && to_d(*find(body, 147)) < 0.0;
+        ds.tol_method = static_cast<std::uint8_t>(dimlim ? 3 : dimtol ? (std::abs(tp - tm) < 1e-12 ? 1 : 2) : basic ? 4 : 0);
+        ds.tol_upper = tp;
+        ds.tol_lower = tm;
+        ranged(272, 0, 8, [&](long x) { ds.tol_precision = static_cast<std::int8_t>(x); });
         if (const std::string* v = find(body, 45); v != nullptr && to_d(*v) >= 0.0) {
             ds.round_off = to_d(*v);
         }

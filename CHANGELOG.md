@@ -53,6 +53,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **The Tolerances tab** (#58) -- a dimension style's tolerance method (None, Symmetrical,
+  Deviation, Limits, Basic), precision and upper and lower values, taken by every dimension
+  without a tolerance of its own; Deviation stacks -lower under +upper beside the value. Kept in
+  the drawing and in DXF.
 - **DATAEXTRACTION** (#71) -- the block references counted by name and attribute values, into a
   CSV file and/or a table in the drawing: a parts list from the drawing's blocks.
 - **The file commands at the command line** -- NEW, OPEN, QSAVE, SAVEAS (SAVE), CLOSE, CLOSEALL,

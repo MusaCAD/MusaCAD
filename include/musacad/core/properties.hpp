@@ -78,6 +78,7 @@ enum class TolMode : std::uint8_t {
     Limits = 2,    ///< value+upper stacked over value+lower (two lines)
     Basic = 3,     ///< the value in a box (ASME Y14.5 theoretically-exact dimension)
     Reference = 4, ///< the value in parentheses
+    Deviation = 5, ///< the value, then +upper stacked over -lower beside it
 };
 
 /// A dimension's tolerance decoration. `lower` is the (usually negative) deviation;
@@ -185,6 +186,14 @@ struct DimStyle {
     std::string post{};
     /// DIMAPOST: "[]" stands for the alternate value.
     std::string alt_post{};
+    /// The Tolerances tab: the method a dimension without a tolerance of its own takes --
+    /// 0 None, 1 Symmetrical, 2 Deviation, 3 Limits, 4 Basic (DIMTOL / DIMLIM / DIMGAP < 0) --
+    /// the upper and lower values (DIMTP, DIMTM; the lower one entered positive, below the
+    /// value) and their precision (DIMTDEC; -1: as the primary units').
+    std::uint8_t tol_method = 0;
+    double tol_upper = 0.0;
+    double tol_lower = 0.0;
+    std::int8_t tol_precision = -1;
 
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };

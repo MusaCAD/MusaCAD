@@ -628,6 +628,19 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
     const auto wrap = [&](const std::string& core) { return pre + core + suf; };
 
     DimLabel out;
+    // The dimension's own tolerance, else the one its style's Tolerances tab sets.
+    DimTolerance tol = d.tol;
+    if (tol.mode == TolMode::None && style.tol_method != 0) {
+        static constexpr TolMode kMethod[5] = {TolMode::None, TolMode::Symmetric, TolMode::Deviation, TolMode::Limits,
+                                               TolMode::Basic};
+        tol.mode = kMethod[std::min<int>(style.tol_method, 4)];
+        tol.upper = style.tol_upper;
+        tol.lower = -style.tol_lower; // entered positive: below the value
+    }
+    DimStyle tstyle = style; // the tolerance values' precision (DIMTDEC)
+    if (style.tol_precision >= 0) {
+        tstyle.precision = static_cast<std::uint8_t>(style.tol_precision);
+    }
 
     // ---------------------------------------------------------------------------
     // Text override (issue #20). AutoCAD's Properties "Text override" field, where
@@ -662,26 +675,34 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         // Control codes expand through the SAME pass every other text uses, so an
         // override can carry %%c and \U+XXXX with no dimension-specific handling.
         out.line1 = text::substitute_text(expanded);
-        if (d.tol.mode == TolMode::Basic) {
+        if (tol.mode == TolMode::Basic) {
             out.boxed = true;
-        } else if (d.tol.mode == TolMode::Reference) {
+        } else if (tol.mode == TolMode::Reference) {
             out.line1 = "(" + out.line1 + ")";
         }
         return out;
     }
 
-    switch (d.tol.mode) {
+    switch (tol.mode) {
     case TolMode::Symmetric:
         // One line: the value, then the deviation. ISO 129-1 writes a single
         // deviation as value ± tol.
-        out.line1 = wrap(measured_text(d, style) + " ±" + format_dim_value(std::abs(d.tol.upper), style));
+        out.line1 = wrap(measured_text(d, style) + " ±" + format_dim_value(std::abs(tol.upper), tstyle));
         break;
+    case TolMode::Deviation: {
+        // The value, then +upper with -lower stacked under it (AutoCAD's Deviation).
+        const std::string value = wrap(measured_text(d, style));
+        out.line1 = value + (tol.upper < 0.0 ? " -" : " +") + format_dim_value(std::abs(tol.upper), tstyle);
+        out.line2 = (tol.lower > 0.0 ? "+" : "-") + format_dim_value(std::abs(tol.lower), tstyle);
+        out.stack_at = value.size() + 1;
+        break;
+    }
     case TolMode::Limits: {
         // Two lines: the actual limit VALUES, upper over lower -- not the deviations.
         // That is what a machinist reads off the drawing.
         const double v = dim_measure(d);
-        const double hi = std::max(v + d.tol.upper, v + d.tol.lower);
-        const double lo = std::min(v + d.tol.upper, v + d.tol.lower);
+        const double hi = std::max(v + tol.upper, v + tol.lower);
+        const double lo = std::min(v + tol.upper, v + tol.lower);
         out.line1 = wrap(measured_text_for(d.type, style, hi));
         out.line2 = wrap(measured_text_for(d.type, style, lo));
         break;
@@ -788,6 +809,19 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         }
         if (!g.label2.empty()) {
             g.label2_pos = g.text_pos - ay * line_gap; // the lower limit sits under the upper
+            if (label.stack_at != std::string::npos && label.stack_at <= g.label.size()) {
+                // Deviation: the -lower value starts where the +upper one does.
+                const double w1 = text::text_width(g.label, h);
+                const double w2 = text::text_width(g.label2, h);
+                const double x1 = g.text_justify == text::Justify::Center  ? -w1 * 0.5
+                                  : g.text_justify == text::Justify::Right ? -w1
+                                                                           : 0.0;
+                const double xs = x1 + text::text_width(g.label.substr(0, label.stack_at), h);
+                const double x2 = g.text_justify == text::Justify::Center  ? xs + w2 * 0.5
+                                  : g.text_justify == text::Justify::Right ? xs + w2
+                                                                           : xs;
+                g.label2_pos = g.text_pos + ax * x2 - ay * line_gap;
+            }
         }
         if (!label.boxed && !insp_framed) {
             return;

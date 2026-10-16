@@ -620,6 +620,35 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
                              group(QStringLiteral("Alternate units format"), alt, this)}),
                  QStringLiteral("Alternate Units"));
 
+    // Tolerances: the method (DIMTOL / DIMLIM), the precision (DIMTDEC) and the upper and
+    // lower values (DIMTP, DIMTM) a dimension without a tolerance of its own takes.
+    auto* tol_method = new QComboBox(this);
+    tol_method->addItems({QStringLiteral("None"), QStringLiteral("Symmetrical"), QStringLiteral("Deviation"),
+                          QStringLiteral("Limits"), QStringLiteral("Basic")});
+    tol_method->setCurrentIndex(std::min<int>(style.tol_method, 4));
+    auto* tol_precision = new QComboBox(this);
+    tol_precision->addItem(QStringLiteral("As the primary units"));
+    for (int places = 0; places <= 8; ++places) {
+        tol_precision->addItem(unit_sample(2, places, QLatin1Char('.')));
+    }
+    tol_precision->setCurrentIndex(std::clamp(style.tol_precision + 1, 0, 9));
+    QDoubleSpinBox* tol_upper = length_box(style.tol_upper, 0.0, this);
+    QDoubleSpinBox* tol_lower = length_box(style.tol_lower, 0.0, this);
+    QFormLayout* tol = form();
+    row(tol, QStringLiteral("Method:"), tol_method);
+    row(tol, QStringLiteral("Precision:"), tol_precision);
+    row(tol, QStringLiteral("Upper value:"), tol_upper);
+    row(tol, QStringLiteral("Lower value:"), tol_lower);
+    const auto tol_enable = [tol_method, tol_precision, tol_upper, tol_lower] {
+        const int m = tol_method->currentIndex();
+        tol_precision->setEnabled(m != 0 && m != 4);
+        tol_upper->setEnabled(m != 0 && m != 4);
+        tol_lower->setEnabled(m == 2 || m == 3);
+    };
+    tol_enable();
+    connect(tol_method, &QComboBox::currentIndexChanged, this, tol_enable);
+    tabs->addTab(page(tabs, {group(QStringLiteral("Tolerance format"), tol, this)}), QStringLiteral("Tolerances"));
+
     auto* preview = new DimStylePreview(this);
     read_ = [=, this] {
         core::DimStyle s = base_;
@@ -653,12 +682,16 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.alt_factor = alt_factor->value();
         s.alt_round = alt_round->value();
         s.alt_post = post_of(alt_prefix->text(), alt_suffix->text(), "[]");
+        s.tol_method = static_cast<std::uint8_t>(std::max(0, tol_method->currentIndex()));
+        s.tol_precision = static_cast<std::int8_t>(tol_precision->currentIndex() - 1);
+        s.tol_upper = tol_upper->value();
+        s.tol_lower = tol_lower->value();
         return s;
     };
     const auto refresh_preview = [preview, this] { preview->set_style(read_()); };
     refresh_preview();
     for (QComboBox* c : {dim_color, lineweight, ext_color, arrow_type, arrow_color, text_color, vertical, precision,
-                         fraction, angle_unit, angle_precision, alt_precision}) {
+                         fraction, angle_unit, angle_precision, alt_precision, tol_method, tol_precision}) {
         connect(c, &QComboBox::currentIndexChanged, this, refresh_preview);
     }
     connect(unit, &QComboBox::currentIndexChanged, this, [=] {
@@ -669,7 +702,7 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         fill_alt_precision(alt_precision->currentIndex());
         refresh_preview();
     });
-    for (QDoubleSpinBox* b : {round_off, lfac, alt_factor, alt_round}) {
+    for (QDoubleSpinBox* b : {round_off, lfac, alt_factor, alt_round, tol_upper, tol_lower}) {
         connect(b, &QDoubleSpinBox::valueChanged, this, refresh_preview);
     }
     for (QLineEdit* e : {prefix, suffix, alt_prefix, alt_suffix}) {
