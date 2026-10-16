@@ -9,6 +9,7 @@
 
 #include <array>
 #include <vector>
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <chrono>
@@ -4026,6 +4027,10 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
     if (dyn_handle_key(event->key(), event->text())) {
         return; // consumed by an on-canvas Dynamic Input field
     }
+    if (event->key() == Qt::Key_Down && event->modifiers() == Qt::NoModifier && processor_->has_active_command() &&
+        !cmd_active_ && show_prompt_options()) {
+        return; // Dynamic Input's down arrow: the prompt's options at the cursor
+    }
     if (event->key() == Qt::Key_Escape) {
         if (plot_picking_) {
             cancel_plot_window_pick(); // re-opens the plot dialog (ok=false)
@@ -4069,6 +4074,53 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
         return;
     }
     QWindow::keyPressEvent(event);
+}
+
+bool ViewportWindow::show_prompt_options() {
+    // The options in the prompt's brackets, `[Close/Undo]`; each one's keyword is its
+    // capital letters and digits (Close: C, eXit: X, 3P: 3P), as the command reads it.
+    const std::string p = processor_->current_prompt();
+    const std::size_t lb = p.find('[');
+    const std::size_t rb = lb == std::string::npos ? std::string::npos : p.find(']', lb);
+    if (rb == std::string::npos || rb == lb + 1) {
+        return false;
+    }
+    const std::string inside = p.substr(lb + 1, rb - lb - 1);
+    QMenu menu;
+    std::vector<std::pair<QAction*, std::string>> keys;
+    std::size_t from = 0;
+    while (from <= inside.size()) {
+        const std::size_t slash = inside.find('/', from);
+        const std::string option = inside.substr(from, slash == std::string::npos ? std::string::npos : slash - from);
+        std::string key;
+        for (const char c : option) {
+            if (std::isupper(static_cast<unsigned char>(c)) != 0 || std::isdigit(static_cast<unsigned char>(c)) != 0) {
+                key += c;
+            }
+        }
+        if (key.empty()) {
+            key = option; // "?" and the like
+        }
+        if (!option.empty()) {
+            keys.emplace_back(menu.addAction(QString::fromStdString(option)), key);
+        }
+        if (slash == std::string::npos) {
+            break;
+        }
+        from = slash + 1;
+    }
+    if (keys.empty()) {
+        return false;
+    }
+    QAction* chosen = menu.exec(QCursor::pos());
+    for (const auto& [action, key] : keys) {
+        if (action == chosen) {
+            processor_->submit_line(key);
+            rebuild_overlay();
+            break;
+        }
+    }
+    return true;
 }
 
 core::Vec2 ViewportWindow::world_to_widget(core::Vec2 world) {

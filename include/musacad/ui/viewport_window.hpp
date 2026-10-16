@@ -355,6 +355,9 @@ public:
     void show_curve_grip_menu(const core::GripInfo& grip, QPoint global);
     /// The grip's menu, when its object has one (a right-click on it, or resting on it).
     bool show_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// Dynamic Input's down arrow: the current prompt's [options] in a menu at the cursor;
+    /// false when the prompt has none.
+    bool show_prompt_options();
     [[nodiscard]] static bool has_grip_menu(const core::GripInfo& grip);
     /// The idle right-click menu (Repeat, Recent Input, Clipboard, Isolate, Select
     /// Similar, Quick Select, Deselect All, Undo / Redo, Properties).
