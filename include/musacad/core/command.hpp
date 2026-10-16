@@ -410,6 +410,12 @@ struct DimBreakCommand {
     Vec2 p2{};
     std::uint64_t group = 0;
 };
+/// INSUNITSDEFSOURCE / INSUNITSDEFTARGET: the units taken for a unitless drawing inserted
+/// or attached (source), and for this drawing when it is unitless (target).
+struct SetUnitsDefaultsCommand {
+    std::uint8_t source = 4;
+    std::uint8_t target = 4;
+};
 /// BASE: the drawing's insertion base point (INSBASE).
 struct SetInsBaseCommand {
     Vec2 base{};
@@ -2204,6 +2210,7 @@ using Command =
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
                  SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
+                 SetUnitsDefaultsCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

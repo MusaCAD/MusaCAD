@@ -8026,7 +8026,9 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     def.base = doc.insbase; // the drawing's INSBASE (BASE), as AutoCAD inserts and attaches it
     def.xref_path = xref_path;
     if (bind) {
-        def.units = doc.display_units.insunits; // inserted at this drawing's units (an xref is scaled as attached)
+        // Inserted at this drawing's units (an xref is scaled as it is attached); a
+        // unitless drawing counts as INSUNITSDEFSOURCE's.
+        def.units = doc.display_units.insunits != 0 ? doc.display_units.insunits : insunits_def_source_;
     }
     std::vector<EntityHandle> taken;
     int skipped = 0;
@@ -8501,7 +8503,9 @@ void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
     }
     // A drawing in other units comes in at this drawing's (INSUNITS): millimetres into
     // inches at 1/25.4.
-    const double sc = (c.scale > 0.0 ? c.scale : 1.0) * units::insunits_factor(src_units, store_.units().insunits);
+    const double sc = (c.scale > 0.0 ? c.scale : 1.0) *
+                      units::insunits_factor(src_units != 0 ? src_units : insunits_def_source_,
+                                             store_.units().insunits != 0 ? store_.units().insunits : insunits_def_target_);
     AddInsertCommand ins{bi, c.pos, sc, sc, c.rotation, 0, {}, {}};
     const Command add = ins;
     const EntityHandle nh = create_indexed(add);
@@ -14412,7 +14416,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 } else {
                     // The block's units to the drawing's (a block in millimetres into a drawing in
                     // inches comes in at 1/25.4), as AutoCAD's Block unit scales it.
-                    const double f = units::insunits_factor(store_.block(bi)->units, store_.units().insunits);
+                    const double f = units::insunits_factor(
+                        store_.block(bi)->units, store_.units().insunits != 0 ? store_.units().insunits : insunits_def_target_);
                     AddInsertCommand ins{bi, c.pos, c.scale_x * f, c.scale_y * f, c.rotation, 0, {}, {}};
                     ins.attribs = c.attribs;
                     const Command add = ins;
@@ -15848,6 +15853,10 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
+            }
+            if constexpr (std::is_same_v<T, SetUnitsDefaultsCommand>) {
+                insunits_def_source_ = c.source;
+                insunits_def_target_ = c.target;
             }
             if constexpr (std::is_same_v<T, InsertLinkedTableCommand>) {
                 apply_insert_linked_table(c);

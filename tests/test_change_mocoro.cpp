@@ -1770,3 +1770,16 @@ TEST_CASE("A block's units scale its inserts, and travel with it in the drawing 
     engine.stop();
     std::filesystem::remove(hp);
 }
+
+TEST_CASE("INSUNITSDEFSOURCE and INSUNITSDEFTARGET are asked for and handed to the engine") {
+    H h;
+    h.run({"INSUNITSDEFSOURCE"});
+    REQUIRE(h.out.prompt == "Enter new value for INSUNITSDEFSOURCE <4>: ");
+    h.run({"25"});
+    REQUIRE(h.out.lines.back() == "Requires an integer between 0 and 24.");
+    h.run({"1"});
+    REQUIRE(h.last<SetUnitsDefaultsCommand>()->source == 1);
+    REQUIRE(h.last<SetUnitsDefaultsCommand>()->target == 4);
+    h.run({"INSUNITSDEFSOURCE", "4"}); // as it was, for the other tests
+    REQUIRE(h.last<SetUnitsDefaultsCommand>()->source == 4);
+}

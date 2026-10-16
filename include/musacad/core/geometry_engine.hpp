@@ -621,6 +621,8 @@ private:
 
     GeometryStore store_;
     NativeKernel2D kernel_;
+    std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
+    std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;
     MpscQueue<Command> queue_;
     TripleBuffer<RenderSnapshot> snapshots_;

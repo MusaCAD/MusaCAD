@@ -7574,7 +7574,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
-        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS",         "LAYERPMODE",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET",         "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
         "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
@@ -19178,6 +19178,24 @@ void PointDisplayCommand::input(CommandContext& ctx, const std::string& text) {
 
 void PointDisplayCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void UnitsDefaultCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for " + name() + " <" + std::to_string(target_ ? s_target_ : s_source_) + ">: ");
+}
+
+void UnitsDefaultCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v != std::floor(v) || v < 0.0 || v > 24.0) {
+            ctx.echo("Requires an integer between 0 and 24.");
+            return;
+        }
+        (target_ ? s_target_ : s_source_) = static_cast<int>(v);
+        ctx.submit(core::SetUnitsDefaultsCommand{static_cast<std::uint8_t>(s_source_), static_cast<std::uint8_t>(s_target_)});
+    }
     done_ = true;
 }
 

@@ -590,6 +590,10 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"PTYPE", "DDPTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
         "The point display mode and size (PDMODE and PDSIZE).");
     reg({"TEXTSIZE"}, [] { return std::make_unique<TextSizeCommand>(); }, "", "The height TEXT offers for new text.");
+    reg({"INSUNITSDEFSOURCE"}, [] { return std::make_unique<UnitsDefaultCommand>(false); }, "",
+        "The units a unitless drawing inserted or attached is taken to be in.");
+    reg({"INSUNITSDEFTARGET"}, [] { return std::make_unique<UnitsDefaultCommand>(true); }, "",
+        "The units this drawing is taken to be in, when it is unitless, for inserts and xrefs.");
     file_cmd({"DATALINK", "DL"}, "DATALINK", "assets/ribbon/table.svg",
              "Open the Data Link Manager: links from tables to CSV files of data.");
     reg({"DATALINKUPDATE", "DLU"}, [] { return std::make_unique<DataLinkUpdateUiCommand>(); }, "assets/ribbon/table.svg",

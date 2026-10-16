@@ -3753,6 +3753,28 @@ private:
     bool done_ = false;
 };
 
+/// INSUNITSDEFSOURCE / INSUNITSDEFTARGET: `Enter new value for INSUNITSDEFSOURCE <4>:` (an
+/// INSUNITS code, 0 to 24) -- the units a unitless drawing inserted or attached is taken
+/// to be in, and those this drawing is taken to be in when it is unitless.
+class UnitsDefaultCommand final : public ICommand {
+public:
+    explicit UnitsDefaultCommand(bool target) : target_(target) {}
+    std::string name() const override { return target_ ? "INSUNITSDEFTARGET" : "INSUNITSDEFSOURCE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool target_;
+    bool done_ = false;
+    inline static int s_source_ = 4;
+    inline static int s_target_ = 4;
+};
+
 /// TEXTSIZE: `Enter new value for TEXTSIZE <2.5000>:` -- the height TEXT offers.
 class TextSizeCommand final : public ICommand {
 public:

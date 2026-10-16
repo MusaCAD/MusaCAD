@@ -104,7 +104,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **Block units** (#81) -- a block keeps the units it was made in (the drawing's, or those of
   the drawing a file insert came from), and INSERT scales it to the drawing's: a block in
   millimetres comes into a drawing in inches at 1/25.4. Kept in the drawing and in DXF (the
-  block record's insertion units).
+  block record's insertion units). **INSUNITSDEFSOURCE** and **INSUNITSDEFTARGET** (millimetres
+  to begin with): the units taken for a unitless drawing inserted or attached, and for this
+  drawing when it is unitless.
 - **BASE, and drawings inserted as blocks** (#75) -- BASE (`Enter base point <0.0000,0.0000,0.0000>:`)
   sets the drawing's insertion base point (INSBASE), kept in the drawing and in DXF. At
   INSERT's block name, `~` chooses a drawing file and a path names one: it comes in as a
