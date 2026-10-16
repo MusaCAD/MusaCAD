@@ -108,7 +108,12 @@ commands (Ribbon Phase A):
 | PLINEWID | The width new polylines start with. |
 | XLINE (XL) | Draw an infinite construction line. |
 | RAY | Draw a semi-infinite construction line. |
-| POINT (PO) | Place point objects; Esc ends. |
+| POINT (PO) | Place a point; the ribbon's Multiple Points (MULTIPLE POINT) places one after another. |
+| MULTIPLE | Repeat a command until Esc (MULTIPLE POINT places point after point). |
+| PDMODE | How points are drawn: 0 a dot, 1 nothing, 2 a plus, 3 a cross, 4 a tick; +32 in a circle, +64 in a square. |
+| PDSIZE | The size of point markers: in drawing units, or 0 or less for a size on screen. |
+| PTYPE | The point display mode and size (PDMODE and PDSIZE). |
+| LIMITS | The drawing's limits, and whether points outside them are refused. |
 | DIVIDE (DIV) | Mark a curve into a number of equal segments with points. |
 | MEASURE (ME) | Mark a curve at set intervals with points. |
 | EXTEND (EX) | Extend objects to meet the edges of other objects; a dragged path extends every object it crosses. Shift trims instead. |
@@ -184,7 +189,7 @@ commands (Ribbon Phase A):
 | SPLINE | SPL | Implemented (#23) -- Fit and CV methods |
 | ELLIPSE | EL | Implemented (#23) -- axis-end, Center, Rotation, Arc |
 | POLYGON (side count and Inscribed / Circumscribed remembered, 3..1024 sides, a typed radius stands the polygon on a flat bottom edge, an Edge-mode band) | POL | Implemented (#23) -- inscribed / circumscribed / Edge |
-| POINT | PO | Implemented (#23) |
+| POINT -- `Current point modes:  PDMODE=0  PDSIZE=0.0000`, `Specify a point:`, one point; **MULTIPLE** (`Enter command name to repeat:`) runs any command again until Esc, and the ribbon's Multiple Points is MULTIPLE POINT. **PDMODE** / **PDSIZE** / **PTYPE** set how points are drawn (0 a dot, 1 nothing, 2 a plus, 3 a cross, 4 a tick up; +32 in a circle, +64 in a square) and how big (drawing units; 0 or less a size on screen, about forty pixels at any zoom); kept in the drawing and in DXF | PO | Implemented (#23, #40) |
 | XLINE / RAY | XL | Implemented (#23) -- Hor / Ver / Ang / Bisect / two-point |
 | HATCH / BHATCH — **SOLID fill** of a region (Part A). Two boundary modes: **pick an internal point** (the engine traces the enclosing boundary from surrounding geometry — lines, arcs, circles, polylines — building a **planar arrangement** so a partitioning line correctly splits the region; closed entities inside become **islands/holes**) or **pre-select** closed polylines (noun-verb). "Valid hatch boundary not found." when no closed boundary encloses the pick. Fill is **derived, not baked** (rendered via the fill pipeline, so it plots as PDF vectors). Pickable (point-in-region, islands respected), PR-editable (Pattern/Scale/Angle/Origin), MATCHPROP-matchable, native + DXF round-trip. Selected hatch shows a **highlight tint over the fill + a grip at every boundary vertex** (drag to reshape) | H / BHATCH | Implemented (Part A: SOLID; line patterns = Part B) |
 | HATCH **line patterns** (Part B) — `.PAT` parser + a built-in stock library (ANSI31–ANSI38, NET/NET3/GRID, BRICK, BOX, HEX/HONEY, ANGLE, DOTS, CROSS, SQUARE, TRIANG, GRASS, EARTH, STEEL, CONC, INSUL, …; authored from the public .PAT format, **not** copied from acad.pat — load that file for the vendor set). Line families are **generated + clipped to the boundary at render time** (derived-not-baked, even-odd so islands carve out) and plot as vectors. Choose via the command's `[Pattern/Scale/Angle]` options or the PR. SOLID stays the special fill name — one render path, patterns are not a fork | H ▸ Pattern | Implemented (Part B) |
@@ -241,7 +246,7 @@ commands (Ribbon Phase A):
 | FILL / FILLMODE / PLINEWID | -- | Implemented |
 | VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
 | GROUP / UNGROUP / PICKSTYLE 0..3 / -GROUP (?, Order, Add, Remove, Explode, REName, Selectable, Create) / GROUPEDIT / Ctrl+H | G | Implemented (#53; group membership persists in .musa; not on the undo stack; PICKSTYLE's hatch bit waits for associative hatches, #41) |
-| UNITS (the Drawing Units dialog; -UNITS with AutoCAD's numbered tables; INSUNITS; degrees/DMS/grads/radians/surveyor) | UN / -UNITS | Implemented (#67; dimension text keeps the dimstyle precision, as DIMLUNIT does) |
+| UNITS (the Drawing Units dialog; -UNITS with AutoCAD's numbered tables; INSUNITS; degrees/DMS/grads/radians/surveyor) -- lengths are typed as decimals, fractions (`12 3/8`, `3/8`) or feet and inches (`1'-6"`, `1'6`, `6"`, `1'-6 1/2"`; a foot is twelve drawing units) at every length and point prompt; DXF carries `$INSUNITS`, `$LUNITS`, `$LUPREC`, `$AUNITS`, `$AUPREC`, `$ANGDIR`, `$ANGBASE` and `$MEASUREMENT` both ways | UN / -UNITS | Implemented (#67, #81; dimension text keeps the dimstyle precision, as DIMLUNIT does; blocks and pastes are not yet scaled by the units) |
 | LTSCALE shows the current value and says `Regenerating model.`; CELTSCALE, PSLTSCALE (viewport dashes follow the viewport scale), MSLTSCALE (recorded) | LTS | Implemented (#67) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented |
@@ -626,7 +631,7 @@ and disappear (returning to the last fixed tab) when it doesn't. Mixed selection
 | Object Snap | F3 | Implemented |
 | Grid display | F7 | Implemented |
 | Ortho | F8 | Implemented; **ORTHO** `Enter mode [ON/OFF] <OFF>:` at the command line |
-| Snap (grid snap) | F9 | Implemented; **SNAP** `Specify snap spacing or [ON/OFF] <10.0000>:` (a spacing turns snap on; Aspect, Style and Type not yet). **GRID** `Enter mode [ON/OFF]:` shows or hides the grid, whose spacing follows the zoom |
+| Snap (grid snap) | F9 | Implemented; **SNAP** `Specify snap spacing or [ON/OFF/Aspect/Legacy/Style/Type] <10.0000>:` (a spacing turns snap on; **Aspect** asks the horizontal and the vertical spacing; **Type** Polar / Grid; Style Isometric and Legacy are not there yet and say so). **GRID** `Enter mode [ON/OFF]:` shows or hides the grid, whose spacing follows the zoom. **LIMITS** -- `Specify lower left corner or [ON/OFF] <0.0000,0.0000>:`, `Specify upper right corner <420.0000,297.0000>:`; with checking on a point outside is refused at every prompt (`**Outside limits`); kept in the drawing and in DXF (`$LIMMIN`, `$LIMMAX`, `$LIMCHECK`) |
 | Polar tracking | F10 | Implemented -- alignment paths at the polar angles from the last point; the cursor locks onto one within the aperture of it (a dashed path and a tooltip, `Polar: 12.3456 < 45°`). Increment angles from the POLAR dropdown or `POLARANG` (90 to begin with), additional angles (`POLARADDANG`, used with `POLARMODE` 4), angles relative to the last segment (`POLARMODE` 1), PolarSnap (`SNAPTYPE` 1 with SNAP on: steps of `POLARDIST` along the path) |
 | Object snap tracking | F11 | Implemented -- rest the cursor on an object snap point to acquire it (a small cross; rest on it again to let it go; seven at most), then track along the horizontal and vertical through it (every polar angle with `POLARMODE` 2), onto the crossing of two paths or of a path and a polar path (`Endpoint: < 90°, Polar: < 0°`). `AUTOSNAP` bits 8 and 16 switch the two tracking modes |
 | Temporary override keys, held at a point prompt | Shift … | Implemented -- Shift: ORTHO the other way; Shift + A: OSNAP; Shift + X: POLAR; Shift + Q: OTRACK; Shift + D (or L): no snapping or tracking; Shift + E (or P) / V (or M) / C: Endpoint / Midpoint / Center alone. `TEMPOVERRIDES` 0 switches them off |

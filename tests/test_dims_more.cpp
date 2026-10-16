@@ -127,7 +127,7 @@ TEST_CASE("The Angle option: a dimension's text at its own angle, kept in the dr
     doc.dims.push_back(dd);
     io::Document back;
     REQUIRE(io::parse_native(io::serialize_native(doc), back).ok);
-    REQUIRE(back.format_version == 39);
+    REQUIRE(back.format_version == io::kFormatVersion);
     REQUIRE(back.dims.size() == 1);
     REQUIRE(back.dims[0].text_angle == Approx(0.7));
 

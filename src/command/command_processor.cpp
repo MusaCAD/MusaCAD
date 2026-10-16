@@ -452,8 +452,9 @@ core::Vec2 CommandProcessor::resolve_constraints(core::Vec2 world) const {
     TrackingSettings settings = tracking_;
     settings.polar_snap = grid_snap_ && polar_snap_type_;
     if (grid_snap_ && grid_spacing_ > 0.0 && !settings.polar_snap) {
+        const double sy = grid_spacing_y_ > 0.0 ? grid_spacing_y_ : grid_spacing_;
         p.x = std::round(p.x / grid_spacing_) * grid_spacing_;
-        p.y = std::round(p.y / grid_spacing_) * grid_spacing_;
+        p.y = std::round(p.y / sy) * sy;
     }
     const bool ortho = ortho_ != override_held(Override::Ortho);
     const bool polar = !ortho && (polar_ != override_held(Override::Polar));

@@ -3,6 +3,8 @@
 
 #include "musacad/command/coordinate.hpp"
 
+#include "musacad/core/units.hpp"
+
 #include "musacad/core/text/parse_double.hpp"
 
 #include <charconv>
@@ -39,7 +41,17 @@ std::string fmt_point(core::Vec2 p) {
 
 } // namespace
 
-bool parse_number(std::string_view text, double& out) { return to_double(text, out); }
+bool parse_number(std::string_view text, double& out) {
+    if (to_double(text, out)) {
+        return true;
+    }
+    // Feet and inches, or a fraction, as the Architectural and Fractional formats write.
+    if (const std::optional<double> v = core::units::parse_length_text(text)) {
+        out = *v;
+        return true;
+    }
+    return false;
+}
 
 CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> last) {
     return parse_coordinate(text, last, std::nullopt);
@@ -64,7 +76,7 @@ CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> las
         return r;
     }
     if (double dist = 0.0; t.front() != '@' && t.find(',') == std::string_view::npos &&
-                           t.find('<') == std::string_view::npos && to_double(t, dist)) {
+                           t.find('<') == std::string_view::npos && parse_number(t, dist)) {
         // Direct distance entry: along the cursor's bearing from the last point.
         if (!last || !cursor_bearing) {
             r.error = "Requires a point, or a distance with the cursor showing the direction.";
@@ -91,7 +103,7 @@ CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> las
         }
         double dist = 0.0;
         double angle_deg = 0.0;
-        if (!to_double(body.substr(0, lt), dist) || !to_double(body.substr(lt + 1), angle_deg)) {
+        if (!parse_number(body.substr(0, lt), dist) || !to_double(body.substr(lt + 1), angle_deg)) {
             r.error = "Malformed polar coordinate (expected @dist<angle).";
             return r;
         }
@@ -110,7 +122,7 @@ CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> las
     }
     double a = 0.0;
     double b = 0.0;
-    if (!to_double(body.substr(0, comma), a) || !to_double(body.substr(comma + 1), b)) {
+    if (!parse_number(body.substr(0, comma), a) || !parse_number(body.substr(comma + 1), b)) {
         r.error = "Malformed coordinate (expected numeric x,y).";
         return r;
     }

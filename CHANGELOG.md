@@ -6,6 +6,27 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **Feet, inches and fractions at every prompt** (#81) -- `1'-6"`, `1'6`, `6 1/2`, `12-3/8`
+  and `@3/8<90` are read wherever a length or a point is asked for, a foot being twelve
+  drawing units as the Engineering and Architectural formats show them.
+- **DXF carries the drawing's units** (#81) -- `$INSUNITS`, `$LUNITS`, `$LUPREC`, `$AUNITS`,
+  `$AUPREC`, `$ANGDIR`, `$ANGBASE` and `$MEASUREMENT` are written and read, so another program
+  opens a Musa CAD drawing at the right scale and shows its lengths and angles the same way;
+  `$PDMODE`, `$PDSIZE`, `$LIMMIN`, `$LIMMAX`, `$LIMCHECK` and `$FILLMODE` too.
+- **Point display** (#40) -- **PDMODE** draws points as a dot, nothing, a plus, a cross or a
+  tick, in a circle or a square (32 and 64 added), and **PDSIZE** sizes the marker in
+  drawing units, or on screen whatever the zoom (0 or less); **PTYPE** asks both. POINT says
+  `Current point modes:  PDMODE=0  PDSIZE=0.0000`, places one point and ends; the ribbon's
+  **Multiple Points** runs **MULTIPLE** POINT, which goes on until Esc -- MULTIPLE repeats any
+  command. The settings are saved with the drawing (format v40) and in DXF.
+- **LIMITS** (#65) -- `Specify lower left corner or [ON/OFF]:` and the upper right; with
+  checking on, a point outside the limits is refused at every prompt (`**Outside limits`).
+  **SNAP** gains **Aspect** (a horizontal and a vertical spacing) and **Type** (Polar / Grid);
+  Style and Legacy say what is not there yet.
+
 ## 0.7.0 - 2026-10-11
 
 ### Added

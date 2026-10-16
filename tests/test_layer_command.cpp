@@ -197,7 +197,7 @@ TEST_CASE("ORTHO, SNAP and GRID at the command line") {
 
     h.proc.set_grid_spacing(10.0);
     h.proc.submit_line("SNAP");
-    REQUIRE(h.out.prompt == "Specify snap spacing or [ON/OFF] <10.0000>: ");
+    REQUIRE(h.out.prompt == "Specify snap spacing or [ON/OFF/Aspect/Legacy/Style/Type] <10.0000>: ");
     h.proc.submit_line("2.5");
     REQUIRE(h.proc.snap_spacing() == 2.5);
     REQUIRE(h.proc.snap_mode()); // a spacing turns it on
@@ -206,7 +206,7 @@ TEST_CASE("ORTHO, SNAP and GRID at the command line") {
     REQUIRE_FALSE(h.proc.snap_mode());
     h.proc.submit_line("SNAP");
     h.proc.submit_line("-1");
-    REQUIRE(h.out.lines.back() == "Requires a positive spacing, ON or OFF.");
+    REQUIRE(h.out.lines.back() == "Requires a positive spacing, ON, OFF or an option.");
     h.proc.submit_line("");
 
     h.proc.submit_line("GRID");

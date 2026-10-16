@@ -959,7 +959,11 @@ public:
     bool done() const override { return done_; }
 
 private:
+    enum class Step : std::uint8_t { Main, AspectX, AspectY, Type, Style, Legacy };
+    void main_prompt(CommandContext& ctx);
     Mode mode_;
+    Step step_ = Step::Main;
+    double x_ = 0.0;
     bool done_ = false;
 };
 
@@ -2571,6 +2575,64 @@ public:
     bool done() const override { return done_; }
 
 private:
+    bool done_ = false;
+};
+
+/// MULTIPLE: `Enter command name to repeat:`, then that command again and again until Esc.
+class MultipleCommand final : public ICommand {
+public:
+    std::string name() const override { return "MULTIPLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void hover(CommandContext& ctx, std::optional<core::EntityKind> kind) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && sub_ && sub_->in_selection_phase(); }
+    bool selection_removing() const override { return sub_ && sub_->selection_removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    bool wants_selection() const override { return sub_ && sub_->wants_selection(); }
+    bool wants_freehand() const override { return sub_ && sub_->wants_freehand(); }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+    bool free_text() const override { return sub_ && sub_->free_text(); }
+
+private:
+    void again(CommandContext& ctx);
+    std::string alias_;
+    std::unique_ptr<ICommand> sub_;
+    bool done_ = false;
+};
+
+/// PDMODE and PDSIZE (`Enter new value for PDMODE <0>:`), and PTYPE, which asks both.
+class PointDisplayCommand final : public ICommand {
+public:
+    enum class Var : std::uint8_t { Mode, Size, Both };
+    explicit PointDisplayCommand(Var v) : var_(v) {}
+    std::string name() const override { return var_ == Var::Mode ? "PDMODE" : var_ == Var::Size ? "PDSIZE" : "PTYPE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    void ask_size(CommandContext& ctx);
+    Var var_;
+    bool sizing_ = false;
+    std::uint8_t mode_ = 0;
+    bool done_ = false;
+};
+
+/// LIMITS: `Specify lower left corner or [ON/OFF] <0.0000,0.0000>:`, then the upper right.
+class LimitsCommand final : public ICommand {
+public:
+    std::string name() const override { return "LIMITS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool second_ = false;
+    core::Vec2 lower_{};
     bool done_ = false;
 };
 

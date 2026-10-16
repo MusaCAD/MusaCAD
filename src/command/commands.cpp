@@ -71,6 +71,12 @@ std::optional<core::Vec2> read_point(CommandContext& ctx, const std::string& tex
         ctx.echo(p.error);
         return std::nullopt;
     }
+    // LIMITS on: a point outside the drawing's limits is refused, as AutoCAD refuses it.
+    if (const CommandContext::Limits lim = ctx.limits();
+        lim.on && (p.point.x < lim.min.x || p.point.y < lim.min.y || p.point.x > lim.max.x || p.point.y > lim.max.y)) {
+        ctx.echo("**Outside limits");
+        return std::nullopt;
+    }
     ctx.echo("  = " + p.interpretation);
     return p.point;
 }
@@ -8363,7 +8369,10 @@ void PolygonCommand::cancel(CommandContext& ctx) {
 // POINT: place a point at each pick until Esc
 // ---------------------------------------------------------------------------
 void PointCommand::start(CommandContext& ctx) {
-    ctx.clear_last_point();
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "Current point modes:  PDMODE=%u  PDSIZE=%s", static_cast<unsigned>(ctx.pdmode()),
+                  fmt4(ctx.pdsize()).c_str());
+    ctx.echo(buf);
     ctx.set_prompt("Specify a point: ");
 }
 
@@ -8371,8 +8380,7 @@ void PointCommand::input(CommandContext& ctx, const std::string& text) {
     if (const auto p = read_point(ctx, text)) {
         ctx.submit(core::AddPointCommand{*p, ctx.group_id(), {}});
         ctx.set_last_point(*p);
-        // Stay open for the next one, like AutoCAD: points come in groups.
-        ctx.set_prompt("Specify a point: ");
+        done_ = true; // one point; MULTIPLE POINT (the ribbon's Multiple Points) goes on
     }
 }
 
@@ -9544,20 +9552,8 @@ namespace {
 /// A plain number ("30", "-12.5"), or nothing: what an angle prompt takes as a value
 /// before it tries the text as a point.
 std::optional<double> parse_number(const std::string& t) {
-    if (t.empty()) {
-        return std::nullopt;
-    }
-    std::size_t used = 0;
-    double v = 0.0;
-    try {
-        v = std::stod(t, &used);
-    } catch (...) {
-        return std::nullopt;
-    }
-    if (used != t.size() || !std::isfinite(v)) {
-        return std::nullopt;
-    }
-    return v;
+    // A decimal, a fraction, or feet and inches (units::parse_length_text).
+    return core::units::parse_length_text(t);
 }
 
 /// Mtext / Text / Angle at a dimension's placement prompt: true when `u` asked for one
@@ -13886,7 +13882,7 @@ void DraftModeCommand::start(CommandContext& ctx) {
         ctx.set_prompt(std::string("Enter mode [ON/OFF] <") + (ctx.ortho_mode() ? "ON" : "OFF") + ">: ");
         return;
     case Mode::Snap:
-        ctx.set_prompt("Specify snap spacing or [ON/OFF] <" + fmt4(ctx.snap_spacing()) + ">: ");
+        ctx.set_prompt("Specify snap spacing or [ON/OFF/Aspect/Legacy/Style/Type] <" + fmt4(ctx.snap_spacing()) + ">: ");
         return;
     case Mode::Grid: {
         const bool on = ctx.view() != nullptr && ctx.view()->grid_mode();
@@ -13896,19 +13892,96 @@ void DraftModeCommand::start(CommandContext& ctx) {
     }
 }
 
+void DraftModeCommand::main_prompt(CommandContext& ctx) {
+    step_ = Step::Main;
+    start(ctx);
+}
+
 void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
+    switch (step_) {
+    case Step::AspectX:
+    case Step::AspectY: {
+        double v = step_ == Step::AspectX ? ctx.snap_spacing() : ctx.snap_spacing_y();
+        if (!t.empty()) {
+            const std::optional<double> n = parse_number(t);
+            if (!n || *n <= 0.0) {
+                ctx.echo("Requires a positive spacing.");
+                return;
+            }
+            v = *n;
+        }
+        if (step_ == Step::AspectX) {
+            x_ = v;
+            step_ = Step::AspectY;
+            ctx.set_prompt("Specify vertical spacing <" + fmt4(ctx.snap_spacing_y()) + ">: ");
+            return;
+        }
+        ctx.set_snap_spacing_xy(x_, v);
+        ctx.set_snap_mode(true);
+        done_ = true;
+        return;
+    }
+    case Step::Type:
+        if (u == "P" || u == "POLAR") {
+            ctx.set_snap_type(1);
+        } else if (u == "G" || u == "GRID" || t.empty()) {
+            ctx.set_snap_type(0);
+        } else {
+            ctx.echo("Enter Polar or Grid.");
+            return;
+        }
+        done_ = true;
+        return;
+    case Step::Style:
+        if (u == "I" || u == "ISOMETRIC") {
+            ctx.echo("Isometric snap is not available yet; the snap stays Standard.");
+        }
+        done_ = true;
+        return;
+    case Step::Legacy:
+        if (u == "Y" || u == "YES") {
+            ctx.echo("Legacy snap behaviour is not available; the cursor snaps only at a point prompt.");
+        }
+        done_ = true;
+        return;
+    case Step::Main:
+        break;
+    }
     if (t.empty()) {
         done_ = true;
         return;
+    }
+    if (mode_ == Mode::Snap) {
+        if (u == "A" || u == "ASPECT") {
+            step_ = Step::AspectX;
+            ctx.set_prompt("Specify horizontal spacing <" + fmt4(ctx.snap_spacing()) + ">: ");
+            return;
+        }
+        if (u == "T" || u == "TYPE") {
+            step_ = Step::Type;
+            ctx.set_prompt(std::string("Enter snap type [Polar/Grid] <") + (ctx.snap_type() == 1 ? "Polar" : "Grid") +
+                           ">: ");
+            return;
+        }
+        if (u == "S" || u == "STYLE") {
+            step_ = Step::Style;
+            ctx.set_prompt("Enter snap grid style [Standard/Isometric] <S>: ");
+            return;
+        }
+        if (u == "L" || u == "LEGACY") {
+            step_ = Step::Legacy;
+            ctx.set_prompt("Enter new value for legacy snap behavior [Yes/No] <No>: ");
+            return;
+        }
     }
     const bool on = u == "ON";
     if (!on && u != "OFF") {
         if (mode_ == Mode::Snap) {
             const std::optional<double> v = parse_number(t);
             if (!v || *v <= 0.0) {
-                ctx.echo("Requires a positive spacing, ON or OFF.");
+                ctx.echo("Requires a positive spacing, ON, OFF or an option.");
                 return;
             }
             ctx.set_snap_spacing(*v);
@@ -14006,6 +14079,195 @@ void QuickDimUiCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void QuickDimUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+
+// ---------------------------------------------------------------------------
+// MULTIPLE, PDMODE / PDSIZE / PTYPE, LIMITS (issues #40, #65)
+// ---------------------------------------------------------------------------
+void MultipleCommand::start(CommandContext& ctx) { ctx.set_prompt("Enter command name to repeat: "); }
+
+std::unique_ptr<ICommand> CommandContext::make_command(const std::string& alias) {
+    (void)alias;
+    return nullptr; // only a context with a command registry makes commands
+}
+
+void MultipleCommand::again(CommandContext& ctx) {
+    sub_ = ctx.make_command(alias_);
+    if (!sub_) {
+        done_ = true;
+        return;
+    }
+    ctx.echo("Command: " + sub_->name());
+    sub_->start(ctx);
+    if (sub_->done()) {
+        done_ = true; // a command that ends at once (a setting) would spin: one run is enough
+    }
+}
+
+void MultipleCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!sub_) {
+        const std::string t = upper(trimmed(text));
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (!ctx.make_command(t)) {
+            ctx.echo("Unknown command \"" + t + "\".");
+            start(ctx);
+            return;
+        }
+        alias_ = t;
+        again(ctx);
+        return;
+    }
+    sub_->input(ctx, text);
+    if (sub_->done()) {
+        again(ctx);
+    }
+}
+
+void MultipleCommand::hover(CommandContext& ctx, std::optional<core::EntityKind> kind) {
+    if (sub_) {
+        sub_->hover(ctx, kind);
+    }
+}
+
+void MultipleCommand::selection_gesture(CommandContext& ctx) {
+    if (sub_) {
+        sub_->selection_gesture(ctx);
+        if (sub_->done()) {
+            again(ctx);
+        }
+    }
+}
+
+void MultipleCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) {
+    if (sub_) {
+        sub_->freehand(ctx, path);
+        if (sub_->done()) {
+            again(ctx);
+        }
+    }
+}
+
+void MultipleCommand::cancel(CommandContext& ctx) {
+    if (sub_) {
+        sub_->cancel(ctx);
+        sub_.reset();
+    } else {
+        ctx.echo("*Cancel*");
+    }
+    done_ = true;
+}
+
+void PointDisplayCommand::start(CommandContext& ctx) {
+    mode_ = ctx.pdmode();
+    if (var_ == Var::Size) {
+        ask_size(ctx);
+        return;
+    }
+    ctx.set_prompt(std::string(var_ == Var::Both ? "Enter point display mode (PDMODE) <" : "Enter new value for PDMODE <") +
+                   std::to_string(ctx.pdmode()) + ">: ");
+}
+
+void PointDisplayCommand::ask_size(CommandContext& ctx) {
+    sizing_ = true;
+    ctx.set_prompt(std::string(var_ == Var::Both ? "Enter point size (PDSIZE) <" : "Enter new value for PDSIZE <") +
+                   fmt4(ctx.pdsize()) + ">: ");
+}
+
+void PointDisplayCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!sizing_) {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            const bool whole = v && *v == std::floor(*v) && *v >= 0.0 && *v <= 100.0;
+            const int m = whole ? static_cast<int>(*v) : -1;
+            if (!whole || (m & 7) > 4 || (m & 24) != 0) { // 0..4, with 32 and 64 added
+                ctx.echo("Requires 0, 1, 2, 3 or 4, with 32 or 64 added for a circle or a square round it.");
+                return;
+            }
+            mode_ = static_cast<std::uint8_t>(m);
+        }
+        if (var_ == Var::Mode) {
+            ctx.submit(core::SetPointDisplayCommand{mode_, ctx.pdsize()});
+            done_ = true;
+            return;
+        }
+        ask_size(ctx);
+        return;
+    }
+    double size = ctx.pdsize();
+    if (!t.empty()) {
+        const std::optional<double> v = parse_number(t);
+        if (!v) {
+            ctx.echo("Requires a size: drawing units, or 0 or less for a size on screen.");
+            return;
+        }
+        size = *v;
+    }
+    ctx.submit(core::SetPointDisplayCommand{mode_, size});
+    done_ = true;
+}
+
+void PointDisplayCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void LimitsCommand::start(CommandContext& ctx) {
+    const CommandContext::Limits lim = ctx.limits();
+    ctx.echo(std::string("Reset Model space limits (limits checking ") + (lim.on ? "on" : "off") + "):");
+    ctx.set_prompt("Specify lower left corner or [ON/OFF] <" + fmt4(lim.min.x) + "," + fmt4(lim.min.y) + ">: ");
+}
+
+void LimitsCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const CommandContext::Limits lim = ctx.limits();
+    if (!second_) {
+        if (u == "ON" || u == "OFF") {
+            core::SetLimitsCommand c;
+            c.on = u == "ON";
+            c.corners = false;
+            ctx.submit(c);
+            done_ = true;
+            return;
+        }
+        lower_ = lim.min;
+        if (!t.empty()) {
+            const CoordParse p = parse_coordinate(t, std::nullopt);
+            if (!p.ok) {
+                ctx.echo(p.error);
+                return;
+            }
+            lower_ = p.point;
+        }
+        second_ = true;
+        ctx.set_prompt("Specify upper right corner <" + fmt4(lim.max.x) + "," + fmt4(lim.max.y) + ">: ");
+        return;
+    }
+    core::Vec2 upper_pt = lim.max;
+    if (!t.empty()) {
+        const CoordParse p = parse_coordinate(t, std::nullopt);
+        if (!p.ok) {
+            ctx.echo(p.error);
+            return;
+        }
+        upper_pt = p.point;
+    }
+    if (upper_pt.x <= lower_.x || upper_pt.y <= lower_.y) {
+        ctx.echo("The upper right corner must be above and to the right of the lower left.");
+        return;
+    }
+    ctx.submit(core::SetLimitsCommand{lower_, upper_pt, lim.on, true});
+    done_ = true;
+}
+
+void LimitsCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

@@ -13504,6 +13504,19 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
             }
+            if constexpr (std::is_same_v<T, SetPointDisplayCommand>) {
+                store_.set_point_display(c.mode, c.size);
+                geom_dirty_ = true; // the points are drawn again
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "PDMODE=%u  PDSIZE=%.4f", static_cast<unsigned>(c.mode), c.size);
+                report(buf);
+            }
+            if constexpr (std::is_same_v<T, SetLimitsCommand>) {
+                store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),
+                                  c.on);
+                geom_dirty_ = true; // the snapshot carries the limits
+                report(c.corners ? "Limits set." : (c.on ? "Limits checking on." : "Limits checking off."));
+            }
             if constexpr (std::is_same_v<T, JustifyTextCommand>) {
                 apply_justify_text(c);
             }
@@ -13973,6 +13986,11 @@ void GeometryEngine::rebuild_and_publish() {
         buf.layouts = geom_cache_.layouts;
         buf.wipeout_frames = geom_cache_.wipeout_frames;
         buf.fillmode = geom_cache_.fillmode;
+        buf.pdmode = geom_cache_.pdmode;
+        buf.pdsize = geom_cache_.pdsize;
+        buf.limits_min = geom_cache_.limits_min;
+        buf.limits_max = geom_cache_.limits_max;
+        buf.limits_on = geom_cache_.limits_on;
         buf.line_batches = geom_cache_.line_batches;
         buf.point_batches = geom_cache_.point_batches;
         buf.fill_vertices = geom_cache_.fill_vertices;

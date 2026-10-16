@@ -1051,6 +1051,19 @@ std::string serialize_native(const Document& doc) {
     s += "FILLMODE ";
     append_uint(s, doc.fillmode ? 1 : 0);
     s += '\n';
+    // v40: POINTMODE pdmode pdsize  and  LIMITS x0 y0 x1 y1 on
+    s += "POINTMODE ";
+    append_uint(s, doc.pdmode);
+    s += ' ';
+    append_double(s, doc.pdsize);
+    s += '\n';
+    s += "LIMITS ";
+    append_vec(s, doc.limits_min);
+    s += ' ';
+    append_vec(s, doc.limits_max);
+    s += ' ';
+    append_uint(s, doc.limits_on ? 1 : 0);
+    s += '\n';
     s += "ATTDISP ";
     append_uint(s, doc.attdisp);
     s += '\n';
@@ -1524,6 +1537,21 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed FILLMODE");
             }
             doc.fillmode = on != 0;
+        } else if (key == "POINTMODE") {
+            std::uint64_t mode = 0;
+            if (tok.size() != 3 || !to_uint(tok[1], mode) || !to_double(tok[2], doc.pdsize)) {
+                return fail("malformed POINTMODE");
+            }
+            doc.pdmode = static_cast<std::uint8_t>(std::min<std::uint64_t>(mode, 100));
+        } else if (key == "LIMITS") {
+            std::uint64_t on = 0;
+            vals.clear();
+            if (tok.size() != 6 || !parse_doubles(tok, 1, 4, vals) || !to_uint(tok[5], on)) {
+                return fail("malformed LIMITS");
+            }
+            doc.limits_min = {vals[0], vals[1]};
+            doc.limits_max = {vals[2], vals[3]};
+            doc.limits_on = on != 0;
         } else if (key == "WIPEOUTFRAME") {
             std::uint64_t on = 1;
             if (tok.size() != 2 || !to_uint(tok[1], on)) {
