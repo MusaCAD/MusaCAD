@@ -2056,3 +2056,27 @@ TEST_CASE("Multileader styles: added, made current, kept in the drawing; MLEADER
     REQUIRE(m->overrides.has(DimOverrides::kArrowType));
     REQUIRE(m->overrides.arrow_size == 4.0);
 }
+
+TEST_CASE("PAGESETUP's Set Current in a layout gives the layout that page setup") {
+    GeometryEngine engine;
+    engine.start();
+    PageSetup a3;
+    a3.name = "A3 landscape";
+    a3.paper = "ISO A3";
+    a3.paper_w_mm = 420.0;
+    a3.paper_h_mm = 297.0;
+    a3.landscape = true;
+    engine.submit(AddPageSetupCommand{a3});
+    engine.submit(SetLayoutPageCommand{"A3 landscape"});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "A page setup is given to a layout: make a layout current first.";
+    }));
+    engine.submit(SetActiveSpaceCommand{0xFF, {}});
+    engine.submit(SetLayoutPageCommand{"A3 landscape"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Page setup \"A3 landscape\" is current for layout", 0) == 0; }));
+    const io::Document doc = dump(engine, "musacad_layout_page.musa");
+    REQUIRE(!doc.layouts.empty());
+    REQUIRE(doc.layouts.front().page.name == "A3 landscape");
+    REQUIRE(doc.layouts.front().page.paper_w_mm == 420.0);
+    engine.stop();
+}

@@ -122,6 +122,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **A page setup for each layout** (#74) -- in a layout, the Page Setup Manager's Set Current
+  gives the layout that setup: its paper, orientation and plot settings.
 - **Multileader styles** (#61, #78) -- MLEADERSTYLE (MLS): the Multileader Style Manager -- the
   arrowhead and its size, leader points, landing and its length, Mtext or None, text height
   and landing gap; MLEADER draws with the current style. Annotate > Leaders: the Multileader

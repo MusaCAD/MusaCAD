@@ -4971,6 +4971,13 @@ void MainWindow::open_page_setup_manager() {
     connect(set_current, &QPushButton::clicked, d.dlg, [this, d, refill] {
         PlotSpec s;
         const std::string name = current_name(d).toStdString();
+        engine_->consume_snapshot();
+        if (!name.empty() && engine_->snapshot().active_space != 0) {
+            // In a layout: the setup becomes the layout's own (its sheet and plot settings).
+            engine_->submit(core::SetLayoutPageCommand{name});
+            QTimer::singleShot(250, d.dlg, refill);
+            return;
+        }
         if (!name.empty() && recall_page_setup(name, s)) {
             last_plot_spec_ = s; // what PLOT starts from in model space
             current_page_setup_ = name;

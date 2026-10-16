@@ -16226,6 +16226,23 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
             }
+            if constexpr (std::is_same_v<T, SetLayoutPageCommand>) {
+                const PageSetup* ps = nullptr;
+                for (const PageSetup& p : store_.page_setups()) {
+                    ps = p.name == c.setup ? &p : ps;
+                }
+                Layout* l = store_.active_space() != 0 ? store_.mutable_layout(store_.active_space()) : nullptr;
+                if (ps == nullptr) {
+                    report("No page setup is called \"" + c.setup + "\".");
+                } else if (l == nullptr) {
+                    report("A page setup is given to a layout: make a layout current first.");
+                } else {
+                    l->page = *ps;
+                    geom_dirty_ = true; // the sheet takes the new paper
+                    dirty_ = true;
+                    report("Page setup \"" + c.setup + "\" is current for layout \"" + l->name + "\".");
+                }
+            }
             if constexpr (std::is_same_v<T, MLeaderStyleCommand>) {
                 using Op = MLeaderStyleCommand::Op;
                 std::vector<MLeaderStyle> styles = store_.mleader_styles();

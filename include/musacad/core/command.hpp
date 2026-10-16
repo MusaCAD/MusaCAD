@@ -1974,6 +1974,11 @@ struct TableStyleCommand {
     std::string name;
     TableStyle style{};
 };
+/// PAGESETUP's Set Current in a layout: the named page setup becomes the layout's own --
+/// its paper, orientation and plot settings, what the sheet shows and plots on.
+struct SetLayoutPageCommand {
+    std::string setup;
+};
 /// MLEADERSTYLE: Add `style` (a name not in use), Modify the style named `name` to `style`
 /// (Standard keeps its name), make the style named `name` Current, or Delete it (not
 /// Standard or the current one). New multileaders take the current style.
@@ -2247,7 +2252,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
