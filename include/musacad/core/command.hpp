@@ -410,6 +410,17 @@ struct DimBreakCommand {
     Vec2 p2{};
     std::uint64_t group = 0;
 };
+/// ATTOUT (Express Tools): the attribute values of the selected block references written to
+/// `path` as tab-separated text -- HANDLE, BLOCKNAME and a column per tag ("<>" where a
+/// block has no such tag) -- for a spreadsheet. ATTIN reads such a file back and sets the
+/// values in it, by handle (the handles hold while the drawing stays open), as one undo step.
+struct AttOutCommand {
+    std::string path;
+};
+struct AttInCommand {
+    std::string path;
+    std::uint64_t group = 0;
+};
 /// INSUNITSDEFSOURCE / INSUNITSDEFTARGET: the units taken for a unitless drawing inserted
 /// or attached (source), and for this drawing when it is unitless (target).
 struct SetUnitsDefaultsCommand {
@@ -2211,7 +2222,7 @@ using Command =
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
                  SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
-                 SetUnitsDefaultsCommand,
+                 SetUnitsDefaultsCommand, AttOutCommand, AttInCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

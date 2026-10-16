@@ -2908,6 +2908,38 @@ private:
     bool done_ = false;
 };
 
+/// ATTOUT / ATTIN (Express Tools): ATTOUT's `Select objects:`, then the file to write the
+/// attribute values to (tab-separated, for a spreadsheet); ATTIN's file to read them back
+/// from. Where there is no window the file name is asked for.
+class AttFileCommand final : public ICommand {
+public:
+    explicit AttFileCommand(bool in) : in_(in) {}
+    std::string name() const override { return in_ ? "ATTIN" : "ATTOUT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            ask_file(ctx);
+        }
+    }
+    bool free_text() const override { return asking_name_; }
+
+private:
+    void ask_file(CommandContext& ctx);
+    void finish(CommandContext& ctx, const std::string& path);
+    bool in_;
+    bool asking_name_ = false;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// DIMREASSOC (Express Tools): `Select dimension objects:` -- each one's text override taken
 /// away, so it shows its measurement again.
 class DimReassocCommand final : public ICommand {

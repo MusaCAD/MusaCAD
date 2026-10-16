@@ -120,6 +120,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **ATTOUT** and **ATTIN** (#77) -- block attribute values out to a tab-separated file for a
+  spreadsheet, and back in (by handle, while the drawing stays open).
 - **MPEDIT** and **DIMREASSOC** (#77) -- PEDIT's Multiple from the start; dimensions' text
   overrides taken away so they show their measurements again.
 - **DIMBREAK** (#60) -- `Select dimension to add/remove break or [Multiple]:` and `Select object to

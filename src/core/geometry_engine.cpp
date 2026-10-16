@@ -8286,6 +8286,166 @@ void GeometryEngine::apply_dim_break(const DimBreakCommand& c) {
     report(std::to_string(changed) + (changed == 1 ? " object modified." : " objects modified."));
 }
 
+namespace {
+std::string handle_text(EntityHandle h) {
+    return "'" + std::to_string(h.index) + ":" + std::to_string(h.generation);
+}
+std::optional<EntityHandle> handle_from_text(std::string_view t) {
+    if (!t.empty() && t.front() == '\'') {
+        t.remove_prefix(1);
+    }
+    const std::size_t colon = t.find(':');
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+    try {
+        const unsigned long index = std::stoul(std::string(t.substr(0, colon)));
+        const unsigned long generation = std::stoul(std::string(t.substr(colon + 1)));
+        return EntityHandle{static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(generation), EntityKind::Insert};
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+std::vector<std::string> split_tabs(const std::string& line) {
+    std::vector<std::string> out(1);
+    for (const char ch : line) {
+        if (ch == '\t') {
+            out.emplace_back();
+        } else if (ch != '\r') {
+            out.back() += ch;
+        }
+    }
+    return out;
+}
+} // namespace
+
+void GeometryEngine::apply_attout(const AttOutCommand& c) {
+    prune_selection();
+    std::vector<EntityHandle> refs;
+    std::vector<std::string> tags;
+    for (const EntityHandle h : selection_) {
+        const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+        const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+        if (bd == nullptr || bd->content.attdefs.empty()) {
+            continue;
+        }
+        refs.push_back(h);
+        for (const BlockAttDef& a : bd->content.attdefs) {
+            if (std::find(tags.begin(), tags.end(), a.tag) == tags.end()) {
+                tags.push_back(a.tag);
+            }
+        }
+    }
+    if (refs.empty()) {
+        report("No block references with attributes selected.");
+        return;
+    }
+    const auto clean = [](std::string v) {
+        std::replace(v.begin(), v.end(), '\t', ' ');
+        std::replace(v.begin(), v.end(), '\n', ' ');
+        return v;
+    };
+    std::ofstream f(c.path, std::ios::binary);
+    f << "HANDLE\tBLOCKNAME";
+    for (const std::string& t : tags) {
+        f << '\t' << clean(t);
+    }
+    f << "\r\n";
+    for (const EntityHandle h : refs) {
+        const InsertData* in = store_.insert(h);
+        const BlockDef* bd = store_.block(in->block);
+        const std::vector<std::string> values = store_.insert_attribs(*in);
+        f << handle_text(h) << '\t' << clean(bd->name);
+        for (const std::string& t : tags) {
+            std::string v = "<>";
+            for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                if (bd->content.attdefs[i].tag == t) {
+                    v = i < values.size() ? values[i] : bd->content.attdefs[i].def;
+                }
+            }
+            f << '\t' << clean(v);
+        }
+        f << "\r\n";
+    }
+    report(f.good() ? std::to_string(refs.size()) + (refs.size() == 1 ? " block reference" : " block references") +
+                          " written to " + c.path + "."
+                    : "ATTOUT: could not write " + c.path + ".");
+}
+
+void GeometryEngine::apply_attin(const AttInCommand& c) {
+    std::ifstream f(c.path, std::ios::binary);
+    if (!f) {
+        report("ATTIN: cannot read " + c.path + ".");
+        return;
+    }
+    std::string line;
+    if (!std::getline(f, line)) {
+        report("ATTIN: " + c.path + " is empty.");
+        return;
+    }
+    const std::vector<std::string> head = split_tabs(line);
+    if (head.size() < 2 || head[0] != "HANDLE") {
+        report("ATTIN: " + c.path + " does not start with HANDLE and BLOCKNAME columns.");
+        return;
+    }
+    int updated = 0;
+    int missing = 0;
+    std::vector<EntityHandle> renewed;
+    while (std::getline(f, line)) {
+        const std::vector<std::string> row = split_tabs(line);
+        if (row.empty() || row[0].empty()) {
+            continue;
+        }
+        const std::optional<EntityHandle> h = handle_from_text(row[0]);
+        const InsertData* in = h ? store_.insert(*h) : nullptr;
+        const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+        if (bd == nullptr) {
+            ++missing;
+            continue;
+        }
+        std::vector<std::string> values = store_.insert_attribs(*in);
+        for (std::size_t i = values.size(); i < bd->content.attdefs.size(); ++i) {
+            values.push_back(bd->content.attdefs[i].def);
+        }
+        values.resize(bd->content.attdefs.size());
+        bool changed = false;
+        for (std::size_t col = 2; col < head.size() && col < row.size(); ++col) {
+            if (row[col] == "<>") {
+                continue;
+            }
+            for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                if (bd->content.attdefs[i].tag == head[col] && values[i] != row[col]) {
+                    values[i] = row[col];
+                    changed = true;
+                }
+            }
+        }
+        if (!changed) {
+            continue;
+        }
+        const Command original = capture_entity(*h);
+        remove_indexed(*h);
+        push_erase_item(c.group, *h, original);
+        AddInsertCommand nc = std::get<AddInsertCommand>(original);
+        nc.attribs = values;
+        const Command add = nc;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+        ++updated;
+    }
+    if (!renewed.empty()) {
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    std::string said = std::to_string(updated) + (updated == 1 ? " block reference updated" : " block references updated");
+    if (missing > 0) {
+        said += "; " + std::to_string(missing) + (missing == 1 ? " not found" : " not found (the file is from another session or drawing)");
+    }
+    report(said + ".");
+}
+
 void GeometryEngine::apply_set_data_link(const SetDataLinkCommand& c) {
     std::vector<DataLink> links = store_.data_links();
     const std::uint16_t i = store_.data_link_index(c.name);
@@ -15864,6 +16024,12 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
+            }
+            if constexpr (std::is_same_v<T, AttOutCommand>) {
+                apply_attout(c);
+            }
+            if constexpr (std::is_same_v<T, AttInCommand>) {
+                apply_attin(c);
             }
             if constexpr (std::is_same_v<T, SetUnitsDefaultsCommand>) {
                 insunits_def_source_ = c.source;

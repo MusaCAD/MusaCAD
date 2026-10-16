@@ -1828,3 +1828,57 @@ TEST_CASE("MPEDIT starts at PEDIT's Multiple; DIMREASSOC takes dimension text ov
     REQUIRE(c->text.empty());
     REQUIRE_FALSE(c->pick.has_value());
 }
+
+TEST_CASE("ATTOUT writes attribute values to a tab-separated file; ATTIN reads them back") {
+    namespace fs = std::filesystem;
+    const std::string path = (fs::temp_directory_path() / "musacad_attout.txt").string();
+    GeometryEngine engine;
+    engine.start();
+    // A block with two attributes, and a reference of it.
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "TAGBOX";
+    io::DocAttDef a1;
+    a1.text.content = "NUM";
+    a1.def = "1";
+    io::DocAttDef a2;
+    a2.text.content = "NOTE";
+    a2.def = "";
+    b.attdefs = {a1, a2};
+    b.lines.push_back(io::DocLine{{0, 0}, {5, 0}, {}});
+    doc.block_defs.push_back(b);
+    io::DocInsert ins;
+    ins.block_name = "TAGBOX";
+    ins.attribs = {io::DocAttrib{"NUM", "7"}, io::DocAttrib{"NOTE", "old"}};
+    doc.inserts.push_back(ins);
+    const std::string dp = (fs::temp_directory_path() / "musacad_attout_src.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    engine.submit(OpenDocumentCommand{dp});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(AttOutCommand{path});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("1 block reference written to ", 0) == 0; }));
+    std::string text;
+    {
+        std::ifstream f(path, std::ios::binary);
+        text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    REQUIRE(text.rfind("HANDLE\tBLOCKNAME\tNUM\tNOTE\r\n'", 0) == 0);
+    REQUIRE(text.find("\tTAGBOX\t7\told\r\n") != std::string::npos);
+    { // the spreadsheet changes NOTE
+        const std::size_t at = text.find("\told\r\n");
+        text.replace(at, 6, "\tnew\r\n");
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << text;
+    }
+    engine.submit(AttInCommand{path, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 block reference updated."; }));
+    const io::Document out = dump(engine, "musacad_attin.musa");
+    REQUIRE(out.inserts.size() == 1);
+    REQUIRE(out.inserts[0].attribs.size() == 2);
+    REQUIRE(out.inserts[0].attribs[1].value == "new");
+    REQUIRE(out.inserts[0].attribs[0].value == "7");
+    engine.stop();
+    fs::remove(path);
+    fs::remove(dp);
+}

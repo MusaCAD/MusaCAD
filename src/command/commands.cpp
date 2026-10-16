@@ -7932,6 +7932,55 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void AttFileCommand::start(CommandContext& ctx) {
+    if (in_ || ctx.has_selection()) {
+        ask_file(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select objects: ");
+}
+
+void AttFileCommand::ask_file(CommandContext& ctx) {
+    if (!in_ && !ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    if (ctx.view() != nullptr) {
+        const std::string filter = "Text files (*.txt);;All files (*)";
+        const std::string path =
+            in_ ? ctx.view()->open_file_dialog(filter) : ctx.view()->save_file_dialog(filter, "attributes.txt");
+        if (!path.empty()) {
+            finish(ctx, path);
+        }
+        done_ = true;
+        return;
+    }
+    asking_name_ = true;
+    ctx.set_prompt("Enter file name: ");
+}
+
+void AttFileCommand::finish(CommandContext& ctx, const std::string& path) {
+    if (in_) {
+        ctx.submit(core::AttInCommand{path, ctx.group_id()});
+    } else {
+        ctx.submit(core::AttOutCommand{path});
+    }
+}
+
+void AttFileCommand::input(CommandContext& ctx, const std::string& text) {
+    if (asking_name_) {
+        const std::string t = trimmed(text);
+        if (!t.empty()) {
+            finish(ctx, t);
+        }
+        done_ = true;
+        return;
+    }
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        ask_file(ctx);
+    }
+}
+
 void DataLinkUpdateUiCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Select an option [Update data link/Write data link] <Update data link>: ");
 }
