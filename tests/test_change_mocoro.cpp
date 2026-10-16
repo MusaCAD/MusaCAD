@@ -26,6 +26,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/grips.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
@@ -2593,4 +2594,22 @@ TEST_CASE("A grip the selected objects share drags them all; grips made hot with
     REQUIRE(moved.a == Vec2{1, -9});
     REQUIRE(moved.b == Vec2{12, -8});
     engine.stop();
+}
+
+TEST_CASE("The grip menus' Lengthen keeps a line's direction and an arc's circle; Radius keeps an arc's angles") {
+    GeometryStore st;
+    const EntityHandle ln = st.add_line({0, 0}, {10, 0});
+    const Command longer = edit_for_grip_drag(st, ln, 1, {15, 5}, -1, 1);
+    REQUIRE(std::get<AddLineCommand>(longer).b == Vec2{15, 0});
+    REQUIRE(std::get<AddLineCommand>(longer).a == Vec2{0, 0});
+    const Command stretched = edit_for_grip_drag(st, ln, 1, {15, 5});
+    REQUIRE(std::get<AddLineCommand>(stretched).b == Vec2{15, 5});
+    const EntityHandle ah = st.add_arc({0, 0}, 5, 0.0, kHalfPi);
+    const Command around = edit_for_grip_drag(st, ah, 2, {-3, 3}, -1, 1);
+    REQUIRE(std::get<AddArcCommand>(around).end_angle == Approx(0.75 * kPi));
+    REQUIRE(std::get<AddArcCommand>(around).radius == Approx(5.0));
+    const Command wider = edit_for_grip_drag(st, ah, 3, {6, 6}, -1, 2);
+    REQUIRE(std::get<AddArcCommand>(wider).radius == Approx(std::sqrt(72.0)));
+    REQUIRE(std::get<AddArcCommand>(wider).start_angle == Approx(0.0));
+    REQUIRE(std::get<AddArcCommand>(wider).end_angle == Approx(kHalfPi));
 }

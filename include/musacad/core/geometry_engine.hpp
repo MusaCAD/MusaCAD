@@ -749,6 +749,7 @@ private:
     EntityHandle grip_handle_{};
     std::uint32_t grip_index_ = 0;
     int grip_text_move_ = -1; ///< GripDragCommand::text_move of the drag under way
+    int grip_variant_ = 0;    ///< GripDragCommand::variant of the drag under way
     Vec2 grip_origin_{};      ///< where the dragged grip was
     /// Another grip the drag moves by the same delta: a selected object's grip at the same
     /// point (they share it), or one made hot with Shift.

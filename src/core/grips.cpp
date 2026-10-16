@@ -698,8 +698,33 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
 }
 
 Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint32_t grip_index,
-                           Vec2 newpos, int text_move) {
+                           Vec2 newpos, int text_move, int variant) {
     Command c = capture_entity(store, h);
+    if (auto* ln = std::get_if<AddLineCommand>(&c); ln != nullptr && variant == 1 && grip_index <= 1) {
+        // Lengthen: the end slides along the line (never past the other end).
+        const Vec2 fixed = grip_index == 0 ? ln->b : ln->a;
+        const Vec2 moving = grip_index == 0 ? ln->a : ln->b;
+        const double len = distance(fixed, moving);
+        if (len > 1e-12) {
+            const Vec2 dir = (moving - fixed) / len;
+            const Vec2 to = fixed + dir * std::max(dot(newpos - fixed, dir), len * 1e-6);
+            (grip_index == 0 ? ln->a : ln->b) = to;
+        }
+        return c;
+    }
+    if (auto* arc = std::get_if<AddArcCommand>(&c); arc != nullptr && variant != 0) {
+        const Vec2 v = newpos - arc->center;
+        if (length_squared(v) <= 1e-24) {
+            return c;
+        }
+        if (variant == 1 && (grip_index == 1 || grip_index == 2)) {
+            // Lengthen: the end goes round the arc's circle to the cursor's angle.
+            (grip_index == 1 ? arc->start_angle : arc->end_angle) = std::atan2(v.y, v.x);
+        } else if (variant == 2 && grip_index == 3) {
+            arc->radius = length(v); // Radius: the centre and the angles stay
+        }
+        return c;
+    }
     if (auto* dc = std::get_if<AddDimensionCommand>(&c);
         dc != nullptr && text_move >= 0 && text_move <= 2 && grip_index == DimData::kTextGripIndex) {
         dc->overrides.text_move = static_cast<std::uint8_t>(text_move);

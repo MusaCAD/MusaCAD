@@ -10291,8 +10291,9 @@ std::vector<std::pair<EntityHandle, Command>> GeometryEngine::grip_edits() const
     }
     for (const Moved& m : objs) {
         if (m.grips.size() == 1) {
+            const bool own = m.h == grip_handle_;
             out.emplace_back(m.h, edit_for_grip_drag(store_, m.h, m.grips[0].first, m.grips[0].second,
-                                                     m.h == grip_handle_ ? grip_text_move_ : -1));
+                                                     own ? grip_text_move_ : -1, own ? grip_variant_ : 0));
             continue;
         }
         // Several hot grips of one object: each edit made on the one before, on a scratch store.
@@ -10318,6 +10319,7 @@ void GeometryEngine::begin_grip_drag(const GripDragCommand& c) {
     grip_handle_ = c.handle;
     grip_index_ = c.grip;
     grip_text_move_ = c.text_move;
+    grip_variant_ = c.variant;
     grip_peers_.clear();
     if (!grip_active_) {
         return;
@@ -10350,6 +10352,9 @@ void GeometryEngine::begin_grip_drag(const GripDragCommand& c) {
                 add(h, index, g.pos);
             }
         }
+    }
+    if (c.variant != 0) {
+        return; // Lengthen and Radius are the one object's
     }
     // The other selected objects with a grip where the dragged one is: they share it.
     const double tol = 1e-9 * (1.0 + std::max(std::abs(grip_origin_.x), std::abs(grip_origin_.y)));
@@ -17248,6 +17253,7 @@ void GeometryEngine::reset_active_state() {
     grip_index_ = 0;
     grip_peers_.clear();
     grip_text_move_ = -1;
+    grip_variant_ = 0;
     grip_preview_store_.clear();
     forget_stretch_windows();
     stretch_preview_active_ = false;

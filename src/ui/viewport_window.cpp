@@ -1946,6 +1946,21 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                     show_polyline_grip_menu(ginfo, event->globalPosition().toPoint());
                 } else if (ginfo.handle.kind == core::EntityKind::Dimension) {
                     show_dimension_grip_menu(ginfo, event->globalPosition().toPoint());
+                } else if ((ginfo.handle.kind == core::EntityKind::Line && ginfo.index <= 1) ||
+                           (ginfo.handle.kind == core::EntityKind::Arc && ginfo.index >= 1 && ginfo.index <= 3)) {
+                    // A line's or an arc's end: Stretch, Lengthen; an arc's middle: Stretch, Radius.
+                    QMenu menu;
+                    QAction* stretch = menu.addAction(QStringLiteral("Stretch"));
+                    QAction* other = menu.addAction(ginfo.index == 3 ? QStringLiteral("Radius") : QStringLiteral("Lengthen"));
+                    QAction* chosen = menu.exec(event->globalPosition().toPoint());
+                    if (chosen == stretch || chosen == other) {
+                        core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, ginfo.handle, ginfo.index, {}, 0};
+                        begin.variant = chosen == stretch ? 0 : ginfo.index == 3 ? 2 : 1;
+                        engine_.submit(std::move(begin));
+                        processor_->set_last_point(ginfo.pos);
+                        processor_->start_grip_mode(ginfo.handle, ginfo.index, ginfo.pos);
+                        rebuild_overlay();
+                    }
                 }
             } else if (box_pending_ || lasso_active_) {
                 box_pending_ = false; // right-click abandons a box in progress
@@ -2524,12 +2539,20 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
     using Op = core::PolylineVertexCommand::Op;
     const bool segment = grip.index >= core::kSegmentGripBase;
     QMenu menu;
+    QAction* stretch = menu.addAction(segment ? QStringLiteral("Stretch") : QStringLiteral("Stretch Vertex"));
     QAction* add = menu.addAction(QStringLiteral("Add Vertex"));
     QAction* remove = segment ? nullptr : menu.addAction(QStringLiteral("Remove Vertex"));
     QAction* to_arc = segment ? menu.addAction(QStringLiteral("Convert to Arc")) : nullptr;
     QAction* to_line = segment ? menu.addAction(QStringLiteral("Convert to Line")) : nullptr;
     QAction* chosen = menu.exec(global);
     if (chosen == nullptr) {
+        return;
+    }
+    if (chosen == stretch) {
+        engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0});
+        processor_->set_last_point(grip.pos);
+        processor_->start_grip_mode(grip.handle, grip.index, grip.pos);
+        rebuild_overlay();
         return;
     }
     Op op = Op::AddVertex;

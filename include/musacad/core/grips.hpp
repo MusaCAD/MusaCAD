@@ -61,7 +61,11 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
 /// unchanged (its capture). Never bakes tessellation; dimensions stay def-points.
 /// `text_move` (0..2), a dimension's text grip dragged as the grip menu's Move with Dim
 /// Line, Move Text Only or Move with Leader: the dimension takes that DIMTMOVE as its own.
+/// `variant` 1, the grip menus' Lengthen (a line's or an arc's end moved along it: the line
+/// keeps its direction, the arc its centre and radius); 2, Radius (an arc's middle grip:
+/// the radius, the centre and the angles kept).
 [[nodiscard]] Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h,
-                                         std::uint32_t grip_index, Vec2 newpos, int text_move = -1);
+                                         std::uint32_t grip_index, Vec2 newpos, int text_move = -1,
+                                         int variant = 0);
 
 } // namespace musacad::core
