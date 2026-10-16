@@ -18,6 +18,7 @@
 #include "musacad/command/command_processor.hpp"
 #include "musacad/command/commands.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/native_format.hpp"
@@ -281,4 +282,43 @@ TEST_CASE("NEWVIEW saves the view on screen; VIEW without its window asks at the
         return s.layer_state_names.size() == 1 && s.layer_state_names[0] == "Plan";
     }));
     engine.stop();
+}
+
+TEST_CASE("DIMJOGLINE puts a jog in a dimension's line where asked, kept with the drawing; Remove takes it away") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {20, 0}, {10, 10}, 0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(DimJogCommand{{5, 10}, 0.5, Vec2{15, 12}, false, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Jog added."; }));
+    io::Document doc = dump(engine, "musacad_dimjog.musa");
+    REQUIRE(doc.dims[0].jog == Approx(0.75));
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.dims[0].jog == Approx(0.75));
+
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {20, 0};
+    d.line_pt = {10, 10};
+    REQUIRE(compute_dim_geometry(d, DimStyle{}, Rgb{}).dim_lines.size() == 2);
+    d.jog = 0.75;
+    REQUIRE(compute_dim_geometry(d, DimStyle{}, Rgb{}).dim_lines.size() == 10); // the line and its zigzag
+
+    engine.submit(DimJogCommand{{5, 10}, 0.5, std::nullopt, true, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Jog removed."; }));
+    doc = dump(engine, "musacad_dimjog_removed.musa");
+    REQUIRE(doc.dims[0].jog < 0.0);
+    engine.stop();
+
+    H h;
+    h.run({"DJL"});
+    REQUIRE(h.out.prompt == "Select dimension to add jog or [Remove]: ");
+    h.run({"5,10"});
+    REQUIRE(h.out.prompt == "Specify jog location (or press ENTER): ");
+    h.run({"15,10"});
+    REQUIRE(*h.last<DimJogCommand>()->at == Vec2{15, 10});
+    h.run({"DJL", "R", "5,10"});
+    REQUIRE(h.last<DimJogCommand>()->remove);
 }

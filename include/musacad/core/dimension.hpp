@@ -126,6 +126,10 @@ void orient_linear_dim(DimData& d, std::optional<double> fixed, bool circle = fa
 /// Formats a measurement with `precision` decimal places.
 [[nodiscard]] std::string format_measurement(double value, std::uint8_t precision);
 
+/// A linear or aligned dimension's line from the first extension line to the second
+/// (DIMJOGLINE places its jog along it); false for the other types.
+bool dim_line_feet(const DimData& d, Vec2& fa, Vec2& fb);
+
 /// Formats a dimension's value as its style writes it: the style's precision, its
 /// decimal separator, and its zero suppression (leading, trailing).
 [[nodiscard]] std::string format_dim_value(double value, const DimStyle& style);

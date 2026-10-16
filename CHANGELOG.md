@@ -50,6 +50,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   for MTEXT and QLEADER keeps its spaces.
 - **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
   and Output > Plot > Preview, with Plot from it.
+- **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
+  takes it away.
 - **CHANGE** (#55) -- a change point for lines' ends and circles' radii; the insertion point,
   style, height, rotation and text of the selected texts; the insertion point and rotation of
   blocks; Properties as CHPROP.

@@ -1229,6 +1229,7 @@ struct AddDimensionCommand {
     double text_angle = 0.0;
     bool arc_leader = false;
     double oblique = 0.0; ///< DimData::oblique
+    double jog = -1.0;    ///< DimData::jog
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1776,6 +1777,15 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// DIMJOGLINE: a jog in the line of the linear or aligned dimension at `pick`, where `at`
+/// falls along it (unset: a quarter of the way along); `remove` takes it away. One undo step.
+struct DimJogCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    std::optional<Vec2> at{};
+    bool remove = false;
+    std::uint64_t group = 0;
+};
 /// FLATTEN: the selected polylines' elevation and thickness set to 0 (a drawing from
 /// elsewhere can carry them). One undo step.
 struct FlattenCommand {
@@ -1956,7 +1966,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
-                 FlattenCommand, ChangeCommand, HatchBoundaryCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

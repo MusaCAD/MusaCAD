@@ -16391,6 +16391,58 @@ void HatchEditUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void DimJogLineCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select dimension to add jog or [Remove]: ");
+}
+
+void DimJogLineCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "R" || u == "REMOVE") {
+            step_ = Step::Remove;
+            ctx.set_prompt("Select jog to remove: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            step_ = Step::Location;
+            ctx.set_prompt("Specify jog location (or press ENTER): ");
+        }
+        return;
+    case Step::Location: {
+        core::DimJogCommand c{pick_, ctx.pick_radius(), std::nullopt, false, ctx.group_id()};
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            c.at = *p;
+        }
+        ctx.submit(c);
+        done_ = true;
+        return;
+    }
+    case Step::Remove:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::DimJogCommand{*p, ctx.pick_radius(), std::nullopt, true, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void DimJogLineCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void NewViewCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     if (t.empty()) {

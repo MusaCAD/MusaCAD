@@ -218,6 +218,16 @@ double dim_measure(const DimData& d) {
     return std::abs(dot(d.b - d.a, dir));
 }
 
+bool dim_line_feet(const DimData& d, Vec2& fa, Vec2& fb) {
+    if (d.type != DimType::Linear && d.type != DimType::Aligned) {
+        return false;
+    }
+    const Vec2 dir = dim_direction(d);
+    fa = foot(d.a, d.line_pt, dir);
+    fb = foot(d.b, d.line_pt, dir);
+    return true;
+}
+
 std::string format_measurement(double value, std::uint8_t precision) {
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%.*f", static_cast<int>(precision), value);
@@ -1212,7 +1222,23 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     // arrow length plus a short stub when the arrows are outside, so each head has a
     // line to sit on (ISO 129-1 fig. 8).
     const double stub = arrows_inside ? 0.0 : style.arrow_size * 1.6;
-    seg(g.dim_lines, fa - u * stub, fb + u * stub);
+    const double jh = style.text_height * 1.5; // DIMJOGLINE's jog: 1.5 text heights
+    if (d.jog >= 0.0 && span > jh) {
+        // The line with a zigzag across it at the jog's place, kept clear of the ends.
+        const Vec2 n{-u.y, u.x};
+        const Vec2 c = fa + u * std::clamp(span * std::min(d.jog, 1.0), jh * 0.5, span - jh * 0.5);
+        const Vec2 z0 = c - u * (jh * 0.5);
+        const Vec2 z1 = c - u * (jh / 6.0) + n * (jh * 0.5);
+        const Vec2 z2 = c + u * (jh / 6.0) - n * (jh * 0.5);
+        const Vec2 z3 = c + u * (jh * 0.5);
+        seg(g.dim_lines, fa - u * stub, z0);
+        seg(g.dim_lines, z0, z1);
+        seg(g.dim_lines, z1, z2);
+        seg(g.dim_lines, z2, z3);
+        seg(g.dim_lines, z3, fb + u * stub);
+    } else {
+        seg(g.dim_lines, fa - u * stub, fb + u * stub);
+    }
 
     const Vec2 mid = (fa + fb) * 0.5;
     g.text_rotation = std::atan2(dir.y, dir.x);

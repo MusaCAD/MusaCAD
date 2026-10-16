@@ -1551,6 +1551,23 @@ private:
     bool done_ = false;
 };
 
+/// DIMJOGLINE (DJL): `Select dimension to add jog or [Remove]:`, `Specify jog location (or
+/// press ENTER):` -- a zigzag in a linear or aligned dimension's line; Remove takes one away.
+class DimJogLineCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMJOGLINE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, Location, Remove };
+    Step step_ = Step::Pick;
+    core::Vec2 pick_{};
+    bool done_ = false;
+};
+
 /// NEWVIEW: `Enter view name:` -- the current view saved under that name.
 class NewViewCommand final : public ICommand {
 public:

@@ -800,6 +800,8 @@ std::string serialize_native(const Document& doc) {
         s += d.arc_leader ? " 1" : " 0";
         s += ' ';
         append_double(s, d.oblique);
+        s += ' '; // v40: DIMJOGLINE's place along the line
+        append_double(s, d.jog);
         s += '\n';
         s += d.prefix;
         s += '\n';
@@ -2078,7 +2080,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             // 37 = v19 (the override block's 16 fields + decoration + the 2-token offset)
             // 38 = v23 (+ the aux datum)
             // 40 = v39 (+ the text angle and the arc-length leader), 41 (+ the oblique angle)
-            const bool has_oblique = tok.size() == 41;
+            // 42 = v40 (+ the jog)
+            const bool has_jog = tok.size() == 42;
+            const bool has_oblique = tok.size() == 41 || has_jog;
             const bool has_text_angle = tok.size() == 40 || has_oblique;
             const bool has_aux = tok.size() == 38 || has_text_angle;
             const bool has_move = tok.size() == 37 || has_aux;
@@ -2107,6 +2111,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             double dtext_angle = 0.0;
             std::uint64_t dleader = 0;
             double doblique = 0.0;
+            double djog = -1.0;
             if (has_decor) {
                 // The decoration follows the override block, which is one field wider
                 // from v16 -- so its offset is keyed to the same discriminator.
@@ -2139,6 +2144,9 @@ IoResult parse_native(std::string_view text, Document& out) {
                     if (has_oblique && !to_double(tok[db + 8], doblique)) {
                         return fail("DIM oblique angle malformed");
                     }
+                    if (has_jog && !to_double(tok[db + 9], djog)) {
+                        return fail("DIM jog malformed");
+                    }
                 }
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
@@ -2156,7 +2164,8 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       daux,
                                       dtext_angle,
                                       dleader != 0,
-                                      doblique});
+                                      doblique,
+                                      djog});
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");

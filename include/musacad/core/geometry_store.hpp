@@ -178,6 +178,9 @@ struct DimData {
     /// DIMEDIT Oblique (v39, DXF 52): a linear or aligned dimension's extension lines at this
     /// angle (radians from the x axis) instead of square to the dimension line; 0 = square.
     double oblique = 0.0;
+    /// DIMJOGLINE (v40): where a linear or aligned dimension's line has its jog, 0..1 from
+    /// the first extension line to the second; negative: no jog.
+    double jog = -1.0;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
     /// so adding grips to any dimension type can never collide with it.
@@ -521,6 +524,7 @@ public:
     /// The label's angle and the arc-length leader (DimData::text_angle, ::arc_leader).
     bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
     bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
+    bool set_dim_jog(EntityHandle h, double jog) noexcept;
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},

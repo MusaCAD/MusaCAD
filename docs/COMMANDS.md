@@ -142,6 +142,7 @@ commands (Ribbon Phase A):
 | DIMEDIT (DED) | Put dimensions' text home, replace or rotate it, or slant their extension lines (Oblique). |
 | DIMTEDIT (DIMTED) | Move or rotate a dimension's text, or slide it Left, Right or to the Center. |
 | DIMSPACE | Space parallel dimensions evenly from a base dimension, or line them up with it. |
+| DIMJOGLINE -- `Select dimension to add jog or [Remove]:`, `Specify jog location (or press ENTER):`: a zigzag across a linear or aligned dimension's line where it is placed (a quarter of the way along on Enter), one and a half text heights tall, kept with the drawing; Remove takes it away | DJL | Implemented (#60; native only, not yet in DXF) |
 | DIMCENTER (DCE) | Mark the centre of an arc or circle, with centre lines if asked. |
 | DIMOVERRIDE (DOV) | Give dimensions settings of their own (DIMTXT, DIMASZ ...), or clear theirs. |
 | LAYER (LA) | Open the Layer Properties Manager. |

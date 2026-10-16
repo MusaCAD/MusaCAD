@@ -2657,3 +2657,18 @@ no command needs to know. `units::parse_length_text` (fractions and feet-and-inc
 foot being twelve drawing units) is the fallback in both number parsers, so every length
 and coordinate prompt takes it. MULTIPLE holds the command it repeats through
 `CommandContext::make_command` and forwards input, hover, selection and freehand to it.
+
+## DIMJOGLINE and the editing commands of issue #55 (v40)
+
+`DimData` gains `jog` (0..1 along a linear or aligned dimension's line, from the first
+extension line; negative: none) and grows 208 → **216 B**; the native `DIM` record carries
+it as a 42nd token (41-token records read as no jog). `compute_dim_geometry` draws the line
+in pieces round a zigzag one and a half text heights tall; `dim_line_feet` gives DIMJOGLINE
+the line to place it on. The value is a fraction of the line, so moving, rotating and
+mirroring a dimension keep it.
+
+CHANGE needs to know which kinds are selected before it asks the text and block prompts:
+the viewport sets a bit per `EntityKind` from the published selection, and the main window
+hands it to the command processor with the selection count (`selection_kinds()`; all bits
+when not known). FLATTEN, CHANGE and HATCHEDIT's recreate Boundary are engine commands over
+the selection, one undo group each.

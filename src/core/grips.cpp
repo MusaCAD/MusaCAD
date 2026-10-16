@@ -104,7 +104,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                    d->aux,
                                    d->text_angle,
                                    d->arc_leader,
-                                   d->oblique};
+                                   d->oblique,
+                                   d->jog};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -326,6 +327,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 store.set_dim_aux(handle, c.aux);
                 store.set_dim_text(handle, c.text_angle, c.arc_leader);
                 store.set_dim_oblique(handle, c.oblique);
+                store.set_dim_jog(handle, c.jog);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -816,6 +818,7 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.aux = x.aux;
                     probe.text_angle = x.text_angle; // where the label really is ...
                     probe.oblique = x.oblique;
+                    probe.jog = x.jog;
                     if (t == DimType::Angular) {
                         const double r = std::max(distance(x.a, newpos), 1e-9);
                         const double a0 = std::atan2(x.b.y - x.a.y, x.b.x - x.a.x);
@@ -859,6 +862,7 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.aux = x.aux; // a linear one's angle, an angular one's radius ...
                     probe.text_angle = x.text_angle;
                     probe.oblique = x.oblique;
+                    probe.jog = x.jog;
                     const DimGeometry base = compute_dim_geometry(
                         probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
                     Vec2 q[4];

@@ -14205,6 +14205,36 @@ void GeometryEngine::apply_one(const Command& command) {
                     report(std::to_string(changed) + (changed == 1 ? " object changed." : " objects changed."));
                 }
             }
+            if constexpr (std::is_same_v<T, DimJogCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.radius);
+                const DimData* dd = h.kind == EntityKind::Dimension ? store_.dimension(h) : nullptr;
+                Vec2 fa;
+                Vec2 fb;
+                if (dd == nullptr || !dim_line_feet(*dd, fa, fb)) {
+                    report("Select a linear or aligned dimension.");
+                } else if (c.remove && dd->jog < 0.0) {
+                    report("That dimension has no jog.");
+                } else {
+                    double t = 0.25;
+                    const double span = distance(fa, fb);
+                    if (c.at && span > 1e-12) {
+                        t = std::clamp(dot(*c.at - fa, (fb - fa) / span) / span, 0.0, 1.0);
+                    }
+                    Command cmd = capture_entity(h);
+                    if (auto* x = std::get_if<AddDimensionCommand>(&cmd)) {
+                        x->jog = c.remove ? -1.0 : t;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        report(c.remove ? "Jog removed." : "Jog added.");
+                    }
+                }
+            }
             if constexpr (std::is_same_v<T, HatchBoundaryCommand>) {
                 prune_selection();
                 std::size_t made = 0;
