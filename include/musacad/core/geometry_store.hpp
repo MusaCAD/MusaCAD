@@ -586,6 +586,10 @@ public:
         limits_max_ = hi;
         limits_on_ = on;
     }
+    /// BASE: the drawing's insertion base point (INSBASE) -- where it sits on the cursor
+    /// when it is inserted into another drawing as a block or attached as an xref.
+    [[nodiscard]] Vec2 insbase() const noexcept { return insbase_; }
+    void set_insbase(Vec2 p) noexcept { insbase_ = p; }
     [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
     [[nodiscard]] std::uint8_t image_frame() const noexcept { return image_frame_; }
 
@@ -1329,6 +1333,7 @@ private:
     Vec2 limits_min_{0.0, 0.0};
     Vec2 limits_max_{420.0, 297.0}; // an A3 sheet: AutoCAD's metric template
     bool limits_on_ = false;
+    Vec2 insbase_{0.0, 0.0}; // INSBASE
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
     std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts_{Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};

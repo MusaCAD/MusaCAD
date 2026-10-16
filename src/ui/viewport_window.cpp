@@ -198,6 +198,11 @@ std::tuple<core::Vec2, core::Vec2, bool> ViewportWindow::limits() {
     return {limits_min_, limits_max_, limits_on_};
 }
 
+core::Vec2 ViewportWindow::insbase() {
+    std::scoped_lock lock(layers_mutex_);
+    return insbase_;
+}
+
 std::vector<core::TextStyle> ViewportWindow::text_styles() {
     std::scoped_lock lock(layers_mutex_);
     return text_styles_;
@@ -1628,6 +1633,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             limits_min_ = snap.limits_min;
             limits_max_ = snap.limits_max;
             limits_on_ = snap.limits_on;
+            insbase_ = snap.insbase;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
             lwdisplay_ = snap.lineweight_display ? 1 : 0;

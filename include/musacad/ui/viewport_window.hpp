@@ -71,6 +71,7 @@ public:
     /// PDMODE / PDSIZE and LIMITS from the last snapshot, for the commands that show them.
     std::pair<std::uint8_t, double> point_display();
     std::tuple<core::Vec2, core::Vec2, bool> limits();
+    core::Vec2 insbase();
     std::vector<core::TextStyle> text_styles();
     std::uint16_t current_text_style();
     std::vector<core::DimStyle> dim_styles();
@@ -976,6 +977,7 @@ private:
     core::Vec2 limits_min_{0.0, 0.0};
     core::Vec2 limits_max_{420.0, 297.0};
     bool limits_on_ = false;
+    core::Vec2 insbase_{0.0, 0.0};              ///< INSBASE, under layers_mutex_
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
     std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_

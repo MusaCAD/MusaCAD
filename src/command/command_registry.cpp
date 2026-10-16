@@ -587,6 +587,8 @@ CommandRegistry CommandRegistry::make_default() {
         "The size of point markers: in drawing units, or 0 or less for a size on screen.");
     reg({"PTYPE", "DDPTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
         "The point display mode and size (PDMODE and PDSIZE).");
+    reg({"BASE"}, [] { return std::make_unique<BaseCommand>(); }, "",
+        "Set the drawing's insertion base point: where it sits when inserted into another drawing.");
     reg({"LIMITS"}, [] { return std::make_unique<LimitsCommand>(); }, "",
         "The drawing's limits, and whether points outside them are refused.");
     reg({"PO", "POINT"}, [] { return std::make_unique<PointCommand>(); },

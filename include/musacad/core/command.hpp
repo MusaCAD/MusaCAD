@@ -395,6 +395,19 @@ struct SetLimitsCommand {
     bool on = false;
     bool corners = true; ///< false: ON / OFF only, the corners kept
 };
+/// BASE: the drawing's insertion base point (INSBASE).
+struct SetInsBaseCommand {
+    Vec2 base{};
+};
+/// INSERT of a drawing file: `path` read as the block `name` -- its model space, with
+/// its INSBASE as the base point; its own blocks come along by their names, the ones
+/// this drawing already has kept as they are. An existing `name` is only replaced
+/// when `redefine`.
+struct LoadBlockFileCommand {
+    std::string path;
+    std::string name;
+    bool redefine = false;
+};
 /// GROUP ?: list the groups with their descriptions and member counts.
 struct ListGroupsCommand {};
 /// PSLTSCALE / MSLTSCALE: whether linetypes in paper space (viewports) and in model
@@ -2147,7 +2160,7 @@ using Command =
                  DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
-                 SetPointDisplayCommand, SetLimitsCommand,
+                 SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

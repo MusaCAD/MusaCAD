@@ -421,6 +421,10 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code_i("$PDMODE", doc.pdmode);
     code(s, 9, "$PDSIZE");
     code_d(s, 40, doc.pdsize);
+    code(s, 9, "$INSBASE");
+    code_d(s, 10, doc.insbase.x);
+    code_d(s, 20, doc.insbase.y);
+    code_d(s, 30, 0.0);
     code(s, 9, "$LIMMIN");
     code_d(s, 10, doc.limits_min.x);
     code_d(s, 20, doc.limits_min.y);
@@ -2668,6 +2672,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 doc.limits_on = to_l(q.value) != 0;
             } else if (var == "$FILLMODE" && q.code == 70) {
                 doc.fillmode = to_l(q.value) != 0;
+            } else if (var == "$INSBASE" && q.code == 10 && i + 2 < n && pairs[i + 2].code == 20) {
+                doc.insbase = Vec2{to_d(q.value), to_d(pairs[i + 2].value)};
+                i += 3;
+                continue;
             } else if ((var == "$LIMMIN" || var == "$LIMMAX") && q.code == 10 && i + 2 < n && pairs[i + 2].code == 20) {
                 (var == "$LIMMIN" ? doc.limits_min : doc.limits_max) = Vec2{to_d(q.value), to_d(pairs[i + 2].value)};
                 i += 3;

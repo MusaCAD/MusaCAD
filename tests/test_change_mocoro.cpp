@@ -26,6 +26,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
+#include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/text/text_frame.hpp"
@@ -1487,4 +1488,58 @@ TEST_CASE("FIELD takes its field from the Field window, then places the text") {
     REQUIRE(t != nullptr);
     REQUIRE(t->content == "%<\\AcVar Title \\f \"%tc1\">%");
     REQUIRE(t->pos == Vec2{5, 5});
+}
+
+TEST_CASE("BASE asks for the base point; INSERT takes a drawing file in place of a block name") {
+    H h;
+    h.run({"BASE"});
+    REQUIRE(h.out.prompt == "Enter base point <0.0000,0.0000,0.0000>: ");
+    h.run({"5,6"});
+    REQUIRE(h.last<SetInsBaseCommand>()->base == Vec2{5, 6});
+    h.run({"-INSERT", "/tmp/parts/bracket.dxf"});
+    REQUIRE(h.last<LoadBlockFileCommand>()->path == "/tmp/parts/bracket.dxf");
+    REQUIRE(h.last<LoadBlockFileCommand>()->name == "bracket");
+    REQUIRE_FALSE(h.last<LoadBlockFileCommand>()->redefine);
+    REQUIRE(h.out.prompt == "Specify insertion point or [Scale/Rotate]: ");
+    h.run({"0,0", "", "", ""});
+    REQUIRE(h.last<InsertBlockCommand>()->name == "bracket");
+}
+
+TEST_CASE("INSBASE is kept in the drawing and in DXF, and a drawing inserted as a block sits on it") {
+    namespace fs = std::filesystem;
+    const std::string part = (fs::temp_directory_path() / "musacad_part_insbase.musa").string();
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddCircleCommand{{10, 10}, 5, 1});
+        engine.submit(SetInsBaseCommand{{10, 10}});
+        engine.consume_snapshot();
+        const std::uint64_t before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{part, false});
+        REQUIRE(wait_until(engine, [before](const auto& s) { return s.document_version > before; }));
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.insbase == Vec2{10, 10}; }));
+        engine.stop();
+    }
+    io::Document saved;
+    REQUIRE(io::load_native(part, saved).ok);
+    REQUIRE(saved.insbase == Vec2{10, 10});
+    const std::string dxf = (fs::temp_directory_path() / "musacad_insbase.dxf").string();
+    REQUIRE(io::save_dxf(saved, dxf).ok);
+    io::Document back;
+    REQUIRE(io::load_dxf(dxf, back).ok);
+    REQUIRE(back.insbase == Vec2{10, 10});
+    fs::remove(dxf);
+
+    GeometryEngine host;
+    host.start();
+    host.submit(LoadBlockFileCommand{part, "musacad_part_insbase", false});
+    const io::Document doc = dump(host, "musacad_host_insbase.musa");
+    const auto it = std::find_if(doc.block_defs.begin(), doc.block_defs.end(),
+                                 [](const io::DocBlockDef& b) { return b.name == "musacad_part_insbase"; });
+    REQUIRE(it != doc.block_defs.end());
+    REQUIRE(it->base == Vec2{10, 10});
+    REQUIRE(it->circles.size() == 1);
+    REQUIRE(it->xref_path.empty());
+    host.stop();
+    fs::remove(part);
 }

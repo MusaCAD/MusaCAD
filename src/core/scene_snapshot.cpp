@@ -237,6 +237,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     out.limits_min = store.limits_min();
     out.limits_max = store.limits_max();
     out.limits_on = store.limits_on();
+    out.insbase = store.insbase();
     out.active_space = store.active_space();
     out.layouts.clear();
     for (const Layout& l : store.layouts()) {

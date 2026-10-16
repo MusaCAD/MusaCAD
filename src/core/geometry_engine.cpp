@@ -7963,7 +7963,7 @@ void GeometryEngine::apply_vplayer(const SetViewportLayerFreezeCommand& c) {
 std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
                                                    const std::string& name,
                                                    const std::string& xref_path, std::string& err,
-                                                   std::uint8_t* src_insunits) {
+                                                   std::uint8_t* src_insunits, bool bind) {
     io::Document doc;
     const io::IoResult r = lower_ext(full_path) == ".dxf" ? io::load_dxf(full_path, doc)
                                                           : io::load_native(full_path, doc);
@@ -7980,6 +7980,7 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     // The source's own blocks come along as "name|block" so its references keep
     // working; their indices are remapped from the source table to ours.
     std::vector<std::uint16_t> remap(tmp.block_count(), 0xFFFF);
+    std::vector<bool> added(tmp.block_count(), true); // false: one of ours, kept as it is
     const auto find_block = [&](const std::string& n) -> std::uint16_t {
         for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
             if (store_.block(i)->name == n) {
@@ -7990,10 +7991,15 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     };
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(tmp.block_count()); ++i) {
         BlockDef nested = *tmp.block(i);
-        nested.name = name + "|" + nested.name;
+        if (!bind) {
+            nested.name = name + "|" + nested.name;
+        }
         nested.xref_path.clear();
         const std::uint16_t existing = find_block(nested.name);
-        if (existing != 0xFFFF) {
+        if (existing != 0xFFFF && bind) {
+            remap[i] = existing; // AutoCAD keeps the drawing's own definition
+            added[i] = false;
+        } else if (existing != 0xFFFF) {
             store_.redefine_block(existing, nested);
             remap[i] = existing;
         } else {
@@ -8006,13 +8012,16 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
         }
     };
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(tmp.block_count()); ++i) {
+        if (!added[i]) {
+            continue;
+        }
         BlockDef fixed = *store_.block(remap[i]);
         remap_inserts(fixed.content);
         store_.redefine_block(remap[i], fixed);
     }
     BlockDef def;
     def.name = name;
-    def.base = {0.0, 0.0};
+    def.base = doc.insbase; // the drawing's INSBASE (BASE), as AutoCAD inserts and attaches it
     def.xref_path = xref_path;
     std::vector<EntityHandle> taken;
     int skipped = 0;
@@ -8024,6 +8033,34 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
         return existing;
     }
     return store_.add_block(def);
+}
+
+void GeometryEngine::apply_load_block_file(const LoadBlockFileCommand& c) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (c.path.empty() || !fs::is_regular_file(fs::path(c.path), ec)) {
+        report("INSERT: cannot read \"" + c.path + "\".");
+        return;
+    }
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        if (store_.block(i)->name != c.name) {
+            continue;
+        }
+        if (!store_.block(i)->xref_path.empty()) {
+            report("INSERT: \"" + c.name + "\" is an attached xref.");
+            return;
+        }
+        if (!c.redefine) {
+            return; // the block the drawing has is inserted
+        }
+    }
+    std::string err;
+    if (load_xref_definition(c.path, c.name, std::string(), err, nullptr, true) == 0xFFFF) {
+        report("INSERT: " + err);
+        return;
+    }
+    geom_dirty_ = true;
+    dirty_ = true;
 }
 
 void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
@@ -15391,6 +15428,13 @@ void GeometryEngine::apply_one(const Command& command) {
                 char buf[96];
                 std::snprintf(buf, sizeof(buf), "PDMODE=%u  PDSIZE=%.4f", static_cast<unsigned>(c.mode), c.size);
                 report(buf);
+            }
+            if constexpr (std::is_same_v<T, SetInsBaseCommand>) {
+                store_.set_insbase(c.base);
+                geom_dirty_ = true; // the snapshot carries it
+            }
+            if constexpr (std::is_same_v<T, LoadBlockFileCommand>) {
+                apply_load_block_file(c);
             }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),

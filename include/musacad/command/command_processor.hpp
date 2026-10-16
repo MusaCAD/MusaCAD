@@ -223,6 +223,8 @@ public:
         pdsize_ = size;
     }
     void set_limits(core::Vec2 lo, core::Vec2 hi, bool on) { limits_ = Limits{lo, hi, on}; }
+    void set_insbase(core::Vec2 p) { insbase_ = p; }
+    [[nodiscard]] core::Vec2 insbase() const override { return insbase_; }
     [[nodiscard]] std::uint8_t pdmode() const override { return pdmode_; }
     [[nodiscard]] double pdsize() const override { return pdsize_; }
     [[nodiscard]] Limits limits() const override { return limits_; }
@@ -491,6 +493,7 @@ private:
     std::uint8_t pdmode_ = 0;
     double pdsize_ = 0.0;
     Limits limits_{};
+    core::Vec2 insbase_{};
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
     std::uint32_t selection_kinds_ = ~0u; ///< bit per EntityKind; all bits: not known

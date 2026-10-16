@@ -379,6 +379,7 @@ struct Document {
     Vec2 limits_min{0.0, 0.0};        ///< LIMMIN (v40)
     Vec2 limits_max{420.0, 297.0};    ///< LIMMAX (v40)
     bool limits_on = false;           ///< LIMCHECK (v40)
+    Vec2 insbase{0.0, 0.0};           ///< INSBASE (v40): the base point when inserted elsewhere
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
     std::uint8_t image_frame = 1; ///< IMAGEFRAME (v29): 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts;  ///< the layout tabs (v30); entities refer to them by EntityProps::space

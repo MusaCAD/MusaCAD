@@ -1203,6 +1203,11 @@ std::string serialize_native(const Document& doc) {
     s += ' ';
     append_uint(s, doc.limits_on ? 1 : 0);
     s += '\n';
+    if (doc.insbase != Vec2{0.0, 0.0}) {
+        s += "INSBASE "; // v40
+        append_vec(s, doc.insbase);
+        s += '\n';
+    }
     s += "ATTDISP ";
     append_uint(s, doc.attdisp);
     s += '\n';
@@ -1695,6 +1700,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed POINTMODE");
             }
             doc.pdmode = static_cast<std::uint8_t>(std::min<std::uint64_t>(mode, 100));
+        } else if (key == "INSBASE") {
+            vals.clear();
+            if (tok.size() != 3 || !parse_doubles(tok, 1, 2, vals)) {
+                return fail("malformed INSBASE");
+            }
+            doc.insbase = {vals[0], vals[1]};
         } else if (key == "LIMITS") {
             std::uint64_t on = 0;
             vals.clear();

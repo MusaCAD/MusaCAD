@@ -211,6 +211,7 @@ struct RenderSnapshot {
     Vec2 limits_min{0.0, 0.0};          // LIMITS
     Vec2 limits_max{420.0, 297.0};
     bool limits_on = false;             // LIMCHECK
+    Vec2 insbase{0.0, 0.0};             // INSBASE (BASE)
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <sstream>
 #include <optional>
 #include <string>
@@ -6477,6 +6478,27 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.echo("A block name is required.");
             return;
         }
+        if (const bool pick = t == "~"; pick || u.ends_with(".MUSA") || u.ends_with(".DXF") ||
+                                        t.find_first_of("/\\") != std::string::npos) {
+            // A drawing: read in as a block named after the file.
+            file_ = pick && ctx.view() != nullptr
+                        ? ctx.view()->open_file_dialog("Drawings (*.musa *.dxf);;All files (*)")
+                        : (pick ? std::string() : t);
+            if (file_.empty()) {
+                return; // nothing chosen: the name is asked again
+            }
+            name_ = std::filesystem::path(file_).stem().string();
+            const std::vector<std::string> names = ctx.block_names();
+            if (std::find(names.begin(), names.end(), name_) != names.end()) {
+                state_ = State::Redefine;
+                ctx.set_prompt("Block \"" + name_ + "\" already exists. Redefine it? [Yes/No] <N>: ");
+                return;
+            }
+            ctx.submit(core::LoadBlockFileCommand{file_, name_, false});
+            state_ = State::Point;
+            ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+            return;
+        }
         name_ = t.empty() ? s_last_ : t;
         {
             bool known = false;
@@ -6488,6 +6510,15 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
         }
+        state_ = State::Point;
+        ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+        return;
+    case State::Redefine:
+        if (!u.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        ctx.submit(core::LoadBlockFileCommand{file_, name_, u == "Y" || u == "YES"});
         state_ = State::Point;
         ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
         return;
@@ -18935,6 +18966,23 @@ void PointDisplayCommand::input(CommandContext& ctx, const std::string& text) {
 void PointDisplayCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
+}
+
+void BaseCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    const core::Vec2 b = ctx.insbase();
+    ctx.set_prompt("Enter base point <" + fmt4(b.x) + "," + fmt4(b.y) + ",0.0000>: ");
+}
+
+void BaseCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true; // kept as it is
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::SetInsBaseCommand{*p});
+        done_ = true;
+    }
 }
 
 void LimitsCommand::start(CommandContext& ctx) {

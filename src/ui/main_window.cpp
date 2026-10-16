@@ -451,6 +451,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             processor_->set_point_display(mode, size);
             const auto [lo, hi, on] = viewport_->limits();
             processor_->set_limits(lo, hi, on);
+            processor_->set_insbase(viewport_->insbase());
         }
         {
             std::vector<core::TextStyle> tstyles = viewport_->text_styles();

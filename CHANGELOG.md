@@ -98,6 +98,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **The UCS icon** (#72) -- X and Y arrows at the drawing's origin, or in the lower-left corner
   when the origin is off screen; the triangle in paper space. **UCSICON**
   (`[ON/OFF/All/Noorigin/ORigin]`) and View > Viewport Tools > UCS Icon turn it off and on.
+- **BASE, and drawings inserted as blocks** (#75) -- BASE (`Enter base point <0.0000,0.0000,0.0000>:`)
+  sets the drawing's insertion base point (INSBASE), kept in the drawing and in DXF. At
+  INSERT's block name, `~` chooses a drawing file and a path names one: it comes in as a
+  block named after the file, at its base point, its own blocks with it (the drawing's own
+  definitions kept; `Block "X" already exists. Redefine it?` before one is replaced). Xrefs
+  are attached at their INSBASE too. Insert > Block > From Drawing and Set Base Point.
 - **The Field window** (#62, #71) -- FIELD opens it: Date, CreateDate and SaveDate with a date
   format (M/d/yyyy, MMMM d, yyyy, h:mm tt and the rest, or one of your own), Filename with or
   without its path or extension, the drawing's Title, Subject, Author, Keywords, Comments,

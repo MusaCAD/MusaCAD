@@ -2564,6 +2564,9 @@ private:
 };
 
 /// INSERT (I, -INSERT): block name (? lists), insertion point, X and Y scale, rotation.
+/// A drawing file in place of the name -- `~` to choose one, or its path -- is read in
+/// as a block named after the file, at its base point (BASE); a block of that name
+/// already in the drawing is redefined only when the user says so.
 class InsertCommand final : public ICommand {
 public:
     std::string name() const override { return "INSERT"; }
@@ -2573,9 +2576,10 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Name, Point, ScaleX, ScaleY, Rotation, Attrib } state_ = State::Name;
+    enum class State { Name, Redefine, Point, ScaleX, ScaleY, Rotation, Attrib } state_ = State::Name;
     inline static std::string s_last_;
     std::string name_;
+    std::string file_; ///< the drawing file being inserted, if any
     core::Vec2 pos_{};
     double sx_ = 1.0;
     double sy_ = 1.0;
@@ -3687,6 +3691,24 @@ private:
     Var var_;
     bool sizing_ = false;
     std::uint8_t mode_ = 0;
+    bool done_ = false;
+};
+
+/// BASE: `Enter base point <0.0000,0.0000,0.0000>:` -- the drawing's insertion base point
+/// (INSBASE): where it sits on the cursor when inserted into another drawing as a block,
+/// or attached as an xref.
+class BaseCommand final : public ICommand {
+public:
+    std::string name() const override { return "BASE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 

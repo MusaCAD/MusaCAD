@@ -726,6 +726,16 @@ void MainWindow::build_ribbon() {
                     menu_of({action("B", QStringLiteral("Create Block")), action("W", QStringLiteral("Write Block"))}));
         small(iblock, col, QStringLiteral("Edit"), "REFEDIT");
         small(iblock, col, QStringLiteral("Explode"), "X");
+        // A drawing file inserted as a block (INSERT's ~), at its base point (BASE).
+        QWidget* col2 = iblock->add_column();
+        QToolButton* fd = iblock->add_small(col2, asset("insert"), QStringLiteral("From Drawing"));
+        fd->setObjectName(QStringLiteral("ribbon.insert_drawing"));
+        fd->setToolTip(QStringLiteral("<b>INSERT ~</b><br>Insert a drawing file as a block, at its base point."));
+        connect(fd, &QToolButton::clicked, this, [this] {
+            command_widget_->focus_input();
+            processor_->start_macro("-INSERT", {"~"});
+        });
+        small(iblock, col2, QStringLiteral("Set Base Point"), "BASE", "insert");
     }
     RibbonPanel* blockdef = ribbon_->add_panel(insert, QStringLiteral("Block Definition"), 55);
     blockdef->set_representative_icon(asset("attdef"));

@@ -197,6 +197,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.limits_min = store.limits_min();
     doc.limits_max = store.limits_max();
     doc.limits_on = store.limits_on();
+    doc.insbase = store.insbase();
     doc.attdisp = store.attdisp();
     doc.image_frame = store.image_frame();
     doc.layouts = store.layouts();
@@ -488,6 +489,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_fillmode(doc.fillmode);
     store.set_point_display(doc.pdmode, doc.pdsize);
     store.set_limits(doc.limits_min, doc.limits_max, doc.limits_on);
+    store.set_insbase(doc.insbase);
     store.set_attdisp(doc.attdisp);
     store.set_image_frame(doc.image_frame);
     if (!doc.layouts.empty()) {

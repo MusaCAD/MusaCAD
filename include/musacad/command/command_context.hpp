@@ -576,6 +576,8 @@ public:
         bool on = false;
     };
     [[nodiscard]] virtual Limits limits() const { return {}; }
+    /// The drawing's insertion base point (INSBASE, BASE).
+    [[nodiscard]] virtual core::Vec2 insbase() const { return {}; }
     /// GRID's settings (GRIDUNIT, GRIDMAJOR, GRIDDISPLAY), kept here and handed to the view.
     [[nodiscard]] virtual core::GridSettings grid_settings() const { return {}; }
     virtual void set_grid_settings(const core::GridSettings& g) { (void)g; }
