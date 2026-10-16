@@ -187,6 +187,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.display_units = store.units();
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
+    doc.current_table_style = store.current_table_style();
     doc.current_dimstyle = store.current_dimstyle();
     doc.wipeout_frames = store.wipeout_frames();
     doc.wipeout_frames_plot = store.wipeout_frames_plot();
@@ -652,6 +653,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     if (!doc.table_styles.empty()) {
         store.set_table_style_table(doc.table_styles);
     }
+    store.set_current_table_style(doc.current_table_style);
     for (const DocTable& t : doc.tables) {
         std::vector<TableCell> cells;
         cells.reserve(t.cells.size());

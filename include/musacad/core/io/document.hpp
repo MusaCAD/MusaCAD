@@ -369,6 +369,7 @@ struct Document {
     std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
     std::uint16_t current_text_style = 0;
     std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
+    std::uint16_t current_table_style = 0; ///< v40: the style new tables use (TABLESTYLE)
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted
     std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)

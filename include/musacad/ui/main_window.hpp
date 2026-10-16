@@ -295,6 +295,7 @@ private:
     void open_view_manager();      ///< VIEW
     void open_layer_states_manager(); ///< LAYERSTATE
     int open_dim_inspect_dialog(core::DimInspectCommand& io); ///< DIMINSPECT (1 OK, 0 cancelled)
+    void open_table_style_dialog(); ///< TABLESTYLE
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;
@@ -481,6 +482,7 @@ private:
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
     QComboBox* text_style_combo_ = nullptr; // Annotate > Text: the current text style
     QComboBox* dim_style_combo_ = nullptr;  // Annotate > Dimensions: the current dimension style
+    QComboBox* table_style_combo_ = nullptr; // Annotate > Tables: the current table style
     QComboBox* color_combo_ = nullptr;      // ribbon Properties panel: colour / linetype /
     QComboBox* linetype_combo_ = nullptr;   // lineweight of the selection, or the current
     QComboBox* lineweight_combo_ = nullptr; // entity properties when nothing is selected

@@ -11907,11 +11907,41 @@ void StretchCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // TABLE: rows -> columns -> column width -> row height -> placement
 // ---------------------------------------------------------------------------
+namespace {
+/// The name of table style `i` in `styles` ("Standard" when the list is not known).
+std::string table_style_name(const std::vector<core::TableStyle>& styles, std::uint16_t i) {
+    return i < styles.size() ? styles[i].name : std::string("Standard");
+}
+/// The index of the table style named `name` (any case), if there is one.
+std::optional<std::uint16_t> find_table_style(const std::vector<core::TableStyle>& styles, const std::string& name) {
+    if (styles.empty()) {
+        return upper(name) == "STANDARD" ? std::optional<std::uint16_t>(0) : std::nullopt;
+    }
+    for (std::size_t i = 0; i < styles.size(); ++i) {
+        if (upper(styles[i].name) == upper(name)) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return std::nullopt;
+}
+std::string table_style_list(const std::vector<core::TableStyle>& styles) {
+    std::string s = "Table styles:";
+    if (styles.empty()) {
+        return s + " Standard";
+    }
+    for (std::size_t i = 0; i < styles.size(); ++i) {
+        s += (i == 0 ? " " : ", ") + styles[i].name;
+    }
+    return s;
+}
+} // namespace
+
 void TableCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     mode_ = Mode::Cols;
-    ctx.echo("Current table style: Standard  Cell width: " + fmt4(col_w_) + "  Cell height: " +
-             std::to_string(row_lines_) + " line(s)");
+    style_ = ctx.current_table_style();
+    ctx.echo("Current table style: " + table_style_name(ctx.table_styles(), style_) + "  Cell width: " + fmt4(col_w_) +
+             "  Cell height: " + std::to_string(row_lines_) + " line(s)");
     ctx.set_prompt("Enter number of columns or [Auto] <" + std::to_string(cols_) + ">: ");
 }
 
@@ -11974,12 +12004,16 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
     }
     case Mode::Style:
         if (t == "?") {
-            ctx.echo("Table styles: Standard");
+            ctx.echo(table_style_list(ctx.table_styles()));
             return;
         }
-        if (!t.empty() && u != "STANDARD") {
-            ctx.echo("Cannot find table style \"" + t + "\".");
-            return;
+        if (!t.empty()) {
+            const std::optional<std::uint16_t> i = find_table_style(ctx.table_styles(), t);
+            if (!i) {
+                ctx.echo("Cannot find table style \"" + t + "\".");
+                return;
+            }
+            style_ = *i;
         }
         place_prompt(ctx);
         return;
@@ -11996,17 +12030,21 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "S" || u == "STYLE") {
             mode_ = Mode::Style;
-            ctx.set_prompt("Enter a table style name or [?] <Standard>: ");
+            ctx.set_prompt("Enter a table style name or [?] <" + table_style_name(ctx.table_styles(), style_) + ">: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
             // A title row and a header row above the data rows, as AutoCAD's Standard style.
             const int rows = rows_ + 2;
+            const std::vector<core::TableStyle> styles = ctx.table_styles();
+            // A line is Standard's (2.5 text) scaled to the style's data text height.
+            const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
             core::AddTableCommand cmd;
             cmd.rows = static_cast<std::uint16_t>(rows);
             cmd.cols = static_cast<std::uint16_t>(cols_);
+            cmd.style = style_;
             cmd.col_widths.assign(static_cast<std::size_t>(cols_), col_w_);
-            cmd.row_heights.assign(static_cast<std::size_t>(rows), kLine * row_lines_);
+            cmd.row_heights.assign(static_cast<std::size_t>(rows), line * row_lines_);
             cmd.has_title = true;
             cmd.has_header = true;
             const std::size_t n = static_cast<std::size_t>(rows) * cols_;
@@ -12023,6 +12061,36 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void TableCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TableStyleUiCommand::start(CommandContext& ctx) {
+    if (ctx.view() != nullptr && ctx.view()->table_style_dialog()) {
+        done_ = true; // the Table Style window does the rest
+        return;
+    }
+    ctx.set_prompt("Enter table style name to make current or [?] <" +
+                   table_style_name(ctx.table_styles(), ctx.current_table_style()) + ">: ");
+}
+
+void TableStyleUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t == "?") {
+        ctx.echo(table_style_list(ctx.table_styles()));
+        return;
+    }
+    if (!t.empty()) {
+        if (!find_table_style(ctx.table_styles(), t)) {
+            ctx.echo("Cannot find table style \"" + t + "\".");
+            return;
+        }
+        ctx.submit(core::TableStyleCommand{core::TableStyleCommand::Op::SetCurrent, t, {}});
+    }
+    done_ = true;
+}
+
+void TableStyleUiCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

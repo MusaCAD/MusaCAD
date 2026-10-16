@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 //
-// CHANGE and HATCHEDIT (#55), MOCORO and FLATTEN (#77), -MTEXT (#43), DIMINSPECT (#60).
+// CHANGE and HATCHEDIT (#55), MOCORO and FLATTEN (#77), -MTEXT (#43), DIMINSPECT (#60), TABLESTYLE (#44).
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -499,4 +500,63 @@ TEST_CASE("TXTEXP asks for objects and explodes the texts among them") {
     h.run({""});
     REQUIRE(h.last<TextExplodeCommand>() != nullptr);
     REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("TABLESTYLE adds, changes, makes current and deletes table styles; TABLE draws in the current one") {
+    using Op = TableStyleCommand::Op;
+    GeometryEngine engine;
+    engine.start();
+    TableStyle big;
+    big.name = "Big";
+    big.data_height = 5.0;
+    engine.submit(TableStyleCommand{Op::Add, {}, big});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Table style \"Big\" added."; }));
+    engine.submit(TableStyleCommand{Op::Add, {}, big});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Table style \"Big\" already exists."; }));
+    engine.submit(TableStyleCommand{Op::SetCurrent, "big", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "\"Big\" is now the current table style."; }));
+    REQUIRE(engine.snapshot().current_table_style == 1);
+    engine.submit(TableStyleCommand{Op::Delete, "Big", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.ends_with("it is Standard, the current style or in use."); }));
+    big.data_height = 6.0;
+    engine.submit(TableStyleCommand{Op::Modify, "Big", big});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Table style \"Big\" changed."; }));
+    io::Document doc = dump(engine, "musacad_tablestyle.musa");
+    REQUIRE(doc.current_table_style == 1);
+    REQUIRE(doc.table_styles[1].data_height == 6.0);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.current_table_style == 1);
+    engine.submit(TableStyleCommand{Op::SetCurrent, "Standard", {}});
+    engine.submit(TableStyleCommand{Op::Delete, "Big", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Table style \"Big\" deleted."; }));
+    REQUIRE(engine.snapshot().table_styles.size() == 1);
+    engine.stop();
+
+    H h;
+    TableStyle standard;
+    standard.name = "Standard";
+    h.proc.set_table_styles({standard, big}, 0);
+    h.run({"TABLESTYLE"}); // no window here: the command line asks
+    REQUIRE(h.out.prompt == "Enter table style name to make current or [?] <Standard>: ");
+    const auto said = [&h](const std::string& prefix) {
+        return std::any_of(h.out.lines.begin(), h.out.lines.end(),
+                           [&](const std::string& l) { return l.starts_with(prefix); });
+    };
+    h.run({"?"});
+    REQUIRE(said("Table styles: Standard, Big"));
+    h.run({"Big"});
+    REQUIRE(h.last<TableStyleCommand>()->op == Op::SetCurrent);
+    REQUIRE(h.last<TableStyleCommand>()->name == "Big");
+    h.proc.set_table_styles({standard, big}, 1);
+    h.run({"TB", "2", "1"});
+    REQUIRE(said("Current table style: Big"));
+    h.run({"S"});
+    REQUIRE(h.out.prompt == "Enter a table style name or [?] <Big>: ");
+    h.run({"standard", "0,0"});
+    REQUIRE(h.last<AddTableCommand>()->style == 0);
+    h.run({"TB", "2", "1", "0,0"});
+    const AddTableCommand* t = h.last<AddTableCommand>();
+    REQUIRE(t->style == 1);
+    REQUIRE(t->row_heights[0] == Approx(9.0 * 6.0 / 2.5)); // a line of the style's data text
 }

@@ -392,6 +392,7 @@ private:
     std::size_t pv_index_ = 0;
     std::optional<std::size_t> pv_mark_{};
     bool layer_tool_changed_ = false; ///< the last layer tool changed something (the drawing is modified)
+    bool table_style_changed_ = false; ///< the last TableStyleCommand changed the table styles
     std::function<void(const ClipboardExport&)> clipboard_listener_;
     [[nodiscard]] EntityHandle most_recent_dimension() const;
     void apply_chain_dimension(const ChainDimensionCommand& c);

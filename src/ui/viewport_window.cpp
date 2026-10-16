@@ -217,6 +217,16 @@ std::uint16_t ViewportWindow::current_dim_style() {
     return current_dim_style_;
 }
 
+std::vector<core::TableStyle> ViewportWindow::table_styles() {
+    std::scoped_lock lock(layers_mutex_);
+    return table_styles_;
+}
+
+std::uint16_t ViewportWindow::current_table_style() {
+    std::scoped_lock lock(layers_mutex_);
+    return current_table_style_;
+}
+
 std::vector<std::string> ViewportWindow::block_names() {
     std::scoped_lock lock(layers_mutex_);
     return block_names_;
@@ -311,6 +321,14 @@ bool ViewportWindow::view_manager() {
         return false;
     }
     view_manager_callback_();
+    return true;
+}
+
+bool ViewportWindow::table_style_dialog() {
+    if (!table_style_dialog_callback_) {
+        return false;
+    }
+    table_style_dialog_callback_();
     return true;
 }
 
@@ -1487,6 +1505,8 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             current_text_style_ = snap.current_text_style;
             dim_styles_ = snap.dimstyles;
             current_dim_style_ = snap.current_dimstyle;
+            table_styles_ = snap.table_styles;
+            current_table_style_ = snap.current_table_style;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
             layouts_ = snap.layouts;

@@ -23,6 +23,7 @@
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/core/snap.hpp"
+#include "musacad/core/table_types.hpp"
 
 namespace musacad::core {
 
@@ -239,6 +240,8 @@ struct RenderSnapshot {
     DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
     std::vector<TextStyle> text_styles;    // STYLE table (TEXT, the palette)
     std::uint16_t current_text_style = 0;
+    std::vector<TableStyle> table_styles;  // TABLESTYLE (TABLE, the Table Style window)
+    std::uint16_t current_table_style = 0;
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
     // any future hatching. `lineweight_display` is the LWDISPLAY toggle.

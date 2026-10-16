@@ -269,6 +269,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
+    viewport_->set_table_style_dialog_callback([this] { open_table_style_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -389,6 +390,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             processor_->set_text_styles(std::move(tstyles), cur);
         }
         processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
+        processor_->set_table_styles(viewport_->table_styles(), viewport_->current_table_style());
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_purge_candidates(viewport_->purge_candidates());
@@ -1629,6 +1631,13 @@ void MainWindow::sync_style_combos() {
         }
         sync(dim_style_combo_, names, viewport_->current_dim_style());
     }
+    if (table_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::TableStyle& st : viewport_->table_styles()) {
+            names.push_back(st.name);
+        }
+        sync(table_style_combo_, names, viewport_->current_table_style());
+    }
 }
 
 void MainWindow::toggle_properties() {
@@ -2808,6 +2817,131 @@ void MainWindow::open_view_manager() {
         const QString name = current_name(d);
         if (!name.isEmpty()) {
             engine_->submit(core::DeleteNamedViewCommand{name.toStdString()});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+void MainWindow::open_table_style_dialog() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Table Style"));
+    d.dlg->setObjectName(QStringLiteral("TableStyleDialog"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        const std::vector<core::TableStyle> styles = viewport_->table_styles();
+        const std::uint16_t cur = viewport_->current_table_style();
+        d.list->clear();
+        for (const core::TableStyle& st : styles) {
+            d.list->addItem(QString::fromStdString(st.name));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(cur < styles.size() ? cur : 0) : found.front());
+        d.status->setText(cur < styles.size()
+                              ? QStringLiteral("Current table style: %1").arg(QString::fromStdString(styles[cur].name))
+                              : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    const auto style_named = [this](const QString& name) {
+        for (const core::TableStyle& st : viewport_->table_styles()) {
+            if (QString::fromStdString(st.name) == name) {
+                return st;
+            }
+        }
+        return core::TableStyle{"Standard"};
+    };
+    // The style's settings: its text heights, the cell margin and the line weight.
+    const auto edit = [this](QWidget* parent, const QString& title, core::TableStyle& st) {
+        QDialog dlg(parent);
+        dlg.setWindowTitle(title);
+        auto* form = new QFormLayout(&dlg);
+        const auto spin = [&](double v, double lo, double hi) {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setDecimals(4);
+            s->setRange(lo, hi);
+            s->setValue(v);
+            return s;
+        };
+        QDoubleSpinBox* title_h = spin(st.title_height, 0.0001, 1e6);
+        QDoubleSpinBox* header_h = spin(st.header_height, 0.0001, 1e6);
+        QDoubleSpinBox* data_h = spin(st.data_height, 0.0001, 1e6);
+        QDoubleSpinBox* margin = spin(st.margin, 0.0, 10.0);
+        auto* lw = new QSpinBox(&dlg);
+        lw->setRange(0, 211);
+        lw->setSuffix(QStringLiteral(" (1/100 mm)"));
+        lw->setValue(st.lineweight);
+        form->addRow(QStringLiteral("Title text height:"), title_h);
+        form->addRow(QStringLiteral("Header text height:"), header_h);
+        form->addRow(QStringLiteral("Data text height:"), data_h);
+        form->addRow(QStringLiteral("Cell margin (x text height):"), margin);
+        form->addRow(QStringLiteral("Lineweight:"), lw);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(buttons);
+        if (dlg.exec() != QDialog::Accepted) {
+            return false;
+        }
+        st.title_height = title_h->value();
+        st.header_height = header_h->value();
+        st.data_height = data_h->value();
+        st.margin = margin->value();
+        st.lineweight = static_cast<std::uint8_t>(lw->value());
+        return true;
+    };
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* modify = new QPushButton(QStringLiteral("Modify..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, modify, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    using Op = core::TableStyleCommand::Op;
+    connect(set_current, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::TableStyleCommand{Op::SetCurrent, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(add, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        bool ok = false;
+        const QString base = current_name(d);
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("Create New Table Style"),
+                                                   QStringLiteral("New style name (starting from %1):").arg(base),
+                                                   QLineEdit::Normal, QStringLiteral("Copy of %1").arg(base), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        core::TableStyle st = style_named(base);
+        st.name = name.toStdString();
+        if (edit(d.dlg, QStringLiteral("New Table Style: %1").arg(name), st)) {
+            engine_->submit(core::TableStyleCommand{Op::Add, {}, st});
+            later();
+        }
+    });
+    connect(modify, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        core::TableStyle st = style_named(name);
+        if (edit(d.dlg, QStringLiteral("Modify Table Style: %1").arg(name), st)) {
+            engine_->submit(core::TableStyleCommand{Op::Modify, name.toStdString(), st});
+            later();
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, modify, &QPushButton::click);
+    connect(remove, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::TableStyleCommand{Op::Delete, name.toStdString(), {}});
             later();
         }
     });

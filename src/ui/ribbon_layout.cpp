@@ -762,6 +762,23 @@ void MainWindow::build_ribbon() {
     RibbonPanel* tables = ribbon_->add_panel(annotate, QStringLiteral("Tables"), 30);
     tables->set_representative_icon(asset("table"));
     large(tables, QStringLiteral("Table"), "TB");
+    {
+        // The Table Style combo; the panel's launcher opens the Table Style window.
+        QWidget* col = tables->add_column();
+        table_style_combo_ = new QComboBox(col);
+        table_style_combo_->setObjectName(QStringLiteral("ribbon.table_style"));
+        table_style_combo_->setToolTip(QStringLiteral("Table Style: the style new tables take."));
+        table_style_combo_->setMinimumWidth(120);
+        connect(table_style_combo_, &QComboBox::activated, this, [this](int index) {
+            if (index >= 0) {
+                engine_->submit(core::TableStyleCommand{core::TableStyleCommand::Op::SetCurrent,
+                                                        table_style_combo_->itemText(index).toStdString(), {}});
+            }
+        });
+        col->layout()->addWidget(table_style_combo_);
+        small(tables, col, QStringLiteral("Table Style"), "TS", "table");
+    }
+    tables->set_dialog_launcher(QStringLiteral("Table Style"), [this] { open_table_style_dialog(); });
     RibbonPanel* markup = ribbon_->add_panel(annotate, QStringLiteral("Markup"), 20);
     markup->set_representative_icon(asset("revcloud"));
     large(markup, QStringLiteral("Revision\nCloud"), "REVCLOUD");

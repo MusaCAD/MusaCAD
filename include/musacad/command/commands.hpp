@@ -1247,7 +1247,23 @@ private:
     int cols_ = 5;
     double col_w_ = 63.5;
     int row_lines_ = 1;
+    std::uint16_t style_ = 0; ///< the table style: the current one unless Style chose another
     static constexpr double kLine = 9.0; ///< one line of the Standard table style's text, with its margins
+};
+
+/// TABLESTYLE (TS): the Table Style window where there is one -- the styles, Set Current,
+/// New, Modify and Delete; otherwise `Enter table style name to make current or [?]
+/// <current>:`.
+class TableStyleUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLESTYLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
 };
 
 /// TRIM / EXTEND as AutoCAD has them. Quick mode (TRIMEXTENDMODE 1) takes every object as

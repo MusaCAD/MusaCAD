@@ -161,6 +161,8 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
     reg({"MOCORO"}, [] { return std::make_unique<MocoroCommand>(); }, "",
         "Move, rotate and scale the selection in one command, with copies if asked.");
+    reg({"TABLESTYLE", "TS"}, [] { return std::make_unique<TableStyleUiCommand>(); }, "",
+        "Create, change and set the current table style.");
     reg({"TXTEXP"}, [] { return std::make_unique<TextExplodeUiCommand>(); }, "",
         "Turn text into polylines: the strokes of its letters, or their outlines in a TrueType font.");
     reg({"FLATTEN"}, [] { return std::make_unique<FlattenUiCommand>(); }, "",

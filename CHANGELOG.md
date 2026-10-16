@@ -110,6 +110,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or a spline, its points the sketch increment apart.
 - **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
   point with Style, Width and Height; a title and a header row come with the data rows.
+- **TABLESTYLE** (#44) -- the Table Style window: Set Current, New, Modify (text heights,
+  cell margin, lineweight) and Delete; the current table style is kept with the drawing,
+  TABLE uses it (its Style option takes any of them), and Annotate > Tables has the Table
+  Style combo.
 - **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
   the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
   Decimal), the fraction format, round off, a prefix and suffix and the measurement scale

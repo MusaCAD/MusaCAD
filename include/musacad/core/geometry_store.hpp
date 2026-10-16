@@ -915,6 +915,15 @@ public:
     }
     std::uint16_t add_table_style(const TableStyle& s);
     void set_table_style_table(std::vector<TableStyle> styles);
+    /// Replaces the style at `i` (its name too; Standard keeps its name). False if out of range.
+    bool set_table_style(std::uint16_t i, const TableStyle& s);
+    /// TABLESTYLE's Set Current: the style new tables take.
+    [[nodiscard]] std::uint16_t current_table_style() const noexcept { return current_table_style_; }
+    void set_current_table_style(std::uint16_t i) noexcept {
+        current_table_style_ = i < table_styles_.size() ? i : 0;
+    }
+    /// The index of the style named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
 
     /// A table's cells / column widths / row heights, as spans into the shared pools.
     [[nodiscard]] std::span<const TableCell> table_cells(const TableData& t) const noexcept;
@@ -1236,6 +1245,7 @@ private:
     std::vector<TableCell> table_cell_pool_;  ///< shared, like the polyline vertex pool
     std::vector<double> table_size_pool_;     ///< column widths then row heights
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
+    std::uint16_t current_table_style_ = 0;
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool

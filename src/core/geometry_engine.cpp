@@ -6449,7 +6449,7 @@ void GeometryEngine::collect_purge_candidates(RenderSnapshot::PurgeCandidates& o
         }
     }
     for (std::size_t i = 1; i < store_.table_styles().size(); ++i) {
-        if (!store_.table_style_in_use(static_cast<std::uint16_t>(i))) {
+        if (!store_.table_style_in_use(static_cast<std::uint16_t>(i)) && i != store_.current_table_style()) {
             out.tablestyles.push_back(store_.table_styles()[i].name);
         }
     }
@@ -14400,6 +14400,45 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, TableStyleCommand>) {
+                using Op = TableStyleCommand::Op;
+                const std::uint16_t i = store_.table_style_index(c.op == Op::Add ? c.style.name : c.name);
+                const std::string quoted = "\"" + (c.op == Op::Add ? c.style.name : c.name) + "\"";
+                table_style_changed_ = false;
+                if (c.op == Op::Add) {
+                    if (c.style.name.empty() || i != 0xFFFF) {
+                        report(c.style.name.empty() ? "A table style needs a name." : "Table style " + quoted + " already exists.");
+                    } else {
+                        store_.add_table_style(c.style);
+                        table_style_changed_ = true;
+                        report("Table style " + quoted + " added.");
+                    }
+                } else if (i == 0xFFFF) {
+                    report("Table style " + quoted + " not found.");
+                } else if (c.op == Op::Modify) {
+                    const std::uint16_t clash = store_.table_style_index(c.style.name);
+                    if (c.style.name.empty() || (clash != 0xFFFF && clash != i)) {
+                        report("Another table style is called \"" + c.style.name + "\".");
+                    } else {
+                        store_.set_table_style(i, c.style);
+                        table_style_changed_ = true;
+                        geom_dirty_ = true; // the tables drawn in it change
+                        purge_cache_valid_ = false;
+                        report("Table style \"" + store_.table_styles()[i].name + "\" changed.");
+                    }
+                } else if (c.op == Op::SetCurrent) {
+                    store_.set_current_table_style(i);
+                    table_style_changed_ = true;
+                    purge_cache_valid_ = false; // the current style is never a purge candidate
+                    report("\"" + store_.table_styles()[i].name + "\" is now the current table style.");
+                } else if (store_.remove_table_style(i)) {
+                    table_style_changed_ = true;
+                    purge_cache_valid_ = false;
+                    report("Table style " + quoted + " deleted.");
+                } else {
+                    report("Table style " + quoted + " cannot be deleted: it is Standard, the current style or in use.");
+                }
+            }
             if constexpr (std::is_same_v<T, TextExplodeCommand>) {
                 prune_selection();
                 std::vector<EntityHandle> made;
@@ -14834,6 +14873,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 edit = layer_edit_changed_; // ? lists; a name not found changes nothing
             }
+            if constexpr (std::is_same_v<T, TableStyleCommand>) {
+                edit = table_style_changed_;
+            }
             if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
                 edit = layerp_changed_;
             }
@@ -15260,6 +15302,8 @@ void GeometryEngine::rebuild_and_publish() {
     buf.units = store_.units();
     buf.text_styles = store_.text_styles();
     buf.current_text_style = store_.current_text_style();
+    buf.table_styles = store_.table_styles();
+    buf.current_table_style = store_.current_table_style();
     buf.current_dimstyle = store_.current_dimstyle();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {

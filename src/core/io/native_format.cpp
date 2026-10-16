@@ -1282,6 +1282,11 @@ std::string serialize_native(const Document& doc) {
         s += ts.name; // absorbs the rest of the line, so it may contain spaces
         s += '\n';
     }
+    if (doc.current_table_style != 0) { // v40: TABLESTYLE's current style
+        s += "CURTABLESTYLE ";
+        append_uint(s, doc.current_table_style);
+        s += '\n';
+    }
     // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
     // column widths, one of row heights, then per cell: "span_cols span_rows align" and
     // the raw text on the following line (it may contain spaces, so it cannot be a token).
@@ -1687,6 +1692,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed CURDIMSTYLE");
             }
             doc.current_dimstyle = static_cast<std::uint16_t>(i);
+        } else if (key == "CURTABLESTYLE") {
+            std::uint64_t i = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], i)) {
+                return fail("malformed CURTABLESTYLE");
+            }
+            doc.current_table_style = static_cast<std::uint16_t>(i);
         } else if (key == "CURTEXTSTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {

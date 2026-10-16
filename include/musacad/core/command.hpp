@@ -1824,6 +1824,15 @@ struct DimInspectCommand {
     std::string rate{};
     std::uint64_t group = 0;
 };
+/// TABLESTYLE: Add `style` (a name not in use), Modify the style named `name` to `style`
+/// (Standard keeps its name), make the style named `name` Current, or Delete it (not
+/// Standard, the current one or one a table uses). The engine says what it did.
+struct TableStyleCommand {
+    enum class Op : std::uint8_t { Add, Modify, SetCurrent, Delete };
+    Op op = Op::SetCurrent;
+    std::string name;
+    TableStyle style{};
+};
 /// TXTEXP: the selected texts, multiline texts and attribute definitions turned into the
 /// geometry they are drawn with -- polylines along the stroke font's strokes, closed
 /// polylines round an outline font's glyphs -- on their layer, with their colour. One undo
@@ -2011,7 +2020,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
-                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, TextExplodeCommand, SplineEditCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, TextExplodeCommand, TableStyleCommand, SplineEditCommand,
                  TextMaskCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
