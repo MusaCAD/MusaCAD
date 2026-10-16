@@ -21,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iterator>
 #include <limits>
 #include <span>
@@ -14663,6 +14664,46 @@ void GeometryEngine::apply_layer_state(const LayerStateCommand& c) {
         report("Layer state renamed to " + quote(c.to) + ".");
         return;
     }
+    case Op::Export: {
+        const auto it = find(c.name);
+        if (it == states.end()) {
+            report("Cannot find layer state " + quote(c.name) + ".");
+            return;
+        }
+        const std::string body = io::serialize_las(*it);
+        std::ofstream f(c.to, std::ios::binary);
+        f.write(body.data(), static_cast<std::streamsize>(body.size()));
+        report(f ? "Layer state " + quote(it->name) + " exported to " + c.to + "."
+                 : "Cannot write " + c.to + ".");
+        return;
+    }
+    case Op::Import: {
+        std::ifstream f(c.to, std::ios::binary);
+        if (!f) {
+            report("Cannot open " + c.to + ".");
+            return;
+        }
+        std::ostringstream buf;
+        buf << f.rdbuf();
+        LayerState st;
+        std::string error;
+        if (!io::parse_las(buf.str(), st, error)) {
+            report("Cannot import " + c.to + ": " + error + ".");
+            return;
+        }
+        const auto it = find(st.name);
+        const bool replaced = it != states.end();
+        const std::string name = st.name;
+        if (replaced) {
+            *it = std::move(st);
+        } else {
+            states.push_back(std::move(st));
+        }
+        store_.set_layer_states(std::move(states));
+        dirty_ = true;
+        report("Layer state " + quote(name) + (replaced ? " replaced from " : " imported from ") + c.to + ".");
+        return;
+    }
     }
 }
 
@@ -17486,7 +17527,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 edit = false; // a setting of the session
             }
             if constexpr (std::is_same_v<T, LayerStateCommand>) {
-                edit = c.op != LayerStateCommand::Op::List && (c.op != LayerStateCommand::Op::Restore || layerp_changed_);
+                edit = c.op != LayerStateCommand::Op::List && c.op != LayerStateCommand::Op::Export &&
+                       (c.op != LayerStateCommand::Op::Restore || layerp_changed_);
             }
             if constexpr (std::is_same_v<T, FindTextCommand>) {
                 edit = c.do_replace; // finding only selects

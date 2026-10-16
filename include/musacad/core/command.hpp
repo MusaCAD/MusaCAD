@@ -2195,7 +2195,9 @@ struct SetLayerpModeCommand {
 /// settings as `name` (replacing one of that name), Restore them, Delete one, or Rename
 /// `name` to `to`. Names are matched in any case.
 struct LayerStateCommand {
-    enum class Op : std::uint8_t { List, Save, Restore, Delete, Rename };
+    /// Export: the state `name` written to the .las file `to`; Import: the .las file `to`
+    /// read in as a layer state (one of the same name is replaced).
+    enum class Op : std::uint8_t { List, Save, Restore, Delete, Rename, Import, Export };
     Op op = Op::List;
     std::string name;
     std::string to;

@@ -2927,3 +2927,61 @@ TEST_CASE("The Text tab's Vertical position: Below, and Outside on the side away
     REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
     REQUIRE(dim_text_vpos(again.dimstyles.back()) == 4);
 }
+
+TEST_CASE("A layer state goes out to an AutoCAD .las file and comes back") {
+    LayerState st;
+    st.name = "Plot set";
+    st.current = "WALLS";
+    Layer walls;
+    walls.name = "WALLS";
+    walls.color = Rgb{255, 0, 0};
+    walls.linetype = Linetype::Dashed;
+    walls.lineweight = 35;
+    walls.locked = true;
+    Layer notes;
+    notes.name = "NOTES";
+    notes.color = Rgb{12, 34, 56}; // not a colour index: a true colour too
+    notes.on = false;
+    notes.plot = false;
+    notes.transparency = 40;
+    st.layers = {walls, notes};
+    const std::string las = io::serialize_las(st);
+    REQUIRE(las.rfind("  0\r\nLAYERSTATEDICTIONARY\r\n  0\r\nLAYERSTATE\r\n  1\r\nPlot set\r\n 91\r\n2047\r\n", 0) == 0);
+    REQUIRE(las.find("  8\r\nWALLS\r\n 90\r\n12\r\n 62\r\n1\r\n370\r\n35\r\n  6\r\nDASHED\r\n") != std::string::npos);
+    LayerState back;
+    std::string error;
+    REQUIRE(io::parse_las(las, back, error));
+    REQUIRE(back.name == "Plot set");
+    REQUIRE(back.current == "WALLS");
+    REQUIRE(back.layers.size() == 2);
+    REQUIRE(back.layers[0].color == Rgb{255, 0, 0});
+    REQUIRE(back.layers[0].locked);
+    REQUIRE(back.layers[0].linetype == Linetype::Dashed);
+    REQUIRE(back.layers[1].color == Rgb{12, 34, 56});
+    REQUIRE_FALSE(back.layers[1].on);
+    REQUIRE_FALSE(back.layers[1].plot);
+    REQUIRE(back.layers[1].transparency == 40);
+    // As AutoCAD writes one (LF endings here, a byte order mark, the "Default" lineweight).
+    const std::string acad = "\xEF\xBB\xBF  0\nLAYERSTATEDICTIONARY\n  0\nLAYERSTATE\n  1\nAULA\n 91\n2047\n301\n\n290\n0\n302\n"
+                             "CENTRO\n  8\nCENTRO\n 90\n24\n 62\n7\n370\n-3\n  6\nCENTER\n  2\nCor_7\n440\n0\n";
+    REQUIRE(io::parse_las(acad, back, error));
+    REQUIRE(back.name == "AULA");
+    REQUIRE(back.layers.size() == 1);
+    REQUIRE(back.layers[0].vp_freeze_new);
+    REQUIRE(back.layers[0].plot);
+    REQUIRE(back.layers[0].lineweight == 25);
+    REQUIRE_FALSE(io::parse_las("  0\nSECTION\n", back, error));
+}
+
+TEST_CASE("-LAYERSTATE's Import and EXport name the file") {
+    H h;
+    h.run({"-LAYERSTATE", "EX", "Plot set", ""});
+    const auto* c = h.last<LayerStateCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == LayerStateCommand::Op::Export);
+    REQUIRE(c->name == "Plot set");
+    REQUIRE(c->to == "Plot set.las");
+    h.run({"I", "/tmp/x.las"});
+    REQUIRE(h.last<LayerStateCommand>()->op == LayerStateCommand::Op::Import);
+    REQUIRE(h.last<LayerStateCommand>()->to == "/tmp/x.las");
+}

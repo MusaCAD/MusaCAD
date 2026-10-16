@@ -167,6 +167,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
   line families DXF carries with each hatch) and draw; kept in the drawing and written back.
+- **Layer states Import and Export** (#69) -- the Layer States Manager's Import... and Export...
+  and -LAYERSTATE's Import / EXport read and write AutoCAD's layer state files (.las): each
+  layer's on, frozen, locked, plot and new-viewport settings, colour (a true colour too),
+  linetype, lineweight and transparency, and the current layer.
 - **View categories** (#72) -- New View's View category, kept with the view; the View Manager
   lists the views by category.
 - **Layer snapshots with views** (#72) -- New View's Save layer snapshot with view (and NEWVIEW):

@@ -5226,13 +5226,35 @@ void MainWindow::open_layer_states_manager() {
     auto* restore = new QPushButton(QStringLiteral("Restore"), d.dlg);
     auto* rename = new QPushButton(QStringLiteral("Rename..."), d.dlg);
     auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* import_btn = new QPushButton(QStringLiteral("Import..."), d.dlg);
+    auto* export_btn = new QPushButton(QStringLiteral("Export..."), d.dlg);
     auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
-    for (QPushButton* b : {add, restore, rename, remove}) {
+    for (QPushButton* b : {add, restore, rename, remove, import_btn, export_btn}) {
         d.buttons->addWidget(b);
     }
     d.buttons->addStretch(1);
     d.buttons->addWidget(close);
     using Op = core::LayerStateCommand::Op;
+    // AutoCAD's layer state files (.las), one state each.
+    connect(import_btn, &QPushButton::clicked, d.dlg, [d, run] {
+        const QString path = QFileDialog::getOpenFileName(d.dlg, QStringLiteral("Import Layer State"), QString(),
+                                                          QStringLiteral("Layer states (*.las)"));
+        if (!path.isEmpty()) {
+            run(Op::Import, QString(), path);
+        }
+    });
+    connect(export_btn, &QPushButton::clicked, d.dlg, [d, run] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        const QString path = QFileDialog::getSaveFileName(d.dlg, QStringLiteral("Export Layer State"),
+                                                          name + QStringLiteral(".las"),
+                                                          QStringLiteral("Layer states (*.las)"));
+        if (!path.isEmpty()) {
+            run(Op::Export, name, path);
+        }
+    });
     connect(add, &QPushButton::clicked, d.dlg, [d, run] {
         bool ok = false;
         const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New Layer State"),

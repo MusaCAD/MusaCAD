@@ -14,6 +14,10 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <filesystem>
 #include <optional>
 #include <fstream>
@@ -1460,6 +1464,172 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
         code(s, 330, handle_hex(image));
     }
     code(s, 0, "ENDSEC");
+}
+
+std::string serialize_las(const LayerState& state) {
+    std::string s;
+    const auto put = [&](int code, const std::string& value) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%3d", code);
+        s += buf;
+        s += "\r\n";
+        s += value;
+        s += "\r\n";
+    };
+    put(0, "LAYERSTATEDICTIONARY");
+    put(0, "LAYERSTATE");
+    put(1, state.name);
+    put(91, "2047"); // every property restored
+    put(301, "");
+    put(290, "0");
+    put(302, state.current);
+    for (const Layer& l : state.layers) {
+        put(8, l.name);
+        put(90, std::to_string((l.on ? 0 : 1) | (l.frozen ? 2 : 0) | (l.locked ? 4 : 0) | (l.plot ? 8 : 0) |
+                               (l.vp_freeze_new ? 16 : 0)));
+        // The nearest colour index; a colour that is not one also goes as a true colour.
+        long aci = 7;
+        long best = std::numeric_limits<long>::max();
+        for (long i = 1; i <= 255; ++i) {
+            const Rgb p = aci_to_rgb(i);
+            const long dr = static_cast<long>(p.r) - l.color.r;
+            const long dg = static_cast<long>(p.g) - l.color.g;
+            const long db = static_cast<long>(p.b) - l.color.b;
+            const long d2 = dr * dr + dg * dg + db * db;
+            if (d2 < best) {
+                best = d2;
+                aci = i;
+            }
+        }
+        put(62, std::to_string(aci));
+        put(370, std::to_string(static_cast<int>(l.lineweight)));
+        put(6, linetype_name(l.linetype));
+        put(2, "Color_" + std::to_string(aci));
+        const long alpha = std::lround(255.0 * (100.0 - std::min<int>(l.transparency, 90)) / 100.0);
+        put(440, std::to_string(l.transparency == 0 ? 0L : (0x02000000L | alpha)));
+        if (best != 0) {
+            put(92, std::to_string(static_cast<std::int32_t>(0xC2000000u | static_cast<std::uint32_t>(true_color(l.color)))));
+        }
+    }
+    return s;
+}
+
+bool parse_las(std::string_view text, LayerState& out, std::string& error) {
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.remove_prefix(3); // a UTF-8 byte order mark
+    }
+    std::vector<std::string_view> lines;
+    while (!text.empty()) {
+        const std::size_t nl = text.find('\n');
+        std::string_view line = text.substr(0, nl);
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        lines.push_back(line);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+    }
+    const auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) {
+            v.remove_prefix(1);
+        }
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) {
+            v.remove_suffix(1);
+        }
+        return v;
+    };
+    const auto number = [&](std::string_view v, long& n) {
+        v = trim(v);
+        const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), n);
+        return ec == std::errc{} && ptr == v.data() + v.size();
+    };
+    out = LayerState{};
+    bool dict = false;
+    bool state = false;
+    for (std::size_t i = 0; i + 1 < lines.size(); i += 2) {
+        long code = 0;
+        if (!number(lines[i], code)) {
+            error = "line " + std::to_string(i + 1) + " is not a group code";
+            return false;
+        }
+        const std::string_view value = lines[i + 1];
+        const std::string_view word = trim(value);
+        long n = 0;
+        if (code == 0) {
+            if (word == "LAYERSTATEDICTIONARY" || word == "LAYERSTATEDICT") {
+                dict = true;
+                continue;
+            }
+            if (word == "LAYERSTATE" && dict && !state) {
+                state = true;
+                continue;
+            }
+            break; // a second state: one per file
+        }
+        if (!state) {
+            error = "not a layer state file";
+            return false;
+        }
+        Layer* l = out.layers.empty() ? nullptr : &out.layers.back();
+        switch (code) {
+        case 1:
+            if (l == nullptr) {
+                out.name = std::string(value);
+            }
+            break;
+        case 302:
+            out.current = std::string(value);
+            break;
+        case 8:
+            out.layers.push_back(Layer{});
+            out.layers.back().name = std::string(value);
+            break;
+        case 90:
+            if (l != nullptr && number(value, n)) {
+                l->on = (n & 1) == 0;
+                l->frozen = (n & 2) != 0;
+                l->locked = (n & 4) != 0;
+                l->plot = (n & 8) != 0;
+                l->vp_freeze_new = (n & 16) != 0;
+            }
+            break;
+        case 62:
+            if (l != nullptr && number(value, n) && n != 0) {
+                l->color = aci_to_rgb(std::labs(n) > 255 ? 7 : std::labs(n));
+                l->on = l->on && n > 0; // a negative colour is a layer that is off
+            }
+            break;
+        case 92:
+            if (l != nullptr && number(value, n)) {
+                l->color = from_true_color(n & 0xFFFFFF);
+            }
+            break;
+        case 370:
+            if (l != nullptr && number(value, n)) {
+                l->lineweight = static_cast<std::uint8_t>(n < 0 ? 25 : std::min<long>(n, 211));
+            }
+            break;
+        case 6:
+            if (l != nullptr) {
+                l->linetype = linetype_from(std::string(word));
+            }
+            break;
+        case 440:
+            if (l != nullptr && number(value, n)) {
+                const long alpha = n & 0xFF;
+                l->transparency = static_cast<std::uint8_t>(
+                    n == 0 ? 0 : std::clamp<long>(std::lround((255.0 - static_cast<double>(alpha)) * 100.0 / 255.0), 0, 90));
+            }
+            break;
+        default:
+            break; // 91, 301, 290, 2: kept by AutoCAD, not by Musa CAD
+        }
+    }
+    if (!state || out.name.empty()) {
+        error = "not a layer state file";
+        return false;
+    }
+    return true;
 }
 
 std::string serialize_dxf(const Document& doc) {

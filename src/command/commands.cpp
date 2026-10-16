@@ -20107,7 +20107,7 @@ void LayerPreviousCommand::cancel(CommandContext& ctx) {
 
 void LayerStateCommand::options(CommandContext& ctx) {
     step_ = Step::Option;
-    ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name]: ");
+    ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name/Import/EXport]: ");
 }
 
 void LayerStateCommand::start(CommandContext& ctx) {
@@ -20145,6 +20145,12 @@ void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "N" || u == "NAME") {
             op_ = Op::Rename;
             ctx.set_prompt("Enter name of layer state to rename or [?]: ");
+        } else if (u == "I" || u == "IMPORT") {
+            op_ = Op::Import;
+            ctx.set_prompt("Enter file name to import: ");
+        } else if (u == "EX" || u == "EXPORT") {
+            op_ = Op::Export;
+            ctx.set_prompt("Enter name of layer state to export or [?]: ");
         } else {
             ctx.echo("Invalid option keyword.");
             options(ctx);
@@ -20157,7 +20163,7 @@ void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
             options(ctx);
             return;
         }
-        if (t == "?" && op_ != Op::Save) {
+        if (t == "?" && op_ != Op::Save && op_ != Op::Import) {
             ctx.submit(core::LayerStateCommand{Op::List, {}, {}});
             return; // the same prompt again
         }
@@ -20167,11 +20173,24 @@ void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Enter new layer state name: ");
             return;
         }
+        if (op_ == Op::Export) {
+            from_ = t;
+            step_ = Step::NewName;
+            ctx.set_prompt("Enter file name to export <" + t + ".las>: ");
+            return;
+        }
+        if (op_ == Op::Import) {
+            ctx.submit(core::LayerStateCommand{Op::Import, {}, t});
+            options(ctx);
+            return;
+        }
         ctx.submit(core::LayerStateCommand{op_, t, {}});
         options(ctx);
         return;
     case Step::NewName:
-        if (!t.empty()) {
+        if (op_ == Op::Export) {
+            ctx.submit(core::LayerStateCommand{Op::Export, from_, t.empty() ? from_ + ".las" : t});
+        } else if (!t.empty()) {
             ctx.submit(core::LayerStateCommand{Op::Rename, from_, t});
         }
         options(ctx);
