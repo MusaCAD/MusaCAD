@@ -2122,3 +2122,16 @@ TEST_CASE("DONUT carries its ring at the cursor while the centre is asked for") 
     h.run({""});
     REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::None);
 }
+
+TEST_CASE("SPLINE's Object makes the polylines picked into splines") {
+    H h;
+    h.run({"SPLINE", "O"});
+    REQUIRE(h.out.prompt == "Select spline-fit polylines: ");
+    h.proc.set_selection_count(1);
+    h.run({""});
+    const auto* c = h.last<PeditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == 4);
+    REQUIRE(c->selection);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

@@ -5024,6 +5024,25 @@ void SplineCommand::start(CommandContext& ctx) {
     prompt_first(ctx);
 }
 
+void SplineCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        convert_selection(ctx);
+    }
+}
+
+void SplineCommand::convert_selection(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        // PEDIT's Spline on each: the polyline's vertices fitted by a spline, which takes
+        // its place (one undo step).
+        core::PeditCommand c;
+        c.op = 4;
+        c.selection = true;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
 void SplineCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     ctx.set_preview({});
@@ -5058,6 +5077,11 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     switch (state_) {
+    case State::Object:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            convert_selection(ctx);
+        }
+        return;
     case State::First:
         if (u == "M" || u == "METHOD") {
             state_ = State::MethodPick;
@@ -5077,7 +5101,8 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "O" || u == "OBJECT") {
-            ctx.echo("Object: converting spline-fit polylines is not supported yet.");
+            state_ = State::Object;
+            select_.begin(ctx, "Select spline-fit polylines: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {

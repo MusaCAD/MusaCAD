@@ -2522,9 +2522,14 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Object && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class State { First, MethodPick, KnotsPick, DegreePick, Next };
+    enum class State { First, MethodPick, KnotsPick, DegreePick, Next, Object };
+    void convert_selection(CommandContext& ctx); ///< [Object]: the polylines picked, made splines
+    SelectObjectsPhase select_;
     void prompt_first(CommandContext& ctx) const;
     void prompt_next(CommandContext& ctx) const;
     void refresh_preview(CommandContext& ctx) const;
