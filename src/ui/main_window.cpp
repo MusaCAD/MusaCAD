@@ -141,6 +141,8 @@
 namespace musacad::ui {
 
 namespace {
+QIcon hatch_swatch(const std::string& name, const QColor& ink); // a pattern's swatch (Tool Palettes, Hatch Editor)
+
 /// Dynamic Input ships ON: Musa CAD is canvas-first out of the box (on-canvas command
 /// entry, sub-prompts and dimension fields), with F12 as the fallback to the classic
 /// bottom command line. Named once so the startup read and the self-test's
@@ -677,8 +679,10 @@ void MainWindow::build_contextual_tabs() {
         auto* combo = new QComboBox(this);
         combo->setObjectName(QStringLiteral("ctx.hatch.pattern"));
         combo->setMinimumWidth(120);
+        combo->setIconSize(QSize(20, 20));
+        const QColor ink = palette().color(QPalette::Text);
         for (const std::string& name : core::hatch::pattern_choice_list()) {
-            combo->addItem(QString::fromStdString(name));
+            combo->addItem(hatch_swatch(name, ink), QString::fromStdString(name)); // each with its swatch
         }
         combo->setToolTip(QStringLiteral("Hatch pattern (applies to the selected hatch)."));
         connect(combo, &QComboBox::activated, this, [combo, set_prop] {
