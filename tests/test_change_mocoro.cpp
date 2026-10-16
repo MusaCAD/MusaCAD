@@ -3026,3 +3026,30 @@ TEST_CASE("HATCH finds a pattern it does not have in a .pat file on the support 
     REQUIRE(std::any_of(doc.patterns.begin(), doc.patterns.end(), [](const auto& p) { return p.name == "MYGRID"; }));
     engine.stop();
 }
+
+TEST_CASE("Hatching a selection takes circles, whole ellipses, closed splines and polylines with arcs") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 5, 1});
+    AddPolylineCommand slot; // a slot: two straight sides, two half-circle ends
+    slot.points = {{20, 0}, {30, 0}, {30, 10}, {20, 10}};
+    slot.bulges = {0.0, 1.0, 0.0, 1.0};
+    slot.closed = true;
+    slot.group = 2;
+    engine.submit(slot);
+    engine.submit(SelectAllCommand{});
+    engine.submit(HatchFromSelectionCommand{"SOLID", 1.0, 0.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Solid hatch created."; }));
+    const io::Document doc = dump(engine, "musacad_hatch_curves.musa");
+    REQUIRE(doc.hatches.size() == 1);
+    REQUIRE(doc.hatches[0].loops.size() == 2);
+    for (const auto& loop : doc.hatches[0].loops) {
+        REQUIRE(loop.size() > 8); // the curves followed, not their chords
+    }
+    // The circle's loop is on the circle.
+    const auto& circle = doc.hatches[0].loops[0].front().x < 10.0 ? doc.hatches[0].loops[0] : doc.hatches[0].loops[1];
+    for (const Vec2& v : circle) {
+        REQUIRE(length(v) == Approx(5.0).margin(1e-6));
+    }
+    engine.stop();
+}

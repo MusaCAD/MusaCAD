@@ -14191,21 +14191,52 @@ void GeometryEngine::apply_join_selection(double radius, std::uint64_t group, bo
 
 void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, double scale,
                                                 double angle, std::uint64_t group, Rgb color2) {
-    // Each selected CLOSED polyline contributes a boundary loop. The even-odd fill makes
-    // separate loops fill independently and nested loops (a polyline inside another) read
-    // as holes -- no nesting classification needed here.
+    // Each selected closed object contributes a boundary loop: a closed polyline (its arcs
+    // followed), a circle, a whole ellipse, a closed spline. The even-odd fill makes separate
+    // loops fill independently and nested loops (one inside another) read as holes -- no
+    // nesting classification needed here.
     std::vector<std::vector<Vec2>> loops;
+    const double tol = std::max(tess_tolerance_ * 0.25, 1e-6);
     for (const EntityHandle h : selection_) {
-        if (h.kind != EntityKind::Polyline) {
+        if (!store_.is_valid(h)) {
             continue;
         }
-        const PolylineData* p = store_.polyline(h);
-        if (p == nullptr || !p->closed) {
+        std::vector<Vec2> loop;
+        if (h.kind == EntityKind::Polyline) {
+            const PolylineData* p = store_.polyline(h);
+            if (p == nullptr || !p->closed) {
+                continue;
+            }
+            const std::span<const double> b = store_.bulges_of(*p);
+            if (std::any_of(b.begin(), b.end(), [](double x) { return std::abs(x) > 1e-12; })) {
+                kernel_.tessellate(store_, h, tol, loop); // its arcs, flattened finely
+            } else {
+                const std::span<const Vec2> v = store_.vertices_of(*p);
+                loop.assign(v.begin(), v.end());
+            }
+        } else if (h.kind == EntityKind::Circle) {
+            kernel_.tessellate(store_, h, tol, loop);
+        } else if (h.kind == EntityKind::Ellipse) {
+            const EllipseData* e = store_.ellipse(h);
+            if (e == nullptr || std::abs(e->end - e->start) < kTwoPi - 1e-9) {
+                continue; // an elliptical arc encloses nothing
+            }
+            kernel_.tessellate(store_, h, tol, loop);
+        } else if (h.kind == EntityKind::Spline) {
+            const SplineData* sp = store_.spline(h);
+            const std::span<const Vec2> cv = sp != nullptr ? store_.control_points_of(*sp) : std::span<const Vec2>{};
+            if (cv.size() < 3 || distance(cv.front(), cv.back()) > 1e-9) {
+                continue; // open
+            }
+            kernel_.tessellate(store_, h, tol, loop);
+        } else {
             continue;
         }
-        const std::span<const Vec2> v = store_.vertices_of(*p);
-        if (v.size() >= 3) {
-            loops.emplace_back(v.begin(), v.end());
+        if (loop.size() > 1 && distance(loop.front(), loop.back()) < 1e-9) {
+            loop.pop_back(); // the loop closes itself
+        }
+        if (loop.size() >= 3) {
+            loops.push_back(std::move(loop));
         }
     }
     if (loops.empty()) {
