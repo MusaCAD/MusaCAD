@@ -2897,3 +2897,33 @@ TEST_CASE("SPLINE's start and end Tangency: the fitted curve leaves and arrives 
     REQUIRE(sp->control_points[1].x == Approx(0.0).margin(1e-9));
     REQUIRE_FALSE(h.proc.has_active_command()); // the end tangent ends it
 }
+
+TEST_CASE("The Text tab's Vertical position: Below, and Outside on the side away from what is measured") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {20, 0};
+    d.line_pt = {10, 10}; // the line above the points
+    DimStyle st;
+    REQUIRE(dim_text_vpos(st) == 1);
+    const double above = compute_dim_geometry(d, st, Rgb{}).text_pos.y;
+    REQUIRE(above > 10.0);
+    REQUIRE(apply_dim_var(st, "DIMTAD", 4));
+    REQUIRE(dim_text_vpos(st) == 4);
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.y < 10.0 - st.text_height);
+    REQUIRE(apply_dim_var(st, "DIMTAD", 2)); // Outside: away from the points, so above here
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.y == Approx(above));
+    d.line_pt = {10, -10}; // the line below the points: outside is below it
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.y < -10.0 - st.text_height);
+    REQUIRE(apply_dim_var(st, "DIMTAD", 0));
+    REQUIRE(dim_text_vpos(st) == 0);
+    // The file and DXF keep all five.
+    io::Document doc;
+    DimStyle below;
+    below.name = "B";
+    REQUIRE(apply_dim_var(below, "DIMTAD", 4));
+    doc.dimstyles.push_back(below);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(dim_text_vpos(again.dimstyles.back()) == 4);
+}

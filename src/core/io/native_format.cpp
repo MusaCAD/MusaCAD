@@ -458,7 +458,7 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, ds.precision);
         s += ' ';
-        append_uint(s, ds.text_above ? 1 : 0);
+        append_uint(s, dim_text_vpos(ds)); // DIMTAD, 0..4 (v40; 0 or 1 before)
         s += ' ';
         append_uint(s, ds.dim_lineweight);
         s += ' ';
@@ -2162,7 +2162,8 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.ext_offset = eo;
             ds.ext_extension = ee;
             ds.precision = static_cast<std::uint8_t>(pr);
-            ds.text_above = ta != 0;
+            ds.text_above = ta != 0 && ta != 4;
+            ds.text_vpos = ta >= 2 && ta <= 4 ? static_cast<std::uint8_t>(ta) : std::uint8_t{0};
             // v4 appends: dim_lineweight + 4 element colours (by_layer r g b) before name.
             std::size_t name_at = 8;
             if (version >= 4 && tok.size() >= 25) {

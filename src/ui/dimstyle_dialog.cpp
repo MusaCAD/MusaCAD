@@ -467,8 +467,9 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     QDoubleSpinBox* text_height = length_box(style.text_height, 0.0001, this);
     auto* text_color = color_box(style.text_color, this);
     auto* vertical = new QComboBox(this);
-    vertical->addItems({QStringLiteral("Above"), QStringLiteral("Centred")});
-    vertical->setCurrentIndex(style.text_above ? 0 : 1);
+    vertical->addItems({QStringLiteral("Centered"), QStringLiteral("Above"), QStringLiteral("Outside"),
+                        QStringLiteral("JIS"), QStringLiteral("Below")});
+    vertical->setCurrentIndex(core::dim_text_vpos(style)); // DIMTAD's order
     QFormLayout* ta = form();
     row(ta, QStringLiteral("Text height:"), text_height);
     row(ta, QStringLiteral("Text colour:"), text_color);
@@ -678,7 +679,9 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.arrow_color = read_color(arrow_color);
         s.text_height = text_height->value();
         s.text_color = read_color(text_color);
-        s.text_above = vertical->currentIndex() == 0;
+        s.text_above = vertical->currentIndex() != 0 && vertical->currentIndex() != 4;
+        s.text_vpos = vertical->currentIndex() >= 2 ? static_cast<std::uint8_t>(vertical->currentIndex())
+                                                    : std::uint8_t{0};
         s.text_fit = static_cast<std::uint8_t>(std::max(0, fits->checkedId()));
         s.text_move = static_cast<std::uint8_t>(std::max(0, moves->checkedId()));
         s.precision = static_cast<std::uint8_t>(std::max(0, precision->currentIndex()));

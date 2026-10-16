@@ -135,6 +135,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
   dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
   with the drawing (format v40).
+- **The dimension text's Vertical position** (#58) -- the Text tab's Centered, Above, Outside
+  (on the side of the line away from what is measured), JIS and Below: DIMTAD 0 to 4, read from
+  and written to DXF.
 - **SPLINE's start and end Tangency** (#39) -- `Specify start tangent:` after the first point and
   `Specify end tangent:` (which ends it) once there are two: the fitted spline leaves and arrives
   in those directions, the preview turning with the cursor.

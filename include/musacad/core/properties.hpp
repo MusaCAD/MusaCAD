@@ -153,6 +153,9 @@ struct DimStyle {
     double ext_extension = 1.25; ///< how far the extension line passes the dim line
     std::uint8_t precision = 2;  ///< decimal places in the measured text
     bool text_above = true;      ///< text sits above the dim line (else centred)
+    /// DIMTAD beyond Centered and Above: 2 Outside (on the side away from what is measured),
+    /// 3 JIS, 4 Below; 0 leaves it to text_above. dim_text_vpos() reads the two together.
+    std::uint8_t text_vpos = 0;
     std::uint8_t dim_lineweight = 25; ///< dimension/extension line weight (hundredths mm)
     std::uint8_t text_fit = 0;   ///< TextFit: narrow-dimension value placement (Auto)
 
@@ -268,6 +271,11 @@ struct DimOverrides {
 
 /// Apply a dimension's overrides onto a copy of its style, producing the effective
 /// style. The ONE place override-vs-style is decided (called from compute_dim_geometry).
+/// The Text tab's Vertical position, DIMTAD: 0 Centered, 1 Above, 2 Outside, 3 JIS, 4 Below.
+[[nodiscard]] inline std::uint8_t dim_text_vpos(const DimStyle& s) noexcept {
+    return s.text_vpos != 0 ? s.text_vpos : static_cast<std::uint8_t>(s.text_above ? 1 : 0);
+}
+
 [[nodiscard]] inline DimStyle apply_dim_overrides(DimStyle s, const DimOverrides& o) noexcept {
     if (o.has(DimOverrides::kTextHeight)) {
         s.text_height = o.text_height;
@@ -283,6 +291,7 @@ struct DimOverrides {
     }
     if (o.has(DimOverrides::kTextAbove)) {
         s.text_above = o.text_above;
+        s.text_vpos = 0; // the dimension's own Above or Centered
     }
     if (o.has(DimOverrides::kDimColor)) {
         s.dim_color = ElementColor{false, o.dim_color};

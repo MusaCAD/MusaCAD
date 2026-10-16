@@ -586,7 +586,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 41, ds.arrow_size);   // DIMASZ
         code_d(s, 42, ds.ext_offset);   // DIMEXO
         code_d(s, 44, ds.ext_extension); // DIMEXE
-        code_i(s, 77, ds.text_above ? 1 : 0); // DIMTAD
+        code_i(s, 77, dim_text_vpos(ds)); // DIMTAD
         code_i(s, 78, ds.zero_suppression);   // DIMZIN
         code_i(s, 271, ds.precision);   // DIMDEC
         code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
@@ -1869,7 +1869,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             ds.ext_extension = to_d(*v);
         }
         if (const std::string* v = find(body, 77)) {
-            ds.text_above = to_l(*v) != 0;
+            const long tad = to_l(*v);
+            ds.text_above = tad != 0 && tad != 4;
+            ds.text_vpos = tad >= 2 && tad <= 4 ? static_cast<std::uint8_t>(tad) : std::uint8_t{0};
         }
         if (const std::string* v = find(body, 78)) {
             ds.zero_suppression = static_cast<std::uint8_t>(to_l(*v) & 0x0F); // the feet/inch bits too

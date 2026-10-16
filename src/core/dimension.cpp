@@ -291,8 +291,9 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.ext_offset = v;
     } else if (same_var(var, "DIMEXE") && v >= 0.0) {
         s.ext_extension = v;
-    } else if (same_var(var, "DIMTAD") && whole(0, 1)) {
-        s.text_above = v != 0.0;
+    } else if (same_var(var, "DIMTAD") && whole(0, 4)) {
+        s.text_above = v != 0.0 && v != 4.0;
+        s.text_vpos = v >= 2.0 ? static_cast<std::uint8_t>(v) : std::uint8_t{0};
     } else if (same_var(var, "DIMATFIT") && whole(0, 2)) {
         s.text_fit = static_cast<std::uint8_t>(v);
     } else if (same_var(var, "DIMTMOVE") && whole(0, 2)) {
@@ -402,7 +403,7 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
         return s.ext_extension;
     }
     if (same_var(var, "DIMTAD")) {
-        return s.text_above ? 1.0 : 0.0;
+        return dim_text_vpos(s);
     }
     if (same_var(var, "DIMATFIT")) {
         return s.text_fit;
@@ -1070,7 +1071,8 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                 seg(g.dim_lines, c, c + arm); // out from the centre, so the centre is a vertex
             }
             g.text_justify = side > 0.0 ? text::Justify::Left : text::Justify::Right;
-            const double up = style.text_above ? gap : -h * 0.5;
+            const std::uint8_t tad = dim_text_vpos(style);
+            const double up = tad == 0 ? -h * 0.5 : tad == 4 ? -h - gap : gap;
             g.text_pos = land_end + Vec2{side * gap, up};
         } else {
             const Vec2 from = d.type == DimType::Diameter ? c - u * r : c;
@@ -1478,7 +1480,16 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const double cs = std::cos(g.text_rotation);
     const double sn = std::sin(g.text_rotation);
     const Vec2 text_up{-sn, cs};
-    const double off = style.text_above ? style.text_height * 0.4 : -style.text_height * 0.5;
+    // DIMTAD: centred on the line (straddling it), above it (JIS too), below it, or Outside
+    // -- on the side of the line away from the points measured.
+    const std::uint8_t vpos = dim_text_vpos(style);
+    bool above = vpos == 1 || vpos == 3;
+    if (vpos == 2) {
+        above = dot(text_up, d.a - fa) <= 0.0;
+    }
+    const double off = vpos == 0 ? -style.text_height * 0.5
+                       : above   ? style.text_height * 0.4
+                                 : -style.text_height * 1.4;
     if (text_inside) {
         g.text_pos = mid + text_up * off;
     } else {
@@ -1508,7 +1519,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                 s0 = std::min(s0, sp);
                 s1 = std::max(s1, sp);
             }
-            const bool under = style.text_above;
+            const bool under = vpos != 0;
             if (s1 > span + stub_b) {
                 seg(g.dim_lines, fb + u * stub_b, fa + u * (under ? s1 : s0 - gap));
             } else if (s0 < -stub_a) {
