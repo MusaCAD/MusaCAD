@@ -66,6 +66,7 @@
 #include <QMimeData>
 #include <QDateTime>
 #include <QPointer>
+#include <QListView>
 #include <QListWidget>
 #include <QRadioButton>
 #include <QHeaderView>
@@ -732,6 +733,19 @@ void MainWindow::build_contextual_tabs() {
         for (const std::string& name : core::hatch::pattern_choice_list()) {
             combo->addItem(hatch_swatch(name, ink), QString::fromStdString(name)); // each with its swatch
         }
+        // The drop-down is a gallery, as AutoCAD's: the patterns' swatches in a grid, named.
+        auto* gallery = new QListView(combo);
+        gallery->setObjectName(QStringLiteral("ctx.hatch.gallery"));
+        gallery->setViewMode(QListView::IconMode);
+        gallery->setFlow(QListView::LeftToRight);
+        gallery->setWrapping(true);
+        gallery->setResizeMode(QListView::Adjust);
+        gallery->setMovement(QListView::Static);
+        gallery->setIconSize(QSize(32, 32));
+        gallery->setGridSize(QSize(72, 58));
+        gallery->setUniformItemSizes(true);
+        gallery->setMinimumWidth(72 * 5 + 24);
+        combo->setView(gallery);
         combo->setToolTip(QStringLiteral("Hatch pattern (applies to the selected hatch)."));
         connect(combo, &QComboBox::activated, this, [combo, set_prop] {
             PropertyValue v;
