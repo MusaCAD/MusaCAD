@@ -306,6 +306,7 @@ private:
     static QString user_pgp_path();
     QString load_user_aliases(); ///< reads the file again; says what it found
     void open_alias_editor();    ///< ALIASEDIT
+    int open_tolerance_dialog(std::vector<std::string>& cells); ///< TOLERANCE (1 OK, 0 cancelled)
     bool user_aliases_applied_ = false;
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);

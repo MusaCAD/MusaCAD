@@ -1391,3 +1391,34 @@ TEST_CASE("UCSICON turns the icon off and on, and keeps it at the origin or in t
     REQUIRE(view.ucsicon == 3);
     REQUIRE_FALSE(proc.has_active_command());
 }
+
+namespace {
+struct ToleranceView : musacad::command::ViewControl {
+    int answer = 1;
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    int tolerance_dialog(std::vector<std::string>& cells) override {
+        cells = {"\\U+2316", "%%c0.05 \\U+24C2", "A", "B\\U+24C2"};
+        return answer;
+    }
+};
+} // namespace
+
+TEST_CASE("TOLERANCE takes its frame from the Geometric Tolerance window, then asks where") {
+    ToleranceView view;
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, &view, out};
+    proc.submit_line("TOL");
+    REQUIRE(out.prompt == "Enter tolerance location: ");
+    proc.submit_line("10,20");
+    const auto* f = std::get_if<AddFcfCommand>(&cmds.back());
+    REQUIRE(f != nullptr);
+    REQUIRE(f->cells == std::vector<std::string>{"\\U+2316", "%%c0.05 \\U+24C2", "A", "B\\U+24C2"});
+    REQUIRE(f->pos == Vec2{10, 20});
+    view.answer = 0; // Cancel: nothing placed
+    const std::size_t before = cmds.size();
+    proc.submit_line("TOL");
+    REQUIRE_FALSE(proc.has_active_command());
+    REQUIRE(cmds.size() == before);
+}

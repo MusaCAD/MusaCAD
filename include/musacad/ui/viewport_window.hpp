@@ -117,6 +117,12 @@ public:
     bool page_setup_manager() override;
     bool set_navbar(bool on) override;
     bool window_action(const std::string& action) override;
+    int tolerance_dialog(std::vector<std::string>& cells) override {
+        return tolerance_dialog_callback_ ? tolerance_dialog_callback_(cells) : -1;
+    }
+    void set_tolerance_dialog_callback(std::function<int(std::vector<std::string>&)> cb) {
+        tolerance_dialog_callback_ = std::move(cb);
+    }
     std::vector<std::string> workspaces() const override {
         return workspace_list_callback_ ? workspace_list_callback_().first : std::vector<std::string>{};
     }
@@ -830,6 +836,7 @@ private:
     std::function<void(bool)> navbar_callback_;
     std::function<bool(const std::string&)> window_action_callback_;
     std::function<std::pair<std::vector<std::string>, std::string>()> workspace_list_callback_;
+    std::function<int(std::vector<std::string>&)> tolerance_dialog_callback_;
     std::function<bool(const std::string&, const std::string&, const std::string&)> workspace_op_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;
     std::function<int(command::QLeaderSettings&)> qleader_settings_callback_;

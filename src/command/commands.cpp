@@ -13242,6 +13242,22 @@ void ToleranceCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     cells_.clear();
     mode_ = Mode::Cells;
+    if (ctx.view() != nullptr) {
+        // The Geometric Tolerance window, as AutoCAD opens; the command line only where
+        // there is no window.
+        std::vector<std::string> cells;
+        const int r = ctx.view()->tolerance_dialog(cells);
+        if (r == 0 || (r == 1 && cells.empty())) {
+            done_ = true;
+            return;
+        }
+        if (r == 1) {
+            cells_ = std::move(cells);
+            mode_ = Mode::Place;
+            ctx.set_prompt("Enter tolerance location: ");
+            return;
+        }
+    }
     prompt_cell(ctx);
 }
 
@@ -13255,13 +13271,13 @@ void ToleranceCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
             mode_ = Mode::Place;
-            ctx.set_prompt("Specify frame location: ");
+            ctx.set_prompt("Enter tolerance location: ");
             return;
         }
         if (cells_.size() >= 5) { // characteristic + tolerance + up to three datums
             ctx.echo("A feature control frame carries at most five cells.");
             mode_ = Mode::Place;
-            ctx.set_prompt("Specify frame location: ");
+            ctx.set_prompt("Enter tolerance location: ");
             return;
         }
         cells_.push_back(t); // stored RAW; codes expand at layout time

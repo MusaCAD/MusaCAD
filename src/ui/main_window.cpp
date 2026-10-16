@@ -106,6 +106,8 @@
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/text/stroke_font.hpp"
+#include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/external_files.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -330,6 +332,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         return false;
     });
+    viewport_->set_tolerance_dialog_callback([this](std::vector<std::string>& cells) { return open_tolerance_dialog(cells); });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
     viewport_->set_property_dialogs([this](bool& by_layer, core::Rgb& c) { return open_select_color(by_layer, c); },
@@ -3102,6 +3105,146 @@ QString MainWindow::load_user_aliases() {
         msg += QStringLiteral(" Not commands Musa CAD has: ") + unknown.join(QStringLiteral(", ")) + QLatin1Char('.');
     }
     return msg;
+}
+
+namespace {
+/// A GD&T symbol (raw cell text such as "\\U+2316") drawn with the drawing's own stroke
+/// font, so the window shows exactly what the frame will.
+QIcon gdt_icon(const std::string& raw, const QColor& ink) {
+    QPixmap pm(28, 28);
+    pm.fill(Qt::transparent);
+    if (raw.empty()) {
+        return QIcon(pm);
+    }
+    std::vector<core::Vec2> segs;
+    const std::string vis = core::text::substitute_text(raw);
+    const double h = 16.0;
+    const double w = core::text::text_width(vis, h);
+    core::text::append_text_segments(vis, {(28.0 - w) * 0.5, 6.0}, h, 0.0, core::text::Justify::Left, segs);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(ink, 1.4));
+    for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+        p.drawLine(QPointF(segs[i].x, 28.0 - segs[i].y), QPointF(segs[i + 1].x, 28.0 - segs[i + 1].y));
+    }
+    return QIcon(pm);
+}
+} // namespace
+
+// TOLERANCE: AutoCAD's Geometric Tolerance window -- the characteristic symbol, two
+// tolerances (each with a diameter symbol and a material condition) and three datums
+// (each with its material condition); OK goes on to `Enter tolerance location:`.
+int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
+    static const std::pair<const char*, const char*> kSymbols[] = {
+        {"\\U+2316", "Position"},          {"\\U+25CE", "Concentricity"},   {"\\U+232F", "Symmetry"},
+        {"\\U+2225", "Parallelism"},       {"\\U+27C2", "Perpendicularity"}, {"\\U+2220", "Angularity"},
+        {"\\U+232D", "Cylindricity"},      {"\\U+23E5", "Flatness"},         {"\\U+25CB", "Circularity"},
+        {"\\U+23E4", "Straightness"},      {"\\U+2313", "Profile of a surface"},
+        {"\\U+2312", "Profile of a line"}, {"\\U+2197", "Circular runout"},  {"\\U+2330", "Total runout"}};
+    static const std::pair<const char*, const char*> kConditions[] = {
+        {"", "None"}, {"\\U+24C2", "Maximum material condition (M)"}, {"\\U+24C1", "Least material condition (L)"},
+        {"\\U+24C8", "Regardless of feature size (S)"}};
+    const QColor ink = palette().color(QPalette::Text);
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("ToleranceDialog"));
+    dlg.setWindowTitle(QStringLiteral("Geometric Tolerance"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* grid = new QGridLayout;
+    lay->addLayout(grid);
+    const QStringList heads{QStringLiteral("Sym"), QStringLiteral("Tolerance 1"), QStringLiteral("Tolerance 2"),
+                            QStringLiteral("Datum 1"), QStringLiteral("Datum 2"), QStringLiteral("Datum 3")};
+    for (int c = 0; c < heads.size(); ++c) {
+        grid->addWidget(new QLabel(heads[c], &dlg), 0, c, Qt::AlignHCenter);
+    }
+    // A button that picks one of `choices` from a menu, showing it as its icon.
+    const auto picker = [&dlg, ink](const auto& choices, const QString& tip) {
+        auto* b = new QToolButton(&dlg);
+        b->setIconSize(QSize(24, 24));
+        b->setFixedSize(34, 34);
+        b->setToolTip(tip);
+        b->setPopupMode(QToolButton::InstantPopup);
+        b->setProperty("raw", QString());
+        auto* menu = new QMenu(b);
+        for (const auto& [raw, name] : choices) {
+            QAction* a = menu->addAction(gdt_icon(raw, ink), QString::fromLatin1(name));
+            const QString r = QString::fromLatin1(raw);
+            QObject::connect(a, &QAction::triggered, b, [b, r, ink] {
+                b->setProperty("raw", r);
+                b->setIcon(gdt_icon(r.toStdString(), ink));
+            });
+        }
+        b->setMenu(menu);
+        return b;
+    };
+    std::vector<std::pair<const char*, const char*>> sym_choices{{"", "None"}};
+    sym_choices.insert(sym_choices.end(), std::begin(kSymbols), std::end(kSymbols));
+    QToolButton* sym = picker(sym_choices, QStringLiteral("The characteristic symbol"));
+    sym->setObjectName(QStringLiteral("ToleranceSym"));
+    grid->addWidget(sym, 1, 0, Qt::AlignHCenter);
+    struct Tol {
+        QToolButton* dia;
+        QLineEdit* value;
+        QToolButton* mc;
+    };
+    std::vector<Tol> tols;
+    for (int i = 0; i < 2; ++i) {
+        auto* box = new QHBoxLayout;
+        auto* dia = new QToolButton(&dlg);
+        dia->setCheckable(true);
+        dia->setFixedSize(34, 34);
+        dia->setIconSize(QSize(24, 24));
+        dia->setIcon(gdt_icon("%%c", ink));
+        dia->setToolTip(QStringLiteral("A diameter symbol before the value"));
+        auto* value = new QLineEdit(&dlg);
+        value->setObjectName(QStringLiteral("ToleranceValue%1").arg(i + 1));
+        value->setMinimumWidth(70);
+        QToolButton* mc = picker(kConditions, QStringLiteral("Material condition"));
+        box->addWidget(dia);
+        box->addWidget(value);
+        box->addWidget(mc);
+        grid->addLayout(box, 1, 1 + i);
+        tols.push_back({dia, value, mc});
+    }
+    std::vector<std::pair<QLineEdit*, QToolButton*>> datums;
+    for (int i = 0; i < 3; ++i) {
+        auto* box = new QHBoxLayout;
+        auto* value = new QLineEdit(&dlg);
+        value->setObjectName(QStringLiteral("ToleranceDatum%1").arg(i + 1));
+        value->setMaximumWidth(60);
+        QToolButton* mc = picker(kConditions, QStringLiteral("Material condition"));
+        box->addWidget(value);
+        box->addWidget(mc);
+        grid->addLayout(box, 1, 3 + i);
+        datums.emplace_back(value, mc);
+    }
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    lay->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    const auto raw_of = [](const QToolButton* b) { return b->property("raw").toString().toStdString(); };
+    cells.clear();
+    if (const std::string s = raw_of(sym); !s.empty()) {
+        cells.push_back(s);
+    }
+    for (const Tol& t : tols) {
+        const std::string v = t.value->text().trimmed().toStdString();
+        const std::string m = raw_of(t.mc);
+        if (v.empty() && !t.dia->isChecked() && m.empty()) {
+            continue;
+        }
+        cells.push_back((t.dia->isChecked() ? "%%c" : "") + v + (m.empty() ? "" : (v.empty() ? "" : " ") + m));
+    }
+    for (const auto& [value, mc] : datums) {
+        const std::string v = value->text().trimmed().toUpper().toStdString();
+        const std::string m = raw_of(mc);
+        if (!v.empty() || !m.empty()) {
+            cells.push_back(v + m);
+        }
+    }
+    return 1;
 }
 
 // ALIASEDIT: the user's own aliases in a table -- Alias and Command -- added, removed,

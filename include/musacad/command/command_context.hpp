@@ -299,6 +299,13 @@ public:
         (void)action;
         return false;
     }
+    /// TOLERANCE: the Geometric Tolerance window fills `cells` (the characteristic first,
+    /// then the tolerances and the datums, as raw cell text). 1 OK, 0 cancelled, -1 no
+    /// window (the command asks at the command line).
+    virtual int tolerance_dialog(std::vector<std::string>& cells) {
+        (void)cells;
+        return -1;
+    }
     /// Workspaces (WORKSPACE, WSCURRENT, WSSAVE): the names, the built-in one first, and the
     /// current one; empty where there is no window.
     [[nodiscard]] virtual std::vector<std::string> workspaces() const { return {}; }
