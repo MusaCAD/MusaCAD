@@ -1824,6 +1824,13 @@ struct DimInspectCommand {
     std::string rate{};
     std::uint64_t group = 0;
 };
+/// TXTEXP: the selected texts, multiline texts and attribute definitions turned into the
+/// geometry they are drawn with -- polylines along the stroke font's strokes, closed
+/// polylines round an outline font's glyphs -- on their layer, with their colour. One undo
+/// step.
+struct TextExplodeCommand {
+    std::uint64_t group = 0;
+};
 /// FLATTEN: the selected polylines' elevation and thickness set to 0 (a drawing from
 /// elsewhere can carry them). One undo step.
 struct FlattenCommand {
@@ -2004,7 +2011,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
-                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, SplineEditCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, DimInspectCommand, TextExplodeCommand, SplineEditCommand,
                  TextMaskCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,

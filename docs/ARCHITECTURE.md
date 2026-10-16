@@ -284,7 +284,9 @@ So editing re-shows `%%c50`, and native + DXF round-trip the codes byte-for-byte
 no longer bakes them — `strip_mtext` even preserves `\U+`). The pass returns the visible
 UTF-8 string plus the over/under-line runs; it is called at the three "raw string → layout"
 seams — `text_advance` (single-line measure), `layout_mtext` (paragraph measure+emit), and
-the single-line `emit_text_run` — so measurement, bounds, and glyphs never diverge.
+the single-line `text::text_run_geometry` (which the snapshot's `emit_text_run` and TXTEXP
+both call; TXTEXP asks it for an outline face's closed rings, `IFontEngine::glyph_outlines`,
+instead of triangles) — so measurement, bounds, and glyphs never diverge.
 Over/underline are drawn as a horizontal stroke spanning each toggled run (single-line
 today; the symbol codes work in both TEXT and MTEXT). The stroke font carries °, ±, ⌀ as
 glyphs; a TTF face supplies them when selected.

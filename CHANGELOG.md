@@ -66,6 +66,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   a wipeout behind text.
 - **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
   elevation and thickness to 0.
+- **TXTEXP** (#77) -- text turned into polylines as it is drawn: along the strokes of the
+  built-in font, or round the outlines of a TrueType font's letters.
 - **The View Manager and NEWVIEW** (#72) -- VIEW lists the saved views to make current, add
   and delete; NEWVIEW saves the view on screen by name; -VIEW keeps the command line.
 - **The Layer States Manager** (#69) -- LAYERSTATE lists the named layer states to restore,

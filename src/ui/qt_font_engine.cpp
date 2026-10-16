@@ -203,6 +203,14 @@ const QtFontEngine::Glyph& QtFontEngine::glyph_for(Face& f, char32_t cp) const {
             }
             contours.push_back(std::move(ring));
         }
+        for (const std::vector<Vec2>& ring : contours) {
+            std::vector<Vec2> unit;
+            unit.reserve(ring.size());
+            for (const Vec2& p : ring) {
+                unit.push_back({p.x / f.cap, -p.y / f.cap});
+            }
+            g.rings.push_back(std::move(unit));
+        }
         std::vector<Vec2> tris_px;
         triangulate_glyph(std::move(contours), tris_px);
         g.tris.reserve(tris_px.size());
@@ -244,6 +252,33 @@ void QtFontEngine::glyph_fills(std::string_view name, std::string_view text, Vec
             const double lx = pen + v.x * height; // local (baseline) coords
             const double ly = v.y * height;
             tris.push_back({origin.x + lx * cs - ly * sn, origin.y + lx * sn + ly * cs});
+        }
+        pen += g.advance * height;
+    }
+}
+
+void QtFontEngine::glyph_outlines(std::string_view name, std::string_view text, Vec2 origin, double height,
+                                  double rotation, std::vector<std::vector<Vec2>>& rings) const {
+    std::lock_guard lock(mu_);
+    Face* f = face_for(name);
+    if (f == nullptr) {
+        return;
+    }
+    const double cs = std::cos(rotation);
+    const double sn = std::sin(rotation);
+    const QString s = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+    double pen = 0.0;
+    for (const char32_t cp : s.toUcs4()) {
+        const Glyph& g = glyph_for(*f, cp);
+        for (const std::vector<Vec2>& ring : g.rings) {
+            std::vector<Vec2> w;
+            w.reserve(ring.size());
+            for (const Vec2& v : ring) {
+                const double lx = pen + v.x * height;
+                const double ly = v.y * height;
+                w.push_back({origin.x + lx * cs - ly * sn, origin.y + lx * sn + ly * cs});
+            }
+            rings.push_back(std::move(w));
         }
         pen += g.advance * height;
     }

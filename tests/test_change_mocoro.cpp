@@ -490,3 +490,13 @@ TEST_CASE("DIMINSPECT frames a dimension's value with a label and an inspection 
     h.run({"DIMINSPECT", "R"});
     REQUIRE(h.last<DimInspectCommand>()->remove);
 }
+
+TEST_CASE("TXTEXP asks for objects and explodes the texts among them") {
+    H h;
+    h.run({"TXTEXP"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    h.proc.set_selection_count(1);
+    h.run({""});
+    REQUIRE(h.last<TextExplodeCommand>() != nullptr);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

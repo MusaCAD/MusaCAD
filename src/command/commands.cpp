@@ -16047,6 +16047,38 @@ void MocoroCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void TextExplodeUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select objects: ");
+}
+
+void TextExplodeUiCommand::after(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::TextExplodeCommand{ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void TextExplodeUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextExplodeUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextExplodeUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void FlattenUiCommand::start(CommandContext& ctx) {
     if (ctx.has_selection()) {
         after(ctx);

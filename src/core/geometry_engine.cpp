@@ -41,6 +41,7 @@
 #include "musacad/core/polyline_width.hpp"
 #include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/text/mtext.hpp"
+#include "musacad/core/text/text_run.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/table.hpp"
 
@@ -14397,6 +14398,88 @@ void GeometryEngine::apply_one(const Command& command) {
                         dirty_ = true;
                         report(c.remove ? "Jog removed." : "Jog added.");
                     }
+                }
+            }
+            if constexpr (std::is_same_v<T, TextExplodeCommand>) {
+                prune_selection();
+                std::vector<EntityHandle> made;
+                std::size_t texts = 0;
+                text::TextRunGeometry run;
+                for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+                    const EntityProps* props = store_.props(h);
+                    if (props == nullptr) {
+                        continue;
+                    }
+                    std::vector<std::vector<Vec2>> paths; // open: the strokes, chained end to end
+                    std::vector<std::vector<Vec2>> rings; // closed: an outline face's glyphs
+                    const auto add_segments = [&](const std::vector<Vec2>& segs) {
+                        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+                            if (!paths.empty() && length_squared(paths.back().back() - segs[i]) < 1e-18) {
+                                paths.back().push_back(segs[i + 1]);
+                            } else {
+                                paths.push_back({segs[i], segs[i + 1]});
+                            }
+                        }
+                    };
+                    if (h.kind == EntityKind::Text || h.kind == EntityKind::AttDef) {
+                        const TextData& t = h.kind == EntityKind::Text ? *store_.text(h) : store_.attdef(h)->text;
+                        const text::TextFrame frame = text::frame_of(store_, t);
+                        TextStyle ts = store_.text_style_of(t);
+                        ts.width_factor = frame.width_factor;
+                        text::text_run_geometry(store_.string_of(t), frame.origin, frame.height, frame.rotation,
+                                                text::Justify::Left, store_.font_name(t.font), font_engine_, &ts,
+                                                /*outlines=*/true, run);
+                        add_segments(run.segments);
+                        add_segments(run.bars);
+                        rings = std::move(run.rings);
+                    } else if (h.kind == EntityKind::MText) {
+                        const MTextData* m = store_.mtext(h);
+                        const std::string_view fname = store_.font_name(m->text.font);
+                        const text::MTextLayout lay =
+                            text::layout_mtext(m->text, store_.string_of(m->text), font_engine_, fname);
+                        add_segments(lay.segments);
+                        if (font_engine_ != nullptr && font_engine_->is_outline_font(fname)) {
+                            for (const text::MTextLine& line : lay.lines) {
+                                font_engine_->glyph_outlines(fname, line.text, line.origin, m->text.height,
+                                                             m->text.rotation, rings);
+                            }
+                        }
+                    } else {
+                        continue;
+                    }
+                    if (paths.empty() && rings.empty()) {
+                        continue; // nothing drawn (blank text): left as it is
+                    }
+                    ++texts;
+                    const EntityProps p = *props;
+                    for (std::vector<Vec2>& pts : paths) {
+                        const Command pl = AddPolylineCommand{std::move(pts), false, c.group, p};
+                        const EntityHandle nh = create_indexed(pl);
+                        push_create_item(c.group, nh, pl);
+                        made.push_back(nh);
+                    }
+                    for (std::vector<Vec2>& ring : rings) {
+                        if (ring.size() < 3) {
+                            continue;
+                        }
+                        const Command pl = AddPolylineCommand{std::move(ring), true, c.group, p};
+                        const EntityHandle nh = create_indexed(pl);
+                        push_create_item(c.group, nh, pl);
+                        made.push_back(nh);
+                    }
+                    const Command original = capture_entity(h);
+                    remove_indexed(h);
+                    push_erase_item(c.group, h, original);
+                }
+                if (texts == 0) {
+                    report("No text selected.");
+                } else {
+                    selection_ = made;
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    report(std::to_string(texts) + (texts == 1 ? " text" : " texts") + " exploded into " +
+                           std::to_string(made.size()) + (made.size() == 1 ? " polyline." : " polylines."));
                 }
             }
             if constexpr (std::is_same_v<T, DimInspectCommand>) {

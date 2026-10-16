@@ -1480,6 +1480,25 @@ private:
     bool done_ = false;
 };
 
+/// TXTEXP (Express Tools): `Select objects:` (or those selected) -- texts, multiline texts
+/// and attribute definitions become polylines.
+class TextExplodeUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TXTEXP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// FLATTEN (Express Tools): `Select objects to convert to 2d:` -- polylines' elevation and
 /// thickness to 0.
 class FlattenUiCommand final : public ICommand {
