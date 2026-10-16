@@ -17402,23 +17402,23 @@ void GripModeCommand::start(CommandContext& ctx) {
 void GripModeCommand::prompt(CommandContext& ctx) {
     switch (mode_) {
     case Mode::Stretch:
-        ctx.echo("** STRETCH **");
+        ctx.echo(copy_ ? "** STRETCH (multiple) **" : "** STRETCH **");
         ctx.set_prompt("Specify stretch point or [Base point/Copy/Undo/eXit]: ");
         return;
     case Mode::Move:
-        ctx.echo("** MOVE **");
+        ctx.echo(copy_ ? "** MOVE (multiple) **" : "** MOVE **");
         ctx.set_prompt("Specify move point or [Base point/Copy/Undo/eXit]: ");
         return;
     case Mode::Rotate:
-        ctx.echo("** ROTATE **");
+        ctx.echo(copy_ ? "** ROTATE (multiple) **" : "** ROTATE **");
         ctx.set_prompt("Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]: ");
         return;
     case Mode::Scale:
-        ctx.echo("** SCALE **");
+        ctx.echo(copy_ ? "** SCALE (multiple) **" : "** SCALE **");
         ctx.set_prompt("Specify scale factor or [Base point/Copy/Undo/Reference/eXit]: ");
         return;
     case Mode::Mirror:
-        ctx.echo("** MIRROR **");
+        ctx.echo(copy_ ? "** MIRROR (multiple) **" : "** MIRROR **");
         ctx.set_prompt("Specify second point or [Base point/Copy/Undo/eXit]: ");
         return;
     }
@@ -17429,7 +17429,9 @@ void GripModeCommand::enter(CommandContext& ctx, Mode m) {
         ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
         stretching_ = false;
     } else if (!stretching_ && m == Mode::Stretch) {
-        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, handle_, index_, {}, 0});
+        core::GripDragCommand begin = begin_;
+        begin.phase = core::GripDragCommand::Phase::Begin;
+        ctx.submit(std::move(begin));
         stretching_ = true;
     }
     mode_ = m;
@@ -17459,6 +17461,9 @@ void GripModeCommand::enter(CommandContext& ctx, Mode m) {
 }
 
 void GripModeCommand::apply(CommandContext& ctx, core::Vec2 p, std::optional<double> typed) {
+    if (ctx.ctrl_held() && ctx.input_is_pick() && !copy_) {
+        copy_ = true; // Ctrl at the pick: copies, as Copy does
+    }
     const std::uint64_t group = ctx.new_group();
     switch (mode_) {
     case Mode::Stretch:

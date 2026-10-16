@@ -1956,9 +1956,9 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                     if (chosen == stretch || chosen == other) {
                         core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, ginfo.handle, ginfo.index, {}, 0};
                         begin.variant = chosen == stretch ? 0 : ginfo.index == 3 ? 2 : 1;
-                        engine_.submit(std::move(begin));
+                        engine_.submit(begin);
                         processor_->set_last_point(ginfo.pos);
-                        processor_->start_grip_mode(ginfo.handle, ginfo.index, ginfo.pos);
+                        processor_->start_grip_mode(begin, ginfo.pos);
                         rebuild_overlay();
                     }
                 }
@@ -2086,6 +2086,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             grip_pressed_ = ginfo;
             processor_->set_pick_radius(pick_aperture(dpr, scale));
             processor_->set_last_point(ginfo.pos);
+            grip_begin_ = begin;
             engine_.submit(std::move(begin));
         } else if (pickfirst_ != 0) {
             // Idle: begin a selection drag (single click or window/crossing box). If a
@@ -2343,7 +2344,7 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         if (core::length(rel_screen - grip_press_screen_) < 4.0 * dpr) {
             // A click, not a drag: the grip is hot and the grip modes take over (the
             // engine's drag stays under way for STRETCH).
-            processor_->start_grip_mode(grip_pressed_.handle, grip_pressed_.index, grip_pressed_.pos);
+            processor_->start_grip_mode(grip_begin_, grip_pressed_.pos);
             rebuild_overlay();
             return;
         }
@@ -2359,8 +2360,10 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         }
         const core::Vec2 target = processor_->resolve_pick(world, snap);
         const std::uint64_t group = processor_->begin_group();
+        // Ctrl as the drag ends: a copy, the original staying (as STRETCH's Copy).
+        const bool copy = (event->modifiers() & Qt::ControlModifier) != 0;
         engine_.submit(
-            core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, target, group});
+            core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, target, group, copy});
         processor_->clear_last_point();
         rebuild_overlay();
         return;
@@ -2596,7 +2599,7 @@ void ViewportWindow::show_dimension_grip_menu(const core::GripInfo& grip, QPoint
         begin.text_move = move;
         engine_.submit(begin);
         processor_->set_last_point(grip.pos);
-        processor_->start_grip_mode(grip.handle, grip.index, grip.pos);
+        processor_->start_grip_mode(begin, grip.pos);
         rebuild_overlay();
         return;
     }

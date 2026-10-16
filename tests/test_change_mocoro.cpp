@@ -2613,3 +2613,30 @@ TEST_CASE("The grip menus' Lengthen keeps a line's direction and an arc's circle
     REQUIRE(std::get<AddArcCommand>(wider).start_angle == Approx(0.0));
     REQUIRE(std::get<AddArcCommand>(wider).end_angle == Approx(kHalfPi));
 }
+
+TEST_CASE("Ctrl at a hot grip's pick copies, again for each pick; the grip modes then say (multiple)") {
+    using P = GripDragCommand::Phase;
+    H h;
+    h.proc.set_selection_count(2);
+    GripDragCommand begin{P::Begin, EntityHandle{0, 1, EntityKind::Line}, 1, {}, 0};
+    begin.also = {{EntityHandle{1, 1, EntityKind::Line}, 0}};
+    h.proc.start_grip_mode(begin, {10, 0});
+    REQUIRE(h.out.lines.back() == "** STRETCH **");
+    h.proc.set_ctrl_held(true);
+    h.proc.pick_point({20, 5}, std::nullopt);
+    h.proc.set_ctrl_held(false);
+    const GripDragCommand* commit = nullptr;
+    for (const Command& c : h.cmds) {
+        if (const auto* g = std::get_if<GripDragCommand>(&c); g != nullptr && g->phase == P::Commit) {
+            commit = g;
+        }
+    }
+    REQUIRE(commit != nullptr);
+    REQUIRE(commit->copy);
+    REQUIRE(commit->pos == Vec2{20, 5});
+    REQUIRE(h.last<GripDragCommand>()->phase == P::Begin); // the next copy's drag ...
+    REQUIRE(h.last<GripDragCommand>()->also.size() == 1);  // ... with the other hot grip
+    REQUIRE(h.out.lines.back() == "** STRETCH (multiple) **");
+    REQUIRE(h.proc.has_active_command());
+    h.proc.cancel();
+}

@@ -960,6 +960,7 @@ private:
     core::Vec2 grip_press_screen_{};  ///< where the grip was pressed: a release there makes it hot
     core::GripInfo grip_pressed_{};   ///< the grip pressed
     std::vector<core::GripInfo> hot_grips_; ///< grips made hot with Shift + click
+    core::GripDragCommand grip_begin_{};    ///< how the grip drag under way began
     core::Vec2 last_hot_grip_target_{}; ///< the last position streamed to a hot grip
 
     // Published layer table + current layer (for the Layer Manager / ribbon combo).

@@ -1417,7 +1417,14 @@ private:
 /// point makes a copy and the mode goes on until eXit; without, one point ends it.
 class GripModeCommand final : public ICommand {
 public:
-    GripModeCommand(core::EntityHandle h, std::uint32_t index, core::Vec2 pos) : handle_(h), index_(index), base_(pos) {}
+    GripModeCommand(core::EntityHandle h, std::uint32_t index, core::Vec2 pos) : handle_(h), index_(index), base_(pos) {
+        begin_.handle = h;
+        begin_.grip = index;
+    }
+    /// `begin`: the drag as it began (Shift's other hot grips, a grip menu's Lengthen or text
+    /// movement), begun again so for each copy.
+    GripModeCommand(const core::GripDragCommand& begin, core::Vec2 pos)
+        : handle_(begin.handle), index_(begin.grip), base_(pos), begin_(begin) {}
     std::string name() const override { return "GRIP"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
@@ -1432,6 +1439,7 @@ private:
     core::EntityHandle handle_;
     std::uint32_t index_ = 0;
     core::Vec2 base_{};
+    core::GripDragCommand begin_{};
     Mode mode_ = Mode::Stretch;
     bool copy_ = false;
     bool asking_base_ = false;
