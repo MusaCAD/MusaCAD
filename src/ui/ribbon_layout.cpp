@@ -686,7 +686,7 @@ void MainWindow::build_ribbon() {
     {
         QWidget* col = data->add_column();
         small(data, col, QStringLiteral("Table"), "TB");
-        todo_small(data, col, QStringLiteral("Update Fields"), "field");
+        small(data, col, QStringLiteral("Update Fields"), "UPDATEFIELD", "field");
         todo_small(data, col, QStringLiteral("Data Link"), "field");
     }
 

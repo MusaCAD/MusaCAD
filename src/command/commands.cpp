@@ -6833,6 +6833,39 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void UpdateFieldCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select objects: ");
+}
+
+void UpdateFieldCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void UpdateFieldCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void UpdateFieldCommand::after(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::RegenCommand{}); // a field is worked out each time it is drawn
+        ctx.echo("Fields updated.");
+    }
+    done_ = true;
+}
+
+void UpdateFieldCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void ImageFrameCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter new value for IMAGEFRAME [0 hidden/1 shown and plotted/2 shown only] <1>: ");
 }

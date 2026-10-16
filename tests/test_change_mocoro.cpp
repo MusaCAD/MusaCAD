@@ -756,3 +756,23 @@ TEST_CASE("TABLEEDIT edits a cell's text; TABLE without a window asks on the com
     h.run({"2", "1", "0,0"});
     REQUIRE(h.last<AddTableCommand>()->rows == 3); // a title and a header row with the data row
 }
+
+TEST_CASE("TFRAMES turns wipeout and image frames off and on together; UPDATEFIELD redraws the fields") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(ToggleFramesCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Wipeout and image frames off."; }));
+    engine.submit(ToggleFramesCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Wipeout and image frames on."; }));
+    engine.stop();
+
+    H h;
+    h.run({"TFRAMES"});
+    REQUIRE(h.last<ToggleFramesCommand>() != nullptr);
+    h.run({"UPDATEFIELD"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    h.proc.set_selection_count(1);
+    h.run({""});
+    REQUIRE(h.last<RegenCommand>() != nullptr);
+    REQUIRE(h.out.lines.back() == "Fields updated.");
+}

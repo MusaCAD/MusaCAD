@@ -293,6 +293,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
     reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+    reg({"TFRAMES"}, [] { return std::make_unique<ToggleFramesUiCommand>(); }, "",
+        "Turn the frames of wipeouts and images off, or on again.");
+    reg({"UPDATEFIELD"}, [] { return std::make_unique<UpdateFieldCommand>(); }, "",
+        "Work out the fields in the selected objects again.");
     reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
         "Image frames: hidden, shown and plotted, or shown on screen only.");
     reg({"XR", "XREF", "-XREF"}, [] { return std::make_unique<XrefCommand>(); }, "assets/ribbon/xref.svg",

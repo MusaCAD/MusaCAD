@@ -3275,11 +3275,13 @@ void MainWindow::open_text_style_dialog() {
     auto* current_label = new QLabel(dlg);
     auto* set_current = new QPushButton(QStringLiteral("Set Current"), dlg);
     auto* new_style = new QPushButton(QStringLiteral("New..."), dlg);
+    auto* delete_style = new QPushButton(QStringLiteral("Delete"), dlg);
     auto* apply = new QPushButton(QStringLiteral("Apply"), dlg);
     auto* close = new QPushButton(QStringLiteral("Close"), dlg);
     auto* side = new QVBoxLayout;
     side->addWidget(set_current);
     side->addWidget(new_style);
+    side->addWidget(delete_style);
     side->addStretch(1);
     auto* body = new QHBoxLayout;
     auto* left = new QVBoxLayout;
@@ -3377,6 +3379,27 @@ void MainWindow::open_text_style_dialog() {
         engine_->submit(core::SetTextStyleCommand{s, false});
         styles->push_back(s);
         fill(s.name);
+    });
+    // Delete: through PURGE, which keeps Standard, the current style and any style in use.
+    connect(delete_style, &QPushButton::clicked, dlg, [=, this] {
+        const int row = list->currentRow();
+        if (row <= 0 || row >= static_cast<int>(styles->size())) {
+            QMessageBox::information(dlg, QStringLiteral("Text Style"), QStringLiteral("Standard cannot be deleted."));
+            return;
+        }
+        const std::string name = (*styles)[static_cast<std::size_t>(row)].name;
+        engine_->submit(core::PurgeCommand{processor_->begin_group(), 7, name, false});
+        QTimer::singleShot(250, dlg, [=, this] {
+            *styles = viewport_->text_styles();
+            const bool gone = std::none_of(styles->begin(), styles->end(),
+                                           [&](const core::TextStyle& s) { return s.name == name; });
+            fill(gone ? std::string("Standard") : name);
+            if (!gone) {
+                QMessageBox::information(dlg, QStringLiteral("Text Style"),
+                                         QStringLiteral("%1 is the current style or text uses it, so it stays.")
+                                             .arg(QString::fromStdString(name)));
+            }
+        });
     });
     connect(close, &QPushButton::clicked, dlg, &QDialog::close);
     dlg->resize(640, 360);

@@ -2504,6 +2504,41 @@ private:
 };
 
 /// IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown on screen only.
+/// TFRAMES (Express Tools): the frames of wipeouts and images off, or on again.
+class ToggleFramesUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TFRAMES"; }
+    void start(CommandContext& ctx) override {
+        ctx.submit(core::ToggleFramesCommand{});
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// UPDATEFIELD: `Select objects:` -- the fields in them worked out again (they are each
+/// time the drawing is drawn, so this redraws it) and counted.
+class UpdateFieldCommand final : public ICommand {
+public:
+    std::string name() const override { return "UPDATEFIELD"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 class ImageFrameCommand final : public ICommand {
 public:
     std::string name() const override { return "IMAGEFRAME"; }

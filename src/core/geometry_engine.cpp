@@ -14982,6 +14982,14 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
             }
+            if constexpr (std::is_same_v<T, ToggleFramesCommand>) {
+                const bool on = !store_.wipeout_frames();
+                store_.set_wipeout_frames(on);
+                store_.set_image_frame(on ? 1 : 0);
+                dirty_ = true;
+                geom_dirty_ = true;
+                report(on ? "Wipeout and image frames on." : "Wipeout and image frames off.");
+            }
             if constexpr (std::is_same_v<T, SetPointDisplayCommand>) {
                 store_.set_point_display(c.mode, c.size);
                 geom_dirty_ = true; // the points are drawn again

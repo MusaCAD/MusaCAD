@@ -55,6 +55,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Batch Plot).
 - **REVCLOUD Freehand follows a drag** (#40) -- press at the start point and drag: the cloud
   runs along the cursor, closed when the drag comes back to its start, open otherwise.
+- **TFRAMES** (#77) and **UPDATEFIELD** (#71) -- wipeout and image frames off or on together;
+  the fields in the selected objects worked out again.
+- **Delete in the Text Style window** (#62) -- a style that is not Standard, not current and
+  not used goes.
 - **The Page Setup Manager** (#74) -- PAGESETUP names, changes and deletes page setups in the
   Plot window's settings and sets the one PLOT starts from in model space.
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove

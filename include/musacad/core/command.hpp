@@ -1324,6 +1324,9 @@ struct BuildPlotSnapshotCommand {
 struct AddPageSetupCommand {
     PageSetup setup;
 };
+/// TFRAMES: the frames of wipeouts and images turned off together, or on together when
+/// the wipeout frames are off.
+struct ToggleFramesCommand {};
 /// The Page Setup Manager's Delete: the named page setup goes.
 struct RemovePageSetupCommand {
     std::string name;
@@ -2081,7 +2084,7 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, JoinPickCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
