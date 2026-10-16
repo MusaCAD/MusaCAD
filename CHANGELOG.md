@@ -128,6 +128,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Tabs, to Panel Titles and to Panel Buttons, then the full ribbon.
 - **LAYMRG and LAYDEL** (#55, #69) -- a layer's objects moved to a target layer, or erased, after
   AutoCAD's warning; one undo step. The emptied layer stays until PURGE.
+- **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
+  boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
   line families DXF carries with each hatch) and draw; kept in the drawing and written back.
 - **Layer snapshots with views** (#72) -- New View's Save layer snapshot with view (and NEWVIEW):

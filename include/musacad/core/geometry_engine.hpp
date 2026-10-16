@@ -582,6 +582,7 @@ private:
     bool open_refedit(EntityHandle h, std::uint64_t group); ///< REFEDIT on `h` (and BEDIT's reference)
     void apply_block_edit(const BlockEditCommand& c);
     void apply_layer_merge(const LayerMergeCommand& c);
+    void apply_hatch_extras(AddHatchCommand& cmd, const HatchExtras& x) const; ///< -HATCH's Origin, LAyer, COlor
     void apply_attout(const AttOutCommand& c);
     void apply_vpsync(const VpSyncCommand& c);
     void apply_extrim(const ExtrimCommand& c);
@@ -631,6 +632,7 @@ private:
     GeometryStore store_;
     NativeKernel2D kernel_;
     std::vector<std::uint8_t> layer_used_; ///< per layer: holds an entity (set on each geometry rebuild)
+    HatchExtras hatch_extras_{};           ///< the hatch command in hand's Origin, LAyer and COlor
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;

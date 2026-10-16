@@ -542,7 +542,9 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
+                      Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer };
+    [[nodiscard]] core::HatchExtras extras() const; ///< -HATCH's Origin, LAyer and COlor
     void main_prompt(CommandContext& ctx);
     void fill_selection(CommandContext& ctx);
     bool typed_;
@@ -555,6 +557,11 @@ private:
     static inline double scale_ = 1.0;             // HPSCALE
     static inline double angle_ = 0.0;             // HPANG, radians (also the gradient's direction)
     static inline core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
+    static inline std::optional<core::Vec2> origin_;    // HPORIGIN when set
+    static inline std::uint8_t origin_corner_ = 0;      // Default to boundary extents
+    static inline std::string layer_;                   // HPLAYER ("": the current layer)
+    static inline std::optional<core::Rgb> color_;      // HPCOLOR (unset: ByLayer)
+    bool free_text() const override { return mode_ == Mode::HatchLayer; }
 };
 
 /// WIPEOUT: a mask polygon (a hatch with the WIPEOUT pattern) from picked points, or

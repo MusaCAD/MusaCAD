@@ -13459,6 +13459,7 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
     cmd.pattern_angle = angle;
     cmd.color2 = color2;
     cmd.group = group; // props unset -> created on the current layer, ByLayer (AutoCAD default)
+    apply_hatch_extras(cmd, hatch_extras_);
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
     selection_.clear();
@@ -13482,6 +13483,7 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     cmd.pattern_angle = angle;
     cmd.color2 = color2;
     cmd.group = group;
+    apply_hatch_extras(cmd, hatch_extras_);
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
     selection_.clear();
@@ -13489,6 +13491,51 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     redo_.clear();
     geom_dirty_ = true;
     report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
+}
+
+void GeometryEngine::apply_hatch_extras(AddHatchCommand& cmd, const HatchExtras& x) const {
+    if (x.origin) {
+        cmd.pattern_origin = *x.origin;
+    } else if (x.origin_corner != 0 && !cmd.loops.empty() && !cmd.loops.front().empty()) {
+        Vec2 lo = cmd.loops.front().front();
+        Vec2 hi = lo;
+        for (const Vec2& p : cmd.loops.front()) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        }
+        switch (x.origin_corner) {
+        case 2:
+            cmd.pattern_origin = {hi.x, lo.y};
+            break;
+        case 3:
+            cmd.pattern_origin = {lo.x, hi.y};
+            break;
+        case 4:
+            cmd.pattern_origin = hi;
+            break;
+        case 5:
+            cmd.pattern_origin = (lo + hi) * 0.5;
+            break;
+        default:
+            cmd.pattern_origin = lo;
+            break;
+        }
+    }
+    if (!x.layer.empty() || x.color) {
+        EntityProps p{};
+        p.layer = store_.current_layer();
+        for (std::size_t i = 0; i < store_.layers().size(); ++i) {
+            if (store_.layers()[i].name == x.layer) {
+                p.layer = static_cast<std::uint16_t>(i);
+            }
+        }
+        if (x.color) {
+            p.color = *x.color;
+            p.set_color_by_layer(false);
+        }
+        p.set_space(store_.active_space());
+        cmd.props = p;
+    }
 }
 
 std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec2 p) {
@@ -14366,12 +14413,16 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_join_selection(c.radius, c.group, c.polyline);
             }
             if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
+                hatch_extras_ = c.extras;
                 apply_hatch_from_selection(c.pattern_name, c.pattern_scale, c.pattern_angle,
                                            c.group, c.color2);
+                hatch_extras_ = HatchExtras{};
             }
             if constexpr (std::is_same_v<T, HatchPickPointCommand>) {
+                hatch_extras_ = c.extras;
                 apply_hatch_pick_point(c.point, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                        c.group, c.color2);
+                hatch_extras_ = HatchExtras{};
             }
             if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
                 apply_rotate(c.base, c.angle, c.group, c.copy);

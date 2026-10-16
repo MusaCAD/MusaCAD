@@ -2667,7 +2667,7 @@ void HatchCommand::start(CommandContext& ctx) {
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
     if (ctx.has_selection()) {
-        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_});
+        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_, extras()});
         done_ = true;
         return;
     }
@@ -2676,7 +2676,7 @@ void HatchCommand::start(CommandContext& ctx) {
 
 void HatchCommand::fill_selection(CommandContext& ctx) {
     if (ctx.has_selection()) {
-        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.new_group(), color2_});
+        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.new_group(), color2_, extras()});
         ++picks_;
     }
     main_prompt(ctx);
@@ -2688,10 +2688,79 @@ void HatchCommand::selection_gesture(CommandContext& ctx) {
     }
 }
 
+core::HatchExtras HatchCommand::extras() const {
+    core::HatchExtras x;
+    x.origin = origin_;
+    x.origin_corner = origin_corner_;
+    x.layer = layer_;
+    x.color = color_;
+    return x;
+}
+
 void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string up = upper(t);
     switch (mode_) {
+    case Mode::Origin:
+        if (up == "S" || up == "SET" || up == "SET NEW ORIGIN") {
+            mode_ = Mode::OriginPoint;
+            ctx.set_prompt("Specify origin point: ");
+            return;
+        }
+        if (up == "D" || up == "DEFAULT" || up == "DEFAULT TO BOUNDARY EXTENTS") {
+            mode_ = Mode::OriginCorner;
+            ctx.set_prompt("[Bottomleft/bottomRight/topLeft/topRight/Center] <Bottomleft>: ");
+            return;
+        }
+        if (!up.empty() && up != "U" && up != "USE" && up != "USE CURRENT ORIGIN") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        origin_.reset(); // the current origin (0,0)
+        origin_corner_ = 0;
+        main_prompt(ctx);
+        return;
+    case Mode::OriginPoint:
+        if (const auto p = read_point(ctx, text)) {
+            origin_ = *p;
+            origin_corner_ = 0;
+            main_prompt(ctx);
+        }
+        return;
+    case Mode::OriginCorner: {
+        static constexpr std::pair<const char*, std::uint8_t> kCorners[] = {
+            {"B", 1}, {"BOTTOMLEFT", 1}, {"R", 2}, {"BOTTOMRIGHT", 2}, {"L", 3}, {"TOPLEFT", 3},
+            {"T", 4}, {"TOPRIGHT", 4}, {"C", 5}, {"CENTER", 5}};
+        std::uint8_t corner = up.empty() ? 1 : 0;
+        for (const auto& [k, v] : kCorners) {
+            corner = up == k ? v : corner;
+        }
+        if (corner == 0) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        origin_.reset();
+        origin_corner_ = corner;
+        main_prompt(ctx);
+        return;
+    }
+    case Mode::HatchColor:
+        if (t.empty() || t == "." || up == "BYLAYER") {
+            color_.reset();
+        } else {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 1.0 || v > 255.0 || v != std::floor(v)) {
+                ctx.echo("Enter a colour number from 1 to 255, BYLAYER or . for the current one.");
+                return;
+            }
+            color_ = core::io::dxf_aci_to_rgb(static_cast<long>(v));
+        }
+        main_prompt(ctx);
+        return;
+    case Mode::HatchLayer:
+        layer_ = (t.empty() || t == ".") ? std::string() : t;
+        main_prompt(ctx);
+        return;
     case Mode::Select:
         if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
             fill_selection(ctx);
@@ -2865,15 +2934,30 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
                        "," + std::to_string(color2_.b) + ">: ");
         return;
     }
-    if (typed_ && (up == "W" || up == "B" || up == "A" || up == "DR" || up == "O" || up == "AN" || up == "CO" ||
-                   up == "LA" || up == "TR" || up == "DRAW" || up == "ADVANCED" || up == "ORIGIN" || up == "LAYER")) {
+    if (typed_ && (up == "O" || up == "ORIGIN")) {
+        mode_ = Mode::Origin;
+        ctx.set_prompt("[Use current origin/Set new origin/Default to boundary extents] <Use current origin>: ");
+        return;
+    }
+    if (typed_ && (up == "CO" || up == "HATCH COLOR" || up == "COLOR")) {
+        mode_ = Mode::HatchColor;
+        ctx.set_prompt("Enter new color for new hatch objects or [. (use current)] <use current>: ");
+        return;
+    }
+    if (typed_ && (up == "LA" || up == "LAYER")) {
+        mode_ = Mode::HatchLayer;
+        ctx.set_prompt("Enter layer name or [. (use current)] <use current>: ");
+        return;
+    }
+    if (typed_ && (up == "W" || up == "B" || up == "A" || up == "DR" || up == "AN" || up == "TR" || up == "DRAW" ||
+                   up == "ADVANCED")) {
         ctx.echo("That option is not available yet.");
         return;
     }
     if (const auto p = read_point(ctx, text)) {
         // Click inside a closed region -> trace its boundary (+ islands) and hatch it. Each
         // pick is its own undo group; the command stays active for more picks.
-        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_});
+        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_, extras()});
         ++picks_;
         main_prompt(ctx);
     }

@@ -2317,3 +2317,42 @@ TEST_CASE("LAYMRG and LAYDEL ask for the layers, then warn") {
     h.run({""}); // No
     REQUIRE(h.last<LayerMergeCommand>()->target == "Walls"); // nothing new submitted
 }
+
+TEST_CASE("-HATCH's Origin, hatch COlor and LAyer go with the hatches made") {
+    H h;
+    h.run({"-HATCH", "O"});
+    REQUIRE(h.out.prompt == "[Use current origin/Set new origin/Default to boundary extents] <Use current origin>: ");
+    h.run({"S", "5,7"});
+    h.run({"CO"});
+    REQUIRE(h.out.prompt == "Enter new color for new hatch objects or [. (use current)] <use current>: ");
+    h.run({"1", "LA", "Hatching"});
+    h.run({"10,10"});
+    const auto* c = h.last<HatchPickPointCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->extras.origin == Vec2{5, 7});
+    REQUIRE(c->extras.color == Rgb{255, 0, 0});
+    REQUIRE(c->extras.layer == "Hatching");
+    h.proc.cancel();
+    // Back as they were, for the other tests.
+    h.run({"-HATCH", "O", "U", "CO", ".", "LA", "."});
+    h.proc.cancel();
+
+    // The engine: a pick inside a square makes the hatch with them.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLayerCommand{Layer{"Hatching"}});
+    engine.submit(AddPolylineCommand{{{0, 0}, {20, 0}, {20, 20}, {0, 20}}, true, 1});
+    HatchPickPointCommand pick;
+    pick.point = {10, 10};
+    pick.pattern_name = "ANSI31";
+    pick.group = 2;
+    pick.extras.origin_corner = 4; // top right
+    pick.extras.layer = "Hatching";
+    engine.submit(pick);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Hatch created."; }));
+    const io::Document doc = dump(engine, "musacad_hatch_extras.musa");
+    REQUIRE(doc.hatches.size() == 1);
+    REQUIRE(doc.hatches[0].pattern_origin == Vec2{20, 20});
+    REQUIRE(doc.layers[doc.hatches[0].props.layer].name == "Hatching");
+    engine.stop();
+}

@@ -1818,12 +1818,22 @@ struct DataLinkUpdateCommand {
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
 /// closed boundary of each selected closed polyline (UI never touches the store), and
 /// creates one hatch with the given pattern. Resolved geometry-side, like JOIN.
+/// -HATCH's Origin, LAyer and hatch COlor for the hatches made: the pattern origin (a point,
+/// or a corner of the boundary's extents: 1 bottom-left, 2 bottom-right, 3 top-left, 4
+/// top-right, 5 centre), the layer by name (empty: the current one) and a colour.
+struct HatchExtras {
+    std::optional<Vec2> origin{};
+    std::uint8_t origin_corner = 0;
+    std::string layer{};
+    std::optional<Rgb> color{};
+};
 struct HatchFromSelectionCommand {
     std::string pattern_name = "SOLID";
     double pattern_scale = 1.0;
     double pattern_angle = 0.0; ///< radians, CCW
     std::uint64_t group = 0;
     Rgb color2{}; ///< GRADIENT: the second colour
+    HatchExtras extras{};
 };
 
 /// HATCH "Pick internal point" mode: the engine traces the closed boundary enclosing
@@ -1835,6 +1845,7 @@ struct HatchPickPointCommand {
     double pattern_angle = 0.0; ///< radians, CCW
     std::uint64_t group = 0;
     Rgb color2{}; ///< GRADIENT: the second colour
+    HatchExtras extras{};
 };
 
 /// WIPEOUT [Frames]: show or hide wipeout boundaries (WIPEOUTFRAME); `plot` false with
