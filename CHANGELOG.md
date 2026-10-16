@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **NCOPY** (#55, #77) -- objects inside block references copied out, in place or moved, the
+  references left as they are.
 - **The Tolerances tab** (#58) -- a dimension style's tolerance method (None, Symmetrical,
   Deviation, Limits, Basic), precision and upper and lower values, taken by every dimension
   without a tolerance of its own; Deviation stacks -lower under +upper beside the value. Kept in

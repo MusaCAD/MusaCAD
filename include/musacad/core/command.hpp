@@ -1338,6 +1338,15 @@ struct ImportDimStylesCommand {
     std::string path;
     bool overwrite = false;
 };
+/// NCOPY: the object inside the block reference at `pick` (one level down: a nested
+/// reference comes out whole) copied out into the drawing, moved by `offset`; the
+/// reference stays as it is. One undo step.
+struct NestedCopyCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    Vec2 offset{};
+    std::uint64_t group = 0;
+};
 /// DATAEXTRACTION: the block references -- the selected ones, or every one with `all` --
 /// counted by name and attribute values (one row each, Count and Name then a column per
 /// attribute tag), written as CSV to `path` (when set) and placed as a table at `table_at`
@@ -2130,7 +2139,7 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand, RenameObjectCommand, DataExtractCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand, RenameObjectCommand, DataExtractCommand, NestedCopyCommand,
                  ExportDimStylesCommand, ImportDimStylesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,

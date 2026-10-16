@@ -1198,3 +1198,40 @@ TEST_CASE("DATAEXTRACTION counts block references by name and attribute values, 
     REQUIRE(h.last<DataExtractCommand>()->path == "/tmp/parts.csv");
     REQUIRE_FALSE(h.last<DataExtractCommand>()->table_at.has_value());
 }
+
+TEST_CASE("NCOPY copies an object out of a block reference; the reference stays") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddCircleCommand{{5, 20}, 3, 2});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(DefineBlockCommand{"PART", {0, 0}, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.block_names.size() == 1; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{4});
+    InsertBlockCommand ins;
+    ins.name = "PART";
+    ins.pos = {100, 100};
+    ins.group = 5;
+    engine.submit(ins);
+    engine.submit(NestedCopyCommand{{108, 120}, 1.0, {0, -50}, 6}); // on the circle (100+5+3, 100+20)
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 object copied out of the block reference."; }));
+    const io::Document doc = dump(engine, "musacad_ncopy.musa");
+    REQUIRE(doc.inserts.size() == 1);
+    REQUIRE(doc.circles.size() == 1);
+    REQUIRE(doc.circles[0].center.x == Approx(105.0));
+    REQUIRE(doc.circles[0].center.y == Approx(70.0));
+    REQUIRE(doc.lines.empty());
+    engine.submit(NestedCopyCommand{{0, 0}, 1.0, {}, 7});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Select an object inside a block reference."; }));
+    engine.stop();
+
+    H h;
+    h.run({"NCOPY"});
+    REQUIRE(h.out.prompt == "Select nested objects to copy: ");
+    h.run({"108,120", ""});
+    REQUIRE(h.out.prompt == "Specify base point or displacement, or [Multiple]: ");
+    h.run({""}); // in place
+    REQUIRE(h.last<NestedCopyCommand>()->offset == Vec2{0, 0});
+}

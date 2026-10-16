@@ -338,6 +338,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Change the name of a block, dimension style, layer, text style, table style or view.");
     reg({"-RENAME", "-REN"}, [] { return std::make_unique<RenameCommand>(true); }, "",
         "Change the name of a named object, on the command line.");
+    reg({"NCOPY"}, [] { return std::make_unique<NcopyCommand>(); }, "",
+        "Copy objects out of a block reference, leaving the reference as it is.");
     reg({"DX", "DATAEXTRACTION", "EATTEXT"}, [] { return std::make_unique<DataExtractionCommand>(); }, "",
         "Count the block references by name and attribute values into a table or a CSV file.");
     reg({"DBLIST"}, [] { return std::make_unique<DbListCommand>(); }, "", "List every object in the drawing.");

@@ -582,7 +582,9 @@ private:
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
     void apply_revcloud_reverse(std::uint64_t group);
-    void apply_explode(std::uint64_t group, bool burst = false);
+    /// With `ncopy`: NCOPY -- the selected reference left as it is, only the part nearest
+    /// `ncopy->pick` added, moved by `ncopy->offset`.
+    void apply_explode(std::uint64_t group, bool burst = false, const NestedCopyCommand* ncopy = nullptr);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);

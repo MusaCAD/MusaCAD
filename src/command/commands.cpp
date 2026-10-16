@@ -7331,6 +7331,79 @@ void RenameCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void NcopyCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select nested objects to copy: ");
+}
+
+void NcopyCommand::copy_all(CommandContext& ctx, core::Vec2 offset) {
+    for (const core::Vec2& p : picks_) {
+        ctx.submit(core::NestedCopyCommand{p, radius_, offset, ctx.group_id()});
+    }
+}
+
+void NcopyCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            if (picks_.empty()) {
+                done_ = true;
+                return;
+            }
+            step_ = Step::Base;
+            ctx.set_prompt("Specify base point or displacement, or [Multiple]: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            picks_.push_back(*p);
+            radius_ = ctx.pick_radius();
+            ctx.set_prompt("Select nested objects to copy: ");
+        }
+        return;
+    case Step::Base:
+        if (t.empty()) {
+            copy_all(ctx, {}); // in place
+            done_ = true;
+            return;
+        }
+        if (u == "M" || u == "MULTIPLE") {
+            multiple_ = true;
+            ctx.set_prompt("Specify base point or displacement: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Second;
+            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+            ctx.set_prompt(multiple_ ? "Specify second point of displacement: "
+                                     : "Specify second point of displacement, or <use first point as displacement>: ");
+        }
+        return;
+    case Step::Second:
+        if (t.empty()) {
+            ctx.clear_preview();
+            if (!multiple_) {
+                copy_all(ctx, base_); // the first point as the displacement
+            }
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            copy_all(ctx, *p - base_);
+            if (!multiple_) {
+                ctx.clear_preview();
+                done_ = true;
+                return;
+            }
+            (void)ctx.new_group(); // each copy its own undo step
+        }
+        return;
+    }
+}
+
 void DataExtractionCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     step_ = Step::From;

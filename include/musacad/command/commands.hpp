@@ -1499,6 +1499,32 @@ private:
     bool done_ = false;
 };
 
+/// NCOPY (Express Tools): `Select nested objects to copy:` (one pick after another, Enter to
+/// end), then `Specify base point or displacement, or [Multiple]:` -- Enter copies them in
+/// place -- and `Specify second point of displacement, or <use first point as
+/// displacement>:` (Multiple: again and again until Enter).
+class NcopyCommand final : public ICommand {
+public:
+    std::string name() const override { return "NCOPY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, Base, Second };
+    void copy_all(CommandContext& ctx, core::Vec2 offset);
+    Step step_ = Step::Pick;
+    std::vector<core::Vec2> picks_;
+    double radius_ = 0.0;
+    core::Vec2 base_{};
+    bool multiple_ = false;
+    bool done_ = false;
+};
+
 /// DATAEXTRACTION (DX): the block references counted by name and attribute values --
 /// `Extract from [Drawing/Selection] <Drawing>:` (Selection: `Select objects:`), `Output to
 /// [Table/File/Both] <Table>:`, the CSV file (a Save window, or `Enter file name:`) and the

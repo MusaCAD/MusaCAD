@@ -6059,7 +6059,7 @@ void GeometryEngine::apply_revcloud_reverse(std::uint64_t group) {
     report("Reversed the arc direction.");
 }
 
-void GeometryEngine::apply_explode(std::uint64_t group, bool burst) {
+void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const NestedCopyCommand* ncopy) {
     prune_selection();
     if (selection_.empty()) {
         report("Nothing selected to explode.");
@@ -6409,6 +6409,37 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst) {
         return;
     }
     std::vector<EntityHandle> result;
+    if (ncopy != nullptr) {
+        // NCOPY: the part under the pick, found by placing each a moment and measuring.
+        std::size_t best = parts.size();
+        double best_d = 0.0;
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            const EntityHandle th = create_indexed(parts[i]);
+            Vec2 cp{};
+            if (kernel_.closest_point(store_, th, ncopy->pick, cp)) {
+                const double dd = length(cp - ncopy->pick);
+                if (best == parts.size() || dd < best_d) {
+                    best = i;
+                    best_d = dd;
+                }
+            }
+            remove_indexed(th);
+        }
+        if (best == parts.size() || best_d > std::max(ncopy->radius, 1e-9) * 4.0) {
+            report("No object inside the block reference there.");
+            return;
+        }
+        Command part = parts[best];
+        translate_cmd(part, ncopy->offset);
+        const EntityHandle nh = create_indexed(part);
+        push_create_item(group, nh, part);
+        selection_ = {nh};
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("1 object copied out of the block reference.");
+        return;
+    }
     for (const EntityHandle h : exploded) {
         const Command original = capture_entity(h);
         remove_indexed(h);
@@ -15129,6 +15160,15 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                     report(std::to_string(added) + " added, " + std::to_string(replaced) + " overwritten, " +
                            std::to_string(kept) + " kept as they were.");
+                }
+            }
+            if constexpr (std::is_same_v<T, NestedCopyCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.radius);
+                if (h.kind != EntityKind::Insert) {
+                    report("Select an object inside a block reference.");
+                } else {
+                    selection_ = {h};
+                    apply_explode(c.group, false, &c);
                 }
             }
             if constexpr (std::is_same_v<T, DataExtractCommand>) {
