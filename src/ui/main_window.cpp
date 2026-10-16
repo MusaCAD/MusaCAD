@@ -23,6 +23,7 @@
 #include <QGraphicsView>
 #include <QGraphicsPixmapItem>
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QGridLayout>
 #include <QActionGroup>
 #include <QAction>
@@ -1105,6 +1106,43 @@ void MainWindow::dump_ui() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // The layer combo's list: a click on a state icon switches the layer on or off, freezes
+    // or thaws it, locks or unlocks it, in place, the list staying open.
+    if (layer_combo_ != nullptr && watched == layer_combo_->view()->viewport() &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
+         event->type() == QEvent::MouseButtonDblClick)) {
+        const QPoint pos = static_cast<QMouseEvent*>(event)->position().toPoint();
+        const QModelIndex index = layer_combo_->view()->indexAt(pos);
+        if (index.isValid()) {
+            const QRect cell = layer_combo_->view()->visualRect(index);
+            const int x = pos.x() - cell.left() - 4; // the icon starts a small margin in
+            const int slot = x >= 0 ? x / 16 : -1;   // 0 on, 1 freeze, 2 lock, 3 colour
+            if (slot >= 0 && slot <= 2) {
+                if (event->type() == QEvent::MouseButtonRelease) {
+                    std::vector<core::Layer> layers = viewport_->layers();
+                    const auto row = static_cast<std::size_t>(index.row());
+                    if (row < layers.size()) {
+                        core::Layer l = layers[row];
+                        if (slot == 0) {
+                            l.on = !l.on;
+                        } else if (slot == 1) {
+                            if (!l.frozen && row == viewport_->current_layer()) {
+                                command_widget_->append_line("The current layer cannot be frozen.");
+                                return true;
+                            }
+                            l.frozen = !l.frozen;
+                        } else {
+                            l.locked = !l.locked;
+                        }
+                        engine_->submit(core::SetLayerCommand{static_cast<std::uint16_t>(row), l});
+                        const QSignalBlocker block(layer_combo_);
+                        layer_combo_->setItemIcon(index.row(), layer_state_icon(l));
+                    }
+                }
+                return true; // not a pick of the layer: the list stays open
+            }
+        }
+    }
     if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) &&
         viewport_ != nullptr && processor_ != nullptr) {
         // AutoCAD's temporary override keys, read while a command asks for a point. A
@@ -1599,21 +1637,61 @@ bool MainWindow::selftest_persist() {
     return all;
 }
 
+namespace {
+/// The layer combo's state icons, as AutoCAD's: a lit or dark bulb (on / off), a sun or a
+/// snowflake (thawed / frozen), an open or closed padlock, and the layer's colour.
+QIcon layer_state_icon(const core::Layer& l) {
+    QPixmap px(64, 16);
+    px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(QColor(90, 90, 90), 1.0));
+    p.setBrush(l.on ? QColor(255, 214, 51) : QColor(70, 70, 90));
+    p.drawEllipse(QRectF(3.5, 1.5, 9.0, 9.0));
+    p.drawRect(QRectF(6.0, 10.5, 4.0, 3.0));
+    const QPointF sun(24.0, 8.0);
+    if (l.frozen) {
+        p.setPen(QPen(QColor(120, 180, 255), 1.4));
+        for (int k = 0; k < 3; ++k) {
+            const double a = k * 3.141592653589793 / 3.0;
+            const QPointF d(5.5 * std::cos(a), 5.5 * std::sin(a));
+            p.drawLine(sun - d, sun + d);
+        }
+    } else {
+        p.setPen(QPen(QColor(255, 170, 40), 1.0));
+        p.setBrush(QColor(255, 170, 40));
+        p.drawEllipse(sun, 2.8, 2.8);
+        for (int k = 0; k < 8; ++k) {
+            const double a = k * 3.141592653589793 / 4.0;
+            p.drawLine(sun + QPointF(4.2 * std::cos(a), 4.2 * std::sin(a)), sun + QPointF(5.8 * std::cos(a), 5.8 * std::sin(a)));
+        }
+    }
+    p.setPen(QPen(QColor(200, 200, 200), 1.2));
+    p.setBrush(l.locked ? QColor(200, 160, 60) : QColor(Qt::transparent));
+    p.drawRect(QRectF(36.5, 7.5, 7.0, 6.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawArc(l.locked ? QRectF(37.5, 3.0, 5.0, 9.0) : QRectF(40.0, 1.5, 5.0, 9.0), 0, 180 * 16);
+    p.setPen(QPen(QColor(120, 120, 120), 1.0));
+    p.setBrush(QColor(l.color.r, l.color.g, l.color.b));
+    p.drawRect(QRectF(50.5, 3.5, 10.0, 9.0));
+    p.end();
+    return QIcon(px);
+}
+} // namespace
+
 void MainWindow::sync_layer_combo() {
     if (layer_combo_ == nullptr || viewport_ == nullptr) {
         return;
     }
     const std::vector<core::Layer> layers = viewport_->layers();
-    bool changed = static_cast<int>(layers.size()) != layer_combo_->count();
-    for (int i = 0; !changed && i < static_cast<int>(layers.size()); ++i) {
-        changed = layer_combo_->itemText(i).toStdString() != layers[i].name;
-    }
-    if (changed) {
+    if (layers != layer_combo_shown_) {
+        // Names and state icons from the layers as they are now.
         const QSignalBlocker block(layer_combo_);
         layer_combo_->clear();
         for (const core::Layer& l : layers) {
-            layer_combo_->addItem(QString::fromStdString(l.name));
+            layer_combo_->addItem(layer_state_icon(l), QString::fromStdString(l.name));
         }
+        layer_combo_shown_ = layers;
     }
     const int cur = static_cast<int>(viewport_->current_layer());
     if (cur >= 0 && cur < layer_combo_->count() && layer_combo_->currentIndex() != cur) {

@@ -488,6 +488,7 @@ private:
     bool tick_constrained_pending_ = false;
     QString coord_text_shown_;
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
+    std::vector<core::Layer> layer_combo_shown_; // the layers the combo shows (names and state icons)
     QComboBox* text_style_combo_ = nullptr; // Annotate > Text: the current text style
     QComboBox* dim_style_combo_ = nullptr;  // Annotate > Dimensions: the current dimension style
     QComboBox* table_style_combo_ = nullptr; // Annotate > Tables: the current table style

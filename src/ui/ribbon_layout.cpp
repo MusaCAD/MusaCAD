@@ -12,6 +12,7 @@
 // the Musa mark carries the file operations, as AutoCAD's does.
 #include "musacad/ui/main_window.hpp"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QColorDialog>
@@ -465,8 +466,11 @@ void MainWindow::build_ribbon() {
         QWidget* col = layers->add_column(/*icon_only=*/true);
         layer_combo_ = new QComboBox(col);
         layer_combo_->setObjectName(QStringLiteral("CurrentLayerCombo"));
-        layer_combo_->setMinimumWidth(150);
-        layer_combo_->setToolTip(QStringLiteral("Current layer"));
+        layer_combo_->setMinimumWidth(190);
+        layer_combo_->setIconSize(QSize(64, 16));
+        layer_combo_->setToolTip(QStringLiteral("Current layer. In the list, click a layer's bulb, sun or padlock to turn "
+                                                "it off, freeze it or lock it there and then."));
+        layer_combo_->view()->viewport()->installEventFilter(this);
         connect(layer_combo_, &QComboBox::activated, this, [this](int index) {
             if (index >= 0) {
                 engine_->submit(core::SetCurrentLayerCommand{static_cast<std::uint16_t>(index)});
