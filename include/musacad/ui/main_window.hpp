@@ -499,6 +499,7 @@ private:
     QAction* snap_action_ = nullptr;
     QAction* polar_action_ = nullptr;
     QAction* otrack_action_ = nullptr;
+    QAction* selcycle_action_ = nullptr; ///< SC: SELECTIONCYCLING, in step with Ctrl+W and the command
     bool polar_restore_ = false; ///< listing_shot switched POLAR on for its picture
     bool tracking_restore_ = false; ///< ... and set its own polar increment
     command::TrackingSettings tracking_saved_{};

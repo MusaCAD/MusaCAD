@@ -417,6 +417,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         sync_layer_combo();
         sync_style_combos();
+        if (selcycle_action_ != nullptr) {
+            const bool on = viewport_->selection_setting("SELECTIONCYCLING") != 0;
+            if (selcycle_action_->isChecked() != on) {
+                const QSignalBlocker block(selcycle_action_);
+                selcycle_action_->setChecked(on);
+            }
+        }
         sync_properties_panel();
         sync_ribbon_context();  // show/hide contextual ribbon tabs per the selection
         refresh_property_combos(); // the ribbon's colour / linetype / lineweight controls
@@ -892,6 +899,18 @@ void MainWindow::build_status_bar() {
         connect(lwt, &QAction::toggled, this, [this](bool on) { engine_->submit(core::SetLineweightDisplayCommand{on}); });
     }
     add_toggle(lwt);
+    // SC: selection cycling -- a pick over objects on top of one another offers the list
+    // (SELECTIONCYCLING; Ctrl+W toggles it too).
+    selcycle_action_ = make_mode_action(QStringLiteral("SC"), 0, viewport_->selection_setting("SELECTIONCYCLING") != 0,
+                                        QStringLiteral("Selection cycling (Ctrl+W): a pick over objects on top of one "
+                                                       "another offers the list (SELECTIONCYCLING)."));
+    selcycle_action_->setObjectName(QStringLiteral("status.selcycle"));
+    connect(selcycle_action_, &QAction::toggled, this, [this](bool on) {
+        if ((viewport_->selection_setting("SELECTIONCYCLING") != 0) != on) {
+            viewport_->set_selection_setting("SELECTIONCYCLING", on ? 2 : 0);
+        }
+    });
+    add_toggle(selcycle_action_);
     add_toggle(dyn_action_);
     // The POLAR dropdown: AutoCAD's increment angles, the one in force ticked.
     auto* polar_menu = new QMenu(this);
