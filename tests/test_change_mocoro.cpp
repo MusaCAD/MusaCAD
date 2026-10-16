@@ -3627,3 +3627,99 @@ TEST_CASE("Splines keep knots of their own: cut by knot insertion, trimmed and b
         engine.stop();
     }
 }
+
+TEST_CASE("-HATCH Advanced: island style, retained boundaries, gap tolerance, boundary set and one hatch for the areas picked") {
+    H h;
+    h.run({"HPASSOC", "1", "-HATCH", "A"});
+    const std::string advanced =
+        "Enter an option [Boundary set/Retain boundary/Island detection/Style/Associativity/Gap tolerance/separate Hatches]: ";
+    REQUIRE(h.out.prompt == advanced);
+    h.run({"S"});
+    REQUIRE(h.out.prompt == "Enter hatching style [Ignore/Outer/Normal] <Normal>: ");
+    h.run({"O"});
+    REQUIRE(h.out.prompt == advanced);
+    h.run({"R"});
+    REQUIRE(h.out.prompt == "Retain derived boundaries? [Yes/No] <N>: ");
+    h.run({"Y", "I"});
+    REQUIRE(h.out.prompt == "Do you want island detection? [Yes/No] <Y>: ");
+    h.run({"N"});
+    REQUIRE(h.out.prompt == "Enter type of ray casting [Nearest/+X/-X/+Y/-Y/Angle] <Nearest>: ");
+    h.run({"+X", "G"});
+    REQUIRE(h.out.prompt == "Specify a boundary gap tolerance value <0>: ");
+    h.run({"2", "H"});
+    REQUIRE(h.out.prompt == "Create separate hatches? [Yes/No] <N>: ");
+    h.run({"", "A"});
+    REQUIRE(h.out.prompt == "Do you want associativity? [Yes/No] <Y>: ");
+    h.run({"N"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 0);
+    h.run({"B"});
+    REQUIRE(h.out.prompt == "Specify candidate set for boundary [New/Everything] <Everything>: ");
+    h.run({"", ""});
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [", 0) == 0);
+    h.run({"10,10"});
+    const HatchPickPointCommand first = *h.last<HatchPickPointCommand>();
+    REQUIRE(first.extras.island_style == 2); // no island detection
+    REQUIRE(first.extras.retain);
+    REQUIRE(first.extras.gap_tolerance == 2.0);
+    REQUIRE_FALSE(first.extras.merge);
+    h.run({"30,10"});
+    REQUIRE(h.last<HatchPickPointCommand>()->extras.merge); // the second area joins the first's hatch
+    h.proc.cancel();
+    // As they were, for the other tests.
+    h.run({"-HATCH", "A", "S", "N", "R", "N", "I", "Y", "G", "0", "A", "Y", "", ""});
+    h.proc.cancel();
+
+    // The engine: a square open at one corner closes within the gap tolerance.
+    const auto open_square = [](GeometryEngine& e, double x) {
+        e.submit(AddLineCommand{{x, 0}, {x + 20, 0}, 1});
+        e.submit(AddLineCommand{{x + 20, 0}, {x + 20, 20}, 1});
+        e.submit(AddLineCommand{{x + 20, 20}, {x, 20}, 1});
+        e.submit(AddLineCommand{{x, 20}, {x, 1}, 1}); // a gap of 1 to the first line
+    };
+    {
+        GeometryEngine engine;
+        engine.start();
+        open_square(engine, 0);
+        HatchPickPointCommand pick;
+        pick.point = {10, 10};
+        pick.group = 2;
+        engine.submit(pick);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Valid hatch boundary not found."; }));
+        pick.extras.gap_tolerance = 2.0;
+        pick.group = 3;
+        engine.submit(pick);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Solid hatch created." || s.status == "Hatch created."; }));
+        // A second area, picked in the same HATCH: one hatch with both.
+        open_square(engine, 40);
+        pick.point = {50, 10};
+        pick.extras.merge = true;
+        pick.group = 4;
+        engine.submit(pick);
+        const io::Document doc = dump(engine, "musacad_hatch_gap.musa");
+        REQUIRE(doc.hatches.size() == 1);
+        REQUIRE(doc.hatches[0].loops.size() == 2);
+        engine.stop();
+    }
+    // Boundary set: only the objects selected for it bound the area.
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddPolylineCommand{{{0, 0}, {40, 0}, {40, 40}, {0, 40}}, true, 1});
+        engine.submit(AddPolylineCommand{{{10, 10}, {30, 10}, {30, 30}, {10, 30}}, true, 2});
+        engine.submit(SelectPickCommand{{20, 0}, 0.5, false});
+        HatchPickPointCommand pick;
+        pick.point = {20, 20};
+        pick.group = 3;
+        pick.extras.boundary_set = 2;
+        engine.submit(pick);
+        const io::Document doc = dump(engine, "musacad_hatch_set.musa");
+        REQUIRE(doc.hatches.size() == 1);
+        REQUIRE(doc.hatches[0].loops.size() == 1); // the inner square is not in the set: no island
+        double xmax = 0.0;
+        for (const Vec2& v : doc.hatches[0].loops[0]) {
+            xmax = std::max(xmax, v.x);
+        }
+        REQUIRE(xmax == Approx(40.0));
+        engine.stop();
+    }
+}

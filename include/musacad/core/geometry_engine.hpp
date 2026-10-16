@@ -682,6 +682,8 @@ private:
     NativeKernel2D kernel_;
     std::vector<std::uint8_t> layer_used_; ///< per layer: holds an entity (set on each geometry rebuild)
     HatchExtras hatch_extras_{};           ///< the hatch command in hand's Origin, LAyer and COlor
+    std::vector<EntityHandle> hatch_boundary_set_; ///< -HATCH Advanced > Boundary set > New
+    EntityHandle last_pick_hatch_{};       ///< the hatch the last picked area made (to join the next)
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;

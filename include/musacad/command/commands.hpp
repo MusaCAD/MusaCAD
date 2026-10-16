@@ -537,20 +537,28 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool in_selection_phase() const override { return !done_ && mode_ == Mode::Select && select_.active(); }
+    bool in_selection_phase() const override {
+        return !done_ && (mode_ == Mode::Select || mode_ == Mode::AdvBoundarySelect) && select_.active();
+    }
     bool selection_removing() const override { return select_.removing(); }
     void selection_gesture(CommandContext& ctx) override;
 
 private:
     enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
-                      Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer };
-    [[nodiscard]] core::HatchExtras extras() const; ///< -HATCH's Origin, LAyer and COlor
+                      Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer, Advanced, AdvBoundarySet,
+                      AdvBoundarySelect, AdvRetain, AdvIsland, AdvRayCast, AdvRayAngle, AdvStyle, AdvAssoc, AdvGap,
+                      AdvSeparate };
+    [[nodiscard]] core::HatchExtras extras() const; ///< -HATCH's Origin, LAyer, COlor and Advanced
     void main_prompt(CommandContext& ctx);
+    void advanced_prompt(CommandContext& ctx);
+    void advanced_input(CommandContext& ctx, const std::string& t, const std::string& up);
     void fill_selection(CommandContext& ctx);
     bool typed_;
     bool gradient_; ///< GRADIENT: HATCH with the gradient fill
     bool done_ = false;
     int picks_ = 0;
+    bool picked_area_ = false;      ///< an area picked in this command (the next one joins its hatch)
+    std::uint8_t boundary_set_ = 0; ///< HatchExtras::boundary_set for the next pick
     Mode mode_ = Mode::PickPoint;
     SelectObjectsPhase select_;
     static inline std::string pattern_ = "ANSI31"; // HPNAME: SOLID, GRADIENT or a line pattern
@@ -561,6 +569,12 @@ private:
     static inline std::uint8_t origin_corner_ = 0;      // Default to boundary extents
     static inline std::string layer_;                   // HPLAYER ("": the current layer)
     static inline std::optional<core::Rgb> color_;      // HPCOLOR (unset: ByLayer)
+    static inline std::uint8_t island_style_ = 0;       // HPISLANDDETECTION: 0 Normal, 1 Outer, 2 Ignore
+    static inline bool island_detect_ = true;           // HPISLANDDETECTIONMODE
+    static inline std::string ray_cast_ = "Nearest";    // Island detection No: the ray casting
+    static inline bool retain_ = false;                 // Retain boundary
+    static inline double gap_tol_ = 0.0;                // HPGAPTOL
+    static inline bool separate_ = false;               // HPSEPARATE
     bool free_text() const override { return mode_ == Mode::HatchLayer; }
 };
 

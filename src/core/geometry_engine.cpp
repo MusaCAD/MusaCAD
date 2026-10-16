@@ -14684,6 +14684,9 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
 
 void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
                                             double angle, std::uint64_t group, Rgb color2) {
+    if (hatch_extras_.boundary_set == 2) {
+        hatch_boundary_set_ = selection_; // Boundary set > New: what was selected for it
+    }
     std::optional<std::vector<std::vector<Vec2>>> loops = boundary_loops(p);
     if (!loops) {
         report("Valid hatch boundary not found.");
@@ -14718,6 +14721,18 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     }
     AddHatchCommand cmd;
     cmd.loops = std::move(*loops);
+    // Not separate hatches: the areas picked in one HATCH are one hatch -- the one the pick
+    // before made gives way to one with its areas and this one's (in this pick's undo step).
+    if (hatch_extras_.merge && store_.is_valid(last_pick_hatch_) && last_pick_hatch_.kind == EntityKind::Hatch) {
+        const Command before = capture_entity(last_pick_hatch_);
+        if (const auto* bh = std::get_if<AddHatchCommand>(&before)) {
+            std::vector<std::vector<Vec2>> all = bh->loops;
+            all.insert(all.end(), cmd.loops.begin(), cmd.loops.end());
+            cmd.loops = std::move(all);
+            remove_indexed(last_pick_hatch_);
+            push_erase_item(group, last_pick_hatch_, before);
+        }
+    }
     cmd.pattern_name = pattern;
     cmd.pattern_scale = scale;
     cmd.pattern_angle = angle;
@@ -14726,6 +14741,7 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     apply_hatch_extras(cmd, hatch_extras_);
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
+    last_pick_hatch_ = nh;
     selection_.clear();
     selection_.push_back(nh);
     redo_.clear();
@@ -14779,20 +14795,36 @@ void GeometryEngine::apply_hatch_extras(AddHatchCommand& cmd, const HatchExtras&
 }
 
 std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec2 p) {
+    // The objects that can bound it: every one, or -HATCH's boundary set.
+    std::vector<EntityHandle> pool;
+    if (hatch_extras_.boundary_set != 0) {
+        for (const EntityHandle h : hatch_boundary_set_) {
+            if (store_.is_valid(h)) {
+                pool.push_back(h);
+            }
+        }
+    } else {
+        pool = all_live();
+    }
     // Gather candidate boundary edges from every curve-like entity (tessellated, so arcs +
     // bulged polylines follow their true shape), closing the loop for closed shapes.
     std::vector<hatch::Segment> segs;
     std::vector<Vec2> tess;
+    std::vector<Vec2> ends; // the ends of the open ones (for the gap tolerance)
     const auto gather = [&](EntityHandle h, bool closed) {
+        tess.clear();
         kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
         for (std::size_t i = 1; i < tess.size(); ++i) {
             segs.push_back({tess[i - 1], tess[i]});
         }
         if (closed && tess.size() >= 3) {
             segs.push_back({tess.back(), tess.front()});
+        } else if (tess.size() >= 2) {
+            ends.push_back(tess.front());
+            ends.push_back(tess.back());
         }
     };
-    for (const EntityHandle h : all_live()) {
+    for (const EntityHandle h : pool) {
         switch (h.kind) {
         case EntityKind::Xline:
             break; // an infinite line is not a hatch boundary
@@ -14816,7 +14848,61 @@ std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec
             break; // text/dim/leader/insert/hatch are not boundaries
         }
     }
-    const double tol = 1e-6; // basic endpoint gap bridging; full HPGAPTOL parity staged
+    // Gap tolerance: an end that meets nothing is joined to the nearest other such end within
+    // the tolerance, so the boundary closes across the gap.
+    if (hatch_extras_.gap_tolerance > 0.0) {
+        const double tight = 1e-6;
+        // An end meets something when an edge besides its own object's last one touches it:
+        // another object's end or vertex, or a T on another's edge.
+        const auto meets = [&](std::size_t i) {
+            const Vec2 e = ends[i];
+            int touching = 0;
+            for (const hatch::Segment& s : segs) {
+                if (e.x < std::min(s.a.x, s.b.x) - tight || e.x > std::max(s.a.x, s.b.x) + tight ||
+                    e.y < std::min(s.a.y, s.b.y) - tight || e.y > std::max(s.a.y, s.b.y) + tight) {
+                    continue;
+                }
+                const Vec2 d = s.b - s.a;
+                const double l2 = length_squared(d);
+                const double t = l2 > 0.0 ? std::clamp(dot(e - s.a, d) / l2, 0.0, 1.0) : 0.0;
+                if (distance(s.a + d * t, e) <= tight && ++touching >= 2) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        std::vector<std::size_t> loose;
+        for (std::size_t i = 0; i < ends.size(); ++i) {
+            if (!meets(i)) {
+                loose.push_back(i);
+            }
+        }
+        std::vector<bool> used(ends.size(), false);
+        for (const std::size_t i : loose) {
+            if (used[i]) {
+                continue;
+            }
+            std::size_t best = ends.size();
+            double bd = hatch_extras_.gap_tolerance;
+            for (const std::size_t j : loose) {
+                // Not the other end of the same object, and not one already joined.
+                if (j == i || used[j] || (j ^ 1u) == i) {
+                    continue;
+                }
+                const double dd = distance(ends[i], ends[j]);
+                if (dd <= bd) {
+                    bd = dd;
+                    best = j;
+                }
+            }
+            if (best < ends.size()) {
+                segs.push_back({ends[i], ends[best]});
+                used[i] = true;
+                used[best] = true;
+            }
+        }
+    }
+    const double tol = 1e-6; // endpoints closer than this are the same point
     const std::optional<std::vector<Vec2>> outer = hatch::trace_boundary(segs, p, tol);
     if (!outer) {
         return std::nullopt;
@@ -14826,7 +14912,7 @@ std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec
     // Islands: closed polylines / circles fully inside the outer loop, NOT containing the
     // pick (a loop containing the pick is the boundary, not a hole), become holes.
     std::vector<Vec2> verts;
-    for (const EntityHandle h : all_live()) {
+    for (const EntityHandle h : pool) {
         if (h.kind == EntityKind::Polyline) {
             const PolylineData* pl = store_.polyline(h);
             if (pl == nullptr || !pl->closed) {

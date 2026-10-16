@@ -2836,6 +2836,11 @@ void HatchCommand::fill_selection(CommandContext& ctx) {
 
 void HatchCommand::selection_gesture(CommandContext& ctx) {
     if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (mode_ == Mode::AdvBoundarySelect) {
+            boundary_set_ = ctx.has_selection() ? 2 : 0;
+            advanced_prompt(ctx);
+            return;
+        }
         fill_selection(ctx);
     }
 }
@@ -2846,13 +2851,197 @@ core::HatchExtras HatchCommand::extras() const {
     x.origin_corner = origin_corner_;
     x.layer = layer_;
     x.color = color_;
+    x.island_style = island_detect_ ? island_style_ : std::uint8_t{2}; // no detection: no islands
+    x.retain = retain_;
+    x.gap_tolerance = gap_tol_;
+    x.boundary_set = boundary_set_;
     return x;
+}
+
+void HatchCommand::advanced_prompt(CommandContext& ctx) {
+    mode_ = Mode::Advanced;
+    ctx.set_prompt("Enter an option [Boundary set/Retain boundary/Island detection/Style/Associativity/Gap tolerance/"
+                   "separate Hatches]: ");
+}
+
+// -HATCH Advanced: each option asks its question and comes back to the list; Enter at the list
+// goes back to the main prompt.
+void HatchCommand::advanced_input(CommandContext& ctx, const std::string& t, const std::string& up) {
+    const auto yes_no = [&](bool& v) {
+        if (up.empty()) {
+            return true;
+        }
+        if (up == "Y" || up == "YES" || up == "N" || up == "NO") {
+            v = up[0] == 'Y';
+            return true;
+        }
+        ctx.echo("Invalid option keyword.");
+        return false;
+    };
+    switch (mode_) {
+    case Mode::Advanced: {
+        if (up.empty()) {
+            main_prompt(ctx);
+            return;
+        }
+        const auto yn = [](bool v) { return std::string(v ? "Y" : "N"); };
+        if (up == "B" || up == "BOUNDARY" || up == "BOUNDARY SET") {
+            mode_ = Mode::AdvBoundarySet;
+            ctx.set_prompt(std::string("Specify candidate set for boundary [New/Everything] <") +
+                           (boundary_set_ != 0 ? "New" : "Everything") + ">: ");
+        } else if (up == "R" || up == "RETAIN" || up == "RETAIN BOUNDARY") {
+            mode_ = Mode::AdvRetain;
+            ctx.set_prompt("Retain derived boundaries? [Yes/No] <" + yn(retain_) + ">: ");
+        } else if (up == "I" || up == "ISLAND" || up == "ISLAND DETECTION") {
+            mode_ = Mode::AdvIsland;
+            ctx.set_prompt("Do you want island detection? [Yes/No] <" + yn(island_detect_) + ">: ");
+        } else if (up == "S" || up == "STYLE") {
+            mode_ = Mode::AdvStyle;
+            static constexpr const char* kStyles[] = {"Normal", "Outer", "Ignore"};
+            ctx.set_prompt(std::string("Enter hatching style [Ignore/Outer/Normal] <") + kStyles[island_style_ % 3] + ">: ");
+        } else if (up == "A" || up == "ASSOCIATIVITY") {
+            mode_ = Mode::AdvAssoc;
+            ctx.set_prompt("Do you want associativity? [Yes/No] <" + yn(HpAssocCommand::s_value_ != 0) + ">: ");
+        } else if (up == "G" || up == "GAP" || up == "GAP TOLERANCE") {
+            mode_ = Mode::AdvGap;
+            std::string g = std::to_string(gap_tol_); // as the value is: 0, 0.5, 2.25
+            g.erase(g.find_last_not_of('0') + 1);
+            if (!g.empty() && g.back() == '.') {
+                g.pop_back();
+            }
+            ctx.set_prompt("Specify a boundary gap tolerance value <" + g + ">: ");
+        } else if (up == "H" || up == "SEPARATE" || up == "SEPARATE HATCHES") {
+            mode_ = Mode::AdvSeparate;
+            ctx.set_prompt("Create separate hatches? [Yes/No] <" + yn(separate_) + ">: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    }
+    case Mode::AdvBoundarySet:
+        if (up == "N" || up == "NEW") {
+            mode_ = Mode::AdvBoundarySelect;
+            select_.begin(ctx);
+            return;
+        }
+        if (!up.empty() && up != "E" && up != "EVERYTHING") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        if (up == "E" || up == "EVERYTHING") {
+            boundary_set_ = 0;
+        }
+        break;
+    case Mode::AdvBoundarySelect:
+        if (select_.input(ctx, t) == SelectObjectsPhase::Result::Done) {
+            boundary_set_ = ctx.has_selection() ? 2 : 0; // the next pick takes them as the set
+            advanced_prompt(ctx);
+        }
+        return;
+    case Mode::AdvRetain:
+        if (!yes_no(retain_)) {
+            return;
+        }
+        break;
+    case Mode::AdvIsland:
+        if (!yes_no(island_detect_)) {
+            return;
+        }
+        if (!island_detect_) {
+            mode_ = Mode::AdvRayCast;
+            ctx.set_prompt("Enter type of ray casting [Nearest/+X/-X/+Y/-Y/Angle] <" + ray_cast_ + ">: ");
+            return;
+        }
+        break;
+    case Mode::AdvRayCast: {
+        static constexpr std::pair<const char*, const char*> kRays[] = {
+            {"N", "Nearest"}, {"NEAREST", "Nearest"}, {"+X", "+X"}, {"-X", "-X"}, {"+Y", "+Y"}, {"-Y", "-Y"}};
+        if (up == "A" || up == "ANGLE") {
+            mode_ = Mode::AdvRayAngle;
+            ctx.set_prompt("Specify ray casting angle: ");
+            return;
+        }
+        std::string ray = up.empty() ? ray_cast_ : std::string();
+        for (const auto& [k, v] : kRays) {
+            ray = up == k ? v : ray;
+        }
+        if (ray.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        ray_cast_ = ray;
+        break;
+    }
+    case Mode::AdvRayAngle: {
+        double v = 0.0;
+        if (!parse_number(t, v)) {
+            ctx.echo("Requires a valid angle.");
+            return;
+        }
+        ray_cast_ = "Angle";
+        break;
+    }
+    case Mode::AdvStyle:
+        if (up == "N" || up == "NORMAL") {
+            island_style_ = 0;
+        } else if (up == "O" || up == "OUTER") {
+            island_style_ = 1;
+        } else if (up == "I" || up == "IGNORE") {
+            island_style_ = 2;
+        } else if (!up.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        break;
+    case Mode::AdvAssoc: {
+        bool on = HpAssocCommand::s_value_ != 0;
+        if (!yes_no(on)) {
+            return;
+        }
+        HpAssocCommand::s_value_ = on ? 1 : 0;
+        core::DimAssocCommand c;
+        c.op = core::DimAssocCommand::Op::HatchVariable;
+        c.value = on ? std::uint8_t{1} : std::uint8_t{0};
+        ctx.submit(std::move(c));
+        break;
+    }
+    case Mode::AdvGap: {
+        double v = gap_tol_;
+        if (!t.empty() && (!parse_number(t, v) || v < 0.0 || v > 5000.0)) {
+            ctx.echo("Requires a value from 0 to 5000.");
+            return;
+        }
+        gap_tol_ = v;
+        break;
+    }
+    case Mode::AdvSeparate:
+        if (!yes_no(separate_)) {
+            return;
+        }
+        break;
+    default:
+        return;
+    }
+    advanced_prompt(ctx);
 }
 
 void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string up = upper(t);
     switch (mode_) {
+    case Mode::Advanced:
+    case Mode::AdvBoundarySet:
+    case Mode::AdvBoundarySelect:
+    case Mode::AdvRetain:
+    case Mode::AdvIsland:
+    case Mode::AdvRayCast:
+    case Mode::AdvRayAngle:
+    case Mode::AdvStyle:
+    case Mode::AdvAssoc:
+    case Mode::AdvGap:
+    case Mode::AdvSeparate:
+        advanced_input(ctx, mode_ == Mode::AdvBoundarySelect ? text : t, up);
+        return;
     case Mode::Origin:
         if (up == "S" || up == "SET" || up == "SET NEW ORIGIN") {
             mode_ = Mode::OriginPoint;
@@ -3097,15 +3286,23 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Enter layer name or [. (use current)] <use current>: ");
         return;
     }
-    if (typed_ && (up == "W" || up == "B" || up == "A" || up == "DR" || up == "AN" || up == "TR" || up == "DRAW" ||
-                   up == "ADVANCED")) {
+    if (typed_ && (up == "A" || up == "ADVANCED")) {
+        advanced_prompt(ctx);
+        return;
+    }
+    if (typed_ && (up == "W" || up == "B" || up == "DR" || up == "AN" || up == "TR" || up == "DRAW")) {
         ctx.echo("That option is not available yet.");
         return;
     }
     if (const auto p = read_point(ctx, text)) {
         // Click inside a closed region -> trace its boundary (+ islands) and hatch it. Each
-        // pick is its own undo group; the command stays active for more picks.
-        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_, extras()});
+        // pick is its own undo group; the command stays active for more picks. Unless
+        // separate hatches are asked for, the areas picked are one hatch (HPSEPARATE 0).
+        core::HatchExtras x = extras();
+        x.merge = !separate_ && picked_area_;
+        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_, x});
+        picked_area_ = true;
+        boundary_set_ = boundary_set_ == 2 ? 1 : boundary_set_;
         ++picks_;
         main_prompt(ctx);
     }

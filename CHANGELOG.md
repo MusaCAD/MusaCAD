@@ -175,6 +175,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Stretch Vertex / Stretch on a polyline's. **Ctrl** at a hot grip's pick, or as a grip drag
   ends, copies (`** STRETCH (multiple) **`). The grip menus open when the cursor rests on a
   grip, or at once on a right-click.
+- **-HATCH's Advanced options** (#41) -- `Enter an option [Boundary set/Retain boundary/Island
+  detection/Style/Associativity/Gap tolerance/separate Hatches]:`, as AutoCAD asks them: the
+  hatching style (Normal, Outer or Ignore for the islands inside an area), island detection
+  (off: no islands), the boundaries kept as polylines, a boundary set (only the objects
+  selected for it bound an area), HPASSOC, a gap tolerance (ends that far apart or closer are
+  taken as meeting, so an area open by a small gap still hatches) and separate hatches. Unless
+  separate hatches are asked for, the areas picked in one HATCH are now one hatch, as in AutoCAD.
 - **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the

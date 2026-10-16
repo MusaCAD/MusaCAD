@@ -1922,6 +1922,15 @@ struct HatchExtras {
     /// the boundary is kept as a polyline (Retain boundary).
     std::uint8_t island_style = 0;
     bool retain = false;
+    /// Gap tolerance (HPGAPTOL): ends of the boundary objects this far apart or closer are
+    /// taken as meeting.
+    double gap_tolerance = 0.0;
+    /// Boundary set: 0 every object, 1 the set taken before, 2 the objects selected now
+    /// (taken as the set for this pick and the ones after it).
+    std::uint8_t boundary_set = 0;
+    /// Not separate hatches (HPSEPARATE 0): this pick's area joins the hatch the pick
+    /// before it made, as one hatch.
+    bool merge = false;
 };
 struct HatchFromSelectionCommand {
     std::string pattern_name = "SOLID";
