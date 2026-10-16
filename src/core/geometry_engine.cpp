@@ -2190,7 +2190,7 @@ void GeometryEngine::follow_replaced(std::uint64_t group) {
 
 void GeometryEngine::move_followers(const Followers& follows, const std::function<Vec2(Vec2)>& map,
                             const std::function<void(Command&)>& whole, std::uint64_t group) {
-    const auto replace = [&](EntityHandle h, const Command& original, const Command& edited) {
+    const auto recreate = [&](EntityHandle h, const Command& original, const Command& edited) {
         remove_indexed(h);
         push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(edited);
@@ -2234,7 +2234,7 @@ void GeometryEngine::move_followers(const Followers& follows, const std::functio
         if (now.a == was.a && now.b == was.b && now.line_pt == was.line_pt && now.aux == was.aux) {
             continue; // nothing moved
         }
-        replace(f.dim, original, edited);
+        recreate(f.dim, original, edited);
     }
     for (const HatchFollow& f : follows.hatches) {
         if (!store_.is_valid(f.hatch)) {
@@ -2265,7 +2265,7 @@ void GeometryEngine::move_followers(const Followers& follows, const std::functio
         if (x->loops == was.loops && x->pattern_origin == was.pattern_origin) {
             continue; // nothing moved
         }
-        replace(f.hatch, original, edited);
+        recreate(f.hatch, original, edited);
     }
 }
 

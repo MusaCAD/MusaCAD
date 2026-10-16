@@ -164,6 +164,10 @@ struct PreviewSpec {
     bool spline_fit = true;
     int spline_degree = 3;
     int spline_knots = 0; ///< 0 chord, 1 square root, 2 uniform
+    std::optional<core::Vec2> spline_start_tangent{}; ///< start Tangency given
+    /// 1: the cursor gives the start tangent (from the first point), 2: the end tangent
+    /// (from the last); the cursor is then not a fit point.
+    int spline_tangent_cursor = 0;
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor

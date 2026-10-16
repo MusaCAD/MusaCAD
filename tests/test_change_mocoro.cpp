@@ -27,6 +27,7 @@
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/grips.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
@@ -2868,4 +2869,31 @@ TEST_CASE("The array preview draws the copies the array would make, and the arra
     const io::Document doc = dump(engine, "musacad_array_preview.musa");
     REQUIRE(doc.circles.size() == 12);
     engine.stop();
+}
+
+TEST_CASE("SPLINE's start and end Tangency: the fitted curve leaves and arrives in those directions") {
+    // The fit with end directions: through the points, its first and last legs along them.
+    const std::vector<Vec2> pts{{0, 0}, {10, 5}, {20, 0}};
+    const std::vector<Vec2> ctrl = spline::fit_or_fallback(pts, 3, spline::FitParam::Chord, Vec2{0, 1}, Vec2{0, -1});
+    REQUIRE(ctrl.size() == 5);
+    REQUIRE(ctrl.front() == Vec2{0, 0});
+    REQUIRE(ctrl[1].x == Approx(0.0).margin(1e-9)); // straight up from the start
+    REQUIRE(ctrl[1].y > 0.0);
+    REQUIRE(ctrl[3].x == Approx(20.0).margin(1e-9)); // and straight down into the end
+    REQUIRE(ctrl.back().x == Approx(20.0));
+    std::vector<Vec2> curve;
+    spline::tessellate(ctrl, 3, curve);
+    REQUIRE(std::any_of(curve.begin(), curve.end(), [](const Vec2& v) { return distance(v, Vec2{10, 5}) < 0.05; }));
+
+    H h;
+    h.run({"SPLINE", "M", "F", "0,0", "T"}); // Fit, whatever an earlier test left
+    REQUIRE(h.out.prompt == "Specify start tangent: ");
+    h.run({"0,10", "10,5", "20,0", "T"});
+    REQUIRE(h.out.prompt == "Specify end tangent: ");
+    h.run({"20,-10"});
+    const auto* sp = h.last<AddSplineCommand>();
+    REQUIRE(sp != nullptr);
+    REQUIRE(sp->control_points.size() == 5);
+    REQUIRE(sp->control_points[1].x == Approx(0.0).margin(1e-9));
+    REQUIRE_FALSE(h.proc.has_active_command()); // the end tangent ends it
 }

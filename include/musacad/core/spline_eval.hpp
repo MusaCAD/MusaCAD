@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -251,10 +252,124 @@ inline bool fit_control_points(std::span<const Vec2> fit, int degree_in, FitPara
     return true;
 }
 
+/// Global interpolation with the curve's direction given at its start and/or end (SPLINE's
+/// start and end Tangency): one more control point for each, its row asking the curve's
+/// derivative there to be the unit direction times the total chord length (the usual
+/// magnitude). False when the system is singular, as fit_control_points.
+inline bool fit_control_points_tangent(std::span<const Vec2> fit, int degree_in, FitParam mode,
+                                       std::optional<Vec2> start_dir, std::optional<Vec2> end_dir,
+                                       std::vector<Vec2>& ctrl) {
+    const int n = static_cast<int>(fit.size());
+    ctrl.clear();
+    if (n < 2) {
+        return false;
+    }
+    const auto unit = [](std::optional<Vec2>& d) {
+        if (d && length(*d) > 1e-12) {
+            *d = *d / length(*d);
+        } else {
+            d.reset();
+        }
+    };
+    unit(start_dir);
+    unit(end_dir);
+    const int m = n + (start_dir ? 1 : 0) + (end_dir ? 1 : 0);
+    const int degree = effective_degree(m, degree_in);
+    const std::vector<double> knots = clamped_knots(m, degree);
+    const std::vector<double> u = fit_parameters(fit, mode);
+    double chord = 0.0;
+    for (std::size_t i = 1; i < fit.size(); ++i) {
+        chord += length(fit[i] - fit[i - 1]);
+    }
+    const auto M = static_cast<std::size_t>(m);
+    std::vector<double> A(M * M, 0.0);
+    std::vector<double> bx(M, 0.0);
+    std::vector<double> by(M, 0.0);
+    std::vector<double> basis;
+    std::size_t row = 0;
+    // A clamped curve's derivative at an end: degree / (first interior knot) times the
+    // difference of its first (last) two control points.
+    const double d_scale = static_cast<double>(degree) * static_cast<double>(m - degree);
+    for (int i = 0; i < n; ++i) {
+        const double t = u[static_cast<std::size_t>(i)];
+        const int span = find_span(m - 1, degree, t, knots);
+        basis_functions(span, t, degree, knots, basis);
+        for (int j = 0; j <= degree; ++j) {
+            A[row * M + static_cast<std::size_t>(span - degree + j)] = basis[static_cast<std::size_t>(j)];
+        }
+        bx[row] = fit[static_cast<std::size_t>(i)].x;
+        by[row] = fit[static_cast<std::size_t>(i)].y;
+        ++row;
+        if (i == 0 && start_dir) {
+            A[row * M + 0] = -d_scale;
+            A[row * M + 1] = d_scale;
+            bx[row] = start_dir->x * chord;
+            by[row] = start_dir->y * chord;
+            ++row;
+        }
+        if (i == n - 2 && end_dir) {
+            // Just before the last fit point's row, so the system stays near-banded.
+            A[row * M + (M - 2)] = -d_scale;
+            A[row * M + (M - 1)] = d_scale;
+            bx[row] = end_dir->x * chord;
+            by[row] = end_dir->y * chord;
+            ++row;
+        }
+    }
+    for (std::size_t c = 0; c < M; ++c) {
+        std::size_t piv = c;
+        for (std::size_t r = c + 1; r < M; ++r) {
+            if (std::abs(A[r * M + c]) > std::abs(A[piv * M + c])) {
+                piv = r;
+            }
+        }
+        if (std::abs(A[piv * M + c]) < 1e-12) {
+            return false;
+        }
+        if (piv != c) {
+            for (std::size_t k = 0; k < M; ++k) {
+                std::swap(A[c * M + k], A[piv * M + k]);
+            }
+            std::swap(bx[c], bx[piv]);
+            std::swap(by[c], by[piv]);
+        }
+        for (std::size_t r = c + 1; r < M; ++r) {
+            const double f = A[r * M + c] / A[c * M + c];
+            if (f == 0.0) {
+                continue;
+            }
+            for (std::size_t k = c; k < M; ++k) {
+                A[r * M + k] -= f * A[c * M + k];
+            }
+            bx[r] -= f * bx[c];
+            by[r] -= f * by[c];
+        }
+    }
+    ctrl.assign(M, Vec2{});
+    for (std::size_t i = M; i-- > 0;) {
+        double sx = bx[i];
+        double sy = by[i];
+        for (std::size_t k = i + 1; k < M; ++k) {
+            sx -= A[i * M + k] * ctrl[k].x;
+            sy -= A[i * M + k] * ctrl[k].y;
+        }
+        ctrl[i] = {sx / A[i * M + i], sy / A[i * M + i]};
+    }
+    return true;
+}
+
 /// Interpolate with the asked parameterisation, falling back to Uniform (always
 /// solvable) -- the SPLINE command's rule, so a preview and its commit agree.
-inline std::vector<Vec2> fit_or_fallback(std::span<const Vec2> fit, int degree, FitParam mode) {
+inline std::vector<Vec2> fit_or_fallback(std::span<const Vec2> fit, int degree, FitParam mode,
+                                         std::optional<Vec2> start_dir = std::nullopt,
+                                         std::optional<Vec2> end_dir = std::nullopt) {
     std::vector<Vec2> ctrl;
+    if (start_dir || end_dir) {
+        if (fit_control_points_tangent(fit, degree, mode, start_dir, end_dir, ctrl) ||
+            fit_control_points_tangent(fit, degree, FitParam::Uniform, start_dir, end_dir, ctrl)) {
+            return ctrl;
+        }
+    }
     if (fit_control_points(fit, degree, mode, ctrl)) {
         return ctrl;
     }

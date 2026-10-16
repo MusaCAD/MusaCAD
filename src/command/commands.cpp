@@ -5121,6 +5121,8 @@ void SplineCommand::refresh_preview(CommandContext& ctx) const {
     pv.spline_fit = fit_;
     pv.spline_degree = degree_;
     pv.spline_knots = knots_;
+    pv.spline_start_tangent = start_tangent_;
+    pv.spline_tangent_cursor = state_ == State::StartTangent ? 1 : state_ == State::EndTangent ? 2 : 0;
     ctx.set_preview(std::move(pv));
 }
 
@@ -5130,6 +5132,7 @@ void SplineCommand::start(CommandContext& ctx) {
     degree_ = s_degree_;
     knots_ = s_knots_;
     pts_.clear();
+    start_tangent_.reset();
     state_ = State::First;
     if (fit_) {
         ctx.echo(std::string("Current settings: Method=Fit   Knots=") + knots_name(knots_));
@@ -5164,7 +5167,7 @@ void SplineCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
-void SplineCommand::finish(CommandContext& ctx, bool close) {
+void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::Vec2> end_tangent) {
     if (pts_.size() < 2) {
         ctx.echo("A spline needs at least two points.");
         ctx.set_preview({});
@@ -5177,8 +5180,9 @@ void SplineCommand::finish(CommandContext& ctx, bool close) {
     }
     std::vector<core::Vec2> ctrl;
     if (fit_) {
-        ctrl = core::spline::fit_or_fallback(through, degree_,
-                                             static_cast<core::spline::FitParam>(knots_));
+        ctrl = core::spline::fit_or_fallback(through, degree_, static_cast<core::spline::FitParam>(knots_),
+                                             close ? std::nullopt : start_tangent_,
+                                             close ? std::nullopt : end_tangent);
     } else {
         ctrl = std::move(through);
     }
@@ -5197,6 +5201,31 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             convert_selection(ctx);
         }
         return;
+    case State::StartTangent:
+    case State::EndTangent: {
+        const bool at_end = state_ == State::EndTangent;
+        std::optional<core::Vec2> dir;
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            dir = *p - (at_end ? pts_.back() : pts_.front());
+            if (core::length(*dir) < 1e-12) {
+                ctx.echo("The tangent needs a point away from the spline's end.");
+                return;
+            }
+        }
+        state_ = State::Next;
+        if (at_end) {
+            finish(ctx, false, dir); // the end tangent ends the spline
+            return;
+        }
+        start_tangent_ = dir;
+        refresh_preview(ctx);
+        prompt_next(ctx);
+        return;
+    }
     case State::First:
         if (u == "M" || u == "METHOD") {
             state_ = State::MethodPick;
@@ -5296,8 +5325,11 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             finish(ctx, true);
             return;
         }
-        if (fit_ && (u == "T" || u == "TANGENCY")) {
-            ctx.echo("Tangency is not supported yet; the end is left free.");
+        if (fit_ && (u == "T" || u == "TANGENCY" || u == "START TANGENCY" || u == "END TANGENCY")) {
+            // start Tangency before the second point; end Tangency after, which ends it.
+            state_ = pts_.size() < 2 ? State::StartTangent : State::EndTangent;
+            ctx.set_prompt(state_ == State::StartTangent ? "Specify start tangent: " : "Specify end tangent: ");
+            refresh_preview(ctx);
             return;
         }
         if (fit_ && (u == "L" || u == "TOLERANCE")) {

@@ -135,6 +135,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
   dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
   with the drawing (format v40).
+- **SPLINE's start and end Tangency** (#39) -- `Specify start tangent:` after the first point and
+  `Specify end tangent:` (which ends it) once there are two: the fitted spline leaves and arrives
+  in those directions, the preview turning with the cursor.
 - **ARRAY's prompts and preview** (#51) -- ARRAYRECT draws 4 columns by 3 rows at once (spaced
   one and a half times the objects' size), ARRAYPOLAR 6 items round the centre, ARRAYPATH items
   all along the path; then `Select grip to edit array or [...]` changes COUnt, Spacing (or a

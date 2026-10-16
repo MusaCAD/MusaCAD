@@ -2899,12 +2899,20 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Spline:
             if (!pts.empty()) {
                 std::vector<core::Vec2> through(pts.begin(), pts.end());
-                through.push_back(cur_eff);
+                std::optional<core::Vec2> start_dir = pv.spline_start_tangent;
+                std::optional<core::Vec2> end_dir;
+                if (pv.spline_tangent_cursor == 1) {
+                    start_dir = cur_eff - pts.front();
+                } else if (pv.spline_tangent_cursor == 2) {
+                    end_dir = cur_eff - pts.back();
+                } else {
+                    through.push_back(cur_eff);
+                }
                 std::vector<core::Vec2> ctrl;
                 if (pv.spline_fit) {
                     ctrl = core::spline::fit_or_fallback(
                         through, pv.spline_degree,
-                        static_cast<core::spline::FitParam>(pv.spline_knots));
+                        static_cast<core::spline::FitParam>(pv.spline_knots), start_dir, end_dir);
                 } else {
                     ctrl = std::move(through);
                 }
