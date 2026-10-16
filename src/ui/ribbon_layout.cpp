@@ -800,12 +800,12 @@ void MainWindow::build_ribbon() {
     RibbonPanel* named = ribbon_->add_panel(view, QStringLiteral("Named Views"), 50);
     named->set_representative_icon(asset("view"));
     large_split(named, QStringLiteral("Named\nViews"), "V",
-                menu_of({macro(QStringLiteral("Save View"), "V", {"S"}), macro(QStringLiteral("Restore View"), "V", {"R"}),
-                         macro(QStringLiteral("Delete View"), "V", {"D"}), macro(QStringLiteral("List Views"), "V", {"?"})}));
+                menu_of({macro(QStringLiteral("Save View"), "-V", {"S"}, "view"), macro(QStringLiteral("Restore View"), "-V", {"R"}, "view"),
+                         macro(QStringLiteral("Delete View"), "-V", {"D"}, "view"), macro(QStringLiteral("List Views"), "-V", {"?"}, "view")}));
     {
         QWidget* col = named->add_column();
-        bind(named->add_small(col, asset("view"), QStringLiteral("New View")), "V");
-        todo_small(named, col, QStringLiteral("View Manager"), "view");
+        bind(named->add_small(col, asset("view"), QStringLiteral("New View")), "NEWVIEW");
+        bind(named->add_small(col, asset("view"), QStringLiteral("View Manager")), "V");
     }
     RibbonPanel* mvp = ribbon_->add_panel(view, QStringLiteral("Model Viewports"), 45);
     mvp->set_representative_icon(asset("vports"));
