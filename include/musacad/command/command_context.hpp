@@ -206,6 +206,19 @@ public:
     virtual void set_prompt(const std::string& prompt) = 0;
 };
 
+/// The Insert Table window's settings (TABLE): the table style, the columns and their
+/// width, the data rows and their height in lines, and whether a title and a header row
+/// come above the data rows.
+struct InsertTableSettings {
+    std::uint16_t style = 0;
+    int cols = 5;
+    double col_width = 63.5;
+    int rows = 1;
+    int row_lines = 1;
+    bool title = true;
+    bool header = true;
+};
+
 /// View operations a command may request (ZOOM). Implemented by the viewport;
 /// kept on the render/UI side so it never involves the geometry thread.
 class ViewControl {
@@ -265,6 +278,18 @@ public:
     virtual bool publish() { return false; }
     /// PAGESETUP: the Page Setup Manager.
     virtual bool page_setup_manager() { return false; }
+    /// TABLE: the Insert Table window over `io`, the choice left in it. 1 = OK, 0 =
+    /// cancelled, -1 = no window here (the command line asks).
+    virtual int insert_table_dialog(InsertTableSettings& io) {
+        (void)io;
+        return -1;
+    }
+    /// TABLEEDIT: the text editor on the table cell (or text) at `at`, as a double-click
+    /// opens it; false where there is none there or no window.
+    virtual bool edit_text_at(core::Vec2 at) {
+        (void)at;
+        return false;
+    }
     /// VIEW: the View Manager; LAYERSTATE: the Layer States Manager (false where there is
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }

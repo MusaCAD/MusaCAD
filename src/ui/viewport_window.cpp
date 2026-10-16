@@ -368,6 +368,50 @@ bool ViewportWindow::publish() {
     return true;
 }
 
+bool ViewportWindow::text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline) {
+    std::scoped_lock lock(grips_mutex_);
+    bool found = false;
+    double best = 0.0;
+    for (const core::TextEditTarget& t : text_targets_) {
+        if (world.x < t.min.x - pad || world.x > t.max.x + pad || world.y < t.min.y - pad ||
+            world.y > t.max.y + pad) {
+            continue;
+        }
+        const core::Vec2 c{(t.min.x + t.max.x) * 0.5, (t.min.y + t.max.y) * 0.5};
+        const double d2 = core::length_squared(world - c);
+        if (!found || d2 < best) {
+            found = true;
+            best = d2;
+            content = t.content;
+            multiline = t.multiline;
+        }
+    }
+    return found;
+}
+
+bool ViewportWindow::edit_text_at(core::Vec2 at) {
+    if (!text_edit_callback_) {
+        return false;
+    }
+    double scale = 1.0;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        scale = camera_.scale();
+    }
+    const double pad = pick_aperture(devicePixelRatio(), scale);
+    std::string content;
+    bool multiline = false;
+    if (!text_target_at(at, pad, content, multiline)) {
+        return false;
+    }
+    text_edit_callback_(TextEditRequest{at, pad, content, multiline});
+    return true;
+}
+
+int ViewportWindow::insert_table_dialog(command::InsertTableSettings& io) {
+    return insert_table_callback_ ? insert_table_callback_(io) : -1;
+}
+
 bool ViewportWindow::page_setup_manager() {
     if (!page_setup_callback_) {
         return false;
@@ -1958,29 +2002,10 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
         scale = camera_.scale();
     }
     const double pad = pick_aperture(dpr, scale); // pick aperture in world units (DPR-aware)
-    bool found = false;
     std::string content;
     bool multiline = false;
-    {
-        std::scoped_lock lock(grips_mutex_);
-        double best = 0.0;
-        for (const core::TextEditTarget& t : text_targets_) {
-            if (world.x < t.min.x - pad || world.x > t.max.x + pad || world.y < t.min.y - pad ||
-                world.y > t.max.y + pad) {
-                continue;
-            }
-            const core::Vec2 c{(t.min.x + t.max.x) * 0.5, (t.min.y + t.max.y) * 0.5};
-            const double d2 = core::length_squared(world - c);
-            if (!found || d2 < best) {
-                found = true;
-                best = d2;
-                content = t.content;
-                multiline = t.multiline;
-            }
-        }
-    }
     // Open the editor OUTSIDE the lock (it runs a modal dialog).
-    if (found) {
+    if (text_target_at(world, pad, content, multiline)) {
         text_edit_callback_(TextEditRequest{world, pad, content, multiline});
         return;
     }

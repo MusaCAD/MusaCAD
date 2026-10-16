@@ -113,6 +113,11 @@ public:
     bool export_pdf() override;
     bool publish() override;
     bool page_setup_manager() override;
+    int insert_table_dialog(command::InsertTableSettings& io) override;
+    bool edit_text_at(core::Vec2 at) override;
+    void set_insert_table_callback(std::function<int(command::InsertTableSettings&)> cb) {
+        insert_table_callback_ = std::move(cb);
+    }
     void set_export_pdf_callbacks(std::function<void()> export_pdf, std::function<void()> publish,
                                   std::function<void()> page_setups) {
         export_pdf_callback_ = std::move(export_pdf);
@@ -776,6 +781,9 @@ private:
     std::function<void()> export_pdf_callback_;
     std::function<void()> publish_callback_;
     std::function<void()> page_setup_callback_;
+    std::function<int(command::InsertTableSettings&)> insert_table_callback_;
+    /// The text or table cell nearest `world` within `pad` (what a double-click edits).
+    bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline);
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
     std::function<int(core::DimInspectCommand&)> dim_inspect_callback_;

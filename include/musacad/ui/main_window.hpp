@@ -38,6 +38,7 @@ class QPoint;
 
 namespace musacad::command {
 class CommandProcessor;
+struct InsertTableSettings;
 }
 
 namespace musacad::ui {
@@ -415,6 +416,7 @@ private:
     void export_pdf(); ///< EXPORTPDF: the sheet in front to a PDF file
     void publish();    ///< PUBLISH: the sheets chosen, one PDF page each
     void open_page_setup_manager(); ///< PAGESETUP
+    int open_insert_table_dialog(command::InsertTableSettings& io); ///< TABLE (1 OK, 0 cancelled)
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
     /// false (with a message) if there's nothing to plot.
     [[nodiscard]] bool prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax);

@@ -1231,17 +1231,23 @@ private:
     core::Vec2 base_{};
 };
 
+/// TABLE (TB) opens the Insert Table window where there is one, then asks `Specify
+/// insertion point:`; -TABLE, and TABLE without a window, ask everything on the command line.
 class TableCommand final : public ICommand {
 public:
-    std::string name() const override { return "TABLE"; }
+    explicit TableCommand(bool dialog = false) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "TABLE" : "-TABLE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style };
+    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace };
     void place_prompt(CommandContext& ctx);
+    bool dialog_;
+    bool title_ = true;
+    bool header_ = true;
     bool done_ = false;
     Mode mode_ = Mode::Cols;
     int rows_ = 1; ///< data rows; a title and a header row come with them
@@ -1250,6 +1256,23 @@ private:
     int row_lines_ = 1;
     std::uint16_t style_ = 0; ///< the table style: the current one unless Style chose another
     static constexpr double kLine = 9.0; ///< one line of the Standard table style's text, with its margins
+};
+
+/// TABLEEDIT: `Pick a table cell:` -- the cell's text editor, as a double-click opens it;
+/// without a window, `Enter new text:`.
+class TableEditCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLEEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool picked_ = false;
+    core::Vec2 at_{};
+    double radius_ = 0.0;
+    bool done_ = false;
 };
 
 /// TABLESTYLE (TS): the Table Style window where there is one -- the styles, Set Current,

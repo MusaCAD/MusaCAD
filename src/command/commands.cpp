@@ -11965,6 +11965,26 @@ void TableCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     mode_ = Mode::Cols;
     style_ = ctx.current_table_style();
+    if (dialog_ && ctx.view() != nullptr) {
+        InsertTableSettings io{style_, cols_, col_w_, rows_, row_lines_, title_, header_};
+        const int r = ctx.view()->insert_table_dialog(io);
+        if (r == 0) {
+            done_ = true; // cancelled
+            return;
+        }
+        if (r == 1) {
+            style_ = io.style;
+            cols_ = std::clamp(io.cols, 1, 500);
+            col_w_ = io.col_width > 1e-6 ? io.col_width : col_w_;
+            rows_ = std::clamp(io.rows, 1, 500);
+            row_lines_ = std::max(io.row_lines, 1);
+            title_ = io.title;
+            header_ = io.header;
+            mode_ = Mode::DialogPlace;
+            ctx.set_prompt("Specify insertion point: ");
+            return;
+        }
+    }
     ctx.echo("Current table style: " + table_style_name(ctx.table_styles(), style_) + "  Cell width: " + fmt4(col_w_) +
              "  Cell height: " + std::to_string(row_lines_) + " line(s)");
     ctx.set_prompt("Enter number of columns or [Auto] <" + std::to_string(cols_) + ">: ");
@@ -12042,25 +12062,27 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         }
         place_prompt(ctx);
         return;
+    case Mode::DialogPlace:
     case Mode::Place:
-        if (u == "W" || u == "WIDTH") {
+        if (mode_ == Mode::Place && (u == "W" || u == "WIDTH")) {
             mode_ = Mode::ColWidth;
             ctx.set_prompt("Specify column width <" + fmt4(col_w_) + ">: ");
             return;
         }
-        if (u == "H" || u == "HEIGHT") {
+        if (mode_ == Mode::Place && (u == "H" || u == "HEIGHT")) {
             mode_ = Mode::RowHeight;
             ctx.set_prompt("Specify row height in lines <" + std::to_string(row_lines_) + ">: ");
             return;
         }
-        if (u == "S" || u == "STYLE") {
+        if (mode_ == Mode::Place && (u == "S" || u == "STYLE")) {
             mode_ = Mode::Style;
             ctx.set_prompt("Enter a table style name or [?] <" + table_style_name(ctx.table_styles(), style_) + ">: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
-            // A title row and a header row above the data rows, as AutoCAD's Standard style.
-            const int rows = rows_ + 2;
+            // A title row and a header row above the data rows, as AutoCAD's Standard style
+            // (the Insert Table window can leave either out).
+            const int rows = rows_ + (title_ ? 1 : 0) + (header_ ? 1 : 0);
             const std::vector<core::TableStyle> styles = ctx.table_styles();
             // A line is Standard's (2.5 text) scaled to the style's data text height.
             const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
@@ -12070,8 +12092,8 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
             cmd.style = style_;
             cmd.col_widths.assign(static_cast<std::size_t>(cols_), col_w_);
             cmd.row_heights.assign(static_cast<std::size_t>(rows), line * row_lines_);
-            cmd.has_title = true;
-            cmd.has_header = true;
+            cmd.has_title = title_;
+            cmd.has_header = header_;
             const std::size_t n = static_cast<std::size_t>(rows) * cols_;
             cmd.cells.assign(n, core::TableCell{});
             cmd.texts.assign(n, std::string{});
@@ -12086,6 +12108,38 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void TableCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TableEditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Pick a table cell: ");
+}
+
+void TableEditCommand::input(CommandContext& ctx, const std::string& text) {
+    if (picked_) {
+        ctx.submit(core::EditTextContentCommand{at_, radius_, text, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        if (ctx.view() != nullptr && ctx.view()->edit_text_at(*p)) {
+            done_ = true; // the editor does the rest
+            return;
+        }
+        at_ = *p;
+        radius_ = ctx.pick_radius();
+        picked_ = true;
+        ctx.set_prompt("Enter new text: ");
+    }
+}
+
+void TableEditCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

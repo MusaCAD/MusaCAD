@@ -739,3 +739,20 @@ TEST_CASE("REVCLOUD Freehand: a drag draws the cloud, closed when it comes back 
     h.proc.submit_freehand(line);
     REQUIRE_FALSE(h.last<AddPolylineCommand>()->closed);
 }
+
+TEST_CASE("TABLEEDIT edits a cell's text; TABLE without a window asks on the command line") {
+    H h;
+    h.run({"TABLEEDIT"});
+    REQUIRE(h.out.prompt == "Pick a table cell: ");
+    h.run({"5,5"});
+    REQUIRE(h.out.prompt == "Enter new text: ");
+    h.run({"QTY 4"});
+    const EditTextContentCommand* e = h.last<EditTextContentCommand>();
+    REQUIRE(e != nullptr);
+    REQUIRE(e->at == Vec2{5, 5});
+    REQUIRE(e->content == "QTY 4");
+    h.run({"TABLE"});
+    REQUIRE(h.out.prompt == "Enter number of columns or [Auto] <5>: ");
+    h.run({"2", "1", "0,0"});
+    REQUIRE(h.last<AddTableCommand>()->rows == 3); // a title and a header row with the data row
+}

@@ -123,6 +123,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or a spline, its points the sketch increment apart.
 - **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
   point with Style, Width and Height; a title and a header row come with the data rows.
+- **The Insert Table window and TABLEEDIT** (#44) -- TABLE opens the window (the style,
+  columns, rows, and the title and header rows), then asks the insertion point; -TABLE keeps
+  the command line. TABLEEDIT opens a cell's editor as a double-click does.
 - **TABLESTYLE** (#44) -- the Table Style window: Set Current, New, Modify (text heights,
   cell margin, lineweight) and Delete; the current table style is kept with the drawing,
   TABLE uses it (its Style option takes any of them), and Annotate > Tables has the Table

@@ -271,6 +271,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         [this] { QTimer::singleShot(0, this, [this] { export_pdf(); }); },
         [this] { QTimer::singleShot(0, this, [this] { publish(); }); },
         [this] { open_page_setup_manager(); });
+    viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
@@ -2973,6 +2974,63 @@ void MainWindow::open_table_style_dialog() {
     refill();
     d.dlg->resize(420, 320);
     d.dlg->show();
+}
+
+int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
+    // AutoCAD's Insert Table window: the table style, the columns and rows, and the cell
+    // styles of the first two rows; the insertion point is asked for after it.
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("InsertTableDialog"));
+    dlg.setWindowTitle(QStringLiteral("Insert Table"));
+    auto* form = new QFormLayout(&dlg);
+    auto* style = new QComboBox(&dlg);
+    for (const core::TableStyle& st : viewport_->table_styles()) {
+        style->addItem(QString::fromStdString(st.name));
+    }
+    if (style->count() == 0) {
+        style->addItem(QStringLiteral("Standard"));
+    }
+    style->setCurrentIndex(std::min<int>(io.style, style->count() - 1));
+    form->addRow(QStringLiteral("Table style:"), style);
+    auto* cols = new QSpinBox(&dlg);
+    cols->setRange(1, 500);
+    cols->setValue(io.cols);
+    auto* col_w = new QDoubleSpinBox(&dlg);
+    col_w->setDecimals(4);
+    col_w->setRange(0.0001, 1e6);
+    col_w->setValue(io.col_width);
+    auto* rows = new QSpinBox(&dlg);
+    rows->setRange(1, 500);
+    rows->setValue(io.rows);
+    auto* row_h = new QSpinBox(&dlg);
+    row_h->setRange(1, 100);
+    row_h->setSuffix(QStringLiteral(" line(s)"));
+    row_h->setValue(io.row_lines);
+    form->addRow(QStringLiteral("Columns:"), cols);
+    form->addRow(QStringLiteral("Column width:"), col_w);
+    form->addRow(QStringLiteral("Data rows:"), rows);
+    form->addRow(QStringLiteral("Row height:"), row_h);
+    auto* title = new QCheckBox(QStringLiteral("First row: Title"), &dlg);
+    title->setChecked(io.title);
+    auto* header = new QCheckBox(QStringLiteral("Next row: Header"), &dlg);
+    header->setChecked(io.header);
+    form->addRow(title);
+    form->addRow(header);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    io.style = static_cast<std::uint16_t>(std::max(style->currentIndex(), 0));
+    io.cols = cols->value();
+    io.col_width = col_w->value();
+    io.rows = rows->value();
+    io.row_lines = row_h->value();
+    io.title = title->isChecked();
+    io.header = header->isChecked();
+    return 1;
 }
 
 void MainWindow::open_page_setup_manager() {
@@ -6516,7 +6574,7 @@ bool MainWindow::selftest_commands() {
     // (2) TABLE: place one, then edit a cell through the same route a double-click
     // takes, and confirm the text reaches the store.
     clear();
-    type("TABLE");
+    type("-TABLE"); // TABLE itself opens the Insert Table window
     type("2");      // rows
     type("2");      // columns
     type("40");     // column width

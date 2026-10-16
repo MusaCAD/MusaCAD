@@ -597,7 +597,11 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/stretch.svg",
         "Move the parts of objects inside a crossing window, keeping the rest anchored.");
 
-    reg({"TB", "TABLE", "-TABLE"}, [] { return std::make_unique<TableCommand>(); },
+    reg({"-TABLE"}, [] { return std::make_unique<TableCommand>(false); }, "assets/ribbon/table.svg",
+        "Insert a table, asking its columns, rows and place on the command line.");
+    reg({"TABLEEDIT"}, [] { return std::make_unique<TableEditCommand>(); }, "assets/ribbon/table.svg",
+        "Edit the text of a table cell.");
+    reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(true); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");
 
