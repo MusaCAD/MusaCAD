@@ -1560,6 +1560,7 @@ struct AddMLeaderCommand {
     DimOverrides overrides = {}; ///< per-leader arrow override (ByStyle unless set)
     DimStyle dim_style = {};      ///< resolved style snapshot for PR display only
     std::uint8_t leader_flags = 0; ///< MLeaderData::leader_flags
+    std::vector<Vec2> extra_tips = {}; ///< MLEADEREDIT's added leaders, by their arrowheads
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-
@@ -1899,6 +1900,15 @@ struct InsertLinkedTableCommand {
 /// DATALINKUPDATE: the linked tables read again from their files (`write`: the tables
 /// written back to them). Which tables: the selection (`selection`), those linked to
 /// `link`, or every linked table (neither).
+/// MLEADEREDIT: Begin takes the multileader under `pick`; Add gives it a leader with its
+/// arrowhead at `pick`; Remove takes away its leader under `pick`; End lets it go.
+struct MLeaderEditCommand {
+    enum class Op : std::uint8_t { Begin, Add, Remove, End };
+    Op op = Op::Begin;
+    Vec2 pick{};
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
 /// TABLEEXPORT: the cells of the table under `pick`, written to `path` as CSV.
 struct TableExportCommand {
     Vec2 pick;
@@ -2401,7 +2411,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

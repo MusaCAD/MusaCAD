@@ -530,8 +530,20 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     b.str_len = static_cast<std::uint32_t>(content.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot = mleaders_.insert(MLeaderData{
-        voff, static_cast<std::uint32_t>(vertices.size()), style, 0, b, props, overrides});
+        voff, static_cast<std::uint32_t>(vertices.size()), style, 0, 0, 0, b, props, overrides});
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
+}
+
+bool GeometryStore::set_mleader_extra(EntityHandle h, std::span<const Vec2> tips) {
+    MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+    if (m == nullptr) {
+        return false;
+    }
+    const std::size_t n = std::min<std::size_t>(tips.size(), 255);
+    m->extra_offset = static_cast<std::uint32_t>(polyline_pool_.size());
+    m->extra_count = static_cast<std::uint8_t>(n);
+    polyline_pool_.insert(polyline_pool_.end(), tips.begin(), tips.begin() + static_cast<std::ptrdiff_t>(n));
+    return true;
 }
 
 namespace {
@@ -953,6 +965,12 @@ std::string_view GeometryStore::string_of(const MTextBlock& b) const noexcept {
 }
 std::span<const Vec2> GeometryStore::vertices_of(const MLeaderData& m) const noexcept {
     return std::span<const Vec2>(polyline_pool_).subspan(m.vtx_offset, m.vtx_count);
+}
+std::span<const Vec2> GeometryStore::extra_tips_of(const MLeaderData& m) const noexcept {
+    if (m.extra_count == 0) {
+        return {};
+    }
+    return std::span<const Vec2>(polyline_pool_).subspan(m.extra_offset, m.extra_count);
 }
 std::string_view GeometryStore::string_of(const HatchData& h) const noexcept {
     return std::string_view(string_pool_.data() + h.str_offset, h.str_len);

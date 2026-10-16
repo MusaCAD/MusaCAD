@@ -355,10 +355,12 @@ Document document_from_store(const GeometryStore& store) {
         if (mld.alive(i)) {
             const MLeaderData& m = mld.data()[i];
             const auto v = store.vertices_of(m);
+            const auto tips = store.extra_tips_of(m);
             doc.mleaders.push_back(DocMLeader{std::vector<Vec2>(v.begin(), v.end()), m.style,
                                               m.text, std::string(store.string_of(m.text)), m.props,
                                               std::string(store.font_name(m.text.font)),
-                                              m.overrides, m.leader_flags});
+                                              m.overrides, m.leader_flags,
+                                              std::vector<Vec2>(tips.begin(), tips.end())});
         }
     }
     const auto& hatch_arena = store.hatches();
@@ -650,6 +652,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         const EntityHandle mh = store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
         if (m.leader_flags != 0) {
             store.set_mleader_flags(mh, m.leader_flags);
+        }
+        if (!m.extra_tips.empty()) {
+            store.set_mleader_extra(mh, m.extra_tips);
         }
     }
     for (const DocHatch& h : doc.hatches) {

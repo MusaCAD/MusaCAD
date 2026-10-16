@@ -390,6 +390,8 @@ private:
     /// ADDSELECTED: the current properties and layer before they were taken from an object.
     std::optional<std::pair<EntityProps, std::uint16_t>> props_saved_{};
     EntityHandle splinedit_{}; ///< SPLINEDIT's spline
+    EntityHandle mleaderedit_{}; ///< MLEADEREDIT's multileader
+    bool mleader_edit_changed_ = false; ///< the last MLEADEREDIT step changed it
     void apply_spline_edit(const SplineEditCommand& c);
     EntityHandle pv_handle_{};
     std::size_t pv_index_ = 0;
@@ -639,6 +641,7 @@ private:
     void apply_insert_linked_table(const InsertLinkedTableCommand& c);
     void apply_data_link_update(const DataLinkUpdateCommand& c);
     void apply_table_export(const TableExportCommand& c);
+    void apply_mleader_edit(const MLeaderEditCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);

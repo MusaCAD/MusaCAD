@@ -3862,3 +3862,53 @@ TEST_CASE("TABLEEXPORT writes a table's cells as CSV") {
     std::filesystem::remove(p);
     engine.stop();
 }
+
+TEST_CASE("MLEADEREDIT adds leaders to a multileader and takes them away") {
+    H h;
+    h.run({"MLEADEREDIT"});
+    REQUIRE(h.out.prompt == "Select a multileader: ");
+    h.run({"5,5"});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::Begin);
+    REQUIRE(h.out.prompt == "Specify leader arrowhead location or [Remove leaders]: ");
+    h.run({"0,20"});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::Add);
+    REQUIRE(h.last<MLeaderEditCommand>()->pick == Vec2{0, 20});
+    h.run({"R"});
+    REQUIRE(h.out.prompt == "Specify leaders to remove or [Add leaders]: ");
+    h.run({"2,2"});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::Remove);
+    h.run({""});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::End);
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    GeometryEngine engine;
+    engine.start();
+    AddMLeaderCommand ml;
+    ml.vertices = {{0, 0}, {10, 10}, {15, 10}};
+    ml.content = "NOTE";
+    ml.leader_flags = LeaderForm::kLanding;
+    ml.group = 1;
+    engine.submit(ml);
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Begin, {5, 5}, 0.5, 0});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Add, {0, 20}, 0.5, 2});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Add, {20, 0}, 0.5, 2});
+    io::Document d = dump(engine, "musacad_mleaderedit_1.mcad");
+    REQUIRE(d.mleaders.size() == 1);
+    REQUIRE(d.mleaders[0].extra_tips == std::vector<Vec2>{{0, 20}, {20, 0}});
+    REQUIRE(io::serialize_dxf(d).find("LEADER") != std::string::npos);
+    // Removed: an added one (on its way to the landing), then the first, whose place the
+    // remaining added one takes.
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Remove, {15, 5}, 0.5, 3});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Remove, {5, 5}, 0.5, 3});
+    d = dump(engine, "musacad_mleaderedit_2.mcad");
+    REQUIRE(d.mleaders[0].extra_tips.empty());
+    REQUIRE(d.mleaders[0].vertices == std::vector<Vec2>{{0, 20}, {10, 10}, {15, 10}});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Remove, {5, 15}, 0.5, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "A multileader keeps one leader."; }));
+    // Undo puts the leaders back (the last step changed nothing, so it left no undo step).
+    engine.submit(UndoLastGroupCommand{});
+    d = dump(engine, "musacad_mleaderedit_3.mcad");
+    REQUIRE(d.mleaders[0].extra_tips.size() == 2);
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::End, {}, 0.0, 0});
+    engine.stop();
+}

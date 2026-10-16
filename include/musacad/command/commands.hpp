@@ -1974,6 +1974,28 @@ private:
     static inline std::string s_rate_ = "100%";
 };
 
+/// MLEADEREDIT: `Select a multileader:`, then `Specify leader arrowhead location or [Remove
+/// leaders]:` for each leader to add, or `Specify leaders to remove or [Add leaders]:`; Enter
+/// ends it. AIMLEADEREDITADD and AIMLEADEREDITREMOVE (the Leaders panel's Add Leader and
+/// Remove Leader) start adding or removing.
+class MLeaderEditUiCommand final : public ICommand {
+public:
+    explicit MLeaderEditUiCommand(bool remove = false, std::string name = "MLEADEREDIT")
+        : remove_(remove), name_(std::move(name)) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select a multileader: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    void prompt(CommandContext& ctx);
+    bool remove_;
+    std::string name_;
+    bool picked_ = false;
+    bool done_ = false;
+};
+
 /// SPLINEDIT (SPE): `Select spline:`, then `Enter an option [Close/Join/Fit data/Edit vertex/
 /// convert to Polyline/Reverse/Undo/eXit] <eXit>:` -- Edit vertex (`[Add/Delete/Elevate
 /// order/Move/Weight/eXit]`: Add, Delete and Move the control points), convert to Polyline

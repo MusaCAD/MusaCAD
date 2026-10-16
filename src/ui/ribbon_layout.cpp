@@ -910,6 +910,9 @@ void MainWindow::build_ribbon() {
         });
         col->layout()->addWidget(mleader_style_combo_);
         small(leaders, col, QStringLiteral("Align"), "MLEADERALIGN", "leader");
+        QWidget* edit = leaders->add_column(); // MLEADEREDIT's two halves, as AutoCAD's panel has them
+        small(leaders, edit, QStringLiteral("Add Leader"), "AIMLEADEREDITADD", "leader");
+        small(leaders, edit, QStringLiteral("Remove Leader"), "AIMLEADEREDITREMOVE", "leader");
     }
     leaders->set_dialog_launcher(QStringLiteral("Multileader Style"), [this] { open_mleader_style_dialog(); });
     RibbonPanel* tables = ribbon_->add_panel(annotate, QStringLiteral("Tables"), 30);

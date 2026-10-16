@@ -719,6 +719,12 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",
         "Create a dimension suited to the selected object.");
+    reg({"MLEADEREDIT", "MLE"}, [] { return std::make_unique<MLeaderEditUiCommand>(); }, "assets/ribbon/leader.svg",
+        "Add leaders to a multileader, or take leaders away from it.");
+    reg({"AIMLEADEREDITADD"}, [] { return std::make_unique<MLeaderEditUiCommand>(false, "AIMLEADEREDITADD"); },
+        "assets/ribbon/leader.svg", "Add Leader: another leader for a multileader, to its landing.");
+    reg({"AIMLEADEREDITREMOVE"}, [] { return std::make_unique<MLeaderEditUiCommand>(true, "AIMLEADEREDITREMOVE"); },
+        "assets/ribbon/leader.svg", "Remove Leader: take a leader away from a multileader.");
     reg({"MLEADERALIGN", "MLA"}, [] { return std::make_unique<MLeaderAlignUiCommand>(); }, "",
         "Line up the text of the selected multileaders along a direction.");
     reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",

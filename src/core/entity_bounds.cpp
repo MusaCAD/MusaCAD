@@ -217,6 +217,10 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
             out_min = {std::min(out_min.x, v.x), std::min(out_min.y, v.y)};
             out_max = {std::max(out_max.x, v.x), std::max(out_max.y, v.y)};
         }
+        for (const Vec2& v : store.extra_tips_of(*m)) {
+            out_min = {std::min(out_min.x, v.x), std::min(out_min.y, v.y)};
+            out_max = {std::max(out_max.x, v.x), std::max(out_max.y, v.y)};
+        }
         return true;
     }
     case EntityKind::Insert: {

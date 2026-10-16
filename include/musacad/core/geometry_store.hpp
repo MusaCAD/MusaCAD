@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <cstdlib>
@@ -242,10 +243,27 @@ struct MLeaderData {
     std::uint32_t vtx_count = 0;  ///< number of leader vertices (>= 1)
     std::uint16_t style = 0;      ///< dimstyle (arrow type/size + colours)
     std::uint8_t leader_flags = 0; ///< the leader's form, LeaderForm bits
+    /// MLEADEREDIT's added leaders: their arrowhead points (`extra_count` of them in the
+    /// polyline pool from `extra_offset`), each leader straight from there to where the
+    /// leader meets its landing (mleader_attach). In the padding before `text`.
+    std::uint8_t extra_count = 0;
+    std::uint32_t extra_offset = 0;
     MTextBlock text;              ///< the attached label (computed layout)
     EntityProps props{};
     DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
 };
+
+/// Where a multileader's added leaders meet it: the start of its landing (its last segment,
+/// marked so or level), else its last point.
+[[nodiscard]] inline Vec2 mleader_attach(std::span<const Vec2> v, std::uint8_t flags) noexcept {
+    if (v.empty()) {
+        return {};
+    }
+    const std::size_t n = v.size();
+    const bool landing = n >= 2 && ((flags & LeaderForm::kLanding) != 0 ||
+                                    (n >= 3 && std::abs(v[n - 1].y - v[n - 2].y) < 1e-9));
+    return landing ? v[n - 2] : v[n - 1];
+}
 
 /// A HATCH: a filled/patterned region bounded by one or more CLOSED loops (the first
 /// loop is the outer boundary; the rest are islands/holes). Loop vertices live in the
@@ -561,6 +579,8 @@ public:
     bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
     bool set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept;
     bool set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept;
+    /// MLEADEREDIT: the multileader's added leaders, by their arrowhead points (at most 255).
+    bool set_mleader_extra(EntityHandle h, std::span<const Vec2> tips);
     bool set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
@@ -822,6 +842,8 @@ public:
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
     /// Leader-polyline vertices of an MLeader.
     [[nodiscard]] std::span<const Vec2> vertices_of(const MLeaderData& m) const noexcept;
+    /// The arrowhead points of a multileader's added leaders (MLEADEREDIT).
+    [[nodiscard]] std::span<const Vec2> extra_tips_of(const MLeaderData& m) const noexcept;
     /// A hatch's pattern name (in the string pool; "SOLID" = filled).
     [[nodiscard]] std::string_view string_of(const HatchData& h) const noexcept;
     [[nodiscard]] std::string_view string_of(const FcfCell& c) const noexcept;

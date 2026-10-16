@@ -9,6 +9,7 @@
 #include "musacad/core/spline_eval.hpp"
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/geometry_store.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1063,6 +1064,20 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                 code_d(s, 10, v.x);
                 code_d(s, 20, v.y);
                 code_d(s, 30, 0.0);
+            }
+            // The leaders MLEADEREDIT added: each a LEADER of its own, to the landing.
+            const Vec2 attach = mleader_attach(m.vertices, m.leader_flags);
+            for (const Vec2& tip : m.extra_tips) {
+                code(s, 0, "LEADER");
+                emit_props(s, doc, m.props);
+                code_i(s, 71, (m.leader_flags & 4u) != 0 ? 0 : 1);
+                code_i(s, 72, 0);
+                code_i(s, 76, 2);
+                for (const Vec2& v : {tip, attach}) {
+                    code_d(s, 10, v.x);
+                    code_d(s, 20, v.y);
+                    code_d(s, 30, 0.0);
+                }
             }
         }
         if (m.block.str_len != 0 || !m.content.empty()) {

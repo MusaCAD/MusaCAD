@@ -8718,6 +8718,49 @@ void AttFileCommand::ask_file(CommandContext& ctx) {
     ctx.set_prompt("Enter file name: ");
 }
 
+void MLeaderEditUiCommand::prompt(CommandContext& ctx) {
+    ctx.set_prompt(remove_ ? "Specify leaders to remove or [Add leaders]: "
+                           : "Specify leader arrowhead location or [Remove leaders]: ");
+}
+
+void MLeaderEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string up = upper(trimmed(text));
+    if (!picked_) {
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::Begin, *p, ctx.pick_radius(), 0});
+            picked_ = true;
+            prompt(ctx);
+        }
+        return;
+    }
+    if (up.empty()) {
+        ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::End, {}, 0.0, 0});
+        done_ = true;
+        return;
+    }
+    if (!remove_ && (up == "R" || up == "REMOVE" || up == "REMOVE LEADERS")) {
+        remove_ = true;
+        prompt(ctx);
+        return;
+    }
+    if (remove_ && (up == "A" || up == "ADD" || up == "ADD LEADERS")) {
+        remove_ = false;
+        prompt(ctx);
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        using Op = core::MLeaderEditCommand::Op;
+        ctx.submit(core::MLeaderEditCommand{remove_ ? Op::Remove : Op::Add, *p, ctx.pick_radius(), ctx.group_id()});
+        prompt(ctx);
+    }
+}
+
+void MLeaderEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::End, {}, 0.0, 0});
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void TableExportUiCommand::input(CommandContext& ctx, const std::string& text) {
     if (!pick_) {
         const auto p = read_point(ctx, text);

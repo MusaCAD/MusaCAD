@@ -148,7 +148,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                  std::string(store.font_name(m->text.font)),
                                  m->overrides,
                                  mst != nullptr ? *mst : DimStyle{},
-                                 m->leader_flags};
+                                 m->leader_flags,
+                                 std::vector<Vec2>(store.extra_tips_of(*m).begin(), store.extra_tips_of(*m).end())};
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
@@ -369,6 +370,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                            c.overrides);
                 if (c.leader_flags != 0) {
                     store.set_mleader_flags(handle, c.leader_flags);
+                }
+                if (!c.extra_tips.empty()) {
+                    store.set_mleader_extra(handle, c.extra_tips);
                 }
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
@@ -613,6 +617,10 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
             push(out, v[i], i == 0 ? GripKind::Endpoint : GripKind::Vertex, i);
         }
         push(out, m->text.pos, GripKind::Move, static_cast<std::uint32_t>(v.size())); // text
+        std::uint32_t k = static_cast<std::uint32_t>(v.size()) + 1; // the added leaders' arrowheads
+        for (const Vec2& tip : store.extra_tips_of(*m)) {
+            push(out, tip, GripKind::Endpoint, k++);
+        }
         break;
     }
     case EntityKind::Insert: {
@@ -1057,6 +1065,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     if (grip_index == n - 1) {
                         x.block.pos = x.block.pos + d; // landing drags the label with it
                     }
+                } else if (grip_index > n && grip_index - n - 1 < x.extra_tips.size()) {
+                    x.extra_tips[grip_index - n - 1] = newpos; // an added leader's arrowhead
                 } else {
                     x.block.pos = newpos; // text grip
                 }

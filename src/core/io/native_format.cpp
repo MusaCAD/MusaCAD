@@ -1003,6 +1003,15 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, m.leader_flags);
             s += '\n';
         }
+        if (!m.extra_tips.empty()) {
+            s += "MLEADERTIPS "; // v40: MLEADEREDIT's added leaders, by their arrowheads
+            append_uint(s, m.extra_tips.size());
+            for (const Vec2& v : m.extra_tips) {
+                s += ' ';
+                append_vec(s, v);
+            }
+            s += '\n';
+        }
     }
     // v14: HATCH. One line: loop count, then each loop (vertex count + x y pairs), then
     // scale, angle(radians), origin, props. The pattern name is on the next line.
@@ -2488,6 +2497,16 @@ IoResult parse_native(std::string_view text, Document& out) {
             } else {
                 doc.dims.back().overrides.text_move = static_cast<std::uint8_t>(v);
                 doc.dims.back().overrides.set(DimOverrides::kTextMove, true);
+            }
+        } else if (key == "MLEADERTIPS") {
+            std::uint64_t n = 0;
+            vals.clear();
+            if (doc.mleaders.empty() || tok.size() < 2 || !to_uint(tok[1], n) || n > 255 || tok.size() != 2 + n * 2 ||
+                !parse_doubles(tok, 2, n * 2, vals)) {
+                return fail("malformed MLEADERTIPS");
+            }
+            for (std::uint64_t i = 0; i < n; ++i) {
+                doc.mleaders.back().extra_tips.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
         } else if (key == "MLEADERFORM") {
             std::uint64_t v = 0;

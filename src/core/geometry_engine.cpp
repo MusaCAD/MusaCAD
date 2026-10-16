@@ -1372,6 +1372,9 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
                 for (Vec2& v : x.vertices) {
                     pull(v);
                 }
+                for (Vec2& v : x.extra_tips) {
+                    pull(v);
+                }
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 for (std::vector<Vec2>& loop : x.loops) {
                     for (Vec2& v : loop) {
@@ -1437,6 +1440,9 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.block.pos += d;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 for (Vec2& v : x.vertices) {
+                    v += d;
+                }
+                for (Vec2& v : x.extra_tips) {
                     v += d;
                 }
                 x.block.pos += d; // the owned label moves with the leader
@@ -1599,6 +1605,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                 for (Vec2& v : x.vertices) {
                     v = refl(v);
                 }
+                for (Vec2& v : x.extra_tips) {
+                    v = refl(v);
+                }
                 x.block.pos = refl(x.block.pos);
                 x.block.rotation = mirrored_mtext_rotation(x.block.rotation, axis, mirrtext, x.block.attach);
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
@@ -1702,6 +1711,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.block.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 for (Vec2& v : x.vertices) {
+                    v = rot(v);
+                }
+                for (Vec2& v : x.extra_tips) {
                     v = rot(v);
                 }
                 x.block.pos = rot(x.block.pos);
@@ -1853,6 +1865,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.block.width *= f;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 for (Vec2& v : x.vertices) {
+                    v = scl(v);
+                }
+                for (Vec2& v : x.extra_tips) {
                     v = scl(v);
                 }
                 x.block.pos = scl(x.block.pos);
@@ -7206,6 +7221,15 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                 lines_from_pairs(al, m->props);
                 solids_from_tris(af, m->props);
             }
+            const Vec2 attach = mleader_attach(v, m->leader_flags);
+            for (const Vec2& tip : store_.extra_tips_of(*m)) { // MLEADEREDIT's added leaders
+                line(tip, attach, m->props);
+                std::vector<Vec2> af;
+                std::vector<Vec2> al;
+                append_arrowhead(af, al, tip, attach - tip, s.arrow_size, static_cast<ArrowType>(s.arrow_type));
+                lines_from_pairs(al, m->props);
+                solids_from_tris(af, m->props);
+            }
             AddMTextCommand mc;
             mc.block = m->text;
             mc.content = std::string(store_.string_of(m->text));
@@ -9764,6 +9788,93 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
     dirty_ = true;
     report("Table from data link \"" + link.name + "\": " + std::to_string(t.rows) + " rows, " +
            std::to_string(t.cols) + " columns.");
+}
+
+void GeometryEngine::apply_mleader_edit(const MLeaderEditCommand& c) {
+    using Op = MLeaderEditCommand::Op;
+    mleader_edit_changed_ = false;
+    if (c.op == Op::Begin) {
+        const EntityHandle h = pick_nearest(c.pick, c.radius);
+        mleaderedit_ = h.kind == EntityKind::MLeader ? h : EntityHandle::null();
+        if (mleaderedit_.is_null()) {
+            report("Select a multileader.");
+        }
+        return;
+    }
+    if (c.op == Op::End || !store_.is_valid(mleaderedit_)) {
+        mleaderedit_ = EntityHandle::null();
+        return;
+    }
+    const Command original = capture_entity(mleaderedit_);
+    Command made = original;
+    auto& m = std::get<AddMLeaderCommand>(made);
+    if (m.vertices.empty()) {
+        return;
+    }
+    if (c.op == Op::Add) {
+        if (m.extra_tips.size() >= 255) {
+            report("A multileader takes no more leaders.");
+            return;
+        }
+        m.extra_tips.push_back(c.pick);
+    } else {
+        // The leader nearest the pick: the first one (its path up to the landing) or one added.
+        const Vec2 attach = mleader_attach(m.vertices, m.leader_flags);
+        const auto seg_dist = [](Vec2 a, Vec2 b, Vec2 p) {
+            const Vec2 d = b - a;
+            const double l2 = length_squared(d);
+            const double t = l2 > 0.0 ? std::clamp(dot(p - a, d) / l2, 0.0, 1.0) : 0.0;
+            return distance(a + d * t, p);
+        };
+        double best = c.radius;
+        std::optional<std::size_t> which; // index into extra_tips; nullopt with `first` = the first leader
+        bool first = false;
+        for (std::size_t i = 1; i < m.vertices.size(); ++i) {
+            if (m.vertices[i - 1] == attach) {
+                break; // the landing is no leader
+            }
+            const double d = seg_dist(m.vertices[i - 1], m.vertices[i], c.pick);
+            if (d <= best) {
+                best = d;
+                first = true;
+            }
+        }
+        for (std::size_t k = 0; k < m.extra_tips.size(); ++k) {
+            const double d = seg_dist(m.extra_tips[k], attach, c.pick);
+            if (d <= best) {
+                best = d;
+                which = k;
+                first = false;
+            }
+        }
+        if (!first && !which) {
+            report("No leader of the multileader there.");
+            return;
+        }
+        if (first) {
+            if (m.extra_tips.empty()) {
+                report("A multileader keeps one leader.");
+                return;
+            }
+            // The first added leader takes the first one's place, on to the landing.
+            std::vector<Vec2> path{m.extra_tips.front()};
+            const auto at = std::find(m.vertices.begin(), m.vertices.end(), attach);
+            path.insert(path.end(), at, m.vertices.end());
+            m.vertices = std::move(path);
+            m.extra_tips.erase(m.extra_tips.begin());
+        } else {
+            m.extra_tips.erase(m.extra_tips.begin() + static_cast<std::ptrdiff_t>(*which));
+        }
+    }
+    remove_indexed(mleaderedit_);
+    push_erase_item(c.group, mleaderedit_, original);
+    const EntityHandle nh = create_indexed(made);
+    push_create_item(c.group, nh, made);
+    mleaderedit_ = nh;
+    mleader_edit_changed_ = true;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
 }
 
 void GeometryEngine::apply_table_export(const TableExportCommand& c) {
@@ -18510,6 +18621,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, TableExportCommand>) {
                 apply_table_export(c);
             }
+            if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
+                apply_mleader_edit(c);
+            }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),
                                   c.on);
@@ -18648,6 +18762,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
                 edit = false; // a question
+            }
+            if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
+                edit = mleader_edit_changed_; // a pick that found no leader changes nothing
             }
             if constexpr (std::is_same_v<T, DimAssocCommand>) {
                 edit = false; // a setting, or marks the drawing changed itself

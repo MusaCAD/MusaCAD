@@ -756,6 +756,21 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             add_fills(arrow_c, afill);
             add_lines(arrow_c, r.lineweight, aline);
         }
+        // MLEADEREDIT's added leaders: straight from each arrowhead to the landing.
+        const Vec2 attach = mleader_attach(v, m->leader_flags);
+        for (const Vec2& tip : store.extra_tips_of(*m)) {
+            if (!line || distance(tip, attach) < 1e-12) {
+                continue;
+            }
+            add_line(r.color, r.lineweight, tip, attach);
+            if ((m->leader_flags & LeaderForm::kNoArrow) == 0) {
+                afill.clear();
+                aline.clear();
+                append_arrowhead(afill, aline, tip, attach - tip, s.arrow_size, static_cast<ArrowType>(s.arrow_type));
+                add_fills(arrow_c, afill);
+                add_lines(arrow_c, r.lineweight, aline);
+            }
+        }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
         add_lines(text_c, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);

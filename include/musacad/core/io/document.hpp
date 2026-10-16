@@ -232,6 +232,7 @@ struct DocMLeader {
     std::string font{}; ///< font name ("" = stroke "Standard"); maps to block.font index
     DimOverrides overrides{}; ///< per-leader arrow override (v13+; no overrides => ByStyle)
     std::uint8_t leader_flags = 0; ///< v40: MLeaderData::leader_flags
+    std::vector<Vec2> extra_tips{}; ///< v40: MLEADEREDIT's added leaders, by their arrowheads
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 
