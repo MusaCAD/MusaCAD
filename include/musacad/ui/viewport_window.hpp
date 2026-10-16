@@ -66,6 +66,7 @@ public:
     bool viewport_size(int& w, int& h) const override;
     /// The drawing's saved views, from the last consumed snapshot (GUI thread).
     std::vector<core::NamedView> named_views();
+    std::vector<std::string> custom_patterns(); ///< the drawing's own hatch patterns
     std::vector<std::string> layer_state_names();
     core::DrawingUnits units();
     /// PDMODE / PDSIZE and LIMITS from the last snapshot, for the commands that show them.
@@ -1002,6 +1003,7 @@ private:
     core::Vec2 pending_view_center_{};
     double pending_view_scale_ = 1.0;
     std::vector<core::NamedView> named_views_; ///< under layers_mutex_
+    std::vector<std::string> custom_patterns_; ///< under layers_mutex_
     std::vector<std::string> layer_state_names_; ///< under layers_mutex_
     core::DrawingUnits units_{};                ///< under layers_mutex_
     std::uint8_t pdmode_ = 0;                   ///< under layers_mutex_

@@ -520,6 +520,10 @@ public:
     [[nodiscard]] virtual ViewControl* view() = 0;
     /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.
     [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }
+    /// The drawing's own hatch patterns (from a DXF, or a .pat file), by name.
+    [[nodiscard]] virtual std::vector<std::string> custom_patterns() const { return {}; }
+    /// Where .pat files are looked for (AutoCAD's support file search path).
+    [[nodiscard]] virtual std::vector<std::string> support_paths() const { return {}; }
     /// The drawing's display units (UNITS), as last published by the engine.
     [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }
     /// The last line or arc drawn (LINE, ARC and PLINE record it): Continue's start.

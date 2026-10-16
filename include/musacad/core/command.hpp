@@ -22,6 +22,7 @@
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 
 namespace musacad::core {
 
@@ -1104,6 +1105,12 @@ struct ArrayPathCommand {
     std::uint64_t group = 0;
     /// Measure's spacing one and a half times the selection's width (ARRAYPATH's default).
     bool auto_spacing = false;
+};
+
+/// A hatch pattern found in a .pat file, brought into the drawing so its hatches draw with
+/// it and keep it (as AutoCAD keeps the pattern with the hatch).
+struct AddPatternCommand {
+    hatch::Pattern pattern;
 };
 
 /// The array being set up, drawn at once and again at each change (ARRAYRECT, ARRAYPOLAR,
@@ -2328,7 +2335,8 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, SetCurrentPropsCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand,
+                 SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

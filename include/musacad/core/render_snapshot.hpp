@@ -236,6 +236,7 @@ struct RenderSnapshot {
     std::uint16_t current_dimstyle = 0; // DIMSTYLE's current style
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
+    std::vector<std::string> custom_patterns; // the drawing's own hatch pattern names
     std::vector<std::string> layer_state_names; // LAYERSTATE (for the Layer States Manager)
     std::vector<TiledViewport> vports;  // VPORTS: the model window's tiles (fewer than two = one)
     int vports_active = 0;

@@ -2987,3 +2987,42 @@ TEST_CASE("-LAYERSTATE's Import and EXport name the file") {
     REQUIRE(h.last<LayerStateCommand>()->op == LayerStateCommand::Op::Import);
     REQUIRE(h.last<LayerStateCommand>()->to == "/tmp/x.las");
 }
+
+TEST_CASE("HATCH finds a pattern it does not have in a .pat file on the support path and brings it in") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "musacad_pat_support";
+    fs::create_directories(dir);
+    {
+        std::ofstream f(dir / "mine.PAT", std::ios::binary);
+        f << "*MYDIAG, my diagonal lines\r\n45, 0,0, 0,3.175\r\n*MYGRID, a grid\r\n0, 0,0, 0,5\r\n90, 0,0, 0,5\r\n";
+    }
+    H h;
+    h.proc.set_support_paths({dir.string()});
+    h.run({"-HATCH", "P", "?"});
+    REQUIRE(h.out.lines.back().find(" MYDIAG") != std::string::npos);
+    REQUIRE(h.out.lines.back().find(" MYGRID") != std::string::npos);
+    h.run({"mygrid"});
+    const auto* ap = h.last<AddPatternCommand>();
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->pattern.name == "MYGRID");
+    REQUIRE(ap->pattern.lines.size() == 2);
+    REQUIRE(h.out.prompt.rfind("Specify a scale for the pattern <", 0) == 0);
+    h.proc.cancel();
+    h.run({"-HATCH", "P", "NOSUCH"});
+    REQUIRE(h.out.lines.back() == "Unknown pattern \"NOSUCH\"; ? lists them.");
+    h.proc.cancel();
+    fs::remove_all(dir);
+
+    // The engine keeps it with the drawing.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPatternCommand{ap->pattern});
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {20, 0}, {20, 20}, {0, 20}}};
+    fill.pattern_name = "MYGRID";
+    fill.group = 1;
+    engine.submit(fill);
+    const io::Document doc = dump(engine, "musacad_pat_support.musa");
+    REQUIRE(std::any_of(doc.patterns.begin(), doc.patterns.end(), [](const auto& p) { return p.name == "MYGRID"; }));
+    engine.stop();
+}

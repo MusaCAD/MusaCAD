@@ -15182,6 +15182,12 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimGripMenuCommand>) {
                 apply_dim_grip_menu(c);
             }
+            if constexpr (std::is_same_v<T, AddPatternCommand>) {
+                if (!c.pattern.name.empty() && !c.pattern.lines.empty()) {
+                    store_.add_custom_pattern(c.pattern);
+                    geom_dirty_ = true; // hatches already named so draw with it now
+                }
+            }
             if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
                 current_props_ = c.current;
                 current_props_.layer = 0; // the current layer applies at creation
@@ -17945,6 +17951,10 @@ void GeometryEngine::rebuild_and_publish() {
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
+    buf.custom_patterns.clear();            // the drawing's own hatch patterns (HATCH's ?)
+    for (const hatch::Pattern& p : store_.custom_patterns()) {
+        buf.custom_patterns.push_back(p.name);
+    }
     buf.layer_state_names.clear();
     for (const LayerState& st : store_.layer_states()) {
         buf.layer_state_names.push_back(st.name);

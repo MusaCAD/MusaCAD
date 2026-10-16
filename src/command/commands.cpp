@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <optional>
 #include <string>
@@ -49,6 +50,67 @@ std::string trimmed(const std::string& s) {
         --b;
     }
     return s.substr(a, b - a);
+}
+
+/// The patterns of the .pat files on the support paths, read now (the folder's files may
+/// change between commands).
+std::vector<core::hatch::Pattern> support_patterns(const CommandContext& ctx) {
+    std::vector<core::hatch::Pattern> out;
+    for (const std::string& dir : ctx.support_paths()) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (ext != ".pat" || !entry.is_regular_file(ec)) {
+                continue;
+            }
+            std::ifstream f(entry.path(), std::ios::binary);
+            std::ostringstream text;
+            text << f.rdbuf();
+            for (core::hatch::Pattern& p : core::hatch::parse_pat(text.str())) {
+                out.push_back(std::move(p));
+            }
+        }
+    }
+    return out;
+}
+
+/// A hatch pattern by name: SOLID, built in, the drawing's own, or one in a .pat file on the
+/// support paths -- which is then brought into the drawing, as AutoCAD keeps a pattern with
+/// its hatch. False when there is none of that name.
+bool find_hatch_pattern(CommandContext& ctx, const std::string& name) {
+    if (name == "SOLID" || core::hatch::builtin_pattern(name) != nullptr) {
+        return true;
+    }
+    for (const std::string& n : ctx.custom_patterns()) {
+        if (upper(n) == name) {
+            return true;
+        }
+    }
+    for (core::hatch::Pattern& p : support_patterns(ctx)) {
+        if (upper(p.name) == name && !p.lines.empty()) {
+            p.name = name;
+            ctx.submit(core::AddPatternCommand{std::move(p)});
+            return true;
+        }
+    }
+    return false;
+}
+
+/// HATCH's `?`: every pattern there is to name.
+std::string hatch_pattern_list(const CommandContext& ctx) {
+    std::string line = "Patterns: SOLID";
+    for (const std::string& n : core::hatch::builtin_pattern_names()) {
+        line += " " + n;
+    }
+    for (const std::string& n : ctx.custom_patterns()) {
+        line += " " + upper(n);
+    }
+    for (const core::hatch::Pattern& p : support_patterns(ctx)) {
+        line += " " + upper(p.name);
+    }
+    return line;
 }
 
 /// Parses a point, echoing the interpretation on success or the error on
@@ -2799,11 +2861,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case Mode::Pattern: {
         if (t == "?") {
-            std::string line = "Patterns: SOLID";
-            for (const std::string& n : core::hatch::builtin_pattern_names()) {
-                line += " " + n;
-            }
-            ctx.echo(line);
+            ctx.echo(hatch_pattern_list(ctx));
             return;
         }
         if (up == "U" || up == "USER DEFINED" || up == "USER") {
@@ -2824,7 +2882,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (!t.empty()) {
-            if (core::hatch::builtin_pattern(up) == nullptr) {
+            if (!find_hatch_pattern(ctx, up)) {
                 ctx.echo("Unknown pattern \"" + t + "\"; ? lists them.");
                 return;
             }
@@ -19343,11 +19401,7 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case Step::Pattern: {
         if (t == "?") {
-            std::string line = "Patterns: SOLID";
-            for (const std::string& n : core::hatch::builtin_pattern_names()) {
-                line += " " + n;
-            }
-            ctx.echo(line);
+            ctx.echo(hatch_pattern_list(ctx));
             return;
         }
         if (u == "U" || u == "USER DEFINED") {
@@ -19357,7 +19411,7 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (!t.empty()) {
             const std::string name = (u == "S" || u == "SOLID") ? std::string("SOLID") : u;
-            if (name != "SOLID" && core::hatch::builtin_pattern(name) == nullptr) {
+            if (!find_hatch_pattern(ctx, name)) {
                 ctx.echo("Unknown pattern \"" + t + "\"; ? lists them.");
                 return;
             }

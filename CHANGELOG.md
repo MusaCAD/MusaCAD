@@ -148,6 +148,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   ROTate items, Method, Align items and Base point, the preview following, until eXit. Numbers
   can be Expressions. **-ARRAY** asks AutoCAD's classic prompts: rows (---) and columns (|||),
   the distance between rows or a unit cell, and polar's items, angle to fill or angle between.
+- **Hatch patterns from .pat files** (#41) -- a pattern name HATCH, -HATCH or HATCHEDIT does not
+  know is looked for in the .pat files of the drawing's folder and of the support folder in
+  Musa CAD's settings, and brought into the drawing (as AutoCAD keeps a pattern with its
+  hatches); `?` lists them too.
 - **Associative hatches** (#41) -- a hatch follows its boundary: MOVE, ROTATE, SCALE, MIRROR
   (erasing the source), grip edits, TRIM, EXTEND and the like of the objects around it take
   the hatch along, or its edge with the part that changed, in the same undo step. **HPASSOC** (1, the default; 0, the

@@ -472,6 +472,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_selection_kinds(viewport_->selection_kinds());
         processor_->set_selection_size(viewport_->selection_size());
         processor_->set_named_views(viewport_->named_views());
+        processor_->set_custom_patterns(viewport_->custom_patterns());
+        {
+            // Where HATCH looks for .pat files: the drawing's folder, then the support folder of
+            // Musa CAD's settings (AutoCAD's support file search path).
+            std::vector<std::string> paths;
+            const QString doc = active_doc_path();
+            if (!doc.isEmpty()) {
+                paths.push_back(QFileInfo(doc).absolutePath().toStdString());
+            }
+            paths.push_back((QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
+                             QStringLiteral("/support"))
+                                .toStdString());
+            processor_->set_support_paths(std::move(paths));
+        }
         processor_->set_units(viewport_->units());
         {
             const auto [mode, size] = viewport_->point_display();

@@ -267,6 +267,8 @@ public:
     /// smart DIM preview). nullopt means the cursor is over empty space.
     void set_hovered_kind(std::optional<core::EntityKind> kind);
     void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
+    void set_custom_patterns(std::vector<std::string> v) { custom_patterns_ = std::move(v); }
+    void set_support_paths(std::vector<std::string> v) { support_paths_ = std::move(v); }
     void set_units(const core::DrawingUnits& u) { units_ = u; }
     void set_text_styles(std::vector<core::TextStyle> v, std::uint16_t current) {
         text_styles_ = std::move(v);
@@ -339,6 +341,8 @@ public:
     }
     [[nodiscard]] core::DrawingUnits units() const override { return units_; }
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
+    [[nodiscard]] std::vector<std::string> custom_patterns() const override { return custom_patterns_; }
+    [[nodiscard]] std::vector<std::string> support_paths() const override { return support_paths_; }
 
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
     /// A press-and-drag on empty canvas draws a freehand path for the running command.
@@ -466,6 +470,8 @@ private:
     CommandSink sink_;
     ViewControl* view_;
     std::vector<core::NamedView> named_views_;
+    std::vector<std::string> custom_patterns_;
+    std::vector<std::string> support_paths_;
     core::DrawingUnits units_{};
     std::vector<core::TextStyle> text_styles_;
     std::uint16_t current_text_style_ = 0;

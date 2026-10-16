@@ -178,6 +178,11 @@ std::vector<core::NamedView> ViewportWindow::named_views() {
     return named_views_;
 }
 
+std::vector<std::string> ViewportWindow::custom_patterns() {
+    std::scoped_lock lock(layers_mutex_);
+    return custom_patterns_;
+}
+
 std::vector<std::string> ViewportWindow::layer_state_names() {
     std::scoped_lock lock(layers_mutex_);
     return layer_state_names_;
@@ -1661,6 +1666,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             layers_ = snap.layers;
             current_props_ = snap.current_props;
             named_views_ = snap.named_views;
+            custom_patterns_ = snap.custom_patterns;
             layer_state_names_ = snap.layer_state_names;
             units_ = snap.units;
             pdmode_ = snap.pdmode;
