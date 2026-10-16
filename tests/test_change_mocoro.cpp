@@ -3212,3 +3212,54 @@ TEST_CASE("The Text tab's Horizontal placement: beside or over an extension line
     REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
     REQUIRE(again.dimstyles.back().text_just == 3);
 }
+
+TEST_CASE("BLOCKREPLACE makes every reference of one block a reference of another, values kept by tag") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef a;
+    a.name = "OLD";
+    a.lines.push_back(io::DocLine{{0, 0}, {5, 0}, {}});
+    io::DocAttDef tag_a;
+    tag_a.text.content = "NUM";
+    tag_a.def = "0";
+    a.attdefs = {tag_a};
+    io::DocBlockDef b;
+    b.name = "NEW";
+    b.circles.push_back(io::DocCircle{{0, 0}, 2.0, {}});
+    io::DocAttDef note;
+    note.text.content = "NOTE";
+    note.def = "n/a";
+    io::DocAttDef tag_b;
+    tag_b.text.content = "NUM";
+    tag_b.def = "0";
+    b.attdefs = {note, tag_b};
+    doc.block_defs = {a, b};
+    io::DocInsert in;
+    in.block_name = "OLD";
+    in.pos = {10, 10};
+    in.rotation = 0.5;
+    in.attribs = {io::DocAttrib{"NUM", "42"}};
+    doc.inserts = {in};
+    const std::string dp = (fs::temp_directory_path() / "musacad_blockreplace_in.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    engine.submit(ReplaceBlockCommand{"old", "New", 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 reference of \"OLD\" replaced by \"NEW\"."; }));
+    const io::Document out = dump(engine, "musacad_blockreplace_out.musa");
+    REQUIRE(out.inserts.size() == 1);
+    REQUIRE(out.inserts[0].block_name == "NEW");
+    REQUIRE(out.inserts[0].pos == Vec2{10, 10});
+    REQUIRE(out.inserts[0].rotation == Approx(0.5));
+    const auto num = std::find_if(out.inserts[0].attribs.begin(), out.inserts[0].attribs.end(),
+                                  [](const io::DocAttrib& x) { return x.tag == "NUM"; });
+    REQUIRE(num != out.inserts[0].attribs.end());
+    REQUIRE(num->value == "42"); // the value went with its tag
+    engine.stop();
+    fs::remove(dp);
+
+    H h;
+    h.run({"-BLOCKREPLACE"});
+    REQUIRE(h.out.lines.back() == "The drawing needs two blocks for one to replace the other.");
+}

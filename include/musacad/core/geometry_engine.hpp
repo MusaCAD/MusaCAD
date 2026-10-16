@@ -530,6 +530,7 @@ private:
     std::vector<Command> array_preview_; ///< ArrayPreviewCommand's copies, drawn as a preview
     void apply_dim_grip_menu(const DimGripMenuCommand& c);
     void apply_hatch_edit(const HatchEditCommand& c);
+    void apply_replace_block(const ReplaceBlockCommand& c);
     /// DIMASSOC 0: the dimensions the last command drew, exploded in its undo step.
     void explode_new_dimensions();
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides

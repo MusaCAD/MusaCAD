@@ -357,6 +357,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     viewport_->set_field_dialog_callback([this](std::string& code) { return open_field_dialog(code); });
     viewport_->set_tolerance_dialog_callback([this](std::vector<std::string>& cells) { return open_tolerance_dialog(cells); });
+    viewport_->set_choose_dialog_callback(
+        [this](const std::string& title, const std::vector<std::string>& items, std::string& chosen) {
+            if (developer_hook_active()) {
+                return -1; // the self-test types its answers
+            }
+            QStringList list;
+            for (const std::string& s : items) {
+                list << QString::fromStdString(s);
+            }
+            bool ok = false;
+            const QString pick = QInputDialog::getItem(this, QString::fromStdString(title), QString(), list, 0, false, &ok);
+            if (!ok) {
+                return 0;
+            }
+            chosen = pick.toStdString();
+            return 1;
+        });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
     viewport_->set_property_dialogs([this](bool& by_layer, core::Rgb& c) { return open_select_color(by_layer, c); },

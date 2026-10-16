@@ -397,6 +397,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit several polylines at once (PEDIT's Multiple).");
     reg({"DIMASSOC"}, [] { return std::make_unique<DimAssocUiCommand>(); }, "",
         "Whether the dimensions drawn follow the objects they measure.");
+    reg({"BLOCKREPLACE"}, [] { return std::make_unique<BlockReplaceCommand>(true); }, "",
+        "Replace every reference of one block by another.");
+    reg({"-BLOCKREPLACE"}, [] { return std::make_unique<BlockReplaceCommand>(false); }, "",
+        "Replace every reference of one block by another, at the command line.");
     reg({"HPASSOC"}, [] { return std::make_unique<HpAssocCommand>(); }, "",
         "Whether the hatches made follow their boundaries.");
     reg({"DIMDISASSOCIATE", "DDA"}, [] { return std::make_unique<DimDisassociateCommand>(); }, "",

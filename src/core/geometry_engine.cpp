@@ -2313,6 +2313,87 @@ void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
     }
 }
 
+void GeometryEngine::apply_replace_block(const ReplaceBlockCommand& c) {
+    const auto lower = [](std::string s) {
+        for (char& ch : s) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    const std::vector<BlockDef>& blocks = store_.blocks();
+    std::size_t from = blocks.size();
+    std::size_t to = blocks.size();
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        from = lower(blocks[i].name) == lower(c.from) ? i : from;
+        to = lower(blocks[i].name) == lower(c.to) ? i : to;
+    }
+    if (from == blocks.size() || to == blocks.size()) {
+        report("Block \"" + (from == blocks.size() ? c.from : c.to) + "\" not found.");
+        return;
+    }
+    if (from == to) {
+        report("A block cannot replace itself.");
+        return;
+    }
+    // The replacement's attribute values: the replaced block's, tag for tag; its own defaults
+    // for the rest.
+    const std::vector<BlockAttDef>& old_defs = blocks[from].content.attdefs;
+    const std::vector<BlockAttDef>& new_defs = blocks[to].content.attdefs;
+    const auto remap = [&](const std::vector<std::string>& values) {
+        std::vector<std::string> out;
+        for (const BlockAttDef& nd : new_defs) {
+            std::string v = nd.def;
+            for (std::size_t k = 0; k < old_defs.size() && k < values.size(); ++k) {
+                if (lower(old_defs[k].tag) == lower(nd.tag)) {
+                    v = values[k];
+                }
+            }
+            out.push_back(std::move(v));
+        }
+        return out;
+    };
+    const std::string from_name = blocks[from].name;
+    const std::string to_name = blocks[to].name;
+    std::size_t n = 0;
+    for (const EntityHandle h : all_live()) {
+        const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+        if (in == nullptr || in->block != from) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command edited = original;
+        auto& x = std::get<AddInsertCommand>(edited);
+        x.attribs = remap(store_.insert_attribs(*in));
+        x.block = static_cast<std::uint16_t>(to);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        ++n;
+    }
+    // References inside other blocks.
+    std::vector<BlockDef> table = store_.blocks();
+    bool nested = false;
+    for (BlockDef& b : table) {
+        for (InsertData& in : b.content.inserts) {
+            if (in.block == from) {
+                in.block = static_cast<std::uint16_t>(to);
+                nested = true;
+                ++n;
+            }
+        }
+    }
+    if (nested) {
+        store_.set_block_table(std::move(table));
+    }
+    selection_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(n) + (n == 1 ? " reference of \"" : " references of \"") + from_name +
+           "\" replaced by \"" + to_name + "\".");
+}
+
 void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     using Op = HatchEditCommand::Op;
     prune_selection();
@@ -15360,6 +15441,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, HatchEditCommand>) {
                 apply_hatch_edit(c);
+            }
+            if constexpr (std::is_same_v<T, ReplaceBlockCommand>) {
+                apply_replace_block(c);
             }
             if constexpr (std::is_same_v<T, RescaleDrawingCommand>) {
                 if (c.factor > 0.0 && std::abs(c.factor - 1.0) > 1e-12) {

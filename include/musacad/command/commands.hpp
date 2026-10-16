@@ -3182,6 +3182,31 @@ private:
     bool done_ = false;
 };
 
+/// BLOCKREPLACE (Express Tools): the block to be replaced and the block to replace it, picked
+/// from lists (or, with no window -- -BLOCKREPLACE -- typed); every reference of the first
+/// becomes one of the second. The first's definition stays until PURGE.
+class BlockReplaceCommand final : public ICommand {
+public:
+    explicit BlockReplaceCommand(bool dialog) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "BLOCKREPLACE" : "-BLOCKREPLACE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return true; } // block names may have spaces
+
+private:
+    void finish(CommandContext& ctx);
+    bool dialog_ = true;
+    int step_ = 0; ///< 0 the block to be replaced, 1 the replacement
+    std::string from_;
+    std::string to_;
+    bool done_ = false;
+};
+
 /// DIMDISASSOCIATE: `Select dimensions to disassociate:` -- they no longer follow the objects
 /// their points are on. DIMREASSOCIATE: `Select dimensions to reassociate:` -- they follow
 /// them again.

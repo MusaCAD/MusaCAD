@@ -189,6 +189,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   header and data rows, at its text heights and in its colours, redrawn as the style and the
   rows change; Insertion behavior Specify window fits the columns' width and the data rows to a
   window.
+- **BLOCKREPLACE** (#75) -- the block to be replaced and the one to replace it, picked from
+  lists (-BLOCKREPLACE: typed); every reference of the first, nested ones too, becomes one of the
+  second where it was, attribute values kept by tag. The first's definition stays until PURGE.
 - **The Block Editor tab** (#75) -- while BEDIT is open the ribbon shows its own Block Editor tab:
   Edit Block and Save Block, and Close Block Editor.
 - **Layer states Import and Export** (#69) -- the Layer States Manager's Import... and Export...

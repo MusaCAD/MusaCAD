@@ -1120,6 +1120,16 @@ struct HatchEditCommand {
     std::uint64_t group = 0;
 };
 
+/// BLOCKREPLACE: every reference of block `from` (nested ones in other blocks too) made a
+/// reference of block `to`, where it was, at its scale and rotation, its attribute values
+/// kept by tag. One undo step; `from`'s definition stays until PURGE (a purge is not undone,
+/// and the undo step still names it).
+struct ReplaceBlockCommand {
+    std::string from;
+    std::string to;
+    std::uint64_t group = 0;
+};
+
 /// -DWGUNITS's "scale objects in current drawing": every object (in model space, and in the
 /// layouts with `paper`) scaled by `factor` about the origin. One undo step.
 struct RescaleDrawingCommand {
@@ -2356,7 +2366,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, RescaleDrawingCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, RescaleDrawingCommand, ReplaceBlockCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

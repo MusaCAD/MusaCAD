@@ -130,6 +130,13 @@ public:
     void set_tolerance_dialog_callback(std::function<int(std::vector<std::string>&)> cb) {
         tolerance_dialog_callback_ = std::move(cb);
     }
+    int choose_dialog(const std::string& title, const std::vector<std::string>& items, std::string& chosen) override {
+        return choose_dialog_callback_ ? choose_dialog_callback_(title, items, chosen) : -1;
+    }
+    void set_choose_dialog_callback(
+        std::function<int(const std::string&, const std::vector<std::string>&, std::string&)> cb) {
+        choose_dialog_callback_ = std::move(cb);
+    }
     std::vector<std::string> workspaces() const override {
         return workspace_list_callback_ ? workspace_list_callback_().first : std::vector<std::string>{};
     }
@@ -870,6 +877,7 @@ private:
     std::function<bool(const std::string&)> window_action_callback_;
     std::function<std::pair<std::vector<std::string>, std::string>()> workspace_list_callback_;
     std::function<int(std::vector<std::string>&)> tolerance_dialog_callback_;
+    std::function<int(const std::string&, const std::vector<std::string>&, std::string&)> choose_dialog_callback_;
     std::function<int(std::string&)> field_dialog_callback_;
     std::function<bool(const std::string&, const std::string&, const std::string&)> workspace_op_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;

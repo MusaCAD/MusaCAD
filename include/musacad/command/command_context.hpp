@@ -324,6 +324,14 @@ public:
         (void)cells;
         return -1;
     }
+    /// A list to pick one name from (BLOCKREPLACE's blocks): 1 picked into `chosen`, 0
+    /// cancelled, -1 no window.
+    virtual int choose_dialog(const std::string& title, const std::vector<std::string>& items, std::string& chosen) {
+        (void)title;
+        (void)items;
+        (void)chosen;
+        return -1;
+    }
     /// Workspaces (WORKSPACE, WSCURRENT, WSSAVE): the names, the built-in one first, and the
     /// current one; empty where there is no window.
     [[nodiscard]] virtual std::vector<std::string> workspaces() const { return {}; }

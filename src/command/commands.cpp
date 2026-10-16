@@ -2362,6 +2362,65 @@ void DimAssocUiCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void BlockReplaceCommand::start(CommandContext& ctx) {
+    std::vector<std::string> names;
+    for (const std::string& n : ctx.block_names()) {
+        if (!n.empty() && n.front() != '*') { // not the anonymous ones (dimensions, hatches)
+            names.push_back(n);
+        }
+    }
+    if (names.size() < 2) {
+        ctx.echo("The drawing needs two blocks for one to replace the other.");
+        done_ = true;
+        return;
+    }
+    if (dialog_ && ctx.view() != nullptr) {
+        std::string from;
+        const int r = ctx.view()->choose_dialog("BLOCKREPLACE - Select the block to be replaced.", names, from);
+        if (r >= 0) {
+            std::vector<std::string> others;
+            for (const std::string& n : names) {
+                if (n != from) {
+                    others.push_back(n);
+                }
+            }
+            std::string to;
+            if (r == 0 || ctx.view()->choose_dialog("BLOCKREPLACE - Select a block to replace all \"" + from +
+                                                        "\" blocks.",
+                                                    others, to) != 1) {
+                done_ = true;
+                return;
+            }
+            from_ = from;
+            to_ = to;
+            finish(ctx);
+            return;
+        }
+    }
+    ctx.set_prompt("Enter the name of the block to be replaced: ");
+}
+
+void BlockReplaceCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    if (step_ == 0) {
+        from_ = t;
+        step_ = 1;
+        ctx.set_prompt("Enter the name of the replacement block: ");
+        return;
+    }
+    to_ = t;
+    finish(ctx);
+}
+
+void BlockReplaceCommand::finish(CommandContext& ctx) {
+    ctx.submit(core::ReplaceBlockCommand{from_, to_, ctx.group_id()});
+    done_ = true;
+}
+
 void HpAssocCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     if (!t.empty()) {
