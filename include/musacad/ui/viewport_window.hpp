@@ -383,6 +383,9 @@ public:
         return selection_count_.load(std::memory_order_relaxed);
     }
     /// The kinds among the selected objects, one bit per core::EntityKind.
+    [[nodiscard]] core::Vec2 selection_size() const noexcept {
+        return {selection_w_.load(std::memory_order_relaxed), selection_h_.load(std::memory_order_relaxed)};
+    }
     [[nodiscard]] std::uint32_t selection_kinds() const noexcept {
         return selection_kinds_.load(std::memory_order_relaxed);
     }
@@ -874,6 +877,8 @@ private:
     core::DrawingTimes times_;         ///< under layers_mutex_
     std::atomic<int> selection_count_{0};
     std::atomic<std::uint32_t> selection_kinds_{0};
+    std::atomic<double> selection_w_{0.0};
+    std::atomic<double> selection_h_{0.0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};
     std::atomic<double> grip_preview_max_x_{0.0};

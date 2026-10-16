@@ -511,11 +511,23 @@ private:
     };
     /// The associative dimensions and hatches, not among `edited`, with points on `edited`.
     [[nodiscard]] Followers followers_on(const std::vector<EntityHandle>& edited) const;
+    /// Those not `skip`ped with points in [lo, hi] that `follows` says go along.
+    [[nodiscard]] Followers collect_followers(const std::function<bool(EntityHandle)>& skip, Vec2 lo, Vec2 hi,
+                                              const std::function<bool(Vec2, std::uint8_t)>& follows) const;
+    /// After an edit that replaced objects (TRIM, EXTEND, LENGTHEN, BREAK, FILLET, CHAMFER) in
+    /// undo group `group`: the associative dimensions and hatches on what it replaced go to
+    /// what replaced it -- a point at a trimmed end to the new end.
+    void follow_replaced(std::uint64_t group);
     /// Takes each one's following points through `map`; when all of them follow and `whole` is
     /// given, it is transformed as a whole instead (as if it had been selected).
     void move_followers(const Followers& follows, const std::function<Vec2(Vec2)>& map,
                         const std::function<void(Command&)>& whole, std::uint64_t group);
     void apply_dim_assoc(const DimAssocCommand& c);
+    /// An array's copy: made, or with array_sink_ set, kept there (the preview).
+    void emit_copy(const Command& copy, std::uint64_t group);
+    void apply_array_preview(const ArrayPreviewCommand& c);
+    std::vector<Command>* array_sink_ = nullptr;
+    std::vector<Command> array_preview_; ///< ArrayPreviewCommand's copies, drawn as a preview
     void apply_dim_grip_menu(const DimGripMenuCommand& c);
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,

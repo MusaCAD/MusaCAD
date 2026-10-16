@@ -130,13 +130,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   AutoCAD's warning; one undo step. The emptied layer stays until PURGE.
 - **Associative dimensions** (#59) -- a dimension follows the objects its points are on: MOVE,
   ROTATE, SCALE, MIRROR (erasing the source) and grip edits of a line, arc, circle or polyline
-  take its points along, and it measures again. A linear dimension keeps its direction. A point
+  take its points along, and it measures again; TRIM, EXTEND, LENGTHEN, BREAK, FILLET and
+  CHAMFER too (a point at a trimmed end goes to the new end). A linear dimension keeps its direction. A point
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
   dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
   with the drawing (format v40).
 - **Associative hatches** (#41) -- a hatch follows its boundary: MOVE, ROTATE, SCALE, MIRROR
-  (erasing the source) and grip edits of the objects around it take the hatch along, or its
-  edge with the part that changed, in the same undo step. **HPASSOC** (1, the default; 0, the
+  (erasing the source), grip edits, TRIM, EXTEND and the like of the objects around it take
+  the hatch along, or its edge with the part that changed, in the same undo step. **HPASSOC** (1, the default; 0, the
   hatches made do not follow); DXF's associativity flag is read. Saved with the drawing.
 - **Dimension grip menus** (#59) -- right-click a selected dimension's grip: on its text,
   Stretch, Move with Dim Line, Move Text Only, Move with Leader (the dimension keeps that text

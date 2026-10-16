@@ -1099,6 +1099,15 @@ struct ArrayPathCommand {
     std::uint64_t group = 0;
 };
 
+/// The array being set up, drawn at once and again at each change (ARRAYRECT, ARRAYPOLAR,
+/// ARRAYPATH): `type` 1 rectangular, 2 polar, 3 path, with that one's settings; 0 ends it.
+struct ArrayPreviewCommand {
+    std::uint8_t type = 0;
+    ArrayRectCommand rect{};
+    ArrayPolarCommand polar{};
+    ArrayPathCommand path{};
+};
+
 /// Extend the (line) entity nearest `pick` to the nearest boundary edge.
 struct ExtendPickCommand {
     Vec2 pick;
@@ -2310,7 +2319,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, SetCurrentPropsCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

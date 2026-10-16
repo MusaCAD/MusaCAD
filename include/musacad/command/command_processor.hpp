@@ -259,6 +259,8 @@ public:
     void set_selection_count(int n) noexcept { selection_count_ = n; }
     void set_selection_kinds(std::uint32_t mask) noexcept { selection_kinds_ = mask; }
     [[nodiscard]] std::uint32_t selection_kinds() const override { return selection_kinds_; }
+    void set_selection_size(core::Vec2 size) noexcept { selection_size_ = size; }
+    [[nodiscard]] core::Vec2 selection_size() const override { return selection_size_; }
 
     /// Cached hovered-entity kind, fed from the published snapshot by the UI. When
     /// it changes while a command is active, the command's hover() hook fires (the
@@ -515,6 +517,7 @@ private:
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
     std::uint32_t selection_kinds_ = ~0u; ///< bit per EntityKind; all bits: not known
+    core::Vec2 selection_size_{};         ///< the selection's extents (0, 0: not known)
     std::optional<core::EntityKind> hovered_kind_;
     PreviewSpec preview_;
     core::RenderSnapshot::PurgeCandidates purge_;

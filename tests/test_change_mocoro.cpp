@@ -2722,3 +2722,22 @@ TEST_CASE("A view keeps its View category in the file, with or without a layer s
     REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
     REQUIRE(again.views == doc.views);
 }
+
+TEST_CASE("TRIM takes an associative dimension's point at the trimmed end to the new end") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{6, -5}, {6, 5}, 2});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Aligned), {0, 0}, {10, 0}, {5, -8}, 0, 3});
+    engine.submit(TrimPickCommand{{8, 0}, 0.5, 4});
+    io::Document doc = dump(engine, "musacad_trim_assoc.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].a == Vec2{0, 0});
+    REQUIRE(doc.dims[0].b.x == Approx(6.0));
+    REQUIRE(doc.dims[0].b.y == Approx(0.0).margin(1e-9));
+    // One undo: the line and its dimension as they were.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_trim_assoc_2.musa");
+    REQUIRE(doc.dims[0].b == Vec2{10, 0});
+    engine.stop();
+}

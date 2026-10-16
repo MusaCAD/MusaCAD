@@ -281,6 +281,7 @@ struct RenderSnapshot {
     // are those entities' segments, for the highlight and move/mirror ghosts.
     // Interaction state, not part of the checksum.
     std::vector<EntityHandle> selection;
+    Vec2 selection_size{}; ///< the selection's extents, width and height
     std::vector<Vec2> selected_line_vertices;
     // Filled (SOLID hatch) triangles of the selection, overlaid in the highlight
     // colour so a picked fill reads as selected (the fill itself stays in the scene
@@ -436,6 +437,7 @@ struct RenderSnapshot {
         snap_point = {};
         snap_type = SnapType::None;
         selection.clear();
+        selection_size = {};
         selected_line_vertices.clear();
         selected_fill_vertices.clear();
         hover = EntityHandle{};

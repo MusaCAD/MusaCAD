@@ -502,6 +502,8 @@ public:
     /// The kinds among the selected objects, one bit per core::EntityKind (all bits: not
     /// known, ask as if any kind were there).
     [[nodiscard]] virtual std::uint32_t selection_kinds() const { return ~0u; }
+    /// The selection's extents, width and height (0, 0: not known).
+    [[nodiscard]] virtual core::Vec2 selection_size() const { return {}; }
     [[nodiscard]] bool has_selection() const { return selection_count() > 0; }
 
     /// World-space pick aperture (pixels / camera scale), for pick-based commands.

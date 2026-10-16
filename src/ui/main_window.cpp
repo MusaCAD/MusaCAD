@@ -470,6 +470,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
         processor_->set_selection_kinds(viewport_->selection_kinds());
+        processor_->set_selection_size(viewport_->selection_size());
         processor_->set_named_views(viewport_->named_views());
         processor_->set_units(viewport_->units());
         {
