@@ -212,6 +212,7 @@ struct RenderSnapshot {
     Vec2 limits_max{420.0, 297.0};
     bool limits_on = false;             // LIMCHECK
     Vec2 insbase{0.0, 0.0};             // INSBASE (BASE)
+    bool block_editor = false;          // BEDIT is open
     std::vector<DataLink> data_links;   // DATALINK
     std::vector<std::uint8_t> layer_used; // per layer: 1 when an entity is on it
     std::uint64_t checksum = 0;

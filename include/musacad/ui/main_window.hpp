@@ -519,6 +519,7 @@ private:
     int last_ctx_count_ = -1;
     int last_ctx_kind1_ = -1;
     int last_ctx_family1_ = -1;
+    bool last_ctx_bedit_ = false; ///< BEDIT was open at the last contextual check
     QTabBar* file_tabs_ = nullptr;          // multi-document tab strip (mirrors the engine)
     QTabBar* layout_tabs_ = nullptr;        // Model + layouts (mirrors the engine's layout table)
     core::Vec2 last_cursor_world_{};        // latest cursor world pos (paste-at-cursor)

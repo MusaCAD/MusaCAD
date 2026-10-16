@@ -391,6 +391,8 @@ public:
         return selection_count_.load(std::memory_order_relaxed);
     }
     /// The kinds among the selected objects, one bit per core::EntityKind.
+    /// BEDIT is open (the Block Editor tab shows).
+    [[nodiscard]] bool block_editor() const noexcept { return block_editor_.load(std::memory_order_relaxed); }
     [[nodiscard]] core::Vec2 selection_size() const noexcept {
         return {selection_w_.load(std::memory_order_relaxed), selection_h_.load(std::memory_order_relaxed)};
     }
@@ -886,6 +888,7 @@ private:
     std::atomic<int> selection_count_{0};
     std::atomic<std::uint32_t> selection_kinds_{0};
     std::atomic<double> selection_w_{0.0};
+    std::atomic<bool> block_editor_{false};
     std::atomic<double> selection_h_{0.0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};

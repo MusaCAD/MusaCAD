@@ -17965,6 +17965,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.mleader_styles = store_.mleader_styles(); // MLEADERSTYLE
     buf.current_mleader_style = store_.current_mleader_style();
     buf.insbase = store_.insbase();       // BASE
+    buf.block_editor = refedit_.active && refedit_.bedit; // BEDIT: the Block Editor tab
     buf.data_links = store_.data_links(); // DATALINK
     buf.layer_used = layer_used_;
     buf.current_dimstyle = store_.current_dimstyle();

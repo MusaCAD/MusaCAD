@@ -47,6 +47,7 @@ struct RibbonSel {
     bool mixed = false;
     int kind_plus1 = 0;
     int family_plus1 = 0;
+    bool block_editor = false; ///< BEDIT is open
 };
 
 /// A labelled group of icon+label buttons inside a ribbon tab (e.g. "Draw"). Re-renders

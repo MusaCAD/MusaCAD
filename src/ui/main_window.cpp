@@ -796,7 +796,7 @@ void MainWindow::build_contextual_tabs() {
     // --- Block Editor (single Insert), pale amber accent: the reference's own commands. ---
     const int block_page = ribbon_->add_contextual_tab(
         QStringLiteral("Block Editor"), QColor(225, 180, 110), [](const RibbonSel& s) {
-            return s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
+            return !s.block_editor && s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
         });
     RibbonPanel* bdef = ribbon_->add_panel(block_page, QStringLiteral("Definition"), 100);
     bdef->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
@@ -819,6 +819,32 @@ void MainWindow::build_contextual_tabs() {
     block_cmd(QStringLiteral("Edit\nAttributes"), "EATTEDIT", RibbonTier::Primary);
     block_cmd(QStringLiteral("Manage\nAttributes"), "BATTMAN", RibbonTier::Secondary);
     block_cmd(QStringLiteral("Explode"), "X", RibbonTier::Secondary);
+
+    // --- The Block Editor's own tab while BEDIT is open (AutoCAD's Open/Save and Close). ---
+    const int bedit_page = ribbon_->add_contextual_tab(QStringLiteral("Block Editor"), QColor(225, 180, 110),
+                                                       [](const RibbonSel& s) { return s.block_editor; });
+    RibbonPanel* bopen = ribbon_->add_panel(bedit_page, QStringLiteral("Open/Save"), 100);
+    bopen->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
+    RibbonPanel* bclose = ribbon_->add_panel(bedit_page, QStringLiteral("Close"), 90);
+    bclose->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
+    const auto bedit_cmd = [&](RibbonPanel* panel, const QString& label, const char* alias, const char* name) {
+        const command::CommandInfo* info = processor_->registry().find(alias);
+        QToolButton* b = panel->add_button(
+            ribbon_icon(info != nullptr && !info->icon.empty() ? QString::fromStdString(info->icon)
+                                                               : QStringLiteral("assets/ribbon/refedit.svg")),
+            label, RibbonTier::Primary);
+        b->setObjectName(QStringLiteral("ribbon.bedit.%1").arg(QString::fromUtf8(name)));
+        if (info != nullptr) {
+            b->setToolTip(QString::fromStdString(info->description));
+        }
+        connect(b, &QToolButton::clicked, this, [this, alias] {
+            command_widget_->focus_input();
+            processor_->start_command(alias);
+        });
+    };
+    bedit_cmd(bopen, QStringLiteral("Edit\nBlock"), "BEDIT", "edit");
+    bedit_cmd(bopen, QStringLiteral("Save\nBlock"), "BSAVE", "save");
+    bedit_cmd(bclose, QStringLiteral("Close Block\nEditor"), "BCLOSE", "close");
 }
 
 void MainWindow::sync_ribbon_context() {
@@ -827,18 +853,21 @@ void MainWindow::sync_ribbon_context() {
     }
     const core::SelectionSummary s = viewport_->selection_summary();
     fill_contextual_fields(s);
+    const bool bedit = viewport_->block_editor();
     if (s.count == last_ctx_count_ && s.kind_plus1 == last_ctx_kind1_ &&
-        s.family_plus1 == last_ctx_family1_) {
+        s.family_plus1 == last_ctx_family1_ && bedit == last_ctx_bedit_) {
         return; // selection signature unchanged -- nothing to re-evaluate
     }
     last_ctx_count_ = s.count;
     last_ctx_kind1_ = s.kind_plus1;
     last_ctx_family1_ = s.family_plus1;
+    last_ctx_bedit_ = bedit;
     RibbonSel rs;
     rs.count = s.count;
     rs.mixed = s.mixed;
     rs.kind_plus1 = s.kind_plus1;
     rs.family_plus1 = s.family_plus1;
+    rs.block_editor = bedit;
     ribbon_->update_contextual(rs);
 }
 

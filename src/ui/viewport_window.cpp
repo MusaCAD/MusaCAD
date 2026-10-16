@@ -1599,6 +1599,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             }
             selection_kinds_.store(kinds, std::memory_order_relaxed);
             selection_w_.store(snap.selection_size.x, std::memory_order_relaxed);
+            block_editor_.store(snap.block_editor, std::memory_order_relaxed);
             selection_h_.store(snap.selection_size.y, std::memory_order_relaxed);
         }
         grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),

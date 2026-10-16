@@ -2158,11 +2158,13 @@ TEST_CASE("The Block Editor: a block's objects to edit, the rest hidden; BCLOSE 
     engine.submit(OpenDocumentCommand{dp});
     engine.submit(BlockEditCommand{BlockEditCommand::Op::Open, "box", true, 2});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Block Editor: \"BOX\" is open", 0) == 0; }));
+    REQUIRE(engine.snapshot().block_editor); // the Block Editor tab shows
     engine.submit(SaveDocumentCommand{dp, false});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Close the Block Editor", 0) == 0; }));
     engine.submit(AddLineCommand{{0, 10}, {10, 10}, 3}); // drawn in the Block Editor
     engine.submit(BlockEditCommand{BlockEditCommand::Op::Close, {}, true, 4});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Block \"BOX\" saved."; }));
+    REQUIRE_FALSE(engine.snapshot().block_editor);
     const io::Document out = dump(engine, "musacad_bedit_out.musa");
     const auto it = std::find_if(out.block_defs.begin(), out.block_defs.end(), [](const auto& d) { return d.name == "BOX"; });
     REQUIRE(it != out.block_defs.end());
