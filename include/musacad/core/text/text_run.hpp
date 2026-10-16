@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
-#include "musacad/core/text/justify.hpp"
+#include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
 class IFontEngine;

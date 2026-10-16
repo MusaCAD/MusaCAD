@@ -14403,11 +14403,11 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, TextCountCommand>) {
                 prune_selection();
-                struct Item {
+                struct Numbered {
                     EntityHandle h;
                     Vec2 at;
                 };
-                std::vector<Item> items;
+                std::vector<Numbered> items;
                 for (const EntityHandle h : selection_) {
                     if (h.kind == EntityKind::Text) {
                         items.push_back({h, store_.text(h)->pos});
@@ -14416,14 +14416,14 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
                 if (c.sort == TextCountCommand::Sort::X) {
-                    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.at.x < b.at.x; });
+                    std::stable_sort(items.begin(), items.end(), [](const Numbered& a, const Numbered& b) { return a.at.x < b.at.x; });
                 } else if (c.sort == TextCountCommand::Sort::Y) {
-                    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.at.y > b.at.y; });
+                    std::stable_sort(items.begin(), items.end(), [](const Numbered& a, const Numbered& b) { return a.at.y > b.at.y; });
                 }
                 std::int64_t n = c.start;
                 std::size_t changed = 0;
                 std::vector<EntityHandle> made;
-                for (const Item& it : items) {
+                for (const Numbered& it : items) {
                     Command cmd = capture_entity(it.h);
                     std::string* s = nullptr;
                     if (auto* t = std::get_if<AddTextCommand>(&cmd)) {

@@ -196,8 +196,8 @@ struct DocDim {
     double oblique = 0.0;     ///< v39: the extension lines' angle (DimData::oblique)
     double jog = -1.0;        ///< v40: DIMJOGLINE's place along the line (DimData::jog)
     std::uint8_t inspect = 0; ///< v40: DIMINSPECT's frame (DimData::inspect)
-    std::string inspect_label;
-    std::string inspect_rate;
+    std::string inspect_label{};
+    std::string inspect_rate{};
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {
