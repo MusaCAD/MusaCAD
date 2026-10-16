@@ -1452,6 +1452,105 @@ private:
     bool done_ = false;
 };
 
+/// MOCORO (Express Tools): `Select objects:`, `Base point:`, then `Second point or
+/// [Copy/Base/Rotate/Scale/Undo] <eXit>:` again and again -- move, rotate and scale the
+/// selection in one go; Copy makes the next ones copies, Undo takes the last back.
+class MocoroCommand final : public ICommand {
+public:
+    std::string name() const override { return "MOCORO"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Base, Main };
+    enum class Mode : std::uint8_t { Move, Rotate, Scale };
+    void prompt(CommandContext& ctx);
+    Step step_ = Step::Select;
+    Mode mode_ = Mode::Move;
+    SelectObjectsPhase select_;
+    core::Vec2 base_{};
+    bool copy_ = false;
+    bool new_base_ = false;
+    int ops_ = 0;
+    bool done_ = false;
+};
+
+/// FLATTEN (Express Tools): `Select objects to convert to 2d:` -- polylines' elevation and
+/// thickness to 0.
+class FlattenUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "FLATTEN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && selecting_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool selecting_ = false;
+    bool asked_ = false;
+    bool done_ = false;
+};
+
+/// CHANGE (-CH): `Specify change point or [Properties]:` -- lines' nearer ends to the point,
+/// circles through it; then, with texts selected, `Specify new text insertion point <no
+/// change>:`, the style, height, rotation and text, and with blocks the insertion point and
+/// rotation, each for all of them. Properties runs CHPROP.
+class ChangeUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "CHANGE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override {
+        return !done_ && ((step_ == Step::Select && select_.active()) || (sub_ && sub_->in_selection_phase()));
+    }
+    bool selection_removing() const override { return sub_ ? sub_->selection_removing() : select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    bool free_text() const override { return step_ == Step::TextContent || step_ == Step::TextStyle; }
+
+private:
+    enum class Step : std::uint8_t {
+        Select, Point, TextPos, TextStyle, TextHeight, TextRotation, TextContent, BlockPos, BlockRotation, Sub
+    };
+    void after_selection(CommandContext& ctx);
+    void next(CommandContext& ctx, Step from);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    core::ChangeCommand change_{};
+    std::unique_ptr<ICommand> sub_;
+    bool done_ = false;
+};
+
+/// HATCHEDIT (HE): `Select hatch object:`, then `Enter hatch option [Disassociate/Style/
+/// Properties/DRaw order/ADd boundaries/Remove boundaries/recreate Boundary/ASsociative/
+/// separate Hatches/Origin/ANnotative/hatch COlor/LAyer/Transparency] <Properties>:` --
+/// Properties (the pattern, scale and angle) and recreate Boundary.
+class HatchEditUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "HATCHEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate };
+    void options(CommandContext& ctx);
+    Step step_ = Step::Pick;
+    bool done_ = false;
+};
+
 /// HELP (F1): the command reference opens in the browser.
 class HelpCommand final : public ICommand {
 public:
@@ -3466,7 +3565,9 @@ private:
 /// -- each option asked, then the corner again; the text height from the current style.
 class MTextCommand final : public ICommand {
 public:
-    std::string name() const override { return "MTEXT"; }
+    /// `typed`: -MTEXT, the text line by line at `MText:` until an empty line.
+    explicit MTextCommand(bool typed = false) : typed_(typed) {}
+    std::string name() const override { return typed_ ? "-MTEXT" : "MTEXT"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -3478,6 +3579,8 @@ private:
     void corner_prompt(CommandContext& ctx);
     void place(CommandContext& ctx, core::Vec2 other);
     State state_ = State::First;
+    bool typed_ = false;
+    std::vector<std::string> lines_;
     core::Vec2 c1_{};
     core::Vec2 pos_{};
     double width_ = 0.0;

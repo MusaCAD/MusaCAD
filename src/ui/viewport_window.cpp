@@ -1385,6 +1385,13 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
         }
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
+        {
+            std::uint32_t kinds = 0;
+            for (const core::EntityHandle h : snap.selection) {
+                kinds |= 1u << (static_cast<unsigned>(h.kind) & 31u);
+            }
+            selection_kinds_.store(kinds, std::memory_order_relaxed);
+        }
         grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
                                   std::memory_order_relaxed);
         double band_max_x = -std::numeric_limits<double>::infinity();

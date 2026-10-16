@@ -1776,6 +1776,29 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// FLATTEN: the selected polylines' elevation and thickness set to 0 (a drawing from
+/// elsewhere can carry them). One undo step.
+struct FlattenCommand {
+    std::uint64_t group = 0;
+};
+/// CHANGE, on the selection: `point` moves each line's nearer end to it and makes each
+/// circle pass through it; the text settings go to every single-line text, the block ones
+/// to every block reference (unset: unchanged). One undo step.
+struct ChangeCommand {
+    std::optional<Vec2> point{};
+    std::optional<Vec2> text_pos{};
+    std::optional<std::string> text_style{};
+    std::optional<double> text_height{};
+    std::optional<double> text_rotation{}; ///< radians
+    std::optional<std::string> text_content{};
+    std::optional<Vec2> block_pos{};
+    std::optional<double> block_rotation{}; ///< radians
+    std::uint64_t group = 0;
+};
+/// HATCHEDIT recreate Boundary: a closed polyline round each loop of the selected hatches.
+struct HatchBoundaryCommand {
+    std::uint64_t group = 0;
+};
 /// MLEADERALIGN: the selected multileaders' text (with its landing) moved onto the line
 /// through the text of the multileader at `base_pick`, toward `toward`; each keeps its place
 /// along the line, and the arrowheads stay where they are. One undo step.
@@ -1933,6 +1956,7 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

@@ -14120,6 +14120,116 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, FlattenCommand> || std::is_same_v<T, ChangeCommand>) {
+                // Each selected object captured, changed, made again; one undo group.
+                prune_selection();
+                const std::vector<EntityHandle> sel = selection_;
+                std::vector<EntityHandle> out;
+                std::size_t changed = 0;
+                for (const EntityHandle h : sel) {
+                    if (!store_.is_valid(h) || !selectable(h)) {
+                        continue;
+                    }
+                    Command cmd = capture_entity(h);
+                    bool did = false;
+                    std::visit(
+                        [&](auto& x) {
+                            using X = std::decay_t<decltype(x)>;
+                            if constexpr (std::is_same_v<T, FlattenCommand>) {
+                                if constexpr (std::is_same_v<X, AddPolylineCommand>) {
+                                    did = x.elevation != 0.0 || x.thickness != 0.0;
+                                    x.elevation = 0.0;
+                                    x.thickness = 0.0;
+                                }
+                            } else {
+                                if constexpr (std::is_same_v<X, AddLineCommand>) {
+                                    if (c.point) {
+                                        (distance(x.a, *c.point) <= distance(x.b, *c.point) ? x.a : x.b) = *c.point;
+                                        did = true;
+                                    }
+                                } else if constexpr (std::is_same_v<X, AddCircleCommand>) {
+                                    if (c.point && distance(x.center, *c.point) > 1e-12) {
+                                        x.radius = distance(x.center, *c.point);
+                                        did = true;
+                                    }
+                                } else if constexpr (std::is_same_v<X, AddTextCommand>) {
+                                    if (c.text_pos) {
+                                        x.pos = *c.text_pos;
+                                    }
+                                    if (c.text_style) {
+                                        x.style = *c.text_style;
+                                    }
+                                    if (c.text_height && *c.text_height > 0.0) {
+                                        x.height = *c.text_height;
+                                    }
+                                    if (c.text_rotation) {
+                                        x.rotation = *c.text_rotation;
+                                    }
+                                    if (c.text_content) {
+                                        x.content = *c.text_content;
+                                    }
+                                    did = c.text_pos || c.text_style || c.text_height || c.text_rotation || c.text_content;
+                                } else if constexpr (std::is_same_v<X, AddInsertCommand>) {
+                                    if (c.block_pos) {
+                                        x.pos = *c.block_pos;
+                                    }
+                                    if (c.block_rotation) {
+                                        x.rotation = *c.block_rotation;
+                                    }
+                                    did = c.block_pos || c.block_rotation;
+                                }
+                            }
+                        },
+                        cmd);
+                    if (!did) {
+                        out.push_back(h);
+                        continue;
+                    }
+                    const Command original = capture_entity(h);
+                    remove_indexed(h);
+                    push_erase_item(c.group, h, original);
+                    const EntityHandle nh = create_indexed(cmd);
+                    push_create_item(c.group, nh, cmd);
+                    out.push_back(nh);
+                    ++changed;
+                }
+                selection_ = out;
+                if (changed > 0) {
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                }
+                if constexpr (std::is_same_v<T, FlattenCommand>) {
+                    report(std::to_string(changed) + (changed == 1 ? " object flattened." : " objects flattened."));
+                } else {
+                    report(std::to_string(changed) + (changed == 1 ? " object changed." : " objects changed."));
+                }
+            }
+            if constexpr (std::is_same_v<T, HatchBoundaryCommand>) {
+                prune_selection();
+                std::size_t made = 0;
+                for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+                    if (h.kind != EntityKind::Hatch || !store_.is_valid(h)) {
+                        continue;
+                    }
+                    const HatchData* hd = store_.hatch(h);
+                    for (const std::vector<Vec2>& loop : store_.hatch_loops(*hd)) {
+                        if (loop.size() < 3) {
+                            continue;
+                        }
+                        const Command pl = AddPolylineCommand{loop, true, c.group, hd->props};
+                        push_create_item(c.group, create_indexed(pl), pl);
+                        ++made;
+                    }
+                }
+                if (made > 0) {
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                }
+                report(made == 0 ? std::string("No hatch selected.")
+                                 : std::to_string(made) + (made == 1 ? " boundary created." : " boundaries created."));
+            }
             if constexpr (std::is_same_v<T, MLeaderAlignCommand>) {
                 const EntityHandle base = pick_nearest(c.base_pick, c.radius);
                 if (base.is_null() || base.kind != EntityKind::MLeader) {

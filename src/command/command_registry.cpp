@@ -159,6 +159,14 @@ CommandRegistry CommandRegistry::make_default() {
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
+    reg({"MOCORO"}, [] { return std::make_unique<MocoroCommand>(); }, "",
+        "Move, rotate and scale the selection in one command, with copies if asked.");
+    reg({"FLATTEN"}, [] { return std::make_unique<FlattenUiCommand>(); }, "",
+        "Set the elevation and thickness of the selected polylines to 0.");
+    reg({"CHANGE", "-CH"}, [] { return std::make_unique<ChangeUiCommand>(); }, "",
+        "Change lines' ends, circles' radii, texts and blocks by a point, or their properties.");
+    reg({"HATCHEDIT", "HE"}, [] { return std::make_unique<HatchEditUiCommand>(); }, "",
+        "Edit a hatch: its pattern, scale and angle, or a new boundary round it.");
     reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",
         "Show the plot as it will come out, with the last plot's settings.");
     reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
@@ -562,6 +570,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a feature control frame with geometric tolerance symbols.");
     reg({"DATUM", "DIMDATUM"}, [] { return std::make_unique<DatumCommand>(); },
         "assets/ribbon/datum.svg", "Place a datum feature symbol with its leader triangle.");
+    reg({"-MTEXT", "-T"}, [] { return std::make_unique<MTextCommand>(true); }, "",
+        "Multiline text at the command line, line by line until an empty line.");
     reg({"MT", "MTEXT", "T"}, [] { return std::make_unique<MTextCommand>(); },
         "assets/ribbon/mtext.svg", "Create a multiline (paragraph) text object.");
     reg({"LE", "QLEADER", "QL"}, [] { return std::make_unique<QLeaderCommand>(); },

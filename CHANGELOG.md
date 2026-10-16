@@ -50,6 +50,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   for MTEXT and QLEADER keeps its spaces.
 - **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
   and Output > Plot > Preview, with Plot from it.
+- **CHANGE** (#55) -- a change point for lines' ends and circles' radii; the insertion point,
+  style, height, rotation and text of the selected texts; the insertion point and rotation of
+  blocks; Properties as CHPROP.
+- **HATCHEDIT** (#41, #55) -- a hatch's pattern, scale and angle, or a polyline round each of
+  its loops.
+- **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
+  elevation and thickness to 0.
+- **-MTEXT** (#43) -- multiline text at the command line, line by line.
 - **HELP** and **F1** (#65) -- open the command reference in the browser.
 - **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
   the view, `2` against the limits); PAN and -PAN; REGENALL.

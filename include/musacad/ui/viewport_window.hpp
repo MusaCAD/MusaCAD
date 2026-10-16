@@ -301,6 +301,10 @@ public:
     [[nodiscard]] int selection_count() const noexcept {
         return selection_count_.load(std::memory_order_relaxed);
     }
+    /// The kinds among the selected objects, one bit per core::EntityKind.
+    [[nodiscard]] std::uint32_t selection_kinds() const noexcept {
+        return selection_kinds_.load(std::memory_order_relaxed);
+    }
 
     /// Latest engine command-result message and its monotonically-rising version
     /// (so the command line can echo each new result once). Honest feedback from
@@ -753,6 +757,7 @@ private:
     core::DrawingProps drawing_props_; ///< under layers_mutex_
     core::DrawingTimes times_;         ///< under layers_mutex_
     std::atomic<int> selection_count_{0};
+    std::atomic<std::uint32_t> selection_kinds_{0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};
     std::atomic<double> grip_preview_max_x_{0.0};

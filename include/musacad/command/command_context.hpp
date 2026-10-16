@@ -365,6 +365,9 @@ public:
 
     /// Current selection state (published from the geometry side, cached UI-side).
     [[nodiscard]] virtual int selection_count() const = 0;
+    /// The kinds among the selected objects, one bit per core::EntityKind (all bits: not
+    /// known, ask as if any kind were there).
+    [[nodiscard]] virtual std::uint32_t selection_kinds() const { return ~0u; }
     [[nodiscard]] bool has_selection() const { return selection_count() > 0; }
 
     /// World-space pick aperture (pixels / camera scale), for pick-based commands.

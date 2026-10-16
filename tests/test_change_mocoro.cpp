@@ -1,0 +1,243 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 Pranay Kiran
+//
+// CHANGE and HATCHEDIT (#55), MOCORO and FLATTEN (#77), -MTEXT (#43).
+
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <string>
+#include <thread>
+#include <variant>
+#include <vector>
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include "musacad/command/command_processor.hpp"
+#include "musacad/command/commands.hpp"
+#include "musacad/core/command.hpp"
+#include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/io/document.hpp"
+#include "musacad/core/io/native_format.hpp"
+
+using namespace musacad::core;
+using musacad::command::CommandOutput;
+using musacad::command::CommandProcessor;
+using Catch::Approx;
+
+namespace {
+template <class Pred>
+bool wait_until(GeometryEngine& e, Pred pred) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        e.consume_snapshot();
+        if (pred(e.snapshot())) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+
+io::Document dump(GeometryEngine& engine, const char* name) {
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
+    engine.consume_snapshot();
+    const std::uint64_t before = engine.snapshot().document_version;
+    engine.submit(SaveDocumentCommand{p.string(), false});
+    REQUIRE(wait_until(engine, [before](const auto& s) { return s.document_version > before; }));
+    io::Document doc;
+    REQUIRE(io::load_native(p.string(), doc).ok);
+    std::filesystem::remove(p);
+    return doc;
+}
+
+struct Out : CommandOutput {
+    std::vector<std::string> lines;
+    std::string prompt;
+    void append_line(const std::string& l) override { lines.push_back(l); }
+    void set_prompt(const std::string& p) override { prompt = p; }
+};
+
+struct H {
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[this](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+    template <class T>
+    [[nodiscard]] const T* last() const {
+        for (auto it = cmds.rbegin(); it != cmds.rend(); ++it) {
+            if (const auto* c = std::get_if<T>(&*it)) {
+                return c;
+            }
+        }
+        return nullptr;
+    }
+    void run(std::initializer_list<const char*> lines) {
+        for (const char* l : lines) {
+            proc.submit_line(l);
+        }
+    }
+};
+
+constexpr std::uint32_t bit(EntityKind k) { return 1u << static_cast<unsigned>(k); }
+} // namespace
+
+TEST_CASE("CHANGE: a line's nearer end and a circle through the point; texts and blocks by their prompts") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddCircleCommand{{50, 0}, 5, 2});
+    AddTextCommand t;
+    t.pos = {0, 20};
+    t.content = "OLD";
+    t.group = 3;
+    engine.submit(t);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 3; }));
+    ChangeCommand ch;
+    ch.point = Vec2{8, 6};
+    ch.text_height = 5.0;
+    ch.text_content = std::string("NEW");
+    ch.group = 4;
+    engine.submit(ch);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "3 objects changed."; }));
+    const io::Document doc = dump(engine, "musacad_change.musa");
+    REQUIRE(doc.lines[0].a == Vec2{0, 0});
+    REQUIRE(doc.lines[0].b == Vec2{8, 6}); // the nearer end
+    REQUIRE(doc.circles[0].radius == Approx(std::hypot(42.0, 6.0)));
+    REQUIRE(doc.texts[0].content == "NEW");
+    REQUIRE(doc.texts[0].height == Approx(5.0));
+    engine.stop();
+
+    H h;
+    h.proc.set_selection_count(2);
+    h.proc.set_selection_kinds(bit(EntityKind::Line) | bit(EntityKind::Text));
+    h.run({"CHANGE"});
+    REQUIRE(h.out.prompt == "Specify change point or [Properties]: ");
+    h.run({"8,6"});
+    REQUIRE(h.out.prompt == "Specify new text insertion point <no change>: ");
+    h.run({"", ""});
+    REQUIRE(h.out.prompt == "Specify new height <no change>: ");
+    h.run({"3", "45"});
+    REQUIRE(h.out.prompt == "Enter new text <no change>: ");
+    REQUIRE(h.proc.wants_free_text());
+    h.run({"Two words"});
+    const auto* c = h.last<ChangeCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(*c->point == Vec2{8, 6});
+    REQUIRE_FALSE(c->text_pos.has_value());
+    REQUIRE(*c->text_height == 3.0);
+    REQUIRE(*c->text_rotation == Approx(kPi / 4));
+    REQUIRE(*c->text_content == "Two words");
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    h.proc.set_selection_kinds(bit(EntityKind::Line)); // lines only: the point and done
+    h.run({"CHANGE", "1,1"});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.proc.set_selection_kinds(bit(EntityKind::Insert));
+    h.run({"CHANGE", ""});
+    REQUIRE(h.out.prompt == "Specify new block insertion point <no change>: ");
+    h.run({"5,5", "90"});
+    REQUIRE(*h.last<ChangeCommand>()->block_pos == Vec2{5, 5});
+    REQUIRE(*h.last<ChangeCommand>()->block_rotation == Approx(kHalfPi));
+}
+
+TEST_CASE("MOCORO moves, rotates and scales the selection in one go; FLATTEN zeroes elevation") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.run({"MOCORO"});
+    REQUIRE(h.out.prompt == "Base point: ");
+    h.run({"0,0", "10,0"});
+    REQUIRE(h.last<MoveSelectionCommand>()->delta == Vec2{10, 0});
+    REQUIRE(h.out.prompt == "Second point or [Copy/Base/Rotate/Scale/Undo] <eXit>: ");
+    h.run({"R"});
+    REQUIRE(h.out.prompt == "Rotation angle or [Copy/Base/Move/Scale/Undo] <eXit>: ");
+    h.run({"90"});
+    REQUIRE(h.last<RotateSelectionCommand>()->base == Vec2{10, 0}); // the base went with the move
+    REQUIRE(h.last<RotateSelectionCommand>()->angle == Approx(kHalfPi));
+    h.run({"S", "2"});
+    REQUIRE(h.last<ScaleSelectionCommand>()->factor == 2.0);
+    h.run({"C", "M", "20,0"});
+    REQUIRE(h.last<CopySelectionCommand>()->delta == Vec2{10, 0});
+    h.run({"U"});
+    REQUIRE(std::holds_alternative<UndoLastGroupCommand>(h.cmds.back()));
+    h.run({""});
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    GeometryEngine engine;
+    engine.start();
+    AddPolylineCommand pl;
+    pl.points = {{0, 0}, {10, 0}};
+    pl.elevation = 5.0;
+    pl.thickness = 2.0;
+    pl.group = 1;
+    engine.submit(pl);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(FlattenCommand{2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 object flattened."; }));
+    const io::Document doc = dump(engine, "musacad_flatten.musa");
+    REQUIRE(doc.polylines[0].elevation == 0.0);
+    REQUIRE(doc.polylines[0].thickness == 0.0);
+    engine.stop();
+
+    h.run({"FLATTEN"});
+    REQUIRE(h.out.prompt == "Remove hidden lines? <No>: ");
+    h.run({""});
+    REQUIRE(h.last<FlattenCommand>() != nullptr);
+}
+
+TEST_CASE("HATCHEDIT: Properties set the pattern, scale and angle; recreate Boundary draws the loops") {
+    H h;
+    h.run({"HE", "5,5"});
+    REQUIRE(h.last<SelectPickCommand>()->world == Vec2{5, 5});
+    REQUIRE(h.out.prompt.rfind("Enter hatch option [Disassociate/Style/Properties/", 0) == 0);
+    h.run({"", "ANSI37", "2", "30"});
+    int props = 0;
+    for (const Command& c : h.cmds) {
+        if (const auto* p = std::get_if<SetPropertyCommand>(&c)) {
+            ++props;
+            if (p->id == PropertyId::HatchPattern) {
+                REQUIRE(p->value.text == "ANSI37");
+            } else if (p->id == PropertyId::HatchScale) {
+                REQUIRE(p->value.num == 2.0);
+            } else {
+                REQUIRE(p->id == PropertyId::HatchAngle);
+                REQUIRE(p->value.num == 30.0);
+            }
+        }
+    }
+    REQUIRE(props == 3);
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"HATCHEDIT", "5,5", "B", "", ""});
+    REQUIRE(h.last<HatchBoundaryCommand>() != nullptr);
+
+    GeometryEngine engine;
+    engine.start();
+    AddHatchCommand hatch;
+    hatch.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, {{3, 3}, {6, 3}, {6, 6}}};
+    hatch.pattern_name = "SOLID";
+    hatch.group = 1;
+    engine.submit(hatch);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(HatchBoundaryCommand{2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 boundaries created."; }));
+    const io::Document doc = dump(engine, "musacad_hatchedit.musa");
+    REQUIRE(doc.polylines.size() == 2);
+    REQUIRE(doc.polylines[0].closed);
+    engine.stop();
+}
+
+TEST_CASE("-MTEXT takes the text line by line until an empty line") {
+    H h;
+    h.run({"-MTEXT", "0,0", "40,-20"});
+    REQUIRE(h.out.prompt == "MText: ");
+    REQUIRE(h.proc.wants_free_text());
+    h.run({"First line", "Second line"});
+    REQUIRE(h.last<AddMTextCommand>() == nullptr);
+    h.run({""});
+    REQUIRE(h.last<AddMTextCommand>()->content == "First line\nSecond line");
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
