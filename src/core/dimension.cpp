@@ -560,6 +560,10 @@ void split_post(const std::string& post, const char* mark, std::string& pre, std
 }
 } // namespace
 
+namespace {
+constexpr char kAltBelow = '\x1f'; ///< in a measured text: the alternate value goes on the line below
+} // namespace
+
 std::string format_dim_value(double value, const DimStyle& style) {
     return length_text(rounded_to(value, style.round_off), style.linear_unit, style.precision, style);
 }
@@ -587,10 +591,19 @@ std::string measured_text_for(DimType type, const DimStyle& style, double value)
     std::string out = (pre.empty() ? deco : pre) + format_dim_value(length, style) + suf;
     if (style.alt) {
         const double a = rounded_to(length * style.alt_factor, style.alt_round);
+        // "\X" at the start of DIMAPOST puts the alternate value below the primary one, as
+        // AutoCAD's Placement: Below primary value writes it; marked here, split into the
+        // label's second line by compose_dim_label.
+        std::string apost = style.alt_post;
+        const bool below = apost.rfind("\\X", 0) == 0;
+        if (below) {
+            apost.erase(0, 2);
+        }
         std::string apre;
         std::string asuf;
-        split_post(style.alt_post, "[]", apre, asuf);
-        out += " [" + apre + length_text(a, style.alt_unit, style.alt_precision, style) + asuf + "]";
+        split_post(apost, "[]", apre, asuf);
+        out += (below ? std::string(1, kAltBelow) : std::string(" ")) + "[" + apre +
+               length_text(a, style.alt_unit, style.alt_precision, style) + asuf + "]";
     }
     return out;
 }
@@ -621,6 +634,22 @@ bool dim_label_quad(const DimGeometry& g, bool second, Vec2 (&out)[4]) {
     out[3] = at + ax * x0 + ay * g.text_height;
     return true;
 }
+
+namespace {
+/// The alternate value below the primary one: onto the label's second line when that is
+/// free, else beside the value as usual (a stacked tolerance holds the line below).
+void place_alt_below(DimLabel& out) {
+    if (const std::size_t k = out.line1.find(kAltBelow); k != std::string::npos) {
+        if (out.line2.empty()) {
+            out.line2 = out.line1.substr(k + 1);
+            out.line1.resize(k);
+        } else {
+            out.line1[k] = ' ';
+        }
+    }
+    std::replace(out.line2.begin(), out.line2.end(), kAltBelow, ' ');
+}
+} // namespace
 
 DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts parts) {
     // Prefix/suffix are ordinary text: run them through the ONE control-code pass, so
@@ -683,6 +712,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         } else if (tol.mode == TolMode::Reference) {
             out.line1 = "(" + out.line1 + ")";
         }
+        place_alt_below(out);
         return out;
     }
 
@@ -721,6 +751,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         out.line1 = wrap(measured_text(d, style));
         break;
     }
+    place_alt_below(out);
     return out;
 }
 

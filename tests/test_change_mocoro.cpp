@@ -1954,3 +1954,30 @@ TEST_CASE("EXTRIM asks for the cutting edge, then the side") {
     REQUIRE(h.last<ExtrimCommand>()->edge == Vec2{10, 0});
     REQUIRE(h.last<ExtrimCommand>()->side == Vec2{0, 1});
 }
+
+TEST_CASE("Alternate units below the primary value when DIMAPOST starts with \\X") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {50, 0};
+    d.line_pt = {25, 10};
+    DimStyle st;
+    st.alt = true;
+    st.alt_factor = 1.0 / 25.4;
+    st.alt_precision = 2;
+    DimLabel beside = compose_dim_label(d, st, {});
+    REQUIRE(beside.line1.find(" [") != std::string::npos);
+    REQUIRE(beside.line2.empty());
+    st.alt_post = "\\X";
+    DimLabel below = compose_dim_label(d, st, {});
+    REQUIRE(below.line1.find('[') == std::string::npos);
+    REQUIRE(below.line2.front() == '[');
+    REQUIRE(below.line2.back() == ']');
+    // A stacked tolerance keeps the line below: the alternate value goes beside the value.
+    st.tol_method = 3; // Limits
+    st.tol_upper = 0.1;
+    st.tol_lower = 0.05;
+    DimLabel lim = compose_dim_label(d, st, {});
+    REQUIRE(lim.line1.find('\x1f') == std::string::npos);
+    REQUIRE(lim.line2.find('\x1f') == std::string::npos);
+}

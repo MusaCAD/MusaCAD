@@ -603,7 +603,13 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     fill_alt_precision(style.alt_precision);
     QDoubleSpinBox* alt_factor = length_box(style.alt_factor, 0.0001, this);
     QDoubleSpinBox* alt_round = length_box(style.alt_round, 0.0, this);
-    const auto [apost_pre, apost_suf] = post_parts(style.alt_post, "[]");
+    // Placement: after the primary value, or below it -- AutoCAD writes the latter as "\X"
+    // at the start of DIMAPOST.
+    const bool alt_below = style.alt_post.rfind("\\X", 0) == 0;
+    const auto [apost_pre, apost_suf] = post_parts(alt_below ? style.alt_post.substr(2) : style.alt_post, "[]");
+    auto* place_after = new QRadioButton(QStringLiteral("After primary value"), this);
+    auto* place_below = new QRadioButton(QStringLiteral("Below primary value"), this);
+    (alt_below ? place_below : place_after)->setChecked(true);
     auto* alt_prefix = new QLineEdit(apost_pre, this);
     auto* alt_suffix = new QLineEdit(apost_suf, this);
     QFormLayout* alt = form();
@@ -613,6 +619,8 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     row(alt, QStringLiteral("Round distances to:"), alt_round);
     row(alt, QStringLiteral("Prefix:"), alt_prefix);
     row(alt, QStringLiteral("Suffix:"), alt_suffix);
+    row(alt, QStringLiteral("Placement:"), place_after);
+    row(alt, QString(), place_below);
     auto* alt_head = new QVBoxLayout;
     alt_head->setContentsMargins(12, 12, 12, 12);
     alt_head->addWidget(alt_on);
@@ -682,6 +690,9 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.alt_factor = alt_factor->value();
         s.alt_round = alt_round->value();
         s.alt_post = post_of(alt_prefix->text(), alt_suffix->text(), "[]");
+        if (place_below->isChecked()) {
+            s.alt_post = "\\X" + s.alt_post;
+        }
         s.tol_method = static_cast<std::uint8_t>(std::max(0, tol_method->currentIndex()));
         s.tol_precision = static_cast<std::int8_t>(tol_precision->currentIndex() - 1);
         s.tol_upper = tol_upper->value();
