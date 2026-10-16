@@ -112,6 +112,17 @@ bool CommandRegistry::contains(std::string_view alias) const {
     return table_.find(upper(alias)) != table_.end();
 }
 
+std::vector<CommandSuggestion> CommandRegistry::commands() const {
+    std::vector<CommandSuggestion> out;
+    for (const CommandSuggestion& e : entries_) {
+        if (!e.name.empty() && std::none_of(out.begin(), out.end(), [&](const CommandSuggestion& o) { return o.name == e.name; })) {
+            out.push_back(CommandSuggestion{e.name, e.name, e.description});
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const CommandSuggestion& a, const CommandSuggestion& b) { return a.name < b.name; });
+    return out;
+}
+
 std::vector<CommandSuggestion> CommandRegistry::suggest(std::string_view prefix) const {
     const std::string p = upper(prefix);
     std::vector<CommandSuggestion> out;
@@ -254,6 +265,8 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
              "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
+    file_cmd({"CUI"}, "CUI", "assets/ribbon/settings.svg",
+             "Customize the user interface: keyboard shortcuts of your own for any command, and command aliases.");
     file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
              "Open the Tool Palettes: commands, hatches and the drawing's blocks a click away (Ctrl+3).");
     file_cmd({"TOOLPALETTESCLOSE"}, "TOOLPALETTESCLOSE", "", "Close the Tool Palettes.");

@@ -83,6 +83,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **The Quick Access Toolbar's drop-down** (#73) -- Customize Quick Access Toolbar: each tool
   ticked on or off, Plot Preview, Batch Plot, Match Properties, Layer, Properties and Data
   Extraction to add, and Show Below the Ribbon; the choice is kept for the next session.
+- **Keyboard shortcuts of your own** (#73) -- **CUI** (Manage > Customization > User Interface):
+  the commands with their descriptions, searchable; a key pressed in the Shortcut field and
+  Assign gives it to the command (a key already in use is said first), Remove takes it
+  away. Kept in the settings; Command Aliases opens ALIASEDIT.
 - **Command aliases of your own** (#73) -- **ALIASEDIT** (Manage > Customization > Edit Aliases):
   an alias for any command, or one of Musa CAD's given to another command, added, removed or
   loaded from another PGP file such as AutoCAD's acad.pgp; kept in `musacaduser.pgp` in the

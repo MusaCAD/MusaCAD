@@ -90,6 +90,7 @@
 #include <QSettings>
 #include <QColor>
 #include <QItemSelectionModel>
+#include <QKeySequenceEdit>
 #include <functional>
 #include <set>
 #include <QPainter>
@@ -324,6 +325,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
             return true;
         }
+        if (action == "CUI") {
+            QTimer::singleShot(0, this, &MainWindow::open_cui_dialog);
+            return true;
+        }
         if (action == "DATALINK") {
             QTimer::singleShot(0, this, &MainWindow::open_data_link_manager);
             return true;
@@ -442,6 +447,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     build_status_bar();
     build_tool_palettes();
     init_workspaces();
+    if (!developer_hook_active()) {
+        apply_user_shortcuts(); // the keyboard shortcuts of the user's own (CUI)
+    }
 
     title_timer_ = new QTimer(this);
     connect(title_timer_, &QTimer::timeout, this, [this] {
@@ -3440,6 +3448,147 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
         }
     }
     return 1;
+}
+
+void MainWindow::apply_user_shortcuts() {
+    for (QAction* a : user_shortcut_actions_) {
+        removeAction(a);
+        a->deleteLater();
+    }
+    user_shortcut_actions_.clear();
+    const QVariantMap map = QSettings().value(QStringLiteral("shortcuts/map")).toMap();
+    for (auto it = map.cbegin(); it != map.cend(); ++it) {
+        const QKeySequence keys(it.key(), QKeySequence::PortableText);
+        const std::string cmd = it.value().toString().toStdString();
+        if (keys.isEmpty() || cmd.empty()) {
+            continue;
+        }
+        auto* a = new QAction(QString::fromStdString(cmd), this);
+        a->setShortcut(keys);
+        a->setShortcutContext(Qt::ApplicationShortcut);
+        connect(a, &QAction::triggered, this, [this, cmd] {
+            command_widget_->focus_input();
+            processor_->start_command(cmd);
+        });
+        addAction(a);
+        user_shortcut_actions_.push_back(a);
+    }
+}
+
+// CUI: the Customize User Interface window -- here, Keyboard Shortcuts: every command, the
+// key of your own for it (pressed in the Shortcut field), kept in the settings; a key the
+// window already uses elsewhere is said before it is taken. Command Aliases opens ALIASEDIT.
+void MainWindow::open_cui_dialog() {
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("CuiDialog"));
+    dlg.setWindowTitle(QStringLiteral("Customize User Interface"));
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->addWidget(new QLabel(QStringLiteral("Keyboard Shortcuts"), &dlg));
+    auto* search = new QLineEdit(&dlg);
+    search->setPlaceholderText(QStringLiteral("Search commands"));
+    lay->addWidget(search);
+    auto* table = new QTableWidget(0, 3, &dlg);
+    table->setObjectName(QStringLiteral("CuiShortcuts"));
+    table->setHorizontalHeaderLabels({QStringLiteral("Command"), QStringLiteral("Shortcut"), QStringLiteral("Description")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->hide();
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    lay->addWidget(table, 1);
+    QVariantMap map = QSettings().value(QStringLiteral("shortcuts/map")).toMap(); // keys -> command
+    const auto key_of = [&map](const QString& cmd) {
+        for (auto it = map.cbegin(); it != map.cend(); ++it) {
+            if (it.value().toString() == cmd) {
+                return QKeySequence(it.key(), QKeySequence::PortableText).toString(QKeySequence::NativeText);
+            }
+        }
+        return QString();
+    };
+    for (const command::CommandSuggestion& c : processor_->registry().commands()) {
+        const int r = table->rowCount();
+        table->insertRow(r);
+        table->setItem(r, 0, new QTableWidgetItem(QString::fromStdString(c.name)));
+        table->setItem(r, 1, new QTableWidgetItem(key_of(QString::fromStdString(c.name))));
+        table->setItem(r, 2, new QTableWidgetItem(QString::fromStdString(c.description)));
+    }
+    table->resizeColumnToContents(0);
+    connect(search, &QLineEdit::textChanged, &dlg, [table](const QString& s) {
+        for (int r = 0; r < table->rowCount(); ++r) {
+            const bool hit = s.isEmpty() || table->item(r, 0)->text().contains(s, Qt::CaseInsensitive) ||
+                             table->item(r, 2)->text().contains(s, Qt::CaseInsensitive);
+            table->setRowHidden(r, !hit);
+        }
+    });
+    auto* row = new QHBoxLayout;
+    row->addWidget(new QLabel(QStringLiteral("Shortcut:"), &dlg));
+    auto* keys = new QKeySequenceEdit(&dlg);
+    keys->setObjectName(QStringLiteral("CuiKeys"));
+    row->addWidget(keys, 1);
+    auto* assign = new QPushButton(QStringLiteral("Assign"), &dlg);
+    auto* clear = new QPushButton(QStringLiteral("Remove"), &dlg);
+    row->addWidget(assign);
+    row->addWidget(clear);
+    lay->addLayout(row);
+    const auto current_cmd = [table]() -> QString {
+        const int r = table->currentRow();
+        return r >= 0 ? table->item(r, 0)->text() : QString();
+    };
+    const auto drop = [&map](const QString& cmd) {
+        for (auto it = map.begin(); it != map.end();) {
+            it = it.value().toString() == cmd ? map.erase(it) : std::next(it);
+        }
+    };
+    connect(assign, &QPushButton::clicked, &dlg, [&] {
+        const QString cmd = current_cmd();
+        const QKeySequence seq = keys->keySequence();
+        if (cmd.isEmpty() || seq.isEmpty()) {
+            return;
+        }
+        const QString portable = seq.toString(QKeySequence::PortableText);
+        // A key the window already answers to (Ctrl+Z, F8, a ribbon tool's) is said first.
+        QString taken;
+        for (QAction* a : findChildren<QAction*>()) {
+            if (std::find(user_shortcut_actions_.begin(), user_shortcut_actions_.end(), a) == user_shortcut_actions_.end() &&
+                a->shortcuts().contains(seq)) {
+                taken = a->text().isEmpty() ? a->objectName() : a->text();
+            }
+        }
+        if (const QString other = map.value(portable).toString(); !other.isEmpty() && other != cmd) {
+            taken = other;
+        }
+        if (!taken.isEmpty() &&
+            QMessageBox::question(&dlg, QStringLiteral("Keyboard Shortcuts"),
+                                  QStringLiteral("%1 is used by %2. Give it to %3?").arg(seq.toString(QKeySequence::NativeText), taken, cmd)) !=
+                QMessageBox::Yes) {
+            return;
+        }
+        drop(cmd);
+        map.insert(portable, cmd);
+        for (int r = 0; r < table->rowCount(); ++r) {
+            table->item(r, 1)->setText(key_of(table->item(r, 0)->text()));
+        }
+    });
+    connect(clear, &QPushButton::clicked, &dlg, [&] {
+        const QString cmd = current_cmd();
+        if (cmd.isEmpty()) {
+            return;
+        }
+        drop(cmd);
+        table->item(table->currentRow(), 1)->setText(QString());
+    });
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    auto* aliases = buttons->addButton(QStringLiteral("Command Aliases..."), QDialogButtonBox::ActionRole);
+    connect(aliases, &QPushButton::clicked, this, &MainWindow::open_alias_editor);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(buttons);
+    dlg.resize(620, 520);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    QSettings().setValue(QStringLiteral("shortcuts/map"), map);
+    apply_user_shortcuts();
 }
 
 // ALIASEDIT: the user's own aliases in a table -- Alias and Command -- added, removed,

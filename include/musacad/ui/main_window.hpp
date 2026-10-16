@@ -306,6 +306,9 @@ private:
     static QString user_pgp_path();
     QString load_user_aliases(); ///< reads the file again; says what it found
     void open_alias_editor();    ///< ALIASEDIT
+    void open_cui_dialog();      ///< CUI: keyboard shortcuts of the user's own
+    void apply_user_shortcuts(); ///< the saved ones made live (QSettings shortcuts/map)
+    std::vector<QAction*> user_shortcut_actions_;
     int open_tolerance_dialog(std::vector<std::string>& cells); ///< TOLERANCE (1 OK, 0 cancelled)
     int open_field_dialog(std::string& code);                   ///< FIELD (1 OK, 0 cancelled)
     void open_data_link_manager();                              ///< DATALINK

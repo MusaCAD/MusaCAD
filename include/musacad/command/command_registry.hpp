@@ -64,6 +64,9 @@ public:
     /// source of command truth.
     [[nodiscard]] std::vector<CommandSuggestion> suggest(std::string_view prefix) const;
 
+    /// Every command once, by its name, with its description (CUI's list).
+    [[nodiscard]] std::vector<CommandSuggestion> commands() const;
+
     /// A command alias of the user's own (a PGP line `ALIAS, *COMMAND`): `alias` then
     /// starts what `command` starts -- a command's name or one of its aliases -- in place
     /// of whatever it started before. False when `command` is not known.

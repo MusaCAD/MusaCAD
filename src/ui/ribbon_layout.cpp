@@ -1088,7 +1088,7 @@ void MainWindow::build_ribbon() {
     large(cleanup, QStringLiteral("Audit"), "AUDIT", "audit");
     RibbonPanel* customize = ribbon_->add_panel(manage, QStringLiteral("Customization"), 40);
     customize->set_representative_icon(asset("settings"));
-    customize->add_placeholder(asset("settings"), QStringLiteral("User\nInterface"), RibbonTier::Primary);
+    large(customize, QStringLiteral("User\nInterface"), "CUI", "settings");
     {
         QToolButton* tp = customize->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
         tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
