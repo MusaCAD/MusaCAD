@@ -3311,8 +3311,7 @@ TEST_CASE("Spline leaders, leaders with no line and no arrowhead -- drawn so and
         ml.leader_flags = flags;
         ml.group = 1;
         engine.submit(ml);
-        REQUIRE(wait_until(engine, [](const auto& s) { return s.document_version > 0 || !s.line_vertices.empty(); }));
-        engine.consume_snapshot();
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.dirty; }));
         const std::size_t n = engine.snapshot().line_vertices.size();
         engine.stop();
         return n;

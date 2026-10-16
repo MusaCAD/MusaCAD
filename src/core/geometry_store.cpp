@@ -523,7 +523,7 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     b.str_len = static_cast<std::uint32_t>(content.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot = mleaders_.insert(MLeaderData{
-        voff, static_cast<std::uint32_t>(vertices.size()), style, b, props, overrides});
+        voff, static_cast<std::uint32_t>(vertices.size()), style, 0, b, props, overrides});
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
 }
 

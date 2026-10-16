@@ -127,13 +127,14 @@ TEST_CASE("LEADER: points until Enter, lines of annotation, Undo and Format") {
     h.run({"LEADER", "0,0", "5,5", "9,9", "U", "10,5", "F"});
     REQUIRE(h.out.prompt == "Enter leader format option [Spline/STraight/Arrow/None] <Exit>: ");
     h.run({"S"});
-    REQUIRE(h.out.lines.back() == "Spline leaders are not available yet; the leader stays straight.");
+    REQUIRE(h.out.prompt == "Specify next point or [Annotation/Format/Undo] <Annotation>: ");
     h.run({"20,5", "A", "FIRST", "SECOND", ""});
     const auto* m = h.last<AddMLeaderCommand>();
     REQUIRE(m != nullptr);
     REQUIRE(m->vertices.size() == 4);
     REQUIRE(m->vertices[2] == Vec2{10, 5});
     REQUIRE(m->content == "FIRST\nSECOND");
+    REQUIRE((m->leader_flags & LeaderForm::kSpline) != 0);
 
     h.run({"LEADER", "0,0", "5,5", "", ""});
     REQUIRE(h.out.prompt == "Enter an annotation option [Tolerance/Copy/Block/None/Mtext] <Mtext>: ");
