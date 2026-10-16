@@ -59,7 +59,9 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
 /// The entity edited by dragging grip `grip_index` to `newpos`, as an Add* command
 /// (parametric, props preserved). If the grip isn't editable, returns the entity
 /// unchanged (its capture). Never bakes tessellation; dimensions stay def-points.
+/// `text_move` (0..2), a dimension's text grip dragged as the grip menu's Move with Dim
+/// Line, Move Text Only or Move with Leader: the dimension takes that DIMTMOVE as its own.
 [[nodiscard]] Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h,
-                                         std::uint32_t grip_index, Vec2 newpos);
+                                         std::uint32_t grip_index, Vec2 newpos, int text_move = -1);
 
 } // namespace musacad::core

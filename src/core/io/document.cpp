@@ -328,6 +328,7 @@ Document document_from_store(const GeometryStore& store) {
             const std::span<const Vec2> brk = store.dim_breaks(dd);
             doc.dims.back().breaks.assign(brk.begin(), brk.end());
             doc.dims.back().unassoc = dd.unassoc;
+            doc.dims.back().flip = dd.flip;
         }
     }
     const auto& leaders = store.leaders();
@@ -626,6 +627,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         }
         if (d.unassoc) {
             store.set_dim_unassoc(dh, true);
+        }
+        if (d.flip != 0) {
+            store.set_dim_flip(dh, d.flip);
         }
     }
     for (const DocLeader& l : doc.leaders) {

@@ -848,6 +848,16 @@ std::string serialize_native(const Document& doc) {
         if (d.unassoc) {
             s += "DIMNOASSOC\n"; // v40: the DIM just written is not associative
         }
+        if (d.flip != 0) {
+            s += "DIMFLIP "; // v40: its flipped arrowheads
+            append_uint(s, d.flip);
+            s += '\n';
+        }
+        if (d.overrides.has(DimOverrides::kTextMove)) {
+            s += "DIMTMOVE "; // v40: its own DIMTMOVE (outside the override block's fixed fields)
+            append_uint(s, d.overrides.text_move);
+            s += '\n';
+        }
         if (!d.breaks.empty()) {
             // v40: DIMBREAKS n x y ... -- the breaks of the DIM just written.
             s += "DIMBREAKS ";
@@ -2397,6 +2407,18 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       static_cast<std::uint8_t>(dinspect),
                                       dinspect_label,
                                       dinspect_rate});
+        } else if (key == "DIMFLIP" || key == "DIMTMOVE") {
+            std::uint64_t v = 0;
+            if (doc.dims.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 3 ||
+                (key == "DIMTMOVE" && v > 2)) {
+                return fail("malformed " + std::string(key));
+            }
+            if (key == "DIMFLIP") {
+                doc.dims.back().flip = static_cast<std::uint8_t>(v);
+            } else {
+                doc.dims.back().overrides.text_move = static_cast<std::uint8_t>(v);
+                doc.dims.back().overrides.set(DimOverrides::kTextMove, true);
+            }
         } else if (key == "DIMNOASSOC") {
             if (doc.dims.empty()) {
                 return fail("DIMNOASSOC without a DIM");

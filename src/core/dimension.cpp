@@ -358,6 +358,9 @@ bool apply_dim_override(DimOverrides& o, std::string_view var, double v) {
     } else if (same_var(var, "DIMATFIT")) {
         o.text_fit = s.text_fit;
         o.set(B::kTextFit, true);
+    } else if (same_var(var, "DIMTMOVE")) {
+        o.text_move = s.text_move;
+        o.set(B::kTextMove, true);
     } else if (same_var(var, "DIMCLRD") && !s.dim_color.by_layer) {
         o.dim_color = s.dim_color.color;
         o.set(B::kDimColor, true);
@@ -1431,16 +1434,19 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     // Arrows outside: the SAME append_arrowhead call with the direction reversed, so
     // each head sits beyond its extension line pointing back in. There is deliberately
     // no second arrowhead code path -- `along` was already the direction parameter.
+    // Flip Arrow (the grip menu) turns one head to the other side of its extension line.
+    const bool in_a = arrows_inside != ((d.flip & 1u) != 0);
+    const bool in_b = arrows_inside != ((d.flip & 2u) != 0);
     if (span > 1e-9) {
-        const double s = arrows_inside ? 1.0 : -1.0;
-        append_arrowhead(g.arrow_fills, g.arrow_lines, fa, u * s, style.arrow_size, atype);
-        append_arrowhead(g.arrow_fills, g.arrow_lines, fb, u * -s, style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, fa, u * (in_a ? 1.0 : -1.0), style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, fb, u * (in_b ? -1.0 : 1.0), style.arrow_size, atype);
     }
 
     // The dimension line runs foot to foot, extended past each extension line by the
     // arrow length plus a short stub when the arrows are outside, so each head has a
     // line to sit on (ISO 129-1 fig. 8).
-    const double stub = arrows_inside ? 0.0 : style.arrow_size * 1.6;
+    const double stub_a = in_a ? 0.0 : style.arrow_size * 1.6;
+    const double stub_b = in_b ? 0.0 : style.arrow_size * 1.6;
     const double jh = style.text_height * 1.5; // DIMJOGLINE's jog: 1.5 text heights
     if (d.jog >= 0.0 && span > jh) {
         // The line with a zigzag across it at the jog's place, kept clear of the ends.
@@ -1450,13 +1456,13 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 z1 = c - u * (jh / 6.0) + n * (jh * 0.5);
         const Vec2 z2 = c + u * (jh / 6.0) - n * (jh * 0.5);
         const Vec2 z3 = c + u * (jh * 0.5);
-        seg(g.dim_lines, fa - u * stub, z0);
+        seg(g.dim_lines, fa - u * stub_a, z0);
         seg(g.dim_lines, z0, z1);
         seg(g.dim_lines, z1, z2);
         seg(g.dim_lines, z2, z3);
-        seg(g.dim_lines, z3, fb + u * stub);
+        seg(g.dim_lines, z3, fb + u * stub_b);
     } else {
-        seg(g.dim_lines, fa - u * stub, fb + u * stub);
+        seg(g.dim_lines, fa - u * stub_a, fb + u * stub_b);
     }
 
     const Vec2 mid = (fa + fb) * 0.5;
@@ -1479,7 +1485,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         // Outside: on the dimension line's own extension, past the second extension
         // line, clearing the outside arrowhead + stub when there is one, then the gap.
         // Left-justified from there, so the text reads away from the feature.
-        g.text_pos = fb + u * (stub + gap) + text_up * off;
+        g.text_pos = fb + u * (stub_b + gap) + text_up * off;
         g.text_justify = text::Justify::Left;
     }
     // A two-line label (Limits) stacks DOWNWARD from text_pos, so lift the block by one
@@ -1503,10 +1509,10 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                 s1 = std::max(s1, sp);
             }
             const bool under = style.text_above;
-            if (s1 > span + stub) {
-                seg(g.dim_lines, fb + u * stub, fa + u * (under ? s1 : s0 - gap));
-            } else if (s0 < -stub) {
-                seg(g.dim_lines, fa - u * stub, fa + u * (under ? s0 : s1 + gap));
+            if (s1 > span + stub_b) {
+                seg(g.dim_lines, fb + u * stub_b, fa + u * (under ? s1 : s0 - gap));
+            } else if (s0 < -stub_a) {
+                seg(g.dim_lines, fa - u * stub_a, fa + u * (under ? s0 : s1 + gap));
             }
         }
     }

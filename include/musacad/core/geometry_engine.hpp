@@ -505,6 +505,7 @@ private:
     void follow_dims(const std::vector<DimFollow>& follows, const std::function<Vec2(Vec2)>& map,
                      const std::function<void(Command&)>& whole, std::uint64_t group);
     void apply_dim_assoc(const DimAssocCommand& c);
+    void apply_dim_grip_menu(const DimGripMenuCommand& c);
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
                                 std::uint64_t group);
@@ -747,6 +748,7 @@ private:
     bool grip_active_ = false;
     EntityHandle grip_handle_{};
     std::uint32_t grip_index_ = 0;
+    int grip_text_move_ = -1; ///< GripDragCommand::text_move of the drag under way
     Vec2 grip_pos_{};
     GeometryStore grip_preview_store_;
 

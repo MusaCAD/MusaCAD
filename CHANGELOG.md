@@ -134,6 +134,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
   dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
   with the drawing (format v40).
+- **Dimension grip menus** (#59) -- right-click a selected dimension's grip: on its text,
+  Stretch, Move with Dim Line, Move Text Only, Move with Leader (the dimension keeps that text
+  movement), Above Dim Line, Center Vertically and Reset Text Position; on its other grips,
+  Stretch, Continue Dimension, Baseline Dimension (from that extension line) and Flip Arrow.
 - **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
   boundary's extents; a colour and a layer for new hatches; remembered.
 - **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the

@@ -246,12 +246,14 @@ struct DimOverrides {
         kExtColor = 1u << 6,
         kTextColor = 1u << 7,
         kTextFit = 1u << 8,
+        kTextMove = 1u << 9, ///< DIMTMOVE (the text grip's Move with Dim Line / Text Only / with Leader)
     };
     std::uint16_t mask = 0;
     std::uint8_t arrow_type = 0;
     std::uint8_t precision = 2;
     std::uint8_t text_fit = 0; ///< TextFit
     bool text_above = true;
+    std::uint8_t text_move = 0; ///< DimStyle::text_move
     double text_height = 2.5;
     double arrow_size = 2.5;
     Rgb dim_color{};
@@ -294,6 +296,9 @@ struct DimOverrides {
     }
     if (o.has(DimOverrides::kTextFit)) {
         s.text_fit = o.text_fit;
+    }
+    if (o.has(DimOverrides::kTextMove)) {
+        s.text_move = o.text_move;
     }
     return s;
 }

@@ -1944,6 +1944,8 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 }
                 if (ginfo.handle.kind == core::EntityKind::Polyline) {
                     show_polyline_grip_menu(ginfo, event->globalPosition().toPoint());
+                } else if (ginfo.handle.kind == core::EntityKind::Dimension) {
+                    show_dimension_grip_menu(ginfo, event->globalPosition().toPoint());
                 }
             } else if (box_pending_ || lasso_active_) {
                 box_pending_ = false; // right-click abandons a box in progress
@@ -2518,6 +2520,58 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
     }
     const std::uint64_t group = processor_->begin_group();
     engine_.submit(core::PolylineVertexCommand{grip.handle, grip.index, op, group});
+    rebuild_overlay();
+}
+
+void ViewportWindow::show_dimension_grip_menu(const core::GripInfo& grip, QPoint global) {
+    using Op = core::DimGripMenuCommand::Op;
+    const bool text = grip.index == core::DimData::kTextGripIndex;
+    QMenu menu;
+    QAction* stretch = menu.addAction(QStringLiteral("Stretch"));
+    QAction* with_line = text ? menu.addAction(QStringLiteral("Move with Dim Line")) : nullptr;
+    QAction* text_only = text ? menu.addAction(QStringLiteral("Move Text Only")) : nullptr;
+    QAction* with_leader = text ? menu.addAction(QStringLiteral("Move with Leader")) : nullptr;
+    QAction* above = text ? menu.addAction(QStringLiteral("Above Dim Line")) : nullptr;
+    QAction* center = text ? menu.addAction(QStringLiteral("Center Vertically")) : nullptr;
+    QAction* reset = text ? menu.addAction(QStringLiteral("Reset Text Position")) : nullptr;
+    QAction* cont = text ? nullptr : menu.addAction(QStringLiteral("Continue Dimension"));
+    QAction* base = text ? nullptr : menu.addAction(QStringLiteral("Baseline Dimension"));
+    QAction* flip = text ? nullptr : menu.addAction(QStringLiteral("Flip Arrow"));
+    QAction* chosen = menu.exec(global);
+    if (chosen == nullptr || processor_ == nullptr) {
+        return;
+    }
+    if (chosen == stretch || chosen == with_line || chosen == text_only || chosen == with_leader) {
+        // The grip made hot, as a click on it does; the text grip's choices drag the text
+        // that way, and the dimension keeps it as its text movement.
+        const std::int8_t move = chosen == with_line ? 0 : chosen == text_only ? 2 : chosen == with_leader ? 1 : -1;
+        core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0};
+        begin.text_move = move;
+        engine_.submit(begin);
+        processor_->set_last_point(grip.pos);
+        processor_->start_grip_mode(grip.handle, grip.index, grip.pos);
+        rebuild_overlay();
+        return;
+    }
+    if (chosen == cont || chosen == base) {
+        // DIMCONTINUE / DIMBASELINE from this dimension, at the extension line of the grip.
+        processor_->submit_line(chosen == cont ? "DIMCONTINUE" : "DIMBASELINE");
+        processor_->submit_line("S");
+        processor_->pick_point(grip.pos, grip.pos);
+        rebuild_overlay();
+        return;
+    }
+    Op op = Op::FlipArrow;
+    if (chosen == above) {
+        op = Op::AboveLine;
+    } else if (chosen == center) {
+        op = Op::CenterVertically;
+    } else if (chosen == reset) {
+        op = Op::ResetText;
+    } else if (chosen != flip) {
+        return;
+    }
+    engine_.submit(core::DimGripMenuCommand{op, grip.handle, grip.pos, processor_->begin_group()});
     rebuild_overlay();
 }
 

@@ -194,6 +194,9 @@ struct DimData {
     /// round ends, 2 with angular ends, 3 unframed. Its label (left of the value) and its
     /// inspection rate (right of it) are in the shared char pool; either may be empty.
     std::uint8_t inspect = 0;
+    /// Flip Arrow (the dimension grip menu): bit 0 the first arrowhead, bit 1 the second,
+    /// turned to the other side of its extension line (linear and aligned dimensions).
+    std::uint8_t flip = 0;
     std::uint32_t inspect_label_offset = 0;
     std::uint32_t inspect_label_len = 0;
     std::uint32_t inspect_rate_offset = 0;
@@ -547,6 +550,7 @@ public:
     bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
     bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
+    bool set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
     bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;

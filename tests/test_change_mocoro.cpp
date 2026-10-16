@@ -2475,3 +2475,53 @@ TEST_CASE("DIMASSOC asks for 0 to 2; DIMDISASSOCIATE and DIMREASSOCIATE take the
     h.run({"DRE"});
     REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::Reassociate);
 }
+
+TEST_CASE("The dimension grip menu: Flip Arrow, Above Dim Line, Center Vertically, Reset Text Position, Move Text Only") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {20, 0};
+    d.line_pt = {10, 10};
+    REQUIRE(compute_dim_geometry(d, DimStyle{}, Rgb{}).dim_lines[0].x == Approx(0.0));
+    d.flip = 1; // the first head outside: the line goes on past its extension line
+    const DimGeometry flipped = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    REQUIRE(flipped.dim_lines[0].x < -1.0);
+    REQUIRE(flipped.dim_lines[1].x == Approx(20.0));
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {20, 0}, {10, 10}, 0, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    const auto dim = [&] { return engine.snapshot().selection.at(0); };
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, dim(), {20, 10}, 2});
+    io::Document doc = dump(engine, "musacad_dimgrip_1.musa");
+    REQUIRE(doc.dims[0].flip == 2); // the head nearer the grip
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::CenterVertically, dim(), {10, 10}, 3});
+    doc = dump(engine, "musacad_dimgrip_2.musa");
+    REQUIRE(doc.dims[0].overrides.has(DimOverrides::kTextAbove));
+    REQUIRE_FALSE(doc.dims[0].overrides.text_above);
+    // Move Text Only: the text grip dragged off the line; the dimension keeps DIMTMOVE 2.
+    GripDragCommand begin{GripDragCommand::Phase::Begin, dim(), DimData::kTextGripIndex, {}, 0};
+    begin.text_move = 2;
+    engine.submit(begin);
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {14, 25}, 4});
+    doc = dump(engine, "musacad_dimgrip_3.musa");
+    REQUIRE(doc.dims[0].overrides.has(DimOverrides::kTextMove));
+    REQUIRE(doc.dims[0].overrides.text_move == 2);
+    REQUIRE(doc.dims[0].line_pt == Vec2{10, 10}); // the line stayed
+    REQUIRE(doc.dims[0].text_offset != Vec2{});
+    REQUIRE(doc.dims[0].flip == 2);
+    // The file keeps them.
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.dims[0].flip == 2);
+    REQUIRE(again.dims[0].overrides.text_move == 2);
+    REQUIRE(again.dims[0] == doc.dims[0]);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::ResetText, dim(), {14, 25}, 5});
+    doc = dump(engine, "musacad_dimgrip_4.musa");
+    REQUIRE(doc.dims[0].text_offset == Vec2{});
+    engine.stop();
+}

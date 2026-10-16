@@ -346,6 +346,10 @@ public:
 
     /// AutoCAD's multi-functional polyline grip menu (right-click on a grip while idle).
     void show_polyline_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// A dimension's grip menu: on its text, Stretch, Move with Dim Line, Move Text Only, Move
+    /// with Leader, Above Dim Line, Center Vertically, Reset Text Position; on its other grips,
+    /// Stretch, Continue Dimension, Baseline Dimension, Flip Arrow.
+    void show_dimension_grip_menu(const core::GripInfo& grip, QPoint global);
     /// The idle right-click menu (Repeat, Recent Input, Clipboard, Isolate, Select
     /// Similar, Quick Select, Deselect All, Undo / Redo, Properties).
     void show_context_menu(QPoint global, core::Vec2 world);

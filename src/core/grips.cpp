@@ -113,6 +113,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const std::span<const Vec2> brk = store.dim_breaks(*d);
         dc.breaks.assign(brk.begin(), brk.end());
         dc.unassoc = d->unassoc;
+        dc.flip = d->flip;
         return dc;
     }
     case EntityKind::Leader: {
@@ -346,6 +347,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 }
                 if (c.unassoc) {
                     store.set_dim_unassoc(handle, true);
+                }
+                if (c.flip != 0) {
+                    store.set_dim_flip(handle, c.flip);
                 }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
@@ -694,8 +698,13 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
 }
 
 Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint32_t grip_index,
-                           Vec2 newpos) {
+                           Vec2 newpos, int text_move) {
     Command c = capture_entity(store, h);
+    if (auto* dc = std::get_if<AddDimensionCommand>(&c);
+        dc != nullptr && text_move >= 0 && text_move <= 2 && grip_index == DimData::kTextGripIndex) {
+        dc->overrides.text_move = static_cast<std::uint8_t>(text_move);
+        dc->overrides.set(DimOverrides::kTextMove, true);
+    }
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;

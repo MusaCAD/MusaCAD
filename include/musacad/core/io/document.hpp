@@ -201,6 +201,7 @@ struct DocDim {
     std::string inspect_rate{};
     std::vector<Vec2> breaks{}; ///< v40: DIMBREAK's breaks (pairs)
     bool unassoc = false;       ///< v40: not associative (DimData::unassoc)
+    std::uint8_t flip = 0;      ///< v40: Flip Arrow (DimData::flip)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

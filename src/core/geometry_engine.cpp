@@ -2073,6 +2073,41 @@ void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
     }
 }
 
+void GeometryEngine::apply_dim_grip_menu(const DimGripMenuCommand& c) {
+    using Op = DimGripMenuCommand::Op;
+    const DimData* d = c.dim.kind == EntityKind::Dimension ? store_.dimension(c.dim) : nullptr;
+    if (d == nullptr || !selectable(c.dim)) {
+        return;
+    }
+    if (c.op == Op::FlipArrow && d->type != DimType::Linear && d->type != DimType::Aligned) {
+        report("Flip Arrow is for linear and aligned dimensions.");
+        return;
+    }
+    const Command original = capture_entity(c.dim);
+    Command edited = original;
+    auto& x = std::get<AddDimensionCommand>(edited);
+    switch (c.op) {
+    case Op::FlipArrow:
+        x.flip = static_cast<std::uint8_t>(x.flip ^ (distance(c.at, x.a) <= distance(c.at, x.b) ? 1u : 2u));
+        break;
+    case Op::AboveLine:
+    case Op::CenterVertically:
+        x.overrides.text_above = c.op == Op::AboveLine;
+        x.overrides.set(DimOverrides::kTextAbove, true);
+        break;
+    case Op::ResetText:
+        x.text_offset = {};
+        break;
+    }
+    remove_indexed(c.dim);
+    push_erase_item(c.group, c.dim, original);
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(c.group, nh, edited);
+    std::replace(selection_.begin(), selection_.end(), c.dim, nh);
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
 void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
@@ -10236,7 +10271,7 @@ void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     }
     if (copy) {
         // STRETCH's Copy: the original stays (and keeps its grips); the stretched one is new.
-        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_, grip_text_move_);
         const EntityHandle nh = create_indexed(edited);
         push_create_item(group, nh, edited);
         redo_.clear();
@@ -10248,7 +10283,7 @@ void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     // Erase the original and create the grip-edited entity as ONE undo group --
     // exactly the move/property-edit pattern. The edit is parametric (no baking).
     const Command original = capture_entity(grip_handle_);
-    const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+    const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_, grip_text_move_);
     const std::vector<DimFollow> follows = dims_on({grip_handle_});
     std::vector<Grip> before;
     grips_of(store_, grip_handle_, before);
@@ -14659,6 +14694,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimAssocCommand>) {
                 apply_dim_assoc(c);
             }
+            if constexpr (std::is_same_v<T, DimGripMenuCommand>) {
+                apply_dim_grip_menu(c);
+            }
             if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
                 current_props_ = c.current;
                 current_props_.layer = 0; // the current layer applies at creation
@@ -14838,6 +14876,7 @@ void GeometryEngine::apply_one(const Command& command) {
                     grip_active_ = store_.is_valid(c.handle) && selectable(c.handle);
                     grip_handle_ = c.handle;
                     grip_index_ = c.grip;
+                    grip_text_move_ = c.text_move;
                 } else if (c.phase == P::Move) {
                     grip_pos_ = c.pos; // preview recomputed in rebuild_and_publish
                 } else if (c.phase == P::Commit) {
@@ -17660,7 +17699,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.grip_preview_segments.clear();
     buf.grip_preview_fills.clear();
     if (grip_active_ && store_.is_valid(grip_handle_)) {
-        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_, grip_text_move_);
         grip_preview_store_.clear();
         grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
         grip_preview_store_.set_dimstyle_table(store_.dimstyles());

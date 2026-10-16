@@ -1309,6 +1309,7 @@ struct AddDimensionCommand {
     std::string inspect_rate{};   ///< and its inspection rate
     std::vector<Vec2> breaks{};   ///< DIMBREAK's breaks (pairs; DimTextParts::breaks)
     bool unassoc = false;         ///< DimData::unassoc
+    std::uint8_t flip = 0;        ///< DimData::flip
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1374,6 +1375,19 @@ struct GripDragCommand {
     Vec2 pos;                ///< Move/Commit: resolved drag target
     std::uint64_t group = 0; ///< Commit: undo group id
     bool copy = false;       ///< Commit: STRETCH's Copy -- the original stays, the stretched one is new
+    /// Begin: a dimension's text grip dragged as the grip menu's Move with Dim Line (0),
+    /// Move Text Only (2) or Move with Leader (1); -1, as the dimension moves its text.
+    std::int8_t text_move = -1;
+};
+
+/// The dimension grip menu's one-step choices on dimension `dim`, its grip at `at`: Flip
+/// Arrow (the arrowhead nearer `at`), Above Dim Line, Center Vertically, Reset Text Position.
+struct DimGripMenuCommand {
+    enum class Op : std::uint8_t { FlipArrow, AboveLine, CenterVertically, ResetText };
+    Op op = Op::FlipArrow;
+    EntityHandle dim{};
+    Vec2 at{};
+    std::uint64_t group = 0;
 };
 
 /// View scale (world units per pixel) for zoom-adaptive curve tessellation. Sent
@@ -2289,7 +2303,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, SetCurrentPropsCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
