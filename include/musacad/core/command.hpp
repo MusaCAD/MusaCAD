@@ -763,6 +763,8 @@ struct ListQueryCommand {
     double pick_radius = 0.0;
     /// LIST every selected object (the "Select objects:" form) instead of the one under `at`.
     bool selection = false;
+    /// DBLIST: every object in the drawing.
+    bool everything = false;
 };
 /// MEASUREGEOM (issue #63): `what` 0 Radius (an arc or circle under `at`), 1 Angle (two
 /// lines under `at` and `at2`, or one arc), 2 Quick (the object's own measurements).

@@ -1124,3 +1124,25 @@ TEST_CASE("RENAME renames layers, styles, blocks and views; SETVAR runs a variab
     h.run({"REDRAW"});
     REQUIRE(h.last<RegenCommand>() != nullptr);
 }
+
+TEST_CASE("DBLIST lists every object; PLAN takes the World view") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(ListQueryCommand{{}, 0.0, false, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "DBLIST: the drawing is empty."; }));
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddCircleCommand{{20, 0}, 5, 2});
+    engine.submit(ListQueryCommand{{}, 0.0, false, true});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("LINE") != std::string::npos && s.status.find("CIRCLE") != std::string::npos;
+    }));
+    engine.stop();
+
+    H h;
+    h.run({"DBLIST"});
+    REQUIRE(h.last<ListQueryCommand>()->everything);
+    h.run({"PLAN"});
+    REQUIRE(h.out.prompt == "Enter an option [Current ucs/Ucs/World] <Current>: ");
+    h.run({"W"});
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

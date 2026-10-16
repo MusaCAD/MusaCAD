@@ -55,7 +55,7 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Batch Plot).
 - **The file commands at the command line** -- NEW, OPEN, QSAVE, SAVEAS (SAVE), CLOSE, CLOSEALL,
   QUIT (EXIT), IMPORT / DXFIN and EXPORT / DXFOUT, as AutoCAD names them; and RENAME, SETVAR,
-  REDRAW, DTEXT and DDPTYPE.
+  REDRAW, DIMREGEN, DBLIST, PLAN, DTEXT and DDPTYPE.
 - **COLOR, LWEIGHT and LINETYPE** (#68) -- the colour, lineweight and linetype new objects take:
   the Select Color window (the index colours and true colour), Lineweight Settings and the
   Linetype Manager, -COLOR, -LWEIGHT, -LINETYPE on the command line, CECOLOR, CELWEIGHT,

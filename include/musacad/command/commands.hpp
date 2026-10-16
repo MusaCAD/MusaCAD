@@ -1499,6 +1499,39 @@ private:
     bool done_ = false;
 };
 
+/// DBLIST: every object in the drawing listed, as LIST lists one.
+class DbListCommand final : public ICommand {
+public:
+    std::string name() const override { return "DBLIST"; }
+    void start(CommandContext& ctx) override {
+        ctx.submit(core::ListQueryCommand{{}, 0.0, false, true});
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// PLAN: `Enter an option [Current ucs/Ucs/World] <Current>:` -- the drawing seen from
+/// above, its extents filling the view (every view here is the plan view of the WCS).
+class PlanCommand final : public ICommand {
+public:
+    std::string name() const override { return "PLAN"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter an option [Current ucs/Ucs/World] <Current>: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// SETVAR: `Enter variable name or [?]:`, then the variable's own prompt (the system
 /// variables Musa CAD has: PICKBOX, LTSCALE, PDMODE, GRIPSIZE ...).
 class SetVarCommand final : public ICommand {

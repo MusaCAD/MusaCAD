@@ -338,6 +338,9 @@ CommandRegistry CommandRegistry::make_default() {
         "Change the name of a block, dimension style, layer, text style, table style or view.");
     reg({"-RENAME", "-REN"}, [] { return std::make_unique<RenameCommand>(true); }, "",
         "Change the name of a named object, on the command line.");
+    reg({"DBLIST"}, [] { return std::make_unique<DbListCommand>(); }, "", "List every object in the drawing.");
+    reg({"PLAN"}, [] { return std::make_unique<PlanCommand>(); }, "", "The drawing seen from above, its extents in view.");
+    reg({"DIMREGEN"}, [] { return std::make_unique<RegenCommand>(); }, "", "Redraw the dimensions (with the drawing).");
     reg({"SETVAR", "SET"}, [] { return std::make_unique<SetVarCommand>(); }, "",
         "Change a system variable by its name.");
     reg({"NAVBAR"}, [] { return std::make_unique<NavBarCommand>(); }, "assets/ribbon/pan.svg",

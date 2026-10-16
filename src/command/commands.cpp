@@ -7331,6 +7331,22 @@ void RenameCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void PlanCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    const bool ucs = u == "U" || u == "UCS";
+    if (!u.empty() && !ucs && u != "C" && u != "CURRENT" && u != "CURRENT UCS" && u != "W" && u != "WORLD") {
+        ctx.echo("Invalid option keyword.");
+        return;
+    }
+    if (ucs) {
+        ctx.echo("Only the World UCS is there; it is shown.");
+    }
+    if (ctx.view() != nullptr) {
+        ctx.view()->zoom_extents();
+    }
+    done_ = true;
+}
+
 void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {

@@ -3697,14 +3697,18 @@ std::string GeometryEngine::list_block(EntityHandle h) const {
 
 void GeometryEngine::apply_list_query(const ListQueryCommand& c) {
     std::vector<EntityHandle> targets;
-    if (c.selection) {
+    if (c.everything) {
+        targets = all_live();
+    } else if (c.selection) {
         prune_selection();
         targets = selection_;
     } else if (const EntityHandle h = pick_nearest(c.at, c.pick_radius); store_.is_valid(h)) {
         targets.push_back(h);
     }
     if (targets.empty()) {
-        report(c.selection ? "LIST: nothing selected." : "LIST: no object found at that point.");
+        report(c.everything ? "DBLIST: the drawing is empty."
+               : c.selection ? "LIST: nothing selected."
+                             : "LIST: no object found at that point.");
         return;
     }
     std::string out;

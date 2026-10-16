@@ -44,7 +44,9 @@ commands (Ribbon Phase A):
 | IMPORT (IMP, DXFIN) / EXPORT (EXP, DXFOUT) | Bring a DXF file in; write the drawing to a DXF file. |
 | RENAME (REN) / -RENAME | `Enter object type to rename [Block/Dimstyle/LAyer/LType/Material/multileadeRstyle/Plotstyle/textStyle/Tablestyle/Ucs/VPort/View]:`, `Enter old layer name:`, `Enter new layer name:` -- a block, dimension style, layer (not 0), text style or table style (not Standard) or a named view. |
 | SETVAR (SET) | `Enter variable name or [?]:`, then the variable's own prompt; `?` lists the variables there are. |
-| REDRAW (R, RA, REDRAWALL) | Redraw the drawing (as REGEN does). |
+| REDRAW (R, RA, REDRAWALL), DIMREGEN | Redraw the drawing (as REGEN does). |
+| DBLIST | Every object in the drawing listed, as LIST lists one. |
+| PLAN | `Enter an option [Current ucs/Ucs/World] <Current>:` -- the drawing seen from above with its extents in view (the World UCS is the only one). |
 | LWDISPLAY | `Enter new value for LWDISPLAY <ON>:` -- lineweights on screen, as LWT on the status bar. |
 | TRANSPARENCYDISPLAY | Layer transparency on screen: 1 shown, 0 every object opaque; TPY on the status bar. Plots stay opaque. |
 | GRIPS, GRIPSIZE, GRIPCOLOR, GRIPHOT | The grip variables: grips shown (1) or not (0), their size in pixels from centre to edge, and their colour and the hot grip's as AutoCAD colour numbers. |
