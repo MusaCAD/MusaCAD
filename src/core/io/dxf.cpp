@@ -1723,97 +1723,30 @@ double getd(const std::vector<Pair>& body, int c, double def = 0.0) {
 // is plain, so we honour structure (\P -> newline, \~ -> space, escaped literals) and DROP
 // the styling runs rather than render them verbatim as "\fCambria...". Losing font/bold/
 // colour is an intentional, catalogued fidelity gap -- not garbled output.
-std::string strip_mtext(const std::string& in) {
+// An MTEXT's content as Musa CAD keeps it: its format codes as AutoCAD wrote them (they
+// are drawn: heights, colours, fonts, underlines, stacked fractions), its paragraphs \P as
+// line breaks, a ^I tab as a space and ^J as a line break.
+std::string mtext_from_dxf(const std::string& in) {
     std::string out;
     out.reserve(in.size());
     for (std::size_t i = 0; i < in.size(); ++i) {
         const char c = in[i];
-        if (c == '{' || c == '}') {
-            continue; // grouping delimiters -- formatting scope, no glyphs
-        }
-        if (c == '^' && i + 1 < in.size()) {
-            // Caret notation for control chars: ^I = tab (used to indent list items after
-            // \P), ^J/^M = lf/cr. Without this the bare 'I' leaks in as "\P^I 2." -> "I 2.".
-            const char n2 = in[i + 1];
-            if (n2 == 'I') {
-                out += ' '; // tab -> space (keeps the indent, drops the stray glyph)
-                ++i;
-                continue;
+        if (c == '\\' && i + 1 < in.size()) {
+            if (in[i + 1] == 'P') {
+                out += '\n';
+            } else {
+                out += c;
+                out += in[i + 1]; // a code, or an escaped \\ \{ \}: kept as it is
             }
-            if (n2 == 'J' || n2 == 'M') {
-                ++i; // line feed / carriage return -- \P already drives breaks
-                continue;
-            }
-            // any other ^x: a literal caret, emitted by the normal path below
-        }
-        if (c != '\\' || i + 1 >= in.size()) {
-            out += c;
+            ++i;
             continue;
         }
-        const char n = in[i + 1];
-        switch (n) {
-        case 'P':
-            out += '\n'; // hard paragraph break (note: \P upper; \p... is a format run)
+        if (c == '^' && i + 1 < in.size() && (in[i + 1] == 'I' || in[i + 1] == 'J' || in[i + 1] == 'M')) {
+            out += in[i + 1] == 'I' ? std::string(" ") : in[i + 1] == 'J' ? std::string("\n") : std::string();
             ++i;
-            break;
-        case '~':
-            out += ' '; // non-breaking space
-            ++i;
-            break;
-        case '\\':
-        case '{':
-        case '}':
-            out += n; // escaped literal
-            ++i;
-            break;
-        case 'L':
-        case 'l':
-        case 'O':
-        case 'o':
-        case 'K':
-        case 'k':
-            i += 1; // underline/overline/strike toggles: no argument
-            break;
-        case 'U':
-        case 'u':
-            if (i + 2 < in.size() && in[i + 2] == '+') {
-                out += "\\U+"; // keep the Unicode escape -- it expands at render time
-                i += 2;        // step past 'U'; the loop's ++i steps past '+'
-            } else {
-                out += n; // bare \U: drop the backslash (default behaviour)
-                ++i;
-            }
-            break;
-        case 'f':
-        case 'F':
-        case 'C':
-        case 'c':
-        case 'H':
-        case 'W':
-        case 'T':
-        case 'Q':
-        case 'A':
-        case 'p':
-        case 'S': {
-            // A formatting run with an argument terminated by ';' (or, for \S stacking,
-            // the fraction body). Skip through the ';'. For \S keep the operands so a
-            // fraction like 1^2; / 1/2; still reads as text.
-            const std::size_t semi = in.find(';', i + 2);
-            const std::size_t end = (semi == std::string::npos) ? in.size() : semi;
-            if (n == 'S') {
-                for (std::size_t k = i + 2; k < end; ++k) {
-                    const char s = in[k];
-                    out += (s == '^' || s == '#') ? '/' : s;
-                }
-            }
-            i = end; // loop ++i steps past the ';'
-            break;
+            continue;
         }
-        default:
-            out += n; // unknown escape: keep the char, drop the backslash
-            ++i;
-            break;
-        }
+        out += c;
     }
     return out;
 }
@@ -2228,7 +2161,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* c = find(body, 1)) {
                 raw += *c;
             }
-            m.content = strip_mtext(raw);
+            m.content = mtext_from_dxf(raw);
             m.font = font_of_entity(body);
             sink.mtexts->push_back(std::move(m));
             return;

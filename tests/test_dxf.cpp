@@ -9,6 +9,7 @@
 
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_codes.hpp"
 
 using namespace musacad::core;
@@ -96,9 +97,9 @@ TEST_CASE("DXF import treats negative/invalid lineweights as inherit, not fat li
     REQUIRE(out.lines[3].props.lineweight_by_layer()); // 330 (>211) stays ByLayer
 }
 
-TEST_CASE("MTEXT import strips inline formatting to plain, readable text") {
-    // Real title-block cells come in as inline-formatted MTEXT; rendering the control
-    // runs verbatim is the "\fCambria|b0|i0|c0|p18;REV" garbage seen on import.
+TEST_CASE("MTEXT import keeps inline formatting; the text it shows reads plain") {
+    // Real title-block cells come in as inline-formatted MTEXT: the codes are kept (and
+    // drawn: the font, the colour), the paragraphs become line breaks.
     const std::string dxf =
         "0\nSECTION\n2\nENTITIES\n"
         "0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n"
@@ -108,7 +109,8 @@ TEST_CASE("MTEXT import strips inline formatting to plain, readable text") {
     const IoResult r = parse_dxf(dxf, out);
     REQUIRE(r.ok);
     REQUIRE(out.mtexts.size() == 1);
-    REQUIRE(out.mtexts[0].content == "REDUCE BOLT SIZE\nTO M6");
+    REQUIRE(out.mtexts[0].content == "\\fCambria|b0|i0|c0|p18;REDUCE BOLT \\C1;SIZE\nTO M6");
+    REQUIRE(musacad::core::text::mtext_plain(out.mtexts[0].content) == "REDUCE BOLT SIZE\nTO M6");
 }
 
 TEST_CASE("TEXT import keeps %% overrides RAW (codes expand at render time)") {

@@ -34,6 +34,7 @@
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/io/xlsx.hpp"
 #include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
 using namespace musacad::core;
@@ -3911,4 +3912,37 @@ TEST_CASE("MLEADEREDIT adds leaders to a multileader and takes them away") {
     REQUIRE(d.mleaders[0].extra_tips.size() == 2);
     engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::End, {}, 0.0, 0});
     engine.stop();
+}
+
+TEST_CASE("MTEXT format codes are drawn: heights, colours, underlines, stacked fractions") {
+    MTextBlock b;
+    b.height = 2.5;
+    const text::MTextLayout plain = text::layout_mtext(b, "HELLO WORLD\nSECOND");
+    const text::MTextLayout coded = text::layout_mtext(b, "{\\C1;HELLO} WORLD\\PSECOND");
+    REQUIRE(coded.line_count == 2);
+    REQUIRE(coded.segments.size() == plain.segments.size());
+    REQUIRE(coded.max.x == Approx(plain.max.x));
+    REQUIRE(coded.min.y == Approx(plain.min.y));
+    REQUIRE(coded.lines[0].text == "HELLO WORLD");
+    REQUIRE(coded.colors.size() == 1);
+    REQUIRE(coded.colors[0].color == Rgb{255, 0, 0});
+    REQUIRE(coded.colors[0].seg_begin == 0);
+
+    // A taller run makes its line taller: the baseline drops to its height.
+    const text::MTextLayout tall = text::layout_mtext(b, "A{\\H5;B}C");
+    REQUIRE(tall.lines[0].text == "ABC");
+    REQUIRE(tall.lines[0].origin.y == Approx(-5.0));
+    REQUIRE(text::layout_mtext(b, "A{\\H2x;B}C").lines[0].origin.y == Approx(-5.0)); // 2x the 2.5
+
+    // A fraction stacks over a bar; an underline adds its line.
+    const text::MTextLayout frac = text::layout_mtext(b, "1\\S1/2;\" DIA");
+    REQUIRE(frac.lines[0].text == "11/2\" DIA");
+    REQUIRE(frac.max.y > 0.0); // the numerator rises above the line
+    const text::MTextLayout under = text::layout_mtext(b, "\\LUNDER\\l");
+    REQUIRE(under.segments.size() == text::layout_mtext(b, "UNDER").segments.size() + 2);
+
+    // A backslash typed as text is no code; the plain text of a coded one.
+    REQUIRE_FALSE(text::has_mtext_codes("C:\\Program Files\\Lib"));
+    REQUIRE(text::layout_mtext(b, "C:\\Program Files").lines[0].text == "C:\\Program Files");
+    REQUIRE(text::mtext_plain("\\fArial|b1;Title \\S1/2; {\\H3x;big}\nnext") == "Title 1/2 big\nnext");
 }

@@ -404,6 +404,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
   spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
   spline without changing its shape.
+- **MTEXT format codes** (#43) -- an MTEXT from an AutoCAD drawing is drawn as AutoCAD draws
+  it: its runs in their own heights (`\H`), widths (`\W`), slant (`\Q`), letter spacing
+  (`\T`), colours (`\C`, `\c`) and fonts (`\f`), underlined, overlined or struck through
+  (`\L`, `\O`, `\K`), with stacked fractions and tolerances (`\S1/2;`, `\S+0.1^-0.1;`) and
+  grouping braces; a line is as tall as its tallest run. The codes were taken out on
+  opening before; they are now kept, so they go back to DXF as they came.
 - **The block gallery** (#78) -- Insert's drop-down on Home > Block and Insert > Block shows
   the drawing's blocks as pictures, as AutoCAD's gallery does; a pick inserts that block.
   More Options... opens the Insert window, From Drawing... inserts a drawing file.

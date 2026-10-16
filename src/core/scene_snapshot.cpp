@@ -268,6 +268,36 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         auto& v = fill_groups[color_key(c)];
         v.insert(v.end(), tris.begin(), tris.end());
     };
+    // A paragraph's layout in its colour, the runs a format code colours (\C, \c) in theirs.
+    std::vector<Vec2> mtext_part;
+    const auto add_mtext = [&](const text::MTextLayout& lay, Rgb c, std::uint8_t lw, double text_height) {
+        if (lay.colors.empty()) {
+            add_lines(c, lw, lay.segments, /*is_text=*/true, text_height);
+            add_fills(c, lay.fills);
+            return;
+        }
+        const auto emit = [&](Rgb rc, std::size_t s0, std::size_t s1, std::size_t f0, std::size_t f1) {
+            if (s1 > s0) {
+                mtext_part.assign(lay.segments.begin() + static_cast<std::ptrdiff_t>(s0),
+                                  lay.segments.begin() + static_cast<std::ptrdiff_t>(s1));
+                add_lines(rc, lw, mtext_part, /*is_text=*/true, text_height);
+            }
+            if (f1 > f0) {
+                mtext_part.assign(lay.fills.begin() + static_cast<std::ptrdiff_t>(f0),
+                                  lay.fills.begin() + static_cast<std::ptrdiff_t>(f1));
+                add_fills(rc, mtext_part);
+            }
+        };
+        std::size_t seg = 0;
+        std::size_t fill = 0;
+        for (const text::MTextColorSpan& span : lay.colors) {
+            emit(c, seg, span.seg_begin, fill, span.fill_begin);
+            emit(span.color, span.seg_begin, span.seg_end, span.fill_begin, span.fill_end);
+            seg = span.seg_end;
+            fill = span.fill_end;
+        }
+        emit(c, seg, lay.segments.size(), fill, lay.fills.size());
+    };
     const auto add_gradient_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
         auto& v = gradient_groups[color_key(c)];
         v.insert(v.end(), tris.begin(), tris.end());
@@ -709,8 +739,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         const ResolvedProps r = entity_resolved(store, m->props);
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(r.color, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);
-        add_fills(r.color, lay.fills);
+        add_mtext(lay, r.color, r.lineweight, m->text.height);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
@@ -773,8 +802,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(text_c, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);
-        add_fills(text_c, lay.fills);
+        add_mtext(lay, text_c, r.lineweight, m->text.height);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,

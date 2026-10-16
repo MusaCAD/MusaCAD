@@ -226,7 +226,28 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
     for (const BlockMText& mt : bc.mtexts) {
         const ResolvedProps rp = member_props(store, mt.props, inherited);
         const text::MTextLayout lay = text::layout_mtext(mt.block, mt.content);
-        emit_pairs_transformed(xform, lay.segments, rp, out);
+        if (lay.colors.empty()) {
+            emit_pairs_transformed(xform, lay.segments, rp, out);
+            continue;
+        }
+        // The runs a format code colours, in their colours.
+        std::size_t seg = 0;
+        std::vector<Vec2> part;
+        const auto emit = [&](std::size_t s0, std::size_t s1, const ResolvedProps& p) {
+            if (s1 > s0) {
+                part.assign(lay.segments.begin() + static_cast<std::ptrdiff_t>(s0),
+                            lay.segments.begin() + static_cast<std::ptrdiff_t>(s1));
+                emit_pairs_transformed(xform, part, p, out);
+            }
+        };
+        for (const text::MTextColorSpan& span : lay.colors) {
+            emit(seg, span.seg_begin, rp);
+            ResolvedProps own = rp;
+            own.color = span.color;
+            emit(span.seg_begin, span.seg_end, own);
+            seg = span.seg_end;
+        }
+        emit(seg, lay.segments.size(), rp);
     }
     if (depth + 1 >= kMaxBlockDepth) {
         return; // nesting guard: stop composing deeper
