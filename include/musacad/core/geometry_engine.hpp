@@ -642,8 +642,11 @@ private:
     /// With `ncopy`: NCOPY -- the selected reference left as it is, only the part nearest
     /// `ncopy->pick` added, moved by `ncopy->offset`.
     void apply_explode(std::uint64_t group, bool burst = false, const NestedCopyCommand* ncopy = nullptr);
+    /// One and a half times the selection's width and height (either from the other when it
+    /// has none): an array's default spacing.
+    [[nodiscard]] Vec2 array_default_spacing() const;
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
-                           std::uint64_t group);
+                           std::uint64_t group, int rows = 1, double row_spacing = 0.0);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
     void apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                       std::uint64_t group, bool trim = true);

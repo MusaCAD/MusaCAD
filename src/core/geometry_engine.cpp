@@ -5144,9 +5144,11 @@ void GeometryEngine::apply_array_preview(const ArrayPreviewCommand& c) {
     const auto status_version = status_version_;
     array_sink_ = &array_preview_;
     if (c.type == 1) {
-        apply_array_rect(c.rect.rows, c.rect.cols, c.rect.dx, c.rect.dy, c.rect.angle, 0);
+        const Vec2 sp = c.rect.auto_spacing ? array_default_spacing() : Vec2{c.rect.dx, c.rect.dy};
+        apply_array_rect(c.rect.rows, c.rect.cols, sp.x, sp.y, c.rect.angle, 0);
     } else if (c.type == 2) {
-        apply_array_polar(c.polar.center, c.polar.count, c.polar.total_angle, c.polar.rotate_items, 0);
+        apply_array_polar(c.polar.center, c.polar.count, c.polar.total_angle, c.polar.rotate_items, 0,
+                          c.polar.rows, c.polar.row_spacing);
     } else {
         apply_array_path(c.path);
     }
@@ -5233,10 +5235,11 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
     // Where the items go. Divide (spacing 0) spreads `count` over the whole path;
     // Measure steps every `spacing`, with `count` capping how many (0 = as many as fit).
     std::vector<double> stations;
-    if (c.spacing > 1e-12) {
+    const double spacing = c.auto_spacing ? array_default_spacing().x : c.spacing;
+    if (spacing > 1e-12) {
         const int cap = c.count > 0 ? c.count : std::numeric_limits<int>::max();
         for (int i = 0; i < cap; ++i) {
-            const double s = static_cast<double>(i) * c.spacing;
+            const double s = static_cast<double>(i) * spacing;
             if (s > total + 1e-9) {
                 break;
             }
@@ -5412,8 +5415,28 @@ void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
            (block ? " blocks placed." : " points placed."));
 }
 
+Vec2 GeometryEngine::array_default_spacing() const {
+    bool any = false;
+    Vec2 lo;
+    Vec2 hi;
+    for (const EntityHandle h : selection_) {
+        Vec2 a;
+        Vec2 b;
+        if (store_.is_valid(h) && entity_aabb(store_, h, a, b)) {
+            lo = any ? Vec2{std::min(lo.x, a.x), std::min(lo.y, a.y)} : a;
+            hi = any ? Vec2{std::max(hi.x, b.x), std::max(hi.y, b.y)} : b;
+            any = true;
+        }
+    }
+    double w = any ? hi.x - lo.x : 0.0;
+    double h = any ? hi.y - lo.y : 0.0;
+    w = w > 1e-12 ? w : h;
+    h = h > 1e-12 ? h : w;
+    return w > 1e-12 ? Vec2{w * 1.5, h * 1.5} : Vec2{1.0, 1.0};
+}
+
 void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
-                                       bool rotate_items, std::uint64_t group) {
+                                       bool rotate_items, std::uint64_t group, int rows, double row_spacing) {
     const std::vector<EntityHandle> sel = selection_;
     if (sel.empty()) {
         report("Nothing selected to array.");
@@ -5429,13 +5452,27 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     const double step = full ? total_angle / static_cast<double>(count)
                              : total_angle / static_cast<double>(count - 1);
     int made = 0;
-    for (int i = 1; i < count; ++i) {
+    rows = std::max(rows, 1);
+    for (int k = 0; k < rows * count; ++k) {
+        const int row = k / count;
+        const int i = k % count;
+        if (k == 0) {
+            continue; // the originals stay in place
+        }
         const double a = step * static_cast<double>(i);
         for (const EntityHandle h : sel) {
             if (!store_.is_valid(h)) {
                 continue;
             }
             Command copy = capture_entity(h);
+            if (row > 0) {
+                // The next ring out: away from the centre, through where the item is.
+                const Vec2 out = command_anchor(copy) - center;
+                const double len = length(out);
+                if (len > 1e-12) {
+                    translate_cmd(copy, out * (row_spacing * static_cast<double>(row) / len));
+                }
+            }
             if (rotate_items) {
                 rotate_cmd(copy, center, a);
             } else {
@@ -15160,7 +15197,8 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ArrayRectCommand>) {
                 array_preview_.clear();
-                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
+                const Vec2 sp = c.auto_spacing ? array_default_spacing() : Vec2{c.dx, c.dy};
+                apply_array_rect(c.rows, c.cols, sp.x, sp.y, c.angle, c.group);
             }
             if constexpr (std::is_same_v<T, ArrayPathCommand>) {
                 array_preview_.clear();
@@ -15210,7 +15248,7 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 array_preview_.clear();
-                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
+                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group, c.rows, c.row_spacing);
             }
             if constexpr (std::is_same_v<T, ExtendPickCommand>) {
                 apply_extend(c.pick, c.radius, c.group);

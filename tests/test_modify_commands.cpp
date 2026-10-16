@@ -67,7 +67,7 @@ TEST_CASE("SCALE flow emits ScaleSelectionCommand with the typed factor") {
 TEST_CASE("ARRAY rectangular flow emits ArrayRectCommand") {
     Harness h;
     h.proc.set_selection_count(1);
-    h.proc.submit_line("AR");
+    h.proc.submit_line("-ARRAY");
     h.proc.submit_line("R"); // rectangular
     h.proc.submit_line("2"); // rows
     h.proc.submit_line("3"); // cols

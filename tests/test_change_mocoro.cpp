@@ -2741,3 +2741,131 @@ TEST_CASE("TRIM takes an associative dimension's point at the trimmed end to the
     REQUIRE(doc.dims[0].b == Vec2{10, 0});
     engine.stop();
 }
+
+TEST_CASE("ARRAYRECT draws 4 columns and 3 rows at once and changes them option by option") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({10, 4});
+    h.run({"ARRAYRECT"});
+    REQUIRE(std::find(h.out.lines.begin(), h.out.lines.end(), "Type = Rectangular  Associative = No") != h.out.lines.end());
+    const auto* pv = h.last<ArrayPreviewCommand>();
+    REQUIRE(pv != nullptr);
+    REQUIRE(pv->type == 1);
+    REQUIRE(pv->rect.cols == 4);
+    REQUIRE(pv->rect.rows == 3);
+    REQUIRE(pv->rect.dx == Approx(15.0));
+    REQUIRE(pv->rect.dy == Approx(6.0));
+    REQUIRE(h.out.prompt ==
+            "Select grip to edit array or [ASsociative/Base point/COUnt/Spacing/COLumns/Rows/Levels/eXit]<eXit>: ");
+    h.run({"COU"});
+    REQUIRE(h.out.prompt == "Enter the number of columns or [Expression] <4>: ");
+    h.run({"5", "2"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.cols == 5);
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.rows == 2);
+    h.run({"S"});
+    REQUIRE(h.out.prompt.rfind("Specify the distance between columns or [Unit cell] <", 0) == 0);
+    h.run({"20", "8"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.dx == Approx(20.0));
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.dy == Approx(8.0));
+    h.run({"COL", "3", "T", "50"}); // three columns 50 from first to last
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.dx == Approx(25.0));
+    h.run({"COU", "E", "2*3", ""}); // an expression for the columns
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.cols == 6);
+    REQUIRE(h.proc.has_active_command());
+    h.run({""});
+    const auto* ar = h.last<ArrayRectCommand>();
+    REQUIRE(ar != nullptr);
+    REQUIRE(ar->cols == 6);
+    REQUIRE(ar->rows == 2);
+    REQUIRE(ar->dx == Approx(25.0));
+    REQUIRE(ar->dy == Approx(8.0));
+    REQUIRE_FALSE(ar->auto_spacing);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("ARRAYPOLAR asks the centre, then Items, Angle between, Fill angle, ROWs and ROTate items") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({2, 2});
+    h.run({"ARRAYPOLAR"});
+    REQUIRE(h.out.prompt == "Specify center point of array or [Base point/Axis of rotation]: ");
+    h.run({"0,0"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 2);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.count == 6);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.total_angle == Approx(kTwoPi));
+    h.run({"I", "8", "F", "180"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.count == 8);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.total_angle == Approx(kPi));
+    h.run({"A", "30"}); // 30 degrees apart: 210 for the eight
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.total_angle == Approx(to_radians(210.0)));
+    h.run({"ROT", "N", "ROW", "2", "5", ""});
+    REQUIRE_FALSE(h.last<ArrayPreviewCommand>()->polar.rotate_items);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.rows == 2);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.row_spacing == Approx(5.0));
+    h.run({"X"});
+    const auto* ap = h.last<ArrayPolarCommand>();
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->count == 8);
+    REQUIRE(ap->rows == 2);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("ARRAYPATH fills the path at one and a half times the item's size; Method Divide asks how many") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({4, 2});
+    h.run({"ARRAYPATH"});
+    REQUIRE(h.out.prompt == "Select path curve: ");
+    h.run({"50,0"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 3);
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.spacing == Approx(6.0));
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.count == 0); // as many as fit
+    h.run({"M", "D", "I", "4"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.count == 4);
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.spacing == Approx(0.0));
+    h.run({"A", "N", ""});
+    const auto* ap = h.last<ArrayPathCommand>();
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->count == 4);
+    REQUIRE_FALSE(ap->align);
+}
+
+TEST_CASE("ARRAY asks the type; Esc takes the preview away") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.run({"AR"});
+    REQUIRE(h.out.prompt == "Enter array type [Rectangular/PAth/POlar] <Rectangular>: ");
+    h.run({""});
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 1);
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.auto_spacing); // the selection's size not known here
+    h.proc.cancel();
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 0);
+    REQUIRE(h.last<ArrayRectCommand>() == nullptr);
+}
+
+TEST_CASE("The array preview draws the copies the array would make, and the array clears it") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 1, 1});
+    engine.submit(SelectAllCommand{});
+    ArrayPreviewCommand pv;
+    pv.type = 1;
+    pv.rect.rows = 3;
+    pv.rect.cols = 4;
+    pv.rect.auto_spacing = true;
+    engine.submit(pv);
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.grip_preview_segments.empty(); }));
+    // The far corner's copy: 3 x 1.5 x 2 across, 2 x 1.5 x 2 up.
+    const auto& segs = engine.snapshot().grip_preview_segments;
+    REQUIRE(std::any_of(segs.begin(), segs.end(), [](const Vec2& v) { return distance(v, Vec2{9, 6}) <= 1.01; }));
+    ArrayRectCommand make;
+    make.rows = 3;
+    make.cols = 4;
+    make.auto_spacing = true;
+    make.group = 2;
+    engine.submit(make);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.empty(); }));
+    const io::Document doc = dump(engine, "musacad_array_preview.musa");
+    REQUIRE(doc.circles.size() == 12);
+    engine.stop();
+}

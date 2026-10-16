@@ -135,6 +135,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
   dimensions drawn are associative; 1, not), **DIMDISASSOCIATE** and **DIMREASSOCIATE**; saved
   with the drawing (format v40).
+- **ARRAY's prompts and preview** (#51) -- ARRAYRECT draws 4 columns by 3 rows at once (spaced
+  one and a half times the objects' size), ARRAYPOLAR 6 items round the centre, ARRAYPATH items
+  all along the path; then `Select grip to edit array or [...]` changes COUnt, Spacing (or a
+  Unit cell), COLumns, Rows (with Total), Items, Angle between, Fill angle, ROWs (rings),
+  ROTate items, Method, Align items and Base point, the preview following, until eXit. Numbers
+  can be Expressions. **-ARRAY** asks AutoCAD's classic prompts: rows (---) and columns (|||),
+  the distance between rows or a unit cell, and polar's items, angle to fill or angle between.
 - **Associative hatches** (#41) -- a hatch follows its boundary: MOVE, ROTATE, SCALE, MIRROR
   (erasing the source), grip edits, TRIM, EXTEND and the like of the objects around it take
   the hatch along, or its edge with the part that changed, in the same undo step. **HPASSOC** (1, the default; 0, the

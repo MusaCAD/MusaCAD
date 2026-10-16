@@ -4,8 +4,9 @@
 // The ARRAY family. AutoCAD ships ARRAY/-ARRAY (which ask for the type),
 // ARRAYRECT, ARRAYPOLAR and ARRAYPATH, plus ARRAYEDIT/ARRAYCLOSE for ASSOCIATIVE
 // arrays. Musa CAD's arrays are non-associative -- the same thing AutoCAD's own -ARRAY
-// produces -- so the four creation commands are the whole family here; there is no
-// association for ARRAYEDIT to reopen.
+// produces -- so the creation commands are the whole family here; there is no
+// association for ARRAYEDIT to reopen. ARRAY's option-by-option flows are tested in
+// test_change_mocoro.cpp.
 //
 // Covered below: rectangular (including the axis angle), polar, and path in both of
 // AutoCAD's methods (Divide and Measure), aligned and not, on open and closed paths.
@@ -374,12 +375,12 @@ TEST_CASE("ARRAY: a path array is one undo group") {
 // The command flows
 // ---------------------------------------------------------------------------
 
-TEST_CASE("ARRAY: ARRAY still asks the classic four rectangular prompts") {
-    // The legacy -ARRAY flow is unchanged: rows, columns, row spacing, column spacing,
-    // and then it fires. No axis-angle prompt was inserted into it.
+TEST_CASE("ARRAY: -ARRAY asks AutoCAD's classic rectangular prompts") {
+    // Rows (---), columns (|||), the distance between rows (or a unit cell), then between
+    // columns, and it fires.
     ProcHarness h;
     h.proc.set_selection_count(1);
-    h.proc.submit_line("AR");
+    h.proc.submit_line("-ARRAY");
     h.proc.submit_line("R");
     h.proc.submit_line("2");
     h.proc.submit_line("3");
@@ -395,82 +396,58 @@ TEST_CASE("ARRAY: ARRAY still asks the classic four rectangular prompts") {
     REQUIRE(ar->angle == Approx(0.0));
 }
 
-TEST_CASE("ARRAY: ARRAYRECT adds the axis-angle prompt") {
-    ProcHarness h;
-    h.proc.set_selection_count(1);
-    h.proc.submit_line("ARRAYRECT");
-    h.proc.submit_line("2");
-    h.proc.submit_line("3");
-    h.proc.submit_line("10");
-    h.proc.submit_line("15");
-    REQUIRE(h.cmds.empty()); // not finished: the angle is still to come
-    h.proc.submit_line("30");
-    REQUIRE(h.cmds.size() == 1);
-    const auto* ar = std::get_if<ArrayRectCommand>(&h.cmds[0]);
-    REQUIRE(ar != nullptr);
-    REQUIRE(ar->angle == Approx(to_radians(30.0)));
-}
-
-TEST_CASE("ARRAY: ARRAY's PA and PO keywords are told apart, and a bare P is refused") {
-    // AutoCAD distinguishes PAth from POlar by two letters; guessing at a bare "P"
-    // would silently build the wrong kind of array.
+TEST_CASE("ARRAY: -ARRAY's unit cell gives both distances; one row asks only the columns'") {
     {
         ProcHarness h;
         h.proc.set_selection_count(1);
-        h.proc.submit_line("AR");
-        h.proc.submit_line("PO");
-        h.proc.submit_line("0,0"); // centre
-        h.proc.submit_line("6");   // count
-        h.proc.submit_line("360"); // fill
-        h.proc.submit_line("Y");
+        for (const char* l : {"-ARRAY", "", "3", "4", "0,0", "12,-8"}) {
+            h.proc.submit_line(l);
+        }
         REQUIRE(h.cmds.size() == 1);
-        REQUIRE(std::get_if<ArrayPolarCommand>(&h.cmds[0]) != nullptr);
+        const auto* ar = std::get_if<ArrayRectCommand>(&h.cmds[0]);
+        REQUIRE(ar != nullptr);
+        REQUIRE(ar->dx == Approx(12.0));
+        REQUIRE(ar->dy == Approx(-8.0));
     }
     {
         ProcHarness h;
         h.proc.set_selection_count(1);
-        h.proc.submit_line("AR");
-        h.proc.submit_line("PA");
-        h.proc.submit_line("50,0"); // path pick
-        h.proc.submit_line("D");    // Divide
-        h.proc.submit_line("5");    // count
-        h.proc.submit_line("Y");    // align
+        for (const char* l : {"-ARRAY", "R", "1", "5", "7"}) {
+            h.proc.submit_line(l);
+        }
         REQUIRE(h.cmds.size() == 1);
-        const auto* ap = std::get_if<ArrayPathCommand>(&h.cmds[0]);
+        REQUIRE(std::get<ArrayRectCommand>(h.cmds[0]).cols == 5);
+        REQUIRE(std::get<ArrayRectCommand>(h.cmds[0]).dx == Approx(7.0));
+    }
+}
+
+TEST_CASE("ARRAY: -ARRAY polar takes the items and the fill, or the angle between them") {
+    {
+        ProcHarness h;
+        h.proc.set_selection_count(1);
+        for (const char* l : {"-ARRAY", "P", "0,0", "6", "", "Y"}) {
+            h.proc.submit_line(l);
+        }
+        REQUIRE(h.cmds.size() == 1);
+        const auto* ap = std::get_if<ArrayPolarCommand>(&h.cmds[0]);
         REQUIRE(ap != nullptr);
-        REQUIRE(ap->count == 5);
-        REQUIRE(ap->spacing == Approx(0.0));
-        REQUIRE(ap->align);
+        REQUIRE(ap->count == 6);
+        REQUIRE(ap->total_angle == Approx(kTwoPi));
+        REQUIRE(ap->rotate_items);
     }
     {
         ProcHarness h;
         h.proc.set_selection_count(1);
-        h.proc.submit_line("AR");
-        h.proc.submit_line("P"); // ambiguous -> refused, still waiting on the type
-        h.proc.submit_line("R"); // now a rectangular array
-        h.proc.submit_line("1");
-        h.proc.submit_line("2");
-        h.proc.submit_line("5");
-        h.proc.submit_line("5");
+        for (const char* l : {"-ARRAY", "P", "0,0", "", "90", "30", "N"}) { // no count: 90 at 30 apart
+            h.proc.submit_line(l);
+        }
         REQUIRE(h.cmds.size() == 1);
-        REQUIRE(std::get_if<ArrayRectCommand>(&h.cmds[0]) != nullptr);
+        const auto* ap = std::get_if<ArrayPolarCommand>(&h.cmds[0]);
+        REQUIRE(ap != nullptr);
+        REQUIRE(ap->count == 4);
+        REQUIRE(ap->total_angle == Approx(to_radians(90.0)));
+        REQUIRE_FALSE(ap->rotate_items);
     }
-}
-
-TEST_CASE("ARRAY: ARRAYPATH's Measure branch carries the spacing through") {
-    ProcHarness h;
-    h.proc.set_selection_count(1);
-    h.proc.submit_line("ARRAYPATH");
-    h.proc.submit_line("50,0");
-    h.proc.submit_line("M");  // Measure
-    h.proc.submit_line("25"); // spacing
-    h.proc.submit_line("N");  // do not align
-    REQUIRE(h.cmds.size() == 1);
-    const auto* ap = std::get_if<ArrayPathCommand>(&h.cmds[0]);
-    REQUIRE(ap != nullptr);
-    REQUIRE(ap->spacing == Approx(25.0));
-    REQUIRE(ap->count == 0); // as many as fit
-    REQUIRE(!ap->align);
 }
 
 TEST_CASE("ARRAY: every array command asks Select objects with an empty selection, and ends when nothing is chosen") {

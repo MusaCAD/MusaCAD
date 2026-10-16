@@ -1066,16 +1066,21 @@ struct ArrayRectCommand {
     /// each copy keeps its own orientation. 0 = world-aligned, the usual case.
     double angle = 0.0;
     std::uint64_t group = 0;
+    /// dx and dy one and a half times the selection's width and height (ARRAYRECT's default).
+    bool auto_spacing = false;
 };
 
 /// Polar array of the selection: `count` copies around `center` spanning
-/// `total_angle` (radians); `rotate_items` rotates each copy to match.
+/// `total_angle` (radians); `rotate_items` rotates each copy to match. `rows` rings of
+/// them, each `row_spacing` farther out from the centre than the one before (ROWs).
 struct ArrayPolarCommand {
     Vec2 center;
     int count = 1;
     double total_angle = 0.0;
     bool rotate_items = true;
     std::uint64_t group = 0;
+    int rows = 1;
+    double row_spacing = 0.0;
 };
 
 /// Path array of the selection (AutoCAD ARRAYPATH): distribute `count` items along the
@@ -1097,6 +1102,8 @@ struct ArrayPathCommand {
     Vec2 base;                 ///< the point on the selection that rides the path
     bool has_base = false;     ///< false = use the selection's own anchor
     std::uint64_t group = 0;
+    /// Measure's spacing one and a half times the selection's width (ARRAYPATH's default).
+    bool auto_spacing = false;
 };
 
 /// The array being set up, drawn at once and again at each change (ARRAYRECT, ARRAYPOLAR,

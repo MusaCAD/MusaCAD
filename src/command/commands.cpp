@@ -10473,19 +10473,23 @@ void DivideCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
-void ArrayCommand::begin_rect(CommandContext& ctx) {
-    state_ = State::Rows;
-    ctx.set_prompt("Enter number of rows <1>: ");
+// ---------------------------------------------------------------------------
+// ARRAY / ARRAYRECT / ARRAYPOLAR / ARRAYPATH (#51)
+// ---------------------------------------------------------------------------
+namespace {
+/// An option keyword: what was typed is its capitals at least, and a start of its name.
+bool array_kw(const std::string& u, std::string_view abbrev, std::string_view full) {
+    return u == abbrev || (u.size() >= abbrev.size() && full.substr(0, u.size()) == u);
+}
+} // namespace
+
+std::string ArrayCommand::len(CommandContext& ctx, double v) const {
+    return core::units::format_length(v, ctx.units());
 }
 
-void ArrayCommand::begin_polar(CommandContext& ctx) {
-    state_ = State::Center;
-    ctx.set_prompt("Specify center point of array: ");
-}
-
-void ArrayCommand::begin_path(CommandContext& ctx) {
-    state_ = State::PathPick;
-    ctx.set_prompt("Select path curve: ");
+double ArrayCommand::angle_between() const {
+    const bool full = std::abs(std::abs(fill_) - 360.0) < 1e-9;
+    return items_ <= 1 ? fill_ : fill_ / static_cast<double>(full ? items_ : items_ - 1);
 }
 
 void ArrayCommand::start(CommandContext& ctx) {
@@ -10505,25 +10509,429 @@ void ArrayCommand::selection_gesture(CommandContext& ctx) {
 }
 
 void ArrayCommand::begin(CommandContext& ctx) {
-    state_ = State::Type;
+    if (type_ == Type::Ask) {
+        state_ = State::Type;
+        ctx.set_prompt("Enter array type [Rectangular/PAth/POlar] <Rectangular>: ");
+        return;
+    }
+    begin_type(ctx);
+}
+
+void ArrayCommand::begin_type(CommandContext& ctx) {
+    // The defaults: spacing one and a half times the selection's size, as AutoCAD sets it.
+    const core::Vec2 size = ctx.selection_size();
+    double w = size.x > 1e-12 ? size.x : size.y;
+    double h = size.y > 1e-12 ? size.y : size.x;
+    if (w > 1e-12) {
+        dx_ = w * 1.5;
+        dy_ = h * 1.5;
+        path_space_ = dx_;
+        polar_row_space_ = std::max(dx_, dy_);
+        auto_spacing_ = false;
+        path_auto_ = false;
+    } else {
+        dx_ = dy_ = path_space_ = polar_row_space_ = 1.0; // the engine sizes them from the selection
+    }
     switch (type_) {
     case Type::Rect:
-        begin_rect(ctx);
+        ctx.echo("Type = Rectangular  Associative = No");
+        state_ = State::Main;
+        preview(ctx);
+        main_prompt(ctx);
         return;
     case Type::Polar:
-        begin_polar(ctx);
+        ctx.echo("Type = Polar  Associative = No");
+        state_ = State::Center;
+        ctx.set_prompt("Specify center point of array or [Base point/Axis of rotation]: ");
         return;
     case Type::Path:
-        begin_path(ctx);
+        ctx.echo("Type = Path  Associative = No");
+        state_ = State::PathPick;
+        ctx.set_prompt("Select path curve: ");
         return;
     case Type::Ask:
         break;
     }
-    ctx.set_prompt("Enter array type [Rectangular/PAth/POlar] <R>: ");
+}
+
+void ArrayCommand::main_prompt(CommandContext& ctx) {
+    switch (type_) {
+    case Type::Polar:
+        ctx.set_prompt("Select grip to edit array or [ASsociative/Base point/Items/Angle between/Fill angle/ROWs/"
+                       "Levels/ROTate items/eXit]<eXit>: ");
+        return;
+    case Type::Path:
+        ctx.set_prompt("Select grip to edit array or [ASsociative/Method/Base point/Tangent direction/Items/Rows/"
+                       "Levels/Align items/Z direction/eXit]<eXit>: ");
+        return;
+    default:
+        ctx.set_prompt("Select grip to edit array or [ASsociative/Base point/COUnt/Spacing/COLumns/Rows/Levels/"
+                       "eXit]<eXit>: ");
+        return;
+    }
+}
+
+void ArrayCommand::preview(CommandContext& ctx) {
+    core::ArrayPreviewCommand pv;
+    switch (type_) {
+    case Type::Polar:
+        pv.type = 2;
+        pv.polar = core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, 0, polar_rows_,
+                                           polar_row_space_};
+        break;
+    case Type::Path:
+        pv.type = 3;
+        pv.path.pick = path_pick_;
+        pv.path.pick_radius = ctx.pick_radius();
+        pv.path.count = measure_ ? path_items_ : std::max(path_items_, 2);
+        pv.path.spacing = measure_ ? path_space_ : 0.0;
+        pv.path.auto_spacing = measure_ && path_auto_;
+        pv.path.align = align_;
+        pv.path.base = base_.value_or(core::Vec2{});
+        pv.path.has_base = base_.has_value();
+        break;
+    default:
+        pv.type = 1;
+        pv.rect.rows = rows_;
+        pv.rect.cols = cols_;
+        pv.rect.dx = dx_;
+        pv.rect.dy = dy_;
+        pv.rect.auto_spacing = auto_spacing_;
+        break;
+    }
+    ctx.submit(std::move(pv));
+}
+
+void ArrayCommand::finish(CommandContext& ctx) {
+    switch (type_) {
+    case Type::Polar:
+        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
+                                           polar_rows_, polar_row_space_});
+        break;
+    case Type::Path: {
+        core::ArrayPathCommand c;
+        c.pick = path_pick_;
+        c.pick_radius = ctx.pick_radius();
+        c.count = measure_ ? path_items_ : std::max(path_items_, 2);
+        c.spacing = measure_ ? path_space_ : 0.0;
+        c.auto_spacing = measure_ && path_auto_;
+        c.align = align_;
+        c.base = base_.value_or(core::Vec2{});
+        c.has_base = base_.has_value();
+        c.group = ctx.group_id();
+        ctx.submit(c);
+        break;
+    }
+    default: {
+        core::ArrayRectCommand c;
+        c.rows = rows_;
+        c.cols = cols_;
+        c.dx = dx_;
+        c.dy = dy_;
+        c.auto_spacing = auto_spacing_;
+        c.group = ctx.group_id();
+        ctx.submit(c);
+        break;
+    }
+    }
+    done_ = true;
+}
+
+void ArrayCommand::ask(CommandContext& ctx, std::vector<Q> qs) {
+    queue_ = std::move(qs);
+    state_ = State::Ask;
+    ask_next(ctx);
+}
+
+void ArrayCommand::ask_next(CommandContext& ctx) {
+    if (queue_.empty()) {
+        if (type_ == Type::Polar && !center_set_) {
+            state_ = State::Center; // a base point given before the centre: the centre next
+            ctx.set_prompt("Specify center point of array or [Base point/Axis of rotation]: ");
+            return;
+        }
+        state_ = State::Main;
+        preview(ctx);
+        main_prompt(ctx);
+        return;
+    }
+    const auto n = [](int v) { return std::to_string(v); };
+    const auto yn = [](bool b) { return std::string(b ? "Yes" : "No"); };
+    std::string p;
+    switch (queue_.front()) {
+    case Q::Assoc: p = "Create associative array [Yes/No] <No>: "; break;
+    case Q::Base:
+        p = type_ == Type::Path ? "Specify base point or [Key point] <end of path curve>: "
+                                : "Specify base point or [Key point] <centroid>: ";
+        break;
+    case Q::Cols: p = "Enter the number of columns or [Expression] <" + n(cols_) + ">: "; break;
+    case Q::Rows: p = "Enter the number of rows or [Expression] <" + n(rows_) + ">: "; break;
+    case Q::ColSpace:
+        p = queue_.size() > 1 && queue_[1] == Q::RowSpace
+                ? "Specify the distance between columns or [Unit cell] <" + len(ctx, dx_) + ">: "
+                : "Specify the distance between columns or [Total/Expression] <" + len(ctx, dx_) + ">: ";
+        break;
+    case Q::RowSpace:
+        p = queue_.size() > 1 ? "Specify the distance between rows or [Total/Expression] <" + len(ctx, dy_) + ">: "
+                              : "Specify the distance between rows <" + len(ctx, dy_) + ">: ";
+        break;
+    case Q::ColTotal:
+        p = "Specify the total distance between first and last columns <" + len(ctx, dx_ * (cols_ - 1)) + ">: ";
+        break;
+    case Q::RowTotal:
+        p = "Specify the total distance between first and last rows <" +
+            len(ctx, (type_ == Type::Polar ? polar_row_space_ * (polar_rows_ - 1) : dy_ * (rows_ - 1))) + ">: ";
+        break;
+    case Q::RowElev: p = "Specify the incrementing elevation between rows or [Expression] <0>: "; break;
+    case Q::Levels: p = "Enter the number of levels or [Expression] <" + n(levels_) + ">: "; break;
+    case Q::LevelSpace:
+        p = "Specify the distance between levels or [Total/Expression] <" + len(ctx, level_space_) + ">: ";
+        break;
+    case Q::Items: p = "Enter number of items in array or [Expression] <" + n(items_) + ">: "; break;
+    case Q::AngleBetween:
+        p = "Specify angle between items or [EXpression] <" + core::units::format_angle(core::to_radians(angle_between()), ctx.units()) + ">: ";
+        break;
+    case Q::Fill:
+        p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" +
+            core::units::format_angle(core::to_radians(fill_), ctx.units()) + ">: ";
+        break;
+    case Q::RotItems: p = "Rotate arrayed items? [Yes/No] <" + yn(rotate_) + ">: "; break;
+    case Q::PolarRows: p = "Enter the number of rows or [Expression] <" + n(polar_rows_) + ">: "; break;
+    case Q::PolarRowSpace:
+        p = "Specify the distance between rows or [Total/Expression] <" + len(ctx, polar_row_space_) + ">: ";
+        break;
+    case Q::PolarRowTotal: p = "Specify the total distance between first and last rows <" + len(ctx, polar_row_space_ * (polar_rows_ - 1)) + ">: "; break;
+    case Q::Method: p = std::string("Enter path method [Divide/Measure] <") + (measure_ ? "Measure" : "Divide") + ">: "; break;
+    case Q::PathSpace:
+        p = "Specify the distance between items along path or [Expression] <" + len(ctx, path_space_) + ">: ";
+        break;
+    case Q::PathItems:
+        p = "Specify number of items or [Fill entire path/Expression] <" +
+            (path_items_ > 0 ? n(path_items_) : std::string("Fill entire path")) + ">: ";
+        break;
+    case Q::PathDivideItems:
+        p = "Enter number of items along path or [Expression] <" + n(std::max(path_items_, 2)) + ">: ";
+        break;
+    case Q::Align: p = "Align arrayed items to the path? [Yes/No] <" + yn(align_) + ">: "; break;
+    case Q::ZDir: p = "Maintain Z direction of items? [Yes/No] <Yes>: "; break;
+    case Q::Tangent: p = "Specify first point of tangent vector or [Normal]: "; break;
+    case Q::CellCorner1: p = "Specify first corner of unit cell: "; break;
+    case Q::CellCorner2: p = "Specify other corner: "; break;
+    case Q::Expression: p = "Enter an expression: "; break;
+    }
+    ctx.set_prompt(p);
+}
+
+void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    Q q = queue_.front();
+    double v = 0.0;
+    bool have = false;
+    if (q == Q::Expression) {
+        std::string error;
+        const auto r = calc::evaluate(t, error);
+        if (!r || r->vector) {
+            ctx.echo(error.empty() ? "Requires a number." : error);
+            return;
+        }
+        queue_.front() = *expression_for_;
+        q = *expression_for_;
+        v = r->x;
+        have = true;
+    }
+    const auto counts = q == Q::Cols || q == Q::Rows || q == Q::Levels || q == Q::Items || q == Q::PolarRows ||
+                        q == Q::PathItems || q == Q::PathDivideItems;
+    const auto lengths = q == Q::ColSpace || q == Q::RowSpace || q == Q::ColTotal || q == Q::RowTotal ||
+                         q == Q::RowElev || q == Q::LevelSpace || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
+                         q == Q::PathSpace || q == Q::AngleBetween || q == Q::Fill;
+    if (!have && (counts || lengths) && (u == "E" || u == "EX" || u == "EXPRESSION")) {
+        expression_for_ = q;
+        queue_.front() = Q::Expression;
+        ask_next(ctx);
+        return;
+    }
+    if (!have && !t.empty() && (counts || lengths)) {
+        if (!parse_number(t, v)) {
+            if (q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace && (u == "U" || u == "UNIT CELL")) {
+                queue_ = {Q::CellCorner1, Q::CellCorner2};
+                ask_next(ctx);
+                return;
+            }
+            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace) &&
+                !(q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace) && (u == "T" || u == "TOTAL")) {
+                queue_.front() = q == Q::ColSpace ? Q::ColTotal : q == Q::RowSpace ? Q::RowTotal : Q::PolarRowTotal;
+                ask_next(ctx);
+                return;
+            }
+            if (q == Q::PathItems && array_kw(u, "F", "FILL ENTIRE PATH")) {
+                path_items_ = 0;
+                queue_.erase(queue_.begin());
+                ask_next(ctx);
+                return;
+            }
+            ctx.echo(counts ? "Requires a positive integer." : "Requires a number.");
+            return;
+        }
+        have = true;
+    }
+    if (counts && have && (v < 1.0 || std::abs(v - std::round(v)) > 1e-9)) {
+        ctx.echo("Requires a positive integer.");
+        return;
+    }
+    const int iv = have ? static_cast<int>(std::lround(v)) : 0;
+    switch (q) {
+    case Q::Assoc:
+        if (array_kw(u, "Y", "YES")) {
+            ctx.echo("Associative arrays are not made yet: the items are separate copies.");
+        }
+        break;
+    case Q::Base:
+        if (array_kw(u, "K", "KEY POINT")) {
+            ctx.set_prompt("Specify key point on source objects as base point: ");
+            return; // the point that follows answers it
+        }
+        if (t.empty()) {
+            base_.reset(); // the centroid
+        } else {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            base_ = *p;
+        }
+        break;
+    case Q::Cols: cols_ = have ? iv : cols_; break;
+    case Q::Rows: rows_ = have ? iv : rows_; break;
+    case Q::ColSpace:
+        if (have) {
+            dx_ = v;
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::RowSpace:
+        if (have) {
+            dy_ = v;
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::ColTotal:
+        if (have && cols_ > 1) {
+            dx_ = v / (cols_ - 1);
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::RowTotal:
+        if (have && rows_ > 1) {
+            dy_ = v / (rows_ - 1);
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::RowElev:
+        break; // rows rise in Z: nothing to see in plan
+    case Q::Levels:
+        if (have && iv > 1) {
+            ctx.echo("Levels stack the array in Z: a 2D drawing keeps one level.");
+        }
+        break;
+    case Q::LevelSpace:
+        level_space_ = have ? v : level_space_;
+        break;
+    case Q::Items:
+        items_ = have ? iv : items_;
+        break;
+    case Q::AngleBetween:
+        if (have) {
+            fill_ = std::abs(std::abs(v * items_) - 360.0) < 1e-9 ? std::copysign(360.0, v) : v * (items_ - 1);
+        }
+        break;
+    case Q::Fill:
+        if (have) {
+            if (std::abs(v) < 1e-12 || std::abs(v) > 360.0) {
+                ctx.echo("Requires an angle between -360 and 360, not 0.");
+                return;
+            }
+            fill_ = v;
+        }
+        break;
+    case Q::RotItems:
+        if (!t.empty()) {
+            rotate_ = !array_kw(u, "N", "NO");
+        }
+        break;
+    case Q::PolarRows: polar_rows_ = have ? iv : polar_rows_; break;
+    case Q::PolarRowSpace: polar_row_space_ = have ? v : polar_row_space_; break;
+    case Q::PolarRowTotal:
+        if (have && polar_rows_ > 1) {
+            polar_row_space_ = v / (polar_rows_ - 1);
+        }
+        break;
+    case Q::Method:
+        if (array_kw(u, "D", "DIVIDE")) {
+            measure_ = false;
+        } else if (array_kw(u, "M", "MEASURE")) {
+            measure_ = true;
+        }
+        break;
+    case Q::PathSpace:
+        if (have) {
+            if (v <= 0.0) {
+                ctx.echo("Requires a positive distance.");
+                return;
+            }
+            path_space_ = v;
+            path_auto_ = false;
+        }
+        break;
+    case Q::PathItems: path_items_ = have ? iv : path_items_; break;
+    case Q::PathDivideItems:
+        if (have && iv < 2) {
+            ctx.echo("Requires an integer of 2 or more.");
+            return;
+        }
+        path_items_ = have ? iv : std::max(path_items_, 2);
+        break;
+    case Q::Align:
+        if (!t.empty()) {
+            align_ = !array_kw(u, "N", "NO");
+        }
+        break;
+    case Q::ZDir:
+        break; // a 2D drawing's items keep their Z direction
+    case Q::Tangent:
+        if (!t.empty()) {
+            ctx.echo("The items keep the direction they have at the start of the path.");
+        }
+        break;
+    case Q::CellCorner1: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        cell1_ = *p;
+        ctx.set_last_point(*p);
+        break;
+    }
+    case Q::CellCorner2: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        dx_ = p->x - cell1_.x;
+        dy_ = p->y - cell1_.y;
+        auto_spacing_ = false;
+        break;
+    }
+    case Q::Expression:
+        break;
+    }
+    queue_.erase(queue_.begin());
+    ask_next(ctx);
 }
 
 void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
     switch (state_) {
     case State::Select:
         if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
@@ -10535,165 +10943,296 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         }
         begin(ctx);
         return;
-    case State::Type: {
-        // AutoCAD's own capitalisation picks the keywords apart: PA=path, PO=polar,
-        // and a bare P is ambiguous, so it is rejected rather than guessed at.
-        const std::string u = upper(t);
-        if (u == "PA" || u == "PATH") {
-            begin_path(ctx);
-        } else if (u == "PO" || u == "POLAR") {
-            begin_polar(ctx);
-        } else if (u == "P") {
-            ctx.echo("Ambiguous: enter PA for path or PO for polar.");
+    case State::Type:
+        if (u.empty() || array_kw(u, "R", "RECTANGULAR")) {
+            type_ = Type::Rect;
+        } else if (array_kw(u, "PA", "PATH")) {
+            type_ = Type::Path;
+        } else if (array_kw(u, "PO", "POLAR")) {
+            type_ = Type::Polar;
         } else {
-            begin_rect(ctx);
-        }
-        return;
-    }
-
-    // --- Rectangular ------------------------------------------------------
-    case State::Rows:
-        rows_ = std::max(1, parse_int(t, 1));
-        state_ = State::Cols;
-        ctx.set_prompt("Enter number of columns <1>: ");
-        return;
-    case State::Cols:
-        cols_ = std::max(1, parse_int(t, 1));
-        state_ = State::RowSpace;
-        ctx.set_prompt("Enter row spacing (Y): ");
-        return;
-    case State::RowSpace:
-        if (!parse_number(t, row_space_)) {
-            ctx.echo("Enter a number for row spacing.");
+            ctx.echo(u == "P" ? "Ambiguous: enter PA for path or PO for polar." : "Enter R, PA or PO.");
             return;
         }
-        state_ = State::ColSpace;
-        ctx.set_prompt("Enter column spacing (X): ");
+        begin_type(ctx);
         return;
-    case State::ColSpace: {
-        if (!parse_number(t, col_space_)) {
-            ctx.echo("Enter a number for column spacing.");
-            return;
-        }
-        // AutoCAD's legacy -ARRAY flow ends here; only the modern ARRAYRECT offers an
-        // axis angle. Keeping the classic four prompts exactly as they were means
-        // existing muscle memory and scripts are untouched.
-        if (type_ != Type::Rect) {
-            core::ArrayRectCommand cmd;
-            cmd.rows = rows_;
-            cmd.cols = cols_;
-            cmd.dx = col_space_;
-            cmd.dy = row_space_;
-            cmd.group = ctx.group_id();
-            ctx.submit(cmd);
-            done_ = true;
-            return;
-        }
-        state_ = State::Angle;
-        ctx.set_prompt("Angle of array axes <0>: ");
-        return;
-    }
-    case State::Angle: {
-        double deg = 0.0;
-        if (!t.empty() && !parse_number(t, deg)) {
-            ctx.echo("Enter an angle in degrees.");
-            return;
-        }
-        core::ArrayRectCommand cmd;
-        cmd.rows = rows_;
-        cmd.cols = cols_;
-        cmd.dx = col_space_;
-        cmd.dy = row_space_;
-        cmd.angle = core::to_radians(deg);
-        cmd.group = ctx.group_id();
-        ctx.submit(cmd);
-        // The engine reports how many copies it actually made (Ph10.1).
-        done_ = true;
-        return;
-    }
-
-    // --- Polar ------------------------------------------------------------
     case State::Center:
+        if (array_kw(u, "B", "BASE POINT")) {
+            ask(ctx, {Q::Base});
+            return;
+        }
+        if (array_kw(u, "A", "AXIS OF ROTATION")) {
+            ctx.echo("An axis of rotation is for 3D: a 2D array turns about a centre point.");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
-            state_ = State::Count;
-            ctx.set_prompt("Enter number of items: ");
+            center_set_ = true;
+            ctx.set_last_point(*p);
+            state_ = State::Main;
+            preview(ctx);
+            main_prompt(ctx);
         }
         return;
-    case State::Count:
-        count_ = std::max(1, parse_int(t, 1));
-        state_ = State::Fill;
-        ctx.set_prompt("Specify angle to fill in degrees <360>: ");
-        return;
-    case State::Fill: {
-        double deg = 360.0;
-        if (!t.empty() && !parse_number(t, deg)) {
-            deg = 360.0;
-        }
-        fill_ = core::to_radians(deg);
-        state_ = State::RotateItems;
-        ctx.set_prompt("Rotate items as copied? [Yes/No] <Yes>: ");
-        return;
-    }
-    case State::RotateItems: {
-        const std::string u = upper(t);
-        const bool rotate = !(u == "N" || u == "NO");
-        ctx.submit(core::ArrayPolarCommand{center_, count_, fill_, rotate, ctx.group_id()});
-        done_ = true;
-        return;
-    }
-
-    // --- Path -------------------------------------------------------------
     case State::PathPick:
         if (const auto p = read_point(ctx, text)) {
             path_pick_ = *p;
-            state_ = State::PathMethod;
-            ctx.set_prompt("Method [Divide/Measure] <D>: ");
+            state_ = State::Main;
+            preview(ctx);
+            main_prompt(ctx);
         }
         return;
-    case State::PathMethod: {
-        const std::string u = upper(t);
-        if (u == "M" || u == "MEASURE") {
-            state_ = State::PathSpacing;
-            ctx.set_prompt("Distance between items: ");
+    case State::Ask:
+        answer(ctx, text);
+        return;
+    case State::Main:
+        break;
+    }
+    if (u.empty() || array_kw(u, "X", "EXIT")) {
+        finish(ctx);
+        return;
+    }
+    if (array_kw(u, "AS", "ASSOCIATIVE")) {
+        ask(ctx, {Q::Assoc});
+        return;
+    }
+    if (array_kw(u, "B", "BASE POINT")) {
+        ask(ctx, {Q::Base});
+        return;
+    }
+    if (array_kw(u, "L", "LEVELS")) {
+        ask(ctx, {Q::Levels, Q::LevelSpace});
+        return;
+    }
+    if (type_ == Type::Rect) {
+        if (array_kw(u, "COU", "COUNT")) {
+            ask(ctx, {Q::Cols, Q::Rows});
+        } else if (array_kw(u, "S", "SPACING")) {
+            ask(ctx, {Q::ColSpace, Q::RowSpace});
+        } else if (array_kw(u, "COL", "COLUMNS")) {
+            ask(ctx, {Q::Cols, Q::ColSpace});
+        } else if (array_kw(u, "R", "ROWS")) {
+            ask(ctx, {Q::Rows, Q::RowSpace, Q::RowElev});
         } else {
-            state_ = State::PathCount;
-            ctx.set_prompt("Number of items to distribute along the path: ");
+            ctx.echo("Pick an option, or Enter to make the array.");
         }
         return;
     }
-    case State::PathCount:
-        count_ = std::max(2, parse_int(t, 2));
-        path_spacing_ = 0.0; // Divide
-        state_ = State::PathAlign;
-        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
-        return;
-    case State::PathSpacing:
-        if (!parse_number(t, path_spacing_) || path_spacing_ <= 0.0) {
-            ctx.echo("Enter a positive distance between items.");
-            return;
+    if (type_ == Type::Polar) {
+        if (array_kw(u, "I", "ITEMS")) {
+            ask(ctx, {Q::Items});
+        } else if (array_kw(u, "A", "ANGLE BETWEEN")) {
+            ask(ctx, {Q::AngleBetween});
+        } else if (array_kw(u, "F", "FILL ANGLE")) {
+            ask(ctx, {Q::Fill});
+        } else if (array_kw(u, "ROW", "ROWS")) {
+            ask(ctx, {Q::PolarRows, Q::PolarRowSpace, Q::RowElev});
+        } else if (array_kw(u, "ROT", "ROTATE ITEMS")) {
+            ask(ctx, {Q::RotItems});
+        } else {
+            ctx.echo("Pick an option, or Enter to make the array.");
         }
-        count_ = 0; // Measure: as many as fit
-        state_ = State::PathAlign;
-        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
-        return;
-    case State::PathAlign: {
-        const std::string u = upper(t);
-        core::ArrayPathCommand cmd;
-        cmd.pick = path_pick_;
-        cmd.pick_radius = ctx.pick_radius();
-        cmd.count = count_;
-        cmd.spacing = path_spacing_;
-        cmd.align = !(u == "N" || u == "NO");
-        cmd.group = ctx.group_id();
-        ctx.submit(cmd);
-        done_ = true;
         return;
     }
+    // Path
+    if (array_kw(u, "M", "METHOD")) {
+        ask(ctx, {Q::Method});
+    } else if (array_kw(u, "T", "TANGENT DIRECTION")) {
+        ask(ctx, {Q::Tangent});
+    } else if (array_kw(u, "I", "ITEMS")) {
+        if (measure_) {
+            ask(ctx, {Q::PathSpace, Q::PathItems});
+        } else {
+            ask(ctx, {Q::PathDivideItems});
+        }
+    } else if (array_kw(u, "R", "ROWS")) {
+        ctx.echo("A path array here has one row.");
+    } else if (array_kw(u, "A", "ALIGN ITEMS")) {
+        ask(ctx, {Q::Align});
+    } else if (array_kw(u, "Z", "Z DIRECTION")) {
+        ask(ctx, {Q::ZDir});
+    } else {
+        ctx.echo("Pick an option, or Enter to make the array.");
     }
 }
 
 void ArrayCommand::cancel(CommandContext& ctx) {
+    ctx.submit(core::ArrayPreviewCommand{}); // the preview goes
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ArrayClassicCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!ctx.has_selection()) {
+        state_ = State::Select;
+        select_.begin(ctx);
+        return;
+    }
+    begin(ctx);
+}
+
+void ArrayClassicCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
+}
+
+void ArrayClassicCommand::begin(CommandContext& ctx) {
+    state_ = State::Type;
+    ctx.set_prompt("Enter the type of array [Rectangular/Polar] <R>: ");
+}
+
+void ArrayClassicCommand::make_rect(CommandContext& ctx) {
+    core::ArrayRectCommand cmd;
+    cmd.rows = rows_;
+    cmd.cols = cols_;
+    cmd.dx = col_space_;
+    cmd.dy = row_space_;
+    cmd.group = ctx.group_id();
+    ctx.submit(cmd);
+    done_ = true;
+}
+
+void ArrayClassicCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin(ctx);
+        return;
+    case State::Type:
+        if (u == "P" || u == "PO" || u == "POLAR") {
+            state_ = State::Center;
+            ctx.set_prompt("Specify center point of array or [Base]: ");
+        } else if (u.empty() || u == "R" || u == "RECTANGULAR") {
+            state_ = State::Rows;
+            ctx.set_prompt("Enter the number of rows (---) <1>: ");
+        } else {
+            ctx.echo("Enter R or P.");
+        }
+        return;
+    case State::Rows:
+        rows_ = std::max(1, parse_int(t, 1));
+        state_ = State::Cols;
+        ctx.set_prompt("Enter the number of columns (|||) <1>: ");
+        return;
+    case State::Cols:
+        cols_ = std::max(1, parse_int(t, 1));
+        if (rows_ == 1 && cols_ == 1) {
+            ctx.echo("One-element array, nothing to do.");
+            done_ = true;
+            return;
+        }
+        if (rows_ > 1) {
+            state_ = State::RowSpace;
+            ctx.set_prompt("Enter the distance between rows or specify unit cell (---): ");
+        } else {
+            state_ = State::ColSpace;
+            ctx.set_prompt("Specify the distance between columns (|||): ");
+        }
+        return;
+    case State::RowSpace:
+        if (t.find(',') == std::string::npos && !ctx.input_is_pick() && parse_number(t, v)) {
+            row_space_ = v;
+            if (cols_ == 1) {
+                make_rect(ctx);
+                return;
+            }
+            state_ = State::ColSpace;
+            ctx.set_prompt("Specify the distance between columns (|||): ");
+        } else if (const auto p = read_point(ctx, text)) {
+            corner_ = *p; // a unit cell: its two corners give both distances
+            ctx.set_last_point(*p);
+            state_ = State::CellCorner;
+            ctx.set_prompt("Specify other corner: ");
+        }
+        return;
+    case State::CellCorner:
+        if (const auto p = read_point(ctx, text)) {
+            col_space_ = p->x - corner_.x;
+            row_space_ = p->y - corner_.y;
+            make_rect(ctx);
+        }
+        return;
+    case State::ColSpace:
+        if (!parse_number(t, v)) {
+            ctx.echo("Requires a distance.");
+            return;
+        }
+        col_space_ = v;
+        make_rect(ctx);
+        return;
+    case State::Center:
+        if (u == "B" || u == "BASE") {
+            state_ = State::Base;
+            ctx.set_prompt("Specify base point of objects: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            center_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Items;
+            ctx.set_prompt("Enter the number of items in the array: ");
+        }
+        return;
+    case State::Base:
+        if (read_point(ctx, text)) {
+            state_ = State::Center; // each item keeps its own place about the centre
+            ctx.set_prompt("Specify center point of array: ");
+        }
+        return;
+    case State::Items:
+        items_ = t.empty() ? 0 : parse_int(t, 0);
+        if (!t.empty() && items_ < 2) {
+            ctx.echo("Requires an integer greater than 1.");
+            return;
+        }
+        state_ = State::Fill;
+        ctx.set_prompt("Specify the angle to fill (+=ccw, -=cw) <360>: ");
+        return;
+    case State::Fill:
+        fill_ = t.empty() ? 360.0 : (parse_number(t, v) ? v : 360.0);
+        if (items_ == 0 || std::abs(fill_) < 1e-12) {
+            state_ = State::Between;
+            ctx.set_prompt(items_ == 0 ? "Angle between items: " : "Angle between items (+=ccw, -=cw): ");
+            return;
+        }
+        state_ = State::Rotate;
+        ctx.set_prompt("Rotate arrayed objects? [Yes/No] <Y>: ");
+        return;
+    case State::Between:
+        if (!parse_number(t, v) || std::abs(v) < 1e-12) {
+            ctx.echo("Requires a nonzero angle.");
+            return;
+        }
+        if (items_ == 0) {
+            items_ = std::max(2, static_cast<int>(std::floor(std::abs(fill_ / v) + 1e-9)) +
+                                     (std::abs(std::abs(fill_) - 360.0) < 1e-9 ? 0 : 1));
+            fill_ = std::abs(std::abs(fill_) - 360.0) < 1e-9 ? std::copysign(360.0, v) : v * (items_ - 1);
+        } else {
+            fill_ = v * (items_ - 1);
+        }
+        state_ = State::Rotate;
+        ctx.set_prompt("Rotate arrayed objects? [Yes/No] <Y>: ");
+        return;
+    case State::Rotate:
+        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), !(u == "N" || u == "NO"),
+                                           ctx.group_id()});
+        done_ = true;
+        return;
+    }
+}
+
+void ArrayClassicCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

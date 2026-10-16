@@ -661,9 +661,12 @@ CommandRegistry CommandRegistry::make_default() {
     // go straight to their own prompts. ARRAYEDIT/ARRAYCLOSE are absent by design --
     // they edit an ASSOCIATIVE array, and these arrays are non-associative (what
     // AutoCAD's own -ARRAY produces), so there is no association to reopen.
-    reg({"AR", "ARRAY", "-ARRAY"}, [] { return std::make_unique<ArrayCommand>(); },
+    reg({"AR", "ARRAY"}, [] { return std::make_unique<ArrayCommand>(); },
         "assets/ribbon/array.svg",
         "Create a rectangular, path or polar pattern of copies.");
+    reg({"-ARRAY"}, [] { return std::make_unique<ArrayClassicCommand>(); },
+        "assets/ribbon/array.svg",
+        "Create a rectangular or polar pattern of copies, by the classic prompts.");
     reg({"ARRAYRECT"}, [] { return std::make_unique<ArrayCommand>(ArrayCommand::Type::Rect); },
         "assets/ribbon/array.svg",
         "Create a rectangular pattern of copies in rows and columns.");

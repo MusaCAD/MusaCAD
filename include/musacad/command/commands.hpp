@@ -4171,88 +4171,109 @@ private:
     bool done_ = false;
 };
 
-/// The whole AutoCAD array family in one state machine.
-///
-/// ARRAY (AR) and -ARRAY ask for the type, exactly as AutoCAD does; ARRAYRECT,
-/// ARRAYPOLAR and ARRAYPATH jump straight to their own prompts. One class because the
-/// three types differ only in which prompts they ask -- splitting them would duplicate
-/// the selection guard, the parsing and the cancel path three ways.
-///
-/// ARRAYEDIT and ARRAYCLOSE are deliberately absent: both edit an ASSOCIATIVE array,
-/// which is a parametric entity that remembers its source and parameters. Musa CAD's
-/// arrays are non-associative -- the same thing AutoCAD's own -ARRAY produces -- so
-/// there is no association to reopen. See docs/COMMANDS.md.
+/// ARRAY (AR), ARRAYRECT, ARRAYPOLAR and ARRAYPATH, as AutoCAD asks them: the array is
+/// drawn at once with its defaults (4 columns and 3 rows; 6 items round a full turn; items
+/// along the whole path), and `Select grip to edit array or [...]` changes it option by
+/// option, the preview following, until eXit or Enter makes it. The items are separate
+/// copies (an associative array object is not there yet). -ARRAY is ArrayClassicCommand.
 class ArrayCommand final : public ICommand {
 public:
-    /// Which prompts to ask. `Ask` is ARRAY/-ARRAY; the rest are the direct commands.
     enum class Type { Ask, Rect, Polar, Path };
-
     explicit ArrayCommand(Type type = Type::Ask) : type_(type) {}
-
     std::string name() const override {
-        switch (type_) {
-        case Type::Rect:
-            return "ARRAYRECT";
-        case Type::Polar:
-            return "ARRAYPOLAR";
-        case Type::Path:
-            return "ARRAYPATH";
-        case Type::Ask:
-            break;
-        }
-        return "ARRAY";
+        return type_ == Type::Rect ? "ARRAYRECT" : type_ == Type::Polar ? "ARRAYPOLAR" : type_ == Type::Path ? "ARRAYPATH" : "ARRAY";
     }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    /// The path pick selects a curve, but it is a COORDINATE pick here (the engine
-    /// resolves the curve from the point), so the normal snap rules apply.
     bool wants_selection() const override { return false; }
     bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
     bool selection_removing() const override { return select_.removing(); }
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    void begin(CommandContext& ctx);
-    SelectObjectsPhase select_;
-    enum class State {
-        Select,
-        Type,
-        // Rectangular
-        Rows,
-        Cols,
-        RowSpace,
-        ColSpace,
-        Angle,
-        // Polar
-        Center,
-        Count,
-        Fill,
-        RotateItems,
-        // Path
-        PathPick,
-        PathMethod,
-        PathCount,
-        PathSpacing,
-        PathAlign,
+    enum class State { Select, Type, Center, PathPick, Main, Ask };
+    /// The questions an option asks, in turn.
+    enum class Q {
+        Assoc, Base, Cols, Rows, ColSpace, RowSpace, ColTotal, RowTotal, RowElev, Levels, LevelSpace,
+        Items, AngleBetween, Fill, RotItems, PolarRows, PolarRowSpace, PolarRowTotal, Method, PathSpace,
+        PathItems, PathDivideItems, Align, ZDir, Tangent, CellCorner1, CellCorner2, Expression,
     };
-    void begin_rect(CommandContext& ctx);
-    void begin_polar(CommandContext& ctx);
-    void begin_path(CommandContext& ctx);
+    void begin(CommandContext& ctx);
+    void begin_type(CommandContext& ctx);
+    void main_prompt(CommandContext& ctx);
+    void ask(CommandContext& ctx, std::vector<Q> qs);
+    void ask_next(CommandContext& ctx);
+    void answer(CommandContext& ctx, const std::string& text);
+    void preview(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    [[nodiscard]] double angle_between() const;
+    [[nodiscard]] std::string len(CommandContext& ctx, double v) const;
 
     Type type_ = Type::Ask;
-    State state_ = State::Type;
+    State state_ = State::Select;
+    SelectObjectsPhase select_;
+    std::vector<Q> queue_;
+    std::optional<Q> expression_for_; ///< Expression: the question it answers
+    // Rectangular
+    int cols_ = 4;
+    int rows_ = 3;
+    double dx_ = 0.0;
+    double dy_ = 0.0;
+    bool auto_spacing_ = true; ///< dx_/dy_ not known yet: the engine's 1.5 x the selection
+    int levels_ = 1;
+    double level_space_ = 1.0;
+    core::Vec2 cell1_{};
+    // Polar
+    core::Vec2 center_{};
+    bool center_set_ = false;
+    int items_ = 6;
+    double fill_ = 360.0; ///< degrees, + counter-clockwise
+    bool rotate_ = true;
+    int polar_rows_ = 1;
+    double polar_row_space_ = 0.0;
+    // Path
+    core::Vec2 path_pick_{};
+    bool measure_ = true;
+    double path_space_ = 0.0;
+    bool path_auto_ = true;
+    int path_items_ = 0; ///< 0: as many as the path holds (Measure), or Divide's 5
+    bool align_ = true;
+    std::optional<core::Vec2> base_{};
+    bool done_ = false;
+};
+
+/// -ARRAY, AutoCAD's classic prompts: `Enter the type of array [Rectangular/Polar] <R>:`;
+/// rectangular asks the rows (---) and columns (|||) and their distances (or a unit cell),
+/// polar the centre, the number of items, the angle to fill (or the angle between items)
+/// and whether the items turn. No preview, no path: those are ARRAY's.
+class ArrayClassicCommand final : public ICommand {
+public:
+    std::string name() const override { return "-ARRAY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool wants_selection() const override { return false; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State { Select, Type, Rows, Cols, RowSpace, CellCorner, ColSpace, Center, Base, Items, Fill, Between, Rotate };
+    void begin(CommandContext& ctx);
+    void make_rect(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    State state_ = State::Select;
     int rows_ = 1;
     int cols_ = 1;
     double row_space_ = 0.0;
     double col_space_ = 0.0;
-    int count_ = 1;
-    double fill_ = 0.0;
+    core::Vec2 corner_{};
     core::Vec2 center_{};
-    // Path
-    core::Vec2 path_pick_{};
-    double path_spacing_ = 0.0;
+    int items_ = 0;       ///< 0: not given (Enter), the angle between items decides
+    double fill_ = 360.0; ///< degrees
     bool done_ = false;
 };
 
