@@ -193,8 +193,10 @@ core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style, bool computed_co
     return c;
 }
 
-void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
-                core::Vec2 amin, core::Vec2 amax, const ImageSource* images) {
+namespace {
+/// paint_plot's body, on a painter already open on `device`.
+void paint_plot_on(QPainter& p, const QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
+                   core::Vec2 amin, core::Vec2 amax, const ImageSource* images) {
     const double dev_w = device.width();
     const double dev_h = device.height();
     const double dpx = device.logicalDpiX() > 0 ? device.logicalDpiX() : 96.0;
@@ -243,7 +245,6 @@ void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const Pl
         return {x, y};
     };
 
-    QPainter p(&device);
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(0, 0, static_cast<int>(dev_w), static_cast<int>(dev_h), Qt::white);
 
@@ -366,7 +367,55 @@ void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const Pl
             p.drawEllipse(to_dev(snap.points[b.first + i]), r, r);
         }
     }
+}
+} // namespace
+
+void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
+                core::Vec2 amin, core::Vec2 amax, const ImageSource* images) {
+    QPainter p(&device);
+    paint_plot_on(p, device, snap, spec, amin, amax, images);
     p.end();
+}
+
+void paint_plot(QPainter& painter, const QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
+                core::Vec2 amin, core::Vec2 amax, const ImageSource* images) {
+    painter.save();
+    paint_plot_on(painter, device, snap, spec, amin, amax, images);
+    painter.restore();
+}
+
+PdfBook::PdfBook(std::string path) : path_(std::move(path)) {}
+
+PdfBook::~PdfBook() = default;
+
+void PdfBook::add_page(const core::RenderSnapshot& snap, const PlotSpec& spec, core::Vec2 amin, core::Vec2 amax,
+                       const ImageSource* images) {
+    const QPageSize size(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter);
+    if (writer_ == nullptr) {
+        writer_ = std::make_unique<QPdfWriter>(QString::fromStdString(path_));
+        writer_->setPageSize(size);
+        writer_->setResolution(kPlotDpi);
+        painter_ = std::make_unique<QPainter>(writer_.get());
+    } else {
+        writer_->setPageSize(size); // the next page's size
+        writer_->newPage();
+    }
+    paint_plot(*painter_, *writer_, snap, spec, amin, amax, images);
+    ++pages_;
+}
+
+bool PdfBook::finish(std::string& error) {
+    if (painter_ != nullptr) {
+        painter_->end();
+    }
+    painter_.reset();
+    writer_.reset(); // the file is complete on disk once the writer is gone
+    const QFileInfo fi(QString::fromStdString(path_));
+    if (pages_ == 0 || !fi.exists() || fi.size() == 0) {
+        error = pages_ == 0 ? std::string("nothing to publish") : "could not write the PDF: " + path_;
+        return false;
+    }
+    return true;
 }
 
 core::PageSetup to_page_setup(const PlotSpec& s, const std::string& name) {

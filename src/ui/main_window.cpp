@@ -266,6 +266,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_layer_walk_callback([this] { open_layer_walk_dialog(); });
     viewport_->set_text_style_callback([this] { open_text_style_dialog(); });
     viewport_->set_plot_preview_callback([this] { plot_preview(last_plot_spec_); });
+    // Queued: the command finishes first, then the window asks.
+    viewport_->set_export_pdf_callbacks(
+        [this] { QTimer::singleShot(0, this, [this] { export_pdf(); }); },
+        [this] { QTimer::singleShot(0, this, [this] { publish(); }); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
@@ -7789,6 +7793,29 @@ bool MainWindow::selftest_vports() {
     std::printf("[selftest] VPORTS SIngle keeps the current view in one viewport: %s\n",
                 single_ok ? "PASS" : "FAIL");
     all = all && single_ok;
+
+    // PUBLISH's book: two sheets in one PDF, each page its own paper size.
+    {
+        const QString pdf = QDir::temp().filePath(QStringLiteral("musacad_selftest_publish.pdf"));
+        PdfBook book(pdf.toStdString());
+        PlotSpec a4;
+        PlotSpec a3 = a4;
+        a3.paper_w_mm = 420.0;
+        a3.paper_h_mm = 297.0;
+        engine_->consume_snapshot();
+        book.add_page(engine_->snapshot(), a4, {0.0, 0.0}, {100.0, 100.0});
+        book.add_page(engine_->snapshot(), a3, {0.0, 0.0}, {100.0, 100.0});
+        std::string err;
+        bool book_ok = book.finish(err) && book.pages() == 2;
+        QFile f(pdf);
+        if (book_ok && f.open(QIODevice::ReadOnly)) {
+            const QByteArray bytes = f.readAll();
+            book_ok = bytes.count("/Type /Page") - bytes.count("/Type /Pages") == 2;
+        }
+        QFile::remove(pdf);
+        std::printf("[selftest] PUBLISH writes one PDF page per sheet: %s\n", book_ok ? "PASS" : "FAIL");
+        all = all && book_ok;
+    }
     return all && gl_msg_ok;
 }
 
@@ -9118,6 +9145,10 @@ std::string describe_plot_spec(const PlotSpec& s, const char* ctx) {
 } // namespace
 
 void MainWindow::open_plot_dialog() {
+    open_plot_dialog_seeded(current_plot_seed());
+}
+
+PlotSpec MainWindow::current_plot_seed() {
     // Default the paper orientation to the drawing's aspect (a landscape drawing -> a
     // landscape sheet), so a fit plot uses the page well. The dialog still lets the user
     // override. Only nudge when nothing was deliberately picked (still the default A4).
@@ -9150,11 +9181,90 @@ void MainWindow::open_plot_dialog() {
             sheet.fit = false;
             sheet.scale_num = 1.0;
             sheet.scale_den = 1.0;
-            open_plot_dialog_seeded(sheet);
-            return;
+            return sheet;
         }
     }
-    open_plot_dialog_seeded(last_plot_spec_);
+    return last_plot_spec_;
+}
+
+void MainWindow::export_pdf() {
+    PlotSpec spec = current_plot_seed();
+    spec.target = "PDF";
+    do_plot(spec); // asks where the file goes
+}
+
+void MainWindow::publish() {
+    engine_->consume_snapshot();
+    const std::vector<core::LayoutInfo> layouts = engine_->snapshot().layouts;
+    const std::uint8_t back = engine_->snapshot().active_space;
+    // The sheets: Model and every layout, all ticked to begin with.
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("PublishDialog"));
+    dlg.setWindowTitle(QStringLiteral("Publish"));
+    auto* outer = new QVBoxLayout(&dlg);
+    outer->addWidget(new QLabel(QStringLiteral("Sheets to publish, one page each, to a PDF file:"), &dlg));
+    auto* list = new QListWidget(&dlg);
+    const auto add_sheet = [&](const QString& name, std::uint8_t space) {
+        auto* item = new QListWidgetItem(name, list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+        item->setData(Qt::UserRole, static_cast<int>(space));
+    };
+    add_sheet(QStringLiteral("Model"), 0);
+    for (const core::LayoutInfo& l : layouts) {
+        add_sheet(QString::fromStdString(l.name), l.id);
+    }
+    outer->addWidget(list);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dlg);
+    buttons->addButton(QStringLiteral("Publish..."), QDialogButtonBox::AcceptRole);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    std::vector<std::uint8_t> spaces;
+    for (int i = 0; i < list->count(); ++i) {
+        if (list->item(i)->checkState() == Qt::Checked) {
+            spaces.push_back(static_cast<std::uint8_t>(list->item(i)->data(Qt::UserRole).toInt()));
+        }
+    }
+    if (spaces.empty()) {
+        command_widget_->append_line("PUBLISH: no sheets ticked.");
+        return;
+    }
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Publish to PDF"), QString(), QStringLiteral("PDF (*.pdf)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    path = save_path_with_extension(path, QStringLiteral(".pdf"));
+    PdfBook book(path.toStdString());
+    for (const std::uint8_t space : spaces) {
+        engine_->submit(core::SetActiveSpaceCommand{space, {}});
+        pump_with_progress(QStringLiteral("Publishing…"), [this, space] {
+            engine_->consume_snapshot();
+            return engine_->snapshot().active_space == space;
+        }, 10'000);
+        // Each sheet as PLOT would start it: a layout's paper 1:1, the model to its extents.
+        PlotSpec spec = current_plot_seed();
+        spec.target = "PDF";
+        if (space == 0 && spec.area == PlotSpec::Area::Display) {
+            spec.area = PlotSpec::Area::Extents;
+        }
+        core::Vec2 amin;
+        core::Vec2 amax;
+        if (prepare_plot(spec, amin, amax)) {
+            book.add_page(engine_->plot_snapshot(), spec, amin, amax);
+        }
+    }
+    engine_->submit(core::SetActiveSpaceCommand{back, {}});
+    std::string err;
+    if (book.finish(err)) {
+        command_widget_->append_line("Published " + std::to_string(book.pages()) +
+                                     (book.pages() == 1 ? " sheet to " : " sheets to ") + path.toStdString() + ".");
+    } else {
+        QMessageBox::warning(this, QStringLiteral("Publish"), QString::fromStdString("Publish: " + err));
+    }
 }
 
 void MainWindow::open_plot_dialog_seeded(const PlotSpec& seed) {

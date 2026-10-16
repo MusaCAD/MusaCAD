@@ -110,6 +110,12 @@ public:
     bool layer_walk_dialog() override;
     bool text_style_dialog() override;
     bool plot_preview() override;
+    bool export_pdf() override;
+    bool publish() override;
+    void set_export_pdf_callbacks(std::function<void()> export_pdf, std::function<void()> publish) {
+        export_pdf_callback_ = std::move(export_pdf);
+        publish_callback_ = std::move(publish);
+    }
     bool view_manager() override;
     bool layer_states_manager() override;
     int dim_inspect_dialog(core::DimInspectCommand& io) override;
@@ -764,6 +770,8 @@ private:
     std::function<void()> layer_walk_callback_;
     std::function<void()> text_style_callback_;
     std::function<void()> plot_preview_callback_;
+    std::function<void()> export_pdf_callback_;
+    std::function<void()> publish_callback_;
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
     std::function<int(core::DimInspectCommand&)> dim_inspect_callback_;

@@ -40,6 +40,8 @@ commands (Ribbon Phase A):
 | UNDO (U) | Reverse the most recent action. |
 | HELP (?, F1) | Open this command reference in the browser. |
 | PREVIEW (PRE) | The plot as it will come out, with the last plot's settings: zoom, pan by dragging, Plot. |
+| EXPORTPDF | The layout in front (its sheet, 1:1) or the model (the last plot's settings) saved as a PDF file. Output > Export > PDF. |
+| PUBLISH | The Publish window: the model and every layout, ticked to publish; Publish... asks for a file and plots each sheet ticked as a page of one PDF, each page its own paper size. Output > Plot > Batch Plot. |
 | ZOOM (Z) | Zoom in or out to change the view magnification. |
 | PAN (P) / -PAN (-P) | Move the view with a drag, or by a displacement. |
 | MOVE (M) | Move selected objects a specified distance and direction. |

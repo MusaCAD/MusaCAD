@@ -181,6 +181,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Change lines' ends, circles' radii, texts and blocks by a point, or their properties.");
     reg({"HATCHEDIT", "HE"}, [] { return std::make_unique<HatchEditUiCommand>(); }, "",
         "Edit a hatch: its pattern, scale and angle, or a new boundary round it.");
+    reg({"EXPORTPDF"}, [] { return std::make_unique<WindowCommand>("EXPORTPDF", &ViewControl::export_pdf); },
+        "assets/ribbon/export.svg", "Save the layout in front, or the model, as a PDF file.");
+    reg({"PUBLISH"}, [] { return std::make_unique<WindowCommand>("PUBLISH", &ViewControl::publish); },
+        "assets/ribbon/plot.svg", "Plot the model and the layouts chosen into one PDF, a page each.");
     reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",
         "Show the plot as it will come out, with the last plot's settings.");
     reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",

@@ -409,6 +409,11 @@ private:
     void set_performance_overlay(bool on);
     void open_plot_dialog();
     void open_plot_dialog_seeded(const PlotSpec& seed); // re-opens after a window pick
+    /// What PLOT starts from on the sheet in front: a layout's paper 1:1, the whole sheet;
+    /// in model space the last plot's settings, the paper turned to the drawing.
+    [[nodiscard]] PlotSpec current_plot_seed();
+    void export_pdf(); ///< EXPORTPDF: the sheet in front to a PDF file
+    void publish();    ///< PUBLISH: the sheets chosen, one PDF page each
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
     /// false (with a message) if there's nothing to plot.
     [[nodiscard]] bool prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax);

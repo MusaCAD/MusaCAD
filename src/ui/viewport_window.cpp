@@ -352,6 +352,22 @@ bool ViewportWindow::plot_preview() {
     return true;
 }
 
+bool ViewportWindow::export_pdf() {
+    if (!export_pdf_callback_) {
+        return false;
+    }
+    export_pdf_callback_();
+    return true;
+}
+
+bool ViewportWindow::publish() {
+    if (!publish_callback_) {
+        return false;
+    }
+    publish_callback_();
+    return true;
+}
+
 bool ViewportWindow::text_style_dialog() {
     if (!text_style_callback_) {
         return false;

@@ -15,6 +15,8 @@
 #include "musacad/core/properties.hpp"
 
 class QPaintDevice;
+class QPainter;
+class QPdfWriter;
 
 namespace musacad::core {
 struct RenderSnapshot;
@@ -71,6 +73,31 @@ core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style, bool computed_co
 /// caller configures the device's page size/orientation/resolution first.
 void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
                 core::Vec2 amin, core::Vec2 amax, const ImageSource* images = nullptr);
+/// The same on a painter already open on `device` (one page of a PdfBook); the painter's
+/// state is as it was afterwards.
+void paint_plot(QPainter& painter, const QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
+                core::Vec2 amin, core::Vec2 amax, const ImageSource* images = nullptr);
+
+/// PUBLISH's PDF: one page per sheet, each page its own paper size. Paint each page while
+/// its plot snapshot is current -- the next one replaces it -- then finish().
+class PdfBook {
+public:
+    explicit PdfBook(std::string path);
+    ~PdfBook();
+    PdfBook(const PdfBook&) = delete;
+    PdfBook& operator=(const PdfBook&) = delete;
+    void add_page(const core::RenderSnapshot& snap, const PlotSpec& spec, core::Vec2 amin, core::Vec2 amax,
+                  const ImageSource* images = nullptr);
+    /// Closes the file; false (with `error`) when nothing was written.
+    [[nodiscard]] bool finish(std::string& error);
+    [[nodiscard]] int pages() const noexcept { return pages_; }
+
+private:
+    std::string path_;
+    std::unique_ptr<QPdfWriter> writer_;
+    std::unique_ptr<QPainter> painter_;
+    int pages_ = 0;
+};
 
 /// Supplies decoded pixels for the snapshot's ImageInstances at paint time. The snapshot
 /// deliberately carries only transforms (it is copied through the triple buffer on every

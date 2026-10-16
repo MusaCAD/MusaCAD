@@ -259,6 +259,10 @@ public:
     virtual bool text_style_dialog() { return false; }
     /// PREVIEW: the plot as it will come out, with the last plot's settings.
     virtual bool plot_preview() { return false; }
+    /// EXPORTPDF: the sheet in front to a PDF file; PUBLISH: the sheets chosen, one PDF page
+    /// each (false where there is no window to ask in).
+    virtual bool export_pdf() { return false; }
+    virtual bool publish() { return false; }
     /// VIEW: the View Manager; LAYERSTATE: the Layer States Manager (false where there is
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }

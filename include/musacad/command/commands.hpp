@@ -1452,6 +1452,28 @@ private:
 };
 
 /// PREVIEW (PRE): the plot preview, with the settings of the last plot.
+/// A command the drawing window carries out itself (EXPORTPDF, PUBLISH); where there is no
+/// window it says so.
+class WindowCommand final : public ICommand {
+public:
+    WindowCommand(std::string name, bool (ViewControl::*run)()) : name_(std::move(name)), run_(run) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !(ctx.view()->*run_)()) {
+            ctx.echo(name_ + " needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    std::string name_;
+    bool (ViewControl::*run_)();
+    bool done_ = false;
+};
+
 class PlotPreviewCommand final : public ICommand {
 public:
     std::string name() const override { return "PREVIEW"; }

@@ -917,7 +917,7 @@ void MainWindow::build_ribbon() {
         p->setToolTip(QStringLiteral("<b>PLOT (Ctrl+P)</b><br>Plot or print the drawing to paper or PDF."));
         connect(p, &QToolButton::clicked, this, &MainWindow::open_plot_dialog);
         QWidget* col = plot->add_column();
-        todo_small(plot, col, QStringLiteral("Batch Plot"), "plot");
+        small(plot, col, QStringLiteral("Batch Plot"), "PUBLISH", "plot");
         small(plot, col, QStringLiteral("Preview"), "PREVIEW", "preview");
         todo_small(plot, col, QStringLiteral("Page Setup Manager"), "pagesetup");
     }
@@ -929,8 +929,8 @@ void MainWindow::build_ribbon() {
                 this, &MainWindow::file_export_dxf);
         connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/export.svg")), QStringLiteral("DWG…")), &QAction::triggered,
                 this, &MainWindow::file_export_dwg);
-        connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/plot.svg")), QStringLiteral("PDF (Plot)…")), &QAction::triggered,
-                this, &MainWindow::open_plot_dialog);
+        connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/plot.svg")), QStringLiteral("PDF…")), &QAction::triggered,
+                this, [this] { processor_->start_command("EXPORTPDF"); });
         QToolButton* b = export_p->add_dropdown(asset("export"), QStringLiteral("Export"), m, /*split=*/false, RibbonTier::Primary);
         b->setObjectName(QStringLiteral("ribbon.export"));
         b->setToolTip(QStringLiteral("Export the drawing to a DXF or DWG file, or plot it to PDF."));

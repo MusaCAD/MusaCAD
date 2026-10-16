@@ -690,3 +690,12 @@ TEST_CASE("GATTE changes an attribute on every reference of a block; VPSCALE nee
     h.run({"GRADIENT"});
     REQUIRE(h.out.prompt.starts_with("Pick internal point"));
 }
+
+TEST_CASE("EXPORTPDF and PUBLISH say so where there is no drawing window") {
+    H h;
+    h.run({"EXPORTPDF"});
+    REQUIRE(h.out.lines.back() == "EXPORTPDF needs the drawing window.");
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"PUBLISH"});
+    REQUIRE(h.out.lines.back() == "PUBLISH needs the drawing window.");
+}

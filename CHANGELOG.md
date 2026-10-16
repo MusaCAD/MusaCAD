@@ -50,6 +50,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   for MTEXT and QLEADER keeps its spaces.
 - **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
   and Output > Plot > Preview, with Plot from it.
+- **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
+  layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
+  Batch Plot).
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
   takes it away.
 - **DIMINSPECT** (#60) -- inspection dimensions: the value framed with round or angular ends,
