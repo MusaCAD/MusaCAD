@@ -15485,52 +15485,6 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, ReplaceBlockCommand>) {
                 apply_replace_block(c);
             }
-            if constexpr (std::is_same_v<T, RescaleDrawingCommand>) {
-                if (c.factor > 0.0 && std::abs(c.factor - 1.0) > 1e-12) {
-                    std::size_t n = 0;
-                    for (const EntityHandle h : all_live()) {
-                        const EntityProps* p = store_.props(h);
-                        if (p == nullptr || (p->space() != 0 && !c.paper) || h.kind == EntityKind::Viewport) {
-                            continue; // a viewport keeps its size on the sheet; its view scales below
-                        }
-                        const Command original = capture_entity(h);
-                        Command scaled = original;
-                        scale_cmd(scaled, {0.0, 0.0}, c.factor);
-                        remove_indexed(h);
-                        push_erase_item(c.group, h, original);
-                        const EntityHandle nh = create_indexed(scaled);
-                        push_create_item(c.group, nh, scaled);
-                        ++n;
-                    }
-                    // The layouts' viewports show the same part of the model, at its new size.
-                    for (const EntityHandle h : all_live()) {
-                        if (h.kind != EntityKind::Viewport) {
-                            continue;
-                        }
-                        const Command original = capture_entity(h);
-                        Command shown = original;
-                        if (auto* v = std::get_if<AddViewportCommand>(&shown)) {
-                            v->view_center = v->view_center * c.factor;
-                            if (c.paper) {
-                                scale_cmd(shown, {0.0, 0.0}, c.factor); // the sheet scaled too: the same scale
-                            } else {
-                                v->scale /= c.factor;
-                            }
-                        }
-                        remove_indexed(h);
-                        push_erase_item(c.group, h, original);
-                        const EntityHandle nh = create_indexed(shown);
-                        push_create_item(c.group, nh, shown);
-                    }
-                    selection_.clear();
-                    redo_.clear();
-                    geom_dirty_ = true;
-                    dirty_ = true;
-                    char buf[64];
-                    std::snprintf(buf, sizeof buf, "%zu objects scaled by %g.", n, c.factor);
-                    report(buf);
-                }
-            }
             if constexpr (std::is_same_v<T, AddPatternCommand>) {
                 if (!c.pattern.name.empty() && !c.pattern.lines.empty()) {
                     store_.add_custom_pattern(c.pattern);

@@ -3134,24 +3134,6 @@ TEST_CASE("DIMASSOC 0 draws dimensions exploded, in the same undo step") {
     engine.stop();
 }
 
-TEST_CASE("Rescaling a drawing scales every model-space object about the origin, in one undo step") {
-    GeometryEngine engine;
-    engine.start();
-    engine.submit(AddLineCommand{{1, 1}, {2, 2}, 1});
-    engine.submit(AddCircleCommand{{10, 0}, 1, 2});
-    engine.submit(RescaleDrawingCommand{25.4, false, 3});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 objects scaled by 25.4."; }));
-    io::Document doc = dump(engine, "musacad_rescale.musa");
-    REQUIRE(doc.lines[0].a.x == Approx(25.4));
-    REQUIRE(doc.lines[0].b.y == Approx(50.8));
-    REQUIRE(doc.circles[0].center.x == Approx(254.0));
-    REQUIRE(doc.circles[0].radius == Approx(25.4));
-    engine.submit(UndoLastGroupCommand{});
-    doc = dump(engine, "musacad_rescale_undo.musa");
-    REQUIRE(doc.lines[0].a == Vec2{1, 1});
-    engine.stop();
-}
-
 TEST_CASE("SPLINE's toLerance fits fewer control points within the tolerance, ends on the end points") {
     std::vector<Vec2> pts;
     for (int i = 0; i <= 20; ++i) {
