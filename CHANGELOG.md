@@ -189,10 +189,6 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   header and data rows, at its text heights and in its colours, redrawn as the style and the
   rows change; Insertion behavior Specify window fits the columns' width and the data rows to a
   window.
-- **-DWGUNITS** (#81) -- the drawing's unit (Inches, Feet, Millimeters, Centimeters, Decimeters,
-  Meters), its display format and precision, whether objects from other drawings are scaled on
-  insertion and INSUNITS matched, then -- the unit changed -- the drawing scaled to the new unit
-  (paper space too if asked), in one undo step.
 - **Attribute values kept by tag when a block is redefined** (#75) -- BLOCK under the same name,
   REFEDIT, the Block Editor and INSERT of a drawing file: each reference's values follow their
   tags into the new definition.

@@ -3264,35 +3264,6 @@ TEST_CASE("BLOCKREPLACE makes every reference of one block a reference of anothe
     REQUIRE(h.out.lines.back() == "The drawing needs two blocks for one to replace the other.");
 }
 
-TEST_CASE("-DWGUNITS changes the drawing's unit and scales the drawing to it") {
-    H h;
-    DrawingUnits mm;
-    mm.insunits = 4;
-    h.proc.set_units(mm);
-    h.run({"-DWGUNITS"});
-    REQUIRE(std::find(h.out.lines.begin(), h.out.lines.end(), "  3. Millimeters") != h.out.lines.end());
-    REQUIRE(h.out.prompt == "Unit for length <3>: ");
-    h.run({"1"}); // inches
-    REQUIRE(std::find(h.out.lines.begin(), h.out.lines.end(), "  4. Architectural") != h.out.lines.end());
-    REQUIRE(h.out.prompt == "Linear display format <2>: ");
-    h.run({"4"});
-    REQUIRE(h.out.lines.back() == "  8. 1/256\"");
-    h.run({"4", "", ""});
-    REQUIRE(h.out.lines.back() == " ** ask to have automatic scaling occur.                           **");
-    REQUIRE(h.out.prompt == "Scale objects in current drawing to reflect change in units? [Yes/No] <Yes>: ");
-    h.run({"", "N"});
-    const auto* r = h.last<RescaleDrawingCommand>();
-    REQUIRE(r != nullptr);
-    REQUIRE(r->factor == Approx(1.0 / 25.4));
-    REQUIRE_FALSE(r->paper);
-    const auto* u = h.last<SetUnitsCommand>();
-    REQUIRE(u != nullptr);
-    REQUIRE(u->units.insunits == 1);
-    REQUIRE(u->units.linear == LinearFormat::Architectural);
-    REQUIRE(u->units.linear_precision == 4);
-    REQUIRE_FALSE(h.proc.has_active_command());
-}
-
 TEST_CASE("A block redefined with its attributes in another order keeps each reference's values by tag") {
     namespace fs = std::filesystem;
     io::Document doc;
