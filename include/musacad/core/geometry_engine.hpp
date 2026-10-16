@@ -578,6 +578,7 @@ private:
     void apply_set_data_link(const SetDataLinkCommand& c);
     void apply_dim_break(const DimBreakCommand& c);
     void apply_attout(const AttOutCommand& c);
+    void apply_vpsync(const VpSyncCommand& c);
     void apply_attin(const AttInCommand& c);
     void apply_insert_linked_table(const InsertLinkedTableCommand& c);
     void apply_data_link_update(const DataLinkUpdateCommand& c);

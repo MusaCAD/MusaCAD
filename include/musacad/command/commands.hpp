@@ -2940,6 +2940,34 @@ private:
     bool done_ = false;
 };
 
+/// VPSYNC (Express Tools): `Select master viewport:`, then `Select viewports to be aligned to
+/// master viewport:` -- they take its scale and line up with it.
+class VpSyncUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "VPSYNC"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select master viewport: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && picked_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            finish(ctx);
+        }
+    }
+
+private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    core::Vec2 master_{};
+    bool picked_ = false;
+    bool done_ = false;
+};
+
 /// XLIST (Express Tools): `Select nested xref or block object to list:` -- the object inside a
 /// block reference under the pick: what it is, the block, and its layer, colour and linetype.
 class XListCommand final : public ICommand {

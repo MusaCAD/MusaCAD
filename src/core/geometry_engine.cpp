@@ -7607,6 +7607,44 @@ void GeometryEngine::apply_create_viewport(const CreateViewportCommand& c) {
                                                 : " (the model is empty)."));
 }
 
+void GeometryEngine::apply_vpsync(const VpSyncCommand& c) {
+    const EntityHandle mh = pick_nearest(c.master, c.pick_radius);
+    const ViewportData* m = store_.viewport(mh);
+    if (m == nullptr) {
+        report("Select a viewport for the master.");
+        return;
+    }
+    const ViewportData master = *m;
+    prune_selection();
+    std::vector<EntityHandle> renewed;
+    for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+        if (h == mh || store_.viewport(h) == nullptr) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        AddViewportCommand edited = std::get<AddViewportCommand>(original);
+        // The master's scale, and the view centre where the master's model would be seen
+        // through this viewport's place on the sheet.
+        edited.scale = master.scale;
+        edited.view_center = master.view_center + (edited.center - master.center) / master.scale;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const Command add = edited;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+    }
+    if (renewed.empty()) {
+        report("Select the viewports to line up with the master.");
+        return;
+    }
+    selection_ = renewed;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(renewed.size()) + (renewed.size() == 1 ? " viewport" : " viewports") + " aligned to the master.");
+}
+
 void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     if (store_.viewport(h) == nullptr) {
@@ -16063,6 +16101,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
+            }
+            if constexpr (std::is_same_v<T, VpSyncCommand>) {
+                apply_vpsync(c);
             }
             if constexpr (std::is_same_v<T, AttOutCommand>) {
                 apply_attout(c);

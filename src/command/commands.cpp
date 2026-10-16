@@ -7932,6 +7932,31 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void VpSyncUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!picked_) {
+        if (trimmed(text).empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            master_ = *p;
+            picked_ = true;
+            select_.begin(ctx, "Select viewports to be aligned to master viewport: ");
+        }
+        return;
+    }
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void VpSyncUiCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::VpSyncCommand{master_, ctx.pick_radius(), ctx.group_id()});
+    }
+    done_ = true;
+}
+
 bool XListCommand::trimmed_empty(const std::string& t) {
     return trimmed(t).empty();
 }

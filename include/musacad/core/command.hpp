@@ -1596,6 +1596,13 @@ struct CreateViewportCommand {
 };
 /// MVIEW ON / OFF / Scale / Center on the viewport under `pick`: fields left at their
 /// "keep" values (on = -1, scale = 0, no centre) are unchanged.
+/// VPSYNC (Express Tools): the selected layout viewports take the scale of the one at
+/// `master` and are panned so the model lines up across them. One undo step.
+struct VpSyncCommand {
+    Vec2 master{};
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
 struct SetViewportViewCommand {
     Vec2 pick{};
     double pick_radius = 0.0;
@@ -2223,7 +2230,7 @@ using Command =
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
                  SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
-                 SetUnitsDefaultsCommand, AttOutCommand, AttInCommand,
+                 SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

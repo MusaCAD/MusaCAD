@@ -1910,3 +1910,15 @@ TEST_CASE("XLIST says what an object inside a block reference is, and its proper
     engine.stop();
     fs::remove(dp);
 }
+
+TEST_CASE("VPSYNC asks for the master viewport, then the viewports to line up with it") {
+    H h;
+    h.run({"VPSYNC"});
+    REQUIRE(h.out.prompt == "Select master viewport: ");
+    h.run({"10,10"});
+    REQUIRE(h.out.prompt == "Select viewports to be aligned to master viewport: ");
+    h.proc.set_selection_count(2);
+    h.run({""});
+    REQUIRE(h.last<VpSyncCommand>() != nullptr);
+    REQUIRE(h.last<VpSyncCommand>()->master == Vec2{10, 10});
+}
