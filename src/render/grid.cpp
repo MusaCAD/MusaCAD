@@ -63,8 +63,89 @@ GridResult build_grid(const Camera2D& camera, double target_minor_px, int max_li
     return result;
 }
 
+namespace {
+/// The part of the line {p : dot(p, n) = c} (n unit) inside [lo, hi], appended to `out`.
+void clip_line(Vec2 n, double c, Vec2 lo, Vec2 hi, std::vector<Vec2>& out) {
+    const Vec2 p0{n.x * c, n.y * c};
+    const Vec2 d{-n.y, n.x};
+    double t0 = -1e300;
+    double t1 = 1e300;
+    const double p[2] = {p0.x, p0.y};
+    const double dd[2] = {d.x, d.y};
+    const double mn[2] = {lo.x, lo.y};
+    const double mx[2] = {hi.x, hi.y};
+    for (int k = 0; k < 2; ++k) {
+        if (std::abs(dd[k]) < 1e-15) {
+            if (p[k] < mn[k] || p[k] > mx[k]) {
+                return;
+            }
+            continue;
+        }
+        double a = (mn[k] - p[k]) / dd[k];
+        double b = (mx[k] - p[k]) / dd[k];
+        if (a > b) {
+            std::swap(a, b);
+        }
+        t0 = std::max(t0, a);
+        t1 = std::min(t1, b);
+    }
+    if (t0 < t1) {
+        out.push_back({p0.x + d.x * t0, p0.y + d.y * t0});
+        out.push_back({p0.x + d.x * t1, p0.y + d.y * t1});
+    }
+}
+
+/// The isometric grid: lines at 30 and 150 degrees and vertical ones, all through the
+/// isometric snap lattice of vertical spacing `s` (points i*s*cos30, j*s/2, i + j even).
+void iso_grid(double s, int major, Vec2 lo, Vec2 hi, int max_lines, GridResult& result) {
+    const double c30 = std::sqrt(3.0) * 0.5;
+    const double step = s * c30; // between parallel lines of each family
+    const Vec2 normals[3] = {{1.0, 0.0}, {-0.5, c30}, {0.5, c30}}; // vertical, 30 deg, 150 deg
+    const Vec2 corners[4] = {lo, {hi.x, lo.y}, hi, {lo.x, hi.y}};
+    for (const Vec2& n : normals) {
+        double dmin = 1e300;
+        double dmax = -1e300;
+        for (const Vec2& q : corners) {
+            const double v = q.x * n.x + q.y * n.y;
+            dmin = std::min(dmin, v);
+            dmax = std::max(dmax, v);
+        }
+        const auto k0 = static_cast<long long>(std::ceil(dmin / step - 1e-9));
+        const auto k1 = static_cast<long long>(std::floor(dmax / step + 1e-9));
+        if (k1 - k0 > max_lines) {
+            continue;
+        }
+        for (long long k = k0; k <= k1; ++k) {
+            clip_line(n, static_cast<double>(k) * step, lo, hi,
+                      major > 1 && k % major == 0 ? result.major : result.minor);
+        }
+    }
+}
+} // namespace
+
 GridResult build_grid(const Camera2D& camera, const core::GridSettings& settings, Vec2 lim_lo, Vec2 lim_hi,
                       int max_lines_per_axis) {
+    if (settings.isometric) {
+        GridResult result;
+        const double scale = camera.scale();
+        double s = settings.y > 0.0 ? settings.y : choose_minor_spacing(scale, 14.0);
+        const int major = settings.major > 0 ? settings.major : 1;
+        for (int k = 0; k < 64 && scale > 0.0 && s * scale < 6.0; ++k) {
+            s *= major > 1 ? major : 10; // zoomed out: fewer lines
+        }
+        result.minor_spacing = s;
+        result.major_spacing = s * major;
+        Vec2 lo = camera.visible_min();
+        Vec2 hi = camera.visible_max();
+        if (!settings.beyond_limits) {
+            lo = {std::max(lo.x, lim_lo.x), std::max(lo.y, lim_lo.y)};
+            hi = {std::min(hi.x, lim_hi.x), std::min(hi.y, lim_hi.y)};
+        }
+        if (scale > 0.0 && lo.x < hi.x && lo.y < hi.y) {
+            iso_grid(s, major, lo, hi, max_lines_per_axis, result);
+        }
+        return result;
+    }
     if (settings.x <= 0.0 || settings.y <= 0.0) {
         return build_grid(camera, 14.0, max_lines_per_axis);
     }

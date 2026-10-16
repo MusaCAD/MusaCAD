@@ -875,3 +875,57 @@ TEST_CASE("-LAYER TRansparency: the value, then the layers") {
     REQUIRE(c->transparency == 40);
     REQUIRE(c->names == "Glass");
 }
+
+TEST_CASE("Isometric drafting: the snap lattice, ORTHO on the isoplane's axes, ISOPLANE, ISODRAFT and isocircles") {
+    H h;
+    h.run({"SNAP", "S"});
+    REQUIRE(h.out.prompt == "Enter snap grid style [Standard/Isometric] <S>: ");
+    h.run({"I"});
+    REQUIRE(h.out.prompt.starts_with("Specify vertical spacing <"));
+    h.run({"10"});
+    REQUIRE(h.proc.grid_settings().isometric);
+    // The lattice: x a multiple of 10*cos30, y of 5, the two of the same parity.
+    h.proc.set_grid_snap(true);
+    const double sx = 10.0 * std::sqrt(3.0) * 0.5;
+    const Vec2 p = h.proc.resolve_pick({sx * 1.1, 4.0}, std::nullopt);
+    REQUIRE(p.x == Approx(sx));
+    REQUIRE(p.y == Approx(5.0));
+    h.proc.set_grid_snap(false);
+
+    // ORTHO in the Left isoplane: 90 and 150 degrees from the last point.
+    h.proc.set_ortho(true);
+    h.proc.set_last_point({0, 0});
+    const Vec2 up = h.proc.resolve_pick({1, 10}, std::nullopt);
+    REQUIRE(up.x == Approx(0.0).margin(1e-9));
+    REQUIRE(up.y == Approx(10.0));
+    const Vec2 along = h.proc.resolve_pick({-10, 6}, std::nullopt);
+    REQUIRE(along.y / along.x == Approx(std::tan(150.0 * 3.141592653589793 / 180.0)));
+    h.proc.set_ortho(false);
+
+    h.run({"ISOPLANE"});
+    REQUIRE(h.out.prompt == "Enter isometric plane setting [Left/Top/Right] <Top>: ");
+    h.run({""});
+    REQUIRE(h.proc.grid_settings().isoplane == 1);
+    REQUIRE(h.out.lines.back() == "Current isoplane: Top");
+
+    // An isocircle in the Top plane: the long axis level, r*sqrt(3/2) by r*sqrt(1/2).
+    h.run({"ELLIPSE"});
+    REQUIRE(h.out.prompt == "Specify axis endpoint of ellipse or [Arc/Center/Isocircle]: ");
+    h.run({"I"});
+    REQUIRE(h.out.prompt == "Specify center of isocircle: ");
+    h.run({"0,0"});
+    REQUIRE(h.out.prompt == "Specify radius of isocircle or [Diameter]: ");
+    h.run({"10"});
+    const AddEllipseCommand* e = h.last<AddEllipseCommand>();
+    REQUIRE(e != nullptr);
+    REQUIRE(e->major.x == Approx(10.0 * std::sqrt(1.5)));
+    REQUIRE(e->major.y == Approx(0.0).margin(1e-9));
+    REQUIRE(e->ratio == Approx(1.0 / std::sqrt(3.0)));
+
+    h.run({"ISODRAFT"});
+    REQUIRE(h.out.prompt == "Enter isometric drafting option [Orthographic/isoplane Left/isoplane Top/isoplane Right] <Orthographic>: ");
+    h.run({"O"});
+    REQUIRE_FALSE(h.proc.grid_settings().isometric);
+    h.run({"ELLIPSE"});
+    REQUIRE(h.out.prompt == "Specify axis endpoint of ellipse or [Arc/Center]: ");
+}

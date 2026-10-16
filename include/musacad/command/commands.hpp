@@ -1007,7 +1007,7 @@ public:
 
 private:
     enum class Step : std::uint8_t {
-        Main, AspectX, AspectY, Type, Style, Legacy, Major, Adaptive, Subdivide, Limits, Follow
+        Main, AspectX, AspectY, Type, Style, Legacy, Major, Adaptive, Subdivide, Limits, Follow, IsoSpacing
     };
     void main_prompt(CommandContext& ctx);
     /// GRID: the setting changed, and the grid on (a spacing or an option turns it on).
@@ -2227,6 +2227,28 @@ private:
 /// angle. Commits a real ellipse entity; the second axis may come out longer than the
 /// first, in which case the axes swap so the stored major is the longer one (AutoCAD's
 /// rule), and arc angles are still measured from the FIRST axis the user gave.
+/// ISOPLANE (`Enter isometric plane setting [Left/Top/Right] <next>:`) and ISODRAFT
+/// (`Enter isometric drafting option [Orthographic/isoplane Left/isoplane Top/isoplane
+/// Right] <...>:`): the isometric plane the crosshair, ORTHO and the isocircles follow;
+/// ISODRAFT turns isometric drafting on with a plane, or off (Orthographic). F5 and
+/// Ctrl+E cycle the plane.
+class IsoPlaneCommand final : public ICommand {
+public:
+    explicit IsoPlaneCommand(bool draft) : draft_(draft) {}
+    std::string name() const override { return draft_ ? "ISODRAFT" : "ISOPLANE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool draft_;
+    bool done_ = false;
+};
+
 class EllipseCommand final : public ICommand {
 public:
     std::string name() const override { return "ELLIPSE"; }
@@ -2245,8 +2267,15 @@ private:
         Rotation,   ///< rotation angle about the major axis
         ArcStart,   ///< start angle or [Parameter]
         ArcEnd,     ///< end angle or [Parameter/Included angle]
-        ArcIncluded ///< included angle
+        ArcIncluded, ///< included angle
+        IsoCenter,   ///< Isocircle: its centre
+        IsoRadius,   ///< and its radius or [Diameter]
+        IsoDiameter
     };
+    /// The isocircle of radius `r` about `c` in the current isoplane: an ellipse whose axes
+    /// are r*sqrt(3/2) and r*sqrt(1/2), the long one square to the plane's missing axis.
+    void commit_isocircle(CommandContext& ctx, double r);
+    core::Vec2 iso_center_{};
     void define_axes(CommandContext& ctx, double other_half);
     void after_axes(CommandContext& ctx);
     double param_from_input(const std::string& text, bool parameter_mode, bool* ok,

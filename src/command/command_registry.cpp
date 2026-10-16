@@ -293,6 +293,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
     reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+    reg({"ISOPLANE"}, [] { return std::make_unique<IsoPlaneCommand>(false); }, "",
+        "The isometric plane: Left, Top or Right (F5 cycles them).");
+    reg({"ISODRAFT"}, [] { return std::make_unique<IsoPlaneCommand>(true); }, "",
+        "Isometric drafting on, in a plane (Left, Top, Right), or off (Orthographic).");
     reg({"NAVBAR"}, [] { return std::make_unique<NavBarCommand>(); }, "assets/ribbon/pan.svg",
         "Show or hide the navigation bar: Pan and the Zoom tools at the drawing's right edge.");
     reg({"DIMEX"}, [] { return std::make_unique<DimStyleFileCommand>(false); }, "",

@@ -4541,7 +4541,74 @@ void EllipseCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Start;
     arc_ = false;
-    ctx.set_prompt("Specify axis endpoint of ellipse or [Arc/Center]: ");
+    // Isocircle is offered while isometric drafting is on, as AutoCAD offers it.
+    ctx.set_prompt(ctx.grid_settings().isometric ? "Specify axis endpoint of ellipse or [Arc/Center/Isocircle]: "
+                                                 : "Specify axis endpoint of ellipse or [Arc/Center]: ");
+}
+
+void EllipseCommand::commit_isocircle(CommandContext& ctx, double r) {
+    if (r <= 1e-12) {
+        ctx.echo("Requires a radius greater than zero.");
+        return;
+    }
+    // Left: axes 90 and 150, the long axis square to 30 (at 120); Top: 30 and 150, long axis
+    // horizontal; Right: 90 and 30, long axis at 60.
+    static constexpr double kMajorDeg[3] = {120.0, 0.0, 60.0};
+    const double a = core::to_radians(kMajorDeg[std::min<int>(ctx.grid_settings().isoplane, 2)]);
+    const double major = r * std::sqrt(1.5);
+    core::AddEllipseCommand e;
+    e.center = iso_center_;
+    e.major = core::Vec2{std::cos(a), std::sin(a)} * major;
+    e.ratio = 1.0 / std::sqrt(3.0); // sqrt(1/2) / sqrt(3/2)
+    e.group = ctx.group_id();
+    ctx.set_preview({});
+    ctx.submit(std::move(e));
+    done_ = true;
+}
+
+void IsoPlaneCommand::start(CommandContext& ctx) {
+    static constexpr const char* kNames[3] = {"Left", "Top", "Right"};
+    const core::GridSettings g = ctx.grid_settings();
+    const int cur = std::min<int>(g.isoplane, 2);
+    if (draft_) {
+        ctx.set_prompt(std::string("Enter isometric drafting option [Orthographic/isoplane Left/isoplane Top/isoplane Right] <") +
+                       (g.isometric ? "Orthographic" : kNames[cur]) + ">: ");
+    } else {
+        ctx.set_prompt(std::string("Enter isometric plane setting [Left/Top/Right] <") + kNames[(cur + 1) % 3] + ">: ");
+    }
+}
+
+void IsoPlaneCommand::input(CommandContext& ctx, const std::string& text) {
+    static constexpr const char* kNames[3] = {"Left", "Top", "Right"};
+    const std::string u = upper(trimmed(text));
+    core::GridSettings g = ctx.grid_settings();
+    const int cur = std::min<int>(g.isoplane, 2);
+    int plane = -1;
+    if (u == "L" || u == "LEFT" || u == "ISOPLANE LEFT") {
+        plane = 0;
+    } else if (u == "T" || u == "TOP" || u == "ISOPLANE TOP") {
+        plane = 1;
+    } else if (u == "R" || u == "RIGHT" || u == "ISOPLANE RIGHT") {
+        plane = 2;
+    } else if ((draft_ && (u == "O" || u == "ORTHOGRAPHIC")) || (draft_ && u.empty() && g.isometric)) {
+        g.isometric = false;
+        ctx.set_grid_settings(g);
+        ctx.echo("Isometric drafting off.");
+        done_ = true;
+        return;
+    } else if (u.empty()) {
+        plane = draft_ ? cur : (cur + 1) % 3;
+    } else {
+        ctx.echo("Invalid option keyword.");
+        return;
+    }
+    g.isoplane = static_cast<std::uint8_t>(plane);
+    if (draft_) {
+        g.isometric = true;
+    }
+    ctx.set_grid_settings(g);
+    ctx.echo(std::string("Current isoplane: ") + kNames[plane]);
+    done_ = true;
 }
 
 void EllipseCommand::cancel(CommandContext& ctx) {
@@ -4687,6 +4754,15 @@ void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
                                 : "Specify center of ellipse: ");
             return;
         }
+        if ((u == "I" || u == "ISOCIRCLE") && !arc_) {
+            if (!ctx.grid_settings().isometric) {
+                ctx.echo("Isocircle needs isometric drafting: ISODRAFT, or SNAP Style Isometric.");
+                return;
+            }
+            state_ = State::IsoCenter;
+            ctx.set_prompt("Specify center of isocircle: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             axis_a_ = *p;
             ctx.set_last_point(*p);
@@ -4695,6 +4771,33 @@ void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Specify other endpoint of axis: ");
         }
         return;
+    case State::IsoCenter:
+        if (const auto p = read_point(ctx, text)) {
+            iso_center_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::IsoRadius;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify radius of isocircle or [Diameter]: ");
+        }
+        return;
+    case State::IsoRadius:
+    case State::IsoDiameter: {
+        if (state_ == State::IsoRadius && (u == "D" || u == "DIAMETER")) {
+            state_ = State::IsoDiameter;
+            ctx.set_prompt("Specify diameter of isocircle: ");
+            return;
+        }
+        double v = 0.0;
+        if (parse_number(t, v)) {
+            commit_isocircle(ctx, state_ == State::IsoDiameter ? v * 0.5 : v);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            const double d = core::distance(*p, iso_center_);
+            commit_isocircle(ctx, state_ == State::IsoDiameter ? d * 0.5 : d);
+        }
+        return;
+    }
     case State::Center:
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
@@ -15229,12 +15332,40 @@ void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
         }
         done_ = true;
         return;
-    case Step::Style:
+    case Step::Style: {
+        core::GridSettings g = ctx.grid_settings();
         if (u == "I" || u == "ISOMETRIC") {
-            ctx.echo("Isometric snap is not available yet; the snap stays Standard.");
+            step_ = Step::IsoSpacing;
+            ctx.set_prompt("Specify vertical spacing <" + fmt4(ctx.snap_spacing_y()) + ">: ");
+            return;
         }
+        if (!t.empty() && u != "S" && u != "STANDARD") {
+            ctx.echo("Enter Standard or Isometric.");
+            return;
+        }
+        g.isometric = false;
+        ctx.set_grid_settings(g);
         done_ = true;
         return;
+    }
+    case Step::IsoSpacing: {
+        double v = ctx.snap_spacing_y();
+        if (!t.empty()) {
+            const std::optional<double> n = parse_number(t);
+            if (!n || *n <= 0.0) {
+                ctx.echo("Requires a positive spacing.");
+                return;
+            }
+            v = *n;
+        }
+        core::GridSettings g = ctx.grid_settings();
+        g.isometric = true;
+        ctx.set_grid_settings(g);
+        ctx.set_snap_spacing_xy(v, v);
+        ctx.set_snap_mode(true);
+        done_ = true;
+        return;
+    }
     case Step::Legacy:
         if (u == "Y" || u == "YES") {
             ctx.echo("Legacy snap behaviour is not available; the cursor snaps only at a point prompt.");

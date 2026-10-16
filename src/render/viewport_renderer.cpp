@@ -1118,8 +1118,20 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
         const double cx = static_cast<double>(cursor_x_);
         const double cy = static_cast<double>(cursor_y_);
         std::vector<core::Vec2> seg;
-        edge(seg, {0.0, cy}, {static_cast<double>(width), cy});  // horizontal
-        edge(seg, {cx, 0.0}, {cx, static_cast<double>(height)}); // vertical
+        if (grid_settings_.isometric) {
+            // Isometric drafting: the crosshair runs along the isoplane's two axes -- Left 90
+            // and 150 degrees, Top 30 and 150, Right 90 and 30 (screen y runs down).
+            static constexpr double kAxes[3][2] = {{90.0, 150.0}, {30.0, 150.0}, {90.0, 30.0}};
+            const double reach = static_cast<double>(width + height);
+            for (const double deg : kAxes[std::min<int>(grid_settings_.isoplane, 2)]) {
+                const double a = deg * 3.141592653589793 / 180.0;
+                const core::Vec2 d{std::cos(a) * reach, -std::sin(a) * reach};
+                edge(seg, {cx - d.x, cy - d.y}, {cx + d.x, cy + d.y});
+            }
+        } else {
+            edge(seg, {0.0, cy}, {static_cast<double>(width), cy});  // horizontal
+            edge(seg, {cx, 0.0}, {cx, static_cast<double>(height)}); // vertical
+        }
         // Center pick-box (square).
         const double h = kPickBoxHalfPx;
         edge(seg, {cx - h, cy - h}, {cx + h, cy - h});

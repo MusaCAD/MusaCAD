@@ -428,6 +428,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 selcycle_action_->setChecked(on);
             }
         }
+        if (iso_action_ != nullptr) {
+            const bool on = processor_->grid_settings().isometric;
+            if (iso_action_->isChecked() != on) {
+                const QSignalBlocker block(iso_action_);
+                iso_action_->setChecked(on);
+            }
+        }
         if (tpy_action_ != nullptr) {
             const bool on = viewport_->selection_setting("TRANSPARENCYDISPLAY") != 0;
             if (tpy_action_->isChecked() != on) {
@@ -918,6 +925,47 @@ void MainWindow::build_status_bar() {
         viewport_->set_selection_setting("TRANSPARENCYDISPLAY", on ? 1 : 0);
     });
     add_toggle(tpy_action_);
+    // ISO: isometric drafting (ISODRAFT), the plane chosen from its arrow; F5 and Ctrl+E
+    // cycle the plane, as in AutoCAD.
+    iso_action_ = make_mode_action(QStringLiteral("ISO"), 0, processor_->grid_settings().isometric,
+                                   QStringLiteral("Isometric drafting: the snap, grid, ORTHO and crosshair on the "
+                                                  "isometric axes (F5 or Ctrl+E changes the plane)."));
+    iso_action_->setObjectName(QStringLiteral("status.isodraft"));
+    connect(iso_action_, &QAction::toggled, this, [this](bool on) {
+        core::GridSettings g = processor_->grid_settings();
+        if (g.isometric != on) {
+            g.isometric = on;
+            processor_->set_grid_settings(g);
+        }
+    });
+    QToolButton* iso_btn = add_toggle(iso_action_);
+    auto* iso_menu = new QMenu(this);
+    for (int k = 0; k < 3; ++k) {
+        static constexpr const char* kPlanes[3] = {"Isoplane Left", "Isoplane Top", "Isoplane Right"};
+        QAction* a = iso_menu->addAction(QString::fromLatin1(kPlanes[k]));
+        a->setCheckable(true);
+        connect(a, &QAction::triggered, this, [this, k] {
+            core::GridSettings g = processor_->grid_settings();
+            g.isometric = true;
+            g.isoplane = static_cast<std::uint8_t>(k);
+            processor_->set_grid_settings(g);
+        });
+    }
+    connect(iso_menu, &QMenu::aboutToShow, this, [this, iso_menu] {
+        const core::GridSettings g = processor_->grid_settings();
+        for (int k = 0; k < 3; ++k) {
+            iso_menu->actions()[k]->setChecked(g.isometric && g.isoplane == k);
+        }
+    });
+    iso_btn->setMenu(iso_menu);
+    iso_btn->setPopupMode(QToolButton::MenuButtonPopup);
+    {
+        auto* cycle = new QAction(QStringLiteral("Next isoplane"), this);
+        cycle->setShortcuts({QKeySequence(Qt::Key_F5), QKeySequence(QStringLiteral("Ctrl+E"))});
+        cycle->setShortcutContext(Qt::ApplicationShortcut);
+        connect(cycle, &QAction::triggered, this, &MainWindow::cycle_isoplane);
+        addAction(cycle);
+    }
     // SC: selection cycling -- a pick over objects on top of one another offers the list
     // (SELECTIONCYCLING; Ctrl+W toggles it too).
     selcycle_action_ = make_mode_action(QStringLiteral("SC"), 0, viewport_->selection_setting("SELECTIONCYCLING") != 0,
@@ -3130,6 +3178,14 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     io.title = title->isChecked();
     io.header = header->isChecked();
     return 1;
+}
+
+void MainWindow::cycle_isoplane() {
+    static constexpr const char* kNames[3] = {"Left", "Top", "Right"};
+    core::GridSettings g = processor_->grid_settings();
+    g.isoplane = static_cast<std::uint8_t>((g.isoplane + 1) % 3);
+    processor_->set_grid_settings(g);
+    command_widget_->append_line(std::string("<Isoplane ") + kNames[g.isoplane] + ">");
 }
 
 void MainWindow::show_navbar(bool on) {
