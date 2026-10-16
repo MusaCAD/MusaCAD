@@ -36,6 +36,7 @@
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/properties_registry.hpp"
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/io/xlsx.hpp"
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
@@ -9291,6 +9292,17 @@ bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& ro
     return true;
 }
 
+/// A data link's file as rows of cells: an Excel workbook's first sheet (.xlsx), else CSV.
+bool read_grid(const std::string& path, std::vector<std::vector<std::string>>& rows) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext == ".xlsx" || ext == ".xlsm") {
+        std::string error;
+        return io::read_xlsx(path, rows, error);
+    }
+    return read_csv(path, rows);
+}
+
 bool write_csv(const std::string& path, const std::vector<std::vector<std::string>>& rows) {
     std::ofstream f(path, std::ios::binary);
     const auto field = [](const std::string& v) {
@@ -9673,7 +9685,7 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
     }
     const DataLink link = store_.data_links()[li];
     std::vector<std::vector<std::string>> grid;
-    if (!read_csv(link.path, grid)) {
+    if (!read_grid(link.path, grid)) {
         report("Data link \"" + link.name + "\": cannot read " + link.path + ".");
         return;
     }
@@ -9742,6 +9754,13 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
                     grid[r].push_back(k < was->texts.size() ? was->texts[k] : std::string());
                 }
             }
+            std::string ext = std::filesystem::path(link.path).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (ext == ".xlsx" || ext == ".xlsm") {
+                ++failed; // a workbook is never overwritten with plain text
+                continue;
+            }
             if (write_csv(link.path, grid)) {
                 ++done;
             } else {
@@ -9750,7 +9769,7 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
             continue;
         }
         std::vector<std::vector<std::string>> grid;
-        if (!read_csv(link.path, grid)) {
+        if (!read_grid(link.path, grid)) {
             ++failed;
             continue;
         }
@@ -14496,6 +14515,33 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     if (!loops) {
         report("Valid hatch boundary not found.");
         return;
+    }
+    if (hatch_extras_.island_style == 2) {
+        loops->resize(1); // Ignore: through the islands
+    } else if (hatch_extras_.island_style == 1 && loops->size() > 2) {
+        // Outer: only the islands no other island holds.
+        std::vector<std::vector<Vec2>> kept{loops->front()};
+        for (std::size_t i = 1; i < loops->size(); ++i) {
+            bool nested = false;
+            for (std::size_t j = 1; j < loops->size() && !nested; ++j) {
+                nested = j != i && !(*loops)[i].empty() && point_in_polygon((*loops)[j], (*loops)[i].front());
+            }
+            if (!nested) {
+                kept.push_back((*loops)[i]);
+            }
+        }
+        *loops = std::move(kept);
+    }
+    if (hatch_extras_.retain) {
+        // Retain boundary: each loop kept as a closed polyline, in the same undo step.
+        for (const std::vector<Vec2>& loop : *loops) {
+            AddPolylineCommand edge;
+            edge.points = loop;
+            edge.closed = true;
+            edge.group = group;
+            const EntityHandle eh = create_indexed(edge);
+            push_create_item(group, eh, edge);
+        }
     }
     AddHatchCommand cmd;
     cmd.loops = std::move(*loops);

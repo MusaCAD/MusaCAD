@@ -189,6 +189,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   header and data rows, at its text heights and in its colours, redrawn as the style and the
   rows change; Insertion behavior Specify window fits the columns' width and the data rows to a
   window.
+- **Excel workbooks as data links** (#71) -- a data link to an .xlsx file takes its first
+  sheet: text, numbers and booleans, cell for cell, as from a CSV file; DATALINKUPDATE reads it
+  again. Writing back goes to CSV links only -- a workbook is never overwritten.
 - **Spline leaders** (#61) -- MLEADER's Leader type sPline (the landing left straight) and None
   (no leader line), LEADER's Format Spline and None (no arrowhead); kept in the drawing and
   written to DXF's leader path type and arrowhead flag.

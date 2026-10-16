@@ -1909,6 +1909,11 @@ struct HatchExtras {
     std::uint8_t origin_corner = 0;
     std::string layer{};
     std::optional<Rgb> color{};
+    /// Advanced: the island style of a picked area -- 0 Normal (islands in islands alternate),
+    /// 1 Outer (only the outermost islands are left out), 2 Ignore (no islands) -- and whether
+    /// the boundary is kept as a polyline (Retain boundary).
+    std::uint8_t island_style = 0;
+    bool retain = false;
 };
 struct HatchFromSelectionCommand {
     std::string pattern_name = "SOLID";

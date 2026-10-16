@@ -4763,10 +4763,11 @@ void MainWindow::open_data_link_manager() {
     });
     const auto pick_file = [&dlg](const QString& start) {
         return QFileDialog::getOpenFileName(&dlg, QStringLiteral("Data File"), start,
-                                            QStringLiteral("CSV files (*.csv);;Text files (*.txt);;All files (*)"));
+                                            QStringLiteral("Data files (*.xlsx *.csv);;Excel workbooks (*.xlsx);;"
+                                                           "CSV files (*.csv);;Text files (*.txt);;All files (*)"));
     };
     auto* row = new QHBoxLayout;
-    auto* add = new QPushButton(QStringLiteral("New CSV Link..."), &dlg);
+    auto* add = new QPushButton(QStringLiteral("New Data Link..."), &dlg);
     auto* change = new QPushButton(QStringLiteral("Change File..."), &dlg);
     auto* remove = new QPushButton(QStringLiteral("Delete"), &dlg);
     row->addWidget(add);
@@ -4775,7 +4776,7 @@ void MainWindow::open_data_link_manager() {
     lay->addLayout(row);
     connect(add, &QPushButton::clicked, &dlg, [&] {
         bool ok = false;
-        const QString name = QInputDialog::getText(&dlg, QStringLiteral("New CSV Link"), QStringLiteral("Name:"),
+        const QString name = QInputDialog::getText(&dlg, QStringLiteral("New Data Link"), QStringLiteral("Name:"),
                                                    QLineEdit::Normal, QString(), &ok)
                                  .trimmed();
         if (!ok || name.isEmpty()) {
@@ -4783,7 +4784,7 @@ void MainWindow::open_data_link_manager() {
         }
         for (const core::DataLink& dl : pending_data_links_) {
             if (QString::fromStdString(dl.name).compare(name, Qt::CaseInsensitive) == 0) {
-                QMessageBox::information(&dlg, QStringLiteral("New CSV Link"),
+                QMessageBox::information(&dlg, QStringLiteral("New Data Link"),
                                          QStringLiteral("There is a data link named \"%1\" already.").arg(name));
                 return;
             }
