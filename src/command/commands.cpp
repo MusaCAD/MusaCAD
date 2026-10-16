@@ -5970,6 +5970,21 @@ void WipeoutCommand::input(CommandContext& ctx, const std::string& text) {
 void FieldCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Name;
+    if (ctx.view() != nullptr) {
+        // The Field window, as AutoCAD opens; the command line only where there is none.
+        std::string code;
+        const int r = ctx.view()->field_dialog(code);
+        if (r == 0 || (r == 1 && code.empty())) {
+            done_ = true;
+            return;
+        }
+        if (r == 1) {
+            code_ = code;
+            state_ = State::Point;
+            ctx.set_prompt("Specify start point: ");
+            return;
+        }
+    }
     ctx.set_prompt("Enter field name [Date/Time/Filename/Login]: ");
 }
 

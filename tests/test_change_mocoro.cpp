@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -26,6 +27,7 @@
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/native_format.hpp"
+#include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
 using namespace musacad::core;
@@ -1421,4 +1423,68 @@ TEST_CASE("TOLERANCE takes its frame from the Geometric Tolerance window, then a
     proc.submit_line("TOL");
     REQUIRE_FALSE(proc.has_active_command());
     REQUIRE(cmds.size() == before);
+}
+
+TEST_CASE("Fields in AutoCAD's form: date formats, the drawing's properties, text case") {
+    namespace text = musacad::core::text;
+    text::FieldContext fc;
+    fc.date = "2026-10-17";
+    fc.time = "01:30";
+    fc.filename = "site plan.musa";
+    fc.path = "/home/x/site plan.musa";
+    fc.login = "pranay";
+    std::tm t{};
+    t.tm_year = 2026 - 1900;
+    t.tm_mon = 9;
+    t.tm_mday = 7;
+    t.tm_hour = 14;
+    t.tm_min = 5;
+    t.tm_isdst = -1;
+    fc.now = static_cast<std::int64_t>(std::mktime(&t));
+    fc.created = fc.now;
+    fc.title = "Site plan";
+    fc.author = "";
+    fc.custom = {{"Client", "Musa Works"}};
+    text::set_field_context(fc);
+    CHECK(text::expand_fields("%<\\AcVar Date \\f \"M/d/yyyy\">%") == "10/7/2026");
+    CHECK(text::expand_fields("%<\\AcVar Date \\f \"dddd, MMMM dd, yy h:mm tt\">%") == "Wednesday, October 07, 26 2:05 PM");
+    CHECK(text::expand_fields("%<\\AcVar Date \\f \"yyyy-MM-dd HH:mm\">%") == "2026-10-07 14:05");
+    CHECK(text::expand_fields("%<\\AcVar CreateDate \\f \"MMM d\">%") == "Oct 7");
+    CHECK(text::expand_fields("%<\\AcVar SaveDate>%") == "----"); // never saved
+    CHECK(text::expand_fields("%<Date>%") == "2026-10-17");        // the short form as before
+    CHECK(text::expand_fields("%<\\AcVar Title \\f \"%tc1\">%") == "SITE PLAN");
+    CHECK(text::expand_fields("%<\\AcVar Title \\f \"%tc4\">%") == "Site Plan");
+    CHECK(text::expand_fields("%<\\AcVar Author>%") == "----");
+    CHECK(text::expand_fields("%<\\AcVar CustomDP.client>%") == "Musa Works");
+    CHECK(text::expand_fields("%<\\AcVar Filename \\f \"%fn1\">%") == "site plan");
+    CHECK(text::expand_fields("%<\\AcVar Filename \\f \"%fn6\">%") == "/home/x/site plan.musa");
+    CHECK(text::expand_fields("%<\\AcVar Nothing>%") == "####");
+    text::set_field_context(text::make_field_context(""));
+}
+
+namespace {
+struct FieldView : musacad::command::ViewControl {
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    int field_dialog(std::string& code) override {
+        code = "%<\\AcVar Title \\f \"%tc1\">%";
+        return 1;
+    }
+};
+} // namespace
+
+TEST_CASE("FIELD takes its field from the Field window, then places the text") {
+    FieldView view;
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, &view, out};
+    proc.submit_line("FIELD");
+    REQUIRE(out.prompt == "Specify start point: ");
+    proc.submit_line("5,5");
+    proc.submit_line("");
+    proc.submit_line("");
+    const auto* t = std::get_if<AddTextCommand>(&cmds.back());
+    REQUIRE(t != nullptr);
+    REQUIRE(t->content == "%<\\AcVar Title \\f \"%tc1\">%");
+    REQUIRE(t->pos == Vec2{5, 5});
 }

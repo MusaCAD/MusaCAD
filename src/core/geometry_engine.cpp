@@ -8224,8 +8224,20 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
 // %<Date>%, %<Time>%, %<Filename>% and %<Login>%. Refreshed on every rebuild, so a
 // field is as current as the last edit or REGEN (AutoCAD's FIELDEVAL on regen).
 text::FieldContext GeometryEngine::field_context_now() const {
-    return text::make_field_context(active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].path
-                                                                    : std::string());
+    text::FieldContext fc = text::make_field_context(active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].path
+                                                                                     : std::string());
+    // The drawing's own: its properties (DWGPROPS) and when it was created and saved.
+    const DrawingProps& dp = store_.drawing_props();
+    fc.title = dp.title;
+    fc.subject = dp.subject;
+    fc.author = dp.author;
+    fc.keywords = dp.keywords;
+    fc.comments = dp.comments;
+    fc.hyperlink_base = dp.hyperlink_base;
+    fc.custom = dp.custom;
+    fc.created = store_.times().created;
+    fc.saved = store_.times().updated;
+    return fc;
 }
 
 void GeometryEngine::apply_audit(bool fix) {

@@ -299,6 +299,12 @@ public:
         (void)action;
         return false;
     }
+    /// FIELD: the Field window sets `code` (a field expression, `%<\AcVar Date \f "M/d/yyyy">%`).
+    /// 1 OK, 0 cancelled, -1 no window (the command asks at the command line).
+    virtual int field_dialog(std::string& code) {
+        (void)code;
+        return -1;
+    }
     /// TOLERANCE: the Geometric Tolerance window fills `cells` (the characteristic first,
     /// then the tolerances and the datums, as raw cell text). 1 OK, 0 cancelled, -1 no
     /// window (the command asks at the command line).

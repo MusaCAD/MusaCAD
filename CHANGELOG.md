@@ -98,6 +98,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **The UCS icon** (#72) -- X and Y arrows at the drawing's origin, or in the lower-left corner
   when the origin is off screen; the triangle in paper space. **UCSICON**
   (`[ON/OFF/All/Noorigin/ORigin]`) and View > Viewport Tools > UCS Icon turn it off and on.
+- **The Field window** (#62, #71) -- FIELD opens it: Date, CreateDate and SaveDate with a date
+  format (M/d/yyyy, MMMM d, yyyy, h:mm tt and the rest, or one of your own), Filename with or
+  without its path or extension, the drawing's Title, Subject, Author, Keywords, Comments,
+  Hyperlink Base and custom properties (DWGPROPS) in upper, lower, first-capital or title
+  case, and Login; the preview shows the value. Fields in AutoCAD's own form,
+  `%<\AcVar Date \f "M/d/yyyy">%`, are read in any text.
 - **The Geometric Tolerance window** (#62) -- TOLERANCE opens it as AutoCAD does: the
   characteristic picked from the fourteen symbols, two tolerances with the diameter symbol
   and a material condition, three datums with theirs; then `Enter tolerance location:`.

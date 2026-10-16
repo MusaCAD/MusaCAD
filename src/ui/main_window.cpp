@@ -332,6 +332,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         return false;
     });
+    viewport_->set_field_dialog_callback([this](std::string& code) { return open_field_dialog(code); });
     viewport_->set_tolerance_dialog_callback([this](std::vector<std::string>& cells) { return open_tolerance_dialog(cells); });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
@@ -3130,6 +3131,177 @@ QIcon gdt_icon(const std::string& raw, const QColor& ink) {
     return QIcon(pm);
 }
 } // namespace
+
+// FIELD: AutoCAD's Field window -- a category, the field names in it, their formats, the
+// value the field shows now and its expression; OK goes on to place the text.
+int MainWindow::open_field_dialog(std::string& code) {
+    enum class Kind { Date, Text, File };
+    struct Field {
+        QString name;
+        QString category;
+        Kind kind;
+    };
+    std::vector<Field> fields{{QStringLiteral("CreateDate"), QStringLiteral("Date & Time"), Kind::Date},
+                              {QStringLiteral("Date"), QStringLiteral("Date & Time"), Kind::Date},
+                              {QStringLiteral("SaveDate"), QStringLiteral("Date & Time"), Kind::Date},
+                              {QStringLiteral("Author"), QStringLiteral("Document"), Kind::Text},
+                              {QStringLiteral("Comments"), QStringLiteral("Document"), Kind::Text},
+                              {QStringLiteral("Filename"), QStringLiteral("Document"), Kind::File},
+                              {QStringLiteral("HyperlinkBase"), QStringLiteral("Document"), Kind::Text},
+                              {QStringLiteral("Keywords"), QStringLiteral("Document"), Kind::Text},
+                              {QStringLiteral("Subject"), QStringLiteral("Document"), Kind::Text},
+                              {QStringLiteral("Title"), QStringLiteral("Document"), Kind::Text},
+                              {QStringLiteral("Login"), QStringLiteral("Other"), Kind::Text}};
+    for (const auto& [name, value] : core::text::field_context().custom) {
+        fields.push_back({QStringLiteral("CustomDP.") + QString::fromStdString(name), QStringLiteral("Document"), Kind::Text});
+    }
+    static const char* const kDateFormats[] = {"M/d/yyyy",  "dd/MM/yyyy", "yyyy-MM-dd", "d MMM yyyy", "MMMM d, yyyy",
+                                               "dddd, MMMM d, yyyy", "h:mm tt", "HH:mm", "M/d/yyyy h:mm tt",
+                                               "yyyy-MM-dd HH:mm"};
+    static const std::pair<const char*, const char*> kTextFormats[] = {
+        {"(none)", ""}, {"Uppercase", "%tc1"}, {"Lowercase", "%tc2"}, {"First capital", "%tc3"}, {"Title case", "%tc4"}};
+    static const std::pair<const char*, const char*> kFileFormats[] = {
+        {"Filename only", "%fn2"}, {"Path and filename", "%fn6"}, {"Filename, no extension", "%fn1"}};
+
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("FieldDialog"));
+    dlg.setWindowTitle(QStringLiteral("Field"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* cols = new QHBoxLayout;
+    lay->addLayout(cols);
+    auto* left = new QVBoxLayout;
+    left->addWidget(new QLabel(QStringLiteral("Field category:"), &dlg));
+    auto* category = new QComboBox(&dlg);
+    category->addItems({QStringLiteral("All"), QStringLiteral("Date & Time"), QStringLiteral("Document"), QStringLiteral("Other")});
+    left->addWidget(category);
+    left->addWidget(new QLabel(QStringLiteral("Field names:"), &dlg));
+    auto* names = new QListWidget(&dlg);
+    names->setObjectName(QStringLiteral("FieldNames"));
+    left->addWidget(names, 1);
+    cols->addLayout(left, 1);
+    auto* right = new QVBoxLayout;
+    right->addWidget(new QLabel(QStringLiteral("Preview:"), &dlg));
+    auto* preview = new QLabel(&dlg);
+    preview->setObjectName(QStringLiteral("FieldPreview"));
+    preview->setFrameShape(QFrame::StyledPanel);
+    preview->setMinimumWidth(240);
+    right->addWidget(preview);
+    auto* date_label = new QLabel(QStringLiteral("Date format:"), &dlg);
+    right->addWidget(date_label);
+    auto* date_format = new QLineEdit(&dlg);
+    date_format->setObjectName(QStringLiteral("FieldDateFormat"));
+    right->addWidget(date_format);
+    right->addWidget(new QLabel(QStringLiteral("Format:"), &dlg));
+    auto* formats = new QListWidget(&dlg);
+    formats->setObjectName(QStringLiteral("FieldFormats"));
+    right->addWidget(formats, 1);
+    cols->addLayout(right, 1);
+    lay->addWidget(new QLabel(QStringLiteral("Field expression:"), &dlg));
+    auto* expr = new QLineEdit(&dlg);
+    expr->setObjectName(QStringLiteral("FieldExpression"));
+    expr->setReadOnly(true);
+    lay->addWidget(expr);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    lay->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    const auto current = [&]() -> const Field* {
+        const QListWidgetItem* it = names->currentItem();
+        if (it == nullptr) {
+            return nullptr;
+        }
+        for (const Field& f : fields) {
+            if (f.name == it->text()) {
+                return &f;
+            }
+        }
+        return nullptr;
+    };
+    const auto update_expr = [&] {
+        const Field* f = current();
+        QString e;
+        if (f != nullptr) {
+            QString fmt;
+            if (f->kind == Kind::Date) {
+                fmt = date_format->text().trimmed();
+            } else if (formats->currentItem() != nullptr) {
+                fmt = formats->currentItem()->data(Qt::UserRole).toString();
+            }
+            e = QStringLiteral("%<\\AcVar ") + f->name +
+                (fmt.isEmpty() ? QString() : QStringLiteral(" \\f \"") + fmt + QLatin1Char('"')) + QStringLiteral(">%");
+        }
+        expr->setText(e);
+        preview->setText(e.isEmpty() ? QString() : QString::fromStdString(core::text::expand_fields(e.toStdString())));
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(!e.isEmpty());
+    };
+    const auto fill_formats = [&] {
+        const QSignalBlocker quiet(formats);
+        formats->clear();
+        const Field* f = current();
+        const bool is_date = f != nullptr && f->kind == Kind::Date;
+        date_label->setVisible(is_date);
+        date_format->setVisible(is_date);
+        if (f == nullptr) {
+            return;
+        }
+        if (is_date) {
+            for (const char* fmt : kDateFormats) {
+                auto* it = new QListWidgetItem(QString::fromStdString(core::text::format_date(
+                                                   static_cast<std::int64_t>(QDateTime::currentSecsSinceEpoch()), fmt)),
+                                               formats);
+                it->setData(Qt::UserRole, QString::fromLatin1(fmt));
+            }
+            if (date_format->text().isEmpty()) {
+                date_format->setText(QString::fromLatin1(kDateFormats[0]));
+            }
+            return;
+        }
+        const auto add = [formats](const auto& list) {
+            for (const auto& [label, fmt] : list) {
+                auto* it = new QListWidgetItem(QString::fromLatin1(label), formats);
+                it->setData(Qt::UserRole, QString::fromLatin1(fmt));
+            }
+        };
+        if (f->kind == Kind::File) {
+            add(kFileFormats);
+        } else {
+            add(kTextFormats);
+        }
+        formats->setCurrentRow(0);
+    };
+    const auto fill_names = [&] {
+        names->clear();
+        for (const Field& f : fields) {
+            if (category->currentIndex() == 0 || f.category == category->currentText()) {
+                names->addItem(f.name);
+            }
+        }
+        names->setCurrentRow(0);
+    };
+    connect(category, &QComboBox::currentIndexChanged, &dlg, [&] { fill_names(); });
+    connect(names, &QListWidget::currentRowChanged, &dlg, [&] {
+        fill_formats();
+        update_expr();
+    });
+    connect(formats, &QListWidget::currentRowChanged, &dlg, [&] {
+        if (date_format->isVisible() && formats->currentItem() != nullptr) {
+            date_format->setText(formats->currentItem()->data(Qt::UserRole).toString());
+        }
+        update_expr();
+    });
+    connect(date_format, &QLineEdit::textChanged, &dlg, [&] { update_expr(); });
+    fill_names();
+    const QList<QListWidgetItem*> date = names->findItems(QStringLiteral("Date"), Qt::MatchExactly);
+    if (!date.isEmpty()) {
+        names->setCurrentItem(date.front());
+    }
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    code = expr->text().toStdString();
+    return 1;
+}
 
 // TOLERANCE: AutoCAD's Geometric Tolerance window -- the characteristic symbol, two
 // tolerances (each with a diameter symbol and a material condition) and three datums
