@@ -366,6 +366,12 @@ public:
         (void)at;
         return false;
     }
+    /// The same, as soon as something editable stands at `at` (a table just placed: the
+    /// engine adds it a moment later); false where there is no window.
+    virtual bool edit_text_soon(core::Vec2 at) {
+        (void)at;
+        return false;
+    }
     /// VIEW: the View Manager; LAYERSTATE: the Layer States Manager (false where there is
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }

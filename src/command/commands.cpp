@@ -13317,7 +13317,11 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
             cmd.pos = *p;
             cmd.group = ctx.group_id();
             ctx.submit(std::move(cmd));
-            ctx.echo("Table placed. Double-click a cell to edit it.");
+            // From the Insert Table window the first cell opens for typing, as in AutoCAD.
+            const core::Vec2 first{p->x + col_w_ * 0.5, p->y - line * row_lines_ * 0.5};
+            if (!dialog_ || ctx.view() == nullptr || !ctx.view()->edit_text_soon(first)) {
+                ctx.echo("Table placed. Double-click a cell to edit it.");
+            }
             done_ = true;
         }
         return;

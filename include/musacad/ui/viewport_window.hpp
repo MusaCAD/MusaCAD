@@ -158,6 +158,7 @@ public:
         qleader_settings_callback_ = std::move(cb);
     }
     bool edit_text_at(core::Vec2 at) override;
+    bool edit_text_soon(core::Vec2 at) override;
     void set_insert_table_callback(std::function<int(command::InsertTableSettings&)> cb) {
         insert_table_callback_ = std::move(cb);
     }
@@ -855,6 +856,7 @@ private:
     std::function<void()> linetype_manager_callback_;
     /// The text or table cell nearest `world` within `pad` (what a double-click edits).
     bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline);
+    void retry_edit_text(core::Vec2 at, int tries); ///< edit_text_soon's later tries
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
     std::function<int(core::DimInspectCommand&)> dim_inspect_callback_;

@@ -441,6 +441,23 @@ bool ViewportWindow::edit_text_at(core::Vec2 at) {
     return true;
 }
 
+bool ViewportWindow::edit_text_soon(core::Vec2 at) {
+    if (!text_edit_callback_) {
+        return false;
+    }
+    QTimer::singleShot(50, this, [this, at] { retry_edit_text(at, 1); });
+    return true;
+}
+
+void ViewportWindow::retry_edit_text(core::Vec2 at, int tries) {
+    // Tried every 50 ms for up to two seconds: the table appears once the engine has
+    // added it and the snapshot carries its cells.
+    if (edit_text_at(at) || tries >= 40) {
+        return;
+    }
+    QTimer::singleShot(50, this, [this, at, tries] { retry_edit_text(at, tries + 1); });
+}
+
 int ViewportWindow::select_color_dialog(bool& by_layer, core::Rgb& color) {
     return color_dialog_callback_ ? color_dialog_callback_(by_layer, color) : -1;
 }
