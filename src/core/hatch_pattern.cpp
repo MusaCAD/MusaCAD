@@ -126,6 +126,11 @@ namespace {
 // ANSI31..ANSI38 are the standard ANSI section hatches; the rest are common geometric
 // fills. Lengths are in pattern units (scaled by pattern_scale at render time).
 constexpr const char* kBuiltinPat = R"PAT(
+*_USER, user-defined: parallel lines (spacing = the hatch's scale)
+0, 0,0, 0,1
+*_USERDOUBLE, user-defined, double: lines crossed at right angles
+0, 0,0, 0,1
+90, 0,0, 0,1
 *ANSI31, ANSI iron / brick / stone masonry
 45, 0,0, 0,0.125
 *ANSI32, ANSI steel
@@ -272,7 +277,9 @@ const std::vector<std::string>& builtin_pattern_names() {
     static const std::vector<std::string> kNames = [] {
         std::vector<std::string> n;
         for (const Pattern& p : builtins()) {
-            n.push_back(p.name);
+            if (!p.name.starts_with('_')) { // _USER and _USERDOUBLE are the user-defined kind, not names to pick
+                n.push_back(p.name);
+            }
         }
         std::sort(n.begin(), n.end());
         n.erase(std::unique(n.begin(), n.end()), n.end());

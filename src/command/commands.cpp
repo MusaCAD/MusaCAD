@@ -2706,7 +2706,9 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (up == "U" || up == "USER DEFINED" || up == "USER") {
-            ctx.echo("User-defined patterns are not available yet.");
+            mode_ = Mode::UserAngle;
+            ctx.set_prompt("Specify angle for crosshatch lines <" + std::to_string(std::lround(core::to_degrees(angle_))) +
+                           ">: ");
             return;
         }
         if (up == "G" || up == "GRADIENT") {
@@ -2758,6 +2760,42 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         main_prompt(ctx);
         return;
     }
+    case Mode::UserAngle:
+    case Mode::UserSpacing: {
+        // User defined: parallel lines at an angle, a spacing apart (the pattern's scale),
+        // crossed at right angles when doubled.
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || (mode_ == Mode::UserSpacing && v <= 1e-9)) {
+                ctx.echo(mode_ == Mode::UserSpacing ? "Requires a positive spacing." : "Requires an angle in degrees.");
+                return;
+            }
+            if (mode_ == Mode::UserAngle) {
+                angle_ = core::to_radians(v);
+            } else {
+                scale_ = v;
+            }
+        }
+        if (mode_ == Mode::UserAngle) {
+            mode_ = Mode::UserSpacing;
+            ctx.set_prompt("Specify spacing between the lines <" + fmt4(scale_) + ">: ");
+            return;
+        }
+        mode_ = Mode::UserDouble;
+        ctx.set_prompt(std::string("Double hatch area? [Yes/No] <") + (pattern_ == "_USERDOUBLE" ? "Yes" : "No") + ">: ");
+        return;
+    }
+    case Mode::UserDouble:
+        if (up == "Y" || up == "YES") {
+            pattern_ = "_USERDOUBLE";
+        } else if (up == "N" || up == "NO" || (t.empty() && pattern_ != "_USERDOUBLE")) {
+            pattern_ = "_USER";
+        } else if (!t.empty()) {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        main_prompt(ctx);
+        return;
     case Mode::GradientColor:
         // The second colour as r,g,b; Enter keeps the current one. The first colour is
         // the entity colour (ByLayer resolves through the layer), as AutoCAD's
@@ -16839,7 +16877,8 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "U" || u == "USER DEFINED") {
-            ctx.echo("User-defined patterns are not available yet.");
+            step_ = Step::UserAngle;
+            ctx.set_prompt("Specify angle for crosshatch lines <" + fmt4(user_angle_) + ">: ");
             return;
         }
         if (!t.empty()) {
@@ -16879,6 +16918,43 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         }
         done_ = true;
         return;
+    case Step::UserAngle:
+    case Step::UserSpacing: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || (step_ == Step::UserSpacing && v <= 1e-9)) {
+                ctx.echo(step_ == Step::UserSpacing ? "Requires a positive spacing." : "Requires an angle in degrees.");
+                return;
+            }
+            (step_ == Step::UserAngle ? user_angle_ : user_spacing_) = v;
+        }
+        if (step_ == Step::UserAngle) {
+            step_ = Step::UserSpacing;
+            ctx.set_prompt("Specify spacing between the lines <" + fmt4(user_spacing_) + ">: ");
+            return;
+        }
+        step_ = Step::UserDouble;
+        ctx.set_prompt("Double hatch area? [Yes/No] <No>: ");
+        return;
+    }
+    case Step::UserDouble: {
+        const bool twice = u == "Y" || u == "YES";
+        if (!t.empty() && !twice && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        core::PropertyValue name;
+        name.text = twice ? "_USERDOUBLE" : "_USER";
+        set(core::PropertyId::HatchPattern, name);
+        core::PropertyValue spacing;
+        spacing.num = user_spacing_;
+        set(core::PropertyId::HatchScale, spacing);
+        core::PropertyValue angle;
+        angle.num = user_angle_;
+        set(core::PropertyId::HatchAngle, angle);
+        done_ = true;
+        return;
+    }
     case Step::BoundaryType:
         if (u == "R" || u == "REGION") {
             ctx.echo("Regions are not available; the boundary is a polyline.");

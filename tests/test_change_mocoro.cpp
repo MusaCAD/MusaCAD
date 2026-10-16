@@ -776,3 +776,17 @@ TEST_CASE("TFRAMES turns wipeout and image frames off and on together; UPDATEFIE
     REQUIRE(h.last<RegenCommand>() != nullptr);
     REQUIRE(h.out.lines.back() == "Fields updated.");
 }
+
+TEST_CASE("HATCH seTtings User defined: the angle, the spacing and Double") {
+    H h;
+    h.run({"H", "T", "U"});
+    REQUIRE(h.out.prompt.starts_with("Specify angle for crosshatch lines <"));
+    h.run({"45", "2"});
+    REQUIRE(h.out.prompt == "Double hatch area? [Yes/No] <No>: ");
+    h.run({"Y", "5,5"});
+    const HatchPickPointCommand* c = h.last<HatchPickPointCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->pattern_name == "_USERDOUBLE");
+    REQUIRE(c->pattern_scale == Approx(2.0));
+    REQUIRE(c->pattern_angle == Approx(3.141592653589793 / 4.0));
+}

@@ -1069,9 +1069,26 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             }
         }
         code_i(s, 75, 0);  // hatch style = normal (odd parity)
-        code_i(s, 76, 1);  // pattern type = predefined
+        // User-defined (_USER, _USERDOUBLE here): AutoCAD's type 0 with its line families
+        // written out, as it has no file to look them up in.
+        const bool user = h.pattern_name == "_USER" || h.pattern_name == "_USERDOUBLE";
+        code_i(s, 76, user ? 0 : 1);  // pattern type = user-defined / predefined
         code_d(s, 52, to_degrees(h.pattern_angle));
         code_d(s, 41, h.pattern_scale);
+        if (user) {
+            const bool twice = h.pattern_name == "_USERDOUBLE";
+            code_i(s, 77, twice ? 1 : 0);
+            code_i(s, 78, twice ? 2 : 1);
+            for (int k = 0; k < (twice ? 2 : 1); ++k) {
+                const double a = h.pattern_angle + (k == 0 ? 0.0 : kPi * 0.5);
+                code_d(s, 53, to_degrees(a));
+                code_d(s, 43, h.pattern_origin.x);
+                code_d(s, 44, h.pattern_origin.y);
+                code_d(s, 45, -std::sin(a) * h.pattern_scale);
+                code_d(s, 46, std::cos(a) * h.pattern_scale);
+                code_i(s, 79, 0);
+            }
+        }
         code_i(s, 98, 1);  // one seed point = the pattern origin
         code_d(s, 10, h.pattern_origin.x);
         code_d(s, 20, h.pattern_origin.y);
@@ -2174,6 +2191,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             h.props = props_of(body);
             if (const std::string* pn = find(body, 2)) {
                 h.pattern_name = *pn;
+            }
+            if (getd(body, 76, 1.0) == 0.0 || h.pattern_name == "_USER" || h.pattern_name == "_user") {
+                h.pattern_name = getd(body, 77, 0.0) != 0.0 ? "_USERDOUBLE" : "_USER"; // user-defined
             }
             h.pattern_scale = getd(body, 41, 1.0);
             h.pattern_angle = to_radians(getd(body, 52, 0.0));

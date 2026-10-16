@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 //
-// Text styles drawn Backwards and Upside down (#62); TXTEXP (#77).
+// Text styles drawn Backwards and Upside down (#62); TXTEXP (#77); user-defined hatching (#41).
 
 #include <algorithm>
 #include <chrono>
@@ -15,6 +15,7 @@
 #include "musacad/core/command.hpp"
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
@@ -183,4 +184,34 @@ TEST_CASE("PEDIT Ltype gen: off, a polyline's dashes start again at every vertex
     doc.polylines[0].ltype_gen = true;
     REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
     REQUIRE(dxf.polylines.back().ltype_gen);
+}
+
+TEST_CASE("User-defined hatching: lines a spacing apart, crossed when double, through DXF as AutoCAD's type 0") {
+    const hatch::Pattern* one = hatch::builtin_pattern("_USER");
+    const hatch::Pattern* two = hatch::builtin_pattern("_USERDOUBLE");
+    REQUIRE(one != nullptr);
+    REQUIRE(two != nullptr);
+    REQUIRE(one->lines.size() == 1);
+    REQUIRE(two->lines.size() == 2);
+    const auto& names = hatch::builtin_pattern_names();
+    REQUIRE(std::find(names.begin(), names.end(), "_USER") == names.end()); // not offered by name
+
+    io::Document doc;
+    for (const char* name : {"_USER", "_USERDOUBLE", "ANSI31"}) {
+        io::DocHatch h;
+        h.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+        h.pattern_name = name;
+        h.pattern_scale = 2.0;
+        h.pattern_angle = 0.5;
+        doc.hatches.push_back(h);
+    }
+    const std::string dxf = io::serialize_dxf(doc);
+    io::Document back;
+    REQUIRE(io::parse_dxf(dxf, back).ok);
+    REQUIRE(back.hatches.size() == 3);
+    REQUIRE(back.hatches[0].pattern_name == "_USER");
+    REQUIRE(back.hatches[1].pattern_name == "_USERDOUBLE");
+    REQUIRE(back.hatches[2].pattern_name == "ANSI31");
+    REQUIRE(back.hatches[1].pattern_scale == Catch::Approx(2.0));
+    REQUIRE(back.hatches[1].pattern_angle == Catch::Approx(0.5));
 }

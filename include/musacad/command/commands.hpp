@@ -542,7 +542,7 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble };
     void main_prompt(CommandContext& ctx);
     void fill_selection(CommandContext& ctx);
     bool typed_;
@@ -1700,7 +1700,9 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate };
+    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble };
+    double user_angle_ = 0.0;   ///< User defined: the lines' angle, degrees
+    double user_spacing_ = 1.0; ///< and the distance between them
     void options(CommandContext& ctx);
     Step step_ = Step::Pick;
     bool done_ = false;

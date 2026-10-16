@@ -53,6 +53,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **User-defined hatching** (#41) -- HATCH's, -HATCH's and HATCHEDIT's `User defined`: the
+  lines' angle, their spacing and Double (crossed at right angles); written to DXF as
+  AutoCAD's user-defined type and read back from it.
 - **REVCLOUD Freehand follows a drag** (#40) -- press at the start point and drag: the cloud
   runs along the cursor, closed when the drag comes back to its start, open otherwise.
 - **TFRAMES** (#77) and **UPDATEFIELD** (#71) -- wipeout and image frames off or on together;
