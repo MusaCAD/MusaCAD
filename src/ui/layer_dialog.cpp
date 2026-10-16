@@ -11,6 +11,7 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QString>
 #include <QTableWidget>
 #include <QTimer>
@@ -66,6 +67,13 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
     toolbar->addWidget(cur_btn);
     toolbar->addWidget(assign_btn);
     toolbar->addStretch(1);
+    search_ = new QLineEdit(this);
+    search_->setObjectName(QStringLiteral("LayerSearch"));
+    search_->setPlaceholderText(QStringLiteral("Search for layer"));
+    search_->setClearButtonEnabled(true);
+    search_->setToolTip(QStringLiteral("Show the layers whose name holds this text; * and ? are wild cards."));
+    toolbar->addWidget(search_);
+    connect(search_, &QLineEdit::textChanged, this, [this] { apply_filter(); });
     outer->addLayout(toolbar);
 
     table_ = new QTableWidget(0, kColCount, this);
@@ -117,6 +125,20 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 }
 
 int LayerDialog::row_count() const { return table_->rowCount(); }
+
+void LayerDialog::apply_filter() {
+    const QString f = search_ != nullptr ? search_->text().trimmed() : QString();
+    const bool wild = f.contains(QLatin1Char('*')) || f.contains(QLatin1Char('?'));
+    const QRegularExpression re(wild ? QRegularExpression::wildcardToRegularExpression(f) : QString(),
+                                QRegularExpression::CaseInsensitiveOption);
+    for (int row = 0; row < table_->rowCount(); ++row) {
+        const QString name = row < static_cast<int>(shown_.size())
+                                 ? QString::fromStdString(shown_[static_cast<std::size_t>(row)].name)
+                                 : QString();
+        const bool show = f.isEmpty() || (wild ? re.match(name).hasMatch() : name.contains(f, Qt::CaseInsensitive));
+        table_->setRowHidden(row, !show);
+    }
+}
 
 void LayerDialog::refresh() {
     const std::vector<core::Layer> layers = layers_();
@@ -219,6 +241,7 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
         table_->setCellWidget(row, kLineweight, lw);
     }
     building_ = false;
+    apply_filter(); // a rebuilt table keeps the search
 }
 
 core::Layer LayerDialog::layer_from_row(int row) const {

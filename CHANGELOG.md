@@ -53,6 +53,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
   layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
   Batch Plot).
+- **Search for layer** (#69) -- the Layer Properties Manager's search field shows the layers
+  whose name holds the text, or matches it with `*` and `?`.
 - **User-defined hatching** (#41) -- HATCH's, -HATCH's and HATCHEDIT's `User defined`: the
   lines' angle, their spacing and Double (crossed at right angles); written to DXF as
   AutoCAD's user-defined type and read back from it.
