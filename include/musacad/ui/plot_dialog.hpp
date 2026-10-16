@@ -15,6 +15,7 @@ class QCheckBox;
 class QSpinBox;
 class QDoubleSpinBox;
 class QLineEdit;
+class QLabel;
 
 namespace musacad::ui {
 
@@ -50,6 +51,10 @@ private:
     QComboBox* area_ = nullptr;
     QCheckBox* fit_ = nullptr;
     QDoubleSpinBox* scale_num_ = nullptr;
+    QComboBox* units_ = nullptr;   ///< the scale and offset in mm or inches
+    QLabel* off_units_ = nullptr;
+    bool inches_shown_ = false;    ///< the spin boxes hold inches
+    void show_units(bool inches);  ///< converts the shown values to mm or inches
     QDoubleSpinBox* scale_den_ = nullptr;
     QCheckBox* center_ = nullptr;
     QDoubleSpinBox* off_x_ = nullptr;

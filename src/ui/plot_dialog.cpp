@@ -12,6 +12,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSignalBlocker>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QString>
@@ -75,9 +76,13 @@ PlotDialog::PlotDialog(const PlotSpec& initial, std::vector<std::string> printer
     scale_den_ = new QDoubleSpinBox(this);
     scale_den_->setRange(0.0001, 1e6);
     scale_den_->setDecimals(4);
+    units_ = new QComboBox(this);
+    units_->addItems({QStringLiteral("mm"), QStringLiteral("inches")});
+    units_->setToolTip(QStringLiteral("The scale and the offset in millimetres or inches."));
     auto* scale_row = new QHBoxLayout;
     scale_row->addWidget(scale_num_);
-    scale_row->addWidget(new QLabel(QStringLiteral("mm  =  "), this));
+    scale_row->addWidget(units_);
+    scale_row->addWidget(new QLabel(QStringLiteral("=  "), this));
     scale_row->addWidget(scale_den_);
     scale_row->addWidget(new QLabel(QStringLiteral("units"), this));
     form->addRow(QStringLiteral("Scale"), scale_row);
@@ -93,7 +98,8 @@ PlotDialog::PlotDialog(const PlotSpec& initial, std::vector<std::string> printer
     off_row->addWidget(off_x_);
     off_row->addWidget(new QLabel(QStringLiteral("Y"), this));
     off_row->addWidget(off_y_);
-    off_row->addWidget(new QLabel(QStringLiteral("mm"), this));
+    off_units_ = new QLabel(QStringLiteral("mm"), this);
+    off_row->addWidget(off_units_);
     form->addRow(QStringLiteral("Offset"), off_row);
 
     lineweights_ = new QCheckBox(QStringLiteral("Plot object lineweights"), this);
@@ -139,6 +145,28 @@ PlotDialog::PlotDialog(const PlotSpec& initial, std::vector<std::string> printer
     connect(fit_, &QCheckBox::toggled, this, &PlotDialog::sync_enabled);
     connect(center_, &QCheckBox::toggled, this, &PlotDialog::sync_enabled);
     set_spec(initial);
+    connect(units_, &QComboBox::currentIndexChanged, this, [this](int i) { show_units(i == 1); });
+    // An inch paper (ANSI, ARCH) takes inches, a metric one millimetres, as AutoCAD does.
+    connect(paper_, &QComboBox::currentIndexChanged, this, [this](int i) {
+        const QString name = paper_->itemText(i);
+        units_->setCurrentIndex(name.startsWith(QStringLiteral("ANSI")) || name.startsWith(QStringLiteral("ARCH")) ? 1 : 0);
+    });
+}
+
+void PlotDialog::show_units(bool inches) {
+    if (inches == inches_shown_) {
+        return;
+    }
+    const double f = inches ? 1.0 / 25.4 : 25.4;
+    for (QDoubleSpinBox* b : {scale_num_, off_x_, off_y_}) {
+        b->setValue(b->value() * f);
+    }
+    inches_shown_ = inches;
+    off_units_->setText(inches ? QStringLiteral("inches") : QStringLiteral("mm"));
+    if (units_->currentIndex() != (inches ? 1 : 0)) {
+        const QSignalBlocker block(units_);
+        units_->setCurrentIndex(inches ? 1 : 0);
+    }
 }
 
 void PlotDialog::sync_enabled() {
@@ -163,11 +191,20 @@ void PlotDialog::set_spec(const PlotSpec& s) {
     orient_->setCurrentIndex(s.landscape ? 0 : 1);
     area_->setCurrentIndex(static_cast<int>(s.area));
     fit_->setChecked(s.fit);
-    scale_num_->setValue(s.scale_num);
+    // Shown in inches on an inch paper; the spec itself is always in millimetres.
+    const bool inches = s.paper.starts_with("ANSI") || s.paper.starts_with("ARCH");
+    const double f = inches ? 1.0 / 25.4 : 1.0;
+    inches_shown_ = inches;
+    {
+        const QSignalBlocker block(units_);
+        units_->setCurrentIndex(inches ? 1 : 0);
+    }
+    off_units_->setText(inches ? QStringLiteral("inches") : QStringLiteral("mm"));
+    scale_num_->setValue(s.scale_num * f);
     scale_den_->setValue(s.scale_den);
     center_->setChecked(s.center);
-    off_x_->setValue(s.off_x_mm);
-    off_y_->setValue(s.off_y_mm);
+    off_x_->setValue(s.off_x_mm * f);
+    off_y_->setValue(s.off_y_mm * f);
     lineweights_->setChecked(s.plot_lineweights);
     style_->setCurrentIndex(static_cast<int>(s.style));
     copies_->setValue(s.copies);
@@ -184,11 +221,12 @@ PlotSpec PlotDialog::spec() const {
     s.paper_h_mm = s.landscape ? p.short_mm : p.long_mm;
     s.area = static_cast<PlotSpec::Area>(area_->currentIndex());
     s.fit = fit_->isChecked();
-    s.scale_num = scale_num_->value();
+    const double to_mm = inches_shown_ ? 25.4 : 1.0;
+    s.scale_num = scale_num_->value() * to_mm;
     s.scale_den = scale_den_->value();
     s.center = center_->isChecked();
-    s.off_x_mm = off_x_->value();
-    s.off_y_mm = off_y_->value();
+    s.off_x_mm = off_x_->value() * to_mm;
+    s.off_y_mm = off_y_->value() * to_mm;
     s.plot_lineweights = lineweights_->isChecked();
     s.style = static_cast<PlotSpec::Style>(style_->currentIndex());
     s.copies = copies_->value();
