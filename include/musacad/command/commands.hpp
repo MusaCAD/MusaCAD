@@ -1708,7 +1708,7 @@ private:
     bool done_ = false;
 };
 
-/// TEXTMASK (Express Tools): `Select text or [Masktype/Offset]:` -- a wipeout behind each
+/// TEXTMASK (Express Tools): `Select text objects to mask or [Masktype/Offset]:` -- a wipeout behind each
 /// text selected, the offset (text heights) clear of it.
 class TextMaskUiCommand final : public ICommand {
 public:

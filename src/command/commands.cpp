@@ -17065,7 +17065,7 @@ void HatchEditUiCommand::cancel(CommandContext& ctx) {
 void TextMaskUiCommand::prompt(CommandContext& ctx) {
     ctx.echo("Current settings: Offset factor = " + fmt4(s_offset_) + ", Mask type = Wipeout");
     step_ = Step::Select;
-    select_.begin(ctx, "Select text or [Masktype/Offset]: ");
+    select_.begin(ctx, "Select text objects to mask or [Masktype/Offset]: ");
 }
 
 void TextMaskUiCommand::start(CommandContext& ctx) {
@@ -17101,7 +17101,7 @@ void TextMaskUiCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "M" || u == "MASKTYPE") {
             step_ = Step::Masktype;
-            ctx.set_prompt("Specify entity type to use for mask [Wipeout/3dface/Solid/Color] <Wipeout>: ");
+            ctx.set_prompt("Specify object type to use for mask [Wipeout/3dface/Solid] <Wipeout>: ");
             return;
         }
         if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {

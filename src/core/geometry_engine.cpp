@@ -14390,10 +14390,21 @@ void GeometryEngine::apply_one(const Command& command) {
                 } else if (c.remove && dd->jog < 0.0) {
                     report("That dimension has no jog.");
                 } else {
-                    double t = 0.25;
                     const double span = distance(fa, fb);
+                    // Enter: midway between the first extension line and the text when the
+                    // text is on the line, else the middle of the line (AutoCAD's placement).
+                    double t = 0.5;
                     if (c.at && span > 1e-12) {
                         t = std::clamp(dot(*c.at - fa, (fb - fa) / span) / span, 0.0, 1.0);
+                    } else if (span > 1e-12) {
+                        const DimStyle* st = store_.dimstyle(dd->style);
+                        const DimGeometry g =
+                            compute_dim_geometry(*dd, st != nullptr ? *st : DimStyle{}, Rgb{}, store_.dim_text_parts(*dd));
+                        const double along = dot(g.text_pos - fa, (fb - fa) / span) / span;
+                        const double half = (text::text_width(g.label, g.text_height) * 0.5 + g.text_height * 0.4) / span;
+                        if (along > 0.0 && along < 1.0 && along - half > 0.0) {
+                            t = (along - half) * 0.5;
+                        }
                     }
                     Command cmd = capture_entity(h);
                     if (auto* x = std::get_if<AddDimensionCommand>(&cmd)) {

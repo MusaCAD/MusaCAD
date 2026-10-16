@@ -415,7 +415,7 @@ TEST_CASE("BURST keeps the attribute values as text; TEXTMASK puts a wipeout beh
 
     H h;
     h.run({"TEXTMASK"});
-    REQUIRE(h.out.prompt == "Select text or [Masktype/Offset]: ");
+    REQUIRE(h.out.prompt == "Select text objects to mask or [Masktype/Offset]: ");
     h.run({"O", "0.2"});
     h.proc.set_selection_count(1);
     h.run({""});
