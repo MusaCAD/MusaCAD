@@ -40,6 +40,9 @@ public:
     /// An unambiguous command start: any command in progress is cancelled cleanly first
     /// (its preview dropped, the selection preserved), then the new command begins.
     void start_command(const std::string& alias);
+    /// A grip clicked rather than dragged becomes hot: the grip modes (GripModeCommand)
+    /// start on it. The press already began the engine's grip drag.
+    void start_grip_mode(core::EntityHandle handle, std::uint32_t index, core::Vec2 pos);
 
     /// Cancels the active command (ESC).
     void cancel();

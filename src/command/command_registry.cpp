@@ -158,6 +158,19 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"LAYUNISO"}, [] { return std::make_unique<LayToolCommand>(LK::Unisolate); }, "",
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
+    reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
+    reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
+        "Find text in the drawing and replace it.");
+    reg({"TCASE"}, [] { return std::make_unique<TextCaseCommand>(); }, "",
+        "Change the case of the selected text: Sentence, lower, UPPER, Title or tOGGLE.");
+    reg({"BREAKLINE"}, [] { return std::make_unique<BreaklineCommand>(); }, "",
+        "Draw a break line: a polyline with a zigzag break symbol.");
+    reg({"SKETCH"}, [] { return std::make_unique<SketchCommand>(); }, "",
+        "Draw freehand: press and drag; each stroke becomes lines, a polyline or a spline.");
+    reg({"ADDSELECTED"}, [] { return std::make_unique<AddSelectedCommand>(); }, "",
+        "Draw an object of the kind picked, on its layer and with its colour, linetype and lineweight.");
+    reg({"LAYWALK"}, [] { return std::make_unique<LayerWalkCommand>(); }, "",
+        "Show only the layers chosen in a list, one or several at a time.");
     reg({"LAYERP"}, [] { return std::make_unique<LayerPreviousCommand>(false); }, "",
         "Put the layer settings back as they were before the last change.");
     reg({"LAYERPMODE"}, [] { return std::make_unique<LayerPreviousCommand>(true); }, "",
@@ -201,8 +214,9 @@ CommandRegistry CommandRegistry::make_default() {
         "Mask what lies beneath a polygon (text still shows through); [Frames] and [Polyline].");
     reg({"FIELD"}, [] { return std::make_unique<FieldCommand>(); }, "",
         "Place text showing the date, time, file name or login, refreshed on regen.");
-    reg({"OS", "OSNAP", "DDOSNAP"}, [] { return std::make_unique<OsnapCommand>(); }, "",
-        "Open the running object snap settings.");
+    reg({"OS", "OSNAP", "DDOSNAP", "DS", "DSETTINGS", "SE", "DDRMODES", "RM"},
+        [] { return std::make_unique<OsnapCommand>(); }, "",
+        "Open the Drafting Settings: snap and grid, polar tracking, object snaps, dynamic input.");
     using TrackVar = TrackingVarCommand::Var;
     reg({"POLARANG"}, [] { return std::make_unique<TrackingVarCommand>(TrackVar::PolarAng); }, "",
         "The polar tracking increment angle, in degrees.");
@@ -271,9 +285,14 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
     reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",
         "Write a block, or the whole drawing, to a .musa file.");
-    reg({"RE", "REGEN"}, [] { return std::make_unique<RegenCommand>(); }, "",
+    reg({"P", "PAN"}, [] { return std::make_unique<PanCommand>(false); }, "", "Move the view with a drag.");
+    reg({"-P", "-PAN"}, [] { return std::make_unique<PanCommand>(true); }, "",
+        "Move the view by a displacement: a base point and a second point.");
+    reg({"RE", "REGEN", "REA", "REGENALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
         "Rebuild and redraw the scene.");
-    reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
+    reg({"-ST", "-STYLE"}, [] { return std::make_unique<StyleCommand>(false); }, "",
+        "Text styles at the command line: name, font, height, width factor and oblique angle.");
+    reg({"ST", "STYLE"}, [] { return std::make_unique<StyleCommand>(true); }, "",
         "Create or change a named text style and make it current.");
     reg({"COPYCLIP"}, [] { return std::make_unique<ClipCopyCommand>(false, false); }, "",
         "Copy the selected objects to the clipboard (Ctrl+C), for this drawing, another one, or another program as a picture.");
@@ -404,6 +423,8 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"MA", "MATCHPROP", "PAINTER"}, [] { return std::make_unique<MatchPropCommand>(); },
         "assets/ribbon/matchprop.svg",
         "Copy properties from a source object to one or more target objects.");
+    reg({"-H", "-HATCH"}, [] { return std::make_unique<HatchCommand>(true); }, "",
+        "Hatch at the command line: an internal point or the selected boundaries, with Properties.");
     reg({"H", "HATCH", "BHATCH"}, [] { return std::make_unique<HatchCommand>(); },
         "assets/ribbon/hatch.svg", "Fill an enclosed area with a pattern or solid color.");
 
@@ -434,6 +455,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",
         "Create a dimension suited to the selected object.");
+    reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",
+        "Draw a multileader: an arrowhead, a leader line and a landing, and its text.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a leader line with an arrowhead and annotation.");
     // --- Dimension chaining (issue #28) ---
@@ -523,7 +546,7 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/stretch.svg",
         "Move the parts of objects inside a crossing window, keeping the rest anchored.");
 
-    reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(); },
+    reg({"TB", "TABLE", "-TABLE"}, [] { return std::make_unique<TableCommand>(); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");
 

@@ -135,6 +135,9 @@ add_executable(musacad_tests
     test_layer_plot_followups.cpp
     test_layer_states_grid.cpp
     test_dim_units.cpp
+    test_mleader.cpp
+    test_find_text.cpp
+    test_pedit_vertex.cpp
     test_trim_curves.cpp
     test_lengthen_more.cpp
     test_trim_paths_clipboard.cpp

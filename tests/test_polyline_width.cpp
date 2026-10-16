@@ -663,15 +663,16 @@ TEST_CASE("#52 PEDIT Width and the vertex Width option submit the width edits") 
     REQUIRE(w->op == 8);
     REQUIRE(w->p1.x == 2.5);
     h.proc.submit_line("E");
-    REQUIRE(h.out.prompt == "Enter a vertex editing option [Insert/Delete/Move/Width/eXit] <X>: ");
-    h.run({"W", "10,0"});
+    REQUIRE(h.out.prompt ==
+            "Enter a vertex editing option [Next/Previous/Break/Insert/Move/Regen/Straighten/Tangent/Width/eXit] <N>: ");
+    REQUIRE(h.last<PeditCommand>()->op == 11); // the X on the first vertex
+    h.run({"W"});
     REQUIRE(h.out.prompt == "Specify starting width for next segment <0.0000>: ");
     h.proc.submit_line("1");
     REQUIRE(h.out.prompt == "Specify ending width for next segment <1.0000>: ");
     h.proc.submit_line("4");
     const auto* v = h.last<PeditCommand>();
-    REQUIRE(v->op == 9);
-    REQUIRE(v->p1.x == 10.0);
+    REQUIRE(v->op == 20);
     REQUIRE(v->p2.x == 1.0);
     REQUIRE(v->p2.y == 4.0);
     h.run({"X", ""});

@@ -92,6 +92,9 @@ struct PreviewSpec {
     /// kind rather than a new kind, so Dynamic Input's length/angle fields and ortho
     /// behave exactly as they do for LINE with no second code path.
     bool live_stretch = false;
+    /// A hot grip's STRETCH (GripModeCommand): the viewport streams the resolved cursor to
+    /// the engine's grip drag (GripDragCommand Move), which previews the object edited.
+    bool grip_hot = false;
     /// ROTATE / SCALE (PreviewKind::Rotate / Scale): points[0] is the base point. The
     /// live angle is the cursor's bearing from it minus `ref_angle` (radians; ROTATE
     /// Reference), the live factor the cursor's distance from it divided by
@@ -248,6 +251,14 @@ public:
     /// the command then works at the command line, as -LAYER.
     [[nodiscard]] virtual bool layer_dialog() { return false; }
     virtual void osnap_settings_dialog() {}
+    /// FIND: the Find and Replace window; false where there is none (the command line asks).
+    virtual bool find_dialog() { return false; }
+    /// LAYWALK: the window that shows only the layers chosen in it; false where there is none.
+    virtual bool layer_walk_dialog() { return false; }
+    /// STYLE: the Text Style window; false where there is none (the command line asks).
+    virtual bool text_style_dialog() { return false; }
+    /// HELP / F1: the command reference in the browser; false where there is none.
+    virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
     /// hit-tests the published attribute targets; nothing there = a message).
     virtual void attribute_editor_at(core::Vec2 pick, double pick_radius) {

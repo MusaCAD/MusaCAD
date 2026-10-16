@@ -50,6 +50,9 @@
 #include <QTableWidget>
 #include <QTreeWidget>
 #include <QTabWidget>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QSpinBox>
 #include <QClipboard>
 #include <QFontDatabase>
 #include <QMetaObject>
@@ -256,6 +259,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_match_settings_callback([this] { open_matchprop_dialog(); });
     viewport_->set_quick_select_callback([this](bool filter) { open_quick_select_dialog(filter); });
     viewport_->set_purge_dialog_callback([this] { open_purge_dialog(); });
+    viewport_->set_find_dialog_callback([this] { open_find_dialog(); });
+    viewport_->set_layer_walk_callback([this] { open_layer_walk_dialog(); });
+    viewport_->set_text_style_callback([this] { open_text_style_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -781,6 +787,13 @@ void MainWindow::build_status_bar() {
     // command-line bar -- the toggleable fallback.
     const bool dyn_initial =
         QSettings().value(QStringLiteral("dyn/enabled"), kDynDefaultEnabled).toBool();
+    {
+        auto* help = new QAction(QStringLiteral("Help"), this);
+        help->setShortcut(QKeySequence(Qt::Key_F1));
+        help->setShortcutContext(Qt::ApplicationShortcut);
+        connect(help, &QAction::triggered, this, [this] { viewport_->open_help(); });
+        addAction(help);
+    }
     dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial,
                                    QStringLiteral("Show command input and prompts at the cursor "
                                                   "(Dynamic Input)."));
@@ -2646,6 +2659,243 @@ void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
     QGuiApplication::clipboard()->setMimeData(md);
 }
 
+void MainWindow::open_text_style_dialog() {
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("Text Style"));
+    auto* list = new QListWidget(dlg);
+    auto* font = new QComboBox(dlg);
+    font->setEditable(true);
+    font->addItem(QStringLiteral("Standard (stroke)"));
+    font->addItems(QFontDatabase::families());
+    auto* height = new QDoubleSpinBox(dlg);
+    height->setDecimals(4);
+    height->setRange(0.0, 1e6);
+    height->setToolTip(QStringLiteral("0: the height is asked for each text."));
+    auto* width = new QDoubleSpinBox(dlg);
+    width->setDecimals(4);
+    width->setRange(0.01, 100.0);
+    auto* oblique = new QDoubleSpinBox(dlg);
+    oblique->setDecimals(2);
+    oblique->setRange(-85.0, 85.0);
+    auto* form = new QFormLayout;
+    form->addRow(QStringLiteral("Font name:"), font);
+    form->addRow(QStringLiteral("Height:"), height);
+    form->addRow(QStringLiteral("Width factor:"), width);
+    form->addRow(QStringLiteral("Oblique angle:"), oblique);
+    auto* effects = new QLabel(QStringLiteral("Upside down, Backwards and Vertical are not available yet."), dlg);
+    effects->setWordWrap(true);
+    effects->setEnabled(false);
+    form->addRow(QString(), effects);
+    auto* current_label = new QLabel(dlg);
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), dlg);
+    auto* new_style = new QPushButton(QStringLiteral("New..."), dlg);
+    auto* apply = new QPushButton(QStringLiteral("Apply"), dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), dlg);
+    auto* side = new QVBoxLayout;
+    side->addWidget(set_current);
+    side->addWidget(new_style);
+    side->addStretch(1);
+    auto* body = new QHBoxLayout;
+    auto* left = new QVBoxLayout;
+    left->addWidget(new QLabel(QStringLiteral("Styles:"), dlg));
+    left->addWidget(list, 1);
+    body->addLayout(left, 1);
+    body->addLayout(form, 2);
+    body->addLayout(side);
+    auto* bottom = new QHBoxLayout;
+    bottom->addWidget(current_label, 1);
+    bottom->addWidget(apply);
+    bottom->addWidget(close);
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addLayout(body, 1);
+    layout->addLayout(bottom);
+    // The styles as the drawing has them; refilled after each change reaches the engine.
+    auto styles = std::make_shared<std::vector<core::TextStyle>>(viewport_->text_styles());
+    if (styles->empty()) {
+        styles->push_back(core::TextStyle{});
+    }
+    const auto show_style = [=](int row) {
+        if (row < 0 || row >= static_cast<int>(styles->size())) {
+            return;
+        }
+        const core::TextStyle& s = (*styles)[static_cast<std::size_t>(row)];
+        font->setCurrentText(s.font.empty() ? QStringLiteral("Standard (stroke)") : QString::fromStdString(s.font));
+        height->setValue(s.height);
+        width->setValue(s.width_factor);
+        oblique->setValue(core::to_degrees(s.oblique));
+    };
+    const auto fill = [=, this](const std::string& select) {
+        list->clear();
+        const std::uint16_t cur = viewport_->current_text_style();
+        int pick = 0;
+        for (std::size_t i = 0; i < styles->size(); ++i) {
+            list->addItem(QString::fromStdString((*styles)[i].name));
+            if ((*styles)[i].name == select) {
+                pick = static_cast<int>(i);
+            }
+        }
+        current_label->setText(QStringLiteral("Current text style: %1")
+                                   .arg(QString::fromStdString(cur < styles->size() ? (*styles)[cur].name
+                                                                                    : std::string("Standard"))));
+        list->setCurrentRow(pick);
+        show_style(pick);
+    };
+    const std::uint16_t cur0 = viewport_->current_text_style();
+    fill(cur0 < styles->size() ? (*styles)[cur0].name : std::string("Standard"));
+    connect(list, &QListWidget::currentRowChanged, dlg, show_style);
+    const auto edited = [=]() {
+        const int row = list->currentRow();
+        core::TextStyle s = row >= 0 && row < static_cast<int>(styles->size()) ? (*styles)[static_cast<std::size_t>(row)]
+                                                                               : core::TextStyle{};
+        const QString f = font->currentText().trimmed();
+        s.font = f == QStringLiteral("Standard (stroke)") || f.isEmpty() ? std::string() : f.toStdString();
+        s.height = height->value();
+        s.width_factor = width->value();
+        s.oblique = core::to_radians(oblique->value());
+        return s;
+    };
+    connect(apply, &QPushButton::clicked, dlg, [=, this] {
+        const core::TextStyle s = edited();
+        engine_->submit(core::SetTextStyleCommand{s, false});
+        const int row = list->currentRow();
+        if (row >= 0 && row < static_cast<int>(styles->size())) {
+            (*styles)[static_cast<std::size_t>(row)] = s;
+        }
+    });
+    connect(set_current, &QPushButton::clicked, dlg, [=, this] {
+        const core::TextStyle s = edited();
+        engine_->submit(core::SetTextStyleCommand{s, true});
+        current_label->setText(QStringLiteral("Current text style: %1").arg(QString::fromStdString(s.name)));
+    });
+    connect(new_style, &QPushButton::clicked, dlg, [=, this] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(dlg, QStringLiteral("New Text Style"), QStringLiteral("Style name:"),
+                                                   QLineEdit::Normal, QStringLiteral("Style1"), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        for (const core::TextStyle& s : *styles) {
+            if (QString::fromStdString(s.name).compare(name, Qt::CaseInsensitive) == 0) {
+                QMessageBox::information(dlg, QStringLiteral("Text Style"),
+                                         QStringLiteral("A text style named %1 already exists.").arg(name));
+                return;
+            }
+        }
+        core::TextStyle s = edited();
+        s.name = name.toStdString();
+        engine_->submit(core::SetTextStyleCommand{s, false});
+        styles->push_back(s);
+        fill(s.name);
+    });
+    connect(close, &QPushButton::clicked, dlg, &QDialog::close);
+    dlg->resize(640, 360);
+    dlg->show();
+}
+
+void MainWindow::open_layer_walk_dialog() {
+    const std::vector<core::Layer> before = viewport_->layers();
+    if (before.empty()) {
+        return;
+    }
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("LayerWalk - %1 layers").arg(before.size()));
+    auto* list = new QListWidget(dlg);
+    list->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    for (const core::Layer& l : before) {
+        list->addItem(QString::fromStdString(l.name));
+    }
+    auto* restore = new QCheckBox(QStringLiteral("Restore on exit"), dlg);
+    restore->setChecked(true);
+    auto* hint = new QLabel(QStringLiteral("Only the layers selected here are shown. Ctrl and Shift select several."), dlg);
+    hint->setWordWrap(true);
+    hint->setEnabled(false);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addWidget(hint);
+    layout->addWidget(list, 1);
+    layout->addWidget(restore);
+    layout->addWidget(buttons);
+    const auto show_selected = [this, list, before] {
+        for (int i = 0; i < list->count() && i < static_cast<int>(before.size()); ++i) {
+            core::Layer l = before[static_cast<std::size_t>(i)];
+            l.on = list->item(i)->isSelected();
+            l.frozen = l.frozen && !l.on; // a layer walked to is shown even if it was frozen
+            engine_->submit(core::SetLayerCommand{static_cast<std::uint16_t>(i), l});
+        }
+    };
+    connect(list, &QListWidget::itemSelectionChanged, dlg, show_selected);
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    connect(dlg, &QDialog::finished, this, [this, restore, before] {
+        if (!restore->isChecked()) {
+            return;
+        }
+        const std::vector<core::Layer> now = viewport_->layers();
+        for (std::size_t i = 0; i < before.size() && i < now.size(); ++i) {
+            if (now[i].name == before[i].name) {
+                engine_->submit(core::SetLayerCommand{static_cast<std::uint16_t>(i), before[i]});
+            }
+        }
+    });
+    dlg->resize(320, 420);
+    dlg->show();
+}
+
+void MainWindow::open_find_dialog() {
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QStringLiteral("Find and Replace"));
+    auto* form = new QFormLayout;
+    auto* what = new QLineEdit(dlg);
+    auto* with = new QLineEdit(dlg);
+    auto* where = new QComboBox(dlg);
+    where->addItem(QStringLiteral("Entire drawing"));
+    where->addItem(QStringLiteral("Current selection"));
+    if (viewport_->selection_count() > 0) {
+        where->setCurrentIndex(1);
+    }
+    form->addRow(QStringLiteral("Find what:"), what);
+    form->addRow(QStringLiteral("Replace with:"), with);
+    form->addRow(QStringLiteral("Find where:"), where);
+    auto* match_case = new QCheckBox(QStringLiteral("Match case"), dlg);
+    auto* whole = new QCheckBox(QStringLiteral("Find whole words only"), dlg);
+    auto* scope = new QLabel(QStringLiteral("Searches text, multiline text, leaders, table cells, block attributes "
+                                            "and dimension text."),
+                             dlg);
+    scope->setWordWrap(true);
+    scope->setEnabled(false);
+    auto* layout = new QVBoxLayout(dlg);
+    layout->addLayout(form);
+    layout->addWidget(match_case);
+    layout->addWidget(whole);
+    layout->addWidget(scope);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    auto* find = buttons->addButton(QStringLiteral("Find"), QDialogButtonBox::ActionRole);
+    auto* replace = buttons->addButton(QStringLiteral("Replace All"), QDialogButtonBox::ActionRole);
+    find->setDefault(true);
+    layout->addWidget(buttons);
+    const auto run = [this, what, with, where, match_case, whole](bool do_replace) {
+        if (what->text().isEmpty()) {
+            return;
+        }
+        core::FindTextCommand c;
+        c.find = what->text().toStdString();
+        c.replace = with->text().toStdString();
+        c.do_replace = do_replace;
+        c.match_case = match_case->isChecked();
+        c.whole_word = whole->isChecked();
+        c.selection_only = where->currentIndex() == 1;
+        c.group = processor_->begin_group();
+        engine_->submit(std::move(c)); // the result is reported at the command line
+    };
+    connect(find, &QPushButton::clicked, dlg, [run] { run(false); });
+    connect(replace, &QPushButton::clicked, dlg, [run] { run(true); });
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    dlg->show();
+}
+
 std::string MainWindow::prepare_paste() {
     pending_paste_image_ = QImage();
     pending_paste_text_.clear();
@@ -2804,7 +3054,7 @@ bool MainWindow::selftest_annotation() {
         all = all && ok;
         prev = viewport_->line_vertex_count();
     };
-    place("LEADER", {"LEADER", "60,60", "70,66", "see note"});
+    place("LEADER", {"LEADER", "60,60", "70,66", "", "see note", ""});
 
     // --- Object-aware dimensioning (Phase 15): dimension entities by SELECTING
     // them. Draw the source geometry, then pick the objects themselves.
@@ -4699,13 +4949,13 @@ bool MainWindow::hatch_shot(int kind, const std::string& out_png) {
         pump(150);
         processor_->submit_line("HATCH");
         pump(120);
-        processor_->submit_line("P");   // Pattern option
+        processor_->submit_line("T");   // seTtings: the pattern, its scale and angle
         pump(120);
         processor_->submit_line(pat);   // pattern name
         pump(120);
-        processor_->submit_line("S");   // Scale option
-        pump(120);
         processor_->submit_line("3");   // a readable scale for the screenshot
+        pump(120);
+        processor_->submit_line("0");   // the angle
         pump(120);
         processor_->submit_line("30,22"); // pick inside
         pump(300);
@@ -6537,10 +6787,166 @@ void MainWindow::open_block_attribute_manager() {
     }
 }
 
+namespace {
+int s_drafting_tab = 2; // DSETTINGS opens where it was left (Object Snap at first, as OSNAP)
+} // namespace
+
+// DSETTINGS (DS, SE), OSNAP (OS): the Drafting Settings -- Snap and Grid, Polar Tracking,
+// Object Snap and Dynamic Input, each the settings the status bar and the commands use.
 void MainWindow::open_osnap_settings_dialog() {
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("Object Snap Settings"));
+    dlg.setWindowTitle(QStringLiteral("Drafting Settings"));
     auto* layout = new QVBoxLayout(&dlg);
+    auto* tabs = new QTabWidget(&dlg);
+    layout->addWidget(tabs);
+    const auto checked = [](QAction* a) { return a != nullptr && a->isChecked(); };
+    const auto spin = [&dlg](double v, double lo, double hi) {
+        auto* b = new QDoubleSpinBox(&dlg);
+        b->setDecimals(4);
+        b->setRange(lo, hi);
+        b->setValue(v);
+        b->setMinimumWidth(120);
+        return b;
+    };
+
+    // Snap and Grid.
+    auto* snap_page = new QWidget(&dlg);
+    auto* snap_cols = new QHBoxLayout(snap_page);
+    auto* snap_col = new QVBoxLayout;
+    auto* grid_col = new QVBoxLayout;
+    snap_cols->addLayout(snap_col);
+    snap_cols->addLayout(grid_col);
+    auto* snap_on = new QCheckBox(QStringLiteral("Snap On (F9)"), &dlg);
+    snap_on->setChecked(checked(snap_action_));
+    snap_col->addWidget(snap_on);
+    auto* snap_spacing = new QFormLayout;
+    QDoubleSpinBox* snap_x = spin(processor_->snap_spacing(), 0.0001, 1e9);
+    QDoubleSpinBox* snap_y = spin(processor_->snap_spacing_y(), 0.0001, 1e9);
+    auto* equal = new QCheckBox(QStringLiteral("Equal X and Y spacing"), &dlg);
+    equal->setChecked(processor_->snap_spacing() == processor_->snap_spacing_y());
+    snap_spacing->addRow(QStringLiteral("Snap X spacing:"), snap_x);
+    snap_spacing->addRow(QStringLiteral("Snap Y spacing:"), snap_y);
+    snap_spacing->addRow(QString(), equal);
+    auto* snap_box = new QGroupBox(QStringLiteral("Snap spacing"), &dlg);
+    snap_box->setLayout(snap_spacing);
+    snap_col->addWidget(snap_box);
+    command::TrackingSettings ts = processor_->tracking_settings();
+    QDoubleSpinBox* polar_dist = spin(ts.polar_distance, 0.0, 1e9);
+    auto* polar_form = new QFormLayout;
+    polar_form->addRow(QStringLiteral("Polar distance:"), polar_dist);
+    auto* polar_box = new QGroupBox(QStringLiteral("Polar spacing"), &dlg);
+    polar_box->setLayout(polar_form);
+    snap_col->addWidget(polar_box);
+    auto* grid_snap = new QRadioButton(QStringLiteral("Grid snap"), &dlg);
+    auto* polar_snap = new QRadioButton(QStringLiteral("PolarSnap"), &dlg);
+    (processor_->snap_type() == 1 ? polar_snap : grid_snap)->setChecked(true);
+    auto* type_layout = new QVBoxLayout;
+    type_layout->addWidget(grid_snap);
+    type_layout->addWidget(polar_snap);
+    auto* type_box = new QGroupBox(QStringLiteral("Snap type"), &dlg);
+    type_box->setLayout(type_layout);
+    snap_col->addWidget(type_box);
+    snap_col->addStretch(1);
+    auto* grid_on = new QCheckBox(QStringLiteral("Grid On (F7)"), &dlg);
+    grid_on->setChecked(checked(grid_action_));
+    grid_col->addWidget(grid_on);
+    const core::GridSettings gs = processor_->grid_settings();
+    QDoubleSpinBox* grid_x = spin(gs.x, 0.0, 1e9);
+    QDoubleSpinBox* grid_y = spin(gs.y, 0.0, 1e9);
+    auto* major = new QSpinBox(&dlg);
+    major->setRange(1, 100);
+    major->setValue(gs.major);
+    auto* grid_form = new QFormLayout;
+    grid_form->addRow(QStringLiteral("Grid X spacing:"), grid_x);
+    grid_form->addRow(QStringLiteral("Grid Y spacing:"), grid_y);
+    grid_form->addRow(QStringLiteral("Major line every:"), major);
+    auto* grid_hint = new QLabel(QStringLiteral("A spacing of 0 follows the zoom."), &dlg);
+    grid_hint->setEnabled(false);
+    grid_form->addRow(QString(), grid_hint);
+    auto* grid_box = new QGroupBox(QStringLiteral("Grid spacing"), &dlg);
+    grid_box->setLayout(grid_form);
+    grid_col->addWidget(grid_box);
+    auto* adaptive = new QCheckBox(QStringLiteral("Adaptive grid"), &dlg);
+    adaptive->setChecked(gs.adaptive);
+    auto* subdivide = new QCheckBox(QStringLiteral("Allow subdivision below grid spacing"), &dlg);
+    subdivide->setChecked(gs.subdivide);
+    subdivide->setEnabled(gs.adaptive);
+    auto* beyond = new QCheckBox(QStringLiteral("Display grid beyond Limits"), &dlg);
+    beyond->setChecked(gs.beyond_limits);
+    auto* behaviour = new QVBoxLayout;
+    behaviour->addWidget(adaptive);
+    behaviour->addWidget(subdivide);
+    behaviour->addWidget(beyond);
+    auto* behaviour_box = new QGroupBox(QStringLiteral("Grid behavior"), &dlg);
+    behaviour_box->setLayout(behaviour);
+    grid_col->addWidget(behaviour_box);
+    grid_col->addStretch(1);
+    connect(adaptive, &QCheckBox::toggled, subdivide, &QWidget::setEnabled);
+    connect(snap_x, &QDoubleSpinBox::valueChanged, &dlg, [snap_y, equal](double v) {
+        if (equal->isChecked()) {
+            snap_y->setValue(v);
+        }
+    });
+    tabs->addTab(snap_page, QStringLiteral("Snap and Grid"));
+
+    // Polar Tracking.
+    auto* polar_page = new QWidget(&dlg);
+    auto* pl = new QVBoxLayout(polar_page);
+    auto* polar_on = new QCheckBox(QStringLiteral("Polar Tracking On (F10)"), &dlg);
+    polar_on->setChecked(checked(polar_action_));
+    pl->addWidget(polar_on);
+    auto* increment = new QComboBox(&dlg);
+    increment->setEditable(true);
+    for (const char* a : {"90", "45", "30", "22.5", "18", "15", "10", "5"}) {
+        increment->addItem(QString::fromLatin1(a));
+    }
+    increment->setCurrentText(QString::number(core::to_degrees(ts.polar_increment), 'g', 6));
+    auto* use_additional = new QCheckBox(QStringLiteral("Additional angles:"), &dlg);
+    use_additional->setChecked(ts.use_additional);
+    QStringList extra;
+    for (const double a : ts.additional) {
+        extra << QString::number(core::to_degrees(a), 'g', 6);
+    }
+    auto* additional = new QLineEdit(extra.join(QStringLiteral(", ")), &dlg);
+    additional->setPlaceholderText(QStringLiteral("e.g. 12, 75"));
+    auto* angle_form = new QFormLayout;
+    angle_form->addRow(QStringLiteral("Increment angle:"), increment);
+    angle_form->addRow(use_additional, additional);
+    auto* angle_box = new QGroupBox(QStringLiteral("Polar angle settings"), &dlg);
+    angle_box->setLayout(angle_form);
+    pl->addWidget(angle_box);
+    auto* ortho_only = new QRadioButton(QStringLiteral("Track orthogonally only"), &dlg);
+    auto* all_polar = new QRadioButton(QStringLiteral("Track using all polar angle settings"), &dlg);
+    (ts.otrack_polar ? all_polar : ortho_only)->setChecked(true);
+    auto* track_layout = new QVBoxLayout;
+    track_layout->addWidget(ortho_only);
+    track_layout->addWidget(all_polar);
+    auto* track_box = new QGroupBox(QStringLiteral("Object Snap Tracking Settings"), &dlg);
+    track_box->setLayout(track_layout);
+    pl->addWidget(track_box);
+    auto* absolute = new QRadioButton(QStringLiteral("Absolute"), &dlg);
+    auto* relative = new QRadioButton(QStringLiteral("Relative to last segment"), &dlg);
+    (ts.relative ? relative : absolute)->setChecked(true);
+    auto* measure_layout = new QVBoxLayout;
+    measure_layout->addWidget(absolute);
+    measure_layout->addWidget(relative);
+    auto* measure_box = new QGroupBox(QStringLiteral("Polar Angle measurement"), &dlg);
+    measure_box->setLayout(measure_layout);
+    pl->addWidget(measure_box);
+    pl->addStretch(1);
+    tabs->addTab(polar_page, QStringLiteral("Polar Tracking"));
+
+    // Object Snap.
+    auto* osnap_page = new QWidget(&dlg);
+    auto* ol = new QVBoxLayout(osnap_page);
+    auto* osnap_on = new QCheckBox(QStringLiteral("Object Snap On (F3)"), &dlg);
+    osnap_on->setChecked(checked(osnap_action_));
+    auto* otrack_on = new QCheckBox(QStringLiteral("Object Snap Tracking On (F11)"), &dlg);
+    otrack_on->setChecked(checked(otrack_action_));
+    auto* on_row = new QHBoxLayout;
+    on_row->addWidget(osnap_on);
+    on_row->addWidget(otrack_on);
+    ol->addLayout(on_row);
     auto* grid = new QGridLayout();
     std::vector<std::pair<std::uint32_t, QCheckBox*>> boxes;
     int row = 0;
@@ -6551,10 +6957,17 @@ void MainWindow::open_osnap_settings_dialog() {
         boxes.emplace_back(bit, cb);
         ++row;
     }
-    layout->addLayout(grid);
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    auto* all = buttons->addButton(QStringLiteral("Select All"), QDialogButtonBox::ActionRole);
-    auto* none = buttons->addButton(QStringLiteral("Clear All"), QDialogButtonBox::ActionRole);
+    auto* modes_box = new QGroupBox(QStringLiteral("Object Snap modes"), &dlg);
+    modes_box->setLayout(grid);
+    ol->addWidget(modes_box);
+    auto* pick_row = new QHBoxLayout;
+    auto* all = new QPushButton(QStringLiteral("Select All"), &dlg);
+    auto* none = new QPushButton(QStringLiteral("Clear All"), &dlg);
+    pick_row->addStretch(1);
+    pick_row->addWidget(all);
+    pick_row->addWidget(none);
+    ol->addLayout(pick_row);
+    ol->addStretch(1);
     connect(all, &QPushButton::clicked, &dlg, [&boxes] {
         for (auto& [bit, cb] : boxes) {
             cb->setChecked(true);
@@ -6565,12 +6978,63 @@ void MainWindow::open_osnap_settings_dialog() {
             cb->setChecked(false);
         }
     });
+    tabs->addTab(osnap_page, QStringLiteral("Object Snap"));
+
+    // Dynamic Input.
+    auto* dyn_page = new QWidget(&dlg);
+    auto* dl = new QVBoxLayout(dyn_page);
+    auto* dyn_on = new QCheckBox(QStringLiteral("Enable Dynamic Input (F12)"), &dlg);
+    dyn_on->setChecked(checked(dyn_action_));
+    dl->addWidget(dyn_on);
+    auto* dyn_hint = new QLabel(QStringLiteral("Input at the cursor: the prompt, the coordinates and the "
+                                               "lengths and angles of what is being drawn."),
+                                &dlg);
+    dyn_hint->setWordWrap(true);
+    dl->addWidget(dyn_hint);
+    dl->addStretch(1);
+    tabs->addTab(dyn_page, QStringLiteral("Dynamic Input"));
+
+    tabs->setCurrentIndex(std::clamp(s_drafting_tab, 0, tabs->count() - 1));
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     layout->addWidget(buttons);
-    if (dlg.exec() != QDialog::Accepted) {
+    const int result = dlg.exec();
+    s_drafting_tab = tabs->currentIndex();
+    if (result != QDialog::Accepted) {
         return;
     }
+
+    // Snap and Grid.
+    processor_->set_snap_spacing_xy(snap_x->value(), equal->isChecked() ? snap_x->value() : snap_y->value());
+    processor_->set_snap_type(polar_snap->isChecked() ? 1 : 0);
+    core::GridSettings g = gs;
+    g.x = grid_x->value();
+    g.y = grid_y->value() > 0.0 ? grid_y->value() : grid_x->value();
+    g.major = major->value();
+    g.adaptive = adaptive->isChecked();
+    g.subdivide = subdivide->isChecked();
+    g.beyond_limits = beyond->isChecked();
+    processor_->set_grid_settings(g);
+    // Polar tracking.
+    bool ok = false;
+    const double inc = increment->currentText().trimmed().toDouble(&ok);
+    if (ok && inc > 0.0 && inc < 360.0) {
+        ts.polar_increment = core::to_radians(inc);
+    }
+    ts.additional.clear();
+    for (const QString& part : additional->text().split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        const double a = part.trimmed().toDouble(&ok);
+        if (ok) {
+            ts.additional.push_back(core::to_radians(a));
+        }
+    }
+    ts.use_additional = use_additional->isChecked();
+    ts.otrack_polar = all_polar->isChecked();
+    ts.relative = relative->isChecked();
+    ts.polar_distance = polar_dist->value();
+    processor_->set_tracking_settings(ts);
+    // Object snap modes.
     std::uint32_t mask = 0;
     for (const auto& [bit, cb] : boxes) {
         mask |= cb->isChecked() ? bit : 0u;
@@ -6580,6 +7044,18 @@ void MainWindow::open_osnap_settings_dialog() {
         const QSignalBlocker block(action);
         action->setChecked((mask & bit) != 0);
     }
+    // The toggles, through their status-bar actions so everything follows.
+    const auto set = [](QAction* a, bool on) {
+        if (a != nullptr && a->isChecked() != on) {
+            a->setChecked(on);
+        }
+    };
+    set(snap_action_, snap_on->isChecked());
+    set(grid_action_, grid_on->isChecked());
+    set(polar_action_, polar_on->isChecked());
+    set(osnap_action_, osnap_on->isChecked());
+    set(otrack_action_, otrack_on->isChecked());
+    set(dyn_action_, dyn_on->isChecked());
 }
 
 namespace {

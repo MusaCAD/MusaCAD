@@ -317,7 +317,7 @@ TEST_CASE("Processor: ZOOM drives the view, not geometry") {
     REQUIRE(h.cmds.empty()); // no geometry message
 
     h.proc.submit_line("Z");
-    h.proc.submit_line("2");
+    h.proc.submit_line("2X"); // nX: relative to the view (a bare n is relative to the limits)
     REQUIRE(h.view.scale == Approx(2.0));
     REQUIRE(h.cmds.empty());
 }

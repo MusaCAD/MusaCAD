@@ -38,6 +38,42 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Aspect]`: a spacing, the snap spacing or a multiple of it, a major line every so many,
   fewer lines zoomed out and more zoomed in, the grid kept within the limits, and different
   horizontal and vertical spacings. A spacing of 0 keeps the grid following the zoom.
+- **DSETTINGS** (#65) -- the Drafting Settings dialog with its Snap and Grid, Polar
+  Tracking, Object Snap and Dynamic Input tabs; `DS`, `SE` and `OS` open it.
+- **MLEADER** (#61) -- arrowhead first, landing first or content first, a horizontal landing
+  with the text beside it, and Maxpoints, Content type and landing options; Annotate >
+  Leaders opens with it. **LEADER** takes any number of points with Undo, Format and
+  Annotation, and several lines of text.
+- **MTEXT's corner options** (#43) -- `[Height/Justify/Line spacing/Rotation/Style/Width/
+  Columns]` at the opposite corner, the current text style's height by default; text typed
+  for MTEXT and QLEADER keeps its spaces.
+- **HELP** and **F1** (#65) -- open the command reference in the browser.
+- **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
+  the view, `2` against the limits); PAN and -PAN; REGENALL.
+- **PEDIT's vertex editor as AutoCAD has it** (#52) -- an X on the current vertex, Next and
+  Previous, Insert after it, Move it, the next segment's Width, and Break or Straighten
+  between it and a second vertex.
+- **LAYWALK** (#55) -- show only the layers chosen in a list; restored on exit.
+- **Hot grips** (#54) -- click a grip instead of dragging it, and `** STRETCH **` asks where it
+  goes; Enter or Space cycles to MOVE, ROTATE, SCALE and MIRROR about the grip, with Base
+  point, Copy and Undo.
+- **HATCH's prompts** (#41) -- `Pick internal point or [Select objects/Undo/seTtings]:`;
+  seTtings asks the pattern (`?` lists them), its scale and angle, and they are kept for the
+  next hatch, ANSI31 to begin with as in AutoCAD; Undo takes the last pick back; **-HATCH**
+  with Properties and Select objects.
+- **The Text Style window** (#62) -- STYLE lists the styles with their font, height, width
+  factor and oblique angle, with Set Current, New and Apply; -STYLE keeps the command line.
+- **FIND** (#62) -- find and replace text in text, multiline text, leaders, table cells,
+  block attributes and dimension text; the objects found are selected.
+- **TCASE** (#77) -- the selected text in Sentence, lower, UPPER, Title or tOGGLE case.
+- **BREAKLINE** (#77) -- a line past two points with a zigzag break symbol, as the Express
+  Tools draw it.
+- **ADDSELECTED** (#45) -- draw another object of the kind picked, on its layer and with its
+  colour, linetype and lineweight.
+- **SKETCH** (#45) -- press and drag to draw freehand; each stroke becomes lines, a polyline
+  or a spline, its points the sketch increment apart.
+- **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
+  point with Style, Width and Height; a title and a header row come with the data rows.
 - **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
   the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
   Decimal), the fraction format, round off, a prefix and suffix and the measurement scale

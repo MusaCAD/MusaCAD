@@ -286,6 +286,10 @@ private:
     bool done_ = false;
 };
 
+/// ZOOM: `Specify corner of window, enter a scale factor (nX or nXP), or [All/Center/Dynamic/
+/// Extents/Previous/Scale/Window/Object] <real time>:` -- a window (a first corner typed at
+/// once starts one), Center with a magnification or a height, Previous (the views ZOOM
+/// and PAN left, newest first), Scale relative (nX) or to the limits (n), All and Extents.
 class ZoomCommand final : public ICommand {
 public:
     std::string name() const override { return "ZOOM"; }
@@ -293,8 +297,32 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// The view before a ZOOM or PAN changed it (ZOOM Previous goes back through these).
+    static void remember_view(CommandContext& ctx);
 
 private:
+    enum class Step : std::uint8_t { Main, WindowFirst, WindowSecond, Center, CenterSize, Scale };
+    bool apply_scale(CommandContext& ctx, const std::string& u);
+    Step step_ = Step::Main;
+    core::Vec2 corner_{};
+    bool done_ = false;
+    static inline std::vector<std::pair<core::Vec2, double>> s_previous_;
+};
+
+/// PAN: the view follows a drag (Esc or Enter ends); -PAN: `Specify base point or
+/// displacement:`, `Specify second point:` -- the drawing moves by the displacement.
+class PanCommand final : public ICommand {
+public:
+    explicit PanCommand(bool typed) : typed_(typed) {}
+    std::string name() const override { return typed_ ? "-PAN" : "PAN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool typed_;
+    std::optional<core::Vec2> base_;
     bool done_ = false;
 };
 
@@ -496,22 +524,36 @@ public:
 // HATCH / H: fill a closed boundary with a pattern (Part A: SOLID, from selected closed
 // polylines). Noun-verb: with a pre-selection, hatches it immediately; otherwise prompts to
 // pick a closed boundary. The engine extracts the boundary loops (UI never touches the store).
+/// HATCH: `Pick internal point or [Select objects/Undo/seTtings]:` -- picks fill regions,
+/// Select objects fills closed boundaries, Undo takes the last pick back, seTtings asks the
+/// pattern (`Enter a pattern name or [?/Solid/User defined/Gradient] <ANSI31>:`), its scale
+/// and angle. -HATCH: `Specify internal point or [Properties/Select objects/...]:`. The
+/// pattern, scale and angle are remembered (HPNAME, HPSCALE, HPANG).
 class HatchCommand final : public ICommand {
 public:
-    std::string name() const override { return "HATCH"; }
+    explicit HatchCommand(bool typed = false) : typed_(typed) {}
+    std::string name() const override { return typed_ ? "-HATCH" : "HATCH"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && mode_ == Mode::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select };
+    void main_prompt(CommandContext& ctx);
+    void fill_selection(CommandContext& ctx);
+    bool typed_;
     bool done_ = false;
+    int picks_ = 0;
     Mode mode_ = Mode::PickPoint;
-    std::string pattern_ = "SOLID"; // SOLID, GRADIENT, or a known line pattern (e.g. ANSI31)
-    double scale_ = 1.0;
-    double angle_ = 0.0; // radians (pattern rotation / gradient direction)
-    core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
+    SelectObjectsPhase select_;
+    static inline std::string pattern_ = "ANSI31"; // HPNAME: SOLID, GRADIENT or a line pattern
+    static inline double scale_ = 1.0;             // HPSCALE
+    static inline double angle_ = 0.0;             // HPANG, radians (also the gradient's direction)
+    static inline core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
 };
 
 /// WIPEOUT: a mask polygon (a hatch with the WIPEOUT pattern) from picked points, or
@@ -1197,13 +1239,15 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { Rows, Cols, ColWidth, RowHeight, Place };
+    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style };
+    void place_prompt(CommandContext& ctx);
     bool done_ = false;
-    Mode mode_ = Mode::Rows;
-    int rows_ = 4;
-    int cols_ = 3;
-    double col_w_ = 40.0;
-    double row_h_ = 8.0;
+    Mode mode_ = Mode::Cols;
+    int rows_ = 1; ///< data rows; a title and a header row come with them
+    int cols_ = 5;
+    double col_w_ = 63.5;
+    int row_lines_ = 1;
+    static constexpr double kLine = 9.0; ///< one line of the Standard table style's text, with its margins
 };
 
 /// TRIM / EXTEND as AutoCAD has them. Quick mode (TRIMEXTENDMODE 1) takes every object as
@@ -1251,6 +1295,180 @@ private:
     bool fence_open_ = false;       ///< typed Fence: points until Enter (else two picks)
     std::optional<core::Vec2> corner_; ///< Crossing's first corner
     SelectObjectsPhase select_;
+};
+
+/// BREAKLINE (Express Tools): `Specify first point for breakline or [Block/Size/Extension]:`,
+/// the second point and `Specify location for break symbol <Midpoint>:` -- one polyline
+/// along the two points, past each by the extension, with a zigzag break at the location.
+class BreaklineCommand final : public ICommand {
+public:
+    std::string name() const override { return "BREAKLINE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { First, Second, Location, Size, Extension };
+    void first_prompt(CommandContext& ctx);
+    void make(CommandContext& ctx, core::Vec2 at);
+    Step step_ = Step::First;
+    core::Vec2 p1_{};
+    core::Vec2 p2_{};
+    bool done_ = false;
+    static inline double s_size_ = 1.0;
+    static inline double s_extension_ = 1.25;
+};
+
+/// FIND: the Find and Replace window; without one, `Enter the text to find:`, `Enter the
+/// replacement text, or Enter to find only:`, `Match case [Yes/No] <No>:`, `Find whole words
+/// only [Yes/No] <No>:` and, with objects selected, `Find where [Selection/Entire drawing]`.
+class FindCommand final : public ICommand {
+public:
+    std::string name() const override { return "FIND"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::What || step_ == Step::With; }
+
+private:
+    enum class Step : std::uint8_t { What, With, Case, Whole, Where };
+    void submit(CommandContext& ctx);
+    Step step_ = Step::What;
+    core::FindTextCommand find_{};
+    bool done_ = false;
+};
+
+/// TCASE (Express Tools): `Enter case [Sentence/Lower/Upper/Title/tOggle] <Upper>:` for the
+/// selected text.
+class TextCaseCommand final : public ICommand {
+public:
+    std::string name() const override { return "TCASE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && selecting_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after_selection(CommandContext& ctx);
+    bool selecting_ = false;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// A hot grip -- a grip clicked rather than dragged: `** STRETCH ** Specify stretch point or
+/// [Base point/Copy/Undo/eXit]:`; Enter or Space cycles STRETCH, MOVE, ROTATE, SCALE and
+/// MIRROR, each about the grip (or the Base point given) on the selection. With Copy each
+/// point makes a copy and the mode goes on until eXit; without, one point ends it.
+class GripModeCommand final : public ICommand {
+public:
+    GripModeCommand(core::EntityHandle h, std::uint32_t index, core::Vec2 pos) : handle_(h), index_(index), base_(pos) {}
+    std::string name() const override { return "GRIP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Mode : std::uint8_t { Stretch, Move, Rotate, Scale, Mirror };
+    void enter(CommandContext& ctx, Mode m);
+    void prompt(CommandContext& ctx);
+    void apply(CommandContext& ctx, core::Vec2 p, std::optional<double> typed);
+    core::EntityHandle handle_;
+    std::uint32_t index_ = 0;
+    core::Vec2 base_{};
+    Mode mode_ = Mode::Stretch;
+    bool copy_ = false;
+    bool asking_base_ = false;
+    bool stretching_ = false; ///< the engine's grip drag is under way
+    int copies_ = 0;
+    bool done_ = false;
+};
+
+/// ADDSELECTED: `Select object:` -- the command that draws that kind of object starts, and
+/// what it draws takes the object's layer, colour, linetype and lineweight.
+class AddSelectedCommand final : public ICommand {
+public:
+    std::string name() const override { return "ADDSELECTED"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    void hover(CommandContext& ctx, std::optional<core::EntityKind> kind) override {
+        if (sub_) {
+            sub_->hover(ctx, kind);
+        }
+    }
+    bool in_selection_phase() const override { return sub_ && !done_ && sub_->in_selection_phase(); }
+    bool selection_removing() const override { return sub_ && sub_->selection_removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    bool wants_freehand() const override { return sub_ && sub_->wants_freehand(); }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+    bool free_text() const override { return sub_ && sub_->free_text(); }
+
+private:
+    void after(CommandContext& ctx);
+    std::unique_ptr<ICommand> sub_;
+    bool done_ = false;
+};
+
+/// LAYWALK: the LayerWalk window (only the layers chosen in it shown; restored on exit).
+class LayerWalkCommand final : public ICommand {
+public:
+    std::string name() const override { return "LAYWALK"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !ctx.view()->layer_walk_dialog()) {
+            ctx.echo("LAYWALK needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// HELP (F1): the command reference opens in the browser.
+class HelpCommand final : public ICommand {
+public:
+    std::string name() const override { return "HELP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// SKETCH: `Specify sketch or [Type/increment/toLerance]:` -- press and drag to sketch; each
+/// stroke is kept as lines, a polyline or a spline (Type), its points at least the
+/// increment apart, until Enter. The whole sketch is one undo step.
+class SketchCommand final : public ICommand {
+public:
+    std::string name() const override { return "SKETCH"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool wants_freehand() const override { return !done_ && step_ == Step::Sketch; }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
+
+private:
+    enum class Step : std::uint8_t { Sketch, Type, Increment, Tolerance };
+    void main_prompt(CommandContext& ctx);
+    Step step_ = Step::Sketch;
+    int strokes_ = 0;
+    bool done_ = false;
+    static inline int s_type_ = 0; ///< SKPOLY: 0 lines, 1 a polyline, 2 a spline
+    static inline double s_increment_ = 1.0;
+    static inline double s_tolerance_ = 0.5;
 };
 
 /// LAYERP: the layer settings back as they were before the last change (at once).
@@ -1731,13 +1949,14 @@ public:
 
 private:
     enum class State {
-        Select, Option, JoinTargets, Vertex, VInsert, VDelete, VMoveFrom, VMoveTo,
+        Select, Option, JoinTargets, Vertex, VInsert, VMoveTo,
+        VBreak,      ///< [Edit vertex] > [Break] / [Straighten]: `[Next/Previous/Go/eXit]`
+        VTangent,    ///< [Edit vertex] > [Tangent]: the direction
         Accept,      ///< a line or arc picked: `Do you want to turn it into one? <Y>`
         MultiSelect, ///< [Multiple]: `Select objects:`
         Fuzz,        ///< [Multiple] > [Join]: the fuzz distance
         WidthVal,    ///< [Width]: one width for every segment
-        VWidthAt,    ///< [Edit vertex] > [Width]: the vertex the segment leaves
-        VWidthStart, ///< ... its starting width
+        VWidthStart, ///< [Edit vertex] > [Width]: the starting width of the segment leaving the X
         VWidthEnd,   ///< ... and its ending width
     };
     double vw_start_ = 0.0;
@@ -1747,7 +1966,7 @@ private:
     void prompt_vertex(CommandContext& ctx) const;
     State state_ = State::Select;
     core::Vec2 pick_{};
-    core::Vec2 vfrom_{};
+    bool straighten_ = false; ///< the vertex editor's Go straightens (else it breaks)
     std::vector<core::Vec2> join_picks_;
     bool done_ = false;
 };
@@ -2141,7 +2360,8 @@ private:
 /// vertical are reported as not supported. The style becomes current.
 class StyleCommand final : public ICommand {
 public:
-    std::string name() const override { return "STYLE"; }
+    explicit StyleCommand(bool dialog = false) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "STYLE" : "-STYLE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -2149,6 +2369,7 @@ public:
 
 private:
     enum class State { Name, Font, Height, Width, Oblique, Backwards, Upside, Vertical };
+    bool dialog_;
     State state_ = State::Name;
     core::TextStyle ts_{};
     bool done_ = false;
@@ -3123,6 +3344,10 @@ private:
 };
 
 /// LEADER: pick the arrow tip, the landing point, then enter the label.
+/// LEADER: `Specify leader start point:`, `Specify next point:`, then `Specify next point or
+/// [Annotation/Format/Undo] <Annotation>:` until Enter; `Enter first line of annotation text
+/// or <options>:` and the next lines until Enter (the options: `[Tolerance/Copy/Block/None/
+/// Mtext]`). Two points make a leader with its text at the second; more, a multileader.
 class LeaderCommand final : public ICommand {
 public:
     std::string name() const override { return "LEADER"; }
@@ -3130,16 +3355,54 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override {
+        return state_ == State::AnnoFirst || state_ == State::AnnoNext || state_ == State::AnnoMtext;
+    }
 
 private:
-    enum class State { Tip, Knee, Content } state_ = State::Tip;
-    core::Vec2 tip_{};
-    core::Vec2 knee_{};
+    enum class State { Start, Next, More, Format, AnnoFirst, AnnoNext, AnnoOption, AnnoMtext };
+    void more_prompt(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    State state_ = State::Start;
+    std::vector<core::Vec2> pts_;
+    std::vector<std::string> lines_;
     bool done_ = false;
+};
+
+/// MLEADER (MLD): `Specify leader arrowhead location or [leader Landing first/Content first/
+/// Options] <Options>:`, the landing, then the text, which sits beside a short horizontal
+/// landing. Options: Maxpoints (`Enter the maximum points for leader line <2>:`), Content
+/// type Mtext or None, Leader type and landing (straight, with a landing).
+class MLeaderCommand final : public ICommand {
+public:
+    std::string name() const override { return "MLEADER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool free_text() const override { return state_ == State::Text; }
+
+private:
+    enum class Order : std::uint8_t { Arrow, Landing, Content };
+    enum class State : std::uint8_t { First, Next, Landing, Arrow, Text, Options, MaxPoints, ContentType, LeaderType, UseLanding };
+    void first_prompt(CommandContext& ctx);
+    void after_points(CommandContext& ctx);
+    void finish(CommandContext& ctx, const std::string& text);
+    State state_ = State::First;
+    Order order_ = Order::Arrow;
+    std::vector<core::Vec2> pts_; ///< arrowhead first, the landing last
+    std::optional<core::Vec2> text_at_;
+    std::string text_;
+    bool done_ = false;
+    static inline int s_max_points_ = 2;
+    static inline bool s_content_ = true;
+    static inline bool s_landing_ = true;
 };
 
 /// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph
 /// text. Wraps within the defined width across multiple lines.
+/// `Specify opposite corner or [Height/Justify/Line spacing/Rotation/Style/Width/Columns]:`
+/// -- each option asked, then the corner again; the text height from the current style.
 class MTextCommand final : public ICommand {
 public:
     std::string name() const override { return "MTEXT"; }
@@ -3147,12 +3410,21 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override { return !done_ && state_ == State::Content; }
 
 private:
-    enum class State { First, Second, Content } state_ = State::First;
+    enum class State { First, Second, Content, Height, Justify, SpacingType, Spacing, Rotation, Style, Width, Columns };
+    void corner_prompt(CommandContext& ctx);
+    void place(CommandContext& ctx, core::Vec2 other);
+    State state_ = State::First;
     core::Vec2 c1_{};
     core::Vec2 pos_{};
     double width_ = 0.0;
+    double height_ = 0.0;
+    double rotation_ = 0.0;
+    double spacing_ = 1.0;
+    std::uint8_t attach_ = 0;
+    std::string font_;
     bool done_ = false;
 };
 
@@ -3165,6 +3437,7 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override { return !done_ && state_ == State::Content; }
 
 private:
     enum class State { Arrow, Vertices, Content } state_ = State::Arrow;

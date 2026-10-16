@@ -103,9 +103,15 @@ public:
     bool set_selection_setting(const std::string& name, int value) override;
     bool quick_select_dialog(bool filter) override;
     bool purge_dialog() override;
+    bool find_dialog() override;
+    bool layer_walk_dialog() override;
+    bool text_style_dialog() override;
     bool units_dialog() override;
     void set_quick_select_callback(std::function<void(bool)> cb) { quick_select_callback_ = std::move(cb); }
     void set_purge_dialog_callback(std::function<void()> cb) { purge_dialog_callback_ = std::move(cb); }
+    void set_find_dialog_callback(std::function<void()> cb) { find_dialog_callback_ = std::move(cb); }
+    void set_layer_walk_callback(std::function<void()> cb) { layer_walk_callback_ = std::move(cb); }
+    void set_text_style_callback(std::function<void()> cb) { text_style_callback_ = std::move(cb); }
     void set_units_dialog_callback(std::function<void()> cb) { units_dialog_callback_ = std::move(cb); }
     bool quickcalc_dialog() override;
     bool dwgprops_dialog() override;
@@ -157,6 +163,7 @@ public:
     [[nodiscard]] std::uint32_t snap_mask() const override;
     void set_snap_mask(std::uint32_t mask) override;
     void osnap_settings_dialog() override;
+    bool open_help() override;
     void snap_override_changed() override;
     void set_polar_mode(bool on) override;
     void set_otrack_mode(bool on) override;
@@ -734,6 +741,9 @@ private:
     bool object_isolation_ = false;
     std::function<void(bool)> quick_select_callback_;
     std::function<void()> purge_dialog_callback_;
+    std::function<void()> find_dialog_callback_;
+    std::function<void()> layer_walk_callback_;
+    std::function<void()> text_style_callback_;
     std::function<void()> units_dialog_callback_;
     std::function<void()> quickcalc_callback_;
     std::function<void()> dwgprops_callback_;
@@ -823,6 +833,9 @@ private:
     double live_value_ = 0.0;
     int live_kind_ = 0;
     core::Vec2 grip_origin_{};
+    core::Vec2 grip_press_screen_{};  ///< where the grip was pressed: a release there makes it hot
+    core::GripInfo grip_pressed_{};   ///< the grip pressed
+    core::Vec2 last_hot_grip_target_{}; ///< the last position streamed to a hot grip
 
     // Published layer table + current layer (for the Layer Manager / ribbon combo).
     mutable std::mutex layers_mutex_;

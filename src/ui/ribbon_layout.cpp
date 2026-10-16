@@ -729,8 +729,9 @@ void MainWindow::build_ribbon() {
     dims->set_dialog_launcher(QStringLiteral("Dimension Style"), [this] { open_dimstyle_dialog(); });
     RibbonPanel* leaders = ribbon_->add_panel(annotate, QStringLiteral("Leaders"), 40);
     leaders->set_representative_icon(asset("leader"));
-    large_split(leaders, QStringLiteral("Leader"), "LE",
-                menu_of({action("LE", QStringLiteral("Quick Leader")), action("LEADER", QStringLiteral("Leader"))}));
+    large_split(leaders, QStringLiteral("Multileader"), "MLEADER",
+                menu_of({action("MLEADER", QStringLiteral("Multileader")), action("LE", QStringLiteral("Quick Leader")),
+                         action("LEADER", QStringLiteral("Leader"))}));
     RibbonPanel* tables = ribbon_->add_panel(annotate, QStringLiteral("Tables"), 30);
     tables->set_representative_icon(asset("table"));
     large(tables, QStringLiteral("Table"), "TB");
