@@ -8,8 +8,13 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QSignalBlocker>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QRegularExpression>
@@ -42,6 +47,8 @@ enum Col {
     kColCount
 };
 
+constexpr int kBuiltInFilters = 8; // All ... Unlocked; the group filters follow
+
 // A small set of standard lineweights, in hundredths of a millimetre.
 const std::vector<int>& lineweights() {
     static const std::vector<int> v{0, 9, 13, 18, 25, 30, 50, 70, 100, 200};
@@ -50,9 +57,11 @@ const std::vector<int>& lineweights() {
 } // namespace
 
 LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit, QWidget* parent,
-                         VpFrozenGetter vp_frozen, UsedGetter used)
+                         VpFrozenGetter vp_frozen, UsedGetter used, FiltersGetter filters,
+                         LinetypesGetter linetypes)
     : QDialog(parent), layers_(std::move(layers)), current_(std::move(current)),
-      submit_(std::move(submit)), vp_frozen_(std::move(vp_frozen)), used_(std::move(used)) {
+      submit_(std::move(submit)), vp_frozen_(std::move(vp_frozen)), used_(std::move(used)),
+      filters_(std::move(filters)), linetypes_(std::move(linetypes)) {
     setWindowTitle(QStringLiteral("Layer Properties Manager"));
     setModal(false);
     resize(640, 320);
@@ -80,6 +89,21 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
     invert_ = new QCheckBox(QStringLiteral("Invert filter"), this);
     invert_->setObjectName(QStringLiteral("LayerFilterInvert"));
     toolbar->addWidget(invert_);
+    // Group filters of the drawing's own: the selected layers, named, shown together.
+    auto* new_filter = new QPushButton(QStringLiteral("New Group Filter"), this);
+    new_filter->setObjectName(QStringLiteral("LayerNewGroupFilter"));
+    new_filter->setToolTip(QStringLiteral("A filter of the selected layers, kept in the drawing."));
+    auto* new_pfilter = new QPushButton(QStringLiteral("New Property Filter"), this);
+    new_pfilter->setObjectName(QStringLiteral("LayerNewPropertyFilter"));
+    new_pfilter->setToolTip(QStringLiteral("A filter of the layers with a name and settings, kept in the drawing."));
+    toolbar->addWidget(new_pfilter);
+    connect(new_pfilter, &QPushButton::clicked, this, [this] { new_property_filter(); });
+    auto* del_filter = new QPushButton(QStringLiteral("Delete Filter"), this);
+    del_filter->setObjectName(QStringLiteral("LayerDeleteFilter"));
+    toolbar->addWidget(new_filter);
+    toolbar->addWidget(del_filter);
+    connect(new_filter, &QPushButton::clicked, this, [this] { new_group_filter(); });
+    connect(del_filter, &QPushButton::clicked, this, [this] { delete_group_filter(); });
     connect(filter_, &QComboBox::currentIndexChanged, this, [this] { apply_filter(); });
     connect(invert_, &QCheckBox::toggled, this, [this] { apply_filter(); });
     search_ = new QLineEdit(this);
@@ -132,6 +156,7 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
     });
 
     rebuild_table(layers_(), current_(), vp_frozen_ ? vp_frozen_() : std::nullopt);
+    refill_filters();
 
     // Track external changes (commands take effect asynchronously via the engine).
     auto* timer = new QTimer(this);
@@ -140,6 +165,160 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 }
 
 int LayerDialog::row_count() const { return table_->rowCount(); }
+
+void LayerDialog::refill_filters() {
+    const std::vector<core::LayerGroupFilter> now = filters_ ? filters_() : std::vector<core::LayerGroupFilter>{};
+    if (now == shown_filters_) {
+        return;
+    }
+    const QString keep = filter_->currentText();
+    const QSignalBlocker block(filter_);
+    while (filter_->count() > kBuiltInFilters) {
+        filter_->removeItem(filter_->count() - 1);
+    }
+    for (const core::LayerGroupFilter& f : now) {
+        filter_->addItem(QString::fromStdString(f.name));
+    }
+    shown_filters_ = now;
+    const int at = filter_->findText(keep);
+    filter_->setCurrentIndex(at >= 0 ? at : 0);
+    apply_filter();
+}
+
+void LayerDialog::new_group_filter() {
+    // The layers of the selected rows (or the current one).
+    std::vector<std::string> members;
+    std::vector<int> rows;
+    for (const QModelIndex& ix : table_->selectionModel()->selectedIndexes()) {
+        if (std::find(rows.begin(), rows.end(), ix.row()) == rows.end()) {
+            rows.push_back(ix.row());
+        }
+    }
+    if (rows.empty() && table_->currentRow() >= 0) {
+        rows.push_back(table_->currentRow());
+    }
+    std::sort(rows.begin(), rows.end());
+    for (const int r : rows) {
+        if (r >= 0 && static_cast<std::size_t>(r) < shown_.size()) {
+            members.push_back(shown_[static_cast<std::size_t>(r)].name);
+        }
+    }
+    if (members.empty()) {
+        QMessageBox::information(this, QStringLiteral("New Group Filter"),
+                                 QStringLiteral("Select the layers the filter is to show."));
+        return;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, QStringLiteral("New Group Filter"), QStringLiteral("Filter name:"),
+                                               QLineEdit::Normal,
+                                               QStringLiteral("Group Filter%1").arg(shown_filters_.size() + 1), &ok)
+                             .trimmed();
+    if (!ok || name.isEmpty()) {
+        return;
+    }
+    std::vector<core::LayerGroupFilter> next = shown_filters_;
+    const auto same = std::find_if(next.begin(), next.end(), [&](const core::LayerGroupFilter& f) {
+        return QString::fromStdString(f.name).compare(name, Qt::CaseInsensitive) == 0;
+    });
+    if (same != next.end()) {
+        same->layers = members; // the same name: its layers replaced
+    } else {
+        next.push_back(core::LayerGroupFilter{name.toStdString(), members});
+    }
+    submit_(core::SetLayerFiltersCommand{next});
+    shown_filters_ = next;
+    {
+        const QSignalBlocker block(filter_);
+        while (filter_->count() > kBuiltInFilters) {
+            filter_->removeItem(filter_->count() - 1);
+        }
+        for (const core::LayerGroupFilter& f : next) {
+            filter_->addItem(QString::fromStdString(f.name));
+        }
+        filter_->setCurrentText(name);
+    }
+    apply_filter();
+}
+
+void LayerDialog::new_property_filter() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Layer Filter Properties"));
+    auto* form = new QFormLayout(&dlg);
+    auto* name = new QLineEdit(QStringLiteral("Properties Filter%1").arg(shown_filters_.size() + 1), &dlg);
+    auto* pattern = new QLineEdit(&dlg);
+    pattern->setPlaceholderText(QStringLiteral("e.g. A-* (empty: any)"));
+    const auto tri = [&dlg](const QString& yes, const QString& no) {
+        auto* c = new QComboBox(&dlg);
+        c->addItems({QStringLiteral("Any"), yes, no});
+        return c;
+    };
+    QComboBox* on = tri(QStringLiteral("On"), QStringLiteral("Off"));
+    QComboBox* frozen = tri(QStringLiteral("Frozen"), QStringLiteral("Thawed"));
+    QComboBox* locked = tri(QStringLiteral("Locked"), QStringLiteral("Unlocked"));
+    QComboBox* plot = tri(QStringLiteral("Plotted"), QStringLiteral("Not plotted"));
+    form->addRow(QStringLiteral("Filter name:"), name);
+    form->addRow(QStringLiteral("Layer name:"), pattern);
+    form->addRow(QStringLiteral("On:"), on);
+    form->addRow(QStringLiteral("Freeze:"), frozen);
+    form->addRow(QStringLiteral("Lock:"), locked);
+    form->addRow(QStringLiteral("Plot:"), plot);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(buttons);
+    if (dlg.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) {
+        return;
+    }
+    core::LayerGroupFilter rule;
+    rule.property = true;
+    rule.name = name->text().trimmed().toStdString();
+    rule.pattern = pattern->text().trimmed().toStdString();
+    rule.on = static_cast<std::uint8_t>(std::max(on->currentIndex(), 0));
+    rule.frozen = static_cast<std::uint8_t>(std::max(frozen->currentIndex(), 0));
+    rule.locked = static_cast<std::uint8_t>(std::max(locked->currentIndex(), 0));
+    rule.plot = static_cast<std::uint8_t>(std::max(plot->currentIndex(), 0));
+    std::vector<core::LayerGroupFilter> next = shown_filters_;
+    const auto same = std::find_if(next.begin(), next.end(), [&](const core::LayerGroupFilter& f) {
+        return QString::fromStdString(f.name).compare(QString::fromStdString(rule.name), Qt::CaseInsensitive) == 0;
+    });
+    if (same != next.end()) {
+        *same = rule;
+    } else {
+        next.push_back(rule);
+    }
+    submit_(core::SetLayerFiltersCommand{next});
+    shown_filters_ = next;
+    {
+        const QSignalBlocker block(filter_);
+        while (filter_->count() > kBuiltInFilters) {
+            filter_->removeItem(filter_->count() - 1);
+        }
+        for (const core::LayerGroupFilter& f : next) {
+            filter_->addItem(QString::fromStdString(f.name));
+        }
+        filter_->setCurrentText(QString::fromStdString(rule.name));
+    }
+    apply_filter();
+}
+
+void LayerDialog::delete_group_filter() {
+    const int which = filter_->currentIndex() - kBuiltInFilters;
+    if (which < 0 || static_cast<std::size_t>(which) >= shown_filters_.size()) {
+        QMessageBox::information(this, QStringLiteral("Delete Filter"),
+                                 QStringLiteral("The built-in filters cannot be deleted; pick a group filter."));
+        return;
+    }
+    std::vector<core::LayerGroupFilter> next = shown_filters_;
+    next.erase(next.begin() + which);
+    submit_(core::SetLayerFiltersCommand{next});
+    shown_filters_ = next;
+    {
+        const QSignalBlocker block(filter_);
+        filter_->removeItem(filter_->currentIndex());
+        filter_->setCurrentIndex(0);
+    }
+    apply_filter();
+}
 
 void LayerDialog::apply_filter() {
     const QString f = search_ != nullptr ? search_->text().trimmed() : QString();
@@ -178,6 +357,19 @@ void LayerDialog::apply_filter() {
                 pass = !l.locked;
                 break;
             default:
+                if (which >= kBuiltInFilters && static_cast<std::size_t>(which - kBuiltInFilters) < shown_filters_.size()) {
+                    const core::LayerGroupFilter& g = shown_filters_[static_cast<std::size_t>(which - kBuiltInFilters)];
+                    if (!g.property) {
+                        pass = std::find(g.layers.begin(), g.layers.end(), l.name) != g.layers.end();
+                    } else {
+                        const QString pat = QString::fromStdString(g.pattern);
+                        const QRegularExpression rx(QRegularExpression::wildcardToRegularExpression(pat.isEmpty() ? QStringLiteral("*") : pat),
+                                                    QRegularExpression::CaseInsensitiveOption);
+                        const auto rule = [](std::uint8_t want, bool is) { return want == 0 || (want == 1) == is; };
+                        pass = rx.match(QString::fromStdString(l.name)).hasMatch() && rule(g.on, l.on) &&
+                               rule(g.frozen, l.frozen) && rule(g.locked, l.locked) && rule(g.plot, l.plot);
+                    }
+                }
                 break;
             }
         }
@@ -187,6 +379,7 @@ void LayerDialog::apply_filter() {
 }
 
 void LayerDialog::refresh() {
+    refill_filters(); // another drawing's, or an undo's
     const std::vector<core::Layer> layers = layers_();
     const std::uint16_t cur = current_();
     const std::optional<std::vector<std::uint16_t>> vp = vp_frozen_ ? vp_frozen_() : std::nullopt;
@@ -261,7 +454,12 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
 
         auto* lt = new QComboBox(this);
         lt->addItems({"Continuous", "Dashed", "Center", "Hidden"});
-        lt->setCurrentIndex(static_cast<int>(l.linetype));
+        if (linetypes_) {
+            for (const core::LinetypeDef& d : linetypes_()) { // the drawing's loaded ones, in their order
+                lt->addItem(QString::fromStdString(d.name));
+            }
+        }
+        lt->setCurrentIndex(std::min(static_cast<int>(l.linetype), lt->count() - 1));
         connect(lt, &QComboBox::currentIndexChanged, this, [this, row] {
             if (!building_) {
                 submit_row(row);

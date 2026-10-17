@@ -22,6 +22,7 @@
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 
 namespace musacad::core {
 
@@ -93,6 +94,10 @@ struct DefineBlockCommand {
     std::string name;
     Vec2 base{};
     std::uint64_t group = 0;
+    /// ATTREDEF: the block must exist and the objects must hold attribute definitions; the
+    /// objects go into the definition (no reference is put in their place), and its
+    /// references keep their attribute values by tag.
+    bool attredef = false;
 };
 /// INSERT by block NAME (the command line's form).
 struct InsertBlockCommand {
@@ -320,6 +325,9 @@ struct AddSplineCommand {
     std::uint32_t degree = 3;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    /// The spline's own knots (control points + degree + 1), or empty for the clamped
+    /// uniform ones. An edit that changes the number of control points clears them.
+    std::vector<double> knots = {};
 };
 
 /// VIEW Save: store (or replace) a named view. VIEW Delete: remove one by name.
@@ -901,6 +909,21 @@ struct MirrorSelectionCommand {
     std::uint64_t group = 0;
 };
 
+/// DIMASSOC, DIMDISASSOCIATE and DIMREASSOCIATE (#59). A dimension is associative when the
+/// points it measures follow the objects they are on: MOVE, ROTATE, SCALE, MIRROR (erasing the
+/// source) and grip edits of those objects take the dimension's points along.
+struct DimAssocCommand {
+    enum class Op : std::uint8_t {
+        Variable,     ///< DIMASSOC: whether new dimensions are (2) or not (0, 1)
+        Disassociate, ///< the selected dimensions no longer follow
+        Reassociate,  ///< the selected dimensions follow again
+        HatchVariable, ///< HPASSOC: whether new hatches follow their boundaries (1) or not (0)
+    };
+    Op op = Op::Variable;
+    std::uint8_t value = 2;
+    std::uint64_t group = 0;
+};
+
 /// MIRRTEXT: whether MIRROR reflects text (1) or keeps it readable (0, the default).
 struct SetMirrtextCommand {
     bool mirror_text = false;
@@ -1051,16 +1074,21 @@ struct ArrayRectCommand {
     /// each copy keeps its own orientation. 0 = world-aligned, the usual case.
     double angle = 0.0;
     std::uint64_t group = 0;
+    /// dx and dy one and a half times the selection's width and height (ARRAYRECT's default).
+    bool auto_spacing = false;
 };
 
 /// Polar array of the selection: `count` copies around `center` spanning
-/// `total_angle` (radians); `rotate_items` rotates each copy to match.
+/// `total_angle` (radians); `rotate_items` rotates each copy to match. `rows` rings of
+/// them, each `row_spacing` farther out from the centre than the one before (ROWs).
 struct ArrayPolarCommand {
     Vec2 center;
     int count = 1;
     double total_angle = 0.0;
     bool rotate_items = true;
     std::uint64_t group = 0;
+    int rows = 1;
+    double row_spacing = 0.0;
 };
 
 /// Path array of the selection (AutoCAD ARRAYPATH): distribute `count` items along the
@@ -1082,6 +1110,51 @@ struct ArrayPathCommand {
     Vec2 base;                 ///< the point on the selection that rides the path
     bool has_base = false;     ///< false = use the selection's own anchor
     std::uint64_t group = 0;
+    /// Measure's spacing one and a half times the selection's width (ARRAYPATH's default).
+    bool auto_spacing = false;
+};
+
+/// -HATCHEDIT on the selected hatches: Disassociate (they no longer follow their
+/// boundaries), separate Hatches (each outer loop, with the islands inside it, a hatch of
+/// its own), hatch COlor (ByLayer when `by_layer`), LAyer (`layer`; empty: the current one).
+/// One undo step.
+struct HatchEditCommand {
+    enum class Op : std::uint8_t { Disassociate, Separate, Color, Layer };
+    Op op = Op::Disassociate;
+    Rgb color{};
+    bool by_layer = true;
+    std::string layer{};
+    std::uint64_t group = 0;
+};
+
+/// BLOCKREPLACE: every reference of block `from` (nested ones in other blocks too) made a
+/// reference of block `to`, where it was, at its scale and rotation, its attribute values
+/// kept by tag. One undo step; `from`'s definition stays until PURGE (a purge is not undone,
+/// and the undo step still names it).
+struct ReplaceBlockCommand {
+    std::string from;
+    std::string to;
+    std::uint64_t group = 0;
+};
+
+/// The Layer Properties Manager's group filters, as they now are (New Group Filter, Delete).
+struct SetLayerFiltersCommand {
+    std::vector<LayerGroupFilter> filters;
+};
+
+/// A hatch pattern found in a .pat file, brought into the drawing so its hatches draw with
+/// it and keep it (as AutoCAD keeps the pattern with the hatch).
+struct AddPatternCommand {
+    hatch::Pattern pattern;
+};
+
+/// The array being set up, drawn at once and again at each change (ARRAYRECT, ARRAYPOLAR,
+/// ARRAYPATH): `type` 1 rectangular, 2 polar, 3 path, with that one's settings; 0 ends it.
+struct ArrayPreviewCommand {
+    std::uint8_t type = 0;
+    ArrayRectCommand rect{};
+    ArrayPolarCommand polar{};
+    ArrayPathCommand path{};
 };
 
 /// Extend the (line) entity nearest `pick` to the nearest boundary edge.
@@ -1294,6 +1367,8 @@ struct AddDimensionCommand {
     std::string inspect_label{};  ///< DIMINSPECT's label (raw)
     std::string inspect_rate{};   ///< and its inspection rate
     std::vector<Vec2> breaks{};   ///< DIMBREAK's breaks (pairs; DimTextParts::breaks)
+    bool unassoc = false;         ///< DimData::unassoc
+    std::uint8_t flip = 0;        ///< DimData::flip
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1359,6 +1434,24 @@ struct GripDragCommand {
     Vec2 pos;                ///< Move/Commit: resolved drag target
     std::uint64_t group = 0; ///< Commit: undo group id
     bool copy = false;       ///< Commit: STRETCH's Copy -- the original stays, the stretched one is new
+    /// Begin: a dimension's text grip dragged as the grip menu's Move with Dim Line (0),
+    /// Move Text Only (2) or Move with Leader (1); -1, as the dimension moves its text.
+    std::int8_t text_move = -1;
+    /// Begin: the grip menus' Lengthen (1) or Radius (2) instead of Stretch (0); see
+    /// edit_for_grip_drag.
+    std::uint8_t variant = 0;
+    /// Begin: the other grips made hot with Shift, moved by the same delta.
+    std::vector<std::pair<EntityHandle, std::uint32_t>> also{};
+};
+
+/// The dimension grip menu's one-step choices on dimension `dim`, its grip at `at`: Flip
+/// Arrow (the arrowhead nearer `at`), Above Dim Line, Center Vertically, Reset Text Position.
+struct DimGripMenuCommand {
+    enum class Op : std::uint8_t { FlipArrow, AboveLine, CenterVertically, ResetText };
+    Op op = Op::FlipArrow;
+    EntityHandle dim{};
+    Vec2 at{};
+    std::uint64_t group = 0;
 };
 
 /// View scale (world units per pixel) for zoom-adaptive curve tessellation. Sent
@@ -1470,6 +1563,8 @@ struct AddMLeaderCommand {
     std::string font{}; ///< label font NAME ("" = stroke "Standard"); resolved to block.font
     DimOverrides overrides = {}; ///< per-leader arrow override (ByStyle unless set)
     DimStyle dim_style = {};      ///< resolved style snapshot for PR display only
+    std::uint8_t leader_flags = 0; ///< MLeaderData::leader_flags
+    std::vector<Vec2> extra_tips = {}; ///< MLEADEREDIT's added leaders, by their arrowheads
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-
@@ -1498,6 +1593,7 @@ struct AddHatchCommand {
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
     Rgb color2{}; ///< GRADIENT: the second colour
+    bool unassoc = false; ///< HatchData::unassoc
 };
 
 /// ATTDEF: an attribute definition. `text` gives the placement, props, font and style
@@ -1528,6 +1624,17 @@ struct RefSetCommand {
 /// working set (in the reference's own frame); otherwise the working set is dropped
 /// and the reference comes back untouched.
 struct RefCloseCommand {
+    bool save = true;
+    std::uint64_t group = 0;
+};
+/// BEDIT / BCLOSE / BSAVE: the Block Editor. Open: the block `name`'s objects laid out at
+/// its own coordinates for editing, everything else hidden. Close: `save` makes what is
+/// shown the block's content (else it is dropped), and the drawing comes back. Save: the
+/// same, and the Block Editor stays open.
+struct BlockEditCommand {
+    enum class Op : std::uint8_t { Open, Close, Save };
+    Op op = Op::Open;
+    std::string name;
     bool save = true;
     std::uint64_t group = 0;
 };
@@ -1785,6 +1892,8 @@ struct SetDataLinkCommand {
     std::string name;
     std::string path;
     bool remove = false;
+    std::string sheet = {}; ///< DataLink::sheet
+    std::string range = {}; ///< DataLink::range
 };
 /// A table from the data link `link`: the file's rows and columns, its top-left corner at
 /// `pos`, in the current table style; linked, so DATALINKUPDATE can read it again.
@@ -1797,6 +1906,26 @@ struct InsertLinkedTableCommand {
 /// DATALINKUPDATE: the linked tables read again from their files (`write`: the tables
 /// written back to them). Which tables: the selection (`selection`), those linked to
 /// `link`, or every linked table (neither).
+/// -LINETYPE Load / Create, the Linetype Manager's Load: the linetypes loaded into the
+/// drawing (one already loaded by a name is replaced -- reloaded).
+struct LoadLinetypesCommand {
+    std::vector<LinetypeDef> defs;
+};
+/// MLEADEREDIT: Begin takes the multileader under `pick`; Add gives it a leader with its
+/// arrowhead at `pick`; Remove takes away its leader under `pick`; End lets it go.
+struct MLeaderEditCommand {
+    enum class Op : std::uint8_t { Begin, Add, Remove, End };
+    Op op = Op::Begin;
+    Vec2 pick{};
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
+/// TABLEEXPORT: the cells of the table under `pick`, written to `path` as CSV.
+struct TableExportCommand {
+    Vec2 pick;
+    double radius = 0.0;
+    std::string path;
+};
 struct DataLinkUpdateCommand {
     bool write = false;
     bool selection = false;
@@ -1807,16 +1936,59 @@ struct DataLinkUpdateCommand {
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
 /// closed boundary of each selected closed polyline (UI never touches the store), and
 /// creates one hatch with the given pattern. Resolved geometry-side, like JOIN.
+/// -HATCH's Origin, LAyer and hatch COlor for the hatches made: the pattern origin (a point,
+/// or a corner of the boundary's extents: 1 bottom-left, 2 bottom-right, 3 top-left, 4
+/// top-right, 5 centre), the layer by name (empty: the current one) and a colour.
+struct HatchExtras {
+    std::optional<Vec2> origin{};
+    std::uint8_t origin_corner = 0;
+    std::string layer{};
+    std::optional<Rgb> color{};
+    /// Advanced: the island style of a picked area -- 0 Normal (islands in islands alternate),
+    /// 1 Outer (only the outermost islands are left out), 2 Ignore (no islands) -- and whether
+    /// the boundary is kept as a polyline (Retain boundary).
+    std::uint8_t island_style = 0;
+    bool retain = false;
+    /// Gap tolerance (HPGAPTOL): ends of the boundary objects this far apart or closer are
+    /// taken as meeting.
+    double gap_tolerance = 0.0;
+    /// Boundary set: 0 every object, 1 the set taken before, 2 the objects selected now
+    /// (taken as the set for this pick and the ones after it).
+    std::uint8_t boundary_set = 0;
+    /// Not separate hatches (HPSEPARATE 0): this pick's area joins the hatch the pick
+    /// before it made, as one hatch.
+    bool merge = false;
+};
 struct HatchFromSelectionCommand {
     std::string pattern_name = "SOLID";
     double pattern_scale = 1.0;
     double pattern_angle = 0.0; ///< radians, CCW
     std::uint64_t group = 0;
     Rgb color2{}; ///< GRADIENT: the second colour
+    HatchExtras extras{};
 };
 
 /// HATCH "Pick internal point" mode: the engine traces the closed boundary enclosing
 /// `point` from the surrounding geometry (+ islands), then creates the hatch.
+/// -HATCH remove Boundaries: the island the object under `pick` makes taken out of the
+/// hatch the last picked area made.
+struct HatchRemoveBoundaryCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
+/// -HATCH draW boundary: a hatch inside boundaries drawn point by point (the first the
+/// outer one, any inside it an island), the boundaries kept as polylines with `retain`.
+struct HatchDrawnCommand {
+    std::vector<std::vector<Vec2>> loops;
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+    Rgb color2{};
+    HatchExtras extras{};
+    bool retain = false;
+};
 struct HatchPickPointCommand {
     Vec2 point;
     std::string pattern_name = "SOLID";
@@ -1824,6 +1996,7 @@ struct HatchPickPointCommand {
     double pattern_angle = 0.0; ///< radians, CCW
     std::uint64_t group = 0;
     Rgb color2{}; ///< GRADIENT: the second colour
+    HatchExtras extras{};
 };
 
 /// WIPEOUT [Frames]: show or hide wipeout boundaries (WIPEOUTFRAME); `plot` false with
@@ -1974,6 +2147,20 @@ struct TableStyleCommand {
     std::string name;
     TableStyle style{};
 };
+/// PAGESETUP's Set Current in a layout: the named page setup becomes the layout's own --
+/// its paper, orientation and plot settings, what the sheet shows and plots on.
+struct SetLayoutPageCommand {
+    std::string setup;
+};
+/// MLEADERSTYLE: Add `style` (a name not in use), Modify the style named `name` to `style`
+/// (Standard keeps its name), make the style named `name` Current, or Delete it (not
+/// Standard or the current one). New multileaders take the current style.
+struct MLeaderStyleCommand {
+    enum class Op : std::uint8_t { Add, Modify, SetCurrent, Delete };
+    Op op = Op::SetCurrent;
+    std::string name;
+    MLeaderStyle style{};
+};
 /// TCOUNT: numbers the selected texts and multiline texts in `sort` order -- by X left to
 /// right, by Y top to bottom, or as they were selected -- from `start` by `step`: the number
 /// replaces the text (Overwrite), goes before or after it with a space (Prefix, Suffix), or
@@ -2107,7 +2294,9 @@ struct SetLayerpModeCommand {
 /// settings as `name` (replacing one of that name), Restore them, Delete one, or Rename
 /// `name` to `to`. Names are matched in any case.
 struct LayerStateCommand {
-    enum class Op : std::uint8_t { List, Save, Restore, Delete, Rename };
+    /// Export: the state `name` written to the .las file `to`; Import: the .las file `to`
+    /// read in as a layer state (one of the same name is replaced).
+    enum class Op : std::uint8_t { List, Save, Restore, Delete, Rename, Import, Export };
     Op op = Op::List;
     std::string name;
     std::string to;
@@ -2125,6 +2314,19 @@ struct LayerToolCommand {
     Op op = Op::Off;
     Vec2 pick{};
     double radius = 0.0;
+    std::uint64_t group = 0;
+};
+/// LAYMRG / LAYDEL: every object on the source layers -- named in `sources`, or the layers
+/// of the objects at `source_picks` -- moved to the target layer (`target`, or the layer of
+/// the object at `target_pick`), or erased when there is no target (LAYDEL). One undo step.
+/// The emptied layers stay for PURGE: taking a layer out would cost UNDO the objects' layers.
+struct LayerMergeCommand {
+    std::vector<std::string> sources;
+    std::vector<Vec2> source_picks;
+    std::string target;
+    std::optional<Vec2> target_pick;
+    bool erase = false; ///< LAYDEL
+    double pick_radius = 0.0;
     std::uint64_t group = 0;
 };
 /// -LAYER: one option on the layers `names` lists (comma separated, `*` and `?` wild
@@ -2225,7 +2427,8 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, SetCurrentPropsCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, SetLayerFiltersCommand,
+                 SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
@@ -2238,7 +2441,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, LoadLinetypesCommand, HatchDrawnCommand, HatchRemoveBoundaryCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

@@ -112,6 +112,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                               std::string(store.dim_inspect_rate(*d))};
         const std::span<const Vec2> brk = store.dim_breaks(*d);
         dc.breaks.assign(brk.begin(), brk.end());
+        dc.unassoc = d->unassoc;
+        dc.flip = d->flip;
         return dc;
     }
     case EntityKind::Leader: {
@@ -145,7 +147,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                  m->props,
                                  std::string(store.font_name(m->text.font)),
                                  m->overrides,
-                                 mst != nullptr ? *mst : DimStyle{}};
+                                 mst != nullptr ? *mst : DimStyle{},
+                                 m->leader_flags,
+                                 std::vector<Vec2>(store.extra_tips_of(*m).begin(), store.extra_tips_of(*m).end())};
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
@@ -162,7 +166,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                hd->pattern_origin,
                                0,
                                hd->props,
-                               hd->color2};
+                               hd->color2,
+                               hd->unassoc};
     }
     // GD&T: capture is authoritative for the overrides and carries a style SNAPSHOT for
     // PR's effective-value display (ignored on recreate) -- exactly AddDimensionCommand.
@@ -240,7 +245,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(h);
         const std::span<const Vec2> cp = store.control_points_of(*sp);
-        return AddSplineCommand{std::vector<Vec2>(cp.begin(), cp.end()), sp->degree, 0, sp->props};
+        const std::span<const double> k = store.knots_of(*sp);
+        return AddSplineCommand{std::vector<Vec2>(cp.begin(), cp.end()), sp->degree, 0, sp->props,
+                                std::vector<double>(k.begin(), k.end())};
     }
     }
     return AddLineCommand{};
@@ -260,7 +267,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_ellipse(c.center, c.major, c.ratio, c.start, c.end,
                                            props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
-                handle = store.add_spline(c.control_points, c.degree, props_of(c.props));
+                handle = store.add_spline(c.control_points, c.degree, props_of(c.props), c.knots);
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -343,6 +350,12 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 if (!c.breaks.empty()) {
                     store.set_dim_breaks(handle, c.breaks);
                 }
+                if (c.unassoc) {
+                    store.set_dim_unassoc(handle, true);
+                }
+                if (c.flip != 0) {
+                    store.set_dim_flip(handle, c.flip);
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -355,12 +368,21 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 b.font = store.add_font(c.font); // label font travels as a name (like MTEXT)
                 handle = store.add_mleader(c.vertices, c.style, b, c.content, props_of(c.props),
                                            c.overrides);
+                if (c.leader_flags != 0) {
+                    store.set_mleader_flags(handle, c.leader_flags);
+                }
+                if (!c.extra_tips.empty()) {
+                    store.set_mleader_extra(handle, c.extra_tips);
+                }
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
                                           props_of(c.props), c.attribs);
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 handle = store.add_hatch(c.loops, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                          c.pattern_origin, props_of(c.props), c.color2);
+                if (c.unassoc) {
+                    store.set_hatch_unassoc(handle, true);
+                }
             } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
                 handle = store.add_fcf(c.cells, c.pos, c.rotation, c.style, props_of(c.props),
                                        c.overrides);
@@ -595,6 +617,10 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
             push(out, v[i], i == 0 ? GripKind::Endpoint : GripKind::Vertex, i);
         }
         push(out, m->text.pos, GripKind::Move, static_cast<std::uint32_t>(v.size())); // text
+        std::uint32_t k = static_cast<std::uint32_t>(v.size()) + 1; // the added leaders' arrowheads
+        for (const Vec2& tip : store.extra_tips_of(*m)) {
+            push(out, tip, GripKind::Endpoint, k++);
+        }
         break;
     }
     case EntityKind::Insert: {
@@ -690,8 +716,38 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
 }
 
 Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint32_t grip_index,
-                           Vec2 newpos) {
+                           Vec2 newpos, int text_move, int variant) {
     Command c = capture_entity(store, h);
+    if (auto* ln = std::get_if<AddLineCommand>(&c); ln != nullptr && variant == 1 && grip_index <= 1) {
+        // Lengthen: the end slides along the line (never past the other end).
+        const Vec2 fixed = grip_index == 0 ? ln->b : ln->a;
+        const Vec2 moving = grip_index == 0 ? ln->a : ln->b;
+        const double len = distance(fixed, moving);
+        if (len > 1e-12) {
+            const Vec2 dir = (moving - fixed) / len;
+            const Vec2 to = fixed + dir * std::max(dot(newpos - fixed, dir), len * 1e-6);
+            (grip_index == 0 ? ln->a : ln->b) = to;
+        }
+        return c;
+    }
+    if (auto* arc = std::get_if<AddArcCommand>(&c); arc != nullptr && variant != 0) {
+        const Vec2 v = newpos - arc->center;
+        if (length_squared(v) <= 1e-24) {
+            return c;
+        }
+        if (variant == 1 && (grip_index == 1 || grip_index == 2)) {
+            // Lengthen: the end goes round the arc's circle to the cursor's angle.
+            (grip_index == 1 ? arc->start_angle : arc->end_angle) = std::atan2(v.y, v.x);
+        } else if (variant == 2 && grip_index == 3) {
+            arc->radius = length(v); // Radius: the centre and the angles stay
+        }
+        return c;
+    }
+    if (auto* dc = std::get_if<AddDimensionCommand>(&c);
+        dc != nullptr && text_move >= 0 && text_move <= 2 && grip_index == DimData::kTextGripIndex) {
+        dc->overrides.text_move = static_cast<std::uint8_t>(text_move);
+        dc->overrides.set(DimOverrides::kTextMove, true);
+    }
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
@@ -1009,6 +1065,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     if (grip_index == n - 1) {
                         x.block.pos = x.block.pos + d; // landing drags the label with it
                     }
+                } else if (grip_index > n && grip_index - n - 1 < x.extra_tips.size()) {
+                    x.extra_tips[grip_index - n - 1] = newpos; // an added leader's arrowhead
                 } else {
                     x.block.pos = newpos; // text grip
                 }

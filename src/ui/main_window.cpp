@@ -33,6 +33,7 @@
 #include <QWindow>
 #include <QCoreApplication>
 #include <QColorDialog>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QDoubleValidator>
 #include <QCheckBox>
@@ -65,6 +66,7 @@
 #include <QMimeData>
 #include <QDateTime>
 #include <QPointer>
+#include <QListView>
 #include <QListWidget>
 #include <QRadioButton>
 #include <QHeaderView>
@@ -104,6 +106,8 @@
 #include "musacad/command/calc.hpp"
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/io/xlsx.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
@@ -327,6 +331,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_alias_editor);
             return true;
         }
+        if (action == "BEDIT") {
+            QTimer::singleShot(0, this, &MainWindow::open_block_editor_dialog);
+            return true;
+        }
+        if (action == "MLEADERSTYLE") {
+            QTimer::singleShot(0, this, &MainWindow::open_mleader_style_dialog);
+            return true;
+        }
         if (action == "CUI") {
             QTimer::singleShot(0, this, &MainWindow::open_cui_dialog);
             return true;
@@ -347,6 +359,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     viewport_->set_field_dialog_callback([this](std::string& code) { return open_field_dialog(code); });
     viewport_->set_tolerance_dialog_callback([this](std::vector<std::string>& cells) { return open_tolerance_dialog(cells); });
+    viewport_->set_choose_dialog_callback(
+        [this](const std::string& title, const std::vector<std::string>& items, std::string& chosen) {
+            if (developer_hook_active()) {
+                return -1; // the self-test types its answers
+            }
+            QStringList list;
+            for (const std::string& s : items) {
+                list << QString::fromStdString(s);
+            }
+            bool ok = false;
+            const QString pick = QInputDialog::getItem(this, QString::fromStdString(title), QString(), list, 0, false, &ok);
+            if (!ok) {
+                return 0;
+            }
+            chosen = pick.toStdString();
+            return 1;
+        });
     viewport_->set_insert_table_callback([this](command::InsertTableSettings& io) { return open_insert_table_dialog(io); });
     viewport_->set_qleader_settings_callback([this](command::QLeaderSettings& io) { return open_qleader_settings(io); });
     viewport_->set_property_dialogs([this](bool& by_layer, core::Rgb& c) { return open_select_color(by_layer, c); },
@@ -448,6 +477,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     build_ribbon();
     build_status_bar();
     build_tool_palettes();
+    ribbon_->set_persist(!developer_hook_active()); // the tabs and panels shown (ribbon right-click)
+    ribbon_->restore_shown();
     init_workspaces();
     if (!developer_hook_active()) {
         apply_user_shortcuts(); // the keyboard shortcuts of the user's own (CUI)
@@ -460,7 +491,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
         processor_->set_selection_kinds(viewport_->selection_kinds());
+        processor_->set_selection_size(viewport_->selection_size());
         processor_->set_named_views(viewport_->named_views());
+        processor_->set_custom_patterns(viewport_->custom_patterns());
+        {
+            // Where HATCH looks for .pat files: the drawing's folder, then the support folder of
+            // Musa CAD's settings (AutoCAD's support file search path).
+            std::vector<std::string> paths;
+            const QString doc = active_doc_path();
+            if (!doc.isEmpty()) {
+                paths.push_back(QFileInfo(doc).absolutePath().toStdString());
+            }
+            paths.push_back((QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
+                             QStringLiteral("/support"))
+                                .toStdString());
+            processor_->set_support_paths(std::move(paths));
+        }
         processor_->set_units(viewport_->units());
         {
             const auto [mode, size] = viewport_->point_display();
@@ -490,8 +536,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
         processor_->set_table_styles(viewport_->table_styles(), viewport_->current_table_style());
+        processor_->set_mleader_styles(viewport_->mleader_styles(), viewport_->current_mleader_style());
         processor_->set_current_props(viewport_->current_props());
         processor_->set_block_names(viewport_->block_names());
+        {
+            std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
+            if (properties_panel_ != nullptr) {
+                std::vector<std::string> names;
+                for (const core::LinetypeDef& d : loaded) {
+                    names.push_back(d.name);
+                }
+                properties_panel_->set_linetype_names(std::move(names));
+            }
+            processor_->set_linetypes(std::move(loaded));
+        }
         processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_purge_candidates(viewport_->purge_candidates());
         processor_->set_ltscales(viewport_->ltscale(), viewport_->current_celtscale(), viewport_->psltscale(),
@@ -705,6 +763,19 @@ void MainWindow::build_contextual_tabs() {
         for (const std::string& name : core::hatch::pattern_choice_list()) {
             combo->addItem(hatch_swatch(name, ink), QString::fromStdString(name)); // each with its swatch
         }
+        // The drop-down is a gallery, as AutoCAD's: the patterns' swatches in a grid, named.
+        auto* gallery = new QListView(combo);
+        gallery->setObjectName(QStringLiteral("ctx.hatch.gallery"));
+        gallery->setViewMode(QListView::IconMode);
+        gallery->setFlow(QListView::LeftToRight);
+        gallery->setWrapping(true);
+        gallery->setResizeMode(QListView::Adjust);
+        gallery->setMovement(QListView::Static);
+        gallery->setIconSize(QSize(32, 32));
+        gallery->setGridSize(QSize(72, 58));
+        gallery->setUniformItemSizes(true);
+        gallery->setMinimumWidth(72 * 5 + 24);
+        combo->setView(gallery);
         combo->setToolTip(QStringLiteral("Hatch pattern (applies to the selected hatch)."));
         connect(combo, &QComboBox::activated, this, [combo, set_prop] {
             PropertyValue v;
@@ -784,7 +855,7 @@ void MainWindow::build_contextual_tabs() {
     // --- Block Editor (single Insert), pale amber accent: the reference's own commands. ---
     const int block_page = ribbon_->add_contextual_tab(
         QStringLiteral("Block Editor"), QColor(225, 180, 110), [](const RibbonSel& s) {
-            return s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
+            return !s.block_editor && s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
         });
     RibbonPanel* bdef = ribbon_->add_panel(block_page, QStringLiteral("Definition"), 100);
     bdef->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
@@ -807,6 +878,32 @@ void MainWindow::build_contextual_tabs() {
     block_cmd(QStringLiteral("Edit\nAttributes"), "EATTEDIT", RibbonTier::Primary);
     block_cmd(QStringLiteral("Manage\nAttributes"), "BATTMAN", RibbonTier::Secondary);
     block_cmd(QStringLiteral("Explode"), "X", RibbonTier::Secondary);
+
+    // --- The Block Editor's own tab while BEDIT is open (AutoCAD's Open/Save and Close). ---
+    const int bedit_page = ribbon_->add_contextual_tab(QStringLiteral("Block Editor"), QColor(225, 180, 110),
+                                                       [](const RibbonSel& s) { return s.block_editor; });
+    RibbonPanel* bopen = ribbon_->add_panel(bedit_page, QStringLiteral("Open/Save"), 100);
+    bopen->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
+    RibbonPanel* bclose = ribbon_->add_panel(bedit_page, QStringLiteral("Close"), 90);
+    bclose->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/refedit.svg")));
+    const auto bedit_cmd = [&](RibbonPanel* panel, const QString& label, const char* alias, const char* name) {
+        const command::CommandInfo* info = processor_->registry().find(alias);
+        QToolButton* b = panel->add_button(
+            ribbon_icon(info != nullptr && !info->icon.empty() ? QString::fromStdString(info->icon)
+                                                               : QStringLiteral("assets/ribbon/refedit.svg")),
+            label, RibbonTier::Primary);
+        b->setObjectName(QStringLiteral("ribbon.bedit.%1").arg(QString::fromUtf8(name)));
+        if (info != nullptr) {
+            b->setToolTip(QString::fromStdString(info->description));
+        }
+        connect(b, &QToolButton::clicked, this, [this, alias] {
+            command_widget_->focus_input();
+            processor_->start_command(alias);
+        });
+    };
+    bedit_cmd(bopen, QStringLiteral("Edit\nBlock"), "BEDIT", "edit");
+    bedit_cmd(bopen, QStringLiteral("Save\nBlock"), "BSAVE", "save");
+    bedit_cmd(bclose, QStringLiteral("Close Block\nEditor"), "BCLOSE", "close");
 }
 
 void MainWindow::sync_ribbon_context() {
@@ -815,18 +912,21 @@ void MainWindow::sync_ribbon_context() {
     }
     const core::SelectionSummary s = viewport_->selection_summary();
     fill_contextual_fields(s);
+    const bool bedit = viewport_->block_editor();
     if (s.count == last_ctx_count_ && s.kind_plus1 == last_ctx_kind1_ &&
-        s.family_plus1 == last_ctx_family1_) {
+        s.family_plus1 == last_ctx_family1_ && bedit == last_ctx_bedit_) {
         return; // selection signature unchanged -- nothing to re-evaluate
     }
     last_ctx_count_ = s.count;
     last_ctx_kind1_ = s.kind_plus1;
     last_ctx_family1_ = s.family_plus1;
+    last_ctx_bedit_ = bedit;
     RibbonSel rs;
     rs.count = s.count;
     rs.mixed = s.mixed;
     rs.kind_plus1 = s.kind_plus1;
     rs.family_plus1 = s.family_plus1;
+    rs.block_editor = bedit;
     ribbon_->update_contextual(rs);
 }
 
@@ -1273,9 +1373,11 @@ void MainWindow::dump_ui() {
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     // The layer combo's list: a click on a state icon switches the layer on or off, freezes
     // or thaws it, locks or unlocks it, in place, the list staying open.
-    if (layer_combo_ != nullptr && watched == layer_combo_->view()->viewport() &&
-        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
-         event->type() == QEvent::MouseButtonDblClick)) {
+    // The mouse first: view() makes the list when there is none yet, and the events of its
+    // making come back through this filter.
+    if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
+         event->type() == QEvent::MouseButtonDblClick) &&
+        layer_combo_ != nullptr && watched == layer_combo_->view()->viewport()) {
         const QPoint pos = static_cast<QMouseEvent*>(event)->position().toPoint();
         const QModelIndex index = layer_combo_->view()->indexAt(pos);
         if (index.isValid()) {
@@ -1564,7 +1666,7 @@ bool MainWindow::selftest_modify() {
     processor_->set_selection_count(viewport_->selection_count());
     command_widget_->debug_set_input(QString());
     command_widget_->focus_input();
-    type("AR");
+    type("-ARRAY"); // the classic prompts: type, rows, columns, the two distances
     type("R");
     type("2");
     type("2");
@@ -1917,6 +2019,13 @@ void MainWindow::sync_style_combos() {
             names.push_back(st.name);
         }
         sync(table_style_combo_, names, viewport_->current_table_style());
+    }
+    if (mleader_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::MLeaderStyle& st : viewport_->mleader_styles()) {
+            names.push_back(st.name);
+        }
+        sync(mleader_style_combo_, names, viewport_->current_mleader_style());
     }
 }
 
@@ -2308,6 +2417,9 @@ void MainWindow::open_quick_select_dialog(bool filter) {
         case 3:
             value->addItems({QStringLiteral("Continuous"), QStringLiteral("Dashed"), QStringLiteral("Center"),
                              QStringLiteral("Hidden")});
+            for (const core::LinetypeDef& d : viewport_->linetypes()) {
+                value->addItem(QString::fromStdString(d.name));
+            }
             break;
         case 9:
             for (const std::string& b : viewport_->block_names()) {
@@ -2946,7 +3058,9 @@ void MainWindow::open_layer_dialog() {
                                 [this] { return viewport_->current_layer(); },
                                 [this](core::Command c) { engine_->submit(std::move(c)); }, this,
                                 [this] { return viewport_->mspace_frozen_layers(); },
-                                [this] { return viewport_->layer_used(); });
+                                [this] { return viewport_->layer_used(); },
+                                [this] { return viewport_->layer_filters(); },
+                                [this] { return viewport_->linetypes(); });
     dlg->setObjectName(QStringLiteral("LayerManager"));
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
     dlg->show();
@@ -3046,7 +3160,11 @@ NamedListDialog make_named_list_dialog(QWidget* parent, const QString& title) {
     return d;
 }
 QString current_name(const NamedListDialog& d) {
-    return d.list->currentItem() != nullptr ? d.list->currentItem()->text() : QString();
+    if (d.list->currentItem() == nullptr) {
+        return {};
+    }
+    const QVariant name = d.list->currentItem()->data(Qt::UserRole); // set where the text says more
+    return name.isValid() ? name.toString() : d.list->currentItem()->text();
 }
 } // namespace
 
@@ -3055,11 +3173,20 @@ void MainWindow::open_view_manager() {
     const auto refill = [this, d] {
         const QString keep = current_name(d);
         d.list->clear();
-        for (const core::NamedView& v : viewport_->named_views()) {
-            d.list->addItem(QString::fromStdString(v.name));
+        // By View category, as the View Manager groups them; the views without one first.
+        std::vector<core::NamedView> views = viewport_->named_views();
+        std::stable_sort(views.begin(), views.end(),
+                         [](const core::NamedView& a, const core::NamedView& b) { return a.category < b.category; });
+        QListWidgetItem* again = nullptr;
+        for (const core::NamedView& v : views) {
+            const QString name = QString::fromStdString(v.name);
+            auto* item = new QListWidgetItem(
+                v.category.empty() ? name : QStringLiteral("%1    (%2)").arg(name, QString::fromStdString(v.category)),
+                d.list);
+            item->setData(Qt::UserRole, name);
+            again = name == keep ? item : again;
         }
-        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
-        d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());
+        d.list->setCurrentItem(again != nullptr ? again : d.list->item(0));
         d.status->setText(d.list->count() == 0 ? QStringLiteral("No saved views: New saves the view on screen.")
                                                : QString());
     };
@@ -3078,19 +3205,53 @@ void MainWindow::open_view_manager() {
         for (const core::NamedView& v : viewport_->named_views()) {
             if (v.name == name) {
                 viewport_->set_view(v.center, v.scale);
+                if (!v.layer_state.empty()) { // its layer snapshot too
+                    engine_->submit(core::LayerStateCommand{core::LayerStateCommand::Op::Restore, v.layer_state, {}});
+                }
             }
         }
     });
     connect(d.list, &QListWidget::itemDoubleClicked, set_current, &QPushButton::click);
     connect(add, &QPushButton::clicked, d.dlg, [this, d, later] {
-        bool ok = false;
-        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New View"), QStringLiteral("View name:"),
-                                                   QLineEdit::Normal, QString(), &ok)
-                                 .trimmed();
+        // New View: the name, and the layers saved with it (AutoCAD's Save layer snapshot).
+        QDialog nv(d.dlg);
+        nv.setWindowTitle(QStringLiteral("New View"));
+        auto* form = new QFormLayout(&nv);
+        auto* name_edit = new QLineEdit(&nv);
+        auto* snapshot = new QCheckBox(QStringLiteral("Save layer snapshot with view"), &nv);
+        snapshot->setChecked(true);
+        auto* category = new QComboBox(&nv);
+        category->setEditable(true);
+        category->addItem(QStringLiteral("<None>"));
+        QStringList seen;
+        for (const core::NamedView& v : viewport_->named_views()) {
+            const QString c = QString::fromStdString(v.category);
+            if (!c.isEmpty() && !seen.contains(c)) {
+                seen << c;
+                category->addItem(c);
+            }
+        }
+        form->addRow(QStringLiteral("View name:"), name_edit);
+        form->addRow(QStringLiteral("View category:"), category);
+        form->addRow(snapshot);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &nv);
+        connect(buttons, &QDialogButtonBox::accepted, &nv, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &nv, &QDialog::reject);
+        form->addRow(buttons);
+        const bool ok = nv.exec() == QDialog::Accepted;
+        const QString name = name_edit->text().trimmed();
         core::Vec2 center;
         double scale = 0.0;
         if (ok && !name.isEmpty() && viewport_->current_view(center, scale)) {
-            engine_->submit(core::SaveNamedViewCommand{core::NamedView{name.toStdString(), center, scale}});
+            core::NamedView v{name.toStdString(), center, scale};
+            if (snapshot->isChecked()) {
+                v.layer_state = "*VIEW|" + v.name;
+            }
+            const QString cat = category->currentText().trimmed();
+            if (!cat.isEmpty() && cat != QStringLiteral("<None>")) {
+                v.category = cat.toStdString();
+            }
+            engine_->submit(core::SaveNamedViewCommand{v});
             later();
         }
     });
@@ -3424,6 +3585,24 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
         grid->addLayout(box, 1, 3 + i);
         datums.emplace_back(value, mc);
     }
+    // The second row (a projected tolerance zone's height and its symbol) and the datum
+    // identifier, each drawn as a row under the frame.
+    auto* extra = new QFormLayout;
+    auto* height = new QLineEdit(&dlg);
+    height->setObjectName(QStringLiteral("ToleranceHeight"));
+    auto* projected = new QToolButton(&dlg);
+    projected->setCheckable(true);
+    projected->setFixedSize(34, 34);
+    projected->setIconSize(QSize(24, 24));
+    projected->setIcon(gdt_icon("\\U+24C5", ink));
+    projected->setToolTip(QStringLiteral("Projected tolerance zone"));
+    auto* datum_id = new QLineEdit(&dlg);
+    datum_id->setObjectName(QStringLiteral("ToleranceDatumId"));
+    datum_id->setMaximumWidth(60);
+    extra->addRow(QStringLiteral("Height:"), height);
+    extra->addRow(QStringLiteral("Projected Tolerance Zone:"), projected);
+    extra->addRow(QStringLiteral("Datum Identifier:"), datum_id);
+    lay->addLayout(extra);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     lay->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -3450,6 +3629,15 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
         if (!v.empty() || !m.empty()) {
             cells.push_back(v + m);
         }
+    }
+    const std::string hv = height->text().trimmed().toStdString();
+    if (!hv.empty() || projected->isChecked()) {
+        cells.push_back("^J"); // the next row
+        cells.push_back(hv + (projected->isChecked() ? (hv.empty() ? "" : " ") + std::string("\\U+24C5") : std::string()));
+    }
+    if (const std::string id = datum_id->text().trimmed().toUpper().toStdString(); !id.empty()) {
+        cells.push_back("^J");
+        cells.push_back("-" + id + "-"); // AutoCAD's datum identifier
     }
     return 1;
 }
@@ -3790,6 +3978,29 @@ void MainWindow::open_table_style_dialog() {
         form->addRow(QStringLiteral("Data text height:"), data_h);
         form->addRow(QStringLiteral("Cell margin (x text height):"), margin);
         form->addRow(QStringLiteral("Lineweight:"), lw);
+        // The border and text colours: ByLayer, or one picked in the Select Color window.
+        core::ElementColor line_c = st.line_color;
+        core::ElementColor text_c = st.text_color;
+        const auto color_button = [this, &dlg](core::ElementColor& ec) {
+            auto* b = new QPushButton(&dlg);
+            const auto show = [b, &ec] {
+                b->setText(ec.by_layer ? QStringLiteral("ByLayer")
+                                       : QStringLiteral("RGB %1,%2,%3").arg(ec.color.r).arg(ec.color.g).arg(ec.color.b));
+            };
+            show();
+            connect(b, &QPushButton::clicked, &dlg, [this, &ec, show] {
+                bool by_layer = ec.by_layer;
+                core::Rgb c = ec.color;
+                if (open_select_color(by_layer, c) == 1) {
+                    ec.by_layer = by_layer;
+                    ec.color = c;
+                    show();
+                }
+            });
+            return b;
+        };
+        form->addRow(QStringLiteral("Grid color:"), color_button(line_c));
+        form->addRow(QStringLiteral("Text color:"), color_button(text_c));
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
         connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -3797,6 +4008,8 @@ void MainWindow::open_table_style_dialog() {
         if (dlg.exec() != QDialog::Accepted) {
             return false;
         }
+        st.line_color = line_c;
+        st.text_color = text_c;
         st.title_height = title_h->value();
         st.header_height = header_h->value();
         st.data_height = data_h->value();
@@ -3855,6 +4068,177 @@ void MainWindow::open_table_style_dialog() {
         const QString name = current_name(d);
         if (!name.isEmpty()) {
             engine_->submit(core::TableStyleCommand{Op::Delete, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+// BEDIT: the Edit Block Definition window -- the drawing's blocks; OK opens the Block
+// Editor on the one picked.
+void MainWindow::open_block_editor_dialog() {
+    QStringList names;
+    for (const std::string& n : viewport_->block_names()) {
+        if (!n.empty() && n.front() != '*') {
+            names << QString::fromStdString(n);
+        }
+    }
+    if (names.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Edit Block Definition"), QStringLiteral("The drawing has no blocks."));
+        return;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, QStringLiteral("Edit Block Definition"),
+                                               QStringLiteral("Block to edit:"), names, 0, false, &ok);
+    if (ok && !name.isEmpty()) {
+        engine_->submit(core::BlockEditCommand{core::BlockEditCommand::Op::Open, name.toStdString(), true,
+                                               processor_->new_group()});
+        command_widget_->append_line("Block Editor: \"" + name.toStdString() + "\" -- BCLOSE when done.");
+    }
+}
+
+// MLEADERSTYLE: the Multileader Style Manager -- the styles, Set Current, New (from the one
+// picked), Modify and Delete; a style's arrowhead, landing, text and leader points.
+void MainWindow::open_mleader_style_dialog() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Multileader Style Manager"));
+    d.dlg->setObjectName(QStringLiteral("MLeaderStyleDialog"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        const std::vector<core::MLeaderStyle> styles = viewport_->mleader_styles();
+        const std::uint16_t cur = viewport_->current_mleader_style();
+        d.list->clear();
+        for (const core::MLeaderStyle& st : styles) {
+            d.list->addItem(QString::fromStdString(st.name));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(cur < styles.size() ? cur : 0) : found.front());
+        d.status->setText(cur < styles.size()
+                              ? QStringLiteral("Current multileader style: %1").arg(QString::fromStdString(styles[cur].name))
+                              : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    const auto style_named = [this](const QString& name) {
+        for (const core::MLeaderStyle& st : viewport_->mleader_styles()) {
+            if (QString::fromStdString(st.name) == name) {
+                return st;
+            }
+        }
+        return core::MLeaderStyle{};
+    };
+    // AutoCAD's three tabs in one form: Leader Format (the arrowhead), Leader Structure
+    // (the points and the landing) and Content (the text and its gap).
+    const auto edit = [](QWidget* parent, const QString& title, core::MLeaderStyle& st) {
+        QDialog dlg(parent);
+        dlg.setWindowTitle(title);
+        auto* form = new QFormLayout(&dlg);
+        const auto spin = [&](double v, double lo, double hi) {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setDecimals(4);
+            s->setRange(lo, hi);
+            s->setValue(v);
+            return s;
+        };
+        auto* arrow = new QComboBox(&dlg);
+        arrow->addItems({QStringLiteral("Closed filled"), QStringLiteral("Architectural tick"), QStringLiteral("Open"),
+                         QStringLiteral("Dot")});
+        arrow->setCurrentIndex(std::min<int>(st.arrow, 3));
+        QDoubleSpinBox* arrow_size = spin(st.arrow_size, 0.0001, 1e6);
+        auto* leader_type = new QComboBox(&dlg);
+        leader_type->addItems({QStringLiteral("Straight"), QStringLiteral("Spline"), QStringLiteral("None")});
+        leader_type->setCurrentIndex(std::min<int>(st.leader_type, 2));
+        auto* max_points = new QSpinBox(&dlg);
+        max_points->setRange(0, 99);
+        max_points->setSpecialValueText(QStringLiteral("No limit"));
+        max_points->setValue(st.max_points);
+        auto* landing = new QCheckBox(QStringLiteral("Automatically include landing"), &dlg);
+        landing->setChecked(st.landing);
+        QDoubleSpinBox* landing_distance = spin(st.landing_distance, 0.0, 1e6);
+        auto* content = new QComboBox(&dlg);
+        content->addItems({QStringLiteral("Mtext"), QStringLiteral("None")});
+        content->setCurrentIndex(st.text ? 0 : 1);
+        QDoubleSpinBox* text_height = spin(st.text_height, 0.0001, 1e6);
+        QDoubleSpinBox* gap = spin(st.landing_gap, 0.0, 1e6);
+        form->addRow(QStringLiteral("Leader type:"), leader_type);
+        form->addRow(QStringLiteral("Arrowhead symbol:"), arrow);
+        form->addRow(QStringLiteral("Arrowhead size:"), arrow_size);
+        form->addRow(QStringLiteral("Maximum leader points:"), max_points);
+        form->addRow(landing);
+        form->addRow(QStringLiteral("Landing distance:"), landing_distance);
+        form->addRow(QStringLiteral("Multileader type:"), content);
+        form->addRow(QStringLiteral("Text height:"), text_height);
+        form->addRow(QStringLiteral("Landing gap:"), gap);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(buttons);
+        if (dlg.exec() != QDialog::Accepted) {
+            return false;
+        }
+        st.arrow = static_cast<std::uint8_t>(std::max(0, arrow->currentIndex()));
+        st.leader_type = static_cast<std::uint8_t>(std::max(0, leader_type->currentIndex()));
+        st.arrow_size = arrow_size->value();
+        st.max_points = static_cast<std::uint8_t>(max_points->value());
+        st.landing = landing->isChecked();
+        st.landing_distance = landing_distance->value();
+        st.text = content->currentIndex() == 0;
+        st.text_height = text_height->value();
+        st.landing_gap = gap->value();
+        return true;
+    };
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* modify = new QPushButton(QStringLiteral("Modify..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, modify, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    using Op = core::MLeaderStyleCommand::Op;
+    connect(set_current, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::MLeaderStyleCommand{Op::SetCurrent, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(add, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        bool ok = false;
+        const QString base = current_name(d);
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("Create New Multileader Style"),
+                                                   QStringLiteral("New style name (starting from %1):").arg(base),
+                                                   QLineEdit::Normal, QStringLiteral("Copy of %1").arg(base), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        core::MLeaderStyle st = style_named(base);
+        st.name = name.toStdString();
+        if (edit(d.dlg, QStringLiteral("New Multileader Style: %1").arg(name), st)) {
+            engine_->submit(core::MLeaderStyleCommand{Op::Add, {}, st});
+            later();
+        }
+    });
+    connect(modify, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        core::MLeaderStyle st = style_named(name);
+        if (edit(d.dlg, QStringLiteral("Modify Multileader Style: %1").arg(name), st)) {
+            engine_->submit(core::MLeaderStyleCommand{Op::Modify, name.toStdString(), st});
+            later();
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, modify, &QPushButton::click);
+    connect(remove, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::MLeaderStyleCommand{Op::Delete, name.toStdString(), {}});
             later();
         }
     });
@@ -4012,34 +4396,53 @@ int MainWindow::open_lineweight_settings(bool& by_layer, std::uint8_t& lw) {
 }
 
 void MainWindow::open_linetype_manager() {
-    // AutoCAD's Linetype Manager, over the linetypes Musa CAD has: Current, and the global and
-    // current object linetype scales; Load says what can be loaded.
-    static constexpr const char* kNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
+    // AutoCAD's Linetype Manager: the linetypes in the drawing (the built-in four and those
+    // loaded), Load... from a .lin file or Musa CAD's own, Current, and the global and current
+    // object linetype scales.
     static constexpr const char* kLooks[4] = {"Solid line", "__ __ __ __ __", "____ _ ____ _ ____", "_ _ _ _ _ _"};
     auto* dlg = new QDialog(this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setObjectName(QStringLiteral("LinetypeManager"));
     dlg->setWindowTitle(QStringLiteral("Linetype Manager"));
     auto* outer = new QVBoxLayout(dlg);
-    auto* table = new QTableWidget(5, 2, dlg);
+    auto* table = new QTableWidget(0, 2, dlg);
     table->setHorizontalHeaderLabels({QStringLiteral("Linetype"), QStringLiteral("Appearance / Description")});
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setSelectionMode(QAbstractItemView::SingleSelection);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->verticalHeader()->setVisible(false);
     table->horizontalHeader()->setStretchLastSection(true);
-    table->setItem(0, 0, new QTableWidgetItem(QStringLiteral("ByLayer")));
-    table->setItem(0, 1, new QTableWidgetItem(QString()));
-    for (int i = 0; i < 4; ++i) {
-        table->setItem(i + 1, 0, new QTableWidgetItem(QString::fromLatin1(kNames[i])));
-        table->setItem(i + 1, 1, new QTableWidgetItem(QString::fromLatin1(kLooks[i])));
-    }
+    const auto name_of = [this](core::Linetype lt) {
+        const auto v = static_cast<std::size_t>(lt);
+        if (v < core::kFirstLoadedLinetype) {
+            return QString::fromLatin1(core::builtin_linetype_name(lt));
+        }
+        const std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
+        return v - core::kFirstLoadedLinetype < loaded.size()
+                   ? QString::fromStdString(loaded[v - core::kFirstLoadedLinetype].name)
+                   : QStringLiteral("Continuous");
+    };
+    const auto refill = [this, table] {
+        const std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
+        table->setRowCount(static_cast<int>(5 + loaded.size()));
+        table->setItem(0, 0, new QTableWidgetItem(QStringLiteral("ByLayer")));
+        table->setItem(0, 1, new QTableWidgetItem(QString()));
+        for (int i = 0; i < 4; ++i) {
+            table->setItem(i + 1, 0,
+                           new QTableWidgetItem(QString::fromLatin1(core::builtin_linetype_name(static_cast<core::Linetype>(i)))));
+            table->setItem(i + 1, 1, new QTableWidgetItem(QString::fromLatin1(kLooks[i])));
+        }
+        for (std::size_t k = 0; k < loaded.size(); ++k) {
+            table->setItem(static_cast<int>(5 + k), 0, new QTableWidgetItem(QString::fromStdString(loaded[k].name)));
+            table->setItem(static_cast<int>(5 + k), 1, new QTableWidgetItem(QString::fromStdString(loaded[k].description)));
+        }
+    };
+    refill();
     auto* current = new QLabel(dlg);
-    const auto show_current = [this, current] {
+    const auto show_current = [this, current, name_of] {
         const core::EntityProps p = viewport_->current_props();
         current->setText(QStringLiteral("Current Linetype: %1")
-                             .arg(p.linetype_by_layer() ? QStringLiteral("ByLayer")
-                                                        : QString::fromLatin1(kNames[static_cast<int>(p.linetype) & 3])));
+                             .arg(p.linetype_by_layer() ? QStringLiteral("ByLayer") : name_of(p.linetype)));
     };
     show_current();
     auto* buttons_row = new QHBoxLayout;
@@ -4063,10 +4466,75 @@ void MainWindow::open_linetype_manager() {
     df->addRow(QStringLiteral("Global scale factor:"), global);
     df->addRow(QStringLiteral("Current object scale:"), object);
     outer->addWidget(details);
-    connect(load, &QPushButton::clicked, dlg, [dlg] {
-        QMessageBox::information(dlg, QStringLiteral("Load Linetypes"),
-                                 QStringLiteral("Continuous, Dashed, Center and Hidden are loaded. Loading other "
-                                                "linetypes from a .lin file is not available yet."));
+    connect(load, &QPushButton::clicked, dlg, [this, dlg, refill] {
+        // Load or Reload Linetypes: a .lin file's linetypes (Musa CAD's own until File...
+        // picks one), ticked ones loaded -- one already in the drawing reloaded.
+        QDialog pick(dlg);
+        pick.setWindowTitle(QStringLiteral("Load or Reload Linetypes"));
+        auto* lay = new QVBoxLayout(&pick);
+        auto* file_row = new QHBoxLayout;
+        auto* file_btn = new QPushButton(QStringLiteral("File..."), &pick);
+        auto* file_name = new QLabel(QStringLiteral("musacad.lin (Musa CAD's own)"), &pick);
+        file_row->addWidget(file_btn);
+        file_row->addWidget(file_name, 1);
+        lay->addLayout(file_row);
+        auto* avail = new QTableWidget(0, 2, &pick);
+        avail->setHorizontalHeaderLabels({QStringLiteral("Linetype"), QStringLiteral("Description")});
+        avail->setSelectionBehavior(QAbstractItemView::SelectRows);
+        avail->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        avail->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        avail->verticalHeader()->setVisible(false);
+        avail->horizontalHeader()->setStretchLastSection(true);
+        lay->addWidget(avail, 1);
+        auto defs = std::make_shared<std::vector<core::LinetypeDef>>(core::linetype_library());
+        const auto list = [avail, defs] {
+            avail->setRowCount(static_cast<int>(defs->size()));
+            for (std::size_t k = 0; k < defs->size(); ++k) {
+                avail->setItem(static_cast<int>(k), 0, new QTableWidgetItem(QString::fromStdString((*defs)[k].name)));
+                avail->setItem(static_cast<int>(k), 1,
+                               new QTableWidgetItem(QString::fromStdString((*defs)[k].description)));
+            }
+        };
+        list();
+        connect(file_btn, &QPushButton::clicked, &pick, [&pick, file_name, defs, list] {
+            const QString path = QFileDialog::getOpenFileName(&pick, QStringLiteral("Select Linetype File"), QString(),
+                                                              QStringLiteral("Linetype files (*.lin);;All files (*)"));
+            if (path.isEmpty()) {
+                return;
+            }
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) {
+                return;
+            }
+            *defs = core::parse_lin(f.readAll().toStdString());
+            file_name->setText(QFileInfo(path).fileName());
+            list();
+        });
+        auto* ok = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &pick);
+        connect(ok, &QDialogButtonBox::accepted, &pick, &QDialog::accept);
+        connect(ok, &QDialogButtonBox::rejected, &pick, &QDialog::reject);
+        lay->addWidget(ok);
+        pick.resize(520, 420);
+        if (pick.exec() != QDialog::Accepted) {
+            return;
+        }
+        core::LoadLinetypesCommand c;
+        for (const QModelIndex& ix : avail->selectionModel()->selectedRows()) {
+            const auto r = static_cast<std::size_t>(ix.row());
+            const std::string& name = (*defs)[r].name;
+            std::string u = name;
+            for (char& ch : u) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            if (u == "CONTINUOUS" || u == "DASHED" || u == "CENTER" || u == "HIDDEN") {
+                continue; // built in, always loaded
+            }
+            c.defs.push_back((*defs)[r]);
+        }
+        if (!c.defs.empty()) {
+            engine_->submit(std::move(c));
+            QTimer::singleShot(300, dlg, refill);
+        }
     });
     connect(set_current, &QPushButton::clicked, dlg, [this, table, show_current] {
         const int row = table->currentRow();
@@ -4076,7 +4544,7 @@ void MainWindow::open_linetype_manager() {
         core::EntityProps p = viewport_->current_props();
         p.set_linetype_by_layer(row == 0);
         if (row > 0) {
-            p.linetype = static_cast<core::Linetype>(row - 1);
+            p.linetype = static_cast<core::Linetype>(row - 1); // the table's order is the Linetype values'
         }
         engine_->submit(core::SetCurrentPropsCommand{p});
         QTimer::singleShot(250, this, show_current);
@@ -4173,6 +4641,61 @@ int MainWindow::open_qleader_settings(command::QLeaderSettings& io) {
     return 1;
 }
 
+namespace {
+/// The Insert Table window's preview: the table style's look -- a title row across, header
+/// cells, data cells -- at its text heights, in its grid and text colours.
+QPixmap table_preview(const core::TableStyle& st, bool title, bool header, int cols, int rows) {
+    constexpr int kW = 260;
+    constexpr int kH = 170;
+    QPixmap pm(kW, kH);
+    pm.fill(Qt::white);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const auto color = [](const core::ElementColor& c) {
+        return c.by_layer ? QColor(Qt::black) : QColor(c.color.r, c.color.g, c.color.b);
+    };
+    const int nc = std::clamp(cols, 1, 5);
+    const int nr = std::clamp(rows, 1, 6);
+    const auto row_h = [&](double text) { return text * (1.0 + 2.0 * st.margin) * 1.4; };
+    std::vector<std::pair<double, int>> rows_h; // height, kind: 0 title, 1 header, 2 data
+    if (title) {
+        rows_h.emplace_back(row_h(st.title_height), 0);
+    }
+    if (header) {
+        rows_h.emplace_back(row_h(st.header_height), 1);
+    }
+    for (int i = 0; i < nr; ++i) {
+        rows_h.emplace_back(row_h(st.data_height), 2);
+    }
+    double total = 0.0;
+    for (const auto& r : rows_h) {
+        total += r.first;
+    }
+    const double margin = 10.0;
+    const double s = std::min((kH - 2.0 * margin) / std::max(total, 1e-9), 12.0);
+    const double w = kW - 2.0 * margin;
+    p.setPen(QPen(color(st.line_color), 1.0));
+    double y = margin;
+    for (const auto& [h, kind] : rows_h) {
+        const double hh = h * s;
+        const int cells = kind == 0 ? 1 : nc;
+        for (int c = 0; c < cells; ++c) {
+            const QRectF cell(margin + w * c / cells, y, w / cells, hh);
+            p.setPen(QPen(color(st.line_color), 1.0));
+            p.drawRect(cell);
+            QFont f = p.font();
+            f.setPixelSize(std::max(4, static_cast<int>((kind == 0 ? st.title_height : kind == 1 ? st.header_height : st.data_height) * s)));
+            p.setFont(f);
+            p.setPen(color(st.text_color));
+            p.drawText(cell, Qt::AlignCenter,
+                       kind == 0 ? QStringLiteral("Title") : kind == 1 ? QStringLiteral("Header") : QStringLiteral("Data"));
+        }
+        y += hh;
+    }
+    return pm;
+}
+} // namespace
+
 int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     // AutoCAD's Insert Table window: the table style, the columns and rows, and the cell
     // styles of the first two rows; the insertion point is asked for after it.
@@ -4218,6 +4741,18 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     form->addRow(QStringLiteral("Insert options:"), from_empty);
     form->addRow(QString(), from_link);
     form->addRow(QString(), link_row);
+    // Insertion behavior: a point (the table at the sizes set) or a window it fills.
+    auto* at_point = new QRadioButton(QStringLiteral("Specify insertion point"), &dlg);
+    auto* in_window = new QRadioButton(QStringLiteral("Specify window"), &dlg);
+    auto* behavior = new QButtonGroup(&dlg);
+    behavior->addButton(at_point);
+    behavior->addButton(in_window);
+    auto* source = new QButtonGroup(&dlg); // two choices of their own, apart from the behavior
+    source->addButton(from_empty);
+    source->addButton(from_link);
+    (io.window ? in_window : at_point)->setChecked(true);
+    form->addRow(QStringLiteral("Insertion behavior:"), at_point);
+    form->addRow(QString(), in_window);
     auto* cols = new QSpinBox(&dlg);
     cols->setRange(1, 500);
     cols->setValue(io.cols);
@@ -4242,6 +4777,23 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     header->setChecked(io.header);
     form->addRow(title);
     form->addRow(header);
+    // The preview, redrawn as the style and the rows change.
+    auto* preview = new QLabel(&dlg);
+    preview->setObjectName(QStringLiteral("InsertTablePreview"));
+    const std::vector<core::TableStyle> styles = viewport_->table_styles();
+    const auto redraw = [=] {
+        const int i = style->currentIndex();
+        const core::TableStyle st =
+            i >= 0 && static_cast<std::size_t>(i) < styles.size() ? styles[static_cast<std::size_t>(i)] : core::TableStyle{};
+        preview->setPixmap(table_preview(st, title->isChecked(), header->isChecked(), cols->value(), rows->value()));
+    };
+    connect(style, &QComboBox::currentIndexChanged, &dlg, redraw);
+    connect(title, &QCheckBox::toggled, &dlg, redraw);
+    connect(header, &QCheckBox::toggled, &dlg, redraw);
+    connect(cols, &QSpinBox::valueChanged, &dlg, redraw);
+    connect(rows, &QSpinBox::valueChanged, &dlg, redraw);
+    redraw();
+    form->insertRow(1, QStringLiteral("Preview:"), preview);
     const auto sync_link = [=] {
         const bool linked = from_link->isChecked();
         link->setEnabled(linked);
@@ -4266,6 +4818,7 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     io.title = title->isChecked();
     io.header = header->isChecked();
     io.link = from_link->isChecked() ? link->currentText().toStdString() : std::string();
+    io.window = in_window->isChecked();
     return 1;
 }
 
@@ -4278,7 +4831,7 @@ void MainWindow::open_data_link_manager() {
     dlg.setObjectName(QStringLiteral("DataLinkManager"));
     dlg.setWindowTitle(QStringLiteral("Data Link Manager"));
     auto* lay = new QVBoxLayout(&dlg);
-    lay->addWidget(new QLabel(QStringLiteral("CSV links:"), &dlg));
+    lay->addWidget(new QLabel(QStringLiteral("Data links (Excel workbooks and CSV files):"), &dlg));
     auto* list = new QListWidget(&dlg);
     list->setObjectName(QStringLiteral("DataLinkList"));
     lay->addWidget(list, 1);
@@ -4312,26 +4865,73 @@ void MainWindow::open_data_link_manager() {
         }
         return nullptr;
     };
+    const auto describe = [](const core::DataLink& dl) {
+        QString text = QStringLiteral("File: %1").arg(QDir::toNativeSeparators(QString::fromStdString(dl.path)));
+        if (!dl.sheet.empty()) {
+            text += QStringLiteral("\nSheet: %1").arg(QString::fromStdString(dl.sheet));
+        }
+        text += QStringLiteral("\nCells: %1").arg(dl.range.empty() ? QStringLiteral("all") : QString::fromStdString(dl.range));
+        return text;
+    };
     connect(list, &QListWidget::currentRowChanged, &dlg, [&] {
         const core::DataLink* dl = current();
-        detail->setText(dl != nullptr ? QStringLiteral("File: %1").arg(QDir::toNativeSeparators(QString::fromStdString(dl->path)))
-                                      : QString());
+        detail->setText(dl != nullptr ? describe(*dl) : QString());
     });
+    // Link Options, as AutoCAD's New Excel Data Link asks them: the sheet of a workbook, and
+    // the whole sheet or a range of its cells. False when cancelled.
+    const auto link_options = [&dlg](const QString& path, std::string& sheet, std::string& range) {
+        QDialog opt(&dlg);
+        opt.setWindowTitle(QStringLiteral("Link Options"));
+        auto* form = new QFormLayout(&opt);
+        auto* sheets = new QComboBox(&opt);
+        const bool workbook = path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive) ||
+                              path.endsWith(QStringLiteral(".xlsm"), Qt::CaseInsensitive);
+        if (workbook) {
+            for (const std::string& n : core::io::xlsx_sheet_names(path.toStdString())) {
+                sheets->addItem(QString::fromStdString(n));
+            }
+            const int at = sheets->findText(QString::fromStdString(sheet));
+            sheets->setCurrentIndex(at >= 0 ? at : 0);
+            form->addRow(QStringLiteral("Select the Excel sheet to link to:"), sheets);
+        } else {
+            sheets->hide();
+        }
+        auto* whole = new QRadioButton(workbook ? QStringLiteral("Link entire sheet") : QStringLiteral("Link entire file"), &opt);
+        auto* part = new QRadioButton(QStringLiteral("Link to range:"), &opt);
+        auto* cells = new QLineEdit(QString::fromStdString(range), &opt);
+        cells->setPlaceholderText(QStringLiteral("A1:D10"));
+        (range.empty() ? whole : part)->setChecked(true);
+        form->addRow(whole);
+        form->addRow(part, cells);
+        auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &opt);
+        connect(bb, &QDialogButtonBox::accepted, &opt, &QDialog::accept);
+        connect(bb, &QDialogButtonBox::rejected, &opt, &QDialog::reject);
+        form->addRow(bb);
+        if (opt.exec() != QDialog::Accepted) {
+            return false;
+        }
+        sheet = workbook && sheets->currentIndex() > 0 ? sheets->currentText().toStdString() : std::string();
+        range = part->isChecked() ? cells->text().trimmed().toUpper().toStdString() : std::string();
+        return true;
+    };
     const auto pick_file = [&dlg](const QString& start) {
         return QFileDialog::getOpenFileName(&dlg, QStringLiteral("Data File"), start,
-                                            QStringLiteral("CSV files (*.csv);;Text files (*.txt);;All files (*)"));
+                                            QStringLiteral("Data files (*.xlsx *.csv);;Excel workbooks (*.xlsx);;"
+                                                           "CSV files (*.csv);;Text files (*.txt);;All files (*)"));
     };
     auto* row = new QHBoxLayout;
-    auto* add = new QPushButton(QStringLiteral("New CSV Link..."), &dlg);
+    auto* add = new QPushButton(QStringLiteral("New Data Link..."), &dlg);
     auto* change = new QPushButton(QStringLiteral("Change File..."), &dlg);
+    auto* options = new QPushButton(QStringLiteral("Link Options..."), &dlg);
     auto* remove = new QPushButton(QStringLiteral("Delete"), &dlg);
     row->addWidget(add);
     row->addWidget(change);
+    row->addWidget(options);
     row->addWidget(remove);
     lay->addLayout(row);
     connect(add, &QPushButton::clicked, &dlg, [&] {
         bool ok = false;
-        const QString name = QInputDialog::getText(&dlg, QStringLiteral("New CSV Link"), QStringLiteral("Name:"),
+        const QString name = QInputDialog::getText(&dlg, QStringLiteral("New Data Link"), QStringLiteral("Name:"),
                                                    QLineEdit::Normal, QString(), &ok)
                                  .trimmed();
         if (!ok || name.isEmpty()) {
@@ -4339,7 +4939,7 @@ void MainWindow::open_data_link_manager() {
         }
         for (const core::DataLink& dl : pending_data_links_) {
             if (QString::fromStdString(dl.name).compare(name, Qt::CaseInsensitive) == 0) {
-                QMessageBox::information(&dlg, QStringLiteral("New CSV Link"),
+                QMessageBox::information(&dlg, QStringLiteral("New Data Link"),
                                          QStringLiteral("There is a data link named \"%1\" already.").arg(name));
                 return;
             }
@@ -4348,8 +4948,13 @@ void MainWindow::open_data_link_manager() {
         if (path.isEmpty()) {
             return;
         }
-        engine_->submit(core::SetDataLinkCommand{name.toStdString(), path.toStdString(), false});
-        pending_data_links_.push_back(core::DataLink{name.toStdString(), path.toStdString()});
+        std::string sheet;
+        std::string range;
+        if (!link_options(path, sheet, range)) {
+            return;
+        }
+        engine_->submit(core::SetDataLinkCommand{name.toStdString(), path.toStdString(), false, sheet, range});
+        pending_data_links_.push_back(core::DataLink{name.toStdString(), path.toStdString(), sheet, range});
         refill();
         const QList<QListWidgetItem*> found = list->findItems(name, Qt::MatchExactly);
         if (!found.isEmpty()) {
@@ -4365,10 +4970,27 @@ void MainWindow::open_data_link_manager() {
         if (path.isEmpty()) {
             return;
         }
+        std::string sheet = dl->sheet;
+        std::string range = dl->range;
+        if (!link_options(path, sheet, range)) {
+            return;
+        }
         dl->path = path.toStdString();
-        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false});
-        list->setCurrentRow(list->currentRow()); // the file shown again
-        detail->setText(QStringLiteral("File: %1").arg(QDir::toNativeSeparators(path)));
+        dl->sheet = sheet;
+        dl->range = range;
+        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false, dl->sheet, dl->range});
+        detail->setText(describe(*dl));
+    });
+    connect(options, &QPushButton::clicked, &dlg, [&] {
+        core::DataLink* dl = current();
+        if (dl == nullptr) {
+            return;
+        }
+        if (!link_options(QString::fromStdString(dl->path), dl->sheet, dl->range)) {
+            return;
+        }
+        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false, dl->sheet, dl->range});
+        detail->setText(describe(*dl));
     });
     connect(remove, &QPushButton::clicked, &dlg, [&] {
         core::DataLink* dl = current();
@@ -4816,6 +5438,13 @@ void MainWindow::open_page_setup_manager() {
     connect(set_current, &QPushButton::clicked, d.dlg, [this, d, refill] {
         PlotSpec s;
         const std::string name = current_name(d).toStdString();
+        engine_->consume_snapshot();
+        if (!name.empty() && engine_->snapshot().active_space != 0) {
+            // In a layout: the setup becomes the layout's own (its sheet and plot settings).
+            engine_->submit(core::SetLayoutPageCommand{name});
+            QTimer::singleShot(250, d.dlg, refill);
+            return;
+        }
         if (!name.empty() && recall_page_setup(name, s)) {
             last_plot_spec_ = s; // what PLOT starts from in model space
             current_page_setup_ = name;
@@ -4916,7 +5545,9 @@ void MainWindow::open_layer_states_manager() {
         const QString keep = current_name(d);
         d.list->clear();
         for (const std::string& n : viewport_->layer_state_names()) {
-            d.list->addItem(QString::fromStdString(n));
+            if (n.rfind("*VIEW|", 0) != 0) { // a view's layer snapshot belongs to the view
+                d.list->addItem(QString::fromStdString(n));
+            }
         }
         const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
         d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());
@@ -4933,13 +5564,35 @@ void MainWindow::open_layer_states_manager() {
     auto* restore = new QPushButton(QStringLiteral("Restore"), d.dlg);
     auto* rename = new QPushButton(QStringLiteral("Rename..."), d.dlg);
     auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* import_btn = new QPushButton(QStringLiteral("Import..."), d.dlg);
+    auto* export_btn = new QPushButton(QStringLiteral("Export..."), d.dlg);
     auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
-    for (QPushButton* b : {add, restore, rename, remove}) {
+    for (QPushButton* b : {add, restore, rename, remove, import_btn, export_btn}) {
         d.buttons->addWidget(b);
     }
     d.buttons->addStretch(1);
     d.buttons->addWidget(close);
     using Op = core::LayerStateCommand::Op;
+    // AutoCAD's layer state files (.las), one state each.
+    connect(import_btn, &QPushButton::clicked, d.dlg, [d, run] {
+        const QString path = QFileDialog::getOpenFileName(d.dlg, QStringLiteral("Import Layer State"), QString(),
+                                                          QStringLiteral("Layer states (*.las)"));
+        if (!path.isEmpty()) {
+            run(Op::Import, QString(), path);
+        }
+    });
+    connect(export_btn, &QPushButton::clicked, d.dlg, [d, run] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        const QString path = QFileDialog::getSaveFileName(d.dlg, QStringLiteral("Export Layer State"),
+                                                          name + QStringLiteral(".las"),
+                                                          QStringLiteral("Layer states (*.las)"));
+        if (!path.isEmpty()) {
+            run(Op::Export, name, path);
+        }
+    });
     connect(add, &QPushButton::clicked, d.dlg, [d, run] {
         bool ok = false;
         const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New Layer State"),
@@ -8450,9 +9103,13 @@ bool MainWindow::selftest_commands() {
     const std::uint64_t sv4 = viewport_->status_version();
     type("ARRAYPATH");
     type("50,0"); // the path
-    type("D");    // Divide
+    type("M");    // Method:
+    type("D");    //   Divide
+    type("I");    // Items:
     type("5");
-    type("N");    // do not align
+    type("A");    // Align items:
+    type("N");    //   No
+    type("");     // the array made
     path_ok = path_ok && pump([this, sv4] {
         return viewport_->status_version() != sv4 &&
                viewport_->last_status().find("Path array created") != std::string::npos;

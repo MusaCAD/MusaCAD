@@ -9,6 +9,7 @@
 
 #include <array>
 #include <vector>
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <chrono>
@@ -178,6 +179,16 @@ std::vector<core::NamedView> ViewportWindow::named_views() {
     return named_views_;
 }
 
+std::vector<std::string> ViewportWindow::custom_patterns() {
+    std::scoped_lock lock(layers_mutex_);
+    return custom_patterns_;
+}
+
+std::vector<core::LayerGroupFilter> ViewportWindow::layer_filters() {
+    std::scoped_lock lock(layers_mutex_);
+    return layer_filters_;
+}
+
 std::vector<std::string> ViewportWindow::layer_state_names() {
     std::scoped_lock lock(layers_mutex_);
     return layer_state_names_;
@@ -238,9 +249,29 @@ std::uint16_t ViewportWindow::current_table_style() {
     return current_table_style_;
 }
 
+std::vector<core::MLeaderStyle> ViewportWindow::mleader_styles() {
+    std::scoped_lock lock(layers_mutex_);
+    return mleader_styles_;
+}
+
+std::uint16_t ViewportWindow::current_mleader_style() {
+    std::scoped_lock lock(layers_mutex_);
+    return current_mleader_style_;
+}
+
 std::vector<std::string> ViewportWindow::block_names() {
     std::scoped_lock lock(layers_mutex_);
     return block_names_;
+}
+
+std::shared_ptr<const std::vector<std::vector<core::Vec2>>> ViewportWindow::block_previews() {
+    std::scoped_lock lock(layers_mutex_);
+    return block_previews_;
+}
+
+std::vector<core::LinetypeDef> ViewportWindow::linetypes() {
+    std::scoped_lock lock(layers_mutex_);
+    return linetypes_;
 }
 
 std::vector<std::vector<core::BlockAttDefInfo>> ViewportWindow::block_attdefs() {
@@ -1588,6 +1619,9 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 kinds |= 1u << (static_cast<unsigned>(h.kind) & 31u);
             }
             selection_kinds_.store(kinds, std::memory_order_relaxed);
+            selection_w_.store(snap.selection_size.x, std::memory_order_relaxed);
+            block_editor_.store(snap.block_editor, std::memory_order_relaxed);
+            selection_h_.store(snap.selection_size.y, std::memory_order_relaxed);
         }
         grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
                                   std::memory_order_relaxed);
@@ -1648,6 +1682,8 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             layers_ = snap.layers;
             current_props_ = snap.current_props;
             named_views_ = snap.named_views;
+            custom_patterns_ = snap.custom_patterns;
+            layer_filters_ = snap.layer_filters;
             layer_state_names_ = snap.layer_state_names;
             units_ = snap.units;
             pdmode_ = snap.pdmode;
@@ -1665,8 +1701,12 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             current_dim_style_ = snap.current_dimstyle;
             table_styles_ = snap.table_styles;
             current_table_style_ = snap.current_table_style;
+            mleader_styles_ = snap.mleader_styles;
+            current_mleader_style_ = snap.current_mleader_style;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
+            block_previews_ = snap.block_previews;
+            linetypes_ = snap.linetypes;
             layouts_ = snap.layouts;
             purge_ = snap.purge;
             ltscale_ = snap.ltscale;
@@ -1930,9 +1970,7 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                     std::scoped_lock lock(grips_mutex_);
                     ginfo = grips_cache_[static_cast<std::size_t>(gi)];
                 }
-                if (ginfo.handle.kind == core::EntityKind::Polyline) {
-                    show_polyline_grip_menu(ginfo, event->globalPosition().toPoint());
-                }
+                show_grip_menu(ginfo, event->globalPosition().toPoint());
             } else if (box_pending_ || lasso_active_) {
                 box_pending_ = false; // right-click abandons a box in progress
                 lasso_active_ = false;
@@ -2018,7 +2056,25 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             processor_->set_ctrl_held(false);
             processor_->set_shift_held(false);
             rebuild_overlay();
-        } else if (const int gi = grip_at(world, pick_aperture(dpr, scale)); gi >= 0) {
+        } else if (const int gi = grip_at(world, pick_aperture(dpr, scale)); gi >= 0 &&
+                                                                             (event->modifiers() & Qt::ShiftModifier) != 0) {
+            // Shift + click on a grip: one more hot grip (or, on a hot one, one less). A click
+            // on a grip then drags them all with it.
+            core::GripInfo ginfo;
+            {
+                std::scoped_lock lock(grips_mutex_);
+                ginfo = grips_cache_[static_cast<std::size_t>(gi)];
+            }
+            const auto it = std::find_if(hot_grips_.begin(), hot_grips_.end(), [&](const core::GripInfo& g) {
+                return g.handle == ginfo.handle && g.index == ginfo.index;
+            });
+            if (it != hot_grips_.end()) {
+                hot_grips_.erase(it);
+            } else {
+                hot_grips_.push_back(ginfo);
+            }
+            rebuild_overlay();
+        } else if (gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
             // drag. ORTHO/POLAR resolve relative to the grip's origin.
             core::GripInfo ginfo;
@@ -2026,14 +2082,21 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 std::scoped_lock lock(grips_mutex_);
                 ginfo = grips_cache_[static_cast<std::size_t>(gi)];
             }
+            core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, ginfo.handle, ginfo.index, {}, 0};
+            for (const core::GripInfo& g : hot_grips_) {
+                if (!(g.handle == ginfo.handle && g.index == ginfo.index)) {
+                    begin.also.emplace_back(g.handle, g.index);
+                }
+            }
+            hot_grips_.clear();
             dragging_grip_ = true;
             grip_origin_ = ginfo.pos;
             grip_press_screen_ = screen_px;
             grip_pressed_ = ginfo;
             processor_->set_pick_radius(pick_aperture(dpr, scale));
             processor_->set_last_point(ginfo.pos);
-            engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, ginfo.handle,
-                                                 ginfo.index, {}, 0});
+            grip_begin_ = begin;
+            engine_.submit(std::move(begin));
         } else if (pickfirst_ != 0) {
             // Idle: begin a selection drag (single click or window/crossing box). If a
             // selection already exists, this drag may instead be a tab-to-tab transfer
@@ -2201,6 +2264,39 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     }
     rest_timer_->start(); // restarted by every move: it fires once the cursor rests
 
+    // Multi-functional grips: resting on a grip whose object has a menu opens it there.
+    if (processor_ != nullptr && !processor_->has_active_command() && !dragging_grip_ && !selecting_ &&
+        event->buttons() == Qt::NoButton) {
+        const int gi = grip_at(world, pick_aperture(dpr, scale));
+        core::GripInfo g{};
+        if (gi >= 0) {
+            std::scoped_lock lock(grips_mutex_);
+            g = grips_cache_[static_cast<std::size_t>(gi)];
+        }
+        if (gi < 0 || !has_grip_menu(g)) {
+            grip_hovering_ = false;
+            if (grip_hover_timer_ != nullptr) {
+                grip_hover_timer_->stop();
+            }
+        } else if (!grip_hovering_ || !(g.handle == grip_hover_.handle && g.index == grip_hover_.index)) {
+            grip_hovering_ = false;
+            grip_hover_ = g;
+            if (grip_hover_timer_ == nullptr) {
+                grip_hover_timer_ = new QTimer(this);
+                grip_hover_timer_->setSingleShot(true);
+                grip_hover_timer_->setInterval(600);
+                connect(grip_hover_timer_, &QTimer::timeout, this, [this] {
+                    if (processor_ == nullptr || processor_->has_active_command() || dragging_grip_ || selecting_ ||
+                        grip_hovering_ || !cursor_inside_.load(std::memory_order_relaxed)) {
+                        return;
+                    }
+                    show_grip_menu(grip_hover_, QCursor::pos());
+                });
+            }
+            grip_hover_timer_->start();
+        }
+    }
+
     if (panning_) {
         const double dx = event->position().x() - last_x_;
         const double dy = event->position().y() - last_y_;
@@ -2290,7 +2386,7 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         if (core::length(rel_screen - grip_press_screen_) < 4.0 * dpr) {
             // A click, not a drag: the grip is hot and the grip modes take over (the
             // engine's drag stays under way for STRETCH).
-            processor_->start_grip_mode(grip_pressed_.handle, grip_pressed_.index, grip_pressed_.pos);
+            processor_->start_grip_mode(grip_begin_, grip_pressed_.pos);
             rebuild_overlay();
             return;
         }
@@ -2306,8 +2402,10 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         }
         const core::Vec2 target = processor_->resolve_pick(world, snap);
         const std::uint64_t group = processor_->begin_group();
+        // Ctrl as the drag ends: a copy, the original staying (as STRETCH's Copy).
+        const bool copy = (event->modifiers() & Qt::ControlModifier) != 0;
         engine_.submit(
-            core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, target, group});
+            core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, target, group, copy});
         processor_->clear_last_point();
         rebuild_overlay();
         return;
@@ -2486,12 +2584,20 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
     using Op = core::PolylineVertexCommand::Op;
     const bool segment = grip.index >= core::kSegmentGripBase;
     QMenu menu;
+    QAction* stretch = menu.addAction(segment ? QStringLiteral("Stretch") : QStringLiteral("Stretch Vertex"));
     QAction* add = menu.addAction(QStringLiteral("Add Vertex"));
     QAction* remove = segment ? nullptr : menu.addAction(QStringLiteral("Remove Vertex"));
     QAction* to_arc = segment ? menu.addAction(QStringLiteral("Convert to Arc")) : nullptr;
     QAction* to_line = segment ? menu.addAction(QStringLiteral("Convert to Line")) : nullptr;
     QAction* chosen = menu.exec(global);
     if (chosen == nullptr) {
+        return;
+    }
+    if (chosen == stretch) {
+        engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0});
+        processor_->set_last_point(grip.pos);
+        processor_->start_grip_mode(grip.handle, grip.index, grip.pos);
+        rebuild_overlay();
         return;
     }
     Op op = Op::AddVertex;
@@ -2506,6 +2612,102 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
     }
     const std::uint64_t group = processor_->begin_group();
     engine_.submit(core::PolylineVertexCommand{grip.handle, grip.index, op, group});
+    rebuild_overlay();
+}
+
+bool ViewportWindow::has_grip_menu(const core::GripInfo& grip) {
+    switch (grip.handle.kind) {
+    case core::EntityKind::Polyline:
+    case core::EntityKind::Dimension: return true;
+    case core::EntityKind::Line: return grip.index <= 1;
+    case core::EntityKind::Arc: return grip.index >= 1 && grip.index <= 3;
+    default: return false;
+    }
+}
+
+bool ViewportWindow::show_grip_menu(const core::GripInfo& grip, QPoint global) {
+    grip_hovering_ = true; // a menu shown: resting there again does not reopen it
+    switch (grip.handle.kind) {
+    case core::EntityKind::Polyline:
+        show_polyline_grip_menu(grip, global);
+        return true;
+    case core::EntityKind::Dimension:
+        show_dimension_grip_menu(grip, global);
+        return true;
+    default:
+        if (has_grip_menu(grip)) {
+            show_curve_grip_menu(grip, global);
+            return true;
+        }
+        return false;
+    }
+}
+
+void ViewportWindow::show_curve_grip_menu(const core::GripInfo& grip, QPoint global) {
+    QMenu menu;
+    QAction* stretch = menu.addAction(QStringLiteral("Stretch"));
+    QAction* other = menu.addAction(grip.index == 3 ? QStringLiteral("Radius") : QStringLiteral("Lengthen"));
+    QAction* chosen = menu.exec(global);
+    if (processor_ == nullptr || (chosen != stretch && chosen != other)) {
+        return;
+    }
+    core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0};
+    begin.variant = static_cast<std::uint8_t>(chosen == stretch ? 0 : grip.index == 3 ? 2 : 1);
+    engine_.submit(begin);
+    processor_->set_last_point(grip.pos);
+    processor_->start_grip_mode(begin, grip.pos);
+    rebuild_overlay();
+}
+
+void ViewportWindow::show_dimension_grip_menu(const core::GripInfo& grip, QPoint global) {
+    using Op = core::DimGripMenuCommand::Op;
+    const bool text = grip.index == core::DimData::kTextGripIndex;
+    QMenu menu;
+    QAction* stretch = menu.addAction(QStringLiteral("Stretch"));
+    QAction* with_line = text ? menu.addAction(QStringLiteral("Move with Dim Line")) : nullptr;
+    QAction* text_only = text ? menu.addAction(QStringLiteral("Move Text Only")) : nullptr;
+    QAction* with_leader = text ? menu.addAction(QStringLiteral("Move with Leader")) : nullptr;
+    QAction* above = text ? menu.addAction(QStringLiteral("Above Dim Line")) : nullptr;
+    QAction* center = text ? menu.addAction(QStringLiteral("Center Vertically")) : nullptr;
+    QAction* reset = text ? menu.addAction(QStringLiteral("Reset Text Position")) : nullptr;
+    QAction* cont = text ? nullptr : menu.addAction(QStringLiteral("Continue Dimension"));
+    QAction* base = text ? nullptr : menu.addAction(QStringLiteral("Baseline Dimension"));
+    QAction* flip = text ? nullptr : menu.addAction(QStringLiteral("Flip Arrow"));
+    QAction* chosen = menu.exec(global);
+    if (chosen == nullptr || processor_ == nullptr) {
+        return;
+    }
+    if (chosen == stretch || chosen == with_line || chosen == text_only || chosen == with_leader) {
+        // The grip made hot, as a click on it does; the text grip's choices drag the text
+        // that way, and the dimension keeps it as its text movement.
+        const std::int8_t move = chosen == with_line ? 0 : chosen == text_only ? 2 : chosen == with_leader ? 1 : -1;
+        core::GripDragCommand begin{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0};
+        begin.text_move = move;
+        engine_.submit(begin);
+        processor_->set_last_point(grip.pos);
+        processor_->start_grip_mode(begin, grip.pos);
+        rebuild_overlay();
+        return;
+    }
+    if (chosen == cont || chosen == base) {
+        // DIMCONTINUE / DIMBASELINE from this dimension, at the extension line of the grip.
+        processor_->submit_line(chosen == cont ? "DIMCONTINUE" : "DIMBASELINE");
+        processor_->submit_line("S");
+        processor_->pick_point(grip.pos, grip.pos);
+        rebuild_overlay();
+        return;
+    }
+    Op op = Op::FlipArrow;
+    if (chosen == above) {
+        op = Op::AboveLine;
+    } else if (chosen == center) {
+        op = Op::CenterVertically;
+    } else if (chosen == reset) {
+        op = Op::ResetText;
+    } else if (chosen != flip) {
+        return;
+    }
+    engine_.submit(core::DimGripMenuCommand{op, grip.handle, grip.pos, processor_->begin_group()});
     rebuild_overlay();
 }
 
@@ -2539,6 +2741,18 @@ void ViewportWindow::rebuild_overlay() {
     }
 
     ov.hide_selection = highlight_ == 0;
+    if (!hot_grips_.empty()) {
+        // Shift's hot grips, while their objects are still selected with them there.
+        std::scoped_lock lock(grips_mutex_);
+        std::erase_if(hot_grips_, [&](const core::GripInfo& h) {
+            return std::none_of(grips_cache_.begin(), grips_cache_.end(), [&](const core::GripInfo& g) {
+                return g.handle == h.handle && g.index == h.index && g.pos == h.pos;
+            });
+        });
+        for (const core::GripInfo& h : hot_grips_) {
+            ov.hot_grips.push_back(h.pos);
+        }
+    }
     if (freehand_active_) {
         ov.lasso = freehand_world_;
         ov.lasso_mode = 3; // drawn as a fence: an open path
@@ -2769,12 +2983,27 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Spline:
             if (!pts.empty()) {
                 std::vector<core::Vec2> through(pts.begin(), pts.end());
-                through.push_back(cur_eff);
+                std::optional<core::Vec2> start_dir = pv.spline_start_tangent;
+                std::optional<core::Vec2> end_dir;
+                if (pv.spline_tangent_cursor == 1) {
+                    start_dir = cur_eff - pts.front();
+                } else if (pv.spline_tangent_cursor == 2) {
+                    end_dir = cur_eff - pts.back();
+                } else {
+                    through.push_back(cur_eff);
+                }
                 std::vector<core::Vec2> ctrl;
                 if (pv.spline_fit) {
-                    ctrl = core::spline::fit_or_fallback(
-                        through, pv.spline_degree,
-                        static_cast<core::spline::FitParam>(pv.spline_knots));
+                    if (pv.spline_tolerance > 0.0 && !start_dir && !end_dir) {
+                        ctrl = core::spline::fit_within(through, pv.spline_degree,
+                                                        static_cast<core::spline::FitParam>(pv.spline_knots),
+                                                        pv.spline_tolerance);
+                    }
+                    if (ctrl.empty()) {
+                        ctrl = core::spline::fit_or_fallback(
+                            through, pv.spline_degree,
+                            static_cast<core::spline::FitParam>(pv.spline_knots), start_dir, end_dir);
+                    }
                 } else {
                     ctrl = std::move(through);
                 }
@@ -3823,6 +4052,10 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
     if (dyn_handle_key(event->key(), event->text())) {
         return; // consumed by an on-canvas Dynamic Input field
     }
+    if (event->key() == Qt::Key_Down && event->modifiers() == Qt::NoModifier && processor_->has_active_command() &&
+        !cmd_active_ && show_prompt_options()) {
+        return; // Dynamic Input's down arrow: the prompt's options at the cursor
+    }
     if (event->key() == Qt::Key_Escape) {
         if (plot_picking_) {
             cancel_plot_window_pick(); // re-opens the plot dialog (ok=false)
@@ -3866,6 +4099,53 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
         return;
     }
     QWindow::keyPressEvent(event);
+}
+
+bool ViewportWindow::show_prompt_options() {
+    // The options in the prompt's brackets, `[Close/Undo]`; each one's keyword is its
+    // capital letters and digits (Close: C, eXit: X, 3P: 3P), as the command reads it.
+    const std::string p = processor_->current_prompt();
+    const std::size_t lb = p.find('[');
+    const std::size_t rb = lb == std::string::npos ? std::string::npos : p.find(']', lb);
+    if (rb == std::string::npos || rb == lb + 1) {
+        return false;
+    }
+    const std::string inside = p.substr(lb + 1, rb - lb - 1);
+    QMenu menu;
+    std::vector<std::pair<QAction*, std::string>> keys;
+    std::size_t from = 0;
+    while (from <= inside.size()) {
+        const std::size_t slash = inside.find('/', from);
+        const std::string option = inside.substr(from, slash == std::string::npos ? std::string::npos : slash - from);
+        std::string key;
+        for (const char c : option) {
+            if (std::isupper(static_cast<unsigned char>(c)) != 0 || std::isdigit(static_cast<unsigned char>(c)) != 0) {
+                key += c;
+            }
+        }
+        if (key.empty()) {
+            key = option; // "?" and the like
+        }
+        if (!option.empty()) {
+            keys.emplace_back(menu.addAction(QString::fromStdString(option)), key);
+        }
+        if (slash == std::string::npos) {
+            break;
+        }
+        from = slash + 1;
+    }
+    if (keys.empty()) {
+        return false;
+    }
+    QAction* chosen = menu.exec(QCursor::pos());
+    for (const auto& [action, key] : keys) {
+        if (action == chosen) {
+            processor_->submit_line(key);
+            rebuild_overlay();
+            break;
+        }
+    }
+    return true;
 }
 
 core::Vec2 ViewportWindow::world_to_widget(core::Vec2 world) {

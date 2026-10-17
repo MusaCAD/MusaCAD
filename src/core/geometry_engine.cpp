@@ -15,12 +15,14 @@
 #include "musacad/core/properties_registry.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <ctime>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iterator>
 #include <limits>
 #include <span>
@@ -29,12 +31,14 @@
 #include <utility>
 #include <variant>
 
+#include "musacad/core/block_resolve.hpp"
 #include "musacad/core/entity_bounds.hpp"
 #include "musacad/core/grips.hpp"
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/properties_registry.hpp"
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/io/xlsx.hpp"
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
@@ -150,7 +154,15 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
             return add_command_to_store(store_, Command{std::move(with)}, fresh);
         }
     }
-    return add_command_to_store(store_, add_command, fresh);
+    const EntityHandle h = add_command_to_store(store_, add_command, fresh);
+    if (const auto* dc = std::get_if<AddDimensionCommand>(&add_command);
+        dc != nullptr && !dc->props && dimassoc_ < 2) {
+        store_.set_dim_unassoc(h, true); // DIMASSOC 0 or 1: drawn not associative
+    }
+    if (const auto* hc = std::get_if<AddHatchCommand>(&add_command); hc != nullptr && !hc->props && !hpassoc_) {
+        store_.set_hatch_unassoc(h, true); // HPASSOC 0
+    }
+    return h;
 }
 
 void GeometryEngine::inherit_polyline(const Command& original) {
@@ -737,7 +749,6 @@ void GeometryEngine::select_similar(std::uint32_t mode) {
 }
 
 void GeometryEngine::select_filter(const SelectFilterCommand& c) {
-    static constexpr const char* kLinetypeNames[] = {"Continuous", "Dashed", "Center", "Hidden"};
     const auto props_of = [this](EntityHandle h) { return store_.props(h); };
     // The property's value for `h`: a number and/or a text; false when `h` has no such
     // property (a circle has no text contents), which is simply "no match".
@@ -761,8 +772,7 @@ void GeometryEngine::select_filter(const SelectFilterCommand& c) {
             const Linetype lt = p->linetype_by_layer() && p->layer < store_.layers().size()
                                     ? store_.layers()[p->layer].linetype
                                     : p->linetype;
-            const auto i = static_cast<std::size_t>(lt);
-            text = i < 4 ? kLinetypeNames[i] : "Continuous";
+            text = store_.linetype_name(lt);
             return true;
         }
         case 4:
@@ -1361,6 +1371,9 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
                 for (Vec2& v : x.vertices) {
                     pull(v);
                 }
+                for (Vec2& v : x.extra_tips) {
+                    pull(v);
+                }
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 for (std::vector<Vec2>& loop : x.loops) {
                     for (Vec2& v : loop) {
@@ -1426,6 +1439,9 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.block.pos += d;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 for (Vec2& v : x.vertices) {
+                    v += d;
+                }
+                for (Vec2& v : x.extra_tips) {
                     v += d;
                 }
                 x.block.pos += d; // the owned label moves with the leader
@@ -1588,6 +1604,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                 for (Vec2& v : x.vertices) {
                     v = refl(v);
                 }
+                for (Vec2& v : x.extra_tips) {
+                    v = refl(v);
+                }
                 x.block.pos = refl(x.block.pos);
                 x.block.rotation = mirrored_mtext_rotation(x.block.rotation, axis, mirrtext, x.block.attach);
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
@@ -1691,6 +1710,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.block.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
                 for (Vec2& v : x.vertices) {
+                    v = rot(v);
+                }
+                for (Vec2& v : x.extra_tips) {
                     v = rot(v);
                 }
                 x.block.pos = rot(x.block.pos);
@@ -1844,6 +1866,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 for (Vec2& v : x.vertices) {
                     v = scl(v);
                 }
+                for (Vec2& v : x.extra_tips) {
+                    v = scl(v);
+                }
                 x.block.pos = scl(x.block.pos);
                 x.block.height *= f;
                 x.block.width *= f;
@@ -1866,9 +1891,731 @@ void scale_cmd(Command& c, Vec2 base, double f) {
 
 } // namespace
 
+namespace {
+/// Which of a dimension's def points (a, b, line_pt) are on the objects it measures. The
+/// third is where its line goes, except on an angular one (a point on the second ray); an
+/// ordinate one's b is where its leader ends.
+std::array<bool, 3> assoc_slots(DimType t) {
+    switch (t) {
+    case DimType::Angular: return {true, true, true};
+    case DimType::Ordinate: return {true, false, false};
+    default: return {true, true, false};
+    }
+}
+/// The kinds a dimension's points can be on (geometry, not annotation).
+bool assoc_target(EntityKind k) {
+    switch (k) {
+    case EntityKind::Point:
+    case EntityKind::Line:
+    case EntityKind::Polyline:
+    case EntityKind::Circle:
+    case EntityKind::Arc:
+    case EntityKind::Spline:
+    case EntityKind::Insert:
+    case EntityKind::Xline:
+    case EntityKind::Ellipse: return true;
+    default: return false;
+    }
+}
+double assoc_tol(Vec2 p) { return 1e-6 * (1.0 + std::max(std::abs(p.x), std::abs(p.y))); }
+std::uint64_t handle_key(EntityHandle h) {
+    return (static_cast<std::uint64_t>(h.kind) << 32) | h.index;
+}
+/// Whether point `p`, of an annotation in `space`, is on the objects being edited and goes
+/// with them. A point also on an object that stays follows only when it is a key point (a
+/// grip) of an edited one and not of the other -- a line's end where another line merely
+/// passes goes; a corner two lines share, only one of them edited, stays.
+bool point_follows(const GeometryStore& store, const SpatialGrid& grid, const NativeKernel2D& kernel, Vec2 p,
+                   std::uint8_t space, const std::unordered_set<std::uint64_t>& in_edit) {
+    const double tol = assoc_tol(p);
+    std::vector<EntityHandle> cand;
+    grid.query({p.x - tol, p.y - tol}, {p.x + tol, p.y + tol}, cand);
+    std::vector<Grip> grips;
+    bool e = false;
+    bool eg = false;
+    bool n = false;
+    bool ng = false;
+    for (const EntityHandle c : cand) {
+        if (!assoc_target(c.kind) || !store.is_valid(c)) {
+            continue;
+        }
+        const EntityProps* cp = store.props(c);
+        if (cp == nullptr || cp->space() != space) {
+            continue;
+        }
+        grips.clear();
+        grips_of(store, c, grips);
+        const bool at_grip =
+            std::any_of(grips.begin(), grips.end(), [&](const Grip& g) { return distance(g.pos, p) <= tol; });
+        Vec2 q;
+        const bool on = at_grip || (kernel.closest_point(store, c, p, q) && distance(q, p) <= tol);
+        if (!on) {
+            continue;
+        }
+        if (in_edit.count(handle_key(c)) != 0) {
+            e = true;
+            eg = eg || at_grip;
+        } else {
+            n = true;
+            ng = ng || at_grip;
+        }
+    }
+    return e && (!n || (eg && !ng));
+}
+} // namespace
+
+GeometryEngine::Followers GeometryEngine::collect_followers(
+    const std::function<bool(EntityHandle)>& skip, Vec2 lo, Vec2 hi,
+    const std::function<bool(Vec2, std::uint8_t)>& follows) const {
+    Followers out;
+    // Only points in the edited objects' extents can be on them.
+    const auto in_reach = [&](Vec2 p) {
+        const double t = assoc_tol(p);
+        return p.x >= lo.x - t && p.x <= hi.x + t && p.y >= lo.y - t && p.y <= hi.y + t;
+    };
+    const auto& dims = store_.dimensions();
+    for (std::uint32_t i = 0; i < dims.slot_count(); ++i) {
+        if (!dims.alive(i)) {
+            continue;
+        }
+        const DimData& d = dims.data()[i];
+        const EntityHandle dh{i, dims.generations()[i], EntityKind::Dimension};
+        if (d.unassoc || skip(dh)) {
+            continue; // not associative, or edited itself, as selected
+        }
+        const std::array<bool, 3> slots = assoc_slots(d.type);
+        const std::array<Vec2, 3> pts{d.a, d.b, d.line_pt};
+        DimFollow f{dh, {}};
+        bool any = false;
+        for (std::size_t k = 0; k < 3; ++k) {
+            f.on[k] = slots[k] && in_reach(pts[k]) && follows(pts[k], d.props.space());
+            any = any || f.on[k];
+        }
+        if (any) {
+            out.dims.push_back(f);
+        }
+    }
+    const auto& hatches = store_.hatches();
+    for (std::uint32_t i = 0; i < hatches.slot_count(); ++i) {
+        if (!hatches.alive(i)) {
+            continue;
+        }
+        const HatchData& hd = hatches.data()[i];
+        const EntityHandle hh{i, hatches.generations()[i], EntityKind::Hatch};
+        if (hd.unassoc || skip(hh)) {
+            continue;
+        }
+        const std::span<const Vec2> verts = store_.hatch_verts(hd);
+        HatchFollow f{hh, std::vector<bool>(verts.size(), false)};
+        bool any = false;
+        for (std::size_t k = 0; k < verts.size(); ++k) {
+            f.on[k] = in_reach(verts[k]) && follows(verts[k], hd.props.space());
+            any = any || f.on[k];
+        }
+        if (any) {
+            out.hatches.push_back(std::move(f));
+        }
+    }
+    return out;
+}
+
+GeometryEngine::Followers GeometryEngine::followers_on(const std::vector<EntityHandle>& edited) const {
+    std::unordered_set<std::uint64_t> in_edit;
+    bool targets = false;
+    Vec2 lo{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+    Vec2 hi{-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+    for (const EntityHandle h : edited) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        in_edit.insert(handle_key(h));
+        Vec2 a;
+        Vec2 b;
+        if (assoc_target(h.kind) && entity_aabb(store_, h, a, b)) {
+            targets = true;
+            lo = {std::min(lo.x, a.x), std::min(lo.y, a.y)};
+            hi = {std::max(hi.x, b.x), std::max(hi.y, b.y)};
+        }
+    }
+    if (!targets) {
+        return {};
+    }
+    return collect_followers([&](EntityHandle h) { return in_edit.count(handle_key(h)) != 0; }, lo, hi,
+                             [&](Vec2 p, std::uint8_t space) {
+                                 return point_follows(store_, grid_, kernel_, p, space, in_edit);
+                             });
+}
+
+void GeometryEngine::follow_replaced(std::uint64_t group) {
+    if (undo_.empty() || undo_.back().id != group) {
+        return;
+    }
+    // What the edit replaced (as it was, on a scratch store) and what replaced it.
+    GeometryStore was;
+    was.set_layer_table(store_.layers(), store_.current_layer());
+    was.set_dimstyle_table(store_.dimstyles());
+    std::vector<EntityHandle> olds;
+    std::vector<EntityHandle> made;
+    std::unordered_set<std::uint64_t> made_keys;
+    for (const Item& it : undo_.back().items) {
+        if (!assoc_target(it.handle.kind)) {
+            continue;
+        }
+        if (it.is_create) {
+            if (store_.is_valid(it.handle)) {
+                made.push_back(it.handle);
+                made_keys.insert(handle_key(it.handle));
+            }
+        } else {
+            olds.push_back(add_command_to_store(was, it.data, EntityProps{store_.current_layer()}));
+        }
+    }
+    if (olds.empty() || made.empty()) {
+        return;
+    }
+    Vec2 lo{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+    Vec2 hi{-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+    for (const EntityHandle o : olds) {
+        Vec2 a;
+        Vec2 b;
+        if (entity_aabb(was, o, a, b)) {
+            lo = {std::min(lo.x, a.x), std::min(lo.y, a.y)};
+            hi = {std::max(hi.x, b.x), std::max(hi.y, b.y)};
+        }
+    }
+    std::vector<Grip> grips;
+    constexpr std::uint8_t kAnySpace = 0xFF;
+    // Was the point on one of the objects replaced (and at which of its grips)?
+    const auto on_old = [&](Vec2 p, std::uint8_t space, EntityHandle* which, std::uint32_t* grip) {
+        const double tol = assoc_tol(p);
+        bool at = false;
+        bool on = false;
+        for (const EntityHandle o : olds) {
+            const EntityProps* op = was.props(o);
+            if (op == nullptr || (space != kAnySpace && op->space() != space)) {
+                continue;
+            }
+            grips.clear();
+            grips_of(was, o, grips);
+            for (const Grip& g : grips) {
+                if (distance(g.pos, p) <= tol) {
+                    at = true;
+                    on = true;
+                    if (which != nullptr) {
+                        *which = o;
+                        *grip = g.index;
+                    }
+                }
+            }
+            Vec2 q;
+            if (!on && kernel_.closest_point(was, o, p, q) && distance(q, p) <= tol) {
+                on = true;
+                if (which != nullptr) {
+                    *which = o;
+                    *grip = 0xFFFFFFFFu;
+                }
+            }
+        }
+        return std::pair<bool, bool>{on, at};
+    };
+    const Followers follows = collect_followers(
+        [](EntityHandle) { return false; }, lo, hi, [&](Vec2 p, std::uint8_t space) {
+            const auto [e, eg] = on_old(p, space, nullptr, nullptr);
+            if (!e) {
+                return false;
+            }
+            // Others there that stayed (what replaced the old ones aside).
+            const double tol = assoc_tol(p);
+            std::vector<EntityHandle> cand;
+            grid_.query({p.x - tol, p.y - tol}, {p.x + tol, p.y + tol}, cand);
+            bool n = false;
+            bool ng = false;
+            std::vector<Grip> gs;
+            for (const EntityHandle c : cand) {
+                if (!assoc_target(c.kind) || !store_.is_valid(c) || made_keys.count(handle_key(c)) != 0) {
+                    continue;
+                }
+                const EntityProps* cp = store_.props(c);
+                if (cp == nullptr || cp->space() != space) {
+                    continue;
+                }
+                gs.clear();
+                grips_of(store_, c, gs);
+                const bool at_grip =
+                    std::any_of(gs.begin(), gs.end(), [&](const Grip& g) { return distance(g.pos, p) <= tol; });
+                Vec2 q;
+                if (at_grip || (kernel_.closest_point(store_, c, p, q) && distance(q, p) <= tol)) {
+                    n = true;
+                    ng = ng || at_grip;
+                }
+            }
+            return !n || (eg && !ng);
+        });
+    if (follows.empty()) {
+        return;
+    }
+    move_followers(
+        follows,
+        [&](Vec2 p) {
+            const double tol = assoc_tol(p);
+            std::vector<Grip> gs;
+            // Still a key point of what is there now: it stays.
+            for (const EntityHandle m : made) {
+                gs.clear();
+                grips_of(store_, m, gs);
+                if (std::any_of(gs.begin(), gs.end(), [&](const Grip& g) { return distance(g.pos, p) <= tol; })) {
+                    return p;
+                }
+            }
+            EntityHandle old{};
+            std::uint32_t grip = 0xFFFFFFFFu;
+            on_old(p, kAnySpace, &old, &grip);
+            // A grip of the old object (a trimmed line's end): the same grip of what replaced
+            // it, the nearest when there are several.
+            Vec2 best = p;
+            double best_d = std::numeric_limits<double>::infinity();
+            if (grip != 0xFFFFFFFFu) {
+                for (const EntityHandle m : made) {
+                    if (m.kind != old.kind) {
+                        continue;
+                    }
+                    gs.clear();
+                    grips_of(store_, m, gs);
+                    for (const Grip& g : gs) {
+                        if (g.index == grip && distance(g.pos, p) < best_d) {
+                            best_d = distance(g.pos, p);
+                            best = g.pos;
+                        }
+                    }
+                }
+                if (best_d < std::numeric_limits<double>::infinity()) {
+                    return best;
+                }
+            }
+            // Elsewhere on it: the nearest point of what replaced it.
+            for (const EntityHandle m : made) {
+                Vec2 q;
+                if (kernel_.closest_point(store_, m, p, q) && distance(q, p) < best_d) {
+                    best_d = distance(q, p);
+                    best = q;
+                }
+            }
+            return best;
+        },
+        {}, group);
+}
+
+void GeometryEngine::move_followers(const Followers& follows, const std::function<Vec2(Vec2)>& map,
+                            const std::function<void(Command&)>& whole, std::uint64_t group) {
+    const auto recreate = [&](EntityHandle h, const Command& original, const Command& edited) {
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(group, nh, edited);
+    };
+    for (const DimFollow& f : follows.dims) {
+        if (!store_.is_valid(f.dim)) {
+            continue;
+        }
+        const Command original = capture_entity(f.dim);
+        Command edited = original;
+        auto* x = std::get_if<AddDimensionCommand>(&edited);
+        if (x == nullptr) {
+            continue;
+        }
+        const auto type = static_cast<DimType>(x->type);
+        const std::array<bool, 3> slots = assoc_slots(type);
+        bool all = true;
+        for (std::size_t s = 0; s < 3; ++s) {
+            all = all && (!slots[s] || f.on[s]);
+        }
+        if (all && whole && type != DimType::Linear && type != DimType::Ordinate) {
+            whole(edited); // the whole dimension goes with its object
+        } else if (type == DimType::ArcLength && !all) {
+            continue; // its arc's angles would need measuring again
+        } else {
+            // A linear dimension keeps its direction (a horizontal one stays horizontal), and
+            // an ordinate one its leader's end, as AutoCAD's do.
+            if (f.on[0]) {
+                x->a = map(x->a);
+            }
+            if (f.on[1] && slots[1]) {
+                x->b = map(x->b);
+            }
+            if (slots[2] ? f.on[2] : (all && whole && type != DimType::Ordinate)) {
+                x->line_pt = map(x->line_pt);
+            }
+        }
+        const auto& was = std::get<AddDimensionCommand>(original);
+        const auto& now = std::get<AddDimensionCommand>(edited);
+        if (now.a == was.a && now.b == was.b && now.line_pt == was.line_pt && now.aux == was.aux) {
+            continue; // nothing moved
+        }
+        recreate(f.dim, original, edited);
+    }
+    for (const HatchFollow& f : follows.hatches) {
+        if (!store_.is_valid(f.hatch)) {
+            continue;
+        }
+        const Command original = capture_entity(f.hatch);
+        Command edited = original;
+        auto* x = std::get_if<AddHatchCommand>(&edited);
+        if (x == nullptr) {
+            continue;
+        }
+        const bool all = std::all_of(f.on.begin(), f.on.end(), [](bool b) { return b; });
+        if (all && whole) {
+            whole(edited); // the boundary went whole: the hatch with it, its pattern too
+        } else {
+            // The boundary reshaped: the points on what changed go with it.
+            std::size_t k = 0;
+            for (std::vector<Vec2>& loop : x->loops) {
+                for (Vec2& v : loop) {
+                    if (k < f.on.size() && f.on[k]) {
+                        v = map(v);
+                    }
+                    ++k;
+                }
+            }
+        }
+        const auto& was = std::get<AddHatchCommand>(original);
+        if (x->loops == was.loops && x->pattern_origin == was.pattern_origin) {
+            continue; // nothing moved
+        }
+        recreate(f.hatch, original, edited);
+    }
+}
+
+void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
+    using Op = DimAssocCommand::Op;
+    if (c.op == Op::Variable) {
+        dimassoc_ = std::min<std::uint8_t>(c.value, 2);
+        return;
+    }
+    if (c.op == Op::HatchVariable) {
+        hpassoc_ = c.value != 0;
+        return;
+    }
+    prune_selection();
+    const bool to = c.op == Op::Disassociate;
+    std::size_t n = 0;
+    std::vector<EntityHandle> keep;
+    for (const EntityHandle h : selection_) {
+        const DimData* d = h.kind == EntityKind::Dimension ? store_.dimension(h) : nullptr;
+        if (d == nullptr || d->unassoc == to) {
+            keep.push_back(h);
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command edited = original;
+        std::get<AddDimensionCommand>(edited).unassoc = to;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        keep.push_back(nh);
+        ++n;
+    }
+    selection_ = keep;
+    if (n > 0) {
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    if (to) {
+        report(std::to_string(n) + " disassociated.");
+    } else {
+        report(std::to_string(n) + (n == 1 ? " dimension" : " dimensions") + " associated with the objects their points are on.");
+    }
+}
+
+void GeometryEngine::redefine_block_by_tags(std::uint16_t index, const BlockDef& def) {
+    const BlockDef* old = store_.block(index);
+    const std::vector<BlockAttDef> was = old != nullptr ? old->content.attdefs : std::vector<BlockAttDef>{};
+    store_.redefine_block(index, def);
+    const std::vector<BlockAttDef>& now = def.content.attdefs;
+    const auto lower = [](std::string t) {
+        for (char& ch : t) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return t;
+    };
+    bool same = was.size() == now.size();
+    for (std::size_t i = 0; same && i < was.size(); ++i) {
+        same = lower(was[i].tag) == lower(now[i].tag);
+    }
+    if (same) {
+        return; // the attributes as they were: every value still in its place
+    }
+    // The references' values follow their tags to where the new definition has them; a new
+    // attribute takes its default.
+    for (const EntityHandle h : all_live()) {
+        const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+        if (in == nullptr || in->block != index) {
+            continue;
+        }
+        const std::vector<std::string> values = store_.insert_attribs(*in);
+        std::vector<std::string> moved;
+        for (const BlockAttDef& nd : now) {
+            std::string v = nd.def;
+            for (std::size_t k = 0; k < was.size(); ++k) {
+                if (lower(was[k].tag) == lower(nd.tag) && k < values.size()) {
+                    v = values[k];
+                }
+            }
+            moved.push_back(std::move(v));
+        }
+        store_.set_insert_attribs(h, moved);
+    }
+}
+
+void GeometryEngine::apply_replace_block(const ReplaceBlockCommand& c) {
+    const auto lower = [](std::string s) {
+        for (char& ch : s) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    const std::vector<BlockDef>& blocks = store_.blocks();
+    std::size_t from = blocks.size();
+    std::size_t to = blocks.size();
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        from = lower(blocks[i].name) == lower(c.from) ? i : from;
+        to = lower(blocks[i].name) == lower(c.to) ? i : to;
+    }
+    if (from == blocks.size() || to == blocks.size()) {
+        report("Block \"" + (from == blocks.size() ? c.from : c.to) + "\" not found.");
+        return;
+    }
+    if (from == to) {
+        report("A block cannot replace itself.");
+        return;
+    }
+    // The replacement's attribute values: the replaced block's, tag for tag; its own defaults
+    // for the rest.
+    const std::vector<BlockAttDef>& old_defs = blocks[from].content.attdefs;
+    const std::vector<BlockAttDef>& new_defs = blocks[to].content.attdefs;
+    const auto remap = [&](const std::vector<std::string>& values) {
+        std::vector<std::string> out;
+        for (const BlockAttDef& nd : new_defs) {
+            std::string v = nd.def;
+            for (std::size_t k = 0; k < old_defs.size() && k < values.size(); ++k) {
+                if (lower(old_defs[k].tag) == lower(nd.tag)) {
+                    v = values[k];
+                }
+            }
+            out.push_back(std::move(v));
+        }
+        return out;
+    };
+    const std::string from_name = blocks[from].name;
+    const std::string to_name = blocks[to].name;
+    std::size_t n = 0;
+    for (const EntityHandle h : all_live()) {
+        const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+        if (in == nullptr || in->block != from) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command edited = original;
+        auto& x = std::get<AddInsertCommand>(edited);
+        x.attribs = remap(store_.insert_attribs(*in));
+        x.block = static_cast<std::uint16_t>(to);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        ++n;
+    }
+    // References inside other blocks.
+    std::vector<BlockDef> table = store_.blocks();
+    bool nested = false;
+    for (BlockDef& b : table) {
+        for (InsertData& in : b.content.inserts) {
+            if (in.block == from) {
+                in.block = static_cast<std::uint16_t>(to);
+                nested = true;
+                ++n;
+            }
+        }
+    }
+    if (nested) {
+        store_.set_block_table(std::move(table));
+    }
+    selection_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(n) + (n == 1 ? " reference of \"" : " references of \"") + from_name +
+           "\" replaced by \"" + to_name + "\".");
+}
+
+void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
+    using Op = HatchEditCommand::Op;
+    prune_selection();
+    std::uint16_t layer = store_.current_layer();
+    if (c.op == Op::Layer && !c.layer.empty()) {
+        const auto lower = [](std::string s) {
+            for (char& ch : s) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return s;
+        };
+        bool found = false;
+        for (std::size_t i = 0; i < store_.layers().size(); ++i) {
+            if (lower(store_.layers()[i].name) == lower(c.layer)) {
+                layer = static_cast<std::uint16_t>(i);
+                found = true;
+            }
+        }
+        if (!found) {
+            report("Cannot find layer \"" + c.layer + "\".");
+            return;
+        }
+    }
+    std::vector<EntityHandle> keep;
+    int edited = 0;
+    for (const EntityHandle h : selection_) {
+        if (h.kind != EntityKind::Hatch || !store_.is_valid(h) || !selectable(h)) {
+            keep.push_back(h);
+            continue;
+        }
+        const Command original = capture_entity(h);
+        AddHatchCommand x = std::get<AddHatchCommand>(original);
+        EntityProps props = x.props.value_or(EntityProps{store_.current_layer()});
+        std::vector<AddHatchCommand> made;
+        switch (c.op) {
+        case Op::Disassociate:
+            x.unassoc = true;
+            made.push_back(x);
+            break;
+        case Op::Color:
+            props.set_color_by_layer(c.by_layer);
+            if (!c.by_layer) {
+                props.color = c.color;
+            }
+            x.props = props;
+            made.push_back(x);
+            break;
+        case Op::Layer:
+            props.layer = layer;
+            x.props = props;
+            made.push_back(x);
+            break;
+        case Op::Separate: {
+            // How many loops each loop is inside: the outer ones (an even count) each make a
+            // hatch, with the loops one level in from it as its islands.
+            const std::size_t n = x.loops.size();
+            std::vector<std::size_t> depth(n, 0);
+            const auto inside = [&](std::size_t a, std::size_t b) {
+                return a != b && !x.loops[a].empty() && x.loops[b].size() >= 3 &&
+                       point_in_polygon(x.loops[b], x.loops[a].front());
+            };
+            for (std::size_t a = 0; a < n; ++a) {
+                for (std::size_t b = 0; b < n; ++b) {
+                    depth[a] += inside(a, b) ? 1u : 0u;
+                }
+            }
+            for (std::size_t a = 0; a < n; ++a) {
+                if (depth[a] % 2 != 0) {
+                    continue;
+                }
+                AddHatchCommand one = x;
+                one.loops = {x.loops[a]};
+                for (std::size_t b = 0; b < n; ++b) {
+                    if (depth[b] == depth[a] + 1 && inside(b, a)) {
+                        one.loops.push_back(x.loops[b]);
+                    }
+                }
+                made.push_back(std::move(one));
+            }
+            if (made.size() < 2) {
+                keep.push_back(h); // one area: nothing to separate
+                continue;
+            }
+            break;
+        }
+        }
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        for (const AddHatchCommand& m : made) {
+            const Command add = m;
+            const EntityHandle nh = create_indexed(add);
+            push_create_item(c.group, nh, add);
+            keep.push_back(nh);
+        }
+        ++edited;
+    }
+    selection_ = keep;
+    if (edited == 0) {
+        report(c.op == Op::Separate ? "Nothing to separate: the hatch has one area." : "No hatch selected.");
+        return;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    if (c.op == Op::Separate) {
+        report(std::to_string(edited) + (edited == 1 ? " hatch" : " hatches") + " separated.");
+    }
+}
+
+void GeometryEngine::apply_dim_grip_menu(const DimGripMenuCommand& c) {
+    using Op = DimGripMenuCommand::Op;
+    const DimData* d = c.dim.kind == EntityKind::Dimension ? store_.dimension(c.dim) : nullptr;
+    if (d == nullptr || !selectable(c.dim)) {
+        return;
+    }
+    const auto type = d->type;
+    if (c.op == Op::FlipArrow && type != DimType::Linear && type != DimType::Aligned && type != DimType::Radius &&
+        type != DimType::Diameter && type != DimType::Angular) {
+        report("Flip Arrow is for linear, aligned, radial, diameter and angular dimensions.");
+        return;
+    }
+    const Command original = capture_entity(c.dim);
+    Command edited = original;
+    auto& x = std::get<AddDimensionCommand>(edited);
+    switch (c.op) {
+    case Op::FlipArrow: {
+        // The arrowhead nearer the grip: an extension line's (linear), the measured point's or
+        // the far end's (radial: b, or the diameter's other end), a ray's (angular: b or the
+        // second ray's point, by the angle round the vertex).
+        bool first = distance(c.at, x.a) <= distance(c.at, x.b);
+        if (type == DimType::Radius) {
+            first = true;
+        } else if (type == DimType::Diameter) {
+            first = distance(c.at, x.b) <= distance(c.at, x.a * 2.0 - x.b);
+        } else if (type == DimType::Angular) {
+            const auto off = [&](Vec2 p) {
+                const double ang = std::atan2(p.y - x.a.y, p.x - x.a.x) - std::atan2(c.at.y - x.a.y, c.at.x - x.a.x);
+                return std::abs(std::remainder(ang, kTwoPi));
+            };
+            first = off(x.b) <= off(x.line_pt);
+        }
+        x.flip = static_cast<std::uint8_t>(x.flip ^ (first ? 1u : 2u));
+        break;
+    }
+    case Op::AboveLine:
+    case Op::CenterVertically:
+        x.overrides.text_above = c.op == Op::AboveLine;
+        x.overrides.set(DimOverrides::kTextAbove, true);
+        break;
+    case Op::ResetText:
+        x.text_offset = {};
+        break;
+    }
+    remove_indexed(c.dim);
+    push_erase_item(c.group, c.dim, original);
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(c.group, nh, edited);
+    std::replace(selection_.begin(), selection_.end(), c.dim, nh);
+    redo_.clear();
+    geom_dirty_ = true;
+}
+
 void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
+    const Followers follows = copy ? Followers{} : followers_on(sel);
     std::vector<EntityHandle> moved;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -1885,6 +2632,8 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
         push_create_item(group, nh, result);
         moved.push_back(nh);
     }
+    move_followers(
+        follows, [&](Vec2 p) { return p + delta; }, [&](Command& c) { translate_cmd(c, delta); }, group);
     if (!copy && !moved.empty()) {
         selection_ = moved; // the moved entities stay selected
     }
@@ -2569,6 +3318,7 @@ void GeometryEngine::apply_reverse(const ReverseSelectionCommand& c) {
             reverse_polyline(*p);
         } else if (auto* s = std::get_if<AddSplineCommand>(&changed)) {
             std::reverse(s->control_points.begin(), s->control_points.end());
+            s->knots = spline::reversed_knots(s->knots);
         } else {
             out.push_back(h);
             continue;
@@ -3117,7 +3867,6 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             }
         }
         std::string out = "Layer name  State  Color  Linetype  Lineweight";
-        static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
         for (const std::uint16_t i : which) {
             const Layer& l = store_.layers()[i];
             char rgb[32];
@@ -3127,7 +3876,7 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             out += "\n\"" + l.name + "\"  " + (l.on ? "On" : "Off") + (l.frozen ? " Frozen" : "") +
                    (l.locked ? " Locked" : "") + (l.plot ? "" : " No-plot") +
                    (i == store_.current_layer() ? " Current" : "") + "  " + rgb + "  " +
-                   kLt[std::min<std::size_t>(static_cast<std::size_t>(l.linetype), 3)] + "  " + lw +
+                   store_.linetype_name(l.linetype) + "  " + lw +
                    (l.description.empty() ? std::string() : "  " + l.description);
         }
         if (which.empty()) {
@@ -3634,9 +4383,7 @@ std::string GeometryEngine::list_block(EntityHandle h) const {
         const std::string color = pr->color_by_layer() ? "BYLAYER"
                                                        : std::to_string(pr->color.r) + "," + std::to_string(pr->color.g) + "," +
                                                              std::to_string(pr->color.b);
-        static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
-        const auto lti = static_cast<std::size_t>(pr->linetype);
-        const std::string ltype = pr->linetype_by_layer() ? "BYLAYER" : (lti < 4 ? kLt[lti] : "Continuous");
+        const std::string ltype = pr->linetype_by_layer() ? std::string("BYLAYER") : store_.linetype_name(pr->linetype);
         char lw[32];
         std::snprintf(lw, sizeof(lw), "%.2f mm", pr->lineweight / 100.0);
         out += "\n                            Color: " + color + "    Linetype: " + ltype +
@@ -4036,9 +4783,7 @@ void GeometryEngine::apply_status(const std::string& modes) {
     out += "\nCurrent layer:            \"" + (cur != nullptr ? cur->name : std::string("0")) + "\"";
     const EntityProps& cp = current_props_;
     out += "\nCurrent color:            " + (cp.color_by_layer() ? std::string("BYLAYER") : std::to_string(cp.color.r) + "," + std::to_string(cp.color.g) + "," + std::to_string(cp.color.b));
-    static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
-    const auto lti = static_cast<std::size_t>(cp.linetype);
-    out += "\nCurrent linetype:         " + (cp.linetype_by_layer() ? std::string("BYLAYER") : std::string(lti < 4 ? kLt[lti] : "Continuous"));
+    out += "\nCurrent linetype:         " + (cp.linetype_by_layer() ? std::string("BYLAYER") : store_.linetype_name(cp.linetype));
     char lw[32];
     std::snprintf(lw, sizeof(lw), "%.2f mm", cp.lineweight / 100.0);
     out += "\nCurrent lineweight:       " + (cp.lineweight_by_layer() ? std::string("BYLAYER") : std::string(lw));
@@ -4221,6 +4966,7 @@ void GeometryEngine::fill_store_from_clipboard(GeometryStore& out, Vec2 offset, 
         out.add_font(f);
     }
     out.set_image_def_table(clipboard_.src_image_defs);
+    out.set_linetypes(clipboard_.src_linetypes);
     for (Command cmd : clipboard_.items) {
         translate_cmd(cmd, offset);
         if (factor != 1.0) {
@@ -4243,6 +4989,7 @@ void GeometryEngine::apply_copy_clipboard(std::optional<Vec2> base) {
     cb.src_blocks.assign(store_.blocks().begin(), store_.blocks().end());
     cb.src_fonts.assign(store_.fonts().begin(), store_.fonts().end());
     cb.src_image_defs.assign(store_.image_defs().begin(), store_.image_defs().end());
+    cb.src_linetypes = store_.linetypes();
     Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
     Vec2 hi{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
     bool any_bounds = false;
@@ -4330,13 +5077,42 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
     std::unordered_map<std::uint16_t, std::uint16_t> layer_map;
     std::unordered_map<std::uint16_t, std::uint16_t> dim_map;
     std::unordered_map<std::uint16_t, std::uint16_t> block_map;
+    // A loaded linetype by its name: the one this drawing has loaded by that name, else it is
+    // loaded here too. The built-in four are the same everywhere.
+    const auto ensure_linetype = [&](Linetype lt) -> Linetype {
+        const auto v = static_cast<std::size_t>(lt);
+        if (v < kFirstLoadedLinetype) {
+            return lt;
+        }
+        if (v - kFirstLoadedLinetype >= clipboard_.src_linetypes.size()) {
+            return Linetype::Continuous;
+        }
+        const LinetypeDef& def = clipboard_.src_linetypes[v - kFirstLoadedLinetype];
+        const auto lower = [](std::string s) {
+            for (char& ch : s) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return s;
+        };
+        const std::vector<LinetypeDef>& mine = store_.linetypes();
+        for (std::size_t k = 0; k < mine.size(); ++k) {
+            if (lower(mine[k].name) == lower(def.name)) {
+                return static_cast<Linetype>(kFirstLoadedLinetype + k);
+            }
+        }
+        return store_.add_linetype(def).value_or(Linetype::Continuous);
+    };
     const auto ensure_layer = [&](std::uint16_t i) -> std::uint16_t {
         const auto it = layer_map.find(i);
         if (it != layer_map.end()) {
             return it->second;
         }
-        const std::uint16_t out =
-            i < clipboard_.src_layers.size() ? store_.add_layer(clipboard_.src_layers[i]) : 0;
+        std::uint16_t out = 0;
+        if (i < clipboard_.src_layers.size()) {
+            Layer l = clipboard_.src_layers[i];
+            l.linetype = ensure_linetype(l.linetype);
+            out = store_.add_layer(l);
+        }
         layer_map[i] = out;
         return out;
     };
@@ -4373,26 +5149,33 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
         BlockDef def = clipboard_.src_blocks[i];
         for (auto& e : def.content.lines) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.circles) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.arcs) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.polylines) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.texts) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.mtexts) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
             e.block.font = ensure_font(e.block.font);
         }
         for (auto& ins : def.content.inserts) {
             ins.block = ensure_block(ins.block); // recursive closure (block tree)
             ins.props.layer = ensure_layer(ins.props.layer);
+            ins.props.linetype = ensure_linetype(ins.props.linetype);
         }
         const std::uint16_t out = store_.add_block(def);
         block_map[i] = out;
@@ -4409,6 +5192,7 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
                 if constexpr (requires { c.props; }) {
                     if (c.props) {
                         c.props->layer = ensure_layer(c.props->layer);
+                        c.props->linetype = ensure_linetype(c.props->linetype);
                     }
                 }
                 if constexpr (std::is_same_v<T, AddDimensionCommand> ||
@@ -4464,6 +5248,7 @@ void GeometryEngine::apply_paste_document(const PasteDocumentCommand& c) {
     cb.src_blocks.assign(scratch.blocks().begin(), scratch.blocks().end());
     cb.src_fonts.assign(scratch.fonts().begin(), scratch.fonts().end());
     cb.src_image_defs.assign(scratch.image_defs().begin(), scratch.image_defs().end());
+    cb.src_linetypes = scratch.linetypes();
     Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
     bool any = false;
     for (const EntityHandle h : all_live_in(scratch)) {
@@ -4494,6 +5279,7 @@ void GeometryEngine::apply_paste_document(const PasteDocumentCommand& c) {
 void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64_t group) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
+    const Followers follows = erase_source ? followers_on(sel) : Followers{};
     std::vector<EntityHandle> result_handles;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -4510,6 +5296,18 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
         push_create_item(group, nh, mirrored);
         result_handles.push_back(nh);
     }
+    {
+        const Vec2 u = b - a;
+        const double L2 = length_squared(u);
+        const auto refl = [&](Vec2 p) {
+            if (L2 <= 0.0) {
+                return p;
+            }
+            const Vec2 foot = a + u * (dot(p - a, u) / L2);
+            return foot * 2.0 - p;
+        };
+        move_followers(follows, refl, [&](Command& c) { mirror_cmd(c, a, b, mirrtext_); }, group);
+    }
     if (erase_source && !result_handles.empty()) {
         selection_ = result_handles;
     }
@@ -4520,6 +5318,7 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
 void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, bool copy) {
     transform_preview_active_ = false; // the band ends with the commit
     const std::vector<EntityHandle> sel = selection_;
+    const Followers follows = copy ? Followers{} : followers_on(sel);
     std::vector<EntityHandle> out;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -4536,6 +5335,17 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, 
         push_create_item(group, nh, result);
         out.push_back(nh);
     }
+    {
+        const double cs = std::cos(angle);
+        const double sn = std::sin(angle);
+        move_followers(
+            follows,
+            [&](Vec2 p) {
+                const Vec2 d = p - base;
+                return Vec2{base.x + d.x * cs - d.y * sn, base.y + d.x * sn + d.y * cs};
+            },
+            [&](Command& c) { rotate_cmd(c, base, angle); }, group);
+    }
     if (!out.empty()) {
         selection_ = out;
     }
@@ -4549,6 +5359,7 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, 
         return;
     }
     const std::vector<EntityHandle> sel = selection_;
+    const Followers follows = copy ? Followers{} : followers_on(sel);
     std::vector<EntityHandle> out;
     for (const EntityHandle h : sel) {
         if (!store_.is_valid(h)) {
@@ -4565,6 +5376,9 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, 
         push_create_item(group, nh, result);
         out.push_back(nh);
     }
+    move_followers(
+        follows, [&](Vec2 p) { return base + (p - base) * factor; },
+        [&](Command& c) { scale_cmd(c, base, factor); }, group);
     if (!out.empty()) {
         selection_ = out;
     }
@@ -4611,6 +5425,39 @@ struct PathSampler {
 
 } // namespace
 
+void GeometryEngine::emit_copy(const Command& copy, std::uint64_t group) {
+    if (array_sink_ != nullptr) {
+        array_sink_->push_back(copy);
+        return;
+    }
+    const EntityHandle nh = create_indexed(copy);
+    push_create_item(group, nh, copy);
+}
+
+void GeometryEngine::apply_array_preview(const ArrayPreviewCommand& c) {
+    array_preview_.clear();
+    if (c.type == 0) {
+        return;
+    }
+    // The array as it would be made, by the code that makes it, its copies kept aside;
+    // what it would say goes unsaid.
+    const std::string status = status_;
+    const auto status_version = status_version_;
+    array_sink_ = &array_preview_;
+    if (c.type == 1) {
+        const Vec2 sp = c.rect.auto_spacing ? array_default_spacing() : Vec2{c.rect.dx, c.rect.dy};
+        apply_array_rect(c.rect.rows, c.rect.cols, sp.x, sp.y, c.rect.angle, 0);
+    } else if (c.type == 2) {
+        apply_array_polar(c.polar.center, c.polar.count, c.polar.total_angle, c.polar.rotate_items, 0,
+                          c.polar.rows, c.polar.row_spacing);
+    } else {
+        apply_array_path(c.path);
+    }
+    array_sink_ = nullptr;
+    status_ = status;
+    status_version_ = status_version;
+}
+
 void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy, double angle,
                                       std::uint64_t group) {
     rows = std::max(rows, 1);
@@ -4639,11 +5486,13 @@ void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy, 
                 }
                 Command copy = capture_entity(h);
                 translate_cmd(copy, d);
-                const EntityHandle nh = create_indexed(copy);
-                push_create_item(group, nh, copy);
+                emit_copy(copy, group);
                 ++made;
             }
         }
+    }
+    if (array_sink_ != nullptr) {
+        return; // the preview's copies
     }
     redo_.clear();
     geom_dirty_ = true;
@@ -4687,10 +5536,11 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
     // Where the items go. Divide (spacing 0) spreads `count` over the whole path;
     // Measure steps every `spacing`, with `count` capping how many (0 = as many as fit).
     std::vector<double> stations;
-    if (c.spacing > 1e-12) {
+    const double spacing = c.auto_spacing ? array_default_spacing().x : c.spacing;
+    if (spacing > 1e-12) {
         const int cap = c.count > 0 ? c.count : std::numeric_limits<int>::max();
         for (int i = 0; i < cap; ++i) {
-            const double s = static_cast<double>(i) * c.spacing;
+            const double s = static_cast<double>(i) * spacing;
             if (s > total + 1e-9) {
                 break;
             }
@@ -4758,10 +5608,12 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
                 rotate_cmd(copy, base, ang - ang0);
             }
             translate_cmd(copy, p - base);
-            const EntityHandle nh = create_indexed(copy);
-            push_create_item(c.group, nh, copy);
+            emit_copy(copy, c.group);
             ++made;
         }
+    }
+    if (array_sink_ != nullptr) {
+        return; // the preview's copies
     }
     redo_.clear();
     geom_dirty_ = true;
@@ -4864,8 +5716,28 @@ void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
            (block ? " blocks placed." : " points placed."));
 }
 
+Vec2 GeometryEngine::array_default_spacing() const {
+    bool any = false;
+    Vec2 lo;
+    Vec2 hi;
+    for (const EntityHandle h : selection_) {
+        Vec2 a;
+        Vec2 b;
+        if (store_.is_valid(h) && entity_aabb(store_, h, a, b)) {
+            lo = any ? Vec2{std::min(lo.x, a.x), std::min(lo.y, a.y)} : a;
+            hi = any ? Vec2{std::max(hi.x, b.x), std::max(hi.y, b.y)} : b;
+            any = true;
+        }
+    }
+    double w = any ? hi.x - lo.x : 0.0;
+    double h = any ? hi.y - lo.y : 0.0;
+    w = w > 1e-12 ? w : h;
+    h = h > 1e-12 ? h : w;
+    return w > 1e-12 ? Vec2{w * 1.5, h * 1.5} : Vec2{1.0, 1.0};
+}
+
 void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
-                                       bool rotate_items, std::uint64_t group) {
+                                       bool rotate_items, std::uint64_t group, int rows, double row_spacing) {
     const std::vector<EntityHandle> sel = selection_;
     if (sel.empty()) {
         report("Nothing selected to array.");
@@ -4881,13 +5753,27 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     const double step = full ? total_angle / static_cast<double>(count)
                              : total_angle / static_cast<double>(count - 1);
     int made = 0;
-    for (int i = 1; i < count; ++i) {
+    rows = std::max(rows, 1);
+    for (int k = 0; k < rows * count; ++k) {
+        const int row = k / count;
+        const int i = k % count;
+        if (k == 0) {
+            continue; // the originals stay in place
+        }
         const double a = step * static_cast<double>(i);
         for (const EntityHandle h : sel) {
             if (!store_.is_valid(h)) {
                 continue;
             }
             Command copy = capture_entity(h);
+            if (row > 0) {
+                // The next ring out: away from the centre, through where the item is.
+                const Vec2 out = command_anchor(copy) - center;
+                const double len = length(out);
+                if (len > 1e-12) {
+                    translate_cmd(copy, out * (row_spacing * static_cast<double>(row) / len));
+                }
+            }
             if (rotate_items) {
                 rotate_cmd(copy, center, a);
             } else {
@@ -4899,10 +5785,12 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
                 const Vec2 moved{center.x + d.x * cs - d.y * sn, center.y + d.x * sn + d.y * cs};
                 translate_cmd(copy, moved - anchor);
             }
-            const EntityHandle nh = create_indexed(copy);
-            push_create_item(group, nh, copy);
+            emit_copy(copy, group);
             ++made;
         }
+    }
+    if (array_sink_ != nullptr) {
+        return; // the preview's copies
     }
     redo_.clear();
     geom_dirty_ = true;
@@ -5278,6 +6166,23 @@ bool GeometryEngine::plan_extend_preview(Vec2 pick, double radius, std::vector<V
         }
         return true;
     }
+    if (h.kind == EntityKind::Spline) {
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid() || distance(cps.front(), cps.back()) < 1e-9) {
+            return false;
+        }
+        const bool at_end = length_squared(pick - cps.back()) <= length_squared(pick - cps.front());
+        const std::optional<Vec2> dir = spline::end_direction(curve, at_end);
+        const Vec2 e = at_end ? cps.back() : cps.front();
+        Vec2 target{};
+        if (!dir || !nearest_boundary_ahead(h, e - *dir, e, target)) {
+            return false;
+        }
+        added = {e, target};
+        return true;
+    }
     return false;
 }
 
@@ -5430,8 +6335,49 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         report("Extended.");
         return;
     }
+    if (h.kind == EntityKind::Spline) {
+        // As AutoCAD extends a spline: the curve as it was, then straight on along the
+        // direction it leaves by, to the first boundary ahead -- one spline.
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid() || distance(cps.front(), cps.back()) < 1e-9) {
+            report("Extend: a closed spline has no open end.");
+            return;
+        }
+        const bool at_end = length_squared(pick - cps.back()) <= length_squared(pick - cps.front());
+        const std::optional<Vec2> dir = spline::end_direction(curve, at_end);
+        if (!dir) {
+            report("Extend: that spline's end cannot be extended.");
+            return;
+        }
+        const Vec2 e = at_end ? cps.back() : cps.front();
+        Vec2 target{};
+        spline::Piece longer;
+        if (!nearest_boundary_ahead(h, e - *dir, e, target)) {
+            report("Extend: no boundary ahead of that end.");
+            return;
+        }
+        if (!spline::extended_straight(curve, at_end, target, longer)) {
+            report("Extend: that spline's end cannot be extended.");
+            return;
+        }
+        const Command original = capture_entity(h);
+        const Command extended =
+            AddSplineCommand{longer.ctrl, static_cast<std::uint32_t>(curve.degree), 0, sd->props, longer.knots};
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const EntityHandle nh = create_indexed(extended);
+        push_create_item(group, nh, extended);
+        note_trim_pieces(h, {nh});
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Extended.");
+        return;
+    }
     if (h.kind != EntityKind::Line) {
-        report("Extend: only lines, arcs, elliptical arcs and open polylines can be extended.");
+        report("Extend: only lines, arcs, elliptical arcs, splines and open polylines can be extended.");
         return;
     }
     const LineData* l = store_.line(h);
@@ -6327,6 +7273,15 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                 lines_from_pairs(al, m->props);
                 solids_from_tris(af, m->props);
             }
+            const Vec2 attach = mleader_attach(v, m->leader_flags);
+            for (const Vec2& tip : store_.extra_tips_of(*m)) { // MLEADEREDIT's added leaders
+                line(tip, attach, m->props);
+                std::vector<Vec2> af;
+                std::vector<Vec2> al;
+                append_arrowhead(af, al, tip, attach - tip, s.arrow_size, static_cast<ArrowType>(s.arrow_type));
+                lines_from_pairs(al, m->props);
+                solids_from_tris(af, m->props);
+            }
             AddMTextCommand mc;
             mc.block = m->text;
             mc.content = std::string(store_.string_of(m->text));
@@ -6339,7 +7294,7 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
             const HatchData* hd = store_.hatch(h);
             const std::vector<std::vector<Vec2>> loops = store_.hatch_loops(*hd);
             const std::string_view pname = store_.string_of(*hd);
-            if (const hatch::Pattern* pat = pname == "SOLID" ? nullptr : hatch::builtin_pattern(pname)) {
+            if (const hatch::Pattern* pat = pname == "SOLID" ? nullptr : store_.pattern(pname)) {
                 std::vector<hatch::Segment> segs;
                 hatch::generate_pattern_segments(loops, *pat, hd->pattern_scale, hd->pattern_angle,
                                                  hd->pattern_origin, segs);
@@ -6456,7 +7411,6 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                 probe);
             EntityProps pr{};
             modify_cmd_props(probe, [&](EntityProps& p) { pr = p; });
-            static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
             const InsertData* in = store_.insert(exploded.front());
             const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
             const std::string layer = pr.layer < store_.layers().size() ? store_.layers()[pr.layer].name : "0";
@@ -6464,7 +7418,7 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                                                           : std::to_string(pr.color.r) + "," + std::to_string(pr.color.g) +
                                                                 "," + std::to_string(pr.color.b);
             const std::string ltype =
-                pr.linetype_by_layer() ? "BYLAYER" : kLt[std::min<std::size_t>(static_cast<std::size_t>(pr.linetype), 3)];
+                pr.linetype_by_layer() ? std::string("BYLAYER") : store_.linetype_name(pr.linetype);
             report("Object: " + kind + "  Block name: " + (bd != nullptr ? bd->name : std::string()) + "  Layer: " + layer +
                    "  Color: " + color + "  Linetype: " + ltype);
             return;
@@ -6937,9 +7891,17 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
             bi = i;
         }
     }
+    if (c.attredef && bi == 0xFFFF) {
+        report("Block \"" + c.name + "\" does not exist.");
+        return;
+    }
+    if (c.attredef && def.content.attdefs.empty()) {
+        report("New block has no attributes.");
+        return;
+    }
     const bool redefined = bi != 0xFFFF;
     if (redefined) {
-        store_.redefine_block(bi, def);
+        redefine_block_by_tags(bi, def);
     } else {
         bi = store_.add_block(def);
     }
@@ -6948,10 +7910,14 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
         remove_indexed(h);
         push_erase_item(c.group, h, original);
     }
-    const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0, {}, {}};
-    const EntityHandle nh = create_indexed(ins);
-    push_create_item(c.group, nh, ins);
-    selection_ = {nh};
+    if (c.attredef) {
+        selection_.clear(); // ATTREDEF: the objects are the definition now; no reference in their place
+    } else {
+        const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0, {}, {}};
+        const EntityHandle nh = create_indexed(ins);
+        push_create_item(c.group, nh, ins);
+        selection_ = {nh};
+    }
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
@@ -6971,18 +7937,21 @@ void GeometryEngine::apply_refedit(const RefEditCommand& c) {
         report("A reference is already being edited; REFCLOSE it first.");
         return;
     }
-    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    open_refedit(pick_nearest(c.pick, c.pick_radius), c.group);
+}
+
+bool GeometryEngine::open_refedit(EntityHandle h, std::uint64_t group) {
     const InsertData* in = store_.insert(h);
     const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
     if (bd == nullptr) {
         report("REFEDIT: select a block reference.");
-        return;
+        return false;
     }
     // The working set is mapped back into the definition's frame on save, which
     // needs an invertible, shape-preserving transform: a positive uniform scale.
     if (!(in->scale_x > 0.0) || std::abs(in->scale_x - in->scale_y) > 1e-9) {
         report("REFEDIT needs a reference with a positive, uniform scale.");
-        return;
+        return false;
     }
     RefEditSession session;
     session.block = in->block;
@@ -6991,18 +7960,188 @@ void GeometryEngine::apply_refedit(const RefEditCommand& c) {
     // Its members become ordinary objects at the reference's place (EXPLODE's path, so
     // nested references stay references and attributes become their definitions).
     selection_ = {h};
+    const std::string name = bd->name;
     const std::size_t before = undo_.size();
-    apply_explode(c.group);
-    if (!store_.is_valid(h) && (undo_.size() > before || (!undo_.empty() && undo_.back().id == c.group))) {
+    apply_explode(group);
+    if (!store_.is_valid(h) && (undo_.size() > before || (!undo_.empty() && undo_.back().id == group))) {
         session.working_set = selection_;
         session.active = true;
         refedit_ = std::move(session);
-        report("Reference \"" + bd->name + "\" open for editing: " +
-               std::to_string(refedit_.working_set.size()) +
+        report("Reference \"" + name + "\" open for editing: " + std::to_string(refedit_.working_set.size()) +
                " object(s) in the working set. REFSET adds or removes objects; REFCLOSE saves "
                "or discards.");
-    } else {
-        report("REFEDIT: that reference has nothing to edit.");
+        return true;
+    }
+    report("REFEDIT: that reference has nothing to edit.");
+    return false;
+}
+
+void GeometryEngine::apply_layer_merge(const LayerMergeCommand& c) {
+    const auto& layers = store_.layers();
+    const auto index_of = [&](const std::string& name) -> int {
+        for (std::size_t i = 0; i < layers.size(); ++i) {
+            const std::string& n = layers[i].name;
+            if (n.size() == name.size() && std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                    return std::toupper(static_cast<unsigned char>(a)) == std::toupper(static_cast<unsigned char>(b));
+                })) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    const auto layer_at = [&](Vec2 p) -> int {
+        const EntityProps* pr = store_.props(pick_nearest(p, c.pick_radius));
+        return pr != nullptr ? static_cast<int>(pr->layer) : -1;
+    };
+    std::vector<std::uint16_t> sources;
+    const auto add_source = [&](int i) {
+        if (i >= 0 && std::find(sources.begin(), sources.end(), static_cast<std::uint16_t>(i)) == sources.end()) {
+            sources.push_back(static_cast<std::uint16_t>(i));
+        }
+    };
+    for (const std::string& n : c.sources) {
+        add_source(index_of(n));
+    }
+    for (const Vec2& p : c.source_picks) {
+        add_source(layer_at(p));
+    }
+    const int target = c.erase ? -1 : (c.target_pick ? layer_at(*c.target_pick) : index_of(c.target));
+    if (sources.empty()) {
+        report("No layers found to " + std::string(c.erase ? "delete." : "merge."));
+        return;
+    }
+    if (!c.erase && target < 0) {
+        report("Target layer not found.");
+        return;
+    }
+    for (const std::uint16_t s : sources) {
+        if (s == 0 || s == store_.current_layer() || static_cast<int>(s) == target) {
+            report(s == 0 ? "Layer \"0\" cannot be " + std::string(c.erase ? "deleted." : "merged.")
+                   : s == store_.current_layer() ? "The current layer cannot be " + std::string(c.erase ? "deleted." : "merged.")
+                                                  : "A layer cannot be merged into itself.");
+            return;
+        }
+    }
+    std::size_t n = 0;
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* pr = store_.props(h);
+        if (pr == nullptr || std::find(sources.begin(), sources.end(), pr->layer) == sources.end()) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        if (!c.erase) {
+            Command moved = original;
+            modify_cmd_props(moved, [&](EntityProps& p) { p.layer = static_cast<std::uint16_t>(target); });
+            push_create_item(c.group, create_indexed(moved), moved);
+        }
+        ++n;
+    }
+    if (n > 0) {
+        prune_selection();
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    std::string names;
+    for (const std::uint16_t s : sources) {
+        names += (names.empty() ? "\"" : ", \"") + layers[s].name + "\"";
+    }
+    report(c.erase ? std::to_string(n) + (n == 1 ? " object" : " objects") + " deleted from " + names +
+                         ". The empty layer stays until PURGE (so UNDO can bring the objects back)."
+                   : std::to_string(n) + (n == 1 ? " object" : " objects") + " merged from " + names + " into \"" +
+                         layers[static_cast<std::size_t>(target)].name +
+                         "\". The empty layer stays until PURGE (so UNDO can bring the objects back).");
+}
+
+void GeometryEngine::apply_block_edit(const BlockEditCommand& c) {
+    using Op = BlockEditCommand::Op;
+    if (c.op == Op::Open) {
+        if (refedit_.active) {
+            report(refedit_.bedit ? "The Block Editor is open: BCLOSE it first." : "A reference is being edited: REFCLOSE it first.");
+            return;
+        }
+        std::uint16_t bi = 0xFFFF;
+        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+            const std::string& n = store_.block(i)->name;
+            if (n.size() == c.name.size() && std::equal(n.begin(), n.end(), c.name.begin(), [](char a, char b) {
+                    return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                })) {
+                bi = i;
+            }
+        }
+        if (bi == 0xFFFF) {
+            report("Block \"" + c.name + "\" not found.");
+            return;
+        }
+        if (!store_.block(bi)->xref_path.empty()) {
+            report("\"" + c.name + "\" is an xref: edit its drawing, then XREF Reload.");
+            return;
+        }
+        // A reference at the base point shows the objects at their own coordinates; REFEDIT
+        // opens it, and everything else is hidden while the block is edited.
+        const Command add = AddInsertCommand{bi, store_.block(bi)->base, 1.0, 1.0, 0.0, 0, {}, {}};
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        if (!open_refedit(nh, c.group)) {
+            return;
+        }
+        refedit_.bedit = true;
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            if (p == nullptr || p->hidden() || p->space() != store_.active_space() ||
+                std::find(refedit_.working_set.begin(), refedit_.working_set.end(), h) != refedit_.working_set.end()) {
+                continue;
+            }
+            EntityProps np = *p;
+            np.set_hidden(true);
+            store_.set_props(h, np);
+            refedit_.hidden.push_back(h);
+        }
+        selection_.clear();
+        geom_dirty_ = true;
+        report("Block Editor: \"" + store_.block(bi)->name + "\" is open. BCLOSE saves or discards it; BSAVE saves it.");
+        return;
+    }
+    if (!refedit_.active || !refedit_.bedit) {
+        report("The Block Editor is not open (BEDIT first).");
+        return;
+    }
+    const std::string name = store_.block(refedit_.block) != nullptr ? store_.block(refedit_.block)->name : std::string();
+    // What is shown is the block: the objects edited, moved or drawn while it was open.
+    std::vector<EntityHandle> shown;
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* p = store_.props(h);
+        if (p != nullptr && !p->hidden() && p->space() == store_.active_space()) {
+            shown.push_back(h);
+        }
+    }
+    refedit_.working_set = shown;
+    refedit_.added.clear();
+    for (const EntityHandle h : refedit_.hidden) {
+        if (const EntityProps* p = store_.props(h); p != nullptr && p->hidden()) {
+            EntityProps np = *p;
+            np.set_hidden(false);
+            store_.set_props(h, np);
+        }
+    }
+    const bool save = c.op == Op::Save || c.save;
+    apply_refclose(RefCloseCommand{save, c.group});
+    // REFCLOSE puts the reference back: BEDIT's own goes.
+    if (!selection_.empty() && selection_.front().kind == EntityKind::Insert && store_.is_valid(selection_.front())) {
+        const EntityHandle ref = selection_.front();
+        const Command original = capture_entity(ref);
+        remove_indexed(ref);
+        push_erase_item(c.group, ref, original);
+        selection_.clear();
+    }
+    report(save ? "Block \"" + name + "\" saved." : "Block \"" + name + "\": changes discarded.");
+    if (c.op == Op::Save) {
+        BlockEditCommand again;
+        again.name = name;
+        again.group = c.group;
+        apply_block_edit(again); // BSAVE: the Block Editor stays open
     }
 }
 
@@ -7102,7 +8241,7 @@ void GeometryEngine::apply_refclose(const RefCloseCommand& c) {
                 ++saved;
             }
         }
-        store_.redefine_block(session.block, def);
+        redefine_block_by_tags(session.block, def);
     } else {
         for (const EntityHandle h : live) {
             if (was_added(h)) {
@@ -7633,6 +8772,20 @@ void GeometryEngine::apply_extrim(const ExtrimCommand& c) {
     // Which side of the edge a point is on: inside or outside a closed one; left or right
     // of an open one, where it passes nearest.
     const auto side_of = [&](Vec2 p) -> int {
+        // Inside a circle or a whole ellipse by its own equation: the chords of its outline
+        // would put a point just inside, near a crossing, on the wrong side.
+        if (const CircleData* ci = e.kind == EntityKind::Circle ? store_.circle(e) : nullptr) {
+            return distance(p, ci->center) < ci->radius ? 1 : -1;
+        }
+        if (const EllipseData* el = e.kind == EntityKind::Ellipse ? store_.ellipse(e) : nullptr;
+            el != nullptr && closed && length(el->major) > 1e-12 && el->ratio > 1e-12) {
+            const double ml = length(el->major);
+            const Vec2 ax = el->major / ml;
+            const Vec2 q = p - el->center;
+            const double x = dot(q, ax) / ml;
+            const double y = cross(ax, q) / (ml * el->ratio);
+            return x * x + y * y < 1.0 ? 1 : -1;
+        }
         if (closed) {
             bool in = false;
             for (std::size_t i = 0, j = edge_pts.size() - 1; i < edge_pts.size(); j = i++) {
@@ -8237,7 +9390,7 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     remap_inserts(def.content);
     const std::uint16_t existing = find_block(name);
     if (existing != 0xFFFF) {
-        store_.redefine_block(existing, def);
+        redefine_block_by_tags(existing, def);
         return existing;
     }
     return store_.add_block(def);
@@ -8247,11 +9400,17 @@ namespace {
 /// A CSV file's rows (RFC 4180: quoted fields may hold commas, quotes doubled, line
 /// breaks); false when it cannot be read.
 bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& rows) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) {
         return false;
     }
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const std::streamoff size = f.tellg();
+    if (size < 0) {
+        return false;
+    }
+    std::string text(static_cast<std::size_t>(size), '\0');
+    f.seekg(0);
+    f.read(text.data(), static_cast<std::streamsize>(size));
     rows.clear();
     std::vector<std::string> row;
     std::string field;
@@ -8298,6 +9457,21 @@ bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& ro
         rows.push_back(std::move(row));
     }
     return true;
+}
+
+/// A data link's cells: an Excel workbook's sheet (its first, or the one named), else a CSV
+/// file's -- all of them, or the link's range.
+bool read_grid(const DataLink& link, std::vector<std::vector<std::string>>& rows) {
+    std::string ext = std::filesystem::path(link.path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    bool ok = false;
+    if (ext == ".xlsx" || ext == ".xlsm") {
+        std::string error;
+        ok = io::read_xlsx(link.path, rows, error, link.sheet);
+    } else {
+        ok = read_csv(link.path, rows);
+    }
+    return ok && (link.range.empty() || io::crop_to_range(rows, link.range));
 }
 
 bool write_csv(const std::string& path, const std::vector<std::vector<std::string>>& rows) {
@@ -8664,8 +9838,10 @@ void GeometryEngine::apply_set_data_link(const SetDataLinkCommand& c) {
         }
         if (i != 0xFFFF) {
             links[i].path = c.path;
+            links[i].sheet = c.sheet;
+            links[i].range = c.range;
         } else {
-            links.push_back(DataLink{c.name, c.path});
+            links.push_back(DataLink{c.name, c.path, c.sheet, c.range});
         }
         report("Data link \"" + c.name + "\": " + c.path + ".");
     }
@@ -8682,7 +9858,7 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
     }
     const DataLink link = store_.data_links()[li];
     std::vector<std::vector<std::string>> grid;
-    if (!read_csv(link.path, grid)) {
+    if (!read_grid(link, grid)) {
         report("Data link \"" + link.name + "\": cannot read " + link.path + ".");
         return;
     }
@@ -8701,6 +9877,118 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
     dirty_ = true;
     report("Table from data link \"" + link.name + "\": " + std::to_string(t.rows) + " rows, " +
            std::to_string(t.cols) + " columns.");
+}
+
+void GeometryEngine::apply_mleader_edit(const MLeaderEditCommand& c) {
+    using Op = MLeaderEditCommand::Op;
+    mleader_edit_changed_ = false;
+    if (c.op == Op::Begin) {
+        const EntityHandle h = pick_nearest(c.pick, c.radius);
+        mleaderedit_ = h.kind == EntityKind::MLeader ? h : EntityHandle::null();
+        if (mleaderedit_.is_null()) {
+            report("Select a multileader.");
+        }
+        return;
+    }
+    if (c.op == Op::End || !store_.is_valid(mleaderedit_)) {
+        if (c.op != Op::End) {
+            report("Select a multileader.");
+        }
+        mleaderedit_ = EntityHandle::null();
+        return;
+    }
+    const Command original = capture_entity(mleaderedit_);
+    Command made = original;
+    auto& m = std::get<AddMLeaderCommand>(made);
+    if (m.vertices.empty()) {
+        return;
+    }
+    if (c.op == Op::Add) {
+        if (m.extra_tips.size() >= 255) {
+            report("A multileader takes no more leaders.");
+            return;
+        }
+        m.extra_tips.push_back(c.pick);
+    } else {
+        // The leader nearest the pick: the first one (its path up to the landing) or one added.
+        const Vec2 attach = mleader_attach(m.vertices, m.leader_flags);
+        const auto seg_dist = [](Vec2 a, Vec2 b, Vec2 p) {
+            const Vec2 d = b - a;
+            const double l2 = length_squared(d);
+            const double t = l2 > 0.0 ? std::clamp(dot(p - a, d) / l2, 0.0, 1.0) : 0.0;
+            return distance(a + d * t, p);
+        };
+        double best = c.radius;
+        std::optional<std::size_t> which; // index into extra_tips; nullopt with `first` = the first leader
+        bool first = false;
+        for (std::size_t i = 1; i < m.vertices.size(); ++i) {
+            if (m.vertices[i - 1] == attach) {
+                break; // the landing is no leader
+            }
+            const double d = seg_dist(m.vertices[i - 1], m.vertices[i], c.pick);
+            if (d <= best) {
+                best = d;
+                first = true;
+            }
+        }
+        for (std::size_t k = 0; k < m.extra_tips.size(); ++k) {
+            const double d = seg_dist(m.extra_tips[k], attach, c.pick);
+            if (d <= best) {
+                best = d;
+                which = k;
+                first = false;
+            }
+        }
+        if (!first && !which) {
+            report("No leader of the multileader there.");
+            return;
+        }
+        if (first) {
+            if (m.extra_tips.empty()) {
+                report("A multileader keeps one leader.");
+                return;
+            }
+            // The first added leader takes the first one's place, on to the landing.
+            std::vector<Vec2> path{m.extra_tips.front()};
+            const auto at = std::find(m.vertices.begin(), m.vertices.end(), attach);
+            path.insert(path.end(), at, m.vertices.end());
+            m.vertices = std::move(path);
+            m.extra_tips.erase(m.extra_tips.begin());
+        } else {
+            m.extra_tips.erase(m.extra_tips.begin() + static_cast<std::ptrdiff_t>(*which));
+        }
+    }
+    remove_indexed(mleaderedit_);
+    push_erase_item(c.group, mleaderedit_, original);
+    const EntityHandle nh = create_indexed(made);
+    push_create_item(c.group, nh, made);
+    mleaderedit_ = nh;
+    mleader_edit_changed_ = true;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+}
+
+void GeometryEngine::apply_table_export(const TableExportCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.radius);
+    if (h.kind != EntityKind::Table) {
+        report("That is not a table.");
+        return;
+    }
+    const Command cmd = capture_entity(h);
+    const auto* t = std::get_if<AddTableCommand>(&cmd);
+    if (t == nullptr) {
+        return;
+    }
+    std::vector<std::vector<std::string>> grid(t->rows);
+    for (std::size_t r = 0; r < t->rows; ++r) {
+        for (std::size_t col = 0; col < t->cols; ++col) {
+            const std::size_t k = r * t->cols + col;
+            grid[r].push_back(k < t->texts.size() ? t->texts[k] : std::string());
+        }
+    }
+    report(write_csv(c.path, grid) ? "Table exported to " + c.path + "."
+                                   : "Could not write " + c.path + ".");
 }
 
 void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
@@ -8751,6 +10039,13 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
                     grid[r].push_back(k < was->texts.size() ? was->texts[k] : std::string());
                 }
             }
+            std::string ext = std::filesystem::path(link.path).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (ext == ".xlsx" || ext == ".xlsm" || !link.range.empty()) {
+                ++failed; // a workbook is never overwritten with plain text, nor a file with part of it
+                continue;
+            }
             if (write_csv(link.path, grid)) {
                 ++done;
             } else {
@@ -8759,7 +10054,7 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
             continue;
         }
         std::vector<std::vector<std::string>> grid;
-        if (!read_csv(link.path, grid)) {
+        if (!read_grid(link, grid)) {
             ++failed;
             continue;
         }
@@ -9536,11 +10831,70 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
                          : ellipse_length(e, e.start + total - new_total, e.start + total);
         break;
     }
-    case EntityKind::Spline:
-        report("Lengthen: splines are not lengthened yet (lines, arcs, polylines and elliptical arcs are).");
-        return;
+    case EntityKind::Spline: {
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid()) {
+            report("Lengthen: that spline has no length.");
+            return;
+        }
+        before = spline::length_between(curve, curve.lo(), curve.hi());
+        if (c.mode == Mode::Measure) {
+            say_length(before, std::nullopt);
+            return;
+        }
+        if (distance(cps.front(), cps.back()) < 1e-9) {
+            report("Lengthen: a closed spline has no end to move.");
+            return;
+        }
+        if (angle_mode) {
+            report("Lengthen: Angle is for arcs; a spline has a length.");
+            return;
+        }
+        // The end nearer the pick moves: shorter, along the curve; longer, straight on along
+        // the direction it leaves by (as EXTEND makes it).
+        const bool move_end = length_squared(c.pick - cps.back()) <= length_squared(c.pick - cps.front());
+        const std::optional<Vec2> dir = spline::end_direction(curve, move_end);
+        const Vec2 e = move_end ? cps.back() : cps.front();
+        double target = 0.0;
+        if (c.mode == Mode::Dynamic) {
+            const double u = spline::param_near(curve, c.to);
+            const double beyond = dir ? dot(c.to - e, *dir) : 0.0;
+            const bool past = move_end ? u >= curve.hi() - 1e-9 : u <= curve.lo() + 1e-9;
+            target = past && beyond > 0.0 ? before + beyond
+                     : move_end           ? spline::length_between(curve, curve.lo(), u)
+                                          : spline::length_between(curve, u, curve.hi());
+        } else {
+            target = resolve(before);
+        }
+        if (target <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        spline::Piece made;
+        if (target < before - 1e-9) {
+            spline::Piece head;
+            spline::Piece tail;
+            if (!spline::split(curve, spline::param_at_length(curve, target, move_end), head, tail)) {
+                report("Lengthen: that would leave nothing of the object.");
+                return;
+            }
+            made = move_end ? head : tail;
+        } else if (target > before + 1e-9) {
+            if (!dir || !spline::extended_straight(curve, move_end, e + *dir * (target - before), made)) {
+                report("Lengthen: that spline's end cannot be moved.");
+                return;
+            }
+        } else {
+            made = spline::Piece{std::vector<Vec2>(cps.begin(), cps.end()), curve.knots};
+        }
+        edited = AddSplineCommand{made.ctrl, static_cast<std::uint32_t>(curve.degree), 0, sd->props, made.knots};
+        after = target;
+        break;
+    }
     default:
-        report("Lengthen: only lines, arcs, polylines and elliptical arcs have an end to move.");
+        report("Lengthen: only lines, arcs, polylines, elliptical arcs and splines have an end to move.");
         return;
     }
 
@@ -9580,9 +10934,81 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
     case EntityKind::Xline:
         report("Break: a construction line cannot be broken.");
         return;
-    case EntityKind::Ellipse:
-        report("Break: ellipses are not supported yet (lines, arcs, circles and polylines are).");
-        return;
+    case EntityKind::Ellipse: {
+        const EllipseData e = *store_.ellipse(h);
+        if (ellipse::is_full(e)) {
+            if (at_point) {
+                report("Break: an ellipse needs two different break points.");
+                return;
+            }
+            // As a circle: the piece counter-clockwise from the first point to the second
+            // goes, and what is left is the elliptical arc from the second round to the first.
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, ellipse::param_of(e, c.p2),
+                                               ellipse::param_of(e, c.p1), 0, e.props});
+            break;
+        }
+        // As an arc: each point by its parameter along the sweep from the start.
+        const double total = ellipse::sweep_of(e);
+        const auto along = [&](Vec2 p) {
+            double d = std::fmod(ellipse::param_of(e, p) - e.start, kTwoPi);
+            if (d < 0.0) {
+                d += kTwoPi;
+            }
+            return d > total ? ((d - total) < (kTwoPi - d) ? total : 0.0) : d;
+        };
+        double s1 = along(c.p1);
+        double s2 = at_point ? s1 : along(c.p2);
+        if (s1 > s2) {
+            std::swap(s1, s2);
+        }
+        if (s1 > 1e-9) {
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start, e.start + s1, 0, e.props});
+        }
+        if (total - s2 > 1e-9) {
+            pieces.push_back(AddEllipseCommand{e.center, e.major, e.ratio, e.start + s2, e.start + total, 0, e.props});
+        }
+        break;
+    }
+    case EntityKind::Spline: {
+        // Along the spline's own parameter; each piece is the same curve over its part,
+        // with knots of its own. A closed spline opens: what is left runs from the second
+        // point round to the first.
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid()) {
+            report("Break: that spline has no length.");
+            return;
+        }
+        const auto deg = static_cast<std::uint32_t>(curve.degree);
+        const double eps = 1e-9 * (curve.hi() - curve.lo());
+        double u1 = spline::param_near(curve, c.p1);
+        double u2 = at_point ? u1 : spline::param_near(curve, c.p2);
+        if (u1 > u2) {
+            std::swap(u1, u2);
+        }
+        const auto keep = [&](const spline::Piece& pc) {
+            if (pc.ctrl.size() >= 2) {
+                pieces.push_back(AddSplineCommand{pc.ctrl, deg, 0, sd->props, pc.knots});
+            }
+        };
+        spline::Piece before;
+        spline::Piece after;
+        spline::Piece unused;
+        const bool cut_lo = u1 > curve.lo() + eps && spline::split(curve, u1, before, unused);
+        const bool cut_hi = u2 < curve.hi() - eps && spline::split(curve, u2, unused, after);
+        if (distance(cps.front(), cps.back()) < 1e-9 && cut_lo && cut_hi) {
+            keep(spline::joined(after, before, curve.degree));
+        } else {
+            if (cut_lo) {
+                keep(before);
+            }
+            if (cut_hi) {
+                keep(after);
+            }
+        }
+        break;
+    }
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         const Vec2 d = l->b - l->a;
@@ -9818,30 +11244,202 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
     report("Dimension created from object.");
 }
 
+std::vector<std::pair<EntityHandle, Command>> GeometryEngine::grip_edits() const {
+    std::vector<std::pair<EntityHandle, Command>> out;
+    if (!store_.is_valid(grip_handle_)) {
+        return out;
+    }
+    // The grips that move, by object (the dragged one's first): it, the selected objects'
+    // grips at the same point, and the grips made hot with Shift -- all by the same delta.
+    struct Moved {
+        EntityHandle h;
+        std::vector<std::pair<std::uint32_t, Vec2>> grips;
+    };
+    std::vector<Moved> objs{{grip_handle_, {{grip_index_, grip_pos_}}}};
+    const Vec2 delta = grip_pos_ - grip_origin_;
+    for (const GripPeer& p : grip_peers_) {
+        if (!store_.is_valid(p.handle)) {
+            continue;
+        }
+        auto it = std::find_if(objs.begin(), objs.end(), [&](const Moved& m) { return m.h == p.handle; });
+        if (it == objs.end()) {
+            objs.push_back({p.handle, {}});
+            it = objs.end() - 1;
+        }
+        it->grips.emplace_back(p.index, p.origin + delta);
+    }
+    for (const Moved& m : objs) {
+        if (m.grips.size() == 1) {
+            const bool own = m.h == grip_handle_;
+            out.emplace_back(m.h, edit_for_grip_drag(store_, m.h, m.grips[0].first, m.grips[0].second,
+                                                     own ? grip_text_move_ : -1, own ? grip_variant_ : 0));
+            continue;
+        }
+        // Several hot grips of one object: each edit made on the one before, on a scratch store.
+        const EntityProps* ep = store_.props(m.h);
+        const EntityProps props = ep != nullptr ? *ep : EntityProps{store_.current_layer()};
+        GeometryStore scratch;
+        Command c = capture_entity(m.h);
+        for (const auto& [index, pos] : m.grips) {
+            scratch.clear();
+            scratch.set_layer_table(store_.layers(), store_.current_layer());
+            scratch.set_dimstyle_table(store_.dimstyles());
+            const EntityHandle sh = add_command_to_store(scratch, c, props);
+            c = edit_for_grip_drag(scratch, sh, index, pos, m.h == grip_handle_ ? grip_text_move_ : -1);
+        }
+        out.emplace_back(m.h, std::move(c));
+    }
+    return out;
+}
+
+void GeometryEngine::begin_grip_drag(const GripDragCommand& c) {
+    // Arm the drag only if the entity is selectable (layer on/unlocked).
+    grip_active_ = store_.is_valid(c.handle) && selectable(c.handle);
+    grip_handle_ = c.handle;
+    grip_index_ = c.grip;
+    grip_text_move_ = c.text_move;
+    grip_variant_ = c.variant;
+    grip_peers_.clear();
+    if (!grip_active_) {
+        return;
+    }
+    std::vector<Grip> gs;
+    grips_of(store_, c.handle, gs);
+    grip_origin_ = {};
+    for (const Grip& g : gs) {
+        if (g.index == c.grip) {
+            grip_origin_ = g.pos;
+        }
+    }
+    const auto add = [&](EntityHandle h, std::uint32_t index, Vec2 at) {
+        const bool dup = (h == c.handle && index == c.grip) ||
+                         std::any_of(grip_peers_.begin(), grip_peers_.end(),
+                                     [&](const GripPeer& p) { return p.handle == h && p.index == index; });
+        if (!dup) {
+            grip_peers_.push_back({h, index, at});
+        }
+    };
+    // Shift's hot grips.
+    for (const auto& [h, index] : c.also) {
+        if (!store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        gs.clear();
+        grips_of(store_, h, gs);
+        for (const Grip& g : gs) {
+            if (g.index == index) {
+                add(h, index, g.pos);
+            }
+        }
+    }
+    if (c.variant != 0) {
+        return; // Lengthen and Radius are the one object's
+    }
+    // The other selected objects with a grip where the dragged one is: they share it.
+    const double tol = 1e-9 * (1.0 + std::max(std::abs(grip_origin_.x), std::abs(grip_origin_.y)));
+    for (const EntityHandle h : selection_) {
+        if (h == c.handle || !store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        gs.clear();
+        grips_of(store_, h, gs);
+        for (const Grip& g : gs) {
+            if (distance(g.pos, grip_origin_) <= tol) {
+                add(h, g.index, g.pos);
+                break;
+            }
+        }
+    }
+}
+
 void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     if (!grip_active_ || !store_.is_valid(grip_handle_)) {
         return;
     }
+    const std::vector<std::pair<EntityHandle, Command>> edits = grip_edits();
     if (copy) {
-        // STRETCH's Copy: the original stays (and keeps its grips); the stretched one is new.
-        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
-        const EntityHandle nh = create_indexed(edited);
-        push_create_item(group, nh, edited);
+        // STRETCH's Copy: the originals stay (and keep their grips); the stretched ones are new.
+        for (const auto& [h, edited] : edits) {
+            const EntityHandle nh = create_indexed(edited);
+            push_create_item(group, nh, edited);
+        }
         redo_.clear();
         geom_dirty_ = true;
         dirty_ = true;
         report("Copied.");
         return;
     }
-    // Erase the original and create the grip-edited entity as ONE undo group --
-    // exactly the move/property-edit pattern. The edit is parametric (no baking).
-    const Command original = capture_entity(grip_handle_);
-    const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
-    remove_indexed(grip_handle_);
-    push_erase_item(group, grip_handle_, original);
-    const EntityHandle nh = create_indexed(edited);
-    push_create_item(group, nh, edited);
-    selection_ = {nh}; // keep the edited entity selected (grips follow)
+    // Erase each original and create its grip-edited one as ONE undo group -- exactly the
+    // move/property-edit pattern. The edit is parametric (no baking).
+    std::vector<EntityHandle> was;
+    for (const auto& e : edits) {
+        was.push_back(e.first);
+    }
+    const Followers follows = followers_on(was);
+    std::vector<std::vector<Grip>> before(edits.size());
+    std::vector<EntityHandle> made;
+    for (std::size_t i = 0; i < edits.size(); ++i) {
+        const EntityHandle h = edits[i].first;
+        grips_of(store_, h, before[i]);
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const EntityHandle nh = create_indexed(edits[i].second);
+        push_create_item(group, nh, edits[i].second);
+        made.push_back(nh);
+    }
+    if (!follows.empty()) {
+        // The associative dimensions on them (#59): a point at one of their grips goes where
+        // that grip now is; one elsewhere on them, to the nearest point of what they have
+        // become. When every grip moved alike (dragged whole), they all just move along.
+        std::vector<std::vector<Grip>> after(made.size());
+        std::optional<Vec2> delta;
+        bool same = true;
+        for (std::size_t i = 0; i < made.size(); ++i) {
+            grips_of(store_, made[i], after[i]);
+            same = same && before[i].size() == after[i].size();
+            for (std::size_t k = 0; same && k < before[i].size(); ++k) {
+                const Vec2 dk = after[i][k].pos - before[i][k].pos;
+                if (!delta) {
+                    delta = dk;
+                }
+                same = distance(dk, *delta) <= assoc_tol(after[i][k].pos);
+            }
+        }
+        if (same && delta) {
+            const Vec2 dv = *delta;
+            move_followers(
+                follows, [&](Vec2 p) { return p + dv; }, [&](Command& c) { translate_cmd(c, dv); }, group);
+        } else {
+            move_followers(
+                follows,
+                [&](Vec2 p) {
+                    for (std::size_t i = 0; i < made.size(); ++i) {
+                        for (const Grip& g : before[i]) {
+                            if (distance(g.pos, p) <= assoc_tol(p)) {
+                                for (const Grip& n : after[i]) {
+                                    if (n.index == g.index && n.kind == g.kind) {
+                                        return n.pos;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Vec2 best = p;
+                    double best_d = std::numeric_limits<double>::infinity();
+                    for (const EntityHandle nh : made) {
+                        Vec2 q;
+                        if (kernel_.closest_point(store_, nh, p, q) && distance(q, p) < best_d) {
+                            best_d = distance(q, p);
+                            best = q;
+                        }
+                    }
+                    return best;
+                },
+                {}, group);
+        }
+    }
+    selection_ = made; // the edited objects stay selected (their grips follow)
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
@@ -10155,6 +11753,16 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         redo_.clear();
         geom_dirty_ = true;
         report("Filleted.");
+        return;
+    }
+
+    // Case 2a: an ellipse or a spline with a line, arc, circle, ellipse or spline.
+    const auto free_kind = [](EntityKind k) { return k == EntityKind::Ellipse || k == EntityKind::Spline; };
+    const auto fillets_with = [&](EntityKind k) {
+        return free_kind(k) || k == EntityKind::Line || k == EntityKind::Arc || k == EntityKind::Circle;
+    };
+    if (h1 != h2 && (free_kind(h1.kind) || free_kind(h2.kind)) && fillets_with(h1.kind) && fillets_with(h2.kind)) {
+        apply_fillet_free(h1, h2, pick1, pick2, radius, group, trim);
         return;
     }
 
@@ -10817,6 +12425,351 @@ void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 
     report("Filleted.");
 }
 
+namespace {
+/// A curve FILLET rounds by measure rather than by formula (an ellipse, a spline, or what it
+/// meets): its point at a parameter, the parameter nearest a point, and its samples.
+struct FreeCurve {
+    EntityKind kind = EntityKind::Line;
+    Vec2 a{}; // a line's ends
+    Vec2 b{};
+    Vec2 c{}; // a circle's or an arc's centre
+    double r = 0.0;
+    EllipseData e{};
+    std::vector<Vec2> cps; // a spline's control points and knots
+    std::vector<double> knots;
+    int degree = 3;
+
+    [[nodiscard]] spline::Curve spline_curve() const { return spline::Curve(cps, degree, knots); }
+    [[nodiscard]] Vec2 at(double t) const {
+        switch (kind) {
+        case EntityKind::Line:
+            return a + (b - a) * t;
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+            return {c.x + r * std::cos(t), c.y + r * std::sin(t)};
+        case EntityKind::Ellipse:
+            return ellipse::point_at(e, t);
+        default:
+            return spline_curve().at(t);
+        }
+    }
+    /// The parameter range a tangent point may be found in: a line runs on both ways, a
+    /// circle and an arc go all round (an arc grows to its point), an elliptical arc and a
+    /// spline keep to themselves.
+    void range(double reach, double& lo, double& hi) const {
+        switch (kind) {
+        case EntityKind::Line: {
+            const double l = std::max(length(b - a), 1e-12);
+            lo = -reach / l;
+            hi = 1.0 + reach / l;
+            return;
+        }
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+            lo = 0.0;
+            hi = kTwoPi;
+            return;
+        case EntityKind::Ellipse:
+            lo = e.start;
+            hi = e.start + ellipse::sweep_of(e);
+            return;
+        default: {
+            const spline::Curve sc = spline_curve();
+            lo = sc.lo();
+            hi = sc.hi();
+            return;
+        }
+        }
+    }
+    [[nodiscard]] double foot(Vec2 p, double lo, double hi) const {
+        if (kind == EntityKind::Line) {
+            const Vec2 d = b - a;
+            return std::clamp(dot(p - a, d) / std::max(length_squared(d), 1e-18), lo, hi);
+        }
+        if (kind == EntityKind::Circle || kind == EntityKind::Arc) {
+            const double t = std::atan2(p.y - c.y, p.x - c.x);
+            return t < 0.0 ? t + kTwoPi : t;
+        }
+        if (kind == EntityKind::Spline) {
+            return spline::param_near(spline_curve(), p);
+        }
+        const int n = 720;
+        double best = lo;
+        double bd = length_squared(at(lo) - p);
+        for (int i = 1; i <= n; ++i) {
+            const double t = lo + (hi - lo) * static_cast<double>(i) / n;
+            const double d = length_squared(at(t) - p);
+            if (d < bd) {
+                bd = d;
+                best = t;
+            }
+        }
+        double l = std::max(lo, best - (hi - lo) / n);
+        double h = std::min(hi, best + (hi - lo) / n);
+        for (int it = 0; it < 60; ++it) {
+            const double m1 = l + (h - l) * 0.381966;
+            const double m2 = l + (h - l) * 0.618034;
+            if (length_squared(at(m1) - p) < length_squared(at(m2) - p)) {
+                h = m2;
+            } else {
+                l = m1;
+            }
+        }
+        return 0.5 * (l + h);
+    }
+    [[nodiscard]] Vec2 tangent(double t, double lo, double hi) const {
+        const double dt = std::max((hi - lo) * 1e-6, 1e-12);
+        return normalized(at(std::min(t + dt, hi)) - at(std::max(t - dt, lo)));
+    }
+};
+
+FreeCurve free_curve_of(const GeometryStore& store, EntityHandle h) {
+    FreeCurve f;
+    f.kind = h.kind;
+    switch (h.kind) {
+    case EntityKind::Line:
+        f.a = store.line(h)->a;
+        f.b = store.line(h)->b;
+        break;
+    case EntityKind::Circle:
+        f.c = store.circle(h)->center;
+        f.r = store.circle(h)->radius;
+        break;
+    case EntityKind::Arc:
+        f.c = store.arc(h)->center;
+        f.r = store.arc(h)->radius;
+        break;
+    case EntityKind::Ellipse:
+        f.e = *store.ellipse(h);
+        break;
+    default: {
+        const SplineData* sd = store.spline(h);
+        const std::span<const Vec2> cp = store.control_points_of(*sd);
+        const std::span<const double> k = store.knots_of(*sd);
+        f.cps.assign(cp.begin(), cp.end());
+        f.knots.assign(k.begin(), k.end());
+        f.degree = static_cast<int>(sd->degree);
+        break;
+    }
+    }
+    return f;
+}
+
+bool segments_cross(Vec2 p1, Vec2 p2, Vec2 q1, Vec2 q2, Vec2& at) {
+    const Vec2 r = p2 - p1;
+    const Vec2 s = q2 - q1;
+    const double den = cross(r, s);
+    if (std::abs(den) < 1e-18) {
+        return false;
+    }
+    const double t = cross(q1 - p1, s) / den;
+    const double u = cross(q1 - p1, r) / den;
+    if (t < 0.0 || t > 1.0 || u < 0.0 || u > 1.0) {
+        return false;
+    }
+    at = p1 + r * t;
+    return true;
+}
+} // namespace
+
+// FILLET with an ellipse or a spline: the arc's centre is where the two curves' offsets at
+// the radius cross -- found on their samples, then made exact by stepping to where the
+// lines offset from the two tangents cross. Each curve is cut back (or a line or arc carried
+// on) to its tangent point on the side picked; a circle and a whole ellipse stay whole.
+void GeometryEngine::apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
+                                       std::uint64_t group, bool trim) {
+    if (radius <= 0.0) {
+        report("Fillet: a radius greater than 0 is needed to fillet a curve.");
+        return;
+    }
+    const FreeCurve f1 = free_curve_of(store_, h1);
+    const FreeCurve f2 = free_curve_of(store_, h2);
+    Vec2 lo_box;
+    Vec2 hi_box;
+    Vec2 lo2;
+    Vec2 hi2;
+    double reach = 4.0 * radius;
+    if (entity_aabb(store_, h1, lo_box, hi_box) && entity_aabb(store_, h2, lo2, hi2)) {
+        reach += 2.0 * length(Vec2{std::max(hi_box.x, hi2.x), std::max(hi_box.y, hi2.y)} -
+                              Vec2{std::min(lo_box.x, lo2.x), std::min(lo_box.y, lo2.y)});
+    }
+    double lo1 = 0.0;
+    double hi1 = 0.0;
+    double lo_2 = 0.0;
+    double hi_2 = 0.0;
+    f1.range(reach, lo1, hi1);
+    f2.range(reach, lo_2, hi_2);
+    // Both sides' offsets of each, as polylines.
+    const auto offsets = [&](const FreeCurve& f, double lo, double hi) {
+        const int n = f.kind == EntityKind::Line ? 1 : f.kind == EntityKind::Spline ? std::clamp(static_cast<int>(f.cps.size()) * 32, 128, 4096) : 256;
+        std::array<std::vector<Vec2>, 2> out;
+        for (int i = 0; i <= n; ++i) {
+            const double t = lo + (hi - lo) * static_cast<double>(i) / n;
+            const Vec2 tg = f.tangent(t, lo, hi);
+            const Vec2 nrm{-tg.y, tg.x};
+            out[0].push_back(f.at(t) + nrm * radius);
+            out[1].push_back(f.at(t) - nrm * radius);
+        }
+        return out;
+    };
+    const std::array<std::vector<Vec2>, 2> o1 = offsets(f1, lo1, hi1);
+    const std::array<std::vector<Vec2>, 2> o2 = offsets(f2, lo_2, hi_2);
+    std::vector<Vec2> seeds;
+    for (const std::vector<Vec2>& a : o1) {
+        for (const std::vector<Vec2>& b : o2) {
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                for (std::size_t j = 1; j < b.size(); ++j) {
+                    Vec2 at{};
+                    if (segments_cross(a[i - 1], a[i], b[j - 1], b[j], at)) {
+                        seeds.push_back(at);
+                    }
+                }
+            }
+        }
+    }
+    struct Fit {
+        Vec2 center{};
+        double t1 = 0.0;
+        double t2 = 0.0;
+    };
+    std::optional<Fit> best;
+    double best_score = std::numeric_limits<double>::infinity();
+    const double tol = 1e-7 * std::max(1.0, radius);
+    for (Vec2 cc : seeds) {
+        double t1 = 0.0;
+        double t2 = 0.0;
+        bool ok = false;
+        for (int it = 0; it < 40; ++it) {
+            t1 = f1.foot(cc, lo1, hi1);
+            t2 = f2.foot(cc, lo_2, hi_2);
+            const Vec2 q1 = f1.at(t1);
+            const Vec2 q2 = f2.at(t2);
+            const Vec2 n1 = normalized(cc - q1);
+            const Vec2 n2 = normalized(cc - q2);
+            if (std::abs(distance(cc, q1) - radius) < tol && std::abs(distance(cc, q2) - radius) < tol) {
+                ok = true;
+                break;
+            }
+            Vec2 next{};
+            const Vec2 a1 = q1 + n1 * radius;
+            const Vec2 a2 = q2 + n2 * radius;
+            if (!NativeKernel2D::line_line_intersection(a1, a1 + f1.tangent(t1, lo1, hi1), a2,
+                                                        a2 + f2.tangent(t2, lo_2, hi_2), next)) {
+                break;
+            }
+            cc = next;
+        }
+        if (!ok) {
+            continue;
+        }
+        const double score = distance(f1.at(t1), pick1) + distance(f2.at(t2), pick2);
+        if (score < best_score) {
+            best_score = score;
+            best = Fit{cc, t1, t2};
+        }
+    }
+    if (!best) {
+        report("Fillet: no arc of that radius is tangent to both objects.");
+        return;
+    }
+    const Vec2 p1 = f1.at(best->t1);
+    const Vec2 p2 = f2.at(best->t2);
+    // The rounding arc: the minor arc between the tangent points about the centre.
+    double a1 = std::atan2(p1.y - best->center.y, p1.x - best->center.x);
+    double a2 = std::atan2(p2.y - best->center.y, p2.x - best->center.x);
+    double ccw = a2 - a1;
+    while (ccw < 0.0) {
+        ccw += kTwoPi;
+    }
+    if (ccw > kPi) {
+        std::swap(a1, a2);
+    }
+    const Command arc = AddArcCommand{best->center, radius, a1, a2, 0, joining_props(store_, h1, h2)};
+
+    // Each cut back to its tangent point, the side the pick is on kept.
+    const auto cut = [&](EntityHandle h, const FreeCurve& f, double t, Vec2 pick) -> std::optional<Command> {
+        const Vec2 tp = f.at(t);
+        switch (h.kind) {
+        case EntityKind::Line: {
+            const LineData l = *store_.line(h);
+            Vec2 u{};
+            return AddLineCommand{kept_endpoint(l, tp, pick, u), tp, 0, l.props, store_.celtscale(h)};
+        }
+        case EntityKind::Arc: {
+            const ArcData a = *store_.arc(h);
+            double total = a.end_angle - a.start_angle;
+            while (total <= 0.0) {
+                total += kTwoPi;
+            }
+            const auto sweep_from_start = [&](Vec2 p) {
+                double sw = std::atan2(p.y - a.center.y, p.x - a.center.x) - a.start_angle;
+                while (sw < 0.0) {
+                    sw += kTwoPi;
+                }
+                return sw;
+            };
+            const double st = sweep_from_start(tp);
+            double ns = a.start_angle;
+            double ne = a.end_angle;
+            if (st <= total + 1e-9) {
+                (sweep_from_start(pick) >= st ? ns : ne) = a.start_angle + st;
+            } else if (st - total <= kTwoPi - st) {
+                ne = a.start_angle + st;
+            } else {
+                ns = a.start_angle + st - kTwoPi;
+            }
+            return AddArcCommand{a.center, a.radius, ns, ne, 0, a.props, store_.celtscale(h)};
+        }
+        case EntityKind::Ellipse: {
+            const EllipseData& e = f.e;
+            if (ellipse::is_full(e)) {
+                return std::nullopt; // left whole, as a circle is
+            }
+            const double total = ellipse::sweep_of(e);
+            const double st = t - e.start;
+            if (st <= 1e-9 || st >= total - 1e-9) {
+                return std::nullopt;
+            }
+            const double sp = f.foot(pick, e.start, e.start + total) - e.start;
+            return sp >= st ? AddEllipseCommand{e.center, e.major, e.ratio, t, e.start + total, 0, e.props}
+                            : AddEllipseCommand{e.center, e.major, e.ratio, e.start, t, 0, e.props};
+        }
+        case EntityKind::Spline: {
+            const spline::Curve sc = f.spline_curve();
+            spline::Piece before;
+            spline::Piece after;
+            if (!spline::split(sc, t, before, after)) {
+                return std::nullopt; // at an end already
+            }
+            const spline::Piece& kept = spline::param_near(sc, pick) >= t ? after : before;
+            return AddSplineCommand{kept.ctrl, static_cast<std::uint32_t>(sc.degree), 0, store_.spline(h)->props,
+                                    kept.knots};
+        }
+        default:
+            return std::nullopt; // a circle is left whole
+        }
+    };
+    const std::optional<Command> e1 = trim ? cut(h1, f1, best->t1, pick1) : std::nullopt;
+    const std::optional<Command> e2 = trim ? cut(h2, f2, best->t2, pick2) : std::nullopt;
+    if (e1) {
+        const Command o1c = capture_entity(h1);
+        remove_indexed(h1);
+        push_erase_item(group, h1, o1c);
+        push_create_item(group, create_indexed(*e1), *e1);
+    }
+    if (e2) {
+        const Command o2c = capture_entity(h2);
+        remove_indexed(h2);
+        push_erase_item(group, h2, o2c);
+        push_create_item(group, create_indexed(*e2), *e2);
+    }
+    push_create_item(group, create_indexed(arc), arc);
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Filleted.");
+}
+
 void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2,
                                    double pick_radius, std::uint64_t group, bool trim) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
@@ -11306,6 +13259,21 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
     std::string what;
     switch (c.op) {
     case Op::AddVertex: {
+        if (!sp->knots.empty()) {
+            // A spline with knots of its own: a knot inserted where the curve passes nearest
+            // the point -- one more control point, the curve as it was.
+            const spline::Curve curve(cp, static_cast<int>(sp->degree), sp->knots);
+            const double u = spline::param_near(curve, c.p1);
+            if (curve.valid() && u > curve.lo() && u < curve.hi()) {
+                std::vector<Vec2> pts(cp.begin(), cp.end());
+                std::vector<double> knots = curve.knots;
+                spline::insert_knot(pts, knots, curve.degree, u);
+                cp = std::move(pts);
+                sp->knots = std::move(knots);
+                what = "Control point added.";
+                break;
+            }
+        }
         // Into the leg of the control polygon nearest the point.
         std::size_t leg = 0;
         double best = std::numeric_limits<double>::infinity();
@@ -11329,7 +13297,14 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
                    " control points.");
             return;
         }
-        cp.erase(cp.begin() + static_cast<std::ptrdiff_t>(nearest(c.p1)));
+        {
+            const std::size_t at = nearest(c.p1);
+            if (!sp->knots.empty()) {
+                const int deg = spline::effective_degree(static_cast<int>(cp.size()), static_cast<int>(sp->degree));
+                sp->knots = spline::knots_without(sp->knots, deg, at);
+            }
+            cp.erase(cp.begin() + static_cast<std::ptrdiff_t>(at));
+        }
         what = "Control point deleted.";
         break;
     case Op::MoveVertex:
@@ -11338,6 +13313,7 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
         break;
     case Op::Reverse:
         std::reverse(cp.begin(), cp.end());
+        sp->knots = spline::reversed_knots(sp->knots);
         what = "Spline reversed.";
         break;
     case Op::ToPolyline: {
@@ -12553,8 +14529,9 @@ bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
     }
     out.h = h;
     if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
-        h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse && h.kind != EntityKind::Xline) {
-        return fail(TrimOutcome::None, "Trim: only lines, arcs, circles, ellipses, polylines, construction lines and rays can be trimmed.");
+        h.kind != EntityKind::Polyline && h.kind != EntityKind::Ellipse && h.kind != EntityKind::Xline &&
+        h.kind != EntityKind::Spline) {
+        return fail(TrimOutcome::None, "Trim: only lines, arcs, circles, ellipses, splines, polylines, construction lines and rays can be trimmed.");
     }
 
     // Every crossing with a nearby entity, whatever both kinds are. The kernel already
@@ -12886,6 +14863,143 @@ bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
         }
         const double far = 1e6; // a construction line's endless side, for the preview
         out.removed = {x.base + x.dir * lo_t.value_or(x.ray ? 0.0 : -far), x.base + x.dir * hi_t.value_or(far)};
+    } else if (h.kind == EntityKind::Spline) {
+        // Along the spline's own parameter. What stays is the same curve over its part,
+        // cut where the edges cross it (knots inserted there, so nothing moves): each piece
+        // a spline with knots of its own.
+        const SplineData* sd = store_.spline(h);
+        const std::span<const Vec2> cps = store_.control_points_of(*sd);
+        const spline::Curve curve(cps, static_cast<int>(sd->degree), store_.knots_of(*sd));
+        if (!curve.valid()) {
+            return fail(TrimOutcome::None, "");
+        }
+        const EntityProps props = sd->props;
+        const auto deg = static_cast<std::uint32_t>(curve.degree);
+        const double u0 = curve.lo();
+        const double u1 = curve.hi();
+        const double eps = 1e-9 * (u1 - u0);
+        const bool loop = distance(cps.front(), cps.back()) < 1e-9;
+        // A crossing is found on the chords of the curves; it is made exact against the edge
+        // through it -- a line, ray or construction line, a circle or an arc -- by bisecting
+        // on which side of that edge the spline is. Another kind of edge keeps the chord's.
+        const double step = (u1 - u0) / static_cast<double>(std::max<std::size_t>((cps.size() - 1) * 16, 2));
+        const auto exact = [&](double u, Vec2 p) {
+            const double reach = std::max(distance(curve.at(u - step), curve.at(u + step)), 1e-9);
+            std::vector<std::function<double(Vec2)>> sides; // signed distance to each edge near p
+            const auto line_side = [&](Vec2 a, Vec2 d) {
+                const double l = length(d);
+                if (l > 1e-12 && std::abs(cross(d, p - a)) / l <= reach) {
+                    sides.emplace_back([a, d, l](Vec2 q) { return cross(d, q - a) / l; });
+                }
+            };
+            const auto circle_side = [&](Vec2 c, double r) {
+                if (std::abs(distance(p, c) - r) <= reach) {
+                    sides.emplace_back([c, r](Vec2 q) { return distance(q, c) - r; });
+                }
+            };
+            std::vector<EntityHandle> around;
+            grid_.query(p - Vec2{reach, reach}, p + Vec2{reach, reach}, around);
+            for (const EntityHandle c : around) {
+                if (c == h || !is_trim_edge(c)) {
+                    continue;
+                }
+                if (const LineData* l = c.kind == EntityKind::Line ? store_.line(c) : nullptr) {
+                    line_side(l->a, l->b - l->a);
+                } else if (const CircleData* ci = c.kind == EntityKind::Circle ? store_.circle(c) : nullptr) {
+                    circle_side(ci->center, ci->radius);
+                } else if (const ArcData* ar = c.kind == EntityKind::Arc ? store_.arc(c) : nullptr) {
+                    circle_side(ar->center, ar->radius);
+                }
+            }
+            const auto& xl = store_.xlines();
+            for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+                if (xl.alive(i) && is_trim_edge(EntityHandle{i, xl.generations()[i], EntityKind::Xline})) {
+                    line_side(xl.data()[i].base, xl.data()[i].dir);
+                }
+            }
+            for (const auto& side : sides) {
+                for (double w = step; w <= 8.0 * step; w *= 2.0) {
+                    double lo_u = std::max(u - w, u0);
+                    double hi_u = std::min(u + w, u1);
+                    double f_lo = side(curve.at(lo_u));
+                    if ((f_lo < 0.0) == (side(curve.at(hi_u)) < 0.0)) {
+                        continue;
+                    }
+                    for (int it = 0; it < 60; ++it) {
+                        const double mid = 0.5 * (lo_u + hi_u);
+                        const double f_mid = side(curve.at(mid));
+                        if ((f_mid < 0.0) == (f_lo < 0.0)) {
+                            lo_u = mid;
+                            f_lo = f_mid;
+                        } else {
+                            hi_u = mid;
+                        }
+                    }
+                    return 0.5 * (lo_u + hi_u);
+                }
+            }
+            return u;
+        };
+        std::vector<double> us;
+        for (const Vec2& p : crossings) {
+            const double u = exact(spline::param_near(curve, p), p);
+            if (u > u0 + eps && u < u1 - eps) {
+                us.push_back(u);
+            }
+        }
+        std::sort(us.begin(), us.end());
+        us.erase(std::unique(us.begin(), us.end(), [eps](double x, double y) { return std::abs(x - y) <= eps; }), us.end());
+        if (us.empty()) {
+            return fail(TrimOutcome::NoEdge, "Trim: no crossing edge found.");
+        }
+        if (loop && us.size() < 2) {
+            return fail(TrimOutcome::None, "Trim: a closed spline needs two crossing edges to trim between.");
+        }
+        const auto keep = [&](const spline::Piece& pc) {
+            if (pc.ctrl.size() >= 2) {
+                pieces.push_back(AddSplineCommand{pc.ctrl, deg, 0, props, pc.knots});
+            }
+        };
+        const double up = spline::param_near(curve, pick);
+        spline::Piece before;
+        spline::Piece after;
+        spline::Piece unused;
+        if (loop && (up < us.front() || up > us.back())) {
+            // The part across the seam goes: what stays runs from the first crossing to the last.
+            if (spline::split(curve, us.front(), unused, after)) {
+                const spline::Curve rest(after.ctrl, curve.degree, after.knots);
+                if (spline::split(rest, us.back(), before, unused)) {
+                    keep(before);
+                }
+            }
+            sample([&](double u) { return curve.at(u); }, us.back(), u1);
+            sample([&](double u) { return curve.at(u); }, u0, us.front());
+        } else {
+            double lo_u = u0;
+            double hi_u = u1;
+            for (const double u : us) {
+                if (u <= up) {
+                    lo_u = u;
+                }
+                if (u >= up) {
+                    hi_u = u;
+                    break;
+                }
+            }
+            const bool cut_lo = lo_u > u0 && spline::split(curve, lo_u, before, unused);
+            const bool cut_hi = hi_u < u1 && spline::split(curve, hi_u, unused, after);
+            if (loop && cut_lo && cut_hi) {
+                keep(spline::joined(after, before, curve.degree)); // one spline, round through the seam
+            } else {
+                if (cut_lo) {
+                    keep(before);
+                }
+                if (cut_hi) {
+                    keep(after);
+                }
+            }
+            sample([&](double u) { return curve.at(u); }, lo_u, hi_u);
+        }
     } else { // Circle
         const CircleData* ci = store_.circle(h);
         const Vec2 centre = ci->center;
@@ -13258,21 +15372,52 @@ void GeometryEngine::apply_join_selection(double radius, std::uint64_t group, bo
 
 void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, double scale,
                                                 double angle, std::uint64_t group, Rgb color2) {
-    // Each selected CLOSED polyline contributes a boundary loop. The even-odd fill makes
-    // separate loops fill independently and nested loops (a polyline inside another) read
-    // as holes -- no nesting classification needed here.
+    // Each selected closed object contributes a boundary loop: a closed polyline (its arcs
+    // followed), a circle, a whole ellipse, a closed spline. The even-odd fill makes separate
+    // loops fill independently and nested loops (one inside another) read as holes -- no
+    // nesting classification needed here.
     std::vector<std::vector<Vec2>> loops;
+    const double tol = std::max(tess_tolerance_ * 0.25, 1e-6);
     for (const EntityHandle h : selection_) {
-        if (h.kind != EntityKind::Polyline) {
+        if (!store_.is_valid(h)) {
             continue;
         }
-        const PolylineData* p = store_.polyline(h);
-        if (p == nullptr || !p->closed) {
+        std::vector<Vec2> loop;
+        if (h.kind == EntityKind::Polyline) {
+            const PolylineData* p = store_.polyline(h);
+            if (p == nullptr || !p->closed) {
+                continue;
+            }
+            const std::span<const double> b = store_.bulges_of(*p);
+            if (std::any_of(b.begin(), b.end(), [](double x) { return std::abs(x) > 1e-12; })) {
+                kernel_.tessellate(store_, h, tol, loop); // its arcs, flattened finely
+            } else {
+                const std::span<const Vec2> v = store_.vertices_of(*p);
+                loop.assign(v.begin(), v.end());
+            }
+        } else if (h.kind == EntityKind::Circle) {
+            kernel_.tessellate(store_, h, tol, loop);
+        } else if (h.kind == EntityKind::Ellipse) {
+            const EllipseData* e = store_.ellipse(h);
+            if (e == nullptr || std::abs(e->end - e->start) < kTwoPi - 1e-9) {
+                continue; // an elliptical arc encloses nothing
+            }
+            kernel_.tessellate(store_, h, tol, loop);
+        } else if (h.kind == EntityKind::Spline) {
+            const SplineData* sp = store_.spline(h);
+            const std::span<const Vec2> cv = sp != nullptr ? store_.control_points_of(*sp) : std::span<const Vec2>{};
+            if (cv.size() < 3 || distance(cv.front(), cv.back()) > 1e-9) {
+                continue; // open
+            }
+            kernel_.tessellate(store_, h, tol, loop);
+        } else {
             continue;
         }
-        const std::span<const Vec2> v = store_.vertices_of(*p);
-        if (v.size() >= 3) {
-            loops.emplace_back(v.begin(), v.end());
+        if (loop.size() > 1 && distance(loop.front(), loop.back()) < 1e-9) {
+            loop.pop_back(); // the loop closes itself
+        }
+        if (loop.size() >= 3) {
+            loops.push_back(std::move(loop));
         }
     }
     if (loops.empty()) {
@@ -13286,6 +15431,7 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
     cmd.pattern_angle = angle;
     cmd.color2 = color2;
     cmd.group = group; // props unset -> created on the current layer, ByLayer (AutoCAD default)
+    apply_hatch_extras(cmd, hatch_extras_);
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
     selection_.clear();
@@ -13297,20 +15443,67 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
 
 void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
                                             double angle, std::uint64_t group, Rgb color2) {
+    if (!hatch_extras_.merge) {
+        last_pick_hatch_ = EntityHandle::null(); // a HATCH's first pick: nothing of before to join
+    }
+    if (hatch_extras_.boundary_set == 2) {
+        hatch_boundary_set_ = selection_; // Boundary set > New: what was selected for it
+    }
     std::optional<std::vector<std::vector<Vec2>>> loops = boundary_loops(p);
     if (!loops) {
         report("Valid hatch boundary not found.");
         return;
     }
+    if (hatch_extras_.island_style == 2) {
+        loops->resize(1); // Ignore: through the islands
+    } else if (hatch_extras_.island_style == 1 && loops->size() > 2) {
+        // Outer: only the islands no other island holds.
+        std::vector<std::vector<Vec2>> kept{loops->front()};
+        for (std::size_t i = 1; i < loops->size(); ++i) {
+            bool nested = false;
+            for (std::size_t j = 1; j < loops->size() && !nested; ++j) {
+                nested = j != i && !(*loops)[i].empty() && point_in_polygon((*loops)[j], (*loops)[i].front());
+            }
+            if (!nested) {
+                kept.push_back((*loops)[i]);
+            }
+        }
+        *loops = std::move(kept);
+    }
+    if (hatch_extras_.retain) {
+        // Retain boundary: each loop kept as a closed polyline, in the same undo step.
+        for (const std::vector<Vec2>& loop : *loops) {
+            AddPolylineCommand edge;
+            edge.points = loop;
+            edge.closed = true;
+            edge.group = group;
+            const EntityHandle eh = create_indexed(edge);
+            push_create_item(group, eh, edge);
+        }
+    }
     AddHatchCommand cmd;
     cmd.loops = std::move(*loops);
+    // Not separate hatches: the areas picked in one HATCH are one hatch -- the one the pick
+    // before made gives way to one with its areas and this one's (in this pick's undo step).
+    if (hatch_extras_.merge && store_.is_valid(last_pick_hatch_) && last_pick_hatch_.kind == EntityKind::Hatch) {
+        const Command before = capture_entity(last_pick_hatch_);
+        if (const auto* bh = std::get_if<AddHatchCommand>(&before)) {
+            std::vector<std::vector<Vec2>> all = bh->loops;
+            all.insert(all.end(), cmd.loops.begin(), cmd.loops.end());
+            cmd.loops = std::move(all);
+            remove_indexed(last_pick_hatch_);
+            push_erase_item(group, last_pick_hatch_, before);
+        }
+    }
     cmd.pattern_name = pattern;
     cmd.pattern_scale = scale;
     cmd.pattern_angle = angle;
     cmd.color2 = color2;
     cmd.group = group;
+    apply_hatch_extras(cmd, hatch_extras_);
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
+    last_pick_hatch_ = nh;
     selection_.clear();
     selection_.push_back(nh);
     redo_.clear();
@@ -13318,21 +15511,82 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
 }
 
+void GeometryEngine::apply_hatch_extras(AddHatchCommand& cmd, const HatchExtras& x) const {
+    if (x.origin) {
+        cmd.pattern_origin = *x.origin;
+    } else if (x.origin_corner != 0 && !cmd.loops.empty() && !cmd.loops.front().empty()) {
+        Vec2 lo = cmd.loops.front().front();
+        Vec2 hi = lo;
+        for (const Vec2& p : cmd.loops.front()) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        }
+        switch (x.origin_corner) {
+        case 2:
+            cmd.pattern_origin = {hi.x, lo.y};
+            break;
+        case 3:
+            cmd.pattern_origin = {lo.x, hi.y};
+            break;
+        case 4:
+            cmd.pattern_origin = hi;
+            break;
+        case 5:
+            cmd.pattern_origin = (lo + hi) * 0.5;
+            break;
+        default:
+            cmd.pattern_origin = lo;
+            break;
+        }
+    }
+    if (!x.layer.empty() || x.color) {
+        EntityProps p{};
+        p.layer = store_.current_layer();
+        for (std::size_t i = 0; i < store_.layers().size(); ++i) {
+            if (store_.layers()[i].name == x.layer) {
+                p.layer = static_cast<std::uint16_t>(i);
+            }
+        }
+        if (x.color) {
+            p.color = *x.color;
+            p.set_color_by_layer(false);
+        }
+        p.set_space(store_.active_space());
+        cmd.props = p;
+    }
+}
+
 std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec2 p) {
+    // The objects that can bound it: every one, or -HATCH's boundary set.
+    std::vector<EntityHandle> pool;
+    if (hatch_extras_.boundary_set != 0) {
+        for (const EntityHandle h : hatch_boundary_set_) {
+            if (store_.is_valid(h)) {
+                pool.push_back(h);
+            }
+        }
+    } else {
+        pool = all_live();
+    }
     // Gather candidate boundary edges from every curve-like entity (tessellated, so arcs +
     // bulged polylines follow their true shape), closing the loop for closed shapes.
     std::vector<hatch::Segment> segs;
     std::vector<Vec2> tess;
+    std::vector<Vec2> ends; // the ends of the open ones (for the gap tolerance)
     const auto gather = [&](EntityHandle h, bool closed) {
+        tess.clear();
         kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
         for (std::size_t i = 1; i < tess.size(); ++i) {
             segs.push_back({tess[i - 1], tess[i]});
         }
         if (closed && tess.size() >= 3) {
             segs.push_back({tess.back(), tess.front()});
+        } else if (tess.size() >= 2) {
+            ends.push_back(tess.front());
+            ends.push_back(tess.back());
         }
     };
-    for (const EntityHandle h : all_live()) {
+    for (const EntityHandle h : pool) {
         switch (h.kind) {
         case EntityKind::Xline:
             break; // an infinite line is not a hatch boundary
@@ -13356,7 +15610,61 @@ std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec
             break; // text/dim/leader/insert/hatch are not boundaries
         }
     }
-    const double tol = 1e-6; // basic endpoint gap bridging; full HPGAPTOL parity staged
+    // Gap tolerance: an end that meets nothing is joined to the nearest other such end within
+    // the tolerance, so the boundary closes across the gap.
+    if (hatch_extras_.gap_tolerance > 0.0) {
+        const double tight = 1e-6;
+        // An end meets something when an edge besides its own object's last one touches it:
+        // another object's end or vertex, or a T on another's edge.
+        const auto meets = [&](std::size_t i) {
+            const Vec2 e = ends[i];
+            int touching = 0;
+            for (const hatch::Segment& s : segs) {
+                if (e.x < std::min(s.a.x, s.b.x) - tight || e.x > std::max(s.a.x, s.b.x) + tight ||
+                    e.y < std::min(s.a.y, s.b.y) - tight || e.y > std::max(s.a.y, s.b.y) + tight) {
+                    continue;
+                }
+                const Vec2 d = s.b - s.a;
+                const double l2 = length_squared(d);
+                const double t = l2 > 0.0 ? std::clamp(dot(e - s.a, d) / l2, 0.0, 1.0) : 0.0;
+                if (distance(s.a + d * t, e) <= tight && ++touching >= 2) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        std::vector<std::size_t> loose;
+        for (std::size_t i = 0; i < ends.size(); ++i) {
+            if (!meets(i)) {
+                loose.push_back(i);
+            }
+        }
+        std::vector<bool> used(ends.size(), false);
+        for (const std::size_t i : loose) {
+            if (used[i]) {
+                continue;
+            }
+            std::size_t best = ends.size();
+            double bd = hatch_extras_.gap_tolerance;
+            for (const std::size_t j : loose) {
+                // Not the other end of the same object, and not one already joined.
+                if (j == i || used[j] || (j ^ 1u) == i) {
+                    continue;
+                }
+                const double dd = distance(ends[i], ends[j]);
+                if (dd <= bd) {
+                    bd = dd;
+                    best = j;
+                }
+            }
+            if (best < ends.size()) {
+                segs.push_back({ends[i], ends[best]});
+                used[i] = true;
+                used[best] = true;
+            }
+        }
+    }
+    const double tol = 1e-6; // endpoints closer than this are the same point
     const std::optional<std::vector<Vec2>> outer = hatch::trace_boundary(segs, p, tol);
     if (!outer) {
         return std::nullopt;
@@ -13366,7 +15674,7 @@ std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec
     // Islands: closed polylines / circles fully inside the outer loop, NOT containing the
     // pick (a loop containing the pick is the boundary, not a hole), become holes.
     std::vector<Vec2> verts;
-    for (const EntityHandle h : all_live()) {
+    for (const EntityHandle h : pool) {
         if (h.kind == EntityKind::Polyline) {
             const PolylineData* pl = store_.polyline(h);
             if (pl == nullptr || !pl->closed) {
@@ -13684,6 +15992,46 @@ void GeometryEngine::apply_layer_state(const LayerStateCommand& c) {
         report("Layer state renamed to " + quote(c.to) + ".");
         return;
     }
+    case Op::Export: {
+        const auto it = find(c.name);
+        if (it == states.end()) {
+            report("Cannot find layer state " + quote(c.name) + ".");
+            return;
+        }
+        const std::string body = io::serialize_las(*it);
+        std::ofstream f(c.to, std::ios::binary);
+        f.write(body.data(), static_cast<std::streamsize>(body.size()));
+        report(f ? "Layer state " + quote(it->name) + " exported to " + c.to + "."
+                 : "Cannot write " + c.to + ".");
+        return;
+    }
+    case Op::Import: {
+        std::ifstream f(c.to, std::ios::binary);
+        if (!f) {
+            report("Cannot open " + c.to + ".");
+            return;
+        }
+        std::ostringstream buf;
+        buf << f.rdbuf();
+        LayerState st;
+        std::string error;
+        if (!io::parse_las(buf.str(), st, error)) {
+            report("Cannot import " + c.to + ": " + error + ".");
+            return;
+        }
+        const auto it = find(st.name);
+        const bool replaced = it != states.end();
+        const std::string name = st.name;
+        if (replaced) {
+            *it = std::move(st);
+        } else {
+            states.push_back(std::move(st));
+        }
+        store_.set_layer_states(std::move(states));
+        dirty_ = true;
+        report("Layer state " + quote(name) + (replaced ? " replaced from " : " imported from ") + c.to + ".");
+        return;
+    }
     }
 }
 
@@ -13775,6 +16123,10 @@ void GeometryEngine::apply(const Command& command) {
         layerp_before = LayerpState{store_.layers(), store_.layers()[store_.current_layer()].name};
     }
     apply_one(command);
+    if (dimassoc_ == 0 && !std::holds_alternative<UndoLastGroupCommand>(command) &&
+        !std::holds_alternative<RedoLastGroupCommand>(command)) {
+        explode_new_dimensions(); // DIMASSOC 0: dimensions are drawn exploded
+    }
     if (layerp_before && (layerp_before->layers != store_.layers() ||
                           layerp_before->current != store_.layers()[store_.current_layer()].name)) {
         layerp_.push_back(std::move(*layerp_before));
@@ -13782,6 +16134,38 @@ void GeometryEngine::apply(const Command& command) {
             layerp_.erase(layerp_.begin());
         }
     }
+}
+
+void GeometryEngine::explode_new_dimensions() {
+    if (undo_.empty()) {
+        return;
+    }
+    // The dimensions just drawn (a fresh draw carries no props; an edit's capture does).
+    std::vector<EntityHandle> fresh;
+    for (const Item& it : undo_.back().items) {
+        if (!it.is_create || it.handle.kind != EntityKind::Dimension || !store_.is_valid(it.handle)) {
+            continue;
+        }
+        if (const auto* d = std::get_if<AddDimensionCommand>(&it.data); d != nullptr && !d->props) {
+            fresh.push_back(it.handle);
+        }
+    }
+    if (fresh.empty()) {
+        return;
+    }
+    const std::vector<EntityHandle> sel = selection_;
+    const std::string status = status_;
+    const auto status_version = status_version_;
+    selection_ = fresh;
+    apply_explode(undo_.back().id, false, nullptr); // in the same undo step
+    selection_.clear();
+    for (const EntityHandle h : sel) {
+        if (store_.is_valid(h)) {
+            selection_.push_back(h);
+        }
+    }
+    status_ = status;
+    status_version_ = status_version;
 }
 
 void GeometryEngine::apply_one(const Command& command) {
@@ -14156,6 +16540,28 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SetMirrtextCommand>) {
                 mirrtext_ = c.mirror_text;
             }
+            if constexpr (std::is_same_v<T, DimAssocCommand>) {
+                apply_dim_assoc(c);
+            }
+            if constexpr (std::is_same_v<T, DimGripMenuCommand>) {
+                apply_dim_grip_menu(c);
+            }
+            if constexpr (std::is_same_v<T, HatchEditCommand>) {
+                apply_hatch_edit(c);
+            }
+            if constexpr (std::is_same_v<T, ReplaceBlockCommand>) {
+                apply_replace_block(c);
+            }
+            if constexpr (std::is_same_v<T, SetLayerFiltersCommand>) {
+                store_.set_layer_filters(c.filters);
+                dirty_ = true;
+            }
+            if constexpr (std::is_same_v<T, AddPatternCommand>) {
+                if (!c.pattern.name.empty() && !c.pattern.lines.empty()) {
+                    store_.add_custom_pattern(c.pattern);
+                    geom_dirty_ = true; // hatches already named so draw with it now
+                }
+            }
             if constexpr (std::is_same_v<T, SetCurrentPropsCommand>) {
                 current_props_ = c.current;
                 current_props_.layer = 0; // the current layer applies at creation
@@ -14193,12 +16599,16 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_join_selection(c.radius, c.group, c.polyline);
             }
             if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
+                hatch_extras_ = c.extras;
                 apply_hatch_from_selection(c.pattern_name, c.pattern_scale, c.pattern_angle,
                                            c.group, c.color2);
+                hatch_extras_ = HatchExtras{};
             }
             if constexpr (std::is_same_v<T, HatchPickPointCommand>) {
+                hatch_extras_ = c.extras;
                 apply_hatch_pick_point(c.point, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                        c.group, c.color2);
+                hatch_extras_ = HatchExtras{};
             }
             if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
                 apply_rotate(c.base, c.angle, c.group, c.copy);
@@ -14207,10 +16617,16 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_scale(c.base, c.factor, c.group, c.copy);
             }
             if constexpr (std::is_same_v<T, ArrayRectCommand>) {
-                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
+                array_preview_.clear();
+                const Vec2 sp = c.auto_spacing ? array_default_spacing() : Vec2{c.dx, c.dy};
+                apply_array_rect(c.rows, c.cols, sp.x, sp.y, c.angle, c.group);
             }
             if constexpr (std::is_same_v<T, ArrayPathCommand>) {
+                array_preview_.clear();
                 apply_array_path(c);
+            }
+            if constexpr (std::is_same_v<T, ArrayPreviewCommand>) {
+                apply_array_preview(c);
             }
             if constexpr (std::is_same_v<T, DividePathCommand>) {
                 apply_divide_measure(c);
@@ -14252,7 +16668,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_lengthen(c);
             }
             if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
-                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
+                array_preview_.clear();
+                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group, c.rows, c.row_spacing);
             }
             if constexpr (std::is_same_v<T, ExtendPickCommand>) {
                 apply_extend(c.pick, c.radius, c.group);
@@ -14327,10 +16744,7 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, GripDragCommand>) {
                 using P = GripDragCommand::Phase;
                 if (c.phase == P::Begin) {
-                    // Arm the drag only if the entity is selectable (layer on/unlocked).
-                    grip_active_ = store_.is_valid(c.handle) && selectable(c.handle);
-                    grip_handle_ = c.handle;
-                    grip_index_ = c.grip;
+                    begin_grip_drag(c);
                 } else if (c.phase == P::Move) {
                     grip_pos_ = c.pos; // preview recomputed in rebuild_and_publish
                 } else if (c.phase == P::Commit) {
@@ -14357,6 +16771,10 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_match_apply(c.point, c.radius, c.filter, c.group);
             }
             if constexpr (std::is_same_v<T, SaveDocumentCommand>) {
+                if (refedit_.bedit) {
+                    report("Close the Block Editor (BCLOSE) before saving: the drawing's other objects are hidden while it is open.");
+                    return;
+                }
                 if (!c.dxf) {
                     tick_edit_time(); // TIME: the total editing time and the last-saved time go in the file
                     DrawingTimes t = store_.times();
@@ -14692,12 +17110,23 @@ void GeometryEngine::apply_one(const Command& command) {
                 }
             }
             if constexpr (std::is_same_v<T, SaveNamedViewCommand>) {
+                if (!c.view.layer_state.empty()) {
+                    // The layer snapshot: the layers as they are now, under the view's own state.
+                    apply_layer_state(LayerStateCommand{LayerStateCommand::Op::Save, c.view.layer_state, {}});
+                }
                 store_.add_named_view(c.view);
                 dirty_ = true;
                 geom_dirty_ = true; // republish the VIEW table
                 report("View \"" + c.view.name + "\" saved.");
             }
             if constexpr (std::is_same_v<T, DeleteNamedViewCommand>) {
+                std::string snapshot;
+                for (const NamedView& v : store_.named_views()) {
+                    snapshot = v.name == c.name ? v.layer_state : snapshot;
+                }
+                if (!snapshot.empty()) {
+                    apply_layer_state(LayerStateCommand{LayerStateCommand::Op::Delete, snapshot, {}}); // its snapshot goes too
+                }
                 if (store_.remove_named_view(c.name)) {
                     dirty_ = true;
                     geom_dirty_ = true;
@@ -14818,7 +17247,17 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_refset(c);
             }
             if constexpr (std::is_same_v<T, RefCloseCommand>) {
-                apply_refclose(c);
+                if (refedit_.bedit) {
+                    report("The Block Editor is open: BCLOSE closes it.");
+                } else {
+                    apply_refclose(c);
+                }
+            }
+            if constexpr (std::is_same_v<T, LayerMergeCommand>) {
+                apply_layer_merge(c);
+            }
+            if constexpr (std::is_same_v<T, BlockEditCommand>) {
+                apply_block_edit(c);
             }
             if constexpr (std::is_same_v<T, PolylineVertexCommand>) {
                 apply_polyline_vertex(c);
@@ -15384,7 +17823,31 @@ void GeometryEngine::apply_one(const Command& command) {
                 if (t == nullptr) {
                     report("Select a single-line text.");
                 } else if (t->justify == 3 || t->justify == 5) {
-                    report("Aligned and Fit text is fitted between its own two points.");
+                    // Aligned and Fit text runs between its own two points: those are what
+                    // move -- the first to the start, the second to the end along the text.
+                    Command cmd = capture_entity(h);
+                    auto* x = std::get_if<AddTextCommand>(&cmd);
+                    const Vec2 run = x != nullptr ? x->align - x->pos : Vec2{};
+                    const double len = length(run);
+                    const Vec2 dir = len > 1e-12 ? run / len : Vec2{std::cos(t->rotation), std::sin(t->rotation)};
+                    const Vec2 s = x == nullptr ? Vec2{} : (c.start ? *c.start : x->pos);
+                    const double w_new = dot(c.end - s, dir);
+                    if (x == nullptr || w_new <= 1e-9) {
+                        report("The end point must lie past the start of the text.");
+                    } else {
+                        x->pos = s;
+                        x->align = s + dir * w_new;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        selection_.clear();
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        report("Text fitted between its two points.");
+                    }
                 } else {
                     const text::TextFrame f = text::frame_of(store_, *t);
                     const Vec2 dir{std::cos(f.rotation), std::sin(f.rotation)};
@@ -15950,19 +18413,21 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_fillmode(c.on);
             }
             if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
+                // The file's first style is a placeholder (a drawing's first is always read
+                // as Standard); the styles exported follow it, each by its own name.
                 io::Document doc;
-                doc.dimstyles.clear();
+                doc.dimstyles.assign(1, DimStyle{"Standard"});
                 for (const DimStyle& ds : store_.dimstyles()) {
                     if (c.names.empty() || glob_match(c.names, ds.name)) {
                         doc.dimstyles.push_back(ds);
                     }
                 }
-                if (doc.dimstyles.empty()) {
+                if (doc.dimstyles.size() == 1) {
                     report("No dimension style is called \"" + c.names + "\".");
                 } else if (const io::IoResult r = io::save_native(doc, c.path); !r.ok) {
                     report("DIMEX: " + r.message);
                 } else {
-                    const std::size_t n = doc.dimstyles.size();
+                    const std::size_t n = doc.dimstyles.size() - 1;
                     report(std::to_string(n) + (n == 1 ? " dimension style" : " dimension styles") + " exported to " +
                            c.path + ".");
                 }
@@ -15975,7 +18440,8 @@ void GeometryEngine::apply_one(const Command& command) {
                     std::size_t added = 0;
                     std::size_t replaced = 0;
                     std::size_t kept = 0;
-                    for (const DimStyle& ds : doc.dimstyles) {
+                    for (std::size_t k = 1; k < doc.dimstyles.size(); ++k) { // [0]: DIMEX's placeholder
+                        const DimStyle& ds = doc.dimstyles[k];
                         const std::uint16_t i = store_.dimstyle_index(ds.name);
                         if (i == 0xFFFF) {
                             store_.add_dimstyle(ds);
@@ -16226,6 +18692,69 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, DimBreakCommand>) {
                 apply_dim_break(c);
             }
+            if constexpr (std::is_same_v<T, SetLayoutPageCommand>) {
+                const PageSetup* ps = nullptr;
+                for (const PageSetup& p : store_.page_setups()) {
+                    ps = p.name == c.setup ? &p : ps;
+                }
+                Layout* l = store_.active_space() != 0 ? store_.mutable_layout(store_.active_space()) : nullptr;
+                if (ps == nullptr) {
+                    report("No page setup is called \"" + c.setup + "\".");
+                } else if (l == nullptr) {
+                    report("A page setup is given to a layout: make a layout current first.");
+                } else {
+                    l->page = *ps;
+                    geom_dirty_ = true; // the sheet takes the new paper
+                    dirty_ = true;
+                    report("Page setup \"" + c.setup + "\" is current for layout \"" + l->name + "\".");
+                }
+            }
+            if constexpr (std::is_same_v<T, MLeaderStyleCommand>) {
+                using Op = MLeaderStyleCommand::Op;
+                std::vector<MLeaderStyle> styles = store_.mleader_styles();
+                const std::uint16_t i = store_.mleader_style_index(c.op == Op::Add ? c.style.name : c.name);
+                const std::string quoted = "\"" + (c.op == Op::Add ? c.style.name : c.name) + "\"";
+                if (c.op == Op::Add) {
+                    if (c.style.name.empty() || i != 0xFFFF) {
+                        report(c.style.name.empty() ? "A multileader style needs a name."
+                                                    : "Multileader style " + quoted + " already exists.");
+                    } else {
+                        styles.push_back(c.style);
+                        store_.set_mleader_styles(std::move(styles));
+                        dirty_ = true;
+                        report("Multileader style " + quoted + " added.");
+                    }
+                } else if (i == 0xFFFF) {
+                    report("Multileader style " + quoted + " not found.");
+                } else if (c.op == Op::Modify) {
+                    const std::uint16_t clash = store_.mleader_style_index(c.style.name);
+                    if (c.style.name.empty() || (clash != 0xFFFF && clash != i)) {
+                        report("Another multileader style is called \"" + c.style.name + "\".");
+                    } else {
+                        const std::string keep = styles[i].name;
+                        styles[i] = c.style;
+                        if (i == 0) {
+                            styles[i].name = keep; // Standard stays Standard
+                        }
+                        store_.set_mleader_styles(std::move(styles));
+                        dirty_ = true;
+                        report("Multileader style \"" + store_.mleader_styles()[i].name + "\" changed.");
+                    }
+                } else if (c.op == Op::SetCurrent) {
+                    store_.set_current_mleader_style(i);
+                    dirty_ = true;
+                    report("\"" + store_.mleader_styles()[i].name + "\" is now the current multileader style.");
+                } else if (i == 0 || i == store_.current_mleader_style()) {
+                    report("Multileader style " + quoted + " cannot be deleted: it is Standard or the current style.");
+                } else {
+                    const std::uint16_t cur = store_.current_mleader_style();
+                    styles.erase(styles.begin() + i);
+                    store_.set_mleader_styles(std::move(styles));
+                    store_.set_current_mleader_style(cur > i ? static_cast<std::uint16_t>(cur - 1) : cur);
+                    dirty_ = true;
+                    report("Multileader style " + quoted + " deleted.");
+                }
+            }
             if constexpr (std::is_same_v<T, ExtrimCommand>) {
                 apply_extrim(c);
             }
@@ -16247,6 +18776,117 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, DataLinkUpdateCommand>) {
                 apply_data_link_update(c);
+            }
+            if constexpr (std::is_same_v<T, TableExportCommand>) {
+                apply_table_export(c);
+            }
+            if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
+                apply_mleader_edit(c);
+            }
+            if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
+                // The nearest object under the pick other than a hatch, and the island loops of
+                // the last picked hatch that lie on it (the same tessellation made them).
+                EntityHandle obj = EntityHandle::null();
+                std::vector<EntityHandle> cand;
+                grid_.query(c.pick - Vec2{c.radius, c.radius}, c.pick + Vec2{c.radius, c.radius}, cand);
+                double best = c.radius * c.radius;
+                Vec2 cp{};
+                for (const EntityHandle e : cand) {
+                    if (e.kind != EntityKind::Hatch && selectable(e) && kernel_.closest_point(store_, e, c.pick, cp) &&
+                        length_squared(cp - c.pick) <= best) {
+                        best = length_squared(cp - c.pick);
+                        obj = e;
+                    }
+                }
+                const Command was = store_.is_valid(last_pick_hatch_) ? capture_entity(last_pick_hatch_) : Command{};
+                const auto* hc = std::get_if<AddHatchCommand>(&was);
+                if (hc == nullptr) {
+                    report("No hatch to remove boundaries from: pick an internal point first.");
+                } else if (obj.is_null()) {
+                    report("No object under the pick.");
+                } else {
+                    const auto on_edge = [&](Vec2 q) {
+                        Vec2 near_pt{};
+                        return kernel_.closest_point(store_, obj, q, near_pt) && distance(near_pt, q) <= 1e-6 * (1.0 + length(q));
+                    };
+                    AddHatchCommand now = *hc;
+                    std::vector<std::vector<Vec2>> kept{now.loops.empty() ? std::vector<Vec2>{} : now.loops.front()};
+                    std::size_t removed = 0;
+                    for (std::size_t i = 1; i < now.loops.size(); ++i) {
+                        const bool on = !now.loops[i].empty() && std::all_of(now.loops[i].begin(), now.loops[i].end(), on_edge);
+                        removed += on ? 1u : 0u;
+                        if (!on) {
+                            kept.push_back(now.loops[i]);
+                        }
+                    }
+                    if (removed == 0) {
+                        report("That object is not one of the hatch's islands.");
+                    } else {
+                        now.loops = std::move(kept);
+                        remove_indexed(last_pick_hatch_);
+                        push_erase_item(c.group, last_pick_hatch_, was);
+                        const Command made = now;
+                        last_pick_hatch_ = create_indexed(made);
+                        push_create_item(c.group, last_pick_hatch_, made);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        report(removed == 1 ? std::string("1 boundary removed.") : std::to_string(removed) + " boundaries removed.");
+                    }
+                }
+            }
+            if constexpr (std::is_same_v<T, HatchDrawnCommand>) {
+                // -HATCH draW boundary: the boundaries as drawn, kept as polylines when asked.
+                std::vector<std::vector<Vec2>> loops;
+                for (const std::vector<Vec2>& l : c.loops) {
+                    if (l.size() >= 3) {
+                        loops.push_back(l);
+                    }
+                }
+                if (loops.empty()) {
+                    report("A drawn boundary needs three points or more.");
+                } else {
+                    if (c.retain) {
+                        for (const std::vector<Vec2>& l : loops) {
+                            AddPolylineCommand edge;
+                            edge.points = l;
+                            edge.closed = true;
+                            edge.group = c.group;
+                            const Command ec = edge;
+                            push_create_item(c.group, create_indexed(ec), ec);
+                        }
+                    }
+                    AddHatchCommand hc;
+                    hc.loops = std::move(loops);
+                    hc.pattern_name = c.pattern_name;
+                    hc.pattern_scale = c.pattern_scale;
+                    hc.pattern_angle = c.pattern_angle;
+                    hc.color2 = c.color2;
+                    hc.group = c.group;
+                    hc.unassoc = true; // drawn, it has no objects to follow
+                    apply_hatch_extras(hc, c.extras);
+                    const Command made = hc;
+                    const EntityHandle nh = create_indexed(made);
+                    push_create_item(c.group, nh, made);
+                    selection_ = {nh};
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    report(c.pattern_name == "SOLID" ? "Solid hatch created." : "Hatch created.");
+                }
+            }
+            if constexpr (std::is_same_v<T, LoadLinetypesCommand>) {
+                std::size_t loaded = 0;
+                for (const LinetypeDef& d : c.defs) {
+                    if (store_.add_linetype(d)) {
+                        ++loaded;
+                        report("Linetype " + d.name + " loaded.");
+                    } else {
+                        report("Linetype " + d.name + " not loaded: a drawing loads at most " +
+                               std::to_string(kMaxLoadedLinetypes) + ".");
+                    }
+                }
+                if (loaded > 0) {
+                    geom_dirty_ = true; // what is drawn in a linetype loaded again changes
+                }
             }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),
@@ -16300,6 +18940,13 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, TrimPickCommand> || std::is_same_v<T, TrimPathCommand> ||
+                          std::is_same_v<T, ExtendPickCommand> || std::is_same_v<T, LengthenCommand> ||
+                          std::is_same_v<T, BreakCommand> || std::is_same_v<T, FilletPickCommand> ||
+                          std::is_same_v<T, FilletPolylineCommand> || std::is_same_v<T, ChamferPickCommand> ||
+                          std::is_same_v<T, ChamferPolylineCommand>) {
+                follow_replaced(c.group); // the associative dimensions and hatches on what changed
+            }
             if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
                 const std::uint16_t i = store_.text_style_index(c.name);
                 if (i == 0xFFFF) {
@@ -16340,6 +18987,7 @@ void GeometryEngine::apply_one(const Command& command) {
                 std::is_same_v<T, BuildPlotSnapshotCommand> || // read-only plot build
                 std::is_same_v<T, StretchPreviewCommand> || // rubber band only
                 std::is_same_v<T, TransformPreviewCommand> || // rubber band only
+                std::is_same_v<T, ArrayPreviewCommand> ||     // rubber band only
                 std::is_same_v<T, OffsetPreviewCommand> || // rubber band only
                 std::is_same_v<T, SetMirrtextCommand> || // a setting, not an edit
                 std::is_same_v<T, SetCurrentPropsCommand> ||
@@ -16354,6 +19002,7 @@ void GeometryEngine::apply_one(const Command& command) {
                 std::is_same_v<T, MeasureQueryCommand> || std::is_same_v<T, MassPropQueryCommand> ||
                 std::is_same_v<T, TimeCommand> || std::is_same_v<T, StatusQueryCommand> ||
                 std::is_same_v<T, AttOutCommand> ||           // writes a file, not the drawing
+                std::is_same_v<T, TableExportCommand> ||      // writes a file, not the drawing
                 std::is_same_v<T, SetUnitsDefaultsCommand> || // a setting, not an edit
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             bool edit = !view_or_io;
@@ -16378,6 +19027,15 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
                 edit = false; // a question
             }
+            if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
+                edit = mleader_edit_changed_; // a pick that found no leader changes nothing
+            }
+            if constexpr (std::is_same_v<T, DimAssocCommand>) {
+                edit = false; // a setting, or marks the drawing changed itself
+            }
+            if constexpr (std::is_same_v<T, SetLayerFiltersCommand>) {
+                edit = false; // marks the drawing changed itself, with no geometry to rebuild
+            }
             if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
                 edit = false; // marks the drawing changed itself, when there was one to delete
             }
@@ -16394,7 +19052,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 edit = false; // a setting of the session
             }
             if constexpr (std::is_same_v<T, LayerStateCommand>) {
-                edit = c.op != LayerStateCommand::Op::List && (c.op != LayerStateCommand::Op::Restore || layerp_changed_);
+                edit = c.op != LayerStateCommand::Op::List && c.op != LayerStateCommand::Op::Export &&
+                       (c.op != LayerStateCommand::Op::Restore || layerp_changed_);
             }
             if constexpr (std::is_same_v<T, FindTextCommand>) {
                 edit = c.do_replace; // finding only selects
@@ -16487,6 +19146,10 @@ void GeometryEngine::reset_active_state() {
     grip_active_ = false;
     grip_handle_ = EntityHandle{};
     grip_index_ = 0;
+    grip_peers_.clear();
+    grip_text_move_ = -1;
+    grip_variant_ = 0;
+    array_preview_.clear();
     grip_preview_store_.clear();
     forget_stretch_windows();
     stretch_preview_active_ = false;
@@ -16603,6 +19266,7 @@ void GeometryEngine::load_active(DocState& d) {
     grip_handle_ = d.grip_handle;
     grip_index_ = d.grip_index;
     grip_pos_ = d.grip_pos;
+    grip_peers_.clear(); // a drag left under way in the other drawing goes on with its own grip only
     grip_preview_store_ = std::move(d.grip_preview_store);
     stretch_windows_ = std::move(d.stretch_windows);
     stretch_windows_sel_ = std::move(d.stretch_windows_sel);
@@ -16806,10 +19470,16 @@ void GeometryEngine::rebuild_and_publish() {
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
+    buf.custom_patterns.clear();            // the drawing's own hatch patterns (HATCH's ?)
+    for (const hatch::Pattern& p : store_.custom_patterns()) {
+        buf.custom_patterns.push_back(p.name);
+    }
     buf.layer_state_names.clear();
     for (const LayerState& st : store_.layer_states()) {
         buf.layer_state_names.push_back(st.name);
     }
+    buf.layer_filters = store_.layer_filters(); // the Layer Properties Manager's group filters
+    buf.linetypes = store_.linetypes();
     buf.vports = store_.vports();           // VPORTS: the UI follows vports_version
     buf.vports_active = store_.vports_active();
     buf.vports_version = store_.vports_version();
@@ -16823,7 +19493,10 @@ void GeometryEngine::rebuild_and_publish() {
     buf.table_styles = store_.table_styles();
     buf.current_table_style = store_.current_table_style();
     buf.page_setups = store_.page_setups(); // PAGESETUP, the Plot window's saved setups
+    buf.mleader_styles = store_.mleader_styles(); // MLEADERSTYLE
+    buf.current_mleader_style = store_.current_mleader_style();
     buf.insbase = store_.insbase();       // BASE
+    buf.block_editor = refedit_.active && refedit_.bedit; // BEDIT: the Block Editor tab
     buf.data_links = store_.data_links(); // DATALINK
     buf.layer_used = layer_used_;
     buf.current_dimstyle = store_.current_dimstyle();
@@ -16879,6 +19552,33 @@ void GeometryEngine::rebuild_and_publish() {
             infos.push_back(BlockAttDefInfo{a.tag, a.prompt, a.def, a.flags, a.text.height});
         }
         buf.block_attdefs.push_back(std::move(infos)); // INSERT's attribute prompts
+    }
+    // The Insert gallery's pictures: each block's geometry about its base point, made again
+    // only when the blocks (or the drawing in front) change.
+    {
+        const std::uint64_t doc = active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].id : 0;
+        if (!block_previews_ || block_previews_serial_ != store_.blocks_serial() || block_previews_doc_ != doc) {
+            auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
+            std::vector<InsertSeg> segs;
+            for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
+                InsertData ins{};
+                ins.block = bi;
+                segs.clear();
+                resolve_insert(store_, ins, kDefaultTessTolerance, segs);
+                std::vector<Vec2> pairs;
+                const std::size_t n = std::min<std::size_t>(segs.size(), 20000);
+                pairs.reserve(n * 2);
+                for (std::size_t i = 0; i < n; ++i) {
+                    pairs.push_back(segs[i].a);
+                    pairs.push_back(segs[i].b);
+                }
+                previews->push_back(std::move(pairs));
+            }
+            block_previews_ = std::move(previews);
+            block_previews_serial_ = store_.blocks_serial();
+            block_previews_doc_ = doc;
+        }
+        buf.block_previews = block_previews_;
     }
     // Image definitions for the renderer's texture cache: embedded payloads by shared
     // pointer (re-made when the version changes), external ones by relative path.
@@ -17013,6 +19713,25 @@ void GeometryEngine::rebuild_and_publish() {
     }
     if (buf.copied_selection_build != sel_cache_build_) {
         buf.selection = selection_;
+        // The selection's extents' size (the default spacing of a rectangular array).
+        buf.selection_size = {};
+        {
+            bool any = false;
+            Vec2 lo;
+            Vec2 hi;
+            for (const EntityHandle h : selection_) {
+                Vec2 a;
+                Vec2 b;
+                if (store_.is_valid(h) && entity_aabb(store_, h, a, b)) {
+                    lo = any ? Vec2{std::min(lo.x, a.x), std::min(lo.y, a.y)} : a;
+                    hi = any ? Vec2{std::max(hi.x, b.x), std::max(hi.y, b.y)} : b;
+                    any = true;
+                }
+            }
+            if (any) {
+                buf.selection_size = hi - lo;
+            }
+        }
         buf.selection_summary = sel_cache_summary_;
         buf.selected_line_vertices = sel_cache_lines_;
         buf.selected_fill_vertices = sel_cache_fills_;
@@ -17060,13 +19779,26 @@ void GeometryEngine::rebuild_and_publish() {
     buf.grip_preview_segments.clear();
     buf.grip_preview_fills.clear();
     if (grip_active_ && store_.is_valid(grip_handle_)) {
-        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
         grip_preview_store_.clear();
         grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
         grip_preview_store_.set_dimstyle_table(store_.dimstyles());
-        const EntityProps* ep = store_.props(grip_handle_);
-        add_command_to_store(grip_preview_store_, edited,
-                             ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+        for (const auto& [h, edited] : grip_edits()) {
+            const EntityProps* ep = store_.props(h);
+            add_command_to_store(grip_preview_store_, edited,
+                                 ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+        }
+        RenderSnapshot tmp;
+        build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
+        buf.grip_preview_segments = std::move(tmp.line_vertices);
+        buf.grip_preview_fills = std::move(tmp.fill_vertices);
+    } else if (!array_preview_.empty()) {
+        // The array being set up: its copies, as they would be made.
+        grip_preview_store_.clear();
+        grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
+        grip_preview_store_.set_dimstyle_table(store_.dimstyles());
+        for (const Command& copy : array_preview_) {
+            add_command_to_store(grip_preview_store_, copy, EntityProps{store_.current_layer()});
+        }
         RenderSnapshot tmp;
         build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
         buf.grip_preview_segments = std::move(tmp.line_vertices);

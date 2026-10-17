@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
@@ -49,6 +51,67 @@ std::string trimmed(const std::string& s) {
         --b;
     }
     return s.substr(a, b - a);
+}
+
+/// The patterns of the .pat files on the support paths, read now (the folder's files may
+/// change between commands).
+std::vector<core::hatch::Pattern> support_patterns(const CommandContext& ctx) {
+    std::vector<core::hatch::Pattern> out;
+    for (const std::string& dir : ctx.support_paths()) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (ext != ".pat" || !entry.is_regular_file(ec)) {
+                continue;
+            }
+            std::ifstream f(entry.path(), std::ios::binary);
+            std::ostringstream text;
+            text << f.rdbuf();
+            for (core::hatch::Pattern& p : core::hatch::parse_pat(text.str())) {
+                out.push_back(std::move(p));
+            }
+        }
+    }
+    return out;
+}
+
+/// A hatch pattern by name: SOLID, built in, the drawing's own, or one in a .pat file on the
+/// support paths -- which is then brought into the drawing, as AutoCAD keeps a pattern with
+/// its hatch. False when there is none of that name.
+bool find_hatch_pattern(CommandContext& ctx, const std::string& name) {
+    if (name == "SOLID" || core::hatch::builtin_pattern(name) != nullptr) {
+        return true;
+    }
+    for (const std::string& n : ctx.custom_patterns()) {
+        if (upper(n) == name) {
+            return true;
+        }
+    }
+    for (core::hatch::Pattern& p : support_patterns(ctx)) {
+        if (upper(p.name) == name && !p.lines.empty()) {
+            p.name = name;
+            ctx.submit(core::AddPatternCommand{std::move(p)});
+            return true;
+        }
+    }
+    return false;
+}
+
+/// HATCH's `?`: every pattern there is to name.
+std::string hatch_pattern_list(const CommandContext& ctx) {
+    std::string line = "Patterns: SOLID";
+    for (const std::string& n : core::hatch::builtin_pattern_names()) {
+        line += " " + n;
+    }
+    for (const std::string& n : ctx.custom_patterns()) {
+        line += " " + upper(n);
+    }
+    for (const core::hatch::Pattern& p : support_patterns(ctx)) {
+        line += " " + upper(p.name);
+    }
+    return line;
 }
 
 /// Parses a point, echoing the interpretation on success or the error on
@@ -2285,6 +2348,96 @@ void MirrtextCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void DimAssocUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1" && t != "2") {
+            ctx.echo("Requires an integer between 0 and 2.");
+            return;
+        }
+        s_value_ = t[0] - '0';
+        core::DimAssocCommand c;
+        c.value = static_cast<std::uint8_t>(s_value_);
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
+void BlockReplaceCommand::start(CommandContext& ctx) {
+    std::vector<std::string> names;
+    for (const std::string& n : ctx.block_names()) {
+        if (!n.empty() && n.front() != '*') { // not the anonymous ones (dimensions, hatches)
+            names.push_back(n);
+        }
+    }
+    if (names.size() < 2) {
+        ctx.echo("The drawing needs two blocks for one to replace the other.");
+        done_ = true;
+        return;
+    }
+    if (dialog_ && ctx.view() != nullptr) {
+        std::string from;
+        const int r = ctx.view()->choose_dialog("BLOCKREPLACE - Select the block to be replaced.", names, from);
+        if (r >= 0) {
+            std::vector<std::string> others;
+            for (const std::string& n : names) {
+                if (n != from) {
+                    others.push_back(n);
+                }
+            }
+            std::string to;
+            if (r == 0 || ctx.view()->choose_dialog("BLOCKREPLACE - Select a block to replace all \"" + from +
+                                                        "\" blocks.",
+                                                    others, to) != 1) {
+                done_ = true;
+                return;
+            }
+            from_ = from;
+            to_ = to;
+            finish(ctx);
+            return;
+        }
+    }
+    ctx.set_prompt("Enter the name of the block to be replaced: ");
+}
+
+void BlockReplaceCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    if (step_ == 0) {
+        from_ = t;
+        step_ = 1;
+        ctx.set_prompt("Enter the name of the replacement block: ");
+        return;
+    }
+    to_ = t;
+    finish(ctx);
+}
+
+void BlockReplaceCommand::finish(CommandContext& ctx) {
+    ctx.submit(core::ReplaceBlockCommand{from_, to_, ctx.group_id()});
+    done_ = true;
+}
+
+void HpAssocCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        if (t != "0" && t != "1") {
+            ctx.echo("Requires an integer between 0 and 1.");
+            return;
+        }
+        s_value_ = t[0] - '0';
+        core::DimAssocCommand c;
+        c.op = core::DimAssocCommand::Op::HatchVariable;
+        c.value = static_cast<std::uint8_t>(s_value_);
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
 void MirrtextCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
@@ -2667,7 +2820,7 @@ void HatchCommand::start(CommandContext& ctx) {
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
     if (ctx.has_selection()) {
-        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_});
+        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_, extras()});
         done_ = true;
         return;
     }
@@ -2676,7 +2829,7 @@ void HatchCommand::start(CommandContext& ctx) {
 
 void HatchCommand::fill_selection(CommandContext& ctx) {
     if (ctx.has_selection()) {
-        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.new_group(), color2_});
+        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.new_group(), color2_, extras()});
         ++picks_;
     }
     main_prompt(ctx);
@@ -2684,14 +2837,407 @@ void HatchCommand::fill_selection(CommandContext& ctx) {
 
 void HatchCommand::selection_gesture(CommandContext& ctx) {
     if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (mode_ == Mode::AdvBoundarySelect) {
+            boundary_set_ = ctx.has_selection() ? 2 : 0;
+            advanced_prompt(ctx);
+            return;
+        }
         fill_selection(ctx);
     }
+}
+
+core::HatchExtras HatchCommand::extras() const {
+    core::HatchExtras x;
+    x.origin = origin_;
+    x.origin_corner = origin_corner_;
+    x.layer = layer_;
+    x.color = color_;
+    x.island_style = island_detect_ ? island_style_ : std::uint8_t{2}; // no detection: no islands
+    x.retain = retain_;
+    x.gap_tolerance = gap_tol_;
+    x.boundary_set = boundary_set_;
+    return x;
+}
+
+void HatchCommand::draw_next_prompt(CommandContext& ctx) {
+    mode_ = Mode::DrawNext;
+    ctx.set_prompt(draw_pts_.size() >= 2 ? "Specify next point or [Arc/Close/Length/Undo]: "
+                                         : "Specify next point or [Arc/Length/Undo]: ");
+}
+
+// -HATCH draW boundary, as AutoCAD asks it: each boundary point by point (Close, or Enter
+// once it has three points, ends it), then `Specify start point for new boundary or
+// <Accept>:` -- another boundary (an island inside the first), or Enter: the hatch.
+void HatchCommand::draw_input(CommandContext& ctx, const std::string& text, const std::string& t,
+                              const std::string& up) {
+    const auto end_boundary = [&] {
+        if (draw_pts_.size() < 3) {
+            ctx.echo("A boundary needs three points or more.");
+            return false;
+        }
+        drawn_.push_back(draw_pts_);
+        draw_pts_.clear();
+        mode_ = Mode::DrawNewBoundary;
+        ctx.set_prompt("Specify start point for new boundary or <Accept>: ");
+        return true;
+    };
+    switch (mode_) {
+    case Mode::DrawRetain:
+        if (up == "Y" || up == "YES" || up == "N" || up == "NO") {
+            draw_retain_ = up[0] == 'Y';
+        } else if (!up.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        mode_ = Mode::DrawStart;
+        ctx.set_prompt("Specify start point: ");
+        return;
+    case Mode::DrawStart:
+    case Mode::DrawNewBoundary:
+        if (t.empty()) {
+            if (mode_ == Mode::DrawNewBoundary && !drawn_.empty()) {
+                core::HatchExtras x = extras();
+                core::HatchDrawnCommand c{drawn_, pattern_, scale_, angle_, ctx.new_group(), color2_, x, draw_retain_};
+                ctx.submit(std::move(c));
+                ++picks_;
+                drawn_.clear();
+            }
+            main_prompt(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            draw_pts_ = {*p};
+            ctx.set_last_point(*p);
+            draw_next_prompt(ctx);
+        }
+        return;
+    case Mode::DrawLength: {
+        double len = 0.0;
+        if (!parse_number(t, len) || len <= 0.0) {
+            ctx.echo("Requires a positive distance.");
+            return;
+        }
+        const std::size_t n = draw_pts_.size();
+        const core::Vec2 dir = n >= 2 ? core::normalized(draw_pts_[n - 1] - draw_pts_[n - 2]) : core::Vec2{1.0, 0.0};
+        draw_pts_.push_back(draw_pts_.back() + dir * len);
+        ctx.set_last_point(draw_pts_.back());
+        draw_next_prompt(ctx);
+        return;
+    }
+    case Mode::DrawNext:
+        if (t.empty()) {
+            end_boundary();
+            return;
+        }
+        if (up == "C" || up == "CLOSE") {
+            if (draw_pts_.size() >= 2) {
+                end_boundary();
+            } else {
+                ctx.echo("Invalid option keyword.");
+            }
+            return;
+        }
+        if (up == "U" || up == "UNDO") {
+            if (draw_pts_.size() > 1) {
+                draw_pts_.pop_back();
+                ctx.set_last_point(draw_pts_.back());
+            } else {
+                ctx.echo("All segments already undone.");
+            }
+            draw_next_prompt(ctx);
+            return;
+        }
+        if (up == "L" || up == "LENGTH") {
+            mode_ = Mode::DrawLength;
+            ctx.set_prompt("Specify length of line: ");
+            return;
+        }
+        if (up == "A" || up == "ARC") {
+            ctx.echo("Arc segments are not available in a drawn boundary yet; its sides are straight.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            draw_pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            draw_next_prompt(ctx);
+        }
+        return;
+    default:
+        return;
+    }
+}
+
+void HatchCommand::advanced_prompt(CommandContext& ctx) {
+    mode_ = Mode::Advanced;
+    ctx.set_prompt("Enter an option [Boundary set/Retain boundary/Island detection/Style/Associativity/Gap tolerance/"
+                   "separate Hatches]: ");
+}
+
+// -HATCH Advanced: each option asks its question and comes back to the list; Enter at the list
+// goes back to the main prompt.
+void HatchCommand::advanced_input(CommandContext& ctx, const std::string& t, const std::string& up) {
+    const auto yes_no = [&](bool& v) {
+        if (up.empty()) {
+            return true;
+        }
+        if (up == "Y" || up == "YES" || up == "N" || up == "NO") {
+            v = up[0] == 'Y';
+            return true;
+        }
+        ctx.echo("Invalid option keyword.");
+        return false;
+    };
+    switch (mode_) {
+    case Mode::Advanced: {
+        if (up.empty()) {
+            main_prompt(ctx);
+            return;
+        }
+        const auto yn = [](bool v) { return std::string(v ? "Y" : "N"); };
+        if (up == "B" || up == "BOUNDARY" || up == "BOUNDARY SET") {
+            mode_ = Mode::AdvBoundarySet;
+            ctx.set_prompt(std::string("Specify candidate set for boundary [New/Everything] <") +
+                           (boundary_set_ != 0 ? "New" : "Everything") + ">: ");
+        } else if (up == "R" || up == "RETAIN" || up == "RETAIN BOUNDARY") {
+            mode_ = Mode::AdvRetain;
+            ctx.set_prompt("Retain derived boundaries? [Yes/No] <" + yn(retain_) + ">: ");
+        } else if (up == "I" || up == "ISLAND" || up == "ISLAND DETECTION") {
+            mode_ = Mode::AdvIsland;
+            ctx.set_prompt("Do you want island detection? [Yes/No] <" + yn(island_detect_) + ">: ");
+        } else if (up == "S" || up == "STYLE") {
+            mode_ = Mode::AdvStyle;
+            static constexpr const char* kStyles[] = {"Normal", "Outer", "Ignore"};
+            ctx.set_prompt(std::string("Enter hatching style [Ignore/Outer/Normal] <") + kStyles[island_style_ % 3] + ">: ");
+        } else if (up == "A" || up == "ASSOCIATIVITY") {
+            mode_ = Mode::AdvAssoc;
+            ctx.set_prompt("Do you want associativity? [Yes/No] <" + yn(HpAssocCommand::s_value_ != 0) + ">: ");
+        } else if (up == "G" || up == "GAP" || up == "GAP TOLERANCE") {
+            mode_ = Mode::AdvGap;
+            std::string g = std::to_string(gap_tol_); // as the value is: 0, 0.5, 2.25
+            g.erase(g.find_last_not_of('0') + 1);
+            if (!g.empty() && g.back() == '.') {
+                g.pop_back();
+            }
+            ctx.set_prompt("Specify a boundary gap tolerance value <" + g + ">: ");
+        } else if (up == "H" || up == "SEPARATE" || up == "SEPARATE HATCHES") {
+            mode_ = Mode::AdvSeparate;
+            ctx.set_prompt("Create separate hatches? [Yes/No] <" + yn(separate_) + ">: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    }
+    case Mode::AdvBoundarySet:
+        if (up == "N" || up == "NEW") {
+            mode_ = Mode::AdvBoundarySelect;
+            select_.begin(ctx);
+            return;
+        }
+        if (!up.empty() && up != "E" && up != "EVERYTHING") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        if (up == "E" || up == "EVERYTHING") {
+            boundary_set_ = 0;
+        }
+        break;
+    case Mode::AdvBoundarySelect:
+        if (select_.input(ctx, t) == SelectObjectsPhase::Result::Done) {
+            boundary_set_ = ctx.has_selection() ? 2 : 0; // the next pick takes them as the set
+            advanced_prompt(ctx);
+        }
+        return;
+    case Mode::AdvRetain:
+        if (!yes_no(retain_)) {
+            return;
+        }
+        break;
+    case Mode::AdvIsland:
+        if (!yes_no(island_detect_)) {
+            return;
+        }
+        if (!island_detect_) {
+            mode_ = Mode::AdvRayCast;
+            ctx.set_prompt("Enter type of ray casting [Nearest/+X/-X/+Y/-Y/Angle] <" + ray_cast_ + ">: ");
+            return;
+        }
+        break;
+    case Mode::AdvRayCast: {
+        static constexpr std::pair<const char*, const char*> kRays[] = {
+            {"N", "Nearest"}, {"NEAREST", "Nearest"}, {"+X", "+X"}, {"-X", "-X"}, {"+Y", "+Y"}, {"-Y", "-Y"}};
+        if (up == "A" || up == "ANGLE") {
+            mode_ = Mode::AdvRayAngle;
+            ctx.set_prompt("Specify ray casting angle: ");
+            return;
+        }
+        std::string ray = up.empty() ? ray_cast_ : std::string();
+        for (const auto& [k, v] : kRays) {
+            ray = up == k ? v : ray;
+        }
+        if (ray.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        ray_cast_ = ray;
+        break;
+    }
+    case Mode::AdvRayAngle: {
+        double v = 0.0;
+        if (!parse_number(t, v)) {
+            ctx.echo("Requires a valid angle.");
+            return;
+        }
+        ray_cast_ = "Angle";
+        break;
+    }
+    case Mode::AdvStyle:
+        if (up == "N" || up == "NORMAL") {
+            island_style_ = 0;
+        } else if (up == "O" || up == "OUTER") {
+            island_style_ = 1;
+        } else if (up == "I" || up == "IGNORE") {
+            island_style_ = 2;
+        } else if (!up.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        break;
+    case Mode::AdvAssoc: {
+        bool on = HpAssocCommand::s_value_ != 0;
+        if (!yes_no(on)) {
+            return;
+        }
+        HpAssocCommand::s_value_ = on ? 1 : 0;
+        core::DimAssocCommand c;
+        c.op = core::DimAssocCommand::Op::HatchVariable;
+        c.value = on ? std::uint8_t{1} : std::uint8_t{0};
+        ctx.submit(std::move(c));
+        break;
+    }
+    case Mode::AdvGap: {
+        double v = gap_tol_;
+        if (!t.empty() && (!parse_number(t, v) || v < 0.0 || v > 5000.0)) {
+            ctx.echo("Requires a value from 0 to 5000.");
+            return;
+        }
+        gap_tol_ = v;
+        break;
+    }
+    case Mode::AdvSeparate:
+        if (!yes_no(separate_)) {
+            return;
+        }
+        break;
+    default:
+        return;
+    }
+    advanced_prompt(ctx);
 }
 
 void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string up = upper(t);
     switch (mode_) {
+    case Mode::Advanced:
+    case Mode::AdvBoundarySet:
+    case Mode::AdvBoundarySelect:
+    case Mode::AdvRetain:
+    case Mode::AdvIsland:
+    case Mode::AdvRayCast:
+    case Mode::AdvRayAngle:
+    case Mode::AdvStyle:
+    case Mode::AdvAssoc:
+    case Mode::AdvGap:
+    case Mode::AdvSeparate:
+        advanced_input(ctx, mode_ == Mode::AdvBoundarySelect ? text : t, up);
+        return;
+    case Mode::DrawRetain:
+    case Mode::DrawStart:
+    case Mode::DrawNext:
+    case Mode::DrawLength:
+    case Mode::DrawNewBoundary:
+        draw_input(ctx, text, t, up);
+        return;
+    case Mode::RemoveBoundaries:
+        // remove Boundaries: the islands of the hatch picked last, object by object.
+        if (t.empty() || up == "A" || up == "ADD" || up == "ADD BOUNDARIES") {
+            main_prompt(ctx);
+            return;
+        }
+        if (up == "U" || up == "UNDO") {
+            if (!removals_.empty()) {
+                ctx.submit(core::UndoLastGroupCommand{removals_.back()});
+                removals_.pop_back();
+            }
+        } else if (const auto p = read_point(ctx, text)) {
+            removals_.push_back(ctx.new_group());
+            ctx.submit(core::HatchRemoveBoundaryCommand{*p, ctx.pick_radius(), removals_.back()});
+        } else {
+            return;
+        }
+        ctx.set_prompt(removals_.empty() ? "Select objects or [Add boundaries]: "
+                                         : "Select objects or [Add boundaries/Undo]: ");
+        return;
+    case Mode::Origin:
+        if (up == "S" || up == "SET" || up == "SET NEW ORIGIN") {
+            mode_ = Mode::OriginPoint;
+            ctx.set_prompt("Specify origin point: ");
+            return;
+        }
+        if (up == "D" || up == "DEFAULT" || up == "DEFAULT TO BOUNDARY EXTENTS") {
+            mode_ = Mode::OriginCorner;
+            ctx.set_prompt("[Bottomleft/bottomRight/topLeft/topRight/Center] <Bottomleft>: ");
+            return;
+        }
+        if (!up.empty() && up != "U" && up != "USE" && up != "USE CURRENT ORIGIN") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        origin_.reset(); // the current origin (0,0)
+        origin_corner_ = 0;
+        main_prompt(ctx);
+        return;
+    case Mode::OriginPoint:
+        if (const auto p = read_point(ctx, text)) {
+            origin_ = *p;
+            origin_corner_ = 0;
+            main_prompt(ctx);
+        }
+        return;
+    case Mode::OriginCorner: {
+        static constexpr std::pair<const char*, std::uint8_t> kCorners[] = {
+            {"B", 1}, {"BOTTOMLEFT", 1}, {"R", 2}, {"BOTTOMRIGHT", 2}, {"L", 3}, {"TOPLEFT", 3},
+            {"T", 4}, {"TOPRIGHT", 4}, {"C", 5}, {"CENTER", 5}};
+        std::uint8_t corner = up.empty() ? 1 : 0;
+        for (const auto& [k, v] : kCorners) {
+            corner = up == k ? v : corner;
+        }
+        if (corner == 0) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        origin_.reset();
+        origin_corner_ = corner;
+        main_prompt(ctx);
+        return;
+    }
+    case Mode::HatchColor:
+        if (t.empty() || t == "." || up == "BYLAYER") {
+            color_.reset();
+        } else {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 1.0 || v > 255.0 || v != std::floor(v)) {
+                ctx.echo("Enter a colour number from 1 to 255, BYLAYER or . for the current one.");
+                return;
+            }
+            color_ = core::io::dxf_aci_to_rgb(static_cast<long>(v));
+        }
+        main_prompt(ctx);
+        return;
+    case Mode::HatchLayer:
+        layer_ = (t.empty() || t == ".") ? std::string() : t;
+        main_prompt(ctx);
+        return;
     case Mode::Select:
         if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
             fill_selection(ctx);
@@ -2699,11 +3245,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case Mode::Pattern: {
         if (t == "?") {
-            std::string line = "Patterns: SOLID";
-            for (const std::string& n : core::hatch::builtin_pattern_names()) {
-                line += " " + n;
-            }
-            ctx.echo(line);
+            ctx.echo(hatch_pattern_list(ctx));
             return;
         }
         if (up == "U" || up == "USER DEFINED" || up == "USER") {
@@ -2724,7 +3266,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (!t.empty()) {
-            if (core::hatch::builtin_pattern(up) == nullptr) {
+            if (!find_hatch_pattern(ctx, up)) {
                 ctx.echo("Unknown pattern \"" + t + "\"; ? lists them.");
                 return;
             }
@@ -2865,15 +3407,51 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
                        "," + std::to_string(color2_.b) + ">: ");
         return;
     }
-    if (typed_ && (up == "W" || up == "B" || up == "A" || up == "DR" || up == "O" || up == "AN" || up == "CO" ||
-                   up == "LA" || up == "TR" || up == "DRAW" || up == "ADVANCED" || up == "ORIGIN" || up == "LAYER")) {
+    if (typed_ && (up == "O" || up == "ORIGIN")) {
+        mode_ = Mode::Origin;
+        ctx.set_prompt("[Use current origin/Set new origin/Default to boundary extents] <Use current origin>: ");
+        return;
+    }
+    if (typed_ && (up == "CO" || up == "HATCH COLOR" || up == "COLOR")) {
+        mode_ = Mode::HatchColor;
+        ctx.set_prompt("Enter new color for new hatch objects or [. (use current)] <use current>: ");
+        return;
+    }
+    if (typed_ && (up == "LA" || up == "LAYER")) {
+        mode_ = Mode::HatchLayer;
+        ctx.set_prompt("Enter layer name or [. (use current)] <use current>: ");
+        return;
+    }
+    if (typed_ && (up == "A" || up == "ADVANCED")) {
+        advanced_prompt(ctx);
+        return;
+    }
+    if (typed_ && (up == "W" || up == "DRAW BOUNDARY")) {
+        mode_ = Mode::DrawRetain;
+        drawn_.clear();
+        draw_pts_.clear();
+        ctx.set_prompt(std::string("Retain polyline boundary? [Yes/No] <") + (draw_retain_ ? "Y" : "N") + ">: ");
+        return;
+    }
+    if (typed_ && (up == "B" || up == "REMOVE BOUNDARIES")) {
+        mode_ = Mode::RemoveBoundaries;
+        removals_.clear();
+        ctx.set_prompt("Select objects or [Add boundaries]: ");
+        return;
+    }
+    if (typed_ && (up == "DR" || up == "AN" || up == "TR" || up == "DRAW")) {
         ctx.echo("That option is not available yet.");
         return;
     }
     if (const auto p = read_point(ctx, text)) {
         // Click inside a closed region -> trace its boundary (+ islands) and hatch it. Each
-        // pick is its own undo group; the command stays active for more picks.
-        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_});
+        // pick is its own undo group; the command stays active for more picks. Unless
+        // separate hatches are asked for, the areas picked are one hatch (HPSEPARATE 0).
+        core::HatchExtras x = extras();
+        x.merge = !separate_ && picked_area_;
+        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_, x});
+        picked_area_ = true;
+        boundary_set_ = boundary_set_ == 2 ? 1 : boundary_set_;
         ++picks_;
         main_prompt(ctx);
     }
@@ -5006,6 +5584,9 @@ void SplineCommand::refresh_preview(CommandContext& ctx) const {
     pv.spline_fit = fit_;
     pv.spline_degree = degree_;
     pv.spline_knots = knots_;
+    pv.spline_start_tangent = start_tangent_;
+    pv.spline_tolerance = tolerance_;
+    pv.spline_tangent_cursor = state_ == State::StartTangent ? 1 : state_ == State::EndTangent ? 2 : 0;
     ctx.set_preview(std::move(pv));
 }
 
@@ -5015,6 +5596,7 @@ void SplineCommand::start(CommandContext& ctx) {
     degree_ = s_degree_;
     knots_ = s_knots_;
     pts_.clear();
+    start_tangent_.reset();
     state_ = State::First;
     if (fit_) {
         ctx.echo(std::string("Current settings: Method=Fit   Knots=") + knots_name(knots_));
@@ -5024,13 +5606,32 @@ void SplineCommand::start(CommandContext& ctx) {
     prompt_first(ctx);
 }
 
+void SplineCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        convert_selection(ctx);
+    }
+}
+
+void SplineCommand::convert_selection(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        // PEDIT's Spline on each: the polyline's vertices fitted by a spline, which takes
+        // its place (one undo step).
+        core::PeditCommand c;
+        c.op = 4;
+        c.selection = true;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
 void SplineCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     ctx.set_preview({});
     done_ = true;
 }
 
-void SplineCommand::finish(CommandContext& ctx, bool close) {
+void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::Vec2> end_tangent) {
     if (pts_.size() < 2) {
         ctx.echo("A spline needs at least two points.");
         ctx.set_preview({});
@@ -5038,15 +5639,27 @@ void SplineCommand::finish(CommandContext& ctx, bool close) {
         return;
     }
     std::vector<core::Vec2> through = pts_;
+    std::optional<core::Vec2> seam; // Close: the same direction leaving and arriving at the start
     if (close) {
-        through.push_back(pts_.front()); // back to the start (C0 at the seam)
+        through.push_back(pts_.front()); // back to the start
+        if (fit_ && pts_.size() >= 3) {
+            seam = pts_[1] - pts_.back(); // the curve smooth across its seam, not a corner there
+        }
     }
     std::vector<core::Vec2> ctrl;
     if (fit_) {
-        ctrl = core::spline::fit_or_fallback(through, degree_,
-                                             static_cast<core::spline::FitParam>(knots_));
+        if (tolerance_ > 0.0 && !close && !start_tangent_ && !end_tangent) {
+            ctrl = core::spline::fit_within(through, degree_, static_cast<core::spline::FitParam>(knots_), tolerance_);
+        }
+        if (ctrl.empty()) {
+            ctrl = core::spline::fit_or_fallback(through, degree_, static_cast<core::spline::FitParam>(knots_),
+                                                 close ? seam : start_tangent_, close ? seam : end_tangent);
+        }
     } else {
         ctrl = std::move(through);
+    }
+    if (close && ctrl.size() >= 2) {
+        ctrl.back() = ctrl.front(); // closed exactly, whatever the fit's rounding
     }
     ctx.submit(core::AddSplineCommand{std::move(ctrl), static_cast<std::uint32_t>(degree_),
                                       ctx.group_id(), {}});
@@ -5058,6 +5671,50 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     switch (state_) {
+    case State::Object:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            convert_selection(ctx);
+        }
+        return;
+    case State::Tolerance: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 0.0) {
+                ctx.echo("Requires a distance of zero or more.");
+                return;
+            }
+            tolerance_ = v;
+        }
+        state_ = State::Next;
+        refresh_preview(ctx);
+        prompt_next(ctx);
+        return;
+    }
+    case State::StartTangent:
+    case State::EndTangent: {
+        const bool at_end = state_ == State::EndTangent;
+        std::optional<core::Vec2> dir;
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            dir = *p - (at_end ? pts_.back() : pts_.front());
+            if (core::length(*dir) < 1e-12) {
+                ctx.echo("The tangent needs a point away from the spline's end.");
+                return;
+            }
+        }
+        state_ = State::Next;
+        if (at_end) {
+            finish(ctx, false, dir); // the end tangent ends the spline
+            return;
+        }
+        start_tangent_ = dir;
+        refresh_preview(ctx);
+        prompt_next(ctx);
+        return;
+    }
     case State::First:
         if (u == "M" || u == "METHOD") {
             state_ = State::MethodPick;
@@ -5077,7 +5734,8 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "O" || u == "OBJECT") {
-            ctx.echo("Object: converting spline-fit polylines is not supported yet.");
+            state_ = State::Object;
+            select_.begin(ctx, "Select spline-fit polylines: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -5156,12 +5814,16 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
             finish(ctx, true);
             return;
         }
-        if (fit_ && (u == "T" || u == "TANGENCY")) {
-            ctx.echo("Tangency is not supported yet; the end is left free.");
+        if (fit_ && (u == "T" || u == "TANGENCY" || u == "START TANGENCY" || u == "END TANGENCY")) {
+            // start Tangency before the second point; end Tangency after, which ends it.
+            state_ = pts_.size() < 2 ? State::StartTangent : State::EndTangent;
+            ctx.set_prompt(state_ == State::StartTangent ? "Specify start tangent: " : "Specify end tangent: ");
+            refresh_preview(ctx);
             return;
         }
         if (fit_ && (u == "L" || u == "TOLERANCE")) {
-            ctx.echo("Fit tolerance other than 0 is not supported yet.");
+            state_ = State::Tolerance;
+            ctx.set_prompt("Specify fit tolerance <" + fmt4(tolerance_) + ">: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -5195,6 +5857,7 @@ void DonutCommand::start(CommandContext& ctx) {
 
 void DonutCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.clear_preview();
     done_ = true;
 }
 
@@ -5214,6 +5877,22 @@ void DonutCommand::take_outer(CommandContext& ctx, double v) {
     s_inner_ = inner_;
     s_outer_ = outer_;
     state_ = State::Center;
+    // The donut rides on the cursor while its centre is asked for: both edges of the ring.
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Outline;
+    constexpr int kSteps = 48;
+    for (const double r : {inner_ * 0.5, outer_ * 0.5}) {
+        if (r <= 0.0) {
+            continue;
+        }
+        for (int i = 0; i < kSteps; ++i) {
+            const double a0 = 2.0 * 3.14159265358979323846 * i / kSteps;
+            const double a1 = 2.0 * 3.14159265358979323846 * (i + 1) / kSteps;
+            pv.points.push_back({r * std::cos(a0), r * std::sin(a0)});
+            pv.points.push_back({r * std::cos(a1), r * std::sin(a1)});
+        }
+    }
+    ctx.set_preview(std::move(pv));
     ctx.set_prompt("Specify center of donut or <exit>: ");
 }
 
@@ -5270,6 +5949,7 @@ void DonutCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Center: {
         if (t.empty()) {
+            ctx.clear_preview();
             done_ = true;
             return;
         }
@@ -5443,6 +6123,9 @@ void ViewCommand::input(CommandContext& ctx, const std::string& text) {
             if (v.name == t) {
                 if (ctx.view() != nullptr) {
                     ctx.view()->set_view(v.center, v.scale);
+                }
+                if (!v.layer_state.empty()) { // and the layers as they were saved with it
+                    ctx.submit(core::LayerStateCommand{core::LayerStateCommand::Op::Restore, v.layer_state, {}});
                 }
                 ctx.echo("View \"" + t + "\" restored.");
                 done_ = true;
@@ -6396,6 +7079,56 @@ void echo_block_names(CommandContext& ctx) {
 }
 } // namespace
 
+void AttRedefCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Name: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::vector<std::string> names = ctx.block_names();
+        const auto it = std::find_if(names.begin(), names.end(), [&](const std::string& n) { return upper(n) == u; });
+        if (it == names.end()) {
+            ctx.echo("Block \"" + t + "\" does not exist.");
+            return;
+        }
+        name_ = *it;
+        ctx.echo("Select objects for new Block...");
+        state_ = State::Select;
+        ctx.set_prompt("Select objects: ");
+        return;
+    }
+    case State::Select:
+        if (t.empty()) {
+            if (ctx.selection_count() == 0) {
+                ctx.echo("Nothing selected.");
+                done_ = true;
+                return;
+            }
+            state_ = State::Base;
+            ctx.set_prompt("Specify insertion base point of new Block: ");
+            return;
+        }
+        if (u == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+        } else if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+        }
+        ctx.set_prompt("Select objects: ");
+        return;
+    case State::Base:
+        if (const auto p = read_point(ctx, text)) {
+            core::DefineBlockCommand c{name_, *p, ctx.group_id()};
+            c.attredef = true;
+            ctx.submit(std::move(c));
+            done_ = true;
+        }
+        return;
+    }
+}
+
 void BlockCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Name;
@@ -7029,6 +7762,105 @@ constexpr const char* kAciNames[8] = {"", "RED", "YELLOW", "GREEN", "CYAN", "BLU
 constexpr const char* kLinetypeNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
 constexpr const char* kLinetypeDescriptions[4] = {"Solid line", "Dashed __ __ __ __", "Center ____ _ ____ _",
                                                   "Hidden __ __ __ __ (shorter)"};
+/// The linetype a name means at a prompt (any case): one loaded by that name, else a
+/// built-in one.
+std::optional<core::Linetype> linetype_named(const CommandContext& ctx, const std::string& name) {
+    const std::string u = upper(name);
+    const std::vector<core::LinetypeDef> loaded = ctx.linetypes();
+    for (std::size_t i = 0; i < loaded.size(); ++i) {
+        if (upper(loaded[i].name) == u) {
+            return static_cast<core::Linetype>(core::kFirstLoadedLinetype + i);
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (upper(kLinetypeNames[i]) == u) {
+            return static_cast<core::Linetype>(i);
+        }
+    }
+    return std::nullopt;
+}
+/// A linetype's name as the prompts show it.
+std::string linetype_label(const CommandContext& ctx, core::Linetype lt) {
+    const auto v = static_cast<std::size_t>(lt);
+    if (v < core::kFirstLoadedLinetype) {
+        return kLinetypeNames[v];
+    }
+    const std::vector<core::LinetypeDef> loaded = ctx.linetypes();
+    return v - core::kFirstLoadedLinetype < loaded.size() ? loaded[v - core::kFirstLoadedLinetype].name
+                                                          : std::string("Continuous");
+}
+/// Every loaded linetype's name, the built-in ones first: `a, b, c` or (`or_last`) `a, b or c`.
+std::string loaded_linetypes_text(const CommandContext& ctx, bool or_last = false) {
+    std::vector<std::string> names(std::begin(kLinetypeNames), std::end(kLinetypeNames));
+    for (const core::LinetypeDef& d : ctx.linetypes()) {
+        names.push_back(d.name);
+    }
+    std::string out;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        out += (i == 0 ? "" : (or_last && i + 1 == names.size()) ? " or " : ", ") + names[i];
+    }
+    return out;
+}
+/// AutoCAD's wild cards in a name list: `*` any run, `?` any one; names separated by commas.
+bool names_match(const std::string& list, const std::string& name) {
+    const std::string n = upper(name);
+    std::size_t at = 0;
+    while (at <= list.size()) {
+        std::size_t comma = list.find(',', at);
+        if (comma == std::string::npos) {
+            comma = list.size();
+        }
+        const std::string pat = upper(trimmed(list.substr(at, comma - at)));
+        // Wild-card match, backtracking on the last `*`.
+        std::size_t p = 0;
+        std::size_t t = 0;
+        std::size_t star = std::string::npos;
+        std::size_t mark = 0;
+        bool ok = true;
+        while (t < n.size()) {
+            if (p < pat.size() && (pat[p] == '?' || pat[p] == n[t])) {
+                ++p;
+                ++t;
+            } else if (p < pat.size() && pat[p] == '*') {
+                star = p++;
+                mark = t;
+            } else if (star != std::string::npos) {
+                p = star + 1;
+                t = ++mark;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        while (ok && p < pat.size() && pat[p] == '*') {
+            ++p;
+        }
+        if (ok && p == pat.size() && !pat.empty()) {
+            return true;
+        }
+        at = comma + 1;
+    }
+    return false;
+}
+/// The linetypes of a .lin file: a path, or a name found in the drawing's folder or the
+/// support folder. Empty when there is none.
+std::vector<core::LinetypeDef> read_lin_file(const CommandContext& ctx, const std::string& name) {
+    std::vector<std::filesystem::path> tries{std::filesystem::path(name)};
+    for (const std::string& dir : ctx.support_paths()) {
+        tries.push_back(std::filesystem::path(dir) / name);
+    }
+    for (const std::filesystem::path& p : tries) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(p, ec)) {
+            continue;
+        }
+        std::ifstream f(p, std::ios::binary);
+        std::ostringstream text;
+        text << f.rdbuf();
+        return core::parse_lin(text.str());
+    }
+    return {};
+}
 /// A colour as AutoCAD names it: BYLAYER, a colour name for 1..7, else r,g,b.
 std::string color_text(const core::EntityProps& p) {
     if (p.color_by_layer()) {
@@ -7121,7 +7953,7 @@ void CurrentPropCommand::ask(CommandContext& ctx) {
         if (name_ == "CELTYPE") {
             step_ = Step::LtSet;
             ctx.set_prompt(std::string("Enter new value for CELTYPE <\"") +
-                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + "\">: ");
+                           (p.linetype_by_layer() ? std::string("BYLAYER") : linetype_label(ctx, p.linetype)) + "\">: ");
         } else {
             step_ = Step::LtOption;
             ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
@@ -7248,53 +8080,189 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
         if (u == "S" || u == "SET") {
             step_ = Step::LtSet;
             ctx.set_prompt(std::string("Specify linetype name or [?] <") +
-                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + ">: ");
+                           (p.linetype_by_layer() ? std::string("BYLAYER") : linetype_label(ctx, p.linetype)) + ">: ");
             return;
         }
-        if (u == "C" || u == "CREATE" || u == "L" || u == "LOAD") {
-            ctx.echo("Continuous, Dashed, Center and Hidden are loaded; other linetypes cannot be created or loaded yet.");
+        if (u == "L" || u == "LOAD") {
+            step_ = Step::LtLoadNames;
+            ctx.set_prompt("Enter linetype(s) to load: ");
+            return;
+        }
+        if (u == "C" || u == "CREATE") {
+            step_ = Step::LtCreateName;
+            ctx.set_prompt("Enter name of linetype to create: ");
             return;
         }
         ctx.echo("Invalid option keyword.");
         return;
-    case Step::LtList:
+    case Step::LtList: {
         ctx.echo("Name           Description");
+        const std::string pattern = t.empty() ? std::string("*") : t;
         for (int i = 0; i < 4; ++i) {
+            if (!names_match(pattern, kLinetypeNames[i])) {
+                continue;
+            }
             std::string line = kLinetypeNames[i];
             line.resize(15, ' ');
             ctx.echo(line + kLinetypeDescriptions[i]);
         }
+        for (const core::LinetypeDef& d : ctx.linetypes()) {
+            if (!names_match(pattern, d.name)) {
+                continue;
+            }
+            std::string line = d.name;
+            line.resize(std::max<std::size_t>(line.size() + 1, 15), ' ');
+            ctx.echo(line + d.description);
+        }
         step_ = Step::LtOption;
         ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
         return;
+    }
+    case Step::LtLoadNames:
+        if (t.empty()) {
+            step_ = Step::LtOption;
+            ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+            return;
+        }
+        names_ = t;
+        if (ctx.view() != nullptr) {
+            // The Select Linetype File window; without a file, Musa CAD's own linetypes.
+            const std::string path = ctx.view()->open_file_dialog("Linetype files (*.lin);;All files (*)");
+            load_from(ctx, path.empty() ? core::linetype_library() : read_lin_file(ctx, path));
+            return;
+        }
+        step_ = Step::LtLoadFile;
+        ctx.set_prompt("Enter name of linetype file to search <musacad.lin>: ");
+        return;
+    case Step::LtLoadFile: {
+        if (t.empty() || u == "MUSACAD.LIN") {
+            load_from(ctx, core::linetype_library());
+            return;
+        }
+        const std::vector<core::LinetypeDef> defs = read_lin_file(ctx, t);
+        if (defs.empty()) {
+            ctx.echo("Cannot find a linetype file " + t + ".");
+            ctx.set_prompt("Enter name of linetype file to search <musacad.lin>: ");
+            return;
+        }
+        load_from(ctx, defs);
+        return;
+    }
+    case Step::LtReload:
+        if (u.empty() || u == "Y" || u == "YES") {
+            accepted_.push_back(pending_.front());
+        } else if (u != "N" && u != "NO") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        pending_.erase(pending_.begin());
+        next_reload(ctx);
+        return;
+    case Step::LtCreateName: {
+        if (t.empty()) {
+            step_ = Step::LtOption;
+            ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+            return;
+        }
+        const bool builtin = std::any_of(std::begin(kLinetypeNames), std::end(kLinetypeNames),
+                                         [&](const char* n) { return upper(n) == u; });
+        if (builtin || t.find_first_of(" ,*?<>/\\\":;|=`") != std::string::npos) {
+            ctx.echo(builtin ? "Linetype " + t + " is built in." : std::string("Invalid linetype name."));
+            return;
+        }
+        created_ = core::LinetypeDef{t, {}, {}};
+        step_ = Step::LtCreateDesc;
+        ctx.set_prompt("Descriptive text: ");
+        return;
+    }
+    case Step::LtCreateDesc:
+        created_.description = t;
+        ctx.echo("Enter linetype pattern (on next line):");
+        step_ = Step::LtCreatePattern;
+        ctx.set_prompt("A,");
+        return;
+    case Step::LtCreatePattern: {
+        const std::vector<core::LinetypeDef> parsed = core::parse_lin("*X\nA," + t + "\n");
+        if (parsed.empty() || parsed.front().pattern.empty() ||
+            std::all_of(parsed.front().pattern.begin(), parsed.front().pattern.end(),
+                        [](double e) { return e == 0.0; })) {
+            ctx.echo("Enter the dash (positive), gap (negative) and dot (0) lengths, separated by commas.");
+            return;
+        }
+        created_.pattern = parsed.front().pattern;
+        ctx.submit(core::LoadLinetypesCommand{{created_}});
+        ctx.echo("Linetype " + created_.name + " created and loaded.");
+        step_ = Step::LtOption;
+        ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+        return;
+    }
     case Step::LtSet: {
         if (t.empty()) {
             done_ = true;
             return;
         }
         if (u == "?") {
-            ctx.echo("Linetypes: BYLAYER, Continuous, Dashed, Center, Hidden");
+            ctx.echo("Linetypes: BYLAYER, " + loaded_linetypes_text(ctx));
             return;
         }
         if (u == "BYLAYER") {
             p.set_linetype_by_layer(true);
         } else {
-            int found = -1;
-            for (int i = 0; i < 4; ++i) {
-                found = u == upper(kLinetypeNames[i]) ? i : found;
-            }
-            if (found < 0) {
-                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            const std::optional<core::Linetype> found = linetype_named(ctx, t);
+            if (!found) {
+                ctx.echo("Linetype " + t + " is not loaded: " + loaded_linetypes_text(ctx, true) + ".");
                 return;
             }
             p.set_linetype_by_layer(false);
-            p.linetype = static_cast<core::Linetype>(found);
+            p.linetype = *found;
         }
         set(ctx, p);
         done_ = true;
         return;
     }
     }
+}
+
+void CurrentPropCommand::load_from(CommandContext& ctx, const std::vector<core::LinetypeDef>& defs) {
+    pending_.clear();
+    accepted_.clear();
+    const std::vector<core::LinetypeDef> loaded = ctx.linetypes();
+    bool any = false;
+    for (const core::LinetypeDef& d : defs) {
+        if (!names_match(names_, d.name)) {
+            continue;
+        }
+        any = true;
+        const bool builtin = std::any_of(std::begin(kLinetypeNames), std::end(kLinetypeNames),
+                                         [&](const char* n) { return upper(n) == upper(d.name); });
+        const bool again = std::any_of(loaded.begin(), loaded.end(),
+                                       [&](const core::LinetypeDef& l) { return upper(l.name) == upper(d.name); });
+        if (builtin) {
+            ctx.echo("Linetype " + d.name + " is already loaded.");
+        } else if (again) {
+            pending_.push_back(d);
+        } else {
+            accepted_.push_back(d);
+        }
+    }
+    if (!any) {
+        ctx.echo("No linetype matching " + names_ + " found.");
+    }
+    next_reload(ctx);
+}
+
+void CurrentPropCommand::next_reload(CommandContext& ctx) {
+    if (!pending_.empty()) {
+        step_ = Step::LtReload;
+        ctx.set_prompt("Linetype " + pending_.front().name + " is already loaded.  Reload it? <Y>: ");
+        return;
+    }
+    if (!accepted_.empty()) {
+        ctx.submit(core::LoadLinetypesCommand{accepted_});
+        accepted_.clear();
+    }
+    step_ = Step::LtOption;
+    ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
 }
 
 void LwDisplayCommand::start(CommandContext& ctx) {
@@ -7579,8 +8547,8 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
-        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
+        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
         "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
@@ -7934,6 +8902,181 @@ void UpdateFieldCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void LayerMergeUiCommand::ask_source(CommandContext& ctx) {
+    step_ = Step::Source;
+    const bool some = !cmd_.sources.empty() || !cmd_.source_picks.empty();
+    ctx.set_prompt(std::string("Select object on layer to ") + (erase_ ? "delete" : "merge") +
+                   (some ? " or [Name/Undo]: " : " or [Name]: "));
+}
+
+void LayerMergeUiCommand::ask_confirm(CommandContext& ctx) {
+    step_ = Step::Confirm;
+    const std::size_t count = cmd_.sources.size() + cmd_.source_picks.size();
+    // Named layers are named in the warning, as AutoCAD's; picked ones the engine finds.
+    std::string which;
+    if (cmd_.source_picks.empty()) {
+        for (const std::string& s : cmd_.sources) {
+            which += (which.empty() ? "\"" : ", \"") + s + "\"";
+        }
+    }
+    ctx.echo("******** WARNING ********");
+    if (erase_) {
+        ctx.echo("You are about to delete " + (which.empty() ? std::string("the layers picked") : "layer " + which) +
+                 " from this drawing.");
+    } else {
+        const std::string into = cmd_.target_pick ? std::string("the target layer") : "layer \"" + cmd_.target + "\"";
+        ctx.echo("You are about to merge " + (which.empty() ? std::to_string(count) + " layer(s)" : which) + " into " + into +
+                 ".");
+    }
+    ctx.set_prompt("Do you wish to continue? [Yes/No] <No>: ");
+}
+
+void LayerMergeUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Source:
+        if (t.empty()) {
+            if (cmd_.sources.empty() && cmd_.source_picks.empty()) {
+                done_ = true;
+                return;
+            }
+            if (erase_) {
+                ask_confirm(ctx);
+            } else {
+                step_ = Step::Target;
+                ctx.set_prompt("Select object on target layer or [Name]: ");
+            }
+            return;
+        }
+        if (u == "N" || u == "NAME") {
+            step_ = Step::SourceName;
+            ctx.set_prompt("Enter layer name: ");
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!cmd_.source_picks.empty()) {
+                cmd_.source_picks.pop_back();
+            } else if (!cmd_.sources.empty()) {
+                cmd_.sources.pop_back();
+            }
+            ask_source(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.source_picks.push_back(*p);
+            ask_source(ctx);
+        }
+        return;
+    case Step::SourceName:
+    case Step::TargetName:
+        if (!t.empty()) {
+            if (step_ == Step::SourceName) {
+                cmd_.sources.push_back(t);
+            } else {
+                cmd_.target = t;
+                ask_confirm(ctx);
+                return;
+            }
+        }
+        if (step_ == Step::SourceName) {
+            ask_source(ctx);
+        } else {
+            step_ = Step::Target;
+            ctx.set_prompt("Select object on target layer or [Name]: ");
+        }
+        return;
+    case Step::Target:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "N" || u == "NAME") {
+            step_ = Step::TargetName;
+            ctx.set_prompt("Enter layer name: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.target_pick = *p;
+            ask_confirm(ctx);
+        }
+        return;
+    case Step::Confirm:
+        if (u == "Y" || u == "YES") {
+            cmd_.erase = erase_;
+            cmd_.pick_radius = ctx.pick_radius();
+            cmd_.group = ctx.group_id();
+            ctx.submit(cmd_);
+        }
+        done_ = true;
+        return;
+    }
+}
+
+void BlockEditUiCommand::start(CommandContext& ctx) {
+    using Op = core::BlockEditCommand::Op;
+    switch (mode_) {
+    case Mode::Open:
+        if (ctx.view() != nullptr && ctx.view()->window_action("BEDIT")) {
+            done_ = true; // the Edit Block Definition window asks
+            return;
+        }
+        [[fallthrough]];
+    case Mode::OpenTyped:
+        ctx.set_prompt("Enter block name or [?]: ");
+        return;
+    case Mode::Close:
+        ctx.set_prompt("Save changes to block? [Yes/No] <Yes>: ");
+        return;
+    case Mode::Save: {
+        core::BlockEditCommand c;
+        c.op = Op::Save;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void BlockEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::BlockEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (mode_ == Mode::Close) {
+        if (!u.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        core::BlockEditCommand c;
+        c.op = Op::Close;
+        c.save = !(u == "N" || u == "NO");
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    if (u == "?") {
+        std::string list;
+        for (const std::string& n : ctx.block_names()) {
+            list += (list.empty() ? "" : ", ") + n;
+        }
+        ctx.echo(list.empty() ? std::string("No blocks in this drawing.") : list);
+        ctx.set_prompt("Enter block name or [?]: ");
+        return;
+    }
+    core::BlockEditCommand c;
+    c.op = Op::Open;
+    c.name = t;
+    c.group = ctx.group_id();
+    ctx.submit(std::move(c));
+    done_ = true;
+}
+
 void ExtrimUiCommand::input(CommandContext& ctx, const std::string& text) {
     if (trimmed(text).empty()) {
         done_ = true;
@@ -8010,6 +9153,83 @@ void AttFileCommand::ask_file(CommandContext& ctx) {
     }
     asking_name_ = true;
     ctx.set_prompt("Enter file name: ");
+}
+
+void MLeaderEditUiCommand::prompt(CommandContext& ctx) {
+    ctx.set_prompt(remove_ ? "Specify leaders to remove or [Add leaders]: "
+                           : "Specify leader arrowhead location or [Remove leaders]: ");
+}
+
+void MLeaderEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string up = upper(trimmed(text));
+    if (!picked_) {
+        if (up.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::optional<core::EntityKind> kind = ctx.hovered_kind();
+        if (const auto p = read_point(ctx, text)) {
+            if (ctx.input_is_pick() && kind != core::EntityKind::MLeader) {
+                ctx.echo("The object selected is not a multileader.");
+                return;
+            }
+            ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::Begin, *p, ctx.pick_radius(), 0});
+            picked_ = true;
+            prompt(ctx);
+        }
+        return;
+    }
+    if (up.empty()) {
+        ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::End, {}, 0.0, 0});
+        done_ = true;
+        return;
+    }
+    if (!remove_ && (up == "R" || up == "REMOVE" || up == "REMOVE LEADERS")) {
+        remove_ = true;
+        prompt(ctx);
+        return;
+    }
+    if (remove_ && (up == "A" || up == "ADD" || up == "ADD LEADERS")) {
+        remove_ = false;
+        prompt(ctx);
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        using Op = core::MLeaderEditCommand::Op;
+        ctx.submit(core::MLeaderEditCommand{remove_ ? Op::Remove : Op::Add, *p, ctx.pick_radius(), ctx.group_id()});
+        prompt(ctx);
+    }
+}
+
+void MLeaderEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::End, {}, 0.0, 0});
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TableExportUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!pick_) {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        pick_ = *p;
+        if (ctx.view() != nullptr) {
+            const std::string path = ctx.view()->save_file_dialog("Comma delimited (*.csv)", "table.csv");
+            if (!path.empty()) {
+                ctx.submit(core::TableExportCommand{*pick_, ctx.pick_radius(), path});
+            }
+            done_ = true;
+            return;
+        }
+        ctx.set_prompt("Enter file name: ");
+        return;
+    }
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        ctx.submit(core::TableExportCommand{*pick_, ctx.pick_radius(), t});
+    }
+    done_ = true;
 }
 
 void AttFileCommand::finish(CommandContext& ctx, const std::string& path) {
@@ -9859,7 +11079,7 @@ void RevcloudCommand::cancel(CommandContext& ctx) {
 void ExplodeCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     if (ctx.has_selection()) {
-        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id(), burst_});
         done_ = true; // the engine reports what it broke and what it could not (Ph10.1)
         return;
     }
@@ -10137,19 +11357,23 @@ void DivideCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
-void ArrayCommand::begin_rect(CommandContext& ctx) {
-    state_ = State::Rows;
-    ctx.set_prompt("Enter number of rows <1>: ");
+// ---------------------------------------------------------------------------
+// ARRAY / ARRAYRECT / ARRAYPOLAR / ARRAYPATH (#51)
+// ---------------------------------------------------------------------------
+namespace {
+/// An option keyword: what was typed is its capitals at least, and a start of its name.
+bool array_kw(const std::string& u, std::string_view abbrev, std::string_view full) {
+    return u == abbrev || (u.size() >= abbrev.size() && full.substr(0, u.size()) == u);
+}
+} // namespace
+
+std::string ArrayCommand::len(CommandContext& ctx, double v) const {
+    return core::units::format_length(v, ctx.units());
 }
 
-void ArrayCommand::begin_polar(CommandContext& ctx) {
-    state_ = State::Center;
-    ctx.set_prompt("Specify center point of array: ");
-}
-
-void ArrayCommand::begin_path(CommandContext& ctx) {
-    state_ = State::PathPick;
-    ctx.set_prompt("Select path curve: ");
+double ArrayCommand::angle_between() const {
+    const bool full = std::abs(std::abs(fill_) - 360.0) < 1e-9;
+    return items_ <= 1 ? fill_ : fill_ / static_cast<double>(full ? items_ : items_ - 1);
 }
 
 void ArrayCommand::start(CommandContext& ctx) {
@@ -10169,25 +11393,429 @@ void ArrayCommand::selection_gesture(CommandContext& ctx) {
 }
 
 void ArrayCommand::begin(CommandContext& ctx) {
-    state_ = State::Type;
+    if (type_ == Type::Ask) {
+        state_ = State::Type;
+        ctx.set_prompt("Enter array type [Rectangular/PAth/POlar] <Rectangular>: ");
+        return;
+    }
+    begin_type(ctx);
+}
+
+void ArrayCommand::begin_type(CommandContext& ctx) {
+    // The defaults: spacing one and a half times the selection's size, as AutoCAD sets it.
+    const core::Vec2 size = ctx.selection_size();
+    double w = size.x > 1e-12 ? size.x : size.y;
+    double h = size.y > 1e-12 ? size.y : size.x;
+    if (w > 1e-12) {
+        dx_ = w * 1.5;
+        dy_ = h * 1.5;
+        path_space_ = dx_;
+        polar_row_space_ = std::max(dx_, dy_);
+        auto_spacing_ = false;
+        path_auto_ = false;
+    } else {
+        dx_ = dy_ = path_space_ = polar_row_space_ = 1.0; // the engine sizes them from the selection
+    }
     switch (type_) {
     case Type::Rect:
-        begin_rect(ctx);
+        ctx.echo("Type = Rectangular  Associative = No");
+        state_ = State::Main;
+        preview(ctx);
+        main_prompt(ctx);
         return;
     case Type::Polar:
-        begin_polar(ctx);
+        ctx.echo("Type = Polar  Associative = No");
+        state_ = State::Center;
+        ctx.set_prompt("Specify center point of array or [Base point/Axis of rotation]: ");
         return;
     case Type::Path:
-        begin_path(ctx);
+        ctx.echo("Type = Path  Associative = No");
+        state_ = State::PathPick;
+        ctx.set_prompt("Select path curve: ");
         return;
     case Type::Ask:
         break;
     }
-    ctx.set_prompt("Enter array type [Rectangular/PAth/POlar] <R>: ");
+}
+
+void ArrayCommand::main_prompt(CommandContext& ctx) {
+    switch (type_) {
+    case Type::Polar:
+        ctx.set_prompt("Select grip to edit array or [ASsociative/Base point/Items/Angle between/Fill angle/ROWs/"
+                       "Levels/ROTate items/eXit]<eXit>: ");
+        return;
+    case Type::Path:
+        ctx.set_prompt("Select grip to edit array or [ASsociative/Method/Base point/Tangent direction/Items/Rows/"
+                       "Levels/Align items/Z direction/eXit]<eXit>: ");
+        return;
+    default:
+        ctx.set_prompt("Select grip to edit array or [ASsociative/Base point/COUnt/Spacing/COLumns/Rows/Levels/"
+                       "eXit]<eXit>: ");
+        return;
+    }
+}
+
+void ArrayCommand::preview(CommandContext& ctx) {
+    core::ArrayPreviewCommand pv;
+    switch (type_) {
+    case Type::Polar:
+        pv.type = 2;
+        pv.polar = core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, 0, polar_rows_,
+                                           polar_row_space_};
+        break;
+    case Type::Path:
+        pv.type = 3;
+        pv.path.pick = path_pick_;
+        pv.path.pick_radius = ctx.pick_radius();
+        pv.path.count = measure_ ? path_items_ : std::max(path_items_, 2);
+        pv.path.spacing = measure_ ? path_space_ : 0.0;
+        pv.path.auto_spacing = measure_ && path_auto_;
+        pv.path.align = align_;
+        pv.path.base = base_.value_or(core::Vec2{});
+        pv.path.has_base = base_.has_value();
+        break;
+    default:
+        pv.type = 1;
+        pv.rect.rows = rows_;
+        pv.rect.cols = cols_;
+        pv.rect.dx = dx_;
+        pv.rect.dy = dy_;
+        pv.rect.auto_spacing = auto_spacing_;
+        break;
+    }
+    ctx.submit(std::move(pv));
+}
+
+void ArrayCommand::finish(CommandContext& ctx) {
+    switch (type_) {
+    case Type::Polar:
+        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
+                                           polar_rows_, polar_row_space_});
+        break;
+    case Type::Path: {
+        core::ArrayPathCommand c;
+        c.pick = path_pick_;
+        c.pick_radius = ctx.pick_radius();
+        c.count = measure_ ? path_items_ : std::max(path_items_, 2);
+        c.spacing = measure_ ? path_space_ : 0.0;
+        c.auto_spacing = measure_ && path_auto_;
+        c.align = align_;
+        c.base = base_.value_or(core::Vec2{});
+        c.has_base = base_.has_value();
+        c.group = ctx.group_id();
+        ctx.submit(c);
+        break;
+    }
+    default: {
+        core::ArrayRectCommand c;
+        c.rows = rows_;
+        c.cols = cols_;
+        c.dx = dx_;
+        c.dy = dy_;
+        c.auto_spacing = auto_spacing_;
+        c.group = ctx.group_id();
+        ctx.submit(c);
+        break;
+    }
+    }
+    done_ = true;
+}
+
+void ArrayCommand::ask(CommandContext& ctx, std::vector<Q> qs) {
+    queue_ = std::move(qs);
+    state_ = State::Ask;
+    ask_next(ctx);
+}
+
+void ArrayCommand::ask_next(CommandContext& ctx) {
+    if (queue_.empty()) {
+        if (type_ == Type::Polar && !center_set_) {
+            state_ = State::Center; // a base point given before the centre: the centre next
+            ctx.set_prompt("Specify center point of array or [Base point/Axis of rotation]: ");
+            return;
+        }
+        state_ = State::Main;
+        preview(ctx);
+        main_prompt(ctx);
+        return;
+    }
+    const auto n = [](int v) { return std::to_string(v); };
+    const auto yn = [](bool b) { return std::string(b ? "Yes" : "No"); };
+    std::string p;
+    switch (queue_.front()) {
+    case Q::Assoc: p = "Create associative array [Yes/No] <No>: "; break;
+    case Q::Base:
+        p = type_ == Type::Path ? "Specify base point or [Key point] <end of path curve>: "
+                                : "Specify base point or [Key point] <centroid>: ";
+        break;
+    case Q::Cols: p = "Enter the number of columns or [Expression] <" + n(cols_) + ">: "; break;
+    case Q::Rows: p = "Enter the number of rows or [Expression] <" + n(rows_) + ">: "; break;
+    case Q::ColSpace:
+        p = queue_.size() > 1 && queue_[1] == Q::RowSpace
+                ? "Specify the distance between columns or [Unit cell] <" + len(ctx, dx_) + ">: "
+                : "Specify the distance between columns or [Total/Expression] <" + len(ctx, dx_) + ">: ";
+        break;
+    case Q::RowSpace:
+        p = queue_.size() > 1 ? "Specify the distance between rows or [Total/Expression] <" + len(ctx, dy_) + ">: "
+                              : "Specify the distance between rows <" + len(ctx, dy_) + ">: ";
+        break;
+    case Q::ColTotal:
+        p = "Specify the total distance between first and last columns <" + len(ctx, dx_ * (cols_ - 1)) + ">: ";
+        break;
+    case Q::RowTotal:
+        p = "Specify the total distance between first and last rows <" +
+            len(ctx, (type_ == Type::Polar ? polar_row_space_ * (polar_rows_ - 1) : dy_ * (rows_ - 1))) + ">: ";
+        break;
+    case Q::RowElev: p = "Specify the incrementing elevation between rows or [Expression] <0>: "; break;
+    case Q::Levels: p = "Enter the number of levels or [Expression] <" + n(levels_) + ">: "; break;
+    case Q::LevelSpace:
+        p = "Specify the distance between levels or [Total/Expression] <" + len(ctx, level_space_) + ">: ";
+        break;
+    case Q::Items: p = "Enter number of items in array or [Expression] <" + n(items_) + ">: "; break;
+    case Q::AngleBetween:
+        p = "Specify angle between items or [EXpression] <" + core::units::format_angle(core::to_radians(angle_between()), ctx.units()) + ">: ";
+        break;
+    case Q::Fill:
+        p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" +
+            core::units::format_angle(core::to_radians(fill_), ctx.units()) + ">: ";
+        break;
+    case Q::RotItems: p = "Rotate arrayed items? [Yes/No] <" + yn(rotate_) + ">: "; break;
+    case Q::PolarRows: p = "Enter the number of rows or [Expression] <" + n(polar_rows_) + ">: "; break;
+    case Q::PolarRowSpace:
+        p = "Specify the distance between rows or [Total/Expression] <" + len(ctx, polar_row_space_) + ">: ";
+        break;
+    case Q::PolarRowTotal: p = "Specify the total distance between first and last rows <" + len(ctx, polar_row_space_ * (polar_rows_ - 1)) + ">: "; break;
+    case Q::Method: p = std::string("Enter path method [Divide/Measure] <") + (measure_ ? "Measure" : "Divide") + ">: "; break;
+    case Q::PathSpace:
+        p = "Specify the distance between items along path or [Expression] <" + len(ctx, path_space_) + ">: ";
+        break;
+    case Q::PathItems:
+        p = "Specify number of items or [Fill entire path/Expression] <" +
+            (path_items_ > 0 ? n(path_items_) : std::string("Fill entire path")) + ">: ";
+        break;
+    case Q::PathDivideItems:
+        p = "Enter number of items along path or [Expression] <" + n(std::max(path_items_, 2)) + ">: ";
+        break;
+    case Q::Align: p = "Align arrayed items to the path? [Yes/No] <" + yn(align_) + ">: "; break;
+    case Q::ZDir: p = "Maintain Z direction of items? [Yes/No] <Yes>: "; break;
+    case Q::Tangent: p = "Specify first point of tangent vector or [Normal]: "; break;
+    case Q::CellCorner1: p = "Specify first corner of unit cell: "; break;
+    case Q::CellCorner2: p = "Specify other corner: "; break;
+    case Q::Expression: p = "Enter an expression: "; break;
+    }
+    ctx.set_prompt(p);
+}
+
+void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    Q q = queue_.front();
+    double v = 0.0;
+    bool have = false;
+    if (q == Q::Expression) {
+        std::string error;
+        const auto r = calc::evaluate(t, error);
+        if (!r || r->vector) {
+            ctx.echo(error.empty() ? "Requires a number." : error);
+            return;
+        }
+        queue_.front() = *expression_for_;
+        q = *expression_for_;
+        v = r->x;
+        have = true;
+    }
+    const auto counts = q == Q::Cols || q == Q::Rows || q == Q::Levels || q == Q::Items || q == Q::PolarRows ||
+                        q == Q::PathItems || q == Q::PathDivideItems;
+    const auto lengths = q == Q::ColSpace || q == Q::RowSpace || q == Q::ColTotal || q == Q::RowTotal ||
+                         q == Q::RowElev || q == Q::LevelSpace || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
+                         q == Q::PathSpace || q == Q::AngleBetween || q == Q::Fill;
+    if (!have && (counts || lengths) && (u == "E" || u == "EX" || u == "EXPRESSION")) {
+        expression_for_ = q;
+        queue_.front() = Q::Expression;
+        ask_next(ctx);
+        return;
+    }
+    if (!have && !t.empty() && (counts || lengths)) {
+        if (!parse_number(t, v)) {
+            if (q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace && (u == "U" || u == "UNIT CELL")) {
+                queue_ = {Q::CellCorner1, Q::CellCorner2};
+                ask_next(ctx);
+                return;
+            }
+            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace) &&
+                !(q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace) && (u == "T" || u == "TOTAL")) {
+                queue_.front() = q == Q::ColSpace ? Q::ColTotal : q == Q::RowSpace ? Q::RowTotal : Q::PolarRowTotal;
+                ask_next(ctx);
+                return;
+            }
+            if (q == Q::PathItems && array_kw(u, "F", "FILL ENTIRE PATH")) {
+                path_items_ = 0;
+                queue_.erase(queue_.begin());
+                ask_next(ctx);
+                return;
+            }
+            ctx.echo(counts ? "Requires a positive integer." : "Requires a number.");
+            return;
+        }
+        have = true;
+    }
+    if (counts && have && (v < 1.0 || std::abs(v - std::round(v)) > 1e-9)) {
+        ctx.echo("Requires a positive integer.");
+        return;
+    }
+    const int iv = have ? static_cast<int>(std::lround(v)) : 0;
+    switch (q) {
+    case Q::Assoc:
+        if (array_kw(u, "Y", "YES")) {
+            ctx.echo("Associative arrays are not made yet: the items are separate copies.");
+        }
+        break;
+    case Q::Base:
+        if (array_kw(u, "K", "KEY POINT")) {
+            ctx.set_prompt("Specify key point on source objects as base point: ");
+            return; // the point that follows answers it
+        }
+        if (t.empty()) {
+            base_.reset(); // the centroid
+        } else {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            base_ = *p;
+        }
+        break;
+    case Q::Cols: cols_ = have ? iv : cols_; break;
+    case Q::Rows: rows_ = have ? iv : rows_; break;
+    case Q::ColSpace:
+        if (have) {
+            dx_ = v;
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::RowSpace:
+        if (have) {
+            dy_ = v;
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::ColTotal:
+        if (have && cols_ > 1) {
+            dx_ = v / (cols_ - 1);
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::RowTotal:
+        if (have && rows_ > 1) {
+            dy_ = v / (rows_ - 1);
+            auto_spacing_ = false;
+        }
+        break;
+    case Q::RowElev:
+        break; // rows rise in Z: nothing to see in plan
+    case Q::Levels:
+        if (have && iv > 1) {
+            ctx.echo("Levels stack the array in Z: a 2D drawing keeps one level.");
+        }
+        break;
+    case Q::LevelSpace:
+        level_space_ = have ? v : level_space_;
+        break;
+    case Q::Items:
+        items_ = have ? iv : items_;
+        break;
+    case Q::AngleBetween:
+        if (have) {
+            fill_ = std::abs(std::abs(v * items_) - 360.0) < 1e-9 ? std::copysign(360.0, v) : v * (items_ - 1);
+        }
+        break;
+    case Q::Fill:
+        if (have) {
+            if (std::abs(v) < 1e-12 || std::abs(v) > 360.0) {
+                ctx.echo("Requires an angle between -360 and 360, not 0.");
+                return;
+            }
+            fill_ = v;
+        }
+        break;
+    case Q::RotItems:
+        if (!t.empty()) {
+            rotate_ = !array_kw(u, "N", "NO");
+        }
+        break;
+    case Q::PolarRows: polar_rows_ = have ? iv : polar_rows_; break;
+    case Q::PolarRowSpace: polar_row_space_ = have ? v : polar_row_space_; break;
+    case Q::PolarRowTotal:
+        if (have && polar_rows_ > 1) {
+            polar_row_space_ = v / (polar_rows_ - 1);
+        }
+        break;
+    case Q::Method:
+        if (array_kw(u, "D", "DIVIDE")) {
+            measure_ = false;
+        } else if (array_kw(u, "M", "MEASURE")) {
+            measure_ = true;
+        }
+        break;
+    case Q::PathSpace:
+        if (have) {
+            if (v <= 0.0) {
+                ctx.echo("Requires a positive distance.");
+                return;
+            }
+            path_space_ = v;
+            path_auto_ = false;
+        }
+        break;
+    case Q::PathItems: path_items_ = have ? iv : path_items_; break;
+    case Q::PathDivideItems:
+        if (have && iv < 2) {
+            ctx.echo("Requires an integer of 2 or more.");
+            return;
+        }
+        path_items_ = have ? iv : std::max(path_items_, 2);
+        break;
+    case Q::Align:
+        if (!t.empty()) {
+            align_ = !array_kw(u, "N", "NO");
+        }
+        break;
+    case Q::ZDir:
+        break; // a 2D drawing's items keep their Z direction
+    case Q::Tangent:
+        if (!t.empty()) {
+            ctx.echo("The items keep the direction they have at the start of the path.");
+        }
+        break;
+    case Q::CellCorner1: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        cell1_ = *p;
+        ctx.set_last_point(*p);
+        break;
+    }
+    case Q::CellCorner2: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        dx_ = p->x - cell1_.x;
+        dy_ = p->y - cell1_.y;
+        auto_spacing_ = false;
+        break;
+    }
+    case Q::Expression:
+        break;
+    }
+    queue_.erase(queue_.begin());
+    ask_next(ctx);
 }
 
 void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
     switch (state_) {
     case State::Select:
         if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
@@ -10199,165 +11827,296 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         }
         begin(ctx);
         return;
-    case State::Type: {
-        // AutoCAD's own capitalisation picks the keywords apart: PA=path, PO=polar,
-        // and a bare P is ambiguous, so it is rejected rather than guessed at.
-        const std::string u = upper(t);
-        if (u == "PA" || u == "PATH") {
-            begin_path(ctx);
-        } else if (u == "PO" || u == "POLAR") {
-            begin_polar(ctx);
-        } else if (u == "P") {
-            ctx.echo("Ambiguous: enter PA for path or PO for polar.");
+    case State::Type:
+        if (u.empty() || array_kw(u, "R", "RECTANGULAR")) {
+            type_ = Type::Rect;
+        } else if (array_kw(u, "PA", "PATH")) {
+            type_ = Type::Path;
+        } else if (array_kw(u, "PO", "POLAR")) {
+            type_ = Type::Polar;
         } else {
-            begin_rect(ctx);
-        }
-        return;
-    }
-
-    // --- Rectangular ------------------------------------------------------
-    case State::Rows:
-        rows_ = std::max(1, parse_int(t, 1));
-        state_ = State::Cols;
-        ctx.set_prompt("Enter number of columns <1>: ");
-        return;
-    case State::Cols:
-        cols_ = std::max(1, parse_int(t, 1));
-        state_ = State::RowSpace;
-        ctx.set_prompt("Enter row spacing (Y): ");
-        return;
-    case State::RowSpace:
-        if (!parse_number(t, row_space_)) {
-            ctx.echo("Enter a number for row spacing.");
+            ctx.echo(u == "P" ? "Ambiguous: enter PA for path or PO for polar." : "Enter R, PA or PO.");
             return;
         }
-        state_ = State::ColSpace;
-        ctx.set_prompt("Enter column spacing (X): ");
+        begin_type(ctx);
         return;
-    case State::ColSpace: {
-        if (!parse_number(t, col_space_)) {
-            ctx.echo("Enter a number for column spacing.");
-            return;
-        }
-        // AutoCAD's legacy -ARRAY flow ends here; only the modern ARRAYRECT offers an
-        // axis angle. Keeping the classic four prompts exactly as they were means
-        // existing muscle memory and scripts are untouched.
-        if (type_ != Type::Rect) {
-            core::ArrayRectCommand cmd;
-            cmd.rows = rows_;
-            cmd.cols = cols_;
-            cmd.dx = col_space_;
-            cmd.dy = row_space_;
-            cmd.group = ctx.group_id();
-            ctx.submit(cmd);
-            done_ = true;
-            return;
-        }
-        state_ = State::Angle;
-        ctx.set_prompt("Angle of array axes <0>: ");
-        return;
-    }
-    case State::Angle: {
-        double deg = 0.0;
-        if (!t.empty() && !parse_number(t, deg)) {
-            ctx.echo("Enter an angle in degrees.");
-            return;
-        }
-        core::ArrayRectCommand cmd;
-        cmd.rows = rows_;
-        cmd.cols = cols_;
-        cmd.dx = col_space_;
-        cmd.dy = row_space_;
-        cmd.angle = core::to_radians(deg);
-        cmd.group = ctx.group_id();
-        ctx.submit(cmd);
-        // The engine reports how many copies it actually made (Ph10.1).
-        done_ = true;
-        return;
-    }
-
-    // --- Polar ------------------------------------------------------------
     case State::Center:
+        if (array_kw(u, "B", "BASE POINT")) {
+            ask(ctx, {Q::Base});
+            return;
+        }
+        if (array_kw(u, "A", "AXIS OF ROTATION")) {
+            ctx.echo("An axis of rotation is for 3D: a 2D array turns about a centre point.");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
-            state_ = State::Count;
-            ctx.set_prompt("Enter number of items: ");
+            center_set_ = true;
+            ctx.set_last_point(*p);
+            state_ = State::Main;
+            preview(ctx);
+            main_prompt(ctx);
         }
         return;
-    case State::Count:
-        count_ = std::max(1, parse_int(t, 1));
-        state_ = State::Fill;
-        ctx.set_prompt("Specify angle to fill in degrees <360>: ");
-        return;
-    case State::Fill: {
-        double deg = 360.0;
-        if (!t.empty() && !parse_number(t, deg)) {
-            deg = 360.0;
-        }
-        fill_ = core::to_radians(deg);
-        state_ = State::RotateItems;
-        ctx.set_prompt("Rotate items as copied? [Yes/No] <Yes>: ");
-        return;
-    }
-    case State::RotateItems: {
-        const std::string u = upper(t);
-        const bool rotate = !(u == "N" || u == "NO");
-        ctx.submit(core::ArrayPolarCommand{center_, count_, fill_, rotate, ctx.group_id()});
-        done_ = true;
-        return;
-    }
-
-    // --- Path -------------------------------------------------------------
     case State::PathPick:
         if (const auto p = read_point(ctx, text)) {
             path_pick_ = *p;
-            state_ = State::PathMethod;
-            ctx.set_prompt("Method [Divide/Measure] <D>: ");
+            state_ = State::Main;
+            preview(ctx);
+            main_prompt(ctx);
         }
         return;
-    case State::PathMethod: {
-        const std::string u = upper(t);
-        if (u == "M" || u == "MEASURE") {
-            state_ = State::PathSpacing;
-            ctx.set_prompt("Distance between items: ");
+    case State::Ask:
+        answer(ctx, text);
+        return;
+    case State::Main:
+        break;
+    }
+    if (u.empty() || array_kw(u, "X", "EXIT")) {
+        finish(ctx);
+        return;
+    }
+    if (array_kw(u, "AS", "ASSOCIATIVE")) {
+        ask(ctx, {Q::Assoc});
+        return;
+    }
+    if (array_kw(u, "B", "BASE POINT")) {
+        ask(ctx, {Q::Base});
+        return;
+    }
+    if (array_kw(u, "L", "LEVELS")) {
+        ask(ctx, {Q::Levels, Q::LevelSpace});
+        return;
+    }
+    if (type_ == Type::Rect) {
+        if (array_kw(u, "COU", "COUNT")) {
+            ask(ctx, {Q::Cols, Q::Rows});
+        } else if (array_kw(u, "S", "SPACING")) {
+            ask(ctx, {Q::ColSpace, Q::RowSpace});
+        } else if (array_kw(u, "COL", "COLUMNS")) {
+            ask(ctx, {Q::Cols, Q::ColSpace});
+        } else if (array_kw(u, "R", "ROWS")) {
+            ask(ctx, {Q::Rows, Q::RowSpace, Q::RowElev});
         } else {
-            state_ = State::PathCount;
-            ctx.set_prompt("Number of items to distribute along the path: ");
+            ctx.echo("Pick an option, or Enter to make the array.");
         }
         return;
     }
-    case State::PathCount:
-        count_ = std::max(2, parse_int(t, 2));
-        path_spacing_ = 0.0; // Divide
-        state_ = State::PathAlign;
-        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
-        return;
-    case State::PathSpacing:
-        if (!parse_number(t, path_spacing_) || path_spacing_ <= 0.0) {
-            ctx.echo("Enter a positive distance between items.");
-            return;
+    if (type_ == Type::Polar) {
+        if (array_kw(u, "I", "ITEMS")) {
+            ask(ctx, {Q::Items});
+        } else if (array_kw(u, "A", "ANGLE BETWEEN")) {
+            ask(ctx, {Q::AngleBetween});
+        } else if (array_kw(u, "F", "FILL ANGLE")) {
+            ask(ctx, {Q::Fill});
+        } else if (array_kw(u, "ROW", "ROWS")) {
+            ask(ctx, {Q::PolarRows, Q::PolarRowSpace, Q::RowElev});
+        } else if (array_kw(u, "ROT", "ROTATE ITEMS")) {
+            ask(ctx, {Q::RotItems});
+        } else {
+            ctx.echo("Pick an option, or Enter to make the array.");
         }
-        count_ = 0; // Measure: as many as fit
-        state_ = State::PathAlign;
-        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
-        return;
-    case State::PathAlign: {
-        const std::string u = upper(t);
-        core::ArrayPathCommand cmd;
-        cmd.pick = path_pick_;
-        cmd.pick_radius = ctx.pick_radius();
-        cmd.count = count_;
-        cmd.spacing = path_spacing_;
-        cmd.align = !(u == "N" || u == "NO");
-        cmd.group = ctx.group_id();
-        ctx.submit(cmd);
-        done_ = true;
         return;
     }
+    // Path
+    if (array_kw(u, "M", "METHOD")) {
+        ask(ctx, {Q::Method});
+    } else if (array_kw(u, "T", "TANGENT DIRECTION")) {
+        ask(ctx, {Q::Tangent});
+    } else if (array_kw(u, "I", "ITEMS")) {
+        if (measure_) {
+            ask(ctx, {Q::PathSpace, Q::PathItems});
+        } else {
+            ask(ctx, {Q::PathDivideItems});
+        }
+    } else if (array_kw(u, "R", "ROWS")) {
+        ctx.echo("A path array here has one row.");
+    } else if (array_kw(u, "A", "ALIGN ITEMS")) {
+        ask(ctx, {Q::Align});
+    } else if (array_kw(u, "Z", "Z DIRECTION")) {
+        ask(ctx, {Q::ZDir});
+    } else {
+        ctx.echo("Pick an option, or Enter to make the array.");
     }
 }
 
 void ArrayCommand::cancel(CommandContext& ctx) {
+    ctx.submit(core::ArrayPreviewCommand{}); // the preview goes
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ArrayClassicCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!ctx.has_selection()) {
+        state_ = State::Select;
+        select_.begin(ctx);
+        return;
+    }
+    begin(ctx);
+}
+
+void ArrayClassicCommand::selection_gesture(CommandContext& ctx) {
+    if (state_ == State::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        input(ctx, "");
+    }
+}
+
+void ArrayClassicCommand::begin(CommandContext& ctx) {
+    state_ = State::Type;
+    ctx.set_prompt("Enter the type of array [Rectangular/Polar] <R>: ");
+}
+
+void ArrayClassicCommand::make_rect(CommandContext& ctx) {
+    core::ArrayRectCommand cmd;
+    cmd.rows = rows_;
+    cmd.cols = cols_;
+    cmd.dx = col_space_;
+    cmd.dy = row_space_;
+    cmd.group = ctx.group_id();
+    ctx.submit(cmd);
+    done_ = true;
+}
+
+void ArrayClassicCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Select:
+        if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
+            return;
+        }
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        begin(ctx);
+        return;
+    case State::Type:
+        if (u == "P" || u == "PO" || u == "POLAR") {
+            state_ = State::Center;
+            ctx.set_prompt("Specify center point of array or [Base]: ");
+        } else if (u.empty() || u == "R" || u == "RECTANGULAR") {
+            state_ = State::Rows;
+            ctx.set_prompt("Enter the number of rows (---) <1>: ");
+        } else {
+            ctx.echo("Enter R or P.");
+        }
+        return;
+    case State::Rows:
+        rows_ = std::max(1, parse_int(t, 1));
+        state_ = State::Cols;
+        ctx.set_prompt("Enter the number of columns (|||) <1>: ");
+        return;
+    case State::Cols:
+        cols_ = std::max(1, parse_int(t, 1));
+        if (rows_ == 1 && cols_ == 1) {
+            ctx.echo("One-element array, nothing to do.");
+            done_ = true;
+            return;
+        }
+        if (rows_ > 1) {
+            state_ = State::RowSpace;
+            ctx.set_prompt("Enter the distance between rows or specify unit cell (---): ");
+        } else {
+            state_ = State::ColSpace;
+            ctx.set_prompt("Specify the distance between columns (|||): ");
+        }
+        return;
+    case State::RowSpace:
+        if (t.find(',') == std::string::npos && !ctx.input_is_pick() && parse_number(t, v)) {
+            row_space_ = v;
+            if (cols_ == 1) {
+                make_rect(ctx);
+                return;
+            }
+            state_ = State::ColSpace;
+            ctx.set_prompt("Specify the distance between columns (|||): ");
+        } else if (const auto p = read_point(ctx, text)) {
+            corner_ = *p; // a unit cell: its two corners give both distances
+            ctx.set_last_point(*p);
+            state_ = State::CellCorner;
+            ctx.set_prompt("Specify other corner: ");
+        }
+        return;
+    case State::CellCorner:
+        if (const auto p = read_point(ctx, text)) {
+            col_space_ = p->x - corner_.x;
+            row_space_ = p->y - corner_.y;
+            make_rect(ctx);
+        }
+        return;
+    case State::ColSpace:
+        if (!parse_number(t, v)) {
+            ctx.echo("Requires a distance.");
+            return;
+        }
+        col_space_ = v;
+        make_rect(ctx);
+        return;
+    case State::Center:
+        if (u == "B" || u == "BASE") {
+            state_ = State::Base;
+            ctx.set_prompt("Specify base point of objects: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            center_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Items;
+            ctx.set_prompt("Enter the number of items in the array: ");
+        }
+        return;
+    case State::Base:
+        if (read_point(ctx, text)) {
+            state_ = State::Center; // each item keeps its own place about the centre
+            ctx.set_prompt("Specify center point of array: ");
+        }
+        return;
+    case State::Items:
+        items_ = t.empty() ? 0 : parse_int(t, 0);
+        if (!t.empty() && items_ < 2) {
+            ctx.echo("Requires an integer greater than 1.");
+            return;
+        }
+        state_ = State::Fill;
+        ctx.set_prompt("Specify the angle to fill (+=ccw, -=cw) <360>: ");
+        return;
+    case State::Fill:
+        fill_ = t.empty() ? 360.0 : (parse_number(t, v) ? v : 360.0);
+        if (items_ == 0 || std::abs(fill_) < 1e-12) {
+            state_ = State::Between;
+            ctx.set_prompt(items_ == 0 ? "Angle between items: " : "Angle between items (+=ccw, -=cw): ");
+            return;
+        }
+        state_ = State::Rotate;
+        ctx.set_prompt("Rotate arrayed objects? [Yes/No] <Y>: ");
+        return;
+    case State::Between:
+        if (!parse_number(t, v) || std::abs(v) < 1e-12) {
+            ctx.echo("Requires a nonzero angle.");
+            return;
+        }
+        if (items_ == 0) {
+            items_ = std::max(2, static_cast<int>(std::floor(std::abs(fill_ / v) + 1e-9)) +
+                                     (std::abs(std::abs(fill_) - 360.0) < 1e-9 ? 0 : 1));
+            fill_ = std::abs(std::abs(fill_) - 360.0) < 1e-9 ? std::copysign(360.0, v) : v * (items_ - 1);
+        } else {
+            fill_ = v * (items_ - 1);
+        }
+        state_ = State::Rotate;
+        ctx.set_prompt("Rotate arrayed objects? [Yes/No] <Y>: ");
+        return;
+    case State::Rotate:
+        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), !(u == "N" || u == "NO"),
+                                           ctx.group_id()});
+        done_ = true;
+        return;
+    }
+}
+
+void ArrayClassicCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }
@@ -13271,6 +15030,14 @@ void TableCommand::start(CommandContext& ctx) {
             title_ = io.title;
             header_ = io.header;
             link_ = io.link;
+            if (io.window && link_.empty()) {
+                // Specify window: the columns as set, their width from the window's, and the
+                // data rows that fit its height.
+                window_cols_ = true;
+                mode_ = Mode::AutoFirst;
+                ctx.set_prompt("Specify first corner: ");
+                return;
+            }
             mode_ = Mode::DialogPlace;
             outline(ctx);
             ctx.set_prompt("Specify insertion point: ");
@@ -13331,7 +15098,11 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
     case Mode::Cols:
     case Mode::Rows: {
         if (u == "A" || u == "AUTO") {
-            ctx.echo("Auto sizing from a window is not available yet; enter a number.");
+            // A window the table fills: the columns from its width (or the data rows from its
+            // height), placed at its top-left corner.
+            auto_cols_ = mode_ == Mode::Cols;
+            mode_ = Mode::AutoFirst;
+            ctx.set_prompt("Specify first corner: ");
             return;
         }
         double v = mode_ == Mode::Cols ? cols_ : rows_;
@@ -13379,6 +15150,38 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         }
         place_prompt(ctx);
         return;
+    case Mode::AutoFirst:
+        if (const auto p = read_point(ctx, text)) {
+            auto_corner_ = *p;
+            ctx.set_last_point(*p);
+            mode_ = Mode::AutoSecond;
+            ctx.set_preview({PreviewKind::Rectangle, {*p}});
+            ctx.set_prompt("Specify second corner: ");
+        }
+        return;
+    case Mode::AutoSecond: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        const double w = std::abs(p->x - auto_corner_.x);
+        const double h = std::abs(p->y - auto_corner_.y);
+        const std::vector<core::TableStyle> styles = ctx.table_styles();
+        const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
+        if (auto_cols_) {
+            cols_ = std::clamp(static_cast<int>(std::lround(w / std::max(col_w_, 1e-9))), 1, 500);
+            col_w_ = w > 1e-9 ? w / cols_ : col_w_;
+        } else if (window_cols_ && w > 1e-9) {
+            col_w_ = w / cols_;
+        }
+        const int fixed = (title_ ? 1 : 0) + (header_ ? 1 : 0);
+        rows_ = std::clamp(static_cast<int>(std::floor(h / (line * row_lines_) + 1e-9)) - fixed, 1, 500);
+        mode_ = Mode::Place;
+        // The table hangs from the window's top-left corner.
+        const core::Vec2 top_left{std::min(p->x, auto_corner_.x), std::max(p->y, auto_corner_.y)};
+        input(ctx, std::to_string(top_left.x) + "," + std::to_string(top_left.y));
+        return;
+    }
     case Mode::DialogPlace:
     case Mode::Place:
         if (mode_ == Mode::Place && (u == "W" || u == "WIDTH")) {
@@ -13651,7 +15454,7 @@ void LeaderCommand::finish(CommandContext& ctx) {
         content += (i > 0 ? "\n" : "") + lines_[i];
     }
     const double h = current_dim_text_height(ctx);
-    if (pts_.size() == 2 && lines_.size() <= 1) {
+    if (pts_.size() == 2 && lines_.size() <= 1 && !spline_ && !no_arrow_) {
         ctx.submit(core::AddLeaderCommand{pts_[0], pts_[1], h, ctx.current_dim_style(), content, ctx.group_id()});
     } else {
         // The text beside the last point, on the side the leader comes in from.
@@ -13660,7 +15463,10 @@ void LeaderCommand::finish(CommandContext& ctx) {
         b.height = h;
         b.attach = right ? 3 : 5; // middle left / middle right
         b.pos = pts_.back() + core::Vec2{right ? h * 0.5 : -h * 0.5, 0.0};
-        ctx.submit(core::AddMLeaderCommand{pts_, ctx.current_dim_style(), b, content, ctx.group_id()});
+        core::AddMLeaderCommand ml{pts_, ctx.current_dim_style(), b, content, ctx.group_id()};
+        ml.leader_flags = static_cast<std::uint8_t>((spline_ ? core::LeaderForm::kSpline : 0) |
+                                                    (no_arrow_ ? core::LeaderForm::kNoArrow : 0));
+        ctx.submit(std::move(ml));
     }
     ctx.echo("Leader placed.");
     done_ = true;
@@ -13704,10 +15510,14 @@ void LeaderCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Format:
         if (u == "S" || u == "SPLINE") {
-            ctx.echo("Spline leaders are not available yet; the leader stays straight.");
+            spline_ = true;
+        } else if (u == "ST" || u == "STRAIGHT") {
+            spline_ = false;
         } else if (u == "N" || u == "NONE") {
-            ctx.echo("A leader here always has its arrowhead.");
-        } else if (!t.empty() && u != "ST" && u != "STRAIGHT" && u != "A" && u != "ARROW" && u != "E" && u != "EXIT") {
+            no_arrow_ = true;
+        } else if (u == "A" || u == "ARROW") {
+            no_arrow_ = false;
+        } else if (!t.empty() && u != "E" && u != "EXIT") {
             ctx.echo("Enter Spline, STraight, Arrow, None or Exit.");
             return;
         }
@@ -13766,6 +15576,15 @@ void LeaderCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void MLeaderCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    // The current multileader style: its leader points, landing and content to begin with
+    // (the Options change them for this leader), its arrow and text when it is placed.
+    const std::vector<core::MLeaderStyle> styles = ctx.mleader_styles();
+    const std::uint16_t cur = ctx.current_mleader_style();
+    style_ = cur < styles.size() ? styles[cur] : core::MLeaderStyle{};
+    s_max_points_ = style_.max_points;
+    s_content_ = style_.text;
+    s_landing_ = style_.landing;
+    s_leader_type_ = style_.leader_type;
     first_prompt(ctx);
 }
 
@@ -13802,18 +15621,26 @@ void MLeaderCommand::after_points(CommandContext& ctx) {
 
 void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     ctx.clear_preview();
-    const double h = current_dim_text_height(ctx);
+    const double h = style_.text_height > 0.0 ? style_.text_height : current_dim_text_height(ctx);
     std::vector<core::Vec2> v = pts_;
     const bool right = v.back().x >= v[v.size() - 2].x;
     const double side = right ? 1.0 : -1.0;
     if (s_landing_) {
-        v.push_back(v.back() + core::Vec2{side * h * 2.0, 0.0}); // the horizontal landing
+        v.push_back(v.back() + core::Vec2{side * style_.landing_distance, 0.0}); // the horizontal landing
     }
     core::MTextBlock b;
     b.height = h;
     b.attach = right ? 3 : 5; // middle left / middle right, a gap beyond the landing
-    b.pos = v.back() + core::Vec2{side * h * 0.5, 0.0};
-    ctx.submit(core::AddMLeaderCommand{v, ctx.current_dim_style(), b, s_content_ ? text : std::string(), ctx.group_id()});
+    b.pos = v.back() + core::Vec2{side * style_.landing_gap, 0.0};
+    core::AddMLeaderCommand c{v, ctx.current_dim_style(), b, s_content_ ? text : std::string(), ctx.group_id()};
+    c.overrides.arrow_type = style_.arrow; // the style's arrowhead
+    c.overrides.arrow_size = style_.arrow_size;
+    c.overrides.set(core::DimOverrides::kArrowType, true);
+    c.overrides.set(core::DimOverrides::kArrowSize, true);
+    using F = core::LeaderForm;
+    c.leader_flags = static_cast<std::uint8_t>((s_leader_type_ == 1 ? F::kSpline : s_leader_type_ == 2 ? F::kNoLine : 0) |
+                                               (s_landing_ ? F::kLanding : 0));
+    ctx.submit(std::move(c));
     ctx.echo("Multileader placed.");
     done_ = true;
 }
@@ -13966,9 +15793,14 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
             }
         } else if (state_ == State::LeaderType) {
             if (u == "P" || u == "SPLINE") {
-                ctx.echo("Spline leaders are not available yet; the leader stays straight.");
+                s_leader_type_ = 1;
             } else if (u == "N" || u == "NONE") {
-                ctx.echo("A multileader here always has its leader line.");
+                s_leader_type_ = 2;
+            } else if (u == "S" || u == "STRAIGHT") {
+                s_leader_type_ = 0;
+            } else if (!t.empty()) {
+                ctx.echo("Enter Straight, sPline or None.");
+                return;
             }
         } else if (u == "Y" || u == "YES" || u == "N" || u == "NO") {
             s_landing_ = u[0] == 'Y';
@@ -15880,14 +17712,10 @@ void ChPropCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Linetype:
         if (t.empty() || u == "BYLAYER" || u == "BYBLOCK") {
             c_.linetype = std::make_pair(true, core::Linetype::Continuous);
-        } else if (u == "CONTINUOUS" || u == "DASHED" || u == "CENTER" || u == "HIDDEN") {
-            const core::Linetype lt = u == "DASHED"   ? core::Linetype::Dashed
-                                      : u == "CENTER" ? core::Linetype::Center
-                                      : u == "HIDDEN" ? core::Linetype::Hidden
-                                                      : core::Linetype::Continuous;
-            c_.linetype = std::make_pair(false, lt);
+        } else if (const std::optional<core::Linetype> lt = linetype_named(ctx, t)) {
+            c_.linetype = std::make_pair(false, *lt);
         } else {
-            ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            ctx.echo("Linetype " + t + " is not loaded: " + loaded_linetypes_text(ctx, true) + ".");
             return;
         }
         property_prompt(ctx);
@@ -16340,14 +18168,12 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
             value_text_ = "color " + std::to_string(aci);
         } else if (edit_.op == Op::Ltype) {
             const std::string n = t.empty() ? std::string("CONTINUOUS") : u;
-            if (n != "CONTINUOUS" && n != "DASHED" && n != "CENTER" && n != "HIDDEN") {
-                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            const std::optional<core::Linetype> lt = linetype_named(ctx, n);
+            if (!lt) {
+                ctx.echo("Linetype " + t + " is not loaded: " + loaded_linetypes_text(ctx, true) + ".");
                 return;
             }
-            edit_.linetype = n == "DASHED" ? core::Linetype::Dashed
-                             : n == "CENTER" ? core::Linetype::Center
-                             : n == "HIDDEN" ? core::Linetype::Hidden
-                                             : core::Linetype::Continuous;
+            edit_.linetype = *lt;
             value_text_ = "linetype \"" + n + "\"";
         } else if (edit_.op == Op::Plot) {
             if (t.empty() || u == "P" || u == "PLOT") {
@@ -17035,23 +18861,23 @@ void GripModeCommand::start(CommandContext& ctx) {
 void GripModeCommand::prompt(CommandContext& ctx) {
     switch (mode_) {
     case Mode::Stretch:
-        ctx.echo("** STRETCH **");
+        ctx.echo(copy_ ? "** STRETCH (multiple) **" : "** STRETCH **");
         ctx.set_prompt("Specify stretch point or [Base point/Copy/Undo/eXit]: ");
         return;
     case Mode::Move:
-        ctx.echo("** MOVE **");
+        ctx.echo(copy_ ? "** MOVE (multiple) **" : "** MOVE **");
         ctx.set_prompt("Specify move point or [Base point/Copy/Undo/eXit]: ");
         return;
     case Mode::Rotate:
-        ctx.echo("** ROTATE **");
+        ctx.echo(copy_ ? "** ROTATE (multiple) **" : "** ROTATE **");
         ctx.set_prompt("Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]: ");
         return;
     case Mode::Scale:
-        ctx.echo("** SCALE **");
+        ctx.echo(copy_ ? "** SCALE (multiple) **" : "** SCALE **");
         ctx.set_prompt("Specify scale factor or [Base point/Copy/Undo/Reference/eXit]: ");
         return;
     case Mode::Mirror:
-        ctx.echo("** MIRROR **");
+        ctx.echo(copy_ ? "** MIRROR (multiple) **" : "** MIRROR **");
         ctx.set_prompt("Specify second point or [Base point/Copy/Undo/eXit]: ");
         return;
     }
@@ -17062,7 +18888,9 @@ void GripModeCommand::enter(CommandContext& ctx, Mode m) {
         ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Cancel, {}, 0, {}, 0});
         stretching_ = false;
     } else if (!stretching_ && m == Mode::Stretch) {
-        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, handle_, index_, {}, 0});
+        core::GripDragCommand begin = begin_;
+        begin.phase = core::GripDragCommand::Phase::Begin;
+        ctx.submit(std::move(begin));
         stretching_ = true;
     }
     mode_ = m;
@@ -17092,6 +18920,9 @@ void GripModeCommand::enter(CommandContext& ctx, Mode m) {
 }
 
 void GripModeCommand::apply(CommandContext& ctx, core::Vec2 p, std::optional<double> typed) {
+    if (ctx.ctrl_held() && ctx.input_is_pick() && !copy_) {
+        copy_ = true; // Ctrl at the pick: copies, as Copy does
+    }
     const std::uint64_t group = ctx.new_group();
     switch (mode_) {
     case Mode::Stretch:
@@ -18377,18 +20208,47 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "B" || u == "RECREATE BOUNDARY" || u == "BOUNDARY") {
             step_ = Step::BoundaryType;
             ctx.set_prompt("Enter type of boundary object [Region/Polyline] <Polyline>: ");
+        } else if (u == "D" || u == "DISASSOCIATE") {
+            ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Disassociate, {}, true, {}, ctx.group_id()});
+            done_ = true;
+        } else if (u == "H" || u == "SEPARATE HATCHES") {
+            ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Separate, {}, true, {}, ctx.group_id()});
+            done_ = true;
+        } else if (u == "CO" || u == "HATCH COLOR" || u == "COLOR") {
+            step_ = Step::Color;
+            ctx.set_prompt("Enter new color for hatch objects or [. (use current)] <BYLAYER>: ");
+        } else if (u == "LA" || u == "LAYER") {
+            step_ = Step::Layer;
+            ctx.set_prompt("Enter layer name or [. (use current)] <use current>: ");
         } else {
-            ctx.echo("That option is not available yet; Properties and recreate Boundary are.");
+            ctx.echo("That option is not available yet; Disassociate, Properties, recreate Boundary, separate Hatches, "
+                     "hatch COlor and LAyer are.");
             options(ctx);
         }
         return;
+    case Step::Color: {
+        core::HatchEditCommand c{core::HatchEditCommand::Op::Color, {}, true, {}, ctx.group_id()};
+        if (!(t.empty() || t == "." || u == "BYLAYER")) {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 1.0 || v > 255.0 || v != std::floor(v)) {
+                ctx.echo("Enter a colour number from 1 to 255, BYLAYER or . for the current one.");
+                return;
+            }
+            c.by_layer = false;
+            c.color = core::io::dxf_aci_to_rgb(static_cast<long>(v));
+        }
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    case Step::Layer:
+        ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Layer, {}, true,
+                                          t == "." ? std::string() : t, ctx.group_id()});
+        done_ = true;
+        return;
     case Step::Pattern: {
         if (t == "?") {
-            std::string line = "Patterns: SOLID";
-            for (const std::string& n : core::hatch::builtin_pattern_names()) {
-                line += " " + n;
-            }
-            ctx.echo(line);
+            ctx.echo(hatch_pattern_list(ctx));
             return;
         }
         if (u == "U" || u == "USER DEFINED") {
@@ -18398,7 +20258,7 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (!t.empty()) {
             const std::string name = (u == "S" || u == "SOLID") ? std::string("SOLID") : u;
-            if (name != "SOLID" && core::hatch::builtin_pattern(name) == nullptr) {
+            if (!find_hatch_pattern(ctx, name)) {
                 ctx.echo("Unknown pattern \"" + t + "\"; ? lists them.");
                 return;
             }
@@ -19004,7 +20864,8 @@ void NewViewCommand::input(CommandContext& ctx, const std::string& text) {
         done_ = true;
         return;
     }
-    ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale}});
+    // As the New View window saves it: with a snapshot of the layers.
+    ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale, "*VIEW|" + t}});
     done_ = true;
 }
 
@@ -19147,7 +21008,7 @@ void LayerPreviousCommand::cancel(CommandContext& ctx) {
 
 void LayerStateCommand::options(CommandContext& ctx) {
     step_ = Step::Option;
-    ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name]: ");
+    ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name/Import/EXport]: ");
 }
 
 void LayerStateCommand::start(CommandContext& ctx) {
@@ -19185,6 +21046,12 @@ void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "N" || u == "NAME") {
             op_ = Op::Rename;
             ctx.set_prompt("Enter name of layer state to rename or [?]: ");
+        } else if (u == "I" || u == "IMPORT") {
+            op_ = Op::Import;
+            ctx.set_prompt("Enter file name to import: ");
+        } else if (u == "EX" || u == "EXPORT") {
+            op_ = Op::Export;
+            ctx.set_prompt("Enter name of layer state to export or [?]: ");
         } else {
             ctx.echo("Invalid option keyword.");
             options(ctx);
@@ -19197,7 +21064,7 @@ void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
             options(ctx);
             return;
         }
-        if (t == "?" && op_ != Op::Save) {
+        if (t == "?" && op_ != Op::Save && op_ != Op::Import) {
             ctx.submit(core::LayerStateCommand{Op::List, {}, {}});
             return; // the same prompt again
         }
@@ -19207,11 +21074,24 @@ void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Enter new layer state name: ");
             return;
         }
+        if (op_ == Op::Export) {
+            from_ = t;
+            step_ = Step::NewName;
+            ctx.set_prompt("Enter file name to export <" + t + ".las>: ");
+            return;
+        }
+        if (op_ == Op::Import) {
+            ctx.submit(core::LayerStateCommand{Op::Import, {}, t});
+            options(ctx);
+            return;
+        }
         ctx.submit(core::LayerStateCommand{op_, t, {}});
         options(ctx);
         return;
     case Step::NewName:
-        if (!t.empty()) {
+        if (op_ == Op::Export) {
+            ctx.submit(core::LayerStateCommand{Op::Export, from_, t.empty() ? from_ + ".las" : t});
+        } else if (!t.empty()) {
             ctx.submit(core::LayerStateCommand{Op::Rename, from_, t});
         }
         options(ctx);

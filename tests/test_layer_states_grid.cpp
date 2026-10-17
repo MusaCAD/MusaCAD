@@ -155,7 +155,7 @@ TEST_CASE("LAYERSTATE saves, restores, renames and deletes named layer states, k
 
     H h;
     h.proc.submit_line("LAYERSTATE");
-    REQUIRE(h.out.prompt == "Enter an option [?/Save/Restore/Delete/Name]: ");
+    REQUIRE(h.out.prompt == "Enter an option [?/Save/Restore/Delete/Name/Import/EXport]: ");
     h.proc.submit_line("S");
     REQUIRE(h.out.prompt == "Enter new layer state name: ");
     REQUIRE(h.proc.wants_free_text());

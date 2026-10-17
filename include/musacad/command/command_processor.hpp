@@ -43,6 +43,8 @@ public:
     /// A grip clicked rather than dragged becomes hot: the grip modes (GripModeCommand)
     /// start on it. The press already began the engine's grip drag.
     void start_grip_mode(core::EntityHandle handle, std::uint32_t index, core::Vec2 pos);
+    /// The same, for a drag begun as `begin` says (Shift's hot grips, a grip menu's choice).
+    void start_grip_mode(const core::GripDragCommand& begin, core::Vec2 pos);
 
     /// Cancels the active command (ESC).
     void cancel();
@@ -257,12 +259,16 @@ public:
     void set_selection_count(int n) noexcept { selection_count_ = n; }
     void set_selection_kinds(std::uint32_t mask) noexcept { selection_kinds_ = mask; }
     [[nodiscard]] std::uint32_t selection_kinds() const override { return selection_kinds_; }
+    void set_selection_size(core::Vec2 size) noexcept { selection_size_ = size; }
+    [[nodiscard]] core::Vec2 selection_size() const override { return selection_size_; }
 
     /// Cached hovered-entity kind, fed from the published snapshot by the UI. When
     /// it changes while a command is active, the command's hover() hook fires (the
     /// smart DIM preview). nullopt means the cursor is over empty space.
     void set_hovered_kind(std::optional<core::EntityKind> kind);
     void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
+    void set_custom_patterns(std::vector<std::string> v) { custom_patterns_ = std::move(v); }
+    void set_support_paths(std::vector<std::string> v) { support_paths_ = std::move(v); }
     void set_units(const core::DrawingUnits& u) { units_ = u; }
     void set_text_styles(std::vector<core::TextStyle> v, std::uint16_t current) {
         text_styles_ = std::move(v);
@@ -282,9 +288,19 @@ public:
     }
     [[nodiscard]] std::vector<core::TableStyle> table_styles() const override { return table_styles_; }
     [[nodiscard]] std::uint16_t current_table_style() const override { return current_table_style_; }
+    void set_mleader_styles(std::vector<core::MLeaderStyle> v, std::uint16_t current) {
+        if (!v.empty()) {
+            mleader_styles_ = std::move(v);
+        }
+        current_mleader_style_ = current < mleader_styles_.size() ? current : 0;
+    }
+    [[nodiscard]] std::vector<core::MLeaderStyle> mleader_styles() const override { return mleader_styles_; }
+    [[nodiscard]] std::uint16_t current_mleader_style() const override { return current_mleader_style_; }
     void set_current_props(const core::EntityProps& p) { current_props_ = p; }
     [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
+    void set_linetypes(std::vector<core::LinetypeDef> v) { linetypes_ = std::move(v); }
+    [[nodiscard]] std::vector<core::LinetypeDef> linetypes() const override { return linetypes_; }
     void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
     [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const override { return purge_; }
     void set_ltscales(double ltscale, double celtscale, bool ps, bool ms) noexcept {
@@ -327,6 +343,8 @@ public:
     }
     [[nodiscard]] core::DrawingUnits units() const override { return units_; }
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
+    [[nodiscard]] std::vector<std::string> custom_patterns() const override { return custom_patterns_; }
+    [[nodiscard]] std::vector<std::string> support_paths() const override { return support_paths_; }
 
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
     /// A press-and-drag on empty canvas draws a freehand path for the running command.
@@ -454,6 +472,8 @@ private:
     CommandSink sink_;
     ViewControl* view_;
     std::vector<core::NamedView> named_views_;
+    std::vector<std::string> custom_patterns_;
+    std::vector<std::string> support_paths_;
     core::DrawingUnits units_{};
     std::vector<core::TextStyle> text_styles_;
     std::uint16_t current_text_style_ = 0;
@@ -461,8 +481,11 @@ private:
     std::uint16_t current_dim_style_ = 0;
     std::vector<core::TableStyle> table_styles_;
     std::uint16_t current_table_style_ = 0;
+    std::vector<core::MLeaderStyle> mleader_styles_{core::MLeaderStyle{}};
+    std::uint16_t current_mleader_style_ = 0;
     core::EntityProps current_props_{};
     std::vector<std::string> block_names_;
+    std::vector<core::LinetypeDef> linetypes_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;
     std::uint8_t active_space_ = 0;
@@ -503,6 +526,7 @@ private:
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
     std::uint32_t selection_kinds_ = ~0u; ///< bit per EntityKind; all bits: not known
+    core::Vec2 selection_size_{};         ///< the selection's extents (0, 0: not known)
     std::optional<core::EntityKind> hovered_kind_;
     PreviewSpec preview_;
     core::RenderSnapshot::PurgeCandidates purge_;

@@ -277,7 +277,7 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(entity);
-        spline::tessellate(store.control_points_of(*sp), sp->degree, out);
+        spline::tessellate(store.control_points_of(*sp), sp->degree, out, store.knots_of(*sp));
         break;
     }
     case EntityKind::Text:
@@ -322,8 +322,20 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::MLeader: {
         const MLeaderData* m = store.mleader(entity);
-        for (const Vec2& v : store.vertices_of(*m)) {
+        const std::span<const Vec2> path = store.vertices_of(*m);
+        for (const Vec2& v : path) {
             out.push_back(v); // the leader polyline (selectable span)
+        }
+        // The added leaders, each out from the landing and back: every chord lies on the
+        // leader as drawn, so nothing that is not there can be picked.
+        const std::span<const Vec2> tips = store.extra_tips_of(*m);
+        if (!tips.empty() && !path.empty()) {
+            const Vec2 attach = mleader_attach(path, m->leader_flags);
+            out.push_back(attach);
+            for (const Vec2& tip : tips) {
+                out.push_back(tip);
+                out.push_back(attach);
+            }
         }
         break;
     }
@@ -1074,7 +1086,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(entity);
         std::vector<Vec2> dense;
-        spline::tessellate(store.control_points_of(*sp), sp->degree, dense);
+        spline::tessellate(store.control_points_of(*sp), sp->degree, dense, store.knots_of(*sp));
         const bool closed = dense.size() > 3 && length(dense.front() - dense.back()) < 1e-9;
         return offset_sampled(dense, closed, distance, side, sp->props, out);
     }

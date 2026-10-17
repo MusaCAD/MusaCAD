@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "musacad/core/drawing_props.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
@@ -143,6 +144,7 @@ struct DocSpline {
     std::vector<Vec2> control_points;
     std::uint32_t degree = 3;
     EntityProps props{};
+    std::vector<double> knots{}; ///< its own knots, or empty for the clamped uniform ones
     friend bool operator==(const DocSpline&, const DocSpline&) = default;
 };
 struct DocText {
@@ -199,6 +201,8 @@ struct DocDim {
     std::string inspect_label{};
     std::string inspect_rate{};
     std::vector<Vec2> breaks{}; ///< v40: DIMBREAK's breaks (pairs)
+    bool unassoc = false;       ///< v40: not associative (DimData::unassoc)
+    std::uint8_t flip = 0;      ///< v40: Flip Arrow (DimData::flip)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {
@@ -227,6 +231,8 @@ struct DocMLeader {
     EntityProps props{};
     std::string font{}; ///< font name ("" = stroke "Standard"); maps to block.font index
     DimOverrides overrides{}; ///< per-leader arrow override (v13+; no overrides => ByStyle)
+    std::uint8_t leader_flags = 0; ///< v40: MLeaderData::leader_flags
+    std::vector<Vec2> extra_tips{}; ///< v40: MLEADEREDIT's added leaders, by their arrowheads
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 
@@ -240,6 +246,7 @@ struct DocHatch {
     Vec2 pattern_origin{};
     EntityProps props{};
     Rgb color2{}; ///< GRADIENT second colour (v27)
+    bool unassoc = false; ///< v40: not associative (HatchData::unassoc)
     friend bool operator==(const DocHatch&, const DocHatch&) = default;
 };
 
@@ -373,9 +380,14 @@ struct Document {
     std::uint16_t current_text_style = 0;
     std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
     std::uint16_t current_table_style = 0; ///< v40: the style new tables use (TABLESTYLE)
+    std::vector<MLeaderStyle> mleader_styles{};  ///< v40: MLEADERSTYLE (empty: Standard only)
+    std::vector<hatch::Pattern> patterns{};      ///< v40: the drawing's own hatch patterns
+    std::uint16_t current_mleader_style = 0;     ///< v40
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted
     std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)
+    std::vector<LayerGroupFilter> layer_filters{}; ///< v40: the layer group filters
+    std::vector<LinetypeDef> linetypes{}; ///< v40: the linetypes loaded beyond the built-in four
     bool fillmode = true;       ///< FILLMODE (v37)
     std::uint8_t pdmode = 0;    ///< PDMODE (v40): how points are drawn
     double pdsize = 0.0;        ///< PDSIZE (v40): their size (0 or less: on screen)

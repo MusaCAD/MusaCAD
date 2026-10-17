@@ -160,7 +160,7 @@ TEST_CASE("PEDIT Ltype gen: off, a polyline's dashes start again at every vertex
     dashed.linetype = Linetype::Dashed;
     dashed.set_linetype_by_layer(false);
     AddPolylineCommand pl;
-    pl.points = {{0, 0}, {7, 0}, {7, 7}, {14, 7}, {14, 14}};
+    pl.points = {{0, 0}, {6, 0}, {6, 6}, {12, 6}, {12, 12}}; // sides not a whole number of dash periods
     pl.props = dashed;
     pl.group = 1;
     engine.submit(pl);

@@ -13,7 +13,7 @@ compatibility verdict for LGPL-3 distribution.
 |---|---|---|---|---|
 | **Qt 6** (Core, Gui, Widgets, OpenGL, OpenGLWidgets, PrintSupport; DBus transitively; SVG image/icon plugins at runtime) | system Qt 6 | **LGPL-3.0** (open-source edition) | **Dynamically linked** to system shared libraries | ✅ Compatible |
 | **Vulkan** (loader + headers) | system | Apache-2.0 (loader); MIT/Apache-2.0 (headers) | Build-time located (`find_package`); **not linked into the shipped binary** | ✅ Compatible |
-| **Catch2** | v3.5.4 | BSL-1.0 | **Test-only** (`FetchContent`, builds the test binaries `musacad_tests` and `musacad_tests_2`); not in the shipped app | ✅ Compatible |
+| **Catch2** | v3.5.4 | BSL-1.0 | **Test-only** (`FetchContent`, builds the test binaries `musacad_tests`, `musacad_tests_2` and so on); not in the shipped app | ✅ Compatible |
 | **pthreads / glibc** | system | LGPL-2.1-or-later (glibc) | System C runtime (`Threads::Threads`) | ✅ Compatible (system library) |
 | **System fonts** (via Qt `QFontDatabase`/fontconfig/FreeType) | system | (Qt transitive; fonts are user/OS-provided) | Runtime, through Qt; no font files shipped | ✅ N/A to Musa's binary |
 | **LibreDWG / ODA File Converter** (DWG↔DXF) | external | **GPL-3.0** (LibreDWG) / proprietary EULA (ODA) | **External process only** — invoked via `QProcess`, discovered at runtime; **never linked, vendored, or shipped** | ✅ Does not affect Musa's LGPL (see scan below) |
@@ -47,7 +47,7 @@ on hosts without a Vulkan SDK (e.g. the Windows installer CI) are byte-identical
 is Apache-2.0 and the headers are MIT/Apache-2.0 — permissive and LGPL-compatible regardless.
 
 ### Catch2 — test-only
-Catch2 is fetched (`FetchContent`, pinned `v3.5.4`) only to build the test binaries (`musacad_tests`, `musacad_tests_2`).
+Catch2 is fetched (`FetchContent`, pinned `v3.5.4`) only to build the test binaries (`musacad_tests`, `musacad_tests_2` and so on).
 It is **not** part of the distributable application. BSL-1.0 is permissive and would be
 compatible even if shipped.
 

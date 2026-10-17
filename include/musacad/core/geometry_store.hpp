@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <cstdlib>
 #include <string>
@@ -14,6 +16,7 @@
 #include "musacad/core/drawing_props.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/generational_arena.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
@@ -92,6 +95,11 @@ struct SplineData {
     std::uint32_t count;  ///< number of control points
     std::uint32_t degree;
     EntityProps props{};
+    /// The spline's own knots (count + degree + 1 of them in the knot pool), or kNoKnots for
+    /// the clamped uniform ones a spline drawn here has: a spline from an AutoCAD drawing
+    /// keeps its knots, and so does each piece of a trimmed or broken one.
+    static constexpr std::uint32_t kNoKnots = 0xFFFFFFFFu;
+    std::uint32_t knot_offset = kNoKnots;
 };
 
 /// Single-line text. The string lives in a shared char pool (offset, len) like
@@ -178,6 +186,9 @@ struct DimData {
     double text_angle = 0.0;
     /// An arc-length dimension's Leader option (v39): a radial leader from the text to the arc.
     bool arc_leader = false;
+    /// Not associative (DIMASSOC 1 when drawn, DIMDISASSOCIATE): it does not follow the
+    /// objects its points are on when they are moved or reshaped (#59).
+    bool unassoc = false;
     std::uint16_t brk_count = 0;  ///< DIMBREAK: its breaks, pairs in the dim-break pool
     std::uint32_t brk_offset = 0; ///< (in the padding after arc_leader: the size stays 240)
     /// DIMEDIT Oblique (v39, DXF 52): a linear or aligned dimension's extension lines at this
@@ -190,6 +201,9 @@ struct DimData {
     /// round ends, 2 with angular ends, 3 unframed. Its label (left of the value) and its
     /// inspection rate (right of it) are in the shared char pool; either may be empty.
     std::uint8_t inspect = 0;
+    /// Flip Arrow (the dimension grip menu): bit 0 the first arrowhead, bit 1 the second,
+    /// turned to the other side of its extension line (linear and aligned dimensions).
+    std::uint8_t flip = 0;
     std::uint32_t inspect_label_offset = 0;
     std::uint32_t inspect_label_len = 0;
     std::uint32_t inspect_rate_offset = 0;
@@ -229,10 +243,28 @@ struct MLeaderData {
     std::uint32_t vtx_offset = 0; ///< first leader vertex in the polyline pool
     std::uint32_t vtx_count = 0;  ///< number of leader vertices (>= 1)
     std::uint16_t style = 0;      ///< dimstyle (arrow type/size + colours)
+    std::uint8_t leader_flags = 0; ///< the leader's form, LeaderForm bits
+    /// MLEADEREDIT's added leaders: their arrowhead points (`extra_count` of them in the
+    /// polyline pool from `extra_offset`), each leader straight from there to where the
+    /// leader meets its landing (mleader_attach). In the padding before `text`.
+    std::uint8_t extra_count = 0;
+    std::uint32_t extra_offset = 0;
     MTextBlock text;              ///< the attached label (computed layout)
     EntityProps props{};
     DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
 };
+
+/// Where a multileader's added leaders meet it: the start of its landing (its last segment,
+/// marked so or level), else its last point.
+[[nodiscard]] inline Vec2 mleader_attach(std::span<const Vec2> v, std::uint8_t flags) noexcept {
+    if (v.empty()) {
+        return {};
+    }
+    const std::size_t n = v.size();
+    const bool landing = n >= 2 && ((flags & LeaderForm::kLanding) != 0 ||
+                                    (n >= 3 && std::abs(v[n - 1].y - v[n - 2].y) < 1e-9));
+    return landing ? v[n - 2] : v[n - 1];
+}
 
 /// A HATCH: a filled/patterned region bounded by one or more CLOSED loops (the first
 /// loop is the outer boundary; the rest are islands/holes). Loop vertices live in the
@@ -255,6 +287,9 @@ struct HatchData {
     /// GRADIENT pattern: the second colour (the first is the entity's own colour); the
     /// fill runs from the first to the second along pattern_angle.
     Rgb color2{};
+    /// Not associative (HPASSOC 0 when made, DXF 71 = 0): it does not follow its boundary
+    /// when the boundary is moved or reshaped (#41).
+    bool unassoc = false;
 };
 
 /// One cell of a feature control frame. A cell is TEXT -- the characteristic symbol,
@@ -530,7 +565,7 @@ public:
                               bool closed, EntityProps props, std::span<const double> widths,
                               double elevation, double thickness);
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
-                            EntityProps props = {});
+                            EntityProps props = {}, std::span<const double> knots = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                           std::string_view content, EntityProps props = {}, std::uint16_t font = 0,
                           std::uint16_t style = 0);
@@ -542,6 +577,12 @@ public:
     bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
     bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
+    bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
+    bool set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept;
+    bool set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept;
+    /// MLEADEREDIT: the multileader's added leaders, by their arrowhead points (at most 255).
+    bool set_mleader_extra(EntityHandle h, std::span<const Vec2> tips);
+    bool set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
     bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;
@@ -802,6 +843,8 @@ public:
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
     /// Leader-polyline vertices of an MLeader.
     [[nodiscard]] std::span<const Vec2> vertices_of(const MLeaderData& m) const noexcept;
+    /// The arrowhead points of a multileader's added leaders (MLEADEREDIT).
+    [[nodiscard]] std::span<const Vec2> extra_tips_of(const MLeaderData& m) const noexcept;
     /// A hatch's pattern name (in the string pool; "SOLID" = filled).
     [[nodiscard]] std::string_view string_of(const HatchData& h) const noexcept;
     [[nodiscard]] std::string_view string_of(const FcfCell& c) const noexcept;
@@ -862,7 +905,27 @@ public:
     // Definitions are referenced by INSERTs by index. Few in number; a vector is
     // plenty. Indices are stable for a session.
     [[nodiscard]] const std::vector<BlockDef>& blocks() const noexcept { return blocks_; }
+
+    // --- linetypes loaded into the drawing (beyond the built-in four) ----------------
+    /// The table: Linetype value kFirstLoadedLinetype + i is linetypes()[i].
+    [[nodiscard]] const std::vector<LinetypeDef>& linetypes() const noexcept { return linetypes_; }
+    void set_linetypes(std::vector<LinetypeDef> table) {
+        linetypes_ = std::move(table);
+        if (linetypes_.size() > kMaxLoadedLinetypes) {
+            linetypes_.resize(kMaxLoadedLinetypes);
+        }
+    }
+    /// Loads `def`: a linetype of that name already loaded is replaced (reloaded). Nullopt
+    /// when the table is full.
+    std::optional<Linetype> add_linetype(const LinetypeDef& def);
+    /// The linetype a name means (any case): one loaded by that name, else a built-in one.
+    [[nodiscard]] std::optional<Linetype> linetype_by_name(std::string_view name) const;
+    /// A linetype's name: a built-in one's as the Linetype Manager shows it, or (`dxf`) as
+    /// DXF writes it; a loaded one's as loaded. "Continuous" for a value with no definition.
+    [[nodiscard]] std::string linetype_name(Linetype lt, bool dxf = false) const;
     [[nodiscard]] std::size_t block_count() const noexcept { return blocks_.size(); }
+    /// Goes up whenever a block definition is added, changed, renamed or removed.
+    [[nodiscard]] std::uint64_t blocks_serial() const noexcept { return blocks_serial_; }
     [[nodiscard]] const BlockDef* block(std::uint16_t index) const noexcept;
     /// Adds a block definition, or returns the existing index if the name is taken.
     std::uint16_t add_block(const BlockDef& def);
@@ -942,6 +1005,31 @@ public:
     }
     /// The index of the style named `name` (any case), or 0xFFFF.
     [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
+    /// The drawing's own hatch patterns (from an AutoCAD drawing's custom patterns), looked
+    /// up before the built-in ones by pattern().
+    [[nodiscard]] const std::vector<hatch::Pattern>& custom_patterns() const noexcept { return custom_patterns_; }
+    void set_custom_patterns(std::vector<hatch::Pattern> v) { custom_patterns_ = std::move(v); }
+    /// Adds a pattern, or replaces the one of the same name (any case).
+    void add_custom_pattern(hatch::Pattern p);
+    /// The pattern called `name` (any case): the drawing's own, else a built-in; nullptr
+    /// for SOLID and names neither knows.
+    [[nodiscard]] const hatch::Pattern* pattern(std::string_view name) const noexcept;
+    /// MLEADERSTYLE: the multileader styles (Standard first) and the current one.
+    [[nodiscard]] const std::vector<MLeaderStyle>& mleader_styles() const noexcept { return mleader_styles_; }
+    void set_mleader_styles(std::vector<MLeaderStyle> v) {
+        if (!v.empty()) {
+            mleader_styles_ = std::move(v);
+        }
+        if (current_mleader_style_ >= mleader_styles_.size()) {
+            current_mleader_style_ = 0;
+        }
+    }
+    [[nodiscard]] std::uint16_t current_mleader_style() const noexcept { return current_mleader_style_; }
+    void set_current_mleader_style(std::uint16_t i) noexcept {
+        current_mleader_style_ = i < mleader_styles_.size() ? i : 0;
+    }
+    /// The index of the multileader style named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t mleader_style_index(std::string_view name) const noexcept;
     /// DATALINK: the drawing's data links (a link is never taken out from under a table:
     /// removing one leaves its slot with an empty name, so table indices stay valid).
     [[nodiscard]] const std::vector<DataLink>& data_links() const noexcept { return data_links_; }
@@ -982,6 +1070,8 @@ public:
     /// The widths of a polyline (two per vertex), or an empty span for a plain one.
     [[nodiscard]] std::span<const double> widths_of(const PolylineData& pl) const noexcept;
     [[nodiscard]] std::span<const Vec2> control_points_of(const SplineData& sp) const noexcept;
+    /// A spline's own knots, or an empty span for the clamped uniform ones.
+    [[nodiscard]] std::span<const double> knots_of(const SplineData& sp) const noexcept;
 
     void reserve_lines(std::size_t n) { lines_.reserve(n); }
 
@@ -1075,6 +1165,7 @@ public:
             return false;
         }
         hit->name = std::string(to);
+        ++blocks_serial_;
         return true;
     }
     bool rename_text_style(std::string_view from, std::string_view to) {
@@ -1186,6 +1277,8 @@ public:
 
     [[nodiscard]] const std::vector<LayerState>& layer_states() const noexcept { return layer_states_; }
     void set_layer_states(std::vector<LayerState> s) { layer_states_ = std::move(s); }
+    [[nodiscard]] const std::vector<LayerGroupFilter>& layer_filters() const noexcept { return layer_filters_; }
+    void set_layer_filters(std::vector<LayerGroupFilter> f) { layer_filters_ = std::move(f); }
     [[nodiscard]] const std::vector<NamedView>& named_views() const noexcept { return named_views_; }
     void set_named_views(std::vector<NamedView> views) { named_views_ = std::move(views); }
     /// Adds or replaces (by name).
@@ -1313,6 +1406,9 @@ private:
     std::vector<double> table_size_pool_;     ///< column widths then row heights
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
     std::uint16_t current_table_style_ = 0;
+    std::vector<MLeaderStyle> mleader_styles_{MLeaderStyle{}}; // MLEADERSTYLE
+    std::vector<hatch::Pattern> custom_patterns_;                // the drawing's own hatch patterns
+    std::uint16_t current_mleader_style_ = 0;
     std::vector<DataLink> data_links_; // DATALINK
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
@@ -1323,6 +1419,7 @@ private:
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<double> width_pool_; // polyline widths, two per vertex
     std::vector<Vec2> spline_pool_;
+    std::vector<double> spline_knot_pool_; // splines' own knots
     std::vector<char> string_pool_; // text content
     std::vector<Vec2> hatch_vtx_pool_;            // hatch boundary-loop vertices (all loops)
     std::vector<std::uint32_t> hatch_loop_lens_;  // per-loop vertex counts
@@ -1348,6 +1445,7 @@ private:
     std::uint16_t current_dimstyle_ = 0;
     bool wipeout_frames_ = true;
     std::vector<LayerState> layer_states_; ///< LAYERSTATE
+    std::vector<LayerGroupFilter> layer_filters_; ///< the Layer Properties Manager's group filters
     bool wipeout_frames_plot_ = true;
     bool fillmode_ = true;
     std::uint8_t pdmode_ = 0;
@@ -1365,6 +1463,8 @@ private:
     double mspace_paper_px_per_mm_ = 1.0;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
+    std::uint64_t blocks_serial_ = 0;                       // blocks_serial()
+    std::vector<LinetypeDef> linetypes_;                    // loaded linetypes (-LINETYPE Load)
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
     const IFontEngine* font_engine_ = nullptr;             // non-owning; injected service
 };

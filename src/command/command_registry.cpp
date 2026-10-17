@@ -265,6 +265,8 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
              "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
+    file_cmd({"MLEADERSTYLE", "MLS"}, "MLEADERSTYLE", "assets/ribbon/leader.svg",
+             "Open the Multileader Style Manager: the styles new multileaders take.");
     file_cmd({"CUI"}, "CUI", "assets/ribbon/settings.svg",
              "Customize the user interface: keyboard shortcuts of your own for any command, and command aliases.");
     file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
@@ -369,6 +371,18 @@ CommandRegistry CommandRegistry::make_default() {
         "The running object snaps as a bit sum (1 END, 2 MID, 4 CEN, 8 NOD, 16 QUA, 32 INT, ...).");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
+    reg({"LAYMRG", "-LAYMRG"}, [] { return std::make_unique<LayerMergeUiCommand>(false); }, "assets/ribbon/layer-props.svg",
+        "Merge layers: their objects moved to a target layer.");
+    reg({"LAYDEL", "-LAYDEL"}, [] { return std::make_unique<LayerMergeUiCommand>(true); }, "assets/ribbon/layer-props.svg",
+        "Delete the objects on layers.");
+    reg({"BEDIT", "BE"}, [] { return std::make_unique<BlockEditUiCommand>(BlockEditUiCommand::Mode::Open); },
+        "assets/ribbon/block.svg", "Open the Block Editor on a block: its objects to edit, the rest of the drawing hidden.");
+    reg({"-BEDIT"}, [] { return std::make_unique<BlockEditUiCommand>(BlockEditUiCommand::Mode::OpenTyped); }, "",
+        "Open the Block Editor on the block named at the command line.");
+    reg({"BCLOSE"}, [] { return std::make_unique<BlockEditUiCommand>(BlockEditUiCommand::Mode::Close); }, "",
+        "Close the Block Editor, saving the block or not.");
+    reg({"BSAVE"}, [] { return std::make_unique<BlockEditUiCommand>(BlockEditUiCommand::Mode::Save); }, "",
+        "Save the block in the Block Editor, which stays open.");
     reg({"EXTRIM"}, [] { return std::make_unique<ExtrimUiCommand>(); }, "",
         "Trim everything crossing a cutting edge on one side of it.");
     reg({"VPSYNC"}, [] { return std::make_unique<VpSyncUiCommand>(); }, "",
@@ -381,10 +395,24 @@ CommandRegistry CommandRegistry::make_default() {
         "Read attribute values back from a file ATTOUT wrote, and set them.");
     reg({"MPEDIT"}, [] { return std::make_unique<PeditCommand>(true); }, "",
         "Edit several polylines at once (PEDIT's Multiple).");
+    reg({"DIMASSOC"}, [] { return std::make_unique<DimAssocUiCommand>(); }, "",
+        "Whether the dimensions drawn follow the objects they measure.");
+    reg({"BLOCKREPLACE"}, [] { return std::make_unique<BlockReplaceCommand>(true); }, "",
+        "Replace every reference of one block by another.");
+    reg({"-BLOCKREPLACE"}, [] { return std::make_unique<BlockReplaceCommand>(false); }, "",
+        "Replace every reference of one block by another, at the command line.");
+    reg({"HPASSOC"}, [] { return std::make_unique<HpAssocCommand>(); }, "",
+        "Whether the hatches made follow their boundaries.");
+    reg({"DIMDISASSOCIATE", "DDA"}, [] { return std::make_unique<DimDisassociateCommand>(); }, "",
+        "Dimensions no longer follow the objects they measure.");
+    reg({"DIMREASSOCIATE", "DRE"}, [] { return std::make_unique<DimDisassociateCommand>(true); }, "",
+        "Dimensions follow the objects they measure again.");
     reg({"DIMREASSOC"}, [] { return std::make_unique<DimReassocCommand>(); }, "",
         "Take the text overrides off dimensions so they show their measurements again.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
         "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
+    reg({"ATTREDEF"}, [] { return std::make_unique<AttRedefCommand>(); }, "assets/ribbon/insert.svg",
+        "Redefine a block from objects with attribute definitions; its references keep their values by tag.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
     reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); },
@@ -426,9 +454,9 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"CELWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "CELWEIGHT", false); }, "",
         "The lineweight new objects take: -1 ByLayer, -3 Default, or hundredths of a millimetre.");
     reg({"LT", "LINETYPE", "LTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "LINETYPE", true); }, "",
-        "The Linetype Manager: the linetypes, the current one, and the linetype scales.");
+        "The Linetype Manager: the linetypes, the current one, the linetype scales, and Load... from a .lin file.");
     reg({"-LINETYPE", "-LT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "-LINETYPE", false); }, "",
-        "Linetypes on the command line: ? lists them, Set makes one current.");
+        "Linetypes on the command line: ? lists them, Load brings them from a .lin file, Create makes one, Set makes one current.");
     reg({"CELTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "CELTYPE", false); }, "",
         "The linetype new objects take.");
     reg({"LWDISPLAY"}, [] { return std::make_unique<LwDisplayCommand>(); }, "",
@@ -639,9 +667,12 @@ CommandRegistry CommandRegistry::make_default() {
     // go straight to their own prompts. ARRAYEDIT/ARRAYCLOSE are absent by design --
     // they edit an ASSOCIATIVE array, and these arrays are non-associative (what
     // AutoCAD's own -ARRAY produces), so there is no association to reopen.
-    reg({"AR", "ARRAY", "-ARRAY"}, [] { return std::make_unique<ArrayCommand>(); },
+    reg({"AR", "ARRAY"}, [] { return std::make_unique<ArrayCommand>(); },
         "assets/ribbon/array.svg",
         "Create a rectangular, path or polar pattern of copies.");
+    reg({"-ARRAY"}, [] { return std::make_unique<ArrayClassicCommand>(); },
+        "assets/ribbon/array.svg",
+        "Create a rectangular or polar pattern of copies, by the classic prompts.");
     reg({"ARRAYRECT"}, [] { return std::make_unique<ArrayCommand>(ArrayCommand::Type::Rect); },
         "assets/ribbon/array.svg",
         "Create a rectangular pattern of copies in rows and columns.");
@@ -690,6 +721,12 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",
         "Create a dimension suited to the selected object.");
+    reg({"MLEADEREDIT", "MLE"}, [] { return std::make_unique<MLeaderEditUiCommand>(); }, "assets/ribbon/leader.svg",
+        "Add leaders to a multileader, or take leaders away from it.");
+    reg({"AIMLEADEREDITADD"}, [] { return std::make_unique<MLeaderEditUiCommand>(false, "AIMLEADEREDITADD"); },
+        "assets/ribbon/leader.svg", "Add Leader: another leader for a multileader, to its landing.");
+    reg({"AIMLEADEREDITREMOVE"}, [] { return std::make_unique<MLeaderEditUiCommand>(true, "AIMLEADEREDITREMOVE"); },
+        "assets/ribbon/leader.svg", "Remove Leader: take a leader away from a multileader.");
     reg({"MLEADERALIGN", "MLA"}, [] { return std::make_unique<MLeaderAlignUiCommand>(); }, "",
         "Line up the text of the selected multileaders along a direction.");
     reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",
@@ -787,6 +824,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Insert a table, asking its columns, rows and place on the command line.");
     reg({"TABLEEDIT"}, [] { return std::make_unique<TableEditCommand>(); }, "assets/ribbon/table.svg",
         "Edit the text of a table cell.");
+    reg({"TABLEEXPORT"}, [] { return std::make_unique<TableExportUiCommand>(); }, "assets/ribbon/table.svg",
+        "Write a table's cells to a CSV file.");
     reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(true); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");

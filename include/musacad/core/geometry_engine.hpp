@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -146,6 +148,8 @@ private:
         AddInsertCommand insert;
         std::vector<EntityHandle> working_set;
         std::vector<EntityHandle> added;
+        bool bedit = false;                ///< the Block Editor's session (BEDIT)
+        std::vector<EntityHandle> hidden;  ///< what BEDIT hid, shown again at BCLOSE
     };
     /// LAYERP: the layer settings before a change to them, and the current layer's name.
     struct LayerpState {
@@ -299,6 +303,7 @@ private:
         std::vector<BlockDef> src_blocks;
         std::vector<std::string> src_fonts; // source font table (index -> name)
         std::vector<ImageDef> src_image_defs; // source raster definitions (index -> def)
+        std::vector<LinetypeDef> src_linetypes; // source loaded linetypes (value - 4 -> def)
         Vec2 base{};                       // reference point (selection AABB min, or COPYBASE's)
         bool has = false;
         std::uint8_t src_insunits = 0;     // the source drawing's INSUNITS (a paste scales by it)
@@ -387,6 +392,8 @@ private:
     /// ADDSELECTED: the current properties and layer before they were taken from an object.
     std::optional<std::pair<EntityProps, std::uint16_t>> props_saved_{};
     EntityHandle splinedit_{}; ///< SPLINEDIT's spline
+    EntityHandle mleaderedit_{}; ///< MLEADEREDIT's multileader
+    bool mleader_edit_changed_ = false; ///< the last MLEADEREDIT step changed it
     void apply_spline_edit(const SplineEditCommand& c);
     EntityHandle pv_handle_{};
     std::size_t pv_index_ = 0;
@@ -488,6 +495,51 @@ private:
     /// An edit may touch it: valid, on a layer that is on, thawed and unlocked.
     [[nodiscard]] bool editable_entity(EntityHandle h) const { return store_.is_valid(h) && selectable(h); }
     bool mirrtext_ = false; ///< MIRRTEXT: 0 keeps mirrored text readable (the default)
+    std::uint8_t dimassoc_ = 2; ///< DIMASSOC: 2, new dimensions are associative; 0 or 1, not
+    bool hpassoc_ = true;       ///< HPASSOC: new hatches are associative
+    /// An associative dimension with points on objects about to be edited (#59): which of
+    /// its def points (a, b, line_pt) are on them and follow them.
+    struct DimFollow {
+        EntityHandle dim;
+        std::array<bool, 3> on{};
+    };
+    /// An associative hatch with boundary points on them (#41): which of its loop vertices.
+    struct HatchFollow {
+        EntityHandle hatch;
+        std::vector<bool> on;
+    };
+    struct Followers {
+        std::vector<DimFollow> dims;
+        std::vector<HatchFollow> hatches;
+        [[nodiscard]] bool empty() const noexcept { return dims.empty() && hatches.empty(); }
+    };
+    /// The associative dimensions and hatches, not among `edited`, with points on `edited`.
+    [[nodiscard]] Followers followers_on(const std::vector<EntityHandle>& edited) const;
+    /// Those not `skip`ped with points in [lo, hi] that `follows` says go along.
+    [[nodiscard]] Followers collect_followers(const std::function<bool(EntityHandle)>& skip, Vec2 lo, Vec2 hi,
+                                              const std::function<bool(Vec2, std::uint8_t)>& follows) const;
+    /// After an edit that replaced objects (TRIM, EXTEND, LENGTHEN, BREAK, FILLET, CHAMFER) in
+    /// undo group `group`: the associative dimensions and hatches on what it replaced go to
+    /// what replaced it -- a point at a trimmed end to the new end.
+    void follow_replaced(std::uint64_t group);
+    /// Takes each one's following points through `map`; when all of them follow and `whole` is
+    /// given, it is transformed as a whole instead (as if it had been selected).
+    void move_followers(const Followers& follows, const std::function<Vec2(Vec2)>& map,
+                        const std::function<void(Command&)>& whole, std::uint64_t group);
+    void apply_dim_assoc(const DimAssocCommand& c);
+    /// An array's copy: made, or with array_sink_ set, kept there (the preview).
+    void emit_copy(const Command& copy, std::uint64_t group);
+    void apply_array_preview(const ArrayPreviewCommand& c);
+    std::vector<Command>* array_sink_ = nullptr;
+    std::vector<Command> array_preview_; ///< ArrayPreviewCommand's copies, drawn as a preview
+    void apply_dim_grip_menu(const DimGripMenuCommand& c);
+    void apply_hatch_edit(const HatchEditCommand& c);
+    void apply_replace_block(const ReplaceBlockCommand& c);
+    /// A block given a new definition, the references' attribute values carried by tag into
+    /// it (ATTSYNC's job in AutoCAD, done as the definition changes).
+    void redefine_block_by_tags(std::uint16_t index, const BlockDef& def);
+    /// DIMASSOC 0: the dimensions the last command drew, exploded in its undo step.
+    void explode_new_dimensions();
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
                                 std::uint64_t group);
@@ -540,6 +592,9 @@ private:
     bool nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mov, Vec2& target) const;
     void apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
                              double radius, std::uint64_t group, bool trim);
+    /// FILLET with an ellipse or a spline (and a line, arc, circle, ellipse or spline).
+    void apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
+                           std::uint64_t group, bool trim);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
     void apply_purge(const PurgeCommand& c);
     /// What PURGE could remove right now, by name (nothing refers to them).
@@ -577,12 +632,18 @@ private:
     void apply_load_block_file(const LoadBlockFileCommand& c);
     void apply_set_data_link(const SetDataLinkCommand& c);
     void apply_dim_break(const DimBreakCommand& c);
+    bool open_refedit(EntityHandle h, std::uint64_t group); ///< REFEDIT on `h` (and BEDIT's reference)
+    void apply_block_edit(const BlockEditCommand& c);
+    void apply_layer_merge(const LayerMergeCommand& c);
+    void apply_hatch_extras(AddHatchCommand& cmd, const HatchExtras& x) const; ///< -HATCH's Origin, LAyer, COlor
     void apply_attout(const AttOutCommand& c);
     void apply_vpsync(const VpSyncCommand& c);
     void apply_extrim(const ExtrimCommand& c);
     void apply_attin(const AttInCommand& c);
     void apply_insert_linked_table(const InsertLinkedTableCommand& c);
     void apply_data_link_update(const DataLinkUpdateCommand& c);
+    void apply_table_export(const TableExportCommand& c);
+    void apply_mleader_edit(const MLeaderEditCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);
@@ -597,8 +658,11 @@ private:
     /// With `ncopy`: NCOPY -- the selected reference left as it is, only the part nearest
     /// `ncopy->pick` added, moved by `ncopy->offset`.
     void apply_explode(std::uint64_t group, bool burst = false, const NestedCopyCommand* ncopy = nullptr);
+    /// One and a half times the selection's width and height (either from the other when it
+    /// has none): an array's default spacing.
+    [[nodiscard]] Vec2 array_default_spacing() const;
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
-                           std::uint64_t group);
+                           std::uint64_t group, int rows = 1, double row_spacing = 0.0);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
     void apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                       std::uint64_t group, bool trim = true);
@@ -626,6 +690,9 @@ private:
     GeometryStore store_;
     NativeKernel2D kernel_;
     std::vector<std::uint8_t> layer_used_; ///< per layer: holds an entity (set on each geometry rebuild)
+    HatchExtras hatch_extras_{};           ///< the hatch command in hand's Origin, LAyer and COlor
+    std::vector<EntityHandle> hatch_boundary_set_; ///< -HATCH Advanced > Boundary set > New
+    EntityHandle last_pick_hatch_{};       ///< the hatch the last picked area made (to join the next)
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;
@@ -652,6 +719,10 @@ private:
     RenderSnapshot::PurgeCandidates purge_cache_;
     bool purge_cache_valid_ = false;
     std::uint64_t purge_cache_serial_ = 0;
+    // The Insert gallery's block pictures (RenderSnapshot::block_previews), and what they show.
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> block_previews_;
+    std::uint64_t block_previews_serial_ = 0;
+    std::uint64_t block_previews_doc_ = 0;
     bool any_hidden_ = false;
     RefEditSession refedit_;
 
@@ -725,6 +796,20 @@ private:
     bool grip_active_ = false;
     EntityHandle grip_handle_{};
     std::uint32_t grip_index_ = 0;
+    int grip_text_move_ = -1; ///< GripDragCommand::text_move of the drag under way
+    int grip_variant_ = 0;    ///< GripDragCommand::variant of the drag under way
+    Vec2 grip_origin_{};      ///< where the dragged grip was
+    /// Another grip the drag moves by the same delta: a selected object's grip at the same
+    /// point (they share it), or one made hot with Shift.
+    struct GripPeer {
+        EntityHandle handle;
+        std::uint32_t index = 0;
+        Vec2 origin{};
+    };
+    std::vector<GripPeer> grip_peers_;
+    void begin_grip_drag(const GripDragCommand& c);
+    /// The drag's edits: each object it changes, as it would be with the grips at the cursor.
+    [[nodiscard]] std::vector<std::pair<EntityHandle, Command>> grip_edits() const;
     Vec2 grip_pos_{};
     GeometryStore grip_preview_store_;
 

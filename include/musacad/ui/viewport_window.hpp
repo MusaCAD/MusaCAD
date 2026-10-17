@@ -66,6 +66,8 @@ public:
     bool viewport_size(int& w, int& h) const override;
     /// The drawing's saved views, from the last consumed snapshot (GUI thread).
     std::vector<core::NamedView> named_views();
+    std::vector<std::string> custom_patterns(); ///< the drawing's own hatch patterns
+    std::vector<core::LayerGroupFilter> layer_filters(); ///< the Layer Properties Manager's group filters
     std::vector<std::string> layer_state_names();
     core::DrawingUnits units();
     /// PDMODE / PDSIZE and LIMITS from the last snapshot, for the commands that show them.
@@ -79,8 +81,14 @@ public:
     std::uint16_t current_dim_style();
     std::vector<core::TableStyle> table_styles();
     std::uint16_t current_table_style();
+    std::vector<core::MLeaderStyle> mleader_styles();
+    std::uint16_t current_mleader_style();
     std::vector<std::string> block_names();
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
+    /// Per block (as block_names): its geometry as segment pairs (the Insert gallery).
+    std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews();
+    /// The linetypes loaded beyond the built-in four.
+    std::vector<core::LinetypeDef> linetypes();
     std::vector<core::LayoutInfo> layouts();
     std::uint8_t active_space();
     /// Image definitions whose pixels are embedded in the drawing (a DXF export writes
@@ -126,6 +134,13 @@ public:
     }
     void set_tolerance_dialog_callback(std::function<int(std::vector<std::string>&)> cb) {
         tolerance_dialog_callback_ = std::move(cb);
+    }
+    int choose_dialog(const std::string& title, const std::vector<std::string>& items, std::string& chosen) override {
+        return choose_dialog_callback_ ? choose_dialog_callback_(title, items, chosen) : -1;
+    }
+    void set_choose_dialog_callback(
+        std::function<int(const std::string&, const std::vector<std::string>&, std::string&)> cb) {
+        choose_dialog_callback_ = std::move(cb);
     }
     std::vector<std::string> workspaces() const override {
         return workspace_list_callback_ ? workspace_list_callback_().first : std::vector<std::string>{};
@@ -344,6 +359,18 @@ public:
 
     /// AutoCAD's multi-functional polyline grip menu (right-click on a grip while idle).
     void show_polyline_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// A dimension's grip menu: on its text, Stretch, Move with Dim Line, Move Text Only, Move
+    /// with Leader, Above Dim Line, Center Vertically, Reset Text Position; on its other grips,
+    /// Stretch, Continue Dimension, Baseline Dimension, Flip Arrow.
+    void show_dimension_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// A line's or an arc's end: Stretch, Lengthen; an arc's middle: Stretch, Radius.
+    void show_curve_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// The grip's menu, when its object has one (a right-click on it, or resting on it).
+    bool show_grip_menu(const core::GripInfo& grip, QPoint global);
+    /// Dynamic Input's down arrow: the current prompt's [options] in a menu at the cursor;
+    /// false when the prompt has none.
+    bool show_prompt_options();
+    [[nodiscard]] static bool has_grip_menu(const core::GripInfo& grip);
     /// The idle right-click menu (Repeat, Recent Input, Clipboard, Isolate, Select
     /// Similar, Quick Select, Deselect All, Undo / Redo, Properties).
     void show_context_menu(QPoint global, core::Vec2 world);
@@ -358,6 +385,9 @@ public:
     std::function<void(bool)> otrack_mode_callback_;
     std::atomic<int> snap_type_{0}; ///< the published snap's type, for the tracking label
     QTimer* rest_timer_ = nullptr;  ///< fires once the cursor has rested (OTRACK acquires)
+    QTimer* grip_hover_timer_ = nullptr; ///< resting on a grip opens its menu (multi-functional grips)
+    core::GripInfo grip_hover_{};        ///< the grip rested on
+    bool grip_hovering_ = false;
     /// The snap under the cursor goes to the processor: a point rested on is acquired.
     void note_snap_for_tracking();
     /// The alignment paths in hand, dashed, the acquired points, and the tooltip.
@@ -377,6 +407,11 @@ public:
         return selection_count_.load(std::memory_order_relaxed);
     }
     /// The kinds among the selected objects, one bit per core::EntityKind.
+    /// BEDIT is open (the Block Editor tab shows).
+    [[nodiscard]] bool block_editor() const noexcept { return block_editor_.load(std::memory_order_relaxed); }
+    [[nodiscard]] core::Vec2 selection_size() const noexcept {
+        return {selection_w_.load(std::memory_order_relaxed), selection_h_.load(std::memory_order_relaxed)};
+    }
     [[nodiscard]] std::uint32_t selection_kinds() const noexcept {
         return selection_kinds_.load(std::memory_order_relaxed);
     }
@@ -847,6 +882,7 @@ private:
     std::function<bool(const std::string&)> window_action_callback_;
     std::function<std::pair<std::vector<std::string>, std::string>()> workspace_list_callback_;
     std::function<int(std::vector<std::string>&)> tolerance_dialog_callback_;
+    std::function<int(const std::string&, const std::vector<std::string>&, std::string&)> choose_dialog_callback_;
     std::function<int(std::string&)> field_dialog_callback_;
     std::function<bool(const std::string&, const std::string&, const std::string&)> workspace_op_callback_;
     std::function<int(command::InsertTableSettings&)> insert_table_callback_;
@@ -868,6 +904,9 @@ private:
     core::DrawingTimes times_;         ///< under layers_mutex_
     std::atomic<int> selection_count_{0};
     std::atomic<std::uint32_t> selection_kinds_{0};
+    std::atomic<double> selection_w_{0.0};
+    std::atomic<bool> block_editor_{false};
+    std::atomic<double> selection_h_{0.0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};
     std::atomic<double> grip_preview_max_x_{0.0};
@@ -953,6 +992,8 @@ private:
     core::Vec2 grip_origin_{};
     core::Vec2 grip_press_screen_{};  ///< where the grip was pressed: a release there makes it hot
     core::GripInfo grip_pressed_{};   ///< the grip pressed
+    std::vector<core::GripInfo> hot_grips_; ///< grips made hot with Shift + click
+    core::GripDragCommand grip_begin_{};    ///< how the grip drag under way began
     core::Vec2 last_hot_grip_target_{}; ///< the last position streamed to a hot grip
 
     // Published layer table + current layer (for the Layer Manager / ribbon combo).
@@ -978,6 +1019,8 @@ private:
     core::Vec2 pending_view_center_{};
     double pending_view_scale_ = 1.0;
     std::vector<core::NamedView> named_views_; ///< under layers_mutex_
+    std::vector<std::string> custom_patterns_; ///< under layers_mutex_
+    std::vector<core::LayerGroupFilter> layer_filters_; ///< under layers_mutex_
     std::vector<std::string> layer_state_names_; ///< under layers_mutex_
     core::DrawingUnits units_{};                ///< under layers_mutex_
     std::uint8_t pdmode_ = 0;                   ///< under layers_mutex_
@@ -993,9 +1036,13 @@ private:
     std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_
     std::uint16_t current_dim_style_ = 0;
     std::vector<core::TableStyle> table_styles_; ///< under layers_mutex_
+    std::vector<core::MLeaderStyle> mleader_styles_; ///< under layers_mutex_
+    std::uint16_t current_mleader_style_ = 0;
     std::uint16_t current_table_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
+    std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews_; ///< under layers_mutex_
+    std::vector<core::LinetypeDef> linetypes_; ///< under layers_mutex_
     std::vector<core::LayoutInfo> layouts_;   ///< under layers_mutex_
     std::uint8_t active_space_ = 0;           ///< under layers_mutex_
     std::size_t embedded_images_ = 0;         ///< under layers_mutex_

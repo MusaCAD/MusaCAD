@@ -164,6 +164,11 @@ struct PreviewSpec {
     bool spline_fit = true;
     int spline_degree = 3;
     int spline_knots = 0; ///< 0 chord, 1 square root, 2 uniform
+    std::optional<core::Vec2> spline_start_tangent{}; ///< start Tangency given
+    /// 1: the cursor gives the start tangent (from the first point), 2: the end tangent
+    /// (from the last); the cursor is then not a fit point.
+    int spline_tangent_cursor = 0;
+    double spline_tolerance = 0.0; ///< toLerance: the curve within this of its fit points
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor
@@ -223,6 +228,7 @@ struct InsertTableSettings {
     bool title = true;
     bool header = true;
     std::string link{}; ///< From a data link: its name (the table takes the file's rows and columns)
+    bool window = false; ///< Insertion behavior Specify window: the columns' width and the rows from it
 };
 
 /// QLEADER's Leader Settings: the annotation (MText, or None), whether the text width is
@@ -316,6 +322,14 @@ public:
     /// window (the command asks at the command line).
     virtual int tolerance_dialog(std::vector<std::string>& cells) {
         (void)cells;
+        return -1;
+    }
+    /// A list to pick one name from (BLOCKREPLACE's blocks): 1 picked into `chosen`, 0
+    /// cancelled, -1 no window.
+    virtual int choose_dialog(const std::string& title, const std::vector<std::string>& items, std::string& chosen) {
+        (void)title;
+        (void)items;
+        (void)chosen;
         return -1;
     }
     /// Workspaces (WORKSPACE, WSCURRENT, WSSAVE): the names, the built-in one first, and the
@@ -502,6 +516,8 @@ public:
     /// The kinds among the selected objects, one bit per core::EntityKind (all bits: not
     /// known, ask as if any kind were there).
     [[nodiscard]] virtual std::uint32_t selection_kinds() const { return ~0u; }
+    /// The selection's extents, width and height (0, 0: not known).
+    [[nodiscard]] virtual core::Vec2 selection_size() const { return {}; }
     [[nodiscard]] bool has_selection() const { return selection_count() > 0; }
 
     /// World-space pick aperture (pixels / camera scale), for pick-based commands.
@@ -514,6 +530,10 @@ public:
     [[nodiscard]] virtual ViewControl* view() = 0;
     /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.
     [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }
+    /// The drawing's own hatch patterns (from a DXF, or a .pat file), by name.
+    [[nodiscard]] virtual std::vector<std::string> custom_patterns() const { return {}; }
+    /// Where .pat files are looked for (AutoCAD's support file search path).
+    [[nodiscard]] virtual std::vector<std::string> support_paths() const { return {}; }
     /// The drawing's display units (UNITS), as last published by the engine.
     [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }
     /// The last line or arc drawn (LINE, ARC and PLINE record it): Continue's start.
@@ -537,11 +557,16 @@ public:
     /// The drawing's table styles and the current one (TABLESTYLE), which TABLE uses.
     [[nodiscard]] virtual std::vector<core::TableStyle> table_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_table_style() const { return 0; }
+    /// MLEADERSTYLE: the multileader styles and the current one (MLEADER draws with it).
+    [[nodiscard]] virtual std::vector<core::MLeaderStyle> mleader_styles() const { return {core::MLeaderStyle{}}; }
+    [[nodiscard]] virtual std::uint16_t current_mleader_style() const { return 0; }
     /// The colour, linetype and lineweight new objects take (CECOLOR, CELTYPE, CELWEIGHT),
     /// as last published; COLOR, LINETYPE and LWEIGHT change them.
     [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
+    /// The linetypes loaded beyond the built-in four (Linetype kFirstLoadedLinetype + i).
+    [[nodiscard]] virtual std::vector<core::LinetypeDef> linetypes() const { return {}; }
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).
     [[nodiscard]] virtual std::vector<std::string> layout_names() const { return {}; }
     [[nodiscard]] virtual std::uint8_t active_space() const { return 0; }

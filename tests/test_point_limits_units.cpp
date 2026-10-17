@@ -274,6 +274,6 @@ TEST_CASE("PDMODE, PDSIZE, PTYPE and LIMITS at the command line; POINT places on
     h.proc.submit_line("SNAP");
     h.proc.submit_line("S");
     h.proc.submit_line("I");
-    REQUIRE(h.out.lines.back() == "Isometric snap is not available yet; the snap stays Standard.");
-    REQUIRE_FALSE(h.proc.has_active_command());
+    REQUIRE(h.out.prompt.rfind("Specify vertical spacing <", 0) == 0); // Isometric asks its spacing
+    h.proc.cancel();
 }

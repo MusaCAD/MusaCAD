@@ -167,7 +167,8 @@ TEST_CASE("The -LAYER Plot and Description options; WIPEOUT Frames Display but n
     H h;
     h.proc.submit_line("-LAYER");
     REQUIRE(h.out.prompt ==
-            "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/LOck/Unlock/Description]: ");
+            "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/"
+            "LOck/Unlock/stAte/Description/rEconcile/Xref]: ");
     h.proc.submit_line("P");
     REQUIRE(h.out.prompt == "Enter a plotting preference [Plot/No plot] <Plot>: ");
     h.proc.submit_line("N");

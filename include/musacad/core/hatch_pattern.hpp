@@ -24,6 +24,7 @@ struct PatternLine {
     Vec2 origin{};
     Vec2 delta{};
     std::vector<double> dashes;
+    friend bool operator==(const PatternLine&, const PatternLine&) = default;
 };
 
 /// A named hatch pattern = one or more line families. SOLID is NOT represented here (it is
@@ -32,6 +33,7 @@ struct PatternLine {
 struct Pattern {
     std::string name;
     std::vector<PatternLine> lines;
+    friend bool operator==(const Pattern&, const Pattern&) = default;
 };
 
 /// Parse AutoCAD .PAT text (one or more `*NAME, description` definitions, each followed by

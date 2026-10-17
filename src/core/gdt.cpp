@@ -66,11 +66,18 @@ FcfGeometry compute_fcf_geometry(const FcfData& f, const std::vector<std::string
     const Frame fr = frame_of(f.pos, f.rotation);
 
     // Expand control codes ONCE, here, so the measured width and the drawn glyphs are
-    // the same string (the entity keeps the raw cells -- derived-not-baked).
+    // the same string (the entity keeps the raw cells -- derived-not-baked). A cell that is
+    // AutoCAD's row break "^J" starts the next row, under this one: the projected
+    // tolerance zone, a composite frame's second line, the datum identifier.
     g.cell_text.reserve(cells.size());
     std::vector<double> widths;
     widths.reserve(cells.size());
     for (const std::string_view c : cells) {
+        if (c == "^J") {
+            widths.push_back(-1.0); // the row break: no box of its own
+            g.cell_text.emplace_back();
+            continue;
+        }
         std::string vis = text::substitute_text(c);
         widths.push_back(std::max(text::text_width(vis, h) + 2.0 * pad, kMinCell * h));
         g.cell_text.push_back(std::move(vis));
@@ -79,38 +86,49 @@ FcfGeometry compute_fcf_geometry(const FcfData& f, const std::vector<std::string
         return g; // a frame with no cells draws nothing rather than a stray box
     }
 
-    double total = 0.0;
-    for (const double w : widths) {
-        total += w;
-    }
-
-    // Outer border.
-    const Vec2 bl = fr.to_world(0.0, 0.0);
-    const Vec2 br = fr.to_world(total, 0.0);
-    const Vec2 tr = fr.to_world(total, box_h);
-    const Vec2 tl = fr.to_world(0.0, box_h);
-    seg(g.lines, bl, br);
-    seg(g.lines, br, tr);
-    seg(g.lines, tr, tl);
-    seg(g.lines, tl, bl);
-
-    // Cell rectangles, dividers and centred text. The divider is drawn on each cell's
-    // right edge except the last, whose edge is the outer border.
-    double x = 0.0;
+    // Row by row, each under the last: its outer border, then the cells with a divider
+    // on each one's right edge but the last's (the border is that).
     g.cell_quads.reserve(widths.size());
     g.text_pos.reserve(widths.size());
-    for (std::size_t i = 0; i < widths.size(); ++i) {
-        const double w = widths[i];
-        g.cell_quads.push_back({fr.to_world(x, 0.0), fr.to_world(x + w, 0.0),
-                                fr.to_world(x + w, box_h), fr.to_world(x, box_h)});
-        if (i + 1 < widths.size()) {
-            seg(g.lines, fr.to_world(x + w, 0.0), fr.to_world(x + w, box_h));
+    std::size_t first = 0;
+    double y0 = 0.0;
+    while (first < widths.size()) {
+        std::size_t end = first;
+        double total = 0.0;
+        while (end < widths.size() && widths[end] >= 0.0) {
+            total += widths[end];
+            ++end;
         }
-        // Text centred horizontally, and vertically on the cell's mid-height (the
-        // baseline sits half a cap-height below centre).
-        const double tw = text::text_width(g.cell_text[i], h);
-        g.text_pos.push_back(fr.to_world(x + (w - tw) * 0.5, (box_h - h) * 0.5));
-        x += w;
+        if (end > first) {
+            const double y1 = y0 + box_h;
+            seg(g.lines, fr.to_world(0.0, y0), fr.to_world(total, y0));
+            seg(g.lines, fr.to_world(total, y0), fr.to_world(total, y1));
+            seg(g.lines, fr.to_world(total, y1), fr.to_world(0.0, y1));
+            seg(g.lines, fr.to_world(0.0, y1), fr.to_world(0.0, y0));
+            double x = 0.0;
+            for (std::size_t i = first; i < end; ++i) {
+                const double w = widths[i];
+                g.cell_quads.push_back({fr.to_world(x, y0), fr.to_world(x + w, y0), fr.to_world(x + w, y1),
+                                        fr.to_world(x, y1)});
+                if (i + 1 < end) {
+                    seg(g.lines, fr.to_world(x + w, y0), fr.to_world(x + w, y1));
+                }
+                // Text centred horizontally, and vertically on the cell's mid-height (the
+                // baseline sits half a cap-height below centre).
+                const double tw = text::text_width(g.cell_text[i], h);
+                g.text_pos.push_back(fr.to_world(x + (w - tw) * 0.5, y0 + (box_h - h) * 0.5));
+                x += w;
+            }
+        }
+        if (end < widths.size()) {
+            // The row break keeps the arrays one entry per cell: an empty box, no text.
+            const Vec2 at = fr.to_world(0.0, y0);
+            g.cell_quads.push_back({at, at, at, at});
+            g.text_pos.push_back(at);
+            y0 -= box_h;
+            ++end;
+        }
+        first = end;
     }
     return g;
 }

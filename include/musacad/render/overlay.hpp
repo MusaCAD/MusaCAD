@@ -60,6 +60,8 @@ struct RenderOverlay {
     int lasso_mode = 0;
     /// HIGHLIGHT 0: the selection is drawn without its highlight.
     bool hide_selection = false;
+    /// Grips made hot with Shift + click, drawn in the hot colour.
+    std::vector<core::Vec2> hot_grips;
 
     /// Ghost transform applied by the renderer to the snapshot's selected
     /// geometry: 0 = none, 1 = move (translate by ghost_b - ghost_a),
@@ -82,6 +84,7 @@ struct RenderOverlay {
         lasso.clear();
         lasso_mode = 0;
         hide_selection = false;
+        hot_grips.clear();
         ghost_mode = 0;
         dyn_labels.clear();
         command_ui = CanvasCommandUI{};

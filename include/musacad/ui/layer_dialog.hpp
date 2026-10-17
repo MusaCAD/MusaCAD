@@ -38,9 +38,14 @@ public:
 
     /// Per layer: whether an entity is on it (All Used Layers).
     using UsedGetter = std::function<std::vector<std::uint8_t>()>;
+    /// The drawing's group filters (New Group Filter).
+    using FiltersGetter = std::function<std::vector<core::LayerGroupFilter>()>;
+    /// The linetypes the drawing has loaded beyond the built-in four (the Linetype column).
+    using LinetypesGetter = std::function<std::vector<core::LinetypeDef>()>;
 
     LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit,
-                QWidget* parent = nullptr, VpFrozenGetter vp_frozen = {}, UsedGetter used = {});
+                QWidget* parent = nullptr, VpFrozenGetter vp_frozen = {}, UsedGetter used = {},
+                FiltersGetter filters = {}, LinetypesGetter linetypes = {});
 
     /// Rebuilds the table from the current layer list (skips while the user is
     /// editing a cell, and only when the list actually changed).
@@ -67,6 +72,13 @@ private:
     Submit submit_;
     VpFrozenGetter vp_frozen_;
     UsedGetter used_;
+    FiltersGetter filters_;
+    LinetypesGetter linetypes_;
+    std::vector<core::LayerGroupFilter> shown_filters_; ///< the group filters in filter_, after the built-in ones
+    void refill_filters();
+    void new_group_filter();
+    void new_property_filter();
+    void delete_group_filter();
     QComboBox* filter_ = nullptr;  ///< All, All Used Layers, On, Off, Frozen, Thawed, Locked, Unlocked
     QCheckBox* invert_ = nullptr;  ///< Invert filter
     std::optional<std::vector<std::uint16_t>> shown_vp_; // last rendered VP Freeze state

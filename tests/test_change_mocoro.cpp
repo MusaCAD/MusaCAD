@@ -24,11 +24,18 @@
 #include "musacad/command/commands.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/ellipse.hpp"
+#include "musacad/core/gdt.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/grips.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
+#include "musacad/core/io/xlsx.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
 using namespace musacad::core;
@@ -280,7 +287,7 @@ TEST_CASE("NEWVIEW saves the view on screen; VIEW without its window asks at the
     REQUIRE(out.prompt == "Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
     proc.submit_line("");
     proc.submit_line("LAYERSTATE");
-    REQUIRE(out.prompt == "Enter an option [?/Save/Restore/Delete/Name]: ");
+    REQUIRE(out.prompt == "Enter an option [?/Save/Restore/Delete/Name/Import/EXport]: ");
     proc.submit_line("");
 
     GeometryEngine engine;
@@ -1953,4 +1960,2314 @@ TEST_CASE("EXTRIM asks for the cutting edge, then the side") {
     h.run({"0,1"});
     REQUIRE(h.last<ExtrimCommand>()->edge == Vec2{10, 0});
     REQUIRE(h.last<ExtrimCommand>()->side == Vec2{0, 1});
+}
+
+TEST_CASE("Alternate units below the primary value when DIMAPOST starts with \\X") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {50, 0};
+    d.line_pt = {25, 10};
+    DimStyle st;
+    st.alt = true;
+    st.alt_factor = 1.0 / 25.4;
+    st.alt_precision = 2;
+    DimLabel beside = compose_dim_label(d, st, {});
+    REQUIRE(beside.line1.find(" [") != std::string::npos);
+    REQUIRE(beside.line2.empty());
+    st.alt_post = "\\X";
+    DimLabel below = compose_dim_label(d, st, {});
+    REQUIRE(below.line1.find('[') == std::string::npos);
+    REQUIRE(below.line2.front() == '[');
+    REQUIRE(below.line2.back() == ']');
+    // A stacked tolerance keeps the line below: the alternate value goes beside the value.
+    st.tol_method = 3; // Limits
+    st.tol_upper = 0.1;
+    st.tol_lower = 0.05;
+    DimLabel lim = compose_dim_label(d, st, {});
+    REQUIRE(lim.line1.find('\x1f') == std::string::npos);
+    REQUIRE(lim.line2.find('\x1f') == std::string::npos);
+}
+
+TEST_CASE("Feet and inches drop zero feet and zero inches as DIMZIN says") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.line_pt = {3, 10};
+    DimStyle st;
+    st.linear_unit = 4; // Architectural
+    st.precision = 4;
+    const auto text = [&](double inches, int mode) {
+        d.b = {inches, 0};
+        st.zero_suppression = static_cast<std::uint8_t>(mode);
+        return compose_dim_label(d, st, {}).line1;
+    };
+    REQUIRE(text(6, 1) == "0'-6\"");
+    REQUIRE(text(12, 1) == "1'-0\"");
+    REQUIRE(text(6, 0) == "6\"");
+    REQUIRE(text(12, 0) == "1'");
+    REQUIRE(text(18, 0) == "1'-6\"");
+    REQUIRE(text(6, 2) == "0'-6\"");
+    REQUIRE(text(12, 2) == "1'");
+    REQUIRE(text(6, 3) == "6\"");
+    REQUIRE(text(12, 3) == "1'-0\"");
+
+    // A drawing saved before v40 keeps showing both.
+    io::Document doc;
+    DimStyle old;
+    old.name = "Imperial";
+    old.zero_suppression = 0;
+    doc.dimstyles.push_back(old);
+    doc.format_version = 39;
+    io::Document back;
+    REQUIRE(io::parse_native(io::serialize_native(doc), back).ok);
+    REQUIRE((back.dimstyles.back().zero_suppression & kDimZinFeetInches) == 1);
+    doc.format_version = 40;
+    io::Document now;
+    REQUIRE(io::parse_native(io::serialize_native(doc), now).ok);
+    REQUIRE((now.dimstyles.back().zero_suppression & kDimZinFeetInches) == 0);
+}
+
+TEST_CASE("Multileader styles: added, made current, kept in the drawing; MLEADER draws with the current one") {
+    GeometryEngine engine;
+    engine.start();
+    MLeaderStyle big;
+    big.name = "Big notes";
+    big.text_height = 5.0;
+    big.landing_distance = 10.0;
+    big.landing_gap = 2.0;
+    big.arrow = 3; // dot
+    big.arrow_size = 4.0;
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::Add, {}, big});
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::SetCurrent, "big notes", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.current_mleader_style == 1; }));
+    io::Document doc = dump(engine, "musacad_mls.musa");
+    REQUIRE(doc.mleader_styles.size() == 2);
+    REQUIRE(doc.mleader_styles[1] == big);
+    REQUIRE(doc.current_mleader_style == 1);
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::Delete, "Big notes", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "Multileader style \"Big notes\" cannot be deleted: it is Standard or the current style.";
+    }));
+    engine.stop();
+
+    H h;
+    h.proc.set_mleader_styles({MLeaderStyle{}, big}, 1);
+    h.run({"MLD", "0,0", "10,10", "NOTE"});
+    const auto* m = h.last<AddMLeaderCommand>();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->block.height == 5.0);
+    REQUIRE(m->vertices[2].x == Approx(20.0));      // a 10 landing
+    REQUIRE(m->block.pos.x == Approx(22.0));         // and a 2 gap
+    REQUIRE(m->overrides.arrow_type == 3);
+    REQUIRE(m->overrides.has(DimOverrides::kArrowType));
+    REQUIRE(m->overrides.arrow_size == 4.0);
+}
+
+TEST_CASE("PAGESETUP's Set Current in a layout gives the layout that page setup") {
+    GeometryEngine engine;
+    engine.start();
+    PageSetup a3;
+    a3.name = "A3 landscape";
+    a3.paper = "ISO A3";
+    a3.paper_w_mm = 420.0;
+    a3.paper_h_mm = 297.0;
+    a3.landscape = true;
+    engine.submit(AddPageSetupCommand{a3});
+    engine.submit(SetLayoutPageCommand{"A3 landscape"});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "A page setup is given to a layout: make a layout current first.";
+    }));
+    engine.submit(SetActiveSpaceCommand{0xFF, {}});
+    engine.submit(SetLayoutPageCommand{"A3 landscape"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Page setup \"A3 landscape\" is current for layout", 0) == 0; }));
+    const io::Document doc = dump(engine, "musacad_layout_page.musa");
+    REQUIRE(!doc.layouts.empty());
+    REQUIRE(doc.layouts.front().page.name == "A3 landscape");
+    REQUIRE(doc.layouts.front().page.paper_w_mm == 420.0);
+    engine.stop();
+}
+
+TEST_CASE("A feature control frame's second row and datum identifier stand under it, and travel through DXF") {
+    DimStyle s;
+    s.text_height = 2.5;
+    const std::vector<std::string> cells = {"\\U+2316", "0.1", "A", "^J", "6 \\U+24C5", "^J", "-B-"};
+    std::vector<std::string_view> views(cells.begin(), cells.end());
+    FcfData f;
+    f.pos = {0.0, 0.0};
+    f.cell_count = static_cast<std::uint32_t>(cells.size());
+    const FcfGeometry g = compute_fcf_geometry(f, views, s, Rgb{255, 255, 255});
+    REQUIRE(g.cell_quads.size() == cells.size());
+    REQUIRE(g.text_pos.size() == cells.size());
+    const double box = 2.0 * s.text_height;
+    REQUIRE(g.cell_quads[0][0].y == Approx(0.0));        // the first row
+    REQUIRE(g.cell_quads[4][0].y == Approx(-box));       // the projected zone, under it
+    REQUIRE(g.cell_quads[6][0].y == Approx(-2.0 * box)); // the datum identifier, under that
+    REQUIRE(g.cell_text[3].empty());
+
+    io::Document doc;
+    io::DocFcf d;
+    d.cells = cells;
+    doc.fcfs.push_back(d);
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_fcf_rows.dxf").string();
+    REQUIRE(io::save_dxf(doc, path).ok);
+    io::Document back;
+    REQUIRE(io::load_dxf(path, back).ok);
+    std::filesystem::remove(path);
+    REQUIRE(!back.fcfs.empty());
+    REQUIRE(back.fcfs[0].cells == cells);
+}
+
+TEST_CASE("DONUT carries its ring at the cursor while the centre is asked for") {
+    H h;
+    h.run({"DONUT", "2", "4"});
+    REQUIRE(h.out.prompt == "Specify center of donut or <exit>: ");
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::Outline);
+    REQUIRE(h.proc.preview().points.size() == 2 * 2 * 48); // both edges
+    REQUIRE(h.proc.preview().points[0].x == Approx(1.0));  // the inner edge, radius 1
+    h.run({""});
+    REQUIRE(h.proc.preview().kind == musacad::command::PreviewKind::None);
+}
+
+TEST_CASE("SPLINE's Object makes the polylines picked into splines") {
+    H h;
+    h.run({"SPLINE", "O"});
+    REQUIRE(h.out.prompt == "Select spline-fit polylines: ");
+    h.proc.set_selection_count(1);
+    h.run({""});
+    const auto* c = h.last<PeditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == 4);
+    REQUIRE(c->selection);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("The Block Editor: a block's objects to edit, the rest hidden; BCLOSE saves what is shown as the block") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "BOX";
+    b.base = {5, 5};
+    b.lines.push_back(io::DocLine{{0, 0}, {10, 0}, {}});
+    doc.block_defs.push_back(b);
+    io::DocInsert ins;
+    ins.block_name = "BOX";
+    ins.pos = {100, 100};
+    doc.inserts.push_back(ins);
+    doc.circles.push_back(io::DocCircle{{50, 50}, 3.0, {}});
+    const std::string dp = (fs::temp_directory_path() / "musacad_bedit.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    engine.submit(BlockEditCommand{BlockEditCommand::Op::Open, "box", true, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Block Editor: \"BOX\" is open", 0) == 0; }));
+    REQUIRE(engine.snapshot().block_editor); // the Block Editor tab shows
+    engine.submit(SaveDocumentCommand{dp, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Close the Block Editor", 0) == 0; }));
+    engine.submit(AddLineCommand{{0, 10}, {10, 10}, 3}); // drawn in the Block Editor
+    engine.submit(BlockEditCommand{BlockEditCommand::Op::Close, {}, true, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Block \"BOX\" saved."; }));
+    REQUIRE_FALSE(engine.snapshot().block_editor);
+    const io::Document out = dump(engine, "musacad_bedit_out.musa");
+    const auto it = std::find_if(out.block_defs.begin(), out.block_defs.end(), [](const auto& d) { return d.name == "BOX"; });
+    REQUIRE(it != out.block_defs.end());
+    REQUIRE(it->lines.size() == 2);       // the new line is in the block
+    REQUIRE(it->base == Vec2{5, 5});
+    REQUIRE(out.inserts.size() == 1);      // the drawing's reference, and no other
+    REQUIRE(out.circles.size() == 1);      // shown again
+    REQUIRE(out.lines.empty());            // nothing left loose
+    engine.stop();
+    fs::remove(dp);
+}
+
+TEST_CASE("-BEDIT asks for the block; BCLOSE asks whether to save") {
+    H h;
+    h.run({"-BEDIT"});
+    REQUIRE(h.out.prompt == "Enter block name or [?]: ");
+    h.run({"Door A"});
+    REQUIRE(h.last<BlockEditCommand>()->name == "Door A");
+    REQUIRE(h.last<BlockEditCommand>()->op == BlockEditCommand::Op::Open);
+    h.run({"BCLOSE"});
+    REQUIRE(h.out.prompt == "Save changes to block? [Yes/No] <Yes>: ");
+    h.run({"N"});
+    REQUIRE_FALSE(h.last<BlockEditCommand>()->save);
+    h.run({"BSAVE"});
+    REQUIRE(h.last<BlockEditCommand>()->op == BlockEditCommand::Op::Save);
+}
+
+TEST_CASE("-TABLE's Auto fits the columns and the data rows to a window") {
+    H h;
+    h.run({"-TABLE", "A"});
+    REQUIRE(h.out.prompt == "Specify first corner: ");
+    h.run({"0,100", "200,0"});
+    const auto* t = h.last<AddTableCommand>();
+    REQUIRE(t != nullptr);
+    REQUIRE(t->cols == 3);                       // 200 / 63.5, rounded
+    REQUIRE(t->col_widths[0] == Approx(200.0 / 3.0));
+    REQUIRE(t->pos == Vec2{0, 100});             // the top-left corner
+    REQUIRE(t->rows == 11);                      // 100 / 9 lines, title and header among them
+}
+
+TEST_CASE("A view saved with a layer snapshot keeps the layers' state; deleting the view deletes it") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(SaveNamedViewCommand{NamedView{"Plan", {0, 0}, 1.0, "*VIEW|Plan"}});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.layer_state_names.size() == 1 && s.layer_state_names[0] == "*VIEW|Plan";
+    }));
+    const io::Document doc = dump(engine, "musacad_view_snapshot.musa");
+    REQUIRE(doc.views.size() == 1);
+    REQUIRE(doc.views[0].layer_state == "*VIEW|Plan");
+    engine.submit(DeleteNamedViewCommand{"Plan"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layer_state_names.empty() && s.named_views.empty(); }));
+    engine.stop();
+}
+
+TEST_CASE("A hatch pattern Musa CAD does not have comes with the drawing, from DXF and back") {
+    io::Document doc;
+    hatch::Pattern pat;
+    pat.name = "MYPAT";
+    hatch::PatternLine l;
+    l.angle = 45.0;
+    l.origin = {1.0, 0.0};
+    l.delta = {0.0, 0.5};
+    l.dashes = {0.25, -0.1};
+    pat.lines.push_back(l);
+    doc.patterns.push_back(pat);
+    io::DocHatch h;
+    h.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+    h.pattern_name = "MYPAT";
+    h.pattern_scale = 2.0;
+    h.pattern_angle = 0.5235987755982988; // 30 degrees
+    doc.hatches.push_back(h);
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_custom_pat.dxf").string();
+    REQUIRE(io::save_dxf(doc, path).ok);
+    io::Document back;
+    REQUIRE(io::load_dxf(path, back).ok);
+    std::filesystem::remove(path);
+    REQUIRE(back.patterns.size() == 1);
+    const hatch::PatternLine& b = back.patterns[0].lines.at(0);
+    REQUIRE(back.patterns[0].name == "MYPAT");
+    REQUIRE(b.angle == Approx(45.0));
+    REQUIRE(b.origin.x == Approx(1.0));
+    REQUIRE(b.origin.y == Approx(0.0).margin(1e-9));
+    REQUIRE(b.delta.x == Approx(0.0).margin(1e-9));
+    REQUIRE(b.delta.y == Approx(0.5));
+    REQUIRE(b.dashes.size() == 2);
+    REQUIRE(b.dashes[0] == Approx(0.25));
+
+    // Kept in the drawing and drawn: the store finds it by name.
+    GeometryStore store;
+    io::populate_store(store, back);
+    REQUIRE(store.pattern("mypat") != nullptr);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(io::document_from_store(store)), again).ok);
+    REQUIRE(again.patterns.size() == 1);
+    REQUIRE(again.patterns[0] == back.patterns[0]);
+}
+
+TEST_CASE("LAYMRG moves a layer's objects to another; LAYDEL erases them; one undo step each") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLayerCommand{Layer{"Walls"}});
+    engine.submit(AddLayerCommand{Layer{"Doors"}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layers.size() == 3; }));
+    AddLineCommand a{{0, 0}, {10, 0}, 1};
+    a.props = EntityProps{};
+    a.props->layer = 1; // Walls
+    engine.submit(a);
+    AddLineCommand b{{0, 5}, {10, 5}, 1};
+    b.props = EntityProps{};
+    b.props->layer = 2; // Doors
+    engine.submit(b);
+    LayerMergeCommand merge;
+    merge.sources = {"doors"};
+    merge.target = "Walls";
+    merge.group = 2;
+    engine.submit(merge);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("1 object merged from \"Doors\" into \"Walls\"", 0) == 0; }));
+    io::Document doc = dump(engine, "musacad_laymrg.musa");
+    REQUIRE(doc.lines.size() == 2);
+    REQUIRE(doc.lines[0].props.layer == 1);
+    REQUIRE(doc.lines[1].props.layer == 1);
+    LayerMergeCommand del;
+    del.sources = {"Walls"};
+    del.erase = true;
+    del.group = 3;
+    engine.submit(del);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("2 objects deleted from \"Walls\"", 0) == 0; }));
+    doc = dump(engine, "musacad_laydel.musa");
+    REQUIRE(doc.lines.empty());
+    REQUIRE(doc.layers.size() == 3); // the layers stay for PURGE
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_laydel_undo.musa");
+    REQUIRE(doc.lines.size() == 2);
+    engine.stop();
+}
+
+TEST_CASE("LAYMRG and LAYDEL ask for the layers, then warn") {
+    H h;
+    h.run({"LAYMRG"});
+    REQUIRE(h.out.prompt == "Select object on layer to merge or [Name]: ");
+    h.run({"N", "Doors"});
+    REQUIRE(h.out.prompt == "Select object on layer to merge or [Name/Undo]: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Select object on target layer or [Name]: ");
+    h.run({"N", "Walls"});
+    REQUIRE(h.out.prompt == "Do you wish to continue? [Yes/No] <No>: ");
+    REQUIRE(h.out.lines.back() == "You are about to merge \"Doors\" into layer \"Walls\".");
+    h.run({"Y"});
+    REQUIRE(h.last<LayerMergeCommand>()->sources == std::vector<std::string>{"Doors"});
+    REQUIRE(h.last<LayerMergeCommand>()->target == "Walls");
+    h.run({"LAYDEL", "N", "Old", ""});
+    REQUIRE(h.out.lines.back() == "You are about to delete layer \"Old\" from this drawing.");
+    h.run({""}); // No
+    REQUIRE(h.last<LayerMergeCommand>()->target == "Walls"); // nothing new submitted
+}
+
+TEST_CASE("-HATCH's Origin, hatch COlor and LAyer go with the hatches made") {
+    H h;
+    h.run({"-HATCH", "O"});
+    REQUIRE(h.out.prompt == "[Use current origin/Set new origin/Default to boundary extents] <Use current origin>: ");
+    h.run({"S", "5,7"});
+    h.run({"CO"});
+    REQUIRE(h.out.prompt == "Enter new color for new hatch objects or [. (use current)] <use current>: ");
+    h.run({"1", "LA", "Hatching"});
+    h.run({"10,10"});
+    const auto* c = h.last<HatchPickPointCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->extras.origin == Vec2{5, 7});
+    REQUIRE(c->extras.color == Rgb{255, 0, 0});
+    REQUIRE(c->extras.layer == "Hatching");
+    h.proc.cancel();
+    // Back as they were, for the other tests.
+    h.run({"-HATCH", "O", "U", "CO", ".", "LA", "."});
+    h.proc.cancel();
+
+    // The engine: a pick inside a square makes the hatch with them.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLayerCommand{Layer{"Hatching"}});
+    engine.submit(AddPolylineCommand{{{0, 0}, {20, 0}, {20, 20}, {0, 20}}, true, 1});
+    HatchPickPointCommand pick;
+    pick.point = {10, 10};
+    pick.pattern_name = "ANSI31";
+    pick.group = 2;
+    pick.extras.origin_corner = 4; // top right
+    pick.extras.layer = "Hatching";
+    engine.submit(pick);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Hatch created."; }));
+    const io::Document doc = dump(engine, "musacad_hatch_extras.musa");
+    REQUIRE(doc.hatches.size() == 1);
+    REQUIRE(doc.hatches[0].pattern_origin == Vec2{20, 20});
+    REQUIRE(doc.layers[doc.hatches[0].props.layer].name == "Hatching");
+    engine.stop();
+}
+
+TEST_CASE("Associative dimensions follow MOVE, SCALE and grip edits of what they measure; DIMDISASSOCIATE stops that") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {20, 0}, 1});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Aligned), {0, 0}, {20, 0}, {10, 5}, 0, 2});
+    engine.submit(AddCircleCommand{{50, 0}, 5, 3});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Radius), {50, 0}, {55, 0}, {58, 0}, 0, 4});
+    // MOVE the line: its dimension goes along, whole.
+    engine.submit(SelectPickCommand{{10, 0}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{5, 3}, 5});
+    io::Document doc = dump(engine, "musacad_assoc_1.musa");
+    REQUIRE(doc.dims.size() == 2);
+    const auto aligned = [&]() -> const io::DocDim& {
+        return doc.dims[0].type == static_cast<std::uint8_t>(DimType::Aligned) ? doc.dims[0] : doc.dims[1];
+    };
+    const auto radius = [&]() -> const io::DocDim& {
+        return doc.dims[0].type == static_cast<std::uint8_t>(DimType::Radius) ? doc.dims[0] : doc.dims[1];
+    };
+    REQUIRE(aligned().a == Vec2{5, 3});
+    REQUIRE(aligned().b == Vec2{25, 3});
+    REQUIRE(aligned().line_pt == Vec2{15, 8});
+    REQUIRE(radius().a == Vec2{50, 0}); // the circle stayed
+    // One undo puts the line and its dimension back.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_assoc_2.musa");
+    REQUIRE(aligned().a == Vec2{0, 0});
+    REQUIRE(doc.lines[0].a == Vec2{0, 0});
+    engine.submit(RedoLastGroupCommand{});
+    // SCALE the circle about its centre: the radius dimension's point on it goes out with it.
+    engine.submit(SelectPickCommand{{50, 5}, 0.5, false});
+    engine.submit(ScaleSelectionCommand{{50, 0}, 2.0, 6});
+    doc = dump(engine, "musacad_assoc_3.musa");
+    REQUIRE(radius().a == Vec2{50, 0});
+    REQUIRE(std::abs(radius().b.x - 60.0) < 1e-9);
+    // A grip edit of the line's end: only the point there follows.
+    engine.submit(SelectPickCommand{{15, 3}, 0.5, false});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return std::any_of(s.grips.begin(), s.grips.end(),
+                           [](const GripInfo& g) { return g.handle.kind == EntityKind::Line; });
+    }));
+    GripInfo end{};
+    for (const GripInfo& g : engine.snapshot().grips) {
+        if (g.handle.kind == EntityKind::Line && g.index == 1) {
+            end = g;
+        }
+    }
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, end.handle, end.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {35, 3}, 7});
+    doc = dump(engine, "musacad_assoc_4.musa");
+    REQUIRE(aligned().a == Vec2{5, 3});
+    REQUIRE(aligned().b == Vec2{35, 3});
+    REQUIRE(aligned().line_pt == Vec2{15, 8});
+    // DIMDISASSOCIATE: the dimensions stay where they are when the line moves again.
+    engine.submit(SelectAllCommand{});
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Disassociate, 2, 8});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 disassociated."; }));
+    engine.submit(SelectPickCommand{{20, 3}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, 10}, 9});
+    doc = dump(engine, "musacad_assoc_5.musa");
+    REQUIRE(aligned().a == Vec2{5, 3});
+    REQUIRE(aligned().unassoc);
+    REQUIRE(radius().unassoc);
+    REQUIRE(doc.lines[0].a == Vec2{5, 13});
+    // DIMREASSOCIATE: they follow again.
+    engine.submit(SelectAllCommand{});
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Reassociate, 2, 10});
+    engine.submit(SelectPickCommand{{50, 10}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, 10}, 11});
+    doc = dump(engine, "musacad_assoc_6.musa");
+    REQUIRE_FALSE(radius().unassoc);
+    REQUIRE(radius().a == Vec2{50, 10});
+    engine.stop();
+}
+
+TEST_CASE("A dimension point where another object stays does not follow; DIMASSOC 1 draws them not associative") {
+    GeometryEngine engine;
+    engine.start();
+    // Two lines meeting at the origin; the dimension is to the corner and the first line's end.
+    engine.submit(AddLineCommand{{0, 0}, {20, 0}, 1});
+    engine.submit(AddLineCommand{{0, 0}, {0, 20}, 2});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Aligned), {0, 0}, {20, 0}, {10, -5}, 0, 3});
+    engine.submit(SelectPickCommand{{10, 0}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, -2}, 4});
+    io::Document doc = dump(engine, "musacad_assoc_7.musa");
+    REQUIRE(doc.dims[0].a == Vec2{0, 0});  // the corner: the other line is still there
+    REQUIRE(doc.dims[0].b == Vec2{20, -2}); // the line's own end
+    // DIMASSOC 1: a dimension drawn now does not follow.
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Variable, 1, 0});
+    engine.submit(AddCircleCommand{{50, 0}, 5, 5});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Radius), {50, 0}, {55, 0}, {58, 0}, 0, 6});
+    engine.submit(SelectPickCommand{{50, 5}, 0.5, false});
+    engine.submit(MoveSelectionCommand{{0, 10}, 7});
+    doc = dump(engine, "musacad_assoc_8.musa");
+    const io::DocDim& r = doc.dims[0].type == static_cast<std::uint8_t>(DimType::Radius) ? doc.dims[0] : doc.dims[1];
+    REQUIRE(r.unassoc);
+    REQUIRE(r.a == Vec2{50, 0});
+    engine.stop();
+}
+
+TEST_CASE("DIMASSOC asks for 0 to 2; DIMDISASSOCIATE and DIMREASSOCIATE take the dimensions selected") {
+    H h;
+    h.run({"DIMASSOC"});
+    REQUIRE(h.out.prompt == "Enter new value for DIMASSOC <2>: ");
+    h.run({"3"});
+    REQUIRE(h.out.lines.back() == "Requires an integer between 0 and 2.");
+    h.run({"1"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 1);
+    h.run({"DIMASSOC", "2"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 2);
+    h.run({"DDA"});
+    REQUIRE(h.out.prompt == "Select dimensions to disassociate: ");
+    h.proc.cancel();
+    h.proc.set_selection_count(1);
+    h.run({"DIMDISASSOCIATE"});
+    REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::Disassociate);
+    h.run({"DRE"});
+    REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::Reassociate);
+}
+
+TEST_CASE("The dimension grip menu: Flip Arrow, Above Dim Line, Center Vertically, Reset Text Position, Move Text Only") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {20, 0};
+    d.line_pt = {10, 10};
+    REQUIRE(compute_dim_geometry(d, DimStyle{}, Rgb{}).dim_lines[0].x == Approx(0.0));
+    d.flip = 1; // the first head outside: the line goes on past its extension line
+    const DimGeometry flipped = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    REQUIRE(flipped.dim_lines[0].x < -1.0);
+    REQUIRE(flipped.dim_lines[1].x == Approx(20.0));
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {20, 0}, {10, 10}, 0, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    const auto dim = [&] { return engine.snapshot().selection.at(0); };
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, dim(), {20, 10}, 2});
+    io::Document doc = dump(engine, "musacad_dimgrip_1.musa");
+    REQUIRE(doc.dims[0].flip == 2); // the head nearer the grip
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::CenterVertically, dim(), {10, 10}, 3});
+    doc = dump(engine, "musacad_dimgrip_2.musa");
+    REQUIRE(doc.dims[0].overrides.has(DimOverrides::kTextAbove));
+    REQUIRE_FALSE(doc.dims[0].overrides.text_above);
+    // Move Text Only: the text grip dragged off the line; the dimension keeps DIMTMOVE 2.
+    GripDragCommand begin{GripDragCommand::Phase::Begin, dim(), DimData::kTextGripIndex, {}, 0};
+    begin.text_move = 2;
+    engine.submit(begin);
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {14, 25}, 4});
+    doc = dump(engine, "musacad_dimgrip_3.musa");
+    REQUIRE(doc.dims[0].overrides.has(DimOverrides::kTextMove));
+    REQUIRE(doc.dims[0].overrides.text_move == 2);
+    REQUIRE(doc.dims[0].line_pt == Vec2{10, 10}); // the line stayed
+    REQUIRE(doc.dims[0].text_offset != Vec2{});
+    REQUIRE(doc.dims[0].flip == 2);
+    // The file keeps them.
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.dims[0].flip == 2);
+    REQUIRE(again.dims[0].overrides.text_move == 2);
+    REQUIRE(again.dims[0] == doc.dims[0]);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::ResetText, dim(), {14, 25}, 5});
+    doc = dump(engine, "musacad_dimgrip_4.musa");
+    REQUIRE(doc.dims[0].text_offset == Vec2{});
+    engine.stop();
+}
+
+TEST_CASE("A grip the selected objects share drags them all; grips made hot with Shift move together") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{10, 0}, {10, 10}, 2});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grips.size() >= 6; }));
+    const auto grip_at = [&](Vec2 p, Vec2 other_end) {
+        // The grip at `p` of the line whose other end is `other_end`.
+        GripInfo found{};
+        std::vector<GripInfo> all = engine.snapshot().grips;
+        for (const GripInfo& g : all) {
+            if (g.pos == p && g.handle.kind == EntityKind::Line) {
+                for (const GripInfo& o : all) {
+                    if (o.handle == g.handle && o.pos == other_end) {
+                        found = g;
+                    }
+                }
+            }
+        }
+        return found;
+    };
+    // The corner both lines have: one drag moves both ends.
+    const GripInfo corner = grip_at({10, 0}, {0, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, corner.handle, corner.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {12, 2}, 3});
+    io::Document doc = dump(engine, "musacad_grips_shared.musa");
+    REQUIRE(doc.lines.size() == 2);
+    for (const io::DocLine& l : doc.lines) {
+        REQUIRE((l.a == Vec2{12, 2} || l.b == Vec2{12, 2}));
+    }
+    // Shift's hot grips: the first line's start and the second line's end go with the drag.
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        return std::any_of(s.grips.begin(), s.grips.end(), [](const GripInfo& g) { return g.pos == Vec2{12, 2}; });
+    }));
+    const GripInfo start = grip_at({0, 0}, {12, 2});
+    const GripInfo top = grip_at({10, 10}, {12, 2});
+    GripDragCommand begin{GripDragCommand::Phase::Begin, start.handle, start.index, {}, 0};
+    begin.also = {{top.handle, top.index}};
+    engine.submit(begin);
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {1, 1}, 4});
+    doc = dump(engine, "musacad_grips_hot.musa");
+    const bool first_is_bottom = doc.lines[0].a == Vec2{1, 1} || doc.lines[0].b == Vec2{1, 1};
+    const io::DocLine& bottom = first_is_bottom ? doc.lines[0] : doc.lines[1];
+    const io::DocLine& side = first_is_bottom ? doc.lines[1] : doc.lines[0];
+    REQUIRE((bottom.a == Vec2{1, 1} && bottom.b == Vec2{12, 2}));
+    REQUIRE((side.a == Vec2{12, 2} && side.b == Vec2{11, 11}));
+    // Both ends of one line hot: it moves whole.
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [&](const auto& s) {
+        return std::any_of(s.grips.begin(), s.grips.end(), [](const GripInfo& g) { return g.pos == Vec2{11, 11}; });
+    }));
+    const GripInfo s0 = grip_at({1, 1}, {12, 2});
+    const GripInfo s1 = grip_at({12, 2}, {1, 1});
+    engine.submit(ClearSelectionCommand{});
+    engine.submit(SelectPickCommand{{6, 1.5}, 0.5, false}); // the bottom line alone
+    GripDragCommand both{GripDragCommand::Phase::Begin, s0.handle, s0.index, {}, 0};
+    both.also = {{s1.handle, s1.index}};
+    engine.submit(both);
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {1, -9}, 5});
+    doc = dump(engine, "musacad_grips_whole.musa");
+    const bool moved_first = doc.lines[0].a == Vec2{1, -9};
+    const io::DocLine& moved = moved_first ? doc.lines[0] : doc.lines[1];
+    REQUIRE(moved.a == Vec2{1, -9});
+    REQUIRE(moved.b == Vec2{12, -8});
+    engine.stop();
+}
+
+TEST_CASE("The grip menus' Lengthen keeps a line's direction and an arc's circle; Radius keeps an arc's angles") {
+    GeometryStore st;
+    const EntityHandle ln = st.add_line({0, 0}, {10, 0});
+    const Command longer = edit_for_grip_drag(st, ln, 1, {15, 5}, -1, 1);
+    REQUIRE(std::get<AddLineCommand>(longer).b == Vec2{15, 0});
+    REQUIRE(std::get<AddLineCommand>(longer).a == Vec2{0, 0});
+    const Command stretched = edit_for_grip_drag(st, ln, 1, {15, 5});
+    REQUIRE(std::get<AddLineCommand>(stretched).b == Vec2{15, 5});
+    const EntityHandle ah = st.add_arc({0, 0}, 5, 0.0, kHalfPi);
+    const Command around = edit_for_grip_drag(st, ah, 2, {-3, 3}, -1, 1);
+    REQUIRE(std::get<AddArcCommand>(around).end_angle == Approx(0.75 * kPi));
+    REQUIRE(std::get<AddArcCommand>(around).radius == Approx(5.0));
+    const Command wider = edit_for_grip_drag(st, ah, 3, {6, 6}, -1, 2);
+    REQUIRE(std::get<AddArcCommand>(wider).radius == Approx(std::sqrt(72.0)));
+    REQUIRE(std::get<AddArcCommand>(wider).start_angle == Approx(0.0));
+    REQUIRE(std::get<AddArcCommand>(wider).end_angle == Approx(kHalfPi));
+}
+
+TEST_CASE("Ctrl at a hot grip's pick copies, again for each pick; the grip modes then say (multiple)") {
+    using P = GripDragCommand::Phase;
+    H h;
+    h.proc.set_selection_count(2);
+    GripDragCommand begin{P::Begin, EntityHandle{0, 1, EntityKind::Line}, 1, {}, 0};
+    begin.also = {{EntityHandle{1, 1, EntityKind::Line}, 0}};
+    h.proc.start_grip_mode(begin, {10, 0});
+    REQUIRE(h.out.lines.back() == "** STRETCH **");
+    h.proc.set_ctrl_held(true);
+    h.proc.pick_point({20, 5}, std::nullopt);
+    h.proc.set_ctrl_held(false);
+    const GripDragCommand* commit = nullptr;
+    for (const Command& c : h.cmds) {
+        if (const auto* g = std::get_if<GripDragCommand>(&c); g != nullptr && g->phase == P::Commit) {
+            commit = g;
+        }
+    }
+    REQUIRE(commit != nullptr);
+    REQUIRE(commit->copy);
+    REQUIRE(commit->pos == Vec2{20, 5});
+    REQUIRE(h.last<GripDragCommand>()->phase == P::Begin); // the next copy's drag ...
+    REQUIRE(h.last<GripDragCommand>()->also.size() == 1);  // ... with the other hot grip
+    REQUIRE(h.out.lines.back() == "** STRETCH (multiple) **");
+    REQUIRE(h.proc.has_active_command());
+    h.proc.cancel();
+}
+
+TEST_CASE("An associative hatch follows its boundary moved or reshaped; HPASSOC 0 makes them not") {
+    GeometryEngine engine;
+    engine.start();
+    AddPolylineCommand rect;
+    rect.points = {{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    rect.closed = true;
+    rect.group = 1;
+    engine.submit(rect);
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+    fill.group = 2;
+    engine.submit(fill);
+    const auto boundary = [&] {
+        engine.submit(SelectAllCommand{});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+        EntityHandle p{};
+        for (const EntityHandle h : engine.snapshot().selection) {
+            p = h.kind == EntityKind::Polyline ? h : p;
+        }
+        engine.submit(SelectHandleCommand{p});
+        return p;
+    };
+    boundary();
+    engine.submit(MoveSelectionCommand{{5, 5}, 3});
+    io::Document doc = dump(engine, "musacad_hatch_assoc_1.musa");
+    REQUIRE(doc.hatches[0].loops[0][0] == Vec2{5, 5});
+    REQUIRE(doc.hatches[0].loops[0][2] == Vec2{15, 15});
+    REQUIRE(doc.hatches[0].pattern_origin == Vec2{5, 5}); // the pattern went with it
+    // A grip edit of a corner: the hatch's corner goes there.
+    const EntityHandle p = boundary();
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, p, 2, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {25, 30}, 4});
+    doc = dump(engine, "musacad_hatch_assoc_2.musa");
+    REQUIRE(doc.hatches[0].loops[0][2] == Vec2{25, 30});
+    REQUIRE(doc.hatches[0].loops[0][1] == Vec2{15, 5});
+    // One undo takes the boundary and the hatch back together.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_hatch_assoc_3.musa");
+    REQUIRE(doc.hatches[0].loops[0][2] == Vec2{15, 15});
+    engine.stop();
+}
+
+TEST_CASE("HPASSOC asks 0 or 1; a hatch made with it 0 does not follow, and the file keeps that") {
+    H h;
+    h.run({"HPASSOC"});
+    REQUIRE(h.out.prompt == "Enter new value for HPASSOC <1>: ");
+    h.run({"0"});
+    REQUIRE(h.last<DimAssocCommand>()->op == DimAssocCommand::Op::HatchVariable);
+    REQUIRE(h.last<DimAssocCommand>()->value == 0);
+    h.run({"HPASSOC", "1"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 1);
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::HatchVariable, 0, 0});
+    engine.submit(AddCircleCommand{{0, 0}, 5, 1});
+    AddHatchCommand fill;
+    fill.loops = {{{5, 0}, {0, 5}, {-5, 0}, {0, -5}}};
+    fill.group = 2;
+    engine.submit(fill);
+    engine.submit(SelectPickCommand{{3.5355339, 3.5355339}, 0.01, false});
+    engine.submit(MoveSelectionCommand{{0, 20}, 3});
+    const io::Document doc = dump(engine, "musacad_hatch_noassoc.musa");
+    REQUIRE(doc.circles[0].center == Vec2{0, 20});
+    REQUIRE(doc.hatches[0].loops[0][0] == Vec2{5, 0});
+    REQUIRE(doc.hatches[0].unassoc);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.hatches[0].unassoc);
+    engine.stop();
+}
+
+TEST_CASE("A view keeps its View category in the file, with or without a layer snapshot") {
+    io::Document doc;
+    doc.views.push_back(NamedView{"Plan", {1, 2}, 3.0, "", "Sheets A"});
+    doc.views.push_back(NamedView{"Side", {4, 5}, 6.0, "*VIEW|Side", "Details"});
+    doc.views.push_back(NamedView{"Top", {7, 8}, 9.0});
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.views == doc.views);
+}
+
+TEST_CASE("TRIM takes an associative dimension's point at the trimmed end to the new end") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddLineCommand{{6, -5}, {6, 5}, 2});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Aligned), {0, 0}, {10, 0}, {5, -8}, 0, 3});
+    engine.submit(TrimPickCommand{{8, 0}, 0.5, 4});
+    io::Document doc = dump(engine, "musacad_trim_assoc.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].a == Vec2{0, 0});
+    REQUIRE(doc.dims[0].b.x == Approx(6.0));
+    REQUIRE(doc.dims[0].b.y == Approx(0.0).margin(1e-9));
+    // One undo: the line and its dimension as they were.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_trim_assoc_2.musa");
+    REQUIRE(doc.dims[0].b == Vec2{10, 0});
+    engine.stop();
+}
+
+TEST_CASE("ARRAYRECT draws 4 columns and 3 rows at once and changes them option by option") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({10, 4});
+    h.run({"ARRAYRECT"});
+    REQUIRE(std::find(h.out.lines.begin(), h.out.lines.end(), "Type = Rectangular  Associative = No") != h.out.lines.end());
+    const auto* pv = h.last<ArrayPreviewCommand>();
+    REQUIRE(pv != nullptr);
+    REQUIRE(pv->type == 1);
+    REQUIRE(pv->rect.cols == 4);
+    REQUIRE(pv->rect.rows == 3);
+    REQUIRE(pv->rect.dx == Approx(15.0));
+    REQUIRE(pv->rect.dy == Approx(6.0));
+    REQUIRE(h.out.prompt ==
+            "Select grip to edit array or [ASsociative/Base point/COUnt/Spacing/COLumns/Rows/Levels/eXit]<eXit>: ");
+    h.run({"COU"});
+    REQUIRE(h.out.prompt == "Enter the number of columns or [Expression] <4>: ");
+    h.run({"5", "2"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.cols == 5);
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.rows == 2);
+    h.run({"S"});
+    REQUIRE(h.out.prompt.rfind("Specify the distance between columns or [Unit cell] <", 0) == 0);
+    h.run({"20", "8"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.dx == Approx(20.0));
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.dy == Approx(8.0));
+    h.run({"COL", "3", "T", "50"}); // three columns 50 from first to last
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.dx == Approx(25.0));
+    h.run({"COU", "E", "2*3", ""}); // an expression for the columns
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.cols == 6);
+    REQUIRE(h.proc.has_active_command());
+    h.run({""});
+    const auto* ar = h.last<ArrayRectCommand>();
+    REQUIRE(ar != nullptr);
+    REQUIRE(ar->cols == 6);
+    REQUIRE(ar->rows == 2);
+    REQUIRE(ar->dx == Approx(25.0));
+    REQUIRE(ar->dy == Approx(8.0));
+    REQUIRE_FALSE(ar->auto_spacing);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("ARRAYPOLAR asks the centre, then Items, Angle between, Fill angle, ROWs and ROTate items") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({2, 2});
+    h.run({"ARRAYPOLAR"});
+    REQUIRE(h.out.prompt == "Specify center point of array or [Base point/Axis of rotation]: ");
+    h.run({"0,0"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 2);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.count == 6);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.total_angle == Approx(kTwoPi));
+    h.run({"I", "8", "F", "180"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.count == 8);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.total_angle == Approx(kPi));
+    h.run({"A", "30"}); // 30 degrees apart: 210 for the eight
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.total_angle == Approx(to_radians(210.0)));
+    h.run({"ROT", "N", "ROW", "2", "5", ""});
+    REQUIRE_FALSE(h.last<ArrayPreviewCommand>()->polar.rotate_items);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.rows == 2);
+    REQUIRE(h.last<ArrayPreviewCommand>()->polar.row_spacing == Approx(5.0));
+    h.run({"X"});
+    const auto* ap = h.last<ArrayPolarCommand>();
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->count == 8);
+    REQUIRE(ap->rows == 2);
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("ARRAYPATH fills the path at one and a half times the item's size; Method Divide asks how many") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({4, 2});
+    h.run({"ARRAYPATH"});
+    REQUIRE(h.out.prompt == "Select path curve: ");
+    h.run({"50,0"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 3);
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.spacing == Approx(6.0));
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.count == 0); // as many as fit
+    h.run({"M", "D", "I", "4"});
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.count == 4);
+    REQUIRE(h.last<ArrayPreviewCommand>()->path.spacing == Approx(0.0));
+    h.run({"A", "N", ""});
+    const auto* ap = h.last<ArrayPathCommand>();
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->count == 4);
+    REQUIRE_FALSE(ap->align);
+}
+
+TEST_CASE("ARRAY asks the type; Esc takes the preview away") {
+    H h;
+    h.proc.set_selection_count(1);
+    h.run({"AR"});
+    REQUIRE(h.out.prompt == "Enter array type [Rectangular/PAth/POlar] <Rectangular>: ");
+    h.run({""});
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 1);
+    REQUIRE(h.last<ArrayPreviewCommand>()->rect.auto_spacing); // the selection's size not known here
+    h.proc.cancel();
+    REQUIRE(h.last<ArrayPreviewCommand>()->type == 0);
+    REQUIRE(h.last<ArrayRectCommand>() == nullptr);
+}
+
+TEST_CASE("The array preview draws the copies the array would make, and the array clears it") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 1, 1});
+    engine.submit(SelectAllCommand{});
+    ArrayPreviewCommand pv;
+    pv.type = 1;
+    pv.rect.rows = 3;
+    pv.rect.cols = 4;
+    pv.rect.auto_spacing = true;
+    engine.submit(pv);
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.grip_preview_segments.empty(); }));
+    // The far corner's copy: 3 x 1.5 x 2 across, 2 x 1.5 x 2 up.
+    const auto& segs = engine.snapshot().grip_preview_segments;
+    REQUIRE(std::any_of(segs.begin(), segs.end(), [](const Vec2& v) { return distance(v, Vec2{9, 6}) <= 1.01; }));
+    ArrayRectCommand make;
+    make.rows = 3;
+    make.cols = 4;
+    make.auto_spacing = true;
+    make.group = 2;
+    engine.submit(make);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.empty(); }));
+    const io::Document doc = dump(engine, "musacad_array_preview.musa");
+    REQUIRE(doc.circles.size() == 12);
+    engine.stop();
+}
+
+TEST_CASE("SPLINE's start and end Tangency: the fitted curve leaves and arrives in those directions") {
+    // The fit with end directions: through the points, its first and last legs along them.
+    const std::vector<Vec2> pts{{0, 0}, {10, 5}, {20, 0}};
+    const std::vector<Vec2> ctrl = spline::fit_or_fallback(pts, 3, spline::FitParam::Chord, Vec2{0, 1}, Vec2{0, -1});
+    REQUIRE(ctrl.size() == 5);
+    REQUIRE(ctrl.front() == Vec2{0, 0});
+    REQUIRE(ctrl[1].x == Approx(0.0).margin(1e-9)); // straight up from the start
+    REQUIRE(ctrl[1].y > 0.0);
+    REQUIRE(ctrl[3].x == Approx(20.0).margin(1e-9)); // and straight down into the end
+    REQUIRE(ctrl.back().x == Approx(20.0));
+    std::vector<Vec2> curve;
+    spline::tessellate(ctrl, 3, curve);
+    REQUIRE(std::any_of(curve.begin(), curve.end(), [](const Vec2& v) { return distance(v, Vec2{10, 5}) < 0.05; }));
+
+    H h;
+    h.run({"SPLINE", "M", "F", "0,0", "T"}); // Fit, whatever an earlier test left
+    REQUIRE(h.out.prompt == "Specify start tangent: ");
+    h.run({"0,10", "10,5", "20,0", "T"});
+    REQUIRE(h.out.prompt == "Specify end tangent: ");
+    h.run({"20,-10"});
+    const auto* sp = h.last<AddSplineCommand>();
+    REQUIRE(sp != nullptr);
+    REQUIRE(sp->control_points.size() == 5);
+    REQUIRE(sp->control_points[1].x == Approx(0.0).margin(1e-9));
+    REQUIRE_FALSE(h.proc.has_active_command()); // the end tangent ends it
+}
+
+TEST_CASE("The Text tab's Vertical position: Below, and Outside on the side away from what is measured") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {20, 0};
+    d.line_pt = {10, 10}; // the line above the points
+    DimStyle st;
+    REQUIRE(dim_text_vpos(st) == 1);
+    const double above = compute_dim_geometry(d, st, Rgb{}).text_pos.y;
+    REQUIRE(above > 10.0);
+    REQUIRE(apply_dim_var(st, "DIMTAD", 4));
+    REQUIRE(dim_text_vpos(st) == 4);
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.y < 10.0 - st.text_height);
+    REQUIRE(apply_dim_var(st, "DIMTAD", 2)); // Outside: away from the points, so above here
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.y == Approx(above));
+    d.line_pt = {10, -10}; // the line below the points: outside is below it
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.y < -10.0 - st.text_height);
+    REQUIRE(apply_dim_var(st, "DIMTAD", 0));
+    REQUIRE(dim_text_vpos(st) == 0);
+    // The file and DXF keep all five.
+    io::Document doc;
+    DimStyle below;
+    below.name = "B";
+    REQUIRE(apply_dim_var(below, "DIMTAD", 4));
+    doc.dimstyles.push_back(below);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(dim_text_vpos(again.dimstyles.back()) == 4);
+}
+
+TEST_CASE("A layer state goes out to an AutoCAD .las file and comes back") {
+    LayerState st;
+    st.name = "Plot set";
+    st.current = "WALLS";
+    Layer walls;
+    walls.name = "WALLS";
+    walls.color = Rgb{255, 0, 0};
+    walls.linetype = Linetype::Dashed;
+    walls.lineweight = 35;
+    walls.locked = true;
+    Layer notes;
+    notes.name = "NOTES";
+    notes.color = Rgb{12, 34, 56}; // not a colour index: a true colour too
+    notes.on = false;
+    notes.plot = false;
+    notes.transparency = 40;
+    st.layers = {walls, notes};
+    const std::string las = io::serialize_las(st);
+    REQUIRE(las.rfind("  0\r\nLAYERSTATEDICTIONARY\r\n  0\r\nLAYERSTATE\r\n  1\r\nPlot set\r\n 91\r\n2047\r\n", 0) == 0);
+    REQUIRE(las.find("  8\r\nWALLS\r\n 90\r\n12\r\n 62\r\n1\r\n370\r\n35\r\n  6\r\nDASHED\r\n") != std::string::npos);
+    LayerState back;
+    std::string error;
+    REQUIRE(io::parse_las(las, back, error));
+    REQUIRE(back.name == "Plot set");
+    REQUIRE(back.current == "WALLS");
+    REQUIRE(back.layers.size() == 2);
+    REQUIRE(back.layers[0].color == Rgb{255, 0, 0});
+    REQUIRE(back.layers[0].locked);
+    REQUIRE(back.layers[0].linetype == Linetype::Dashed);
+    REQUIRE(back.layers[1].color == Rgb{12, 34, 56});
+    REQUIRE_FALSE(back.layers[1].on);
+    REQUIRE_FALSE(back.layers[1].plot);
+    REQUIRE(back.layers[1].transparency == 40);
+    // As AutoCAD writes one (LF endings here, a byte order mark, the "Default" lineweight).
+    const std::string acad = "\xEF\xBB\xBF  0\nLAYERSTATEDICTIONARY\n  0\nLAYERSTATE\n  1\nAULA\n 91\n2047\n301\n\n290\n0\n302\n"
+                             "CENTRO\n  8\nCENTRO\n 90\n24\n 62\n7\n370\n-3\n  6\nCENTER\n  2\nCor_7\n440\n0\n";
+    REQUIRE(io::parse_las(acad, back, error));
+    REQUIRE(back.name == "AULA");
+    REQUIRE(back.layers.size() == 1);
+    REQUIRE(back.layers[0].vp_freeze_new);
+    REQUIRE(back.layers[0].plot);
+    REQUIRE(back.layers[0].lineweight == 25);
+    REQUIRE_FALSE(io::parse_las("  0\nSECTION\n", back, error));
+}
+
+TEST_CASE("-LAYERSTATE's Import and EXport name the file") {
+    H h;
+    h.run({"-LAYERSTATE", "EX", "Plot set", ""});
+    const auto* c = h.last<LayerStateCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == LayerStateCommand::Op::Export);
+    REQUIRE(c->name == "Plot set");
+    REQUIRE(c->to == "Plot set.las");
+    h.run({"I", "/tmp/x.las"});
+    REQUIRE(h.last<LayerStateCommand>()->op == LayerStateCommand::Op::Import);
+    REQUIRE(h.last<LayerStateCommand>()->to == "/tmp/x.las");
+}
+
+TEST_CASE("HATCH finds a pattern it does not have in a .pat file on the support path and brings it in") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "musacad_pat_support";
+    fs::create_directories(dir);
+    {
+        std::ofstream f(dir / "mine.PAT", std::ios::binary);
+        f << "*MYDIAG, my diagonal lines\r\n45, 0,0, 0,3.175\r\n*MYGRID, a grid\r\n0, 0,0, 0,5\r\n90, 0,0, 0,5\r\n";
+    }
+    H h;
+    h.proc.set_support_paths({dir.string()});
+    h.run({"-HATCH", "P", "?"});
+    REQUIRE(h.out.lines.back().find(" MYDIAG") != std::string::npos);
+    REQUIRE(h.out.lines.back().find(" MYGRID") != std::string::npos);
+    h.run({"mygrid"});
+    const auto* ap = h.last<AddPatternCommand>();
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->pattern.name == "MYGRID");
+    REQUIRE(ap->pattern.lines.size() == 2);
+    REQUIRE(h.out.prompt.rfind("Specify a scale for the pattern <", 0) == 0);
+    h.proc.cancel();
+    h.run({"-HATCH", "P", "NOSUCH"});
+    REQUIRE(h.out.lines.back() == "Unknown pattern \"NOSUCH\"; ? lists them.");
+    h.proc.cancel();
+    fs::remove_all(dir);
+
+    // The engine keeps it with the drawing.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPatternCommand{ap->pattern});
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {20, 0}, {20, 20}, {0, 20}}};
+    fill.pattern_name = "MYGRID";
+    fill.group = 1;
+    engine.submit(fill);
+    const io::Document doc = dump(engine, "musacad_pat_support.musa");
+    REQUIRE(std::any_of(doc.patterns.begin(), doc.patterns.end(), [](const auto& p) { return p.name == "MYGRID"; }));
+    engine.stop();
+}
+
+TEST_CASE("Hatching a selection takes circles, whole ellipses, closed splines and polylines with arcs") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 5, 1});
+    AddPolylineCommand slot; // a slot: two straight sides, two half-circle ends
+    slot.points = {{20, 0}, {30, 0}, {30, 10}, {20, 10}};
+    slot.bulges = {0.0, 1.0, 0.0, 1.0};
+    slot.closed = true;
+    slot.group = 2;
+    engine.submit(slot);
+    engine.submit(SelectAllCommand{});
+    engine.submit(HatchFromSelectionCommand{"SOLID", 1.0, 0.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Solid hatch created."; }));
+    const io::Document doc = dump(engine, "musacad_hatch_curves.musa");
+    REQUIRE(doc.hatches.size() == 1);
+    REQUIRE(doc.hatches[0].loops.size() == 2);
+    for (const auto& loop : doc.hatches[0].loops) {
+        REQUIRE(loop.size() > 8); // the curves followed, not their chords
+    }
+    // The circle's loop is on the circle.
+    const auto& circle = doc.hatches[0].loops[0].front().x < 10.0 ? doc.hatches[0].loops[0] : doc.hatches[0].loops[1];
+    for (const Vec2& v : circle) {
+        REQUIRE(length(v) == Approx(5.0).margin(1e-6));
+    }
+    engine.stop();
+}
+
+TEST_CASE("HATCHEDIT separates a hatch's areas, disassociates it, and sets its colour and layer") {
+    GeometryEngine engine;
+    engine.start();
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}},      // an area ...
+                  {{3, 3}, {7, 3}, {7, 7}, {3, 7}},          // ... with an island
+                  {{20, 0}, {30, 0}, {30, 10}, {20, 10}}};   // and another area
+    fill.group = 1;
+    engine.submit(fill);
+    engine.submit(SelectAllCommand{});
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Separate, {}, true, {}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 hatch separated."; }));
+    io::Document doc = dump(engine, "musacad_hatchedit_1.musa");
+    REQUIRE(doc.hatches.size() == 2);
+    const auto& holed = doc.hatches[0].loops.size() == 2 ? doc.hatches[0] : doc.hatches[1];
+    REQUIRE(holed.loops.size() == 2); // the island stays with its area
+    engine.submit(SelectAllCommand{});
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Disassociate, {}, true, {}, 3});
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Color, Rgb{255, 0, 0}, false, {}, 4});
+    doc = dump(engine, "musacad_hatchedit_2.musa");
+    for (const auto& h : doc.hatches) {
+        REQUIRE(h.unassoc);
+        REQUIRE_FALSE(h.props.color_by_layer());
+        REQUIRE(h.props.color == Rgb{255, 0, 0});
+    }
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Layer, {}, true, "NOSUCH", 5});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Cannot find layer \"NOSUCH\"."; }));
+    engine.stop();
+}
+
+TEST_CASE("HATCHEDIT's Disassociate, separate Hatches, hatch COlor and LAyer") {
+    H h;
+    h.run({"HATCHEDIT", "5,5", "CO", "1"});
+    const auto* c = h.last<HatchEditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == HatchEditCommand::Op::Color);
+    REQUIRE_FALSE(c->by_layer);
+    h.run({"HATCHEDIT", "5,5", "LA", "Hatch fill"});
+    REQUIRE(h.last<HatchEditCommand>()->layer == "Hatch fill");
+    h.run({"HATCHEDIT", "5,5", "H"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Separate);
+    h.run({"HATCHEDIT", "5,5", "D"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Disassociate);
+}
+
+TEST_CASE("TEXTFIT fits Aligned and Fit text by moving its two points") {
+    GeometryEngine engine;
+    engine.start();
+    AddTextCommand t;
+    t.pos = {0, 0};
+    t.align = {10, 0};
+    t.justify = 5; // Fit
+    t.content = "FIT";
+    t.group = 1;
+    engine.submit(t);
+    engine.submit(TextFitCommand{{5, 1}, 2.0, {25, 0}, Vec2{5, 0}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Text fitted between its two points."; }));
+    const io::Document doc = dump(engine, "musacad_textfit_fit.musa");
+    REQUIRE(doc.texts.size() == 1);
+    REQUIRE(doc.texts[0].pos == Vec2{5, 0});
+    REQUIRE(doc.texts[0].align == Vec2{25, 0});
+    engine.stop();
+}
+
+TEST_CASE("DIMASSOC 0 draws dimensions exploded, in the same undo step") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(DimAssocCommand{DimAssocCommand::Op::Variable, 0, 0});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {20, 0}, {10, 10}, 0, 1});
+    io::Document doc = dump(engine, "musacad_dimassoc0.musa");
+    REQUIRE(doc.dims.empty());
+    REQUIRE(doc.lines.size() >= 3); // the dimension line and the two extension lines
+    REQUIRE_FALSE(doc.texts.empty());
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_dimassoc0_undo.musa");
+    REQUIRE(doc.dims.empty());
+    REQUIRE(doc.lines.empty());
+    engine.stop();
+}
+
+TEST_CASE("SPLINE's toLerance fits fewer control points within the tolerance, ends on the end points") {
+    std::vector<Vec2> pts;
+    for (int i = 0; i <= 20; ++i) {
+        const double x = i;
+        pts.push_back({x, 0.02 * std::sin(x * 7.0)}); // a wobbly straight run
+    }
+    const std::vector<Vec2> near = spline::fit_within(pts, 3, spline::FitParam::Chord, 0.1);
+    REQUIRE_FALSE(near.empty());
+    REQUIRE(near.size() < pts.size());
+    REQUIRE(near.front() == pts.front());
+    REQUIRE(near.back() == pts.back());
+    REQUIRE(spline::fit_within(pts, 3, spline::FitParam::Chord, 0.0).empty()); // 0: through them
+
+    H h;
+    h.run({"SPLINE", "M", "F", "0,0", "L"});
+    REQUIRE(h.out.prompt == "Specify fit tolerance <0.0000>: ");
+    h.run({"0.5", "5,0.1", "10,-0.1", "15,0.1", "20,0", "25,-0.1", ""});
+    const auto* sp = h.last<AddSplineCommand>();
+    REQUIRE(sp != nullptr);
+    REQUIRE(sp->control_points.size() < 6);
+}
+
+TEST_CASE("SPLINE's Close makes the fitted spline smooth across its seam") {
+    H h;
+    h.run({"SPLINE", "M", "F", "0,0", "10,0", "10,10", "0,10", "C"});
+    const auto* sp = h.last<AddSplineCommand>();
+    REQUIRE(sp != nullptr);
+    const std::vector<Vec2>& c = sp->control_points;
+    REQUIRE(c.front() == c.back()); // closed
+    // The legs either side of the seam lie on one line (the same direction at the start and end).
+    const Vec2 out = c[1] - c.front();
+    const Vec2 in = c.back() - c[c.size() - 2];
+    REQUIRE(std::abs(out.x * in.y - out.y * in.x) < 1e-9);
+    REQUIRE(out.x * in.x + out.y * in.y > 0.0);
+}
+
+TEST_CASE("The Text tab's Horizontal placement: beside or over an extension line") {
+    DimData d;
+    d.type = DimType::Linear;
+    d.a = {0, 0};
+    d.b = {100, 0};
+    d.line_pt = {50, 10};
+    DimStyle st;
+    const DimGeometry centred = compute_dim_geometry(d, st, Rgb{});
+    REQUIRE(centred.text_pos.x == Approx(50.0));
+    REQUIRE(apply_dim_var(st, "DIMJUST", 1));
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.x < 20.0); // by the first extension line
+    REQUIRE(apply_dim_var(st, "DIMJUST", 2));
+    REQUIRE(compute_dim_geometry(d, st, Rgb{}).text_pos.x > 80.0); // by the second
+    REQUIRE(apply_dim_var(st, "DIMJUST", 3));
+    const DimGeometry over = compute_dim_geometry(d, st, Rgb{});
+    REQUIRE(over.text_pos.y > 10.0);                                // past the dimension line
+    REQUIRE(std::abs(std::cos(over.text_rotation)) < 1e-9);         // along the extension line
+    REQUIRE(std::abs(over.text_pos.x) < st.text_height * 1.5);      // over the first one
+    io::Document doc;
+    doc.dimstyles.push_back(st);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.dimstyles.back().text_just == 3);
+}
+
+TEST_CASE("BLOCKREPLACE makes every reference of one block a reference of another, values kept by tag") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef a;
+    a.name = "OLD";
+    a.lines.push_back(io::DocLine{{0, 0}, {5, 0}, {}});
+    io::DocAttDef tag_a;
+    tag_a.text.content = "NUM";
+    tag_a.def = "0";
+    a.attdefs = {tag_a};
+    io::DocBlockDef b;
+    b.name = "NEW";
+    b.circles.push_back(io::DocCircle{{0, 0}, 2.0, {}});
+    io::DocAttDef note;
+    note.text.content = "NOTE";
+    note.def = "n/a";
+    io::DocAttDef tag_b;
+    tag_b.text.content = "NUM";
+    tag_b.def = "0";
+    b.attdefs = {note, tag_b};
+    doc.block_defs = {a, b};
+    io::DocInsert in;
+    in.block_name = "OLD";
+    in.pos = {10, 10};
+    in.rotation = 0.5;
+    in.attribs = {io::DocAttrib{"NUM", "42"}};
+    doc.inserts = {in};
+    const std::string dp = (fs::temp_directory_path() / "musacad_blockreplace_in.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    engine.submit(ReplaceBlockCommand{"old", "New", 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 reference of \"OLD\" replaced by \"NEW\"."; }));
+    const io::Document out = dump(engine, "musacad_blockreplace_out.musa");
+    REQUIRE(out.inserts.size() == 1);
+    REQUIRE(out.inserts[0].block_name == "NEW");
+    REQUIRE(out.inserts[0].pos == Vec2{10, 10});
+    REQUIRE(out.inserts[0].rotation == Approx(0.5));
+    const auto num = std::find_if(out.inserts[0].attribs.begin(), out.inserts[0].attribs.end(),
+                                  [](const io::DocAttrib& x) { return x.tag == "NUM"; });
+    REQUIRE(num != out.inserts[0].attribs.end());
+    REQUIRE(num->value == "42"); // the value went with its tag
+    engine.stop();
+    fs::remove(dp);
+
+    H h;
+    h.run({"-BLOCKREPLACE"});
+    REQUIRE(h.out.lines.back() == "The drawing needs two blocks for one to replace the other.");
+}
+
+TEST_CASE("A block redefined with its attributes in another order keeps each reference's values by tag") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef blk;
+    blk.name = "TAG2";
+    io::DocAttDef a;
+    a.text.content = "A";
+    io::DocAttDef b;
+    b.text.content = "B";
+    blk.attdefs = {a, b};
+    blk.lines.push_back(io::DocLine{{0, 0}, {1, 0}, {}});
+    doc.block_defs = {blk};
+    io::DocInsert in;
+    in.block_name = "TAG2";
+    in.attribs = {io::DocAttrib{"A", "one"}, io::DocAttrib{"B", "two"}};
+    doc.inserts = {in};
+    const std::string dp = (fs::temp_directory_path() / "musacad_redefine_tags.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    // The new definition: B first, then A, far from the reference.
+    AddAttDefCommand nb;
+    nb.text.pos = {100, 0};
+    nb.text.content = "B";
+    nb.group = 2;
+    AddAttDefCommand na;
+    na.text.pos = {100, 10};
+    na.text.content = "A";
+    na.group = 3;
+    engine.submit(nb);
+    engine.submit(na);
+    engine.submit(SelectPickCommand{{100.5, 0.5}, 1.0, false});
+    engine.submit(SelectPickCommand{{100.5, 10.5}, 1.0, true});
+    engine.submit(DefineBlockCommand{"TAG2", {100, 0}, 4});
+    const io::Document out = dump(engine, "musacad_redefine_tags_out.musa");
+    // The reference that was there (BLOCK put a second one where the attributes were).
+    const auto first = std::find_if(out.inserts.begin(), out.inserts.end(),
+                                    [](const io::DocInsert& x) { return x.pos == Vec2{0, 0}; });
+    REQUIRE(first != out.inserts.end());
+    const auto value = [&](const char* tag) {
+        for (const io::DocAttrib& x : first->attribs) {
+            if (x.tag == tag) {
+                return x.value;
+            }
+        }
+        return std::string("?");
+    };
+    REQUIRE(value("A") == "one");
+    REQUIRE(value("B") == "two");
+    engine.stop();
+    fs::remove(dp);
+}
+
+TEST_CASE("Spline leaders, leaders with no line and no arrowhead -- drawn so and kept in the file") {
+    const auto drawn = [](std::uint8_t flags) {
+        GeometryEngine engine;
+        engine.start();
+        AddMLeaderCommand ml;
+        ml.vertices = {{0, 0}, {10, 10}, {20, 5}, {25, 5}};
+        ml.content = "";
+        ml.leader_flags = flags;
+        ml.group = 1;
+        engine.submit(ml);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.dirty; }));
+        const std::size_t n = engine.snapshot().line_vertices.size();
+        engine.stop();
+        return n;
+    };
+    const std::size_t straight = drawn(0);
+    REQUIRE(drawn(LeaderForm::kSpline | LeaderForm::kLanding) > straight); // the curve's many chords
+    REQUIRE(drawn(LeaderForm::kNoLine) < straight);                          // no leader at all
+
+    io::Document doc;
+    io::DocMLeader m;
+    m.vertices = {{0, 0}, {10, 10}};
+    m.leader_flags = LeaderForm::kSpline | LeaderForm::kNoArrow;
+    doc.mleaders.push_back(m);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.mleaders[0].leader_flags == (LeaderForm::kSpline | LeaderForm::kNoArrow));
+    const std::string dxf = io::serialize_dxf(doc);
+    REQUIRE(dxf.find("\n72\n1\n") != std::string::npos); // DXF's spline path type
+}
+
+TEST_CASE("LEADER's Format Spline and None; MLEADER's Leader type sPline") {
+    H h;
+    h.run({"LEADER", "0,0", "10,10", "F", "S", "F", "N", "20,10", "", "NOTE", ""});
+    const auto* ml = h.last<AddMLeaderCommand>();
+    REQUIRE(ml != nullptr);
+    REQUIRE(ml->leader_flags == (LeaderForm::kSpline | LeaderForm::kNoArrow));
+}
+
+
+namespace {
+// A workbook as Excel lays one out (shared strings with a rich-text run, an inline string, a
+// number, a boolean, a gap at C2), deflated with dynamic Huffman codes.
+const unsigned char kWorkbook[] = {
+    0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x7d, 0xb8,
+    0x36, 0xc6, 0x6e, 0x00, 0x00, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x5b, 0x43,
+    0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x5f, 0x54, 0x79, 0x70, 0x65, 0x73, 0x5d, 0x2e, 0x78, 0x6d,
+    0x6c, 0x1d, 0x8c, 0x41, 0x0e, 0xc2, 0x20, 0x10, 0x00, 0xbf, 0x42, 0xf6, 0xde, 0x2e, 0x7a, 0x68,
+    0x8c, 0x01, 0x7a, 0xeb, 0x0b, 0xea, 0x03, 0x08, 0xae, 0xb4, 0x51, 0x16, 0x02, 0x1b, 0xa3, 0xbf,
+    0x97, 0x7a, 0x9c, 0xcc, 0x64, 0xcc, 0xfc, 0x49, 0x2f, 0xf5, 0xa6, 0xda, 0xf6, 0xcc, 0x16, 0x4e,
+    0xa3, 0x06, 0x45, 0x1c, 0xf2, 0x7d, 0xe7, 0x68, 0xe1, 0xb6, 0x2e, 0xc3, 0x05, 0x66, 0x67, 0xd6,
+    0x6f, 0xa1, 0xa6, 0x7a, 0xca, 0xcd, 0xc2, 0x26, 0x52, 0xae, 0x88, 0x2d, 0x6c, 0x94, 0x7c, 0x1b,
+    0x73, 0x21, 0xee, 0xe6, 0x91, 0x6b, 0xf2, 0xd2, 0xb1, 0x46, 0x2c, 0x3e, 0x3c, 0x7d, 0x24, 0x3c,
+    0x6b, 0x3d, 0x61, 0xc8, 0x2c, 0xc4, 0x32, 0xc8, 0xf1, 0x00, 0x67, 0xf0, 0x3f, 0x73, 0x3f, 0x50,
+    0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x2f, 0x65, 0xe1,
+    0x1f, 0xbc, 0x00, 0x00, 0x00, 0x1a, 0x01, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x78, 0x6c, 0x2f,
+    0x77, 0x6f, 0x72, 0x6b, 0x62, 0x6f, 0x6f, 0x6b, 0x2e, 0x78, 0x6d, 0x6c, 0x8d, 0x8f, 0xcb, 0x6e,
+    0xc2, 0x40, 0x0c, 0x45, 0x7f, 0x65, 0xe4, 0x7d, 0x99, 0xc0, 0x02, 0xa1, 0x28, 0x09, 0x9b, 0xaa,
+    0x12, 0x3b, 0x16, 0xe5, 0x03, 0xdc, 0x8c, 0x43, 0x46, 0x64, 0xec, 0xc8, 0x1e, 0x0a, 0xfc, 0x3d,
+    0x53, 0x1e, 0xfb, 0xae, 0xfc, 0xd2, 0x3d, 0xbe, 0xb7, 0xd9, 0x5e, 0xd3, 0xe4, 0x7e, 0x49, 0x2d,
+    0x0a, 0xb7, 0xb0, 0x5c, 0x54, 0xe0, 0x88, 0x7b, 0x09, 0x91, 0x8f, 0x2d, 0x1c, 0xbe, 0xbf, 0x3e,
+    0x36, 0xe0, 0x2c, 0x23, 0x07, 0x9c, 0x84, 0xa9, 0x85, 0x1b, 0x19, 0x6c, 0xbb, 0xe6, 0x22, 0x7a,
+    0xfa, 0x11, 0x39, 0xb9, 0x22, 0x67, 0x6b, 0x61, 0xcc, 0x79, 0xae, 0xbd, 0xb7, 0x7e, 0xa4, 0x84,
+    0xb6, 0x90, 0x99, 0xb8, 0x5c, 0x06, 0xd1, 0x84, 0xb9, 0x8c, 0x7a, 0xf4, 0x36, 0x2b, 0x61, 0xb0,
+    0x91, 0x28, 0xa7, 0xc9, 0xaf, 0xaa, 0x6a, 0xed, 0x13, 0x46, 0x86, 0x27, 0xa1, 0xd6, 0xff, 0x30,
+    0x64, 0x18, 0x62, 0x4f, 0x9f, 0xd2, 0x9f, 0x13, 0x71, 0x7e, 0x42, 0x94, 0x26, 0xcc, 0xc5, 0xbc,
+    0x8d, 0x71, 0x36, 0xe8, 0x9a, 0xc7, 0x07, 0x7b, 0x55, 0xc7, 0x98, 0x8a, 0xe9, 0x3d, 0x6a, 0xb6,
+    0x92, 0xe3, 0x6f, 0xb5, 0x0b, 0x25, 0x26, 0x38, 0xad, 0x63, 0x69, 0x74, 0x17, 0x96, 0xe0, 0xbb,
+    0xc6, 0xbf, 0x55, 0xfe, 0x1d, 0xac, 0xbb, 0x03, 0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00,
+    0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x5a, 0xfd, 0x82, 0x6b, 0xb1, 0x00, 0x00, 0x00, 0x28, 0x01,
+    0x00, 0x00, 0x1a, 0x00, 0x00, 0x00, 0x78, 0x6c, 0x2f, 0x5f, 0x72, 0x65, 0x6c, 0x73, 0x2f, 0x77,
+    0x6f, 0x72, 0x6b, 0x62, 0x6f, 0x6f, 0x6b, 0x2e, 0x78, 0x6d, 0x6c, 0x2e, 0x72, 0x65, 0x6c, 0x73,
+    0x8d, 0xcf, 0xc9, 0x0a, 0xc2, 0x40, 0x0c, 0x06, 0xe0, 0x57, 0x19, 0x72, 0xb7, 0x69, 0x3d, 0x88,
+    0x48, 0xa7, 0x5e, 0x44, 0xe8, 0x55, 0xea, 0x03, 0x0c, 0xd3, 0x74, 0xa1, 0x9d, 0x85, 0xc9, 0xb8,
+    0xf4, 0xed, 0x1d, 0x3c, 0x88, 0x05, 0x0f, 0x9e, 0x42, 0xf2, 0x93, 0x2f, 0xa4, 0x3c, 0x3e, 0xcd,
+    0x2c, 0xee, 0x14, 0x78, 0x74, 0x56, 0x42, 0x91, 0xe5, 0x20, 0xc8, 0x6a, 0xd7, 0x8e, 0xb6, 0x97,
+    0x70, 0x6d, 0xce, 0x9b, 0x3d, 0x08, 0x8e, 0xca, 0xb6, 0x6a, 0x76, 0x96, 0x24, 0x2c, 0xc4, 0x70,
+    0xac, 0xca, 0x0b, 0xcd, 0x2a, 0xa6, 0x15, 0x1e, 0x46, 0xcf, 0x22, 0x19, 0x96, 0x25, 0x0c, 0x31,
+    0xfa, 0x03, 0x22, 0xeb, 0x81, 0x8c, 0xe2, 0xcc, 0x79, 0xb2, 0x29, 0xe9, 0x5c, 0x30, 0x2a, 0xa6,
+    0x36, 0xf4, 0xe8, 0x95, 0x9e, 0x54, 0x4f, 0xb8, 0xcd, 0xf3, 0x1d, 0x86, 0x6f, 0x03, 0xd6, 0xa6,
+    0xa8, 0x5b, 0x09, 0xa1, 0x6e, 0x0b, 0x10, 0xcd, 0xe2, 0xe9, 0x1f, 0xdb, 0x75, 0xdd, 0xa8, 0xe9,
+    0xe4, 0xf4, 0xcd, 0x90, 0x8d, 0x3f, 0x4e, 0xe0, 0xc3, 0x85, 0x89, 0x07, 0xa2, 0x98, 0x50, 0x15,
+    0x7a, 0x8a, 0x12, 0x3e, 0x23, 0xc6, 0x77, 0x29, 0xb2, 0xa4, 0x02, 0x56, 0x25, 0xae, 0x3e, 0xac,
+    0x5e, 0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x6f,
+    0xde, 0xf8, 0xf2, 0xc7, 0x00, 0x00, 0x00, 0x20, 0x01, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x78,
+    0x6c, 0x2f, 0x73, 0x68, 0x61, 0x72, 0x65, 0x64, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x73, 0x2e,
+    0x78, 0x6d, 0x6c, 0x55, 0x8f, 0xdd, 0x4e, 0xc3, 0x30, 0x0c, 0x85, 0x5f, 0xc5, 0xf2, 0x05, 0x77,
+    0x5b, 0x0a, 0x42, 0x68, 0x82, 0x24, 0x93, 0x98, 0xc4, 0x1d, 0xa8, 0x48, 0xf0, 0x00, 0xa1, 0x35,
+    0x6b, 0xa4, 0xc6, 0x29, 0xb1, 0x0b, 0xec, 0xed, 0x49, 0x37, 0xf1, 0x77, 0x63, 0xe9, 0x7c, 0xc7,
+    0x3e, 0xb6, 0xed, 0xf6, 0x33, 0x8d, 0xf0, 0x4e, 0x45, 0x62, 0x66, 0x87, 0xe7, 0xeb, 0x06, 0x81,
+    0xb8, 0xcb, 0x7d, 0xe4, 0xbd, 0xc3, 0xe7, 0xa7, 0xbb, 0xd5, 0x06, 0x41, 0x34, 0x70, 0x1f, 0xc6,
+    0xcc, 0xe4, 0xf0, 0x40, 0x82, 0x5b, 0x6f, 0x45, 0x14, 0xea, 0x24, 0x8b, 0xc3, 0x41, 0x75, 0xba,
+    0x36, 0x46, 0xba, 0x81, 0x52, 0x90, 0x75, 0x9e, 0x88, 0xab, 0xf3, 0x9a, 0x4b, 0x0a, 0x5a, 0x65,
+    0xd9, 0x1b, 0x99, 0x0a, 0x85, 0x5e, 0x06, 0x22, 0x4d, 0xa3, 0xb9, 0x68, 0x9a, 0x2b, 0x93, 0x42,
+    0x64, 0x84, 0x2e, 0xcf, 0xac, 0x0e, 0x2f, 0x11, 0x66, 0x8e, 0x6f, 0x33, 0xed, 0xbe, 0x75, 0x5d,
+    0x10, 0xbd, 0x55, 0xdf, 0x86, 0xa2, 0xd6, 0xa8, 0xb7, 0x66, 0xd1, 0x27, 0xf6, 0xa8, 0x87, 0xff,
+    0xa8, 0x2c, 0xf4, 0x36, 0x8f, 0x0a, 0x27, 0x5e, 0x8e, 0xa8, 0xb4, 0xb5, 0xbc, 0x98, 0x45, 0xb7,
+    0xc7, 0x8e, 0xfb, 0xcd, 0x8f, 0xfd, 0x27, 0xed, 0x61, 0x56, 0x38, 0x0b, 0x69, 0xba, 0x81, 0x8f,
+    0x50, 0x2f, 0x2c, 0xbf, 0xd1, 0xa6, 0xfe, 0xe8, 0xbf, 0x00, 0x50, 0x4b, 0x03, 0x04, 0x14, 0x00,
+    0x00, 0x00, 0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x81, 0x87, 0x50, 0xb1, 0xe4, 0x00, 0x00, 0x00,
+    0xbf, 0x01, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x78, 0x6c, 0x2f, 0x77, 0x6f, 0x72, 0x6b, 0x73,
+    0x68, 0x65, 0x65, 0x74, 0x73, 0x2f, 0x73, 0x68, 0x65, 0x65, 0x74, 0x31, 0x2e, 0x78, 0x6d, 0x6c,
+    0x6d, 0xd0, 0xe1, 0x4e, 0xc3, 0x20, 0x10, 0x07, 0xf0, 0x57, 0x21, 0x7c, 0x77, 0xd7, 0xd2, 0xc5,
+    0x18, 0x43, 0x59, 0x9c, 0xc6, 0x17, 0x50, 0x1f, 0x00, 0xdb, 0x73, 0x25, 0x96, 0xa3, 0xe1, 0x48,
+    0xa7, 0x6f, 0x2f, 0xeb, 0x94, 0x54, 0xdd, 0x37, 0xee, 0xfe, 0xc7, 0x2f, 0x70, 0x7a, 0xf7, 0xe1,
+    0x47, 0x31, 0x63, 0x64, 0x17, 0xa8, 0x95, 0xf5, 0xa6, 0x92, 0x02, 0xa9, 0x0b, 0xbd, 0xa3, 0x43,
+    0x2b, 0x5f, 0x9e, 0x1f, 0xaf, 0x6e, 0xa4, 0xe0, 0x64, 0xa9, 0xb7, 0x63, 0x20, 0x6c, 0xe5, 0x27,
+    0xb2, 0xdc, 0x19, 0x7d, 0x0c, 0xf1, 0x9d, 0x07, 0xc4, 0x24, 0xf2, 0x7d, 0xe2, 0x56, 0x0e, 0x29,
+    0x4d, 0xb7, 0x00, 0xdc, 0x0d, 0xe8, 0x2d, 0x6f, 0xc2, 0x84, 0x94, 0x93, 0xb7, 0x10, 0xbd, 0x4d,
+    0xb9, 0x8c, 0x07, 0xe0, 0x29, 0xa2, 0xed, 0x97, 0x4b, 0x7e, 0x04, 0x55, 0x55, 0xd7, 0xe0, 0xad,
+    0x23, 0x69, 0xf4, 0xd2, 0x7b, 0xb0, 0xc9, 0x1a, 0x1d, 0xc3, 0x51, 0xc4, 0xfc, 0x8e, 0xdc, 0xed,
+    0x4e, 0x87, 0xbb, 0x5a, 0x8a, 0xd4, 0x4a, 0xce, 0xf5, 0x6c, 0x2a, 0x0d, 0xb3, 0xd1, 0xd0, 0x7d,
+    0x67, 0xfb, 0x75, 0x56, 0x97, 0x0c, 0xb2, 0x51, 0x20, 0x55, 0x20, 0xb5, 0x1a, 0x56, 0x7f, 0x20,
+    0x75, 0x26, 0xd4, 0x65, 0xa3, 0x29, 0x46, 0xb3, 0x32, 0x9a, 0xdf, 0xc6, 0xfd, 0x39, 0x73, 0x34,
+    0x3a, 0xc2, 0xa7, 0x14, 0xf3, 0x8c, 0x63, 0xa3, 0x93, 0xe1, 0xc9, 0x46, 0xd4, 0x90, 0xf2, 0xec,
+    0xa9, 0xf1, 0x4f, 0xdf, 0xfe, 0xe8, 0xfb, 0xed, 0x22, 0xbc, 0x5e, 0xfc, 0x0e, 0xac, 0x76, 0x04,
+    0x65, 0xf9, 0xe6, 0x0b, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00,
+    0x04, 0x1f, 0x51, 0x5d, 0x7d, 0xb8, 0x36, 0xc6, 0x6e, 0x00, 0x00, 0x00, 0x7a, 0x00, 0x00, 0x00,
+    0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x5b, 0x43, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x5f, 0x54, 0x79, 0x70, 0x65, 0x73,
+    0x5d, 0x2e, 0x78, 0x6d, 0x6c, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x08,
+    0x00, 0x04, 0x1f, 0x51, 0x5d, 0x2f, 0x65, 0xe1, 0x1f, 0xbc, 0x00, 0x00, 0x00, 0x1a, 0x01, 0x00,
+    0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x9f,
+    0x00, 0x00, 0x00, 0x78, 0x6c, 0x2f, 0x77, 0x6f, 0x72, 0x6b, 0x62, 0x6f, 0x6f, 0x6b, 0x2e, 0x78,
+    0x6d, 0x6c, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x04, 0x1f,
+    0x51, 0x5d, 0x5a, 0xfd, 0x82, 0x6b, 0xb1, 0x00, 0x00, 0x00, 0x28, 0x01, 0x00, 0x00, 0x1a, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x88, 0x01, 0x00, 0x00,
+    0x78, 0x6c, 0x2f, 0x5f, 0x72, 0x65, 0x6c, 0x73, 0x2f, 0x77, 0x6f, 0x72, 0x6b, 0x62, 0x6f, 0x6f,
+    0x6b, 0x2e, 0x78, 0x6d, 0x6c, 0x2e, 0x72, 0x65, 0x6c, 0x73, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03,
+    0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x6f, 0xde, 0xf8, 0xf2, 0xc7, 0x00,
+    0x00, 0x00, 0x20, 0x01, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x80, 0x01, 0x71, 0x02, 0x00, 0x00, 0x78, 0x6c, 0x2f, 0x73, 0x68, 0x61, 0x72, 0x65,
+    0x64, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x73, 0x2e, 0x78, 0x6d, 0x6c, 0x50, 0x4b, 0x01, 0x02,
+    0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x04, 0x1f, 0x51, 0x5d, 0x81, 0x87, 0x50, 0xb1,
+    0xe4, 0x00, 0x00, 0x00, 0xbf, 0x01, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x6a, 0x03, 0x00, 0x00, 0x78, 0x6c, 0x2f, 0x77, 0x6f, 0x72,
+    0x6b, 0x73, 0x68, 0x65, 0x65, 0x74, 0x73, 0x2f, 0x73, 0x68, 0x65, 0x65, 0x74, 0x31, 0x2e, 0x78,
+    0x6d, 0x6c, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x05, 0x00, 0x4e, 0x01,
+    0x00, 0x00, 0x84, 0x04, 0x00, 0x00, 0x00, 0x00,
+};
+// A zip with a stored entry (a.txt) and one deflated with the fixed codes (b.txt).
+const unsigned char kSmallZip[] = {
+    0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x1f, 0x51, 0x5d, 0xb5, 0x01,
+    0xaf, 0x0f, 0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x61, 0x2e,
+    0x74, 0x78, 0x74, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x20, 0x74, 0x65, 0x78, 0x74, 0x50, 0x4b,
+    0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x21, 0x00, 0x38, 0x2f, 0x00, 0x52,
+    0x0f, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x62, 0x2e, 0x74, 0x78,
+    0x74, 0x4b, 0x4c, 0x4a, 0x4e, 0x84, 0x21, 0x85, 0x8c, 0xd4, 0x9c, 0x9c, 0x7c, 0x08, 0x09, 0x00,
+    0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x1f, 0x51, 0x5d,
+    0xb5, 0x01, 0xaf, 0x0f, 0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x61, 0x2e,
+    0x74, 0x78, 0x74, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00,
+    0x00, 0x21, 0x00, 0x38, 0x2f, 0x00, 0x52, 0x0f, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x05,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x2e, 0x00, 0x00,
+    0x00, 0x62, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
+    0x02, 0x00, 0x66, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+} // namespace
+
+TEST_CASE("An Excel workbook's first sheet as rows of cells, for a data link") {
+    const std::string_view wb(reinterpret_cast<const char*>(kWorkbook), sizeof(kWorkbook));
+    std::vector<std::vector<std::string>> rows;
+    std::string error;
+    REQUIRE(io::parse_xlsx(wb, rows, error));
+    REQUIRE(rows.size() == 4);
+    REQUIRE(rows[0] == std::vector<std::string>{"Part", "Qty", ""});
+    REQUIRE(rows[1] == std::vector<std::string>{"Bolt M8", "12", ""});
+    REQUIRE(rows[2] == std::vector<std::string>{"Nut & washer", "", "spare"});
+    REQUIRE(rows[3] == std::vector<std::string>{"", "TRUE", ""});
+    const std::string_view zip(reinterpret_cast<const char*>(kSmallZip), sizeof(kSmallZip));
+    std::string out;
+    REQUIRE(io::zip_entry(zip, "a.txt", out));
+    REQUIRE(out == "stored text");
+    REQUIRE(io::zip_entry(zip, "b.txt", out));
+    REQUIRE(out == "abcabcabcabc hello hello");
+    REQUIRE_FALSE(io::zip_entry(zip, "c.txt", out));
+    REQUIRE_FALSE(io::parse_xlsx(zip, rows, error)); // a zip, but no workbook in it
+    REQUIRE(error == "not an Excel workbook (.xlsx)");
+}
+
+TEST_CASE("A multileader style's Leader type is kept, and MLEADER starts from it") {
+    io::Document doc;
+    MLeaderStyle st;
+    st.name = "Curvy";
+    st.leader_type = 1;
+    doc.mleader_styles = {MLeaderStyle{}, st};
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.mleader_styles.size() == 2);
+    REQUIRE(again.mleader_styles[1].leader_type == 1);
+    REQUIRE(again.mleader_styles[1].name == "Curvy");
+}
+
+TEST_CASE("Layer group filters are kept with the drawing") {
+    io::Document doc;
+    doc.layer_filters = {LayerGroupFilter{"Walls and doors", {"A-WALL", "A DOOR"}}, LayerGroupFilter{"Empty", {}}};
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.layer_filters == doc.layer_filters);
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(SetLayerFiltersCommand{doc.layer_filters});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layer_filters.size() == 2; }));
+    REQUIRE(engine.snapshot().layer_filters[0].layers[1] == "A DOOR");
+    const io::Document out = dump(engine, "musacad_layer_filters.musa");
+    REQUIRE(out.layer_filters == doc.layer_filters);
+    engine.stop();
+}
+
+TEST_CASE("Layer property filters -- a name pattern and settings -- are kept with the drawing") {
+    io::Document doc;
+    LayerGroupFilter rule;
+    rule.property = true;
+    rule.name = "Frozen A layers";
+    rule.pattern = "A-*";
+    rule.frozen = 1;
+    rule.plot = 2;
+    doc.layer_filters = {LayerGroupFilter{"Group", {"0"}}, rule};
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.layer_filters == doc.layer_filters);
+}
+
+TEST_CASE("Splines keep knots of their own: cut by knot insertion, trimmed and broken without moving") {
+    const std::vector<Vec2> cp{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 10}, {50, 0}};
+    const std::vector<double> own{0, 0, 0, 0, 0.1, 0.7, 1, 1, 1, 1}; // AutoCAD-like, not uniform
+    const spline::Curve curve(cp, 3, own);
+    REQUIRE(curve.own);
+    REQUIRE_FALSE(spline::Curve(cp, 3, std::vector<double>{0, 1, 2}).own); // knots that do not fit
+
+    // Split at a parameter: each piece is the same curve over its part.
+    spline::Piece a;
+    spline::Piece b;
+    REQUIRE(spline::split(curve, 0.4, a, b));
+    const spline::Curve ca(a.ctrl, 3, a.knots);
+    const spline::Curve cb(b.ctrl, 3, b.knots);
+    REQUIRE(ca.own);
+    REQUIRE(cb.own);
+    for (int i = 0; i <= 10; ++i) {
+        const double t = i / 10.0;
+        REQUIRE(distance(ca.at(0.4 * t), curve.at(0.4 * t)) < 1e-9);
+        REQUIRE(distance(cb.at(0.4 + 0.6 * t), curve.at(0.4 + 0.6 * t)) < 1e-9);
+    }
+    // Joined again, the whole curve; a knot inserted keeps it as it was.
+    const spline::Piece whole = spline::joined(a, b, 3);
+    const spline::Curve cw(whole.ctrl, 3, whole.knots);
+    std::vector<Vec2> pts(cp);
+    std::vector<double> knots(own);
+    spline::insert_knot(pts, knots, 3, 0.55);
+    REQUIRE(pts.size() == cp.size() + 1);
+    const spline::Curve ci(pts, 3, knots);
+    for (int i = 0; i <= 20; ++i) {
+        const double u = i / 20.0;
+        REQUIRE(distance(cw.at(u), curve.at(u)) < 1e-9);
+        REQUIRE(distance(ci.at(u), curve.at(u)) < 1e-9);
+    }
+    // Reversed, the same points the other way.
+    std::vector<Vec2> rcp(cp.rbegin(), cp.rend());
+    const spline::Curve cr(rcp, 3, spline::reversed_knots(own));
+    REQUIRE(distance(cr.at_unit(0.25), curve.at_unit(0.75)) < 1e-9);
+
+    // The knots are kept by the drawing, its file and DXF.
+    io::Document doc;
+    io::DocSpline ds;
+    ds.control_points = cp;
+    ds.knots = own;
+    doc.splines.push_back(ds);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.splines[0].knots == own);
+    io::Document dx;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dx).ok);
+    REQUIRE(dx.splines.size() == 1);
+    REQUIRE(dx.splines[0].knots == own);
+
+    // TRIM: a line across the spline; the end picked goes, the rest is the same curve.
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddSplineCommand s;
+        s.control_points = cp;
+        s.knots = own;
+        s.group = 1;
+        engine.submit(s);
+        const Vec2 cut = curve.at(0.5);
+        engine.submit(AddLineCommand{{cut.x, -40}, {cut.x, 40}, 2});
+        const Vec2 pick = curve.at(0.9);
+        engine.submit(TrimPickCommand{pick, 0.5, 3});
+        const io::Document d = dump(engine, "musacad_trim_spline.mcad");
+        REQUIRE(d.splines.size() == 1);
+        const spline::Curve kept(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(distance(kept.at_unit(0.0), cp.front()) < 1e-9);
+        REQUIRE(std::abs(kept.at_unit(1.0).x - cut.x) < 1e-6);
+        REQUIRE(distance(kept.at_unit(0.5), curve.at(0.5 * spline::param_near(curve, kept.at_unit(1.0)))) < 1e-6);
+        engine.stop();
+    }
+    // BREAK: a spline in two at a point; an elliptical arc between two points.
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddSplineCommand s;
+        s.control_points = cp;
+        s.knots = own;
+        s.group = 1;
+        engine.submit(s);
+        const Vec2 at = curve.at(0.3);
+        engine.submit(BreakCommand{at, 0.5, at, at, 2});
+        engine.submit(AddEllipseCommand{{100, 0}, {20, 0}, 0.5, 0.0, kPi, 3});
+        const EllipseData e{{100, 0}, {20, 0}, 0.5, 0.0, kPi, {}};
+        engine.submit(BreakCommand{ellipse::point_at(e, 1.0), 0.5, ellipse::point_at(e, 1.0), ellipse::point_at(e, 2.0), 4});
+        const io::Document d = dump(engine, "musacad_break_spline.mcad");
+        REQUIRE(d.splines.size() == 2);
+        for (const io::DocSpline& piece : d.splines) {
+            const spline::Curve pc(piece.control_points, 3, piece.knots);
+            const bool first = distance(pc.at_unit(0.0), cp.front()) < 1e-9;
+            REQUIRE(distance(first ? pc.at_unit(1.0) : pc.at_unit(0.0), at) < 1e-6);
+        }
+        REQUIRE(d.ellipses.size() == 2);
+        const bool in_order = d.ellipses[0].start < d.ellipses[1].start;
+        REQUIRE(d.ellipses[in_order ? 0 : 1].end == Approx(1.0));
+        REQUIRE(d.ellipses[in_order ? 1 : 0].start == Approx(2.0));
+        engine.stop();
+    }
+}
+
+TEST_CASE("-HATCH Advanced: island style, retained boundaries, gap tolerance, boundary set and one hatch for the areas picked") {
+    H h;
+    h.run({"HPASSOC", "1", "-HATCH", "A"});
+    const std::string advanced =
+        "Enter an option [Boundary set/Retain boundary/Island detection/Style/Associativity/Gap tolerance/separate Hatches]: ";
+    REQUIRE(h.out.prompt == advanced);
+    h.run({"S"});
+    REQUIRE(h.out.prompt == "Enter hatching style [Ignore/Outer/Normal] <Normal>: ");
+    h.run({"O"});
+    REQUIRE(h.out.prompt == advanced);
+    h.run({"R"});
+    REQUIRE(h.out.prompt == "Retain derived boundaries? [Yes/No] <N>: ");
+    h.run({"Y", "I"});
+    REQUIRE(h.out.prompt == "Do you want island detection? [Yes/No] <Y>: ");
+    h.run({"N"});
+    REQUIRE(h.out.prompt == "Enter type of ray casting [Nearest/+X/-X/+Y/-Y/Angle] <Nearest>: ");
+    h.run({"+X", "G"});
+    REQUIRE(h.out.prompt == "Specify a boundary gap tolerance value <0>: ");
+    h.run({"2", "H"});
+    REQUIRE(h.out.prompt == "Create separate hatches? [Yes/No] <N>: ");
+    h.run({"", "A"});
+    REQUIRE(h.out.prompt == "Do you want associativity? [Yes/No] <Y>: ");
+    h.run({"N"});
+    REQUIRE(h.last<DimAssocCommand>()->value == 0);
+    h.run({"B"});
+    REQUIRE(h.out.prompt == "Specify candidate set for boundary [New/Everything] <Everything>: ");
+    h.run({"", ""});
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [", 0) == 0);
+    h.run({"10,10"});
+    const HatchPickPointCommand first = *h.last<HatchPickPointCommand>();
+    REQUIRE(first.extras.island_style == 2); // no island detection
+    REQUIRE(first.extras.retain);
+    REQUIRE(first.extras.gap_tolerance == 2.0);
+    REQUIRE_FALSE(first.extras.merge);
+    h.run({"30,10"});
+    REQUIRE(h.last<HatchPickPointCommand>()->extras.merge); // the second area joins the first's hatch
+    h.proc.cancel();
+    // As they were, for the other tests.
+    h.run({"-HATCH", "A", "S", "N", "R", "N", "I", "Y", "G", "0", "A", "Y", "", ""});
+    h.proc.cancel();
+
+    // The engine: a square open at one corner closes within the gap tolerance.
+    const auto open_square = [](GeometryEngine& e, double x) {
+        e.submit(AddLineCommand{{x, 0}, {x + 20, 0}, 1});
+        e.submit(AddLineCommand{{x + 20, 0}, {x + 20, 20}, 1});
+        e.submit(AddLineCommand{{x + 20, 20}, {x, 20}, 1});
+        e.submit(AddLineCommand{{x, 20}, {x, 1}, 1}); // a gap of 1 to the first line
+    };
+    {
+        GeometryEngine engine;
+        engine.start();
+        open_square(engine, 0);
+        HatchPickPointCommand pick;
+        pick.point = {10, 10};
+        pick.group = 2;
+        engine.submit(pick);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Valid hatch boundary not found."; }));
+        pick.extras.gap_tolerance = 2.0;
+        pick.group = 3;
+        engine.submit(pick);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Solid hatch created." || s.status == "Hatch created."; }));
+        // A second area, picked in the same HATCH: one hatch with both.
+        open_square(engine, 40);
+        pick.point = {50, 10};
+        pick.extras.merge = true;
+        pick.group = 4;
+        engine.submit(pick);
+        const io::Document doc = dump(engine, "musacad_hatch_gap.musa");
+        REQUIRE(doc.hatches.size() == 1);
+        REQUIRE(doc.hatches[0].loops.size() == 2);
+        engine.stop();
+    }
+    // Boundary set: only the objects selected for it bound the area.
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddPolylineCommand{{{0, 0}, {40, 0}, {40, 40}, {0, 40}}, true, 1});
+        engine.submit(AddPolylineCommand{{{10, 10}, {30, 10}, {30, 30}, {10, 30}}, true, 2});
+        engine.submit(SelectPickCommand{{20, 0}, 0.5, false});
+        HatchPickPointCommand pick;
+        pick.point = {20, 20};
+        pick.group = 3;
+        pick.extras.boundary_set = 2;
+        engine.submit(pick);
+        const io::Document doc = dump(engine, "musacad_hatch_set.musa");
+        REQUIRE(doc.hatches.size() == 1);
+        REQUIRE(doc.hatches[0].loops.size() == 1); // the inner square is not in the set: no island
+        double xmax = 0.0;
+        for (const Vec2& v : doc.hatches[0].loops[0]) {
+            xmax = std::max(xmax, v.x);
+        }
+        REQUIRE(xmax == Approx(40.0));
+        engine.stop();
+    }
+}
+
+TEST_CASE("EXTEND and LENGTHEN on splines: the curve kept, straight on along its end") {
+    const std::vector<Vec2> cp{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 10}, {50, 0}};
+    const std::vector<double> own{0, 0, 0, 0, 0.1, 0.7, 1, 1, 1, 1};
+    const spline::Curve curve(cp, 3, own);
+    const double whole = spline::length_between(curve, curve.lo(), curve.hi());
+    GeometryEngine engine;
+    engine.start();
+    AddSplineCommand s;
+    s.control_points = cp;
+    s.knots = own;
+    s.group = 1;
+    engine.submit(s);
+    engine.submit(AddLineCommand{{60, -30}, {60, 30}, 2}); // the boundary, ahead of the end
+    engine.submit(ExtendPickCommand{{50, 0}, 0.5, 3});
+    io::Document d = dump(engine, "musacad_extend_spline.mcad");
+    REQUIRE(d.splines.size() == 1);
+    {
+        const spline::Curve longer(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(distance(longer.at(longer.hi()), Vec2{60, -10}) < 1e-9); // straight on at 45 degrees down
+        REQUIRE(distance(longer.at(0.5), curve.at(0.5)) < 1e-9);           // the curve as it was
+    }
+    // LENGTHEN Total: shorter, along the curve, from the end picked.
+    LengthenCommand len;
+    len.pick = {0, 0};
+    len.pick_radius = 0.5;
+    len.mode = LengthenCommand::Mode::Total;
+    len.value = 40.0;
+    len.group = 4;
+    engine.submit(len);
+    d = dump(engine, "musacad_lengthen_spline.mcad");
+    REQUIRE(d.splines.size() == 1);
+    {
+        const spline::Curve shorter(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(spline::length_between(shorter, shorter.lo(), shorter.hi()) == Approx(40.0).margin(1e-3));
+        REQUIRE(distance(shorter.at(shorter.hi()), Vec2{60, -10}) < 1e-9); // the other end stays
+    }
+    // Delta: longer by 5, straight on from the start.
+    len.mode = LengthenCommand::Mode::Delta;
+    len.value = 5.0;
+    len.group = 5;
+    {
+        const spline::Curve now(d.splines[0].control_points, 3, d.splines[0].knots);
+        len.pick = now.at(now.lo());
+    }
+    engine.submit(len);
+    d = dump(engine, "musacad_lengthen_spline2.mcad");
+    {
+        const spline::Curve again(d.splines[0].control_points, 3, d.splines[0].knots);
+        REQUIRE(spline::length_between(again, again.lo(), again.hi()) == Approx(45.0).margin(1e-2));
+    }
+    REQUIRE(whole > 45.0);
+    engine.stop();
+}
+
+TEST_CASE("FILLET with a spline or an ellipse: an arc tangent to both, each cut back to it") {
+    const std::vector<Vec2> cp{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 10}, {50, 0}};
+    const std::vector<double> own{0, 0, 0, 0, 0.1, 0.7, 1, 1, 1, 1};
+    const spline::Curve curve(cp, 3, own);
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddSplineCommand s;
+        s.control_points = cp;
+        s.knots = own;
+        s.group = 1;
+        engine.submit(s);
+        engine.submit(AddLineCommand{{25, -40}, {25, 40}, 2}); // across the spline
+        engine.submit(FilletPickCommand{curve.at(0.2), {25, 30}, 3.0, 0.5, 3});
+        const io::Document d = dump(engine, "musacad_fillet_spline.mcad");
+        REQUIRE(d.arcs.size() == 1);
+        REQUIRE(d.splines.size() == 1);
+        REQUIRE(d.lines.size() == 1);
+        const io::DocArc& a = d.arcs[0];
+        REQUIRE(a.radius == Approx(3.0));
+        const Vec2 s0{a.center.x + 3.0 * std::cos(a.start_angle), a.center.y + 3.0 * std::sin(a.start_angle)};
+        const Vec2 s1{a.center.x + 3.0 * std::cos(a.end_angle), a.center.y + 3.0 * std::sin(a.end_angle)};
+        const spline::Curve kept(d.splines[0].control_points, 3, d.splines[0].knots);
+        const Vec2 spline_end = kept.at(kept.hi());
+        const Vec2 line_end = distance(d.lines[0].a, Vec2{25, 40}) < 1e-9 ? d.lines[0].b : d.lines[0].a;
+        REQUIRE(distance(kept.at(kept.lo()), cp.front()) < 1e-9); // the part picked is kept
+        REQUIRE(std::abs(a.center.x - 25.0) == Approx(3.0));       // tangent to the line
+        REQUIRE(std::min(distance(s0, spline_end), distance(s1, spline_end)) < 1e-5);
+        REQUIRE(std::min(distance(s0, line_end), distance(s1, line_end)) < 1e-5);
+        REQUIRE(distance(curve.at(spline::param_near(curve, a.center)), a.center) == Approx(3.0).margin(1e-5));
+        engine.stop();
+    }
+    {
+        // An elliptical arc and a line: the arc's end cut back to where the fillet meets it.
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddEllipseCommand{{0, 0}, {20, 0}, 0.5, 0.0, kPi, 1}); // the upper half
+        engine.submit(AddLineCommand{{-40, 5}, {40, 5}, 2});
+        const EllipseData e{{0, 0}, {20, 0}, 0.5, 0.0, kPi, {}};
+        engine.submit(FilletPickCommand{ellipse::point_at(e, 0.2), {35, 5}, 2.0, 0.5, 3});
+        const io::Document d = dump(engine, "musacad_fillet_ellipse.mcad");
+        REQUIRE(d.arcs.size() == 1);
+        REQUIRE(d.ellipses.size() == 1);
+        // The part picked kept (from the major axis up to the fillet), the rest past it cut away.
+        REQUIRE(d.ellipses[0].start == Approx(0.0));
+        REQUIRE(d.ellipses[0].end > 0.0);
+        REQUIRE(d.ellipses[0].end < kPi / 6.0); // short of where the line crosses it
+        REQUIRE(std::abs(d.arcs[0].center.y - 5.0) == Approx(2.0));
+        engine.stop();
+    }
+}
+
+TEST_CASE("TABLEEXPORT writes a table's cells as CSV") {
+    H h;
+    h.run({"TABLEEXPORT"});
+    REQUIRE(h.out.prompt == "Select a table: ");
+    h.run({"20,100"});
+    REQUIRE(h.out.prompt == "Enter file name: ");
+    h.run({"parts list.csv"});
+    REQUIRE(h.last<TableExportCommand>()->path == "parts list.csv");
+    REQUIRE(h.last<TableExportCommand>()->pick == Vec2{20, 100});
+
+    GeometryEngine engine;
+    engine.start();
+    AddTableCommand tc;
+    tc.rows = 2;
+    tc.cols = 2;
+    tc.cells.assign(4, TableCell{});
+    tc.texts = {"ITEM", "QTY", "Bolt, M6", "4"};
+    tc.col_widths = {40.0, 40.0};
+    tc.row_heights = {8.0, 8.0};
+    tc.pos = {0.0, 100.0};
+    tc.group = 1;
+    engine.submit(tc);
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_tableexport.csv";
+    engine.submit(TableExportCommand{{20, 100}, 0.5, p.string()});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("Table exported to ", 0) == 0; }));
+    std::ifstream in(p, std::ios::binary);
+    const std::string csv((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE(csv == "ITEM,QTY\r\n\"Bolt, M6\",4\r\n");
+    in.close();
+    std::filesystem::remove(p);
+    engine.stop();
+}
+
+TEST_CASE("MLEADEREDIT adds leaders to a multileader and takes them away") {
+    H h;
+    h.run({"MLEADEREDIT"});
+    REQUIRE(h.out.prompt == "Select a multileader: ");
+    h.run({"5,5"});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::Begin);
+    REQUIRE(h.out.prompt == "Specify leader arrowhead location or [Remove leaders]: ");
+    h.run({"0,20"});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::Add);
+    REQUIRE(h.last<MLeaderEditCommand>()->pick == Vec2{0, 20});
+    h.run({"R"});
+    REQUIRE(h.out.prompt == "Specify leaders to remove or [Add leaders]: ");
+    h.run({"2,2"});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::Remove);
+    h.run({""});
+    REQUIRE(h.last<MLeaderEditCommand>()->op == MLeaderEditCommand::Op::End);
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    GeometryEngine engine;
+    engine.start();
+    AddMLeaderCommand ml;
+    ml.vertices = {{0, 0}, {10, 10}, {15, 10}};
+    ml.content = "NOTE";
+    ml.leader_flags = LeaderForm::kLanding;
+    ml.group = 1;
+    engine.submit(ml);
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Begin, {5, 5}, 0.5, 0});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Add, {0, 20}, 0.5, 2});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Add, {20, 0}, 0.5, 2});
+    io::Document d = dump(engine, "musacad_mleaderedit_1.mcad");
+    REQUIRE(d.mleaders.size() == 1);
+    REQUIRE(d.mleaders[0].extra_tips == std::vector<Vec2>{{0, 20}, {20, 0}});
+    REQUIRE(io::serialize_dxf(d).find("LEADER") != std::string::npos);
+    // Removed: an added one (on its way to the landing), then the first, whose place the
+    // remaining added one takes.
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Remove, {15, 5}, 0.5, 3});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Remove, {5, 5}, 0.5, 3});
+    d = dump(engine, "musacad_mleaderedit_2.mcad");
+    REQUIRE(d.mleaders[0].extra_tips.empty());
+    REQUIRE(d.mleaders[0].vertices == std::vector<Vec2>{{0, 20}, {10, 10}, {15, 10}});
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::Remove, {5, 15}, 0.5, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "A multileader keeps one leader."; }));
+    // Undo puts the leaders back (the last step changed nothing, so it left no undo step).
+    engine.submit(UndoLastGroupCommand{});
+    d = dump(engine, "musacad_mleaderedit_3.mcad");
+    REQUIRE(d.mleaders[0].extra_tips.size() == 2);
+    engine.submit(MLeaderEditCommand{MLeaderEditCommand::Op::End, {}, 0.0, 0});
+    engine.stop();
+}
+
+TEST_CASE("MTEXT format codes are drawn: heights, colours, underlines, stacked fractions") {
+    MTextBlock b;
+    b.height = 2.5;
+    const text::MTextLayout plain = text::layout_mtext(b, "HELLO WORLD\nSECOND");
+    const text::MTextLayout coded = text::layout_mtext(b, "{\\C1;HELLO} WORLD\\PSECOND");
+    REQUIRE(coded.line_count == 2);
+    REQUIRE(coded.segments.size() == plain.segments.size());
+    REQUIRE(coded.max.x == Approx(plain.max.x));
+    REQUIRE(coded.min.y == Approx(plain.min.y));
+    REQUIRE(coded.lines[0].text == "HELLO WORLD");
+    REQUIRE(coded.colors.size() == 1);
+    REQUIRE(coded.colors[0].color == Rgb{255, 0, 0});
+    REQUIRE(coded.colors[0].seg_begin == 0);
+
+    // A taller run makes its line taller: the baseline drops to its height.
+    const text::MTextLayout tall = text::layout_mtext(b, "A{\\H5;B}C");
+    REQUIRE(tall.lines[0].text == "ABC");
+    REQUIRE(tall.lines[0].origin.y == Approx(-5.0));
+    REQUIRE(text::layout_mtext(b, "A{\\H2x;B}C").lines[0].origin.y == Approx(-5.0)); // 2x the 2.5
+
+    // A fraction stacks over a bar; an underline adds its line.
+    const text::MTextLayout frac = text::layout_mtext(b, "1\\S1/2;\" DIA");
+    REQUIRE(frac.lines[0].text == "11/2\" DIA");
+    REQUIRE(frac.max.y > 0.0); // the numerator rises above the line
+    const text::MTextLayout under = text::layout_mtext(b, "\\LUNDER\\l");
+    REQUIRE(under.segments.size() == text::layout_mtext(b, "UNDER").segments.size() + 2);
+
+    // A backslash typed as text is no code; the plain text of a coded one.
+    REQUIRE_FALSE(text::has_mtext_codes("C:\\Program Files\\Lib"));
+    REQUIRE(text::layout_mtext(b, "C:\\Program Files").lines[0].text == "C:\\Program Files");
+    REQUIRE(text::mtext_plain("\\fArial|b1;Title \\S1/2; {\\H3x;big}\nnext") == "Title 1/2 big\nnext");
+}
+
+TEST_CASE("Linetypes loaded from .lin files and AutoCAD drawings: drawn, listed, kept") {
+    // A .lin file: comments, a dot, a shape element left out (its gaps kept).
+    const std::vector<LinetypeDef> lin = parse_lin(";; a comment\n"
+                                                   "*DASHDOT2,Dash dot (.5x) _._._\n"
+                                                   "A,.25,-.125,0,-.125\n"
+                                                   "*GAS_LINE,Gas line ----GAS----\n"
+                                                   "A,.5,-.2,[\"GAS\",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05],-.25\n");
+    REQUIRE(lin.size() == 2);
+    REQUIRE(lin[0].name == "DASHDOT2");
+    REQUIRE(lin[0].description == "Dash dot (.5x) _._._");
+    REQUIRE(lin[0].pattern == std::vector<double>{0.25, -0.125, 0.0, -0.125});
+    REQUIRE(lin[1].pattern == std::vector<double>{0.5, -0.2, -0.25});
+    REQUIRE(linetype_library().size() == 24); // eight linetypes, each in three sizes
+
+    // Drawn by its own pattern: a dash, a gap, a dot, a gap ...
+    const std::vector<Vec2> line{{0, 0}, {10, 0}};
+    std::vector<Vec2> dashed;
+    dash_polyline(line, static_cast<Linetype>(kFirstLoadedLinetype), lin, 1.0, dashed);
+    REQUIRE(dashed.size() > 4);
+    REQUIRE(dashed[1].x == Approx(0.25));
+    REQUIRE(dashed[2].x == Approx(0.375)); // the dot after the gap
+    std::vector<Vec2> solid;
+    dash_polyline(line, static_cast<Linetype>(kFirstLoadedLinetype + 5), lin, 1.0, solid); // none loaded there
+    REQUIRE(solid.size() == 2);
+
+    // The drawing's table: by name, reloaded in place.
+    GeometryStore store;
+    REQUIRE(store.add_linetype(lin[0]) == static_cast<Linetype>(kFirstLoadedLinetype));
+    REQUIRE(store.add_linetype(lin[1]) == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+    REQUIRE(store.add_linetype(LinetypeDef{"dashdot2", "again", {1.0, -1.0}}) == static_cast<Linetype>(kFirstLoadedLinetype));
+    REQUIRE(store.linetypes().size() == 2);
+    REQUIRE(store.linetype_by_name("gas_line") == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+    REQUIRE(store.linetype_by_name("HIDDEN") == Linetype::Hidden);
+    REQUIRE_FALSE(store.linetype_by_name("PHANTOM").has_value());
+    REQUIRE(store.linetype_name(static_cast<Linetype>(kFirstLoadedLinetype + 1)) == "GAS_LINE");
+
+    // Kept in the drawing and in DXF; an AutoCAD drawing's own linetypes come with it, its
+    // DASHED too when drawn otherwise than Musa CAD's.
+    io::Document doc;
+    doc.linetypes = lin;
+    io::DocLine l;
+    l.a = {0, 0};
+    l.b = {10, 0};
+    l.props.set_linetype_by_layer(false);
+    l.props.linetype = static_cast<Linetype>(kFirstLoadedLinetype + 1);
+    doc.lines.push_back(l);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.linetypes == lin);
+    io::Document dx;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dx).ok);
+    REQUIRE(dx.linetypes.size() == 2);
+    REQUIRE(dx.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+    const std::string acad =
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLTYPE\n"
+        "0\nLTYPE\n2\nDASHED\n70\n0\n3\nDashed __ __\n72\n65\n73\n2\n40\n0.75\n49\n0.5\n74\n0\n49\n-0.25\n74\n0\n"
+        "0\nLTYPE\n2\nHIDDEN\n70\n0\n3\nHidden\n72\n65\n73\n2\n40\n3.75\n49\n2.5\n74\n0\n49\n-1.25\n74\n0\n"
+        "0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n"
+        "0\nLINE\n8\n0\n6\nDASHED\n10\n0\n20\n0\n11\n5\n21\n0\n"
+        "0\nLINE\n8\n0\n6\nHIDDEN\n10\n0\n20\n1\n11\n5\n21\n1\n"
+        "0\nLINE\n8\n0\n6\nBYLAYER\n10\n0\n20\n2\n11\n5\n21\n2\n"
+        "0\nENDSEC\n0\nEOF\n";
+    io::Document ad;
+    REQUIRE(io::parse_dxf(acad, ad).ok);
+    REQUIRE(ad.linetypes.size() == 1); // its DASHED; its HIDDEN is Musa CAD's own
+    REQUIRE(ad.linetypes[0].pattern == std::vector<double>{0.5, -0.25});
+    REQUIRE(ad.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype));
+    REQUIRE(ad.lines[1].props.linetype == Linetype::Hidden);
+    REQUIRE(ad.lines[2].props.linetype_by_layer()); // BYLAYER stays the layer's
+
+    // -LINETYPE Load (from Musa CAD's own linetypes) and Create.
+    H h;
+    h.run({"-LINETYPE", "L"});
+    REQUIRE(h.out.prompt == "Enter linetype(s) to load: ");
+    h.run({"DASHED2,PHANTOM*"});
+    REQUIRE(h.out.prompt == "Enter name of linetype file to search <musacad.lin>: ");
+    h.run({""});
+    const auto* loaded = h.last<LoadLinetypesCommand>();
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->defs.size() == 4); // DASHED2, PHANTOM, PHANTOM2, PHANTOMX2
+    REQUIRE(h.out.prompt == "Enter an option [?/Create/Load/Set]: ");
+    h.run({"C", "BORDERLINE", "Border line", ".5,-.25,0,-.25"});
+    REQUIRE(h.last<LoadLinetypesCommand>()->defs.front().name == "BORDERLINE");
+    REQUIRE(h.last<LoadLinetypesCommand>()->defs.front().pattern == std::vector<double>{0.5, -0.25, 0.0, -0.25});
+    h.run({"S", "PHANTOM"});
+    REQUIRE(h.out.lines.back() == "Linetype PHANTOM is not loaded: Continuous, Dashed, Center or Hidden."); // not yet published
+    h.proc.cancel();
+}
+
+TEST_CASE("Data links to a sheet of a workbook and to a range of cells") {
+    const std::string_view wb(reinterpret_cast<const char*>(kWorkbook), sizeof(kWorkbook));
+    std::vector<std::vector<std::string>> rows;
+    std::string error;
+    REQUIRE(io::parse_xlsx(wb, rows, error, "Parts")); // by its name
+    REQUIRE(rows.size() == 4);
+    REQUIRE_FALSE(io::parse_xlsx(wb, rows, error, "Prices"));
+    REQUIRE(error == "the workbook has no sheet \"Prices\"");
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_link_sheets.xlsx";
+    {
+        std::ofstream out(p, std::ios::binary);
+        out.write(wb.data(), static_cast<std::streamsize>(wb.size()));
+    }
+    REQUIRE(io::xlsx_sheet_names(p.string()) == std::vector<std::string>{"Parts"});
+    std::filesystem::remove(p);
+
+    // A range: the cells within it, the rest cut away; one cell; a bad range leaves them.
+    std::vector<std::vector<std::string>> grid{{"A1", "B1", "C1"}, {"A2", "B2", "C2"}, {"A3", "B3", "C3"}};
+    std::vector<std::vector<std::string>> part = grid;
+    REQUIRE(io::crop_to_range(part, "b2:$C$4"));
+    REQUIRE(part == std::vector<std::vector<std::string>>{{"B2", "C2"}, {"B3", "C3"}, {"", ""}});
+    part = grid;
+    REQUIRE(io::crop_to_range(part, "A3"));
+    REQUIRE(part == std::vector<std::vector<std::string>>{{"A3"}});
+    part = grid;
+    REQUIRE_FALSE(io::crop_to_range(part, "B"));
+    REQUIRE(part == grid);
+
+    // Kept in the drawing with the link.
+    io::Document doc;
+    doc.data_links.push_back(DataLink{"Parts list", "/data/parts list.xlsx", "Parts", "A1:B3"});
+    doc.data_links.push_back(DataLink{"Plain", "/data/plain.csv"});
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.data_links == doc.data_links);
+}
+
+TEST_CASE("Flip Arrow on radial, diameter and angular dimensions") {
+    // A diameter: each arrowhead turns round by its own bit -- the arrow geometry changes,
+    // the dimension line stays.
+    DimData d;
+    d.type = DimType::Diameter;
+    d.a = {0, 0};
+    d.b = {10, 0};
+    d.line_pt = {5, 3};
+    const DimGeometry plain = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    d.flip = 2;
+    const DimGeometry flipped = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    REQUIRE(flipped.arrow_fills.size() == plain.arrow_fills.size());
+    REQUIRE(flipped.arrow_fills != plain.arrow_fills);
+    REQUIRE(flipped.dim_lines == plain.dim_lines);
+    // An angular dimension likewise.
+    DimData ang;
+    ang.type = DimType::Angular;
+    ang.a = {0, 0};
+    ang.b = {10, 0};
+    ang.line_pt = {0, 10};
+    const DimGeometry a0 = compute_dim_geometry(ang, DimStyle{}, Rgb{});
+    ang.flip = 1;
+    REQUIRE(compute_dim_geometry(ang, DimStyle{}, Rgb{}).arrow_fills != a0.arrow_fills);
+
+    // The grip menu: the head nearer the grip -- the diameter's far end, the angle's second ray.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Diameter), {0, 0}, {10, 0}, {5, 3}, 0, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, engine.snapshot().selection.at(0), {-10, 0}, 2});
+    io::Document doc = dump(engine, "musacad_flip_dia.musa");
+    REQUIRE(doc.dims[0].flip == 2);
+    engine.stop();
+    GeometryEngine e2; // the angular one in a drawing of its own
+    e2.start();
+    e2.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Angular), {0, 0}, {10, 0}, {0, 10}, 0, 4});
+    e2.submit(SelectAllCommand{});
+    REQUIRE(wait_until(e2, [](const auto& s) { return s.selection.size() == 1; }));
+    e2.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, e2.snapshot().selection.at(0), {1, 9}, 5});
+    doc = dump(e2, "musacad_flip_ang.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].flip == 2);
+    e2.stop();
+}
+
+TEST_CASE("Review follow-ups: a HATCH's first pick joins nothing; MTEXT literals read; linetypes go with a paste") {
+    // A pick that finds no area, then one that does, in a later HATCH: the hatch of the HATCH
+    // before is left alone.
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddPolylineCommand{{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, true, 1});
+        engine.submit(AddPolylineCommand{{{20, 0}, {30, 0}, {30, 10}, {20, 10}}, true, 2});
+        HatchPickPointCommand pick;
+        pick.point = {5, 5};
+        pick.group = 3;
+        engine.submit(pick); // the first HATCH
+        pick.point = {100, 100}; // the next HATCH: nothing there
+        pick.group = 4;
+        engine.submit(pick);
+        pick.point = {25, 5};
+        pick.group = 5;
+        pick.extras.merge = true; // its second pick
+        engine.submit(pick);
+        const io::Document d = dump(engine, "musacad_hatch_first_pick.musa");
+        REQUIRE(d.hatches.size() == 2);
+        REQUIRE(d.hatches[0].loops.size() == 1);
+        REQUIRE(d.hatches[1].loops.size() == 1);
+        engine.stop();
+    }
+    // An AutoCAD MTEXT whose only codes are a non-breaking space and braces reads as text.
+    {
+        const std::string dxf = "0\nSECTION\n2\nENTITIES\n0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n"
+                                "1\n5\\~mm {THICK}\n0\nENDSEC\n0\nEOF\n";
+        io::Document d;
+        REQUIRE(io::parse_dxf(dxf, d).ok);
+        REQUIRE(d.mtexts.size() == 1);
+        REQUIRE(d.mtexts[0].content == "5 mm THICK");
+    }
+    // A loaded linetype goes with a copy into another drawing.
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(LoadLinetypesCommand{{LinetypeDef{"DOTTED", "dots", {0.0, -1.0}}}});
+        AddLineCommand l{{0, 0}, {10, 0}, 1};
+        EntityProps p;
+        p.set_linetype_by_layer(false);
+        p.linetype = static_cast<Linetype>(kFirstLoadedLinetype);
+        l.props = p;
+        engine.submit(l);
+        engine.submit(SelectAllCommand{});
+        engine.submit(CopyClipboardCommand{});
+        engine.submit(CreateDocumentCommand{});
+        engine.submit(LoadLinetypesCommand{{LinetypeDef{"OTHER", "", {1.0, -1.0}}}}); // the new drawing's own first
+        engine.submit(PasteClipboardCommand{{50, 50}, 2, true});
+        const io::Document d = dump(engine, "musacad_paste_linetype.musa");
+        REQUIRE(d.linetypes.size() == 2);
+        REQUIRE(d.linetypes[1].name == "DOTTED");
+        REQUIRE(d.lines.size() == 1);
+        REQUIRE(d.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+        engine.stop();
+    }
+}
+
+TEST_CASE("-HATCH draW boundary and ATTREDEF, as AutoCAD asks them") {
+    H h;
+    h.run({"-HATCH", "W"});
+    REQUIRE(h.out.prompt == "Retain polyline boundary? [Yes/No] <N>: ");
+    h.run({"Y"});
+    REQUIRE(h.out.prompt == "Specify start point: ");
+    h.run({"0,0"});
+    REQUIRE(h.out.prompt == "Specify next point or [Arc/Length/Undo]: ");
+    h.run({"10,0"});
+    REQUIRE(h.out.prompt == "Specify next point or [Arc/Close/Length/Undo]: ");
+    h.run({"L", "10"}); // on along the last side: 20,0
+    h.run({"20,10", "C"});
+    REQUIRE(h.out.prompt == "Specify start point for new boundary or <Accept>: ");
+    h.run({"5,2", "8,2", "8,5", ""}); // an island, ended by Enter
+    REQUIRE(h.out.prompt == "Specify start point for new boundary or <Accept>: ");
+    h.run({""});
+    const auto* drawn = h.last<HatchDrawnCommand>();
+    REQUIRE(drawn != nullptr);
+    REQUIRE(drawn->retain);
+    REQUIRE(drawn->loops.size() == 2);
+    REQUIRE(drawn->loops[0] == std::vector<Vec2>{{0, 0}, {10, 0}, {20, 0}, {20, 10}});
+    REQUIRE(drawn->loops[1].size() == 3);
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [", 0) == 0);
+    h.run({"", "-HATCH", "W", "N", ""}); // Retain back as it was
+    h.proc.cancel();
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(*drawn);
+    const io::Document d = dump(engine, "musacad_hatch_drawn.musa");
+    REQUIRE(d.hatches.size() == 1);
+    REQUIRE(d.hatches[0].loops.size() == 2);
+    REQUIRE(d.polylines.size() == 2); // the boundaries kept
+
+    H a;
+    a.run({"ATTREDEF"});
+    REQUIRE(a.out.prompt == "Enter name of the block you wish to redefine: ");
+    a.run({"NOSUCH"});
+    REQUIRE(a.out.lines.back() == "Block \"NOSUCH\" does not exist.");
+    a.proc.cancel();
+    // The engine: a block redefined from objects with an attribute definition, its
+    // reference keeping its value by tag; without one, "New block has no attributes."
+    GeometryEngine e2;
+    e2.start();
+    e2.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    e2.submit(SelectAllCommand{});
+    e2.submit(DefineBlockCommand{"TAG", {0, 0}, 2});
+    e2.submit(AddLineCommand{{0, 5}, {10, 5}, 3});
+    e2.submit(SelectPickCommand{{5, 5}, 0.5, false});
+    DefineBlockCommand redo{"TAG", {0, 0}, 4};
+    redo.attredef = true;
+    e2.submit(redo);
+    REQUIRE(wait_until(e2, [](const auto& s) { return s.status == "New block has no attributes."; }));
+    const io::Document d2 = dump(e2, "musacad_attredef.musa");
+    REQUIRE(d2.lines.size() == 1); // left as it was
+    REQUIRE(d2.inserts.size() == 1);
+    e2.stop();
+}
+
+TEST_CASE("-HATCH remove Boundaries takes an island out of the hatch just made") {
+    H h;
+    h.run({"-HATCH", "B"});
+    REQUIRE(h.out.prompt == "Select objects or [Add boundaries]: ");
+    h.run({"12,5"});
+    REQUIRE(h.last<HatchRemoveBoundaryCommand>()->pick == Vec2{12, 5});
+    REQUIRE(h.out.prompt == "Select objects or [Add boundaries/Undo]: ");
+    h.run({"U"});
+    REQUIRE(h.out.prompt == "Select objects or [Add boundaries]: ");
+    h.run({""});
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [", 0) == 0);
+    h.proc.cancel();
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPolylineCommand{{{0, 0}, {40, 0}, {40, 20}, {0, 20}}, true, 1});
+    engine.submit(AddCircleCommand{{10, 10}, 3, 2});
+    engine.submit(AddCircleCommand{{30, 10}, 3, 3});
+    HatchPickPointCommand pick;
+    pick.point = {20, 4};
+    pick.group = 4;
+    engine.submit(pick);
+    engine.submit(HatchRemoveBoundaryCommand{{13, 10}, 0.5, 5}); // the left circle
+    const io::Document d = dump(engine, "musacad_hatch_remove.musa");
+    REQUIRE(d.hatches.size() == 1);
+    REQUIRE(d.hatches[0].loops.size() == 2); // the outer one and the right circle
+    double x = 0.0;
+    for (const Vec2& v : d.hatches[0].loops[1]) {
+        x = std::max(x, v.x);
+    }
+    REQUIRE(x == Approx(33.0).margin(0.01));
+    engine.stop();
 }

@@ -291,8 +291,11 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.ext_offset = v;
     } else if (same_var(var, "DIMEXE") && v >= 0.0) {
         s.ext_extension = v;
-    } else if (same_var(var, "DIMTAD") && whole(0, 1)) {
-        s.text_above = v != 0.0;
+    } else if (same_var(var, "DIMJUST") && whole(0, 4)) {
+        s.text_just = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMTAD") && whole(0, 4)) {
+        s.text_above = v != 0.0 && v != 4.0;
+        s.text_vpos = v >= 2.0 ? static_cast<std::uint8_t>(v) : std::uint8_t{0};
     } else if (same_var(var, "DIMATFIT") && whole(0, 2)) {
         s.text_fit = static_cast<std::uint8_t>(v);
     } else if (same_var(var, "DIMTMOVE") && whole(0, 2)) {
@@ -358,6 +361,9 @@ bool apply_dim_override(DimOverrides& o, std::string_view var, double v) {
     } else if (same_var(var, "DIMATFIT")) {
         o.text_fit = s.text_fit;
         o.set(B::kTextFit, true);
+    } else if (same_var(var, "DIMTMOVE")) {
+        o.text_move = s.text_move;
+        o.set(B::kTextMove, true);
     } else if (same_var(var, "DIMCLRD") && !s.dim_color.by_layer) {
         o.dim_color = s.dim_color.color;
         o.set(B::kDimColor, true);
@@ -399,7 +405,10 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
         return s.ext_extension;
     }
     if (same_var(var, "DIMTAD")) {
-        return s.text_above ? 1.0 : 0.0;
+        return dim_text_vpos(s);
+    }
+    if (same_var(var, "DIMJUST")) {
+        return s.text_just;
     }
     if (same_var(var, "DIMATFIT")) {
         return s.text_fit;
@@ -496,6 +505,25 @@ std::string length_text(double value, std::uint8_t unit, int precision, const Di
         u.linear = static_cast<LinearFormat>(unit);
         u.linear_precision = static_cast<std::uint8_t>(std::clamp(precision, 0, 8));
         std::string s = units::format_length(value, u);
+        if (unit == 3 || unit == 4) {
+            // Feet and inches: DIMZIN's zero feet / zero inches, as AutoCAD drops them.
+            const std::size_t tick = s.find("'-");
+            if (tick != std::string::npos && !s.empty() && s.back() == '"') {
+                const std::string sign = s.front() == '-' ? "-" : "";
+                const std::string ft = s.substr(sign.size(), tick - sign.size());
+                const std::string in = s.substr(tick + 2, s.size() - tick - 3);
+                const bool zero_ft = ft == "0";
+                const bool zero_in = in.find_first_not_of("0.,") == std::string::npos;
+                const int mode = style.zero_suppression & kDimZinFeetInches;
+                const bool drop_ft = zero_ft && !zero_in && (mode == 0 || mode == 3);
+                const bool drop_in = zero_in && !zero_ft && (mode == 0 || mode == 2);
+                if (drop_ft) {
+                    s = sign + in + "\"";
+                } else if (drop_in) {
+                    s = sign + ft + "'";
+                }
+            }
+        }
         if (style.decimal_separator == ',') {
             for (char& c : s) {
                 c = c == '.' ? ',' : c;
@@ -560,6 +588,10 @@ void split_post(const std::string& post, const char* mark, std::string& pre, std
 }
 } // namespace
 
+namespace {
+constexpr char kAltBelow = '\x1f'; ///< in a measured text: the alternate value goes on the line below
+} // namespace
+
 std::string format_dim_value(double value, const DimStyle& style) {
     return length_text(rounded_to(value, style.round_off), style.linear_unit, style.precision, style);
 }
@@ -587,10 +619,19 @@ std::string measured_text_for(DimType type, const DimStyle& style, double value)
     std::string out = (pre.empty() ? deco : pre) + format_dim_value(length, style) + suf;
     if (style.alt) {
         const double a = rounded_to(length * style.alt_factor, style.alt_round);
+        // "\X" at the start of DIMAPOST puts the alternate value below the primary one, as
+        // AutoCAD's Placement: Below primary value writes it; marked here, split into the
+        // label's second line by compose_dim_label.
+        std::string apost = style.alt_post;
+        const bool below = apost.rfind("\\X", 0) == 0;
+        if (below) {
+            apost.erase(0, 2);
+        }
         std::string apre;
         std::string asuf;
-        split_post(style.alt_post, "[]", apre, asuf);
-        out += " [" + apre + length_text(a, style.alt_unit, style.alt_precision, style) + asuf + "]";
+        split_post(apost, "[]", apre, asuf);
+        out += (below ? std::string(1, kAltBelow) : std::string(" ")) + "[" + apre +
+               length_text(a, style.alt_unit, style.alt_precision, style) + asuf + "]";
     }
     return out;
 }
@@ -621,6 +662,22 @@ bool dim_label_quad(const DimGeometry& g, bool second, Vec2 (&out)[4]) {
     out[3] = at + ax * x0 + ay * g.text_height;
     return true;
 }
+
+namespace {
+/// The alternate value below the primary one: onto the label's second line when that is
+/// free, else beside the value as usual (a stacked tolerance holds the line below).
+void place_alt_below(DimLabel& out) {
+    if (const std::size_t k = out.line1.find(kAltBelow); k != std::string::npos) {
+        if (out.line2.empty()) {
+            out.line2 = out.line1.substr(k + 1);
+            out.line1.resize(k);
+        } else {
+            out.line1[k] = ' ';
+        }
+    }
+    std::replace(out.line2.begin(), out.line2.end(), kAltBelow, ' ');
+}
+} // namespace
 
 DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts parts) {
     // Prefix/suffix are ordinary text: run them through the ONE control-code pass, so
@@ -683,6 +740,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         } else if (tol.mode == TolMode::Reference) {
             out.line1 = "(" + out.line1 + ")";
         }
+        place_alt_below(out);
         return out;
     }
 
@@ -721,6 +779,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         out.line1 = wrap(measured_text(d, style));
         break;
     }
+    place_alt_below(out);
     return out;
 }
 
@@ -816,6 +875,10 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     g.arrow_color = style.arrow_color.resolve(base_color);
     g.text_color = style.text_color.resolve(base_color);
     const auto atype = static_cast<ArrowType>(style.arrow_type);
+    // Flip Arrow (the grip menu): a radial or angular dimension's arrowhead turned round --
+    // the first (at its measured point, or the first ray) by bit 1, the second by bit 2.
+    const double flip_a = (d.flip & 1u) != 0 ? -1.0 : 1.0;
+    const double flip_b = (d.flip & 2u) != 0 ? -1.0 : 1.0;
     // The label is composed ONCE, here, for every dimension type -- the measured value
     // (which is never authorable) plus its authored decoration. Placing it in the same
     // function that builds the geometry is what makes the text participate in layout,
@@ -1009,7 +1072,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
             const Vec2 land_end = t + Vec2{side * style.arrow_size, 0.0};
             seg(g.dim_lines, d.b, t);
             seg(g.dim_lines, t, land_end);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * flip_a, style.arrow_size, atype);
             // With the dimension line outside, the centre gets its mark (AutoCAD's DIMCEN
             // rule for DIMRADIUS / DIMDIAMETER), as large as an arrowhead.
             const double m = style.arrow_size * 0.5;
@@ -1017,7 +1080,8 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                 seg(g.dim_lines, c, c + arm); // out from the centre, so the centre is a vertex
             }
             g.text_justify = side > 0.0 ? text::Justify::Left : text::Justify::Right;
-            const double up = style.text_above ? gap : -h * 0.5;
+            const std::uint8_t tad = dim_text_vpos(style);
+            const double up = tad == 0 ? -h * 0.5 : tad == 4 ? -h - gap : gap;
             g.text_pos = land_end + Vec2{side * gap, up};
         } else {
             const Vec2 from = d.type == DimType::Diameter ? c - u * r : c;
@@ -1056,9 +1120,9 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
             } else {
                 seg(g.dim_lines, from, d.b);
             }
-            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * -1.0, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * -flip_a, style.arrow_size, atype);
             if (d.type == DimType::Diameter) {
-                append_arrowhead(g.arrow_fills, g.arrow_lines, c - u * r, u, style.arrow_size, atype);
+                append_arrowhead(g.arrow_fills, g.arrow_lines, c - u * r, u * flip_b, style.arrow_size, atype);
             }
             g.text_justify = text::Justify::Center;
             g.text_pos = t + Vec2{0.0, -h * 0.5};
@@ -1074,12 +1138,12 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 u = normalized(edge - center);
         if (d.type == DimType::Radius) {
             seg(g.dim_lines, center, edge);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -flip_a, style.arrow_size, atype);
         } else {
             const Vec2 other = center - u * distance(center, edge);
             seg(g.dim_lines, other, edge);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, other, u, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -flip_a, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, other, u * flip_b, style.arrow_size, atype);
         }
         g.text_pos = edge + u * (style.text_height * 0.4);
         g.text_rotation = 0.0;
@@ -1239,10 +1303,10 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
             prev = p;
         }
         // Arrowheads at both ends, lying along the arc inside it.
-        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a0, r), Vec2{-std::sin(a0), std::cos(a0)}, style.arrow_size,
-                         atype);
-        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a1, r), Vec2{std::sin(a1), -std::cos(a1)}, style.arrow_size,
-                         atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a0, r), Vec2{-std::sin(a0), std::cos(a0)} * flip_a,
+                         style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a1, r), Vec2{std::sin(a1), -std::cos(a1)} * flip_b,
+                         style.arrow_size, atype);
         // The text at the middle of the arc, or -- moved with the arc (DIMTMOVE 0) --
         // slid along it by text_offset.x (an arc length); past either ray the arc goes
         // on round to it.
@@ -1311,9 +1375,9 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 e1{v.x + r * std::cos(a1), v.y + r * std::sin(a1)};
         const double s = sweep >= 0 ? 1.0 : -1.0;
         append_arrowhead(g.arrow_fills, g.arrow_lines, e0,
-                         Vec2{std::sin(a0), -std::cos(a0)} * s, style.arrow_size, atype);
+                         Vec2{std::sin(a0), -std::cos(a0)} * (s * flip_a), style.arrow_size, atype);
         append_arrowhead(g.arrow_fills, g.arrow_lines, e1,
-                         Vec2{-std::sin(a1), std::cos(a1)} * s, style.arrow_size, atype);
+                         Vec2{-std::sin(a1), std::cos(a1)} * (s * flip_b), style.arrow_size, atype);
         const double am = a0 + sweep * 0.5;
         g.text_pos = {v.x + r * std::cos(am), v.y + r * std::sin(am)};
         g.text_rotation = 0.0;
@@ -1381,16 +1445,19 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     // Arrows outside: the SAME append_arrowhead call with the direction reversed, so
     // each head sits beyond its extension line pointing back in. There is deliberately
     // no second arrowhead code path -- `along` was already the direction parameter.
+    // Flip Arrow (the grip menu) turns one head to the other side of its extension line.
+    const bool in_a = arrows_inside != ((d.flip & 1u) != 0);
+    const bool in_b = arrows_inside != ((d.flip & 2u) != 0);
     if (span > 1e-9) {
-        const double s = arrows_inside ? 1.0 : -1.0;
-        append_arrowhead(g.arrow_fills, g.arrow_lines, fa, u * s, style.arrow_size, atype);
-        append_arrowhead(g.arrow_fills, g.arrow_lines, fb, u * -s, style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, fa, u * (in_a ? 1.0 : -1.0), style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, fb, u * (in_b ? -1.0 : 1.0), style.arrow_size, atype);
     }
 
     // The dimension line runs foot to foot, extended past each extension line by the
     // arrow length plus a short stub when the arrows are outside, so each head has a
     // line to sit on (ISO 129-1 fig. 8).
-    const double stub = arrows_inside ? 0.0 : style.arrow_size * 1.6;
+    const double stub_a = in_a ? 0.0 : style.arrow_size * 1.6;
+    const double stub_b = in_b ? 0.0 : style.arrow_size * 1.6;
     const double jh = style.text_height * 1.5; // DIMJOGLINE's jog: 1.5 text heights
     if (d.jog >= 0.0 && span > jh) {
         // The line with a zigzag across it at the jog's place, kept clear of the ends.
@@ -1400,13 +1467,13 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 z1 = c - u * (jh / 6.0) + n * (jh * 0.5);
         const Vec2 z2 = c + u * (jh / 6.0) - n * (jh * 0.5);
         const Vec2 z3 = c + u * (jh * 0.5);
-        seg(g.dim_lines, fa - u * stub, z0);
+        seg(g.dim_lines, fa - u * stub_a, z0);
         seg(g.dim_lines, z0, z1);
         seg(g.dim_lines, z1, z2);
         seg(g.dim_lines, z2, z3);
-        seg(g.dim_lines, z3, fb + u * stub);
+        seg(g.dim_lines, z3, fb + u * stub_b);
     } else {
-        seg(g.dim_lines, fa - u * stub, fb + u * stub);
+        seg(g.dim_lines, fa - u * stub_a, fb + u * stub_b);
     }
 
     const Vec2 mid = (fa + fb) * 0.5;
@@ -1422,14 +1489,44 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const double cs = std::cos(g.text_rotation);
     const double sn = std::sin(g.text_rotation);
     const Vec2 text_up{-sn, cs};
-    const double off = style.text_above ? style.text_height * 0.4 : -style.text_height * 0.5;
+    // DIMTAD: centred on the line (straddling it), above it (JIS too), below it, or Outside
+    // -- on the side of the line away from the points measured.
+    const std::uint8_t vpos = dim_text_vpos(style);
+    bool above = vpos == 1 || vpos == 3;
+    if (vpos == 2) {
+        above = dot(text_up, d.a - fa) <= 0.0;
+    }
+    const double off = vpos == 0 ? -style.text_height * 0.5
+                       : above   ? style.text_height * 0.4
+                                 : -style.text_height * 1.4;
     if (text_inside) {
-        g.text_pos = mid + text_up * off;
+        // DIMJUST: centred, or along the line beside an extension line (clear of its
+        // arrowhead), or over one -- the text along the extension line, past the dimension line.
+        const double half = label_w * 0.5;
+        Vec2 at = mid;
+        if (style.text_just == 1 || style.text_just == 2) {
+            const double in = style.arrow_size + gap + half;
+            at = style.text_just == 1 ? fa + u * in : fb - u * in;
+        }
+        g.text_pos = at + text_up * off;
+        if (style.text_just == 3 || style.text_just == 4) {
+            const Vec2 foot = style.text_just == 3 ? fa : fb;
+            Vec2 n = foot - (style.text_just == 3 ? d.a : d.b);
+            const double nl = length(n);
+            n = nl > 1e-12 ? n / nl : Vec2{-u.y, u.x};
+            double rot = std::atan2(n.y, n.x);
+            if (rot > 1.5708 || rot < -1.5708) {
+                rot += kPi; // kept readable
+            }
+            g.text_rotation = rot;
+            const Vec2 beside{-std::sin(rot), std::cos(rot)};
+            g.text_pos = foot + n * (gap + half) + beside * (style.text_height * 0.4);
+        }
     } else {
         // Outside: on the dimension line's own extension, past the second extension
         // line, clearing the outside arrowhead + stub when there is one, then the gap.
         // Left-justified from there, so the text reads away from the feature.
-        g.text_pos = fb + u * (stub + gap) + text_up * off;
+        g.text_pos = fb + u * (stub_b + gap) + text_up * off;
         g.text_justify = text::Justify::Left;
     }
     // A two-line label (Limits) stacks DOWNWARD from text_pos, so lift the block by one
@@ -1452,11 +1549,11 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                 s0 = std::min(s0, sp);
                 s1 = std::max(s1, sp);
             }
-            const bool under = style.text_above;
-            if (s1 > span + stub) {
-                seg(g.dim_lines, fb + u * stub, fa + u * (under ? s1 : s0 - gap));
-            } else if (s0 < -stub) {
-                seg(g.dim_lines, fa - u * stub, fa + u * (under ? s0 : s1 + gap));
+            const bool under = vpos != 0;
+            if (s1 > span + stub_b) {
+                seg(g.dim_lines, fb + u * stub_b, fa + u * (under ? s1 : s0 - gap));
+            } else if (s0 < -stub_a) {
+                seg(g.dim_lines, fa - u * stub_a, fa + u * (under ? s0 : s1 + gap));
             }
         }
     }

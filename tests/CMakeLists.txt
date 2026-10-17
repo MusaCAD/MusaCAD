@@ -70,7 +70,15 @@ if(MSVC)
     musacad_enable_sanitizers(Catch2WithMain)
 endif()
 
-add_executable(musacad_tests
+# The unit tests, linked into several binaries. Under the dev preset (ASan and UBSan,
+# debug) each test file carries UBSan's records for the inline code it instantiates -- the
+# command variant's above all -- and their relocations, which the linker cannot merge
+# across files, so a binary grows by up to some 50 MB a file; past the 2 GB that 32-bit
+# relative relocations reach, its link fails. The list is cut in turn into binaries of
+# _musacad_files_per_binary files (musacad_tests, musacad_tests_2, ...), each near 1.3 GB.
+# A new test file goes at the end, so that only the last binary changes.
+set(_musacad_files_per_binary 18)
+set(_musacad_test_files
     test_math.cpp
     test_handles.cpp
     test_geometry_store.cpp
@@ -204,18 +212,7 @@ add_executable(musacad_tests
     test_properties.cpp
     test_linetype.cpp
     test_cli.cpp
-    test_header_hygiene.cpp)
-
-target_link_libraries(musacad_tests PRIVATE
-    musacad::core
-    musacad::cli
-    musacad::render
-    musacad::command
-    Catch2::Catch2WithMain)
-
-# A second test binary: under the dev preset (ASan, debug) one binary with every test
-# outgrows the 2 GB that 32-bit relative relocations reach, and the link fails.
-add_executable(musacad_tests_2
+    test_header_hygiene.cpp
     test_batch_r.cpp
     test_change_mocoro.cpp
     test_point_limits_units.cpp
@@ -225,20 +222,37 @@ add_executable(musacad_tests_2
     test_mleader.cpp
     test_find_text.cpp
     test_pedit_vertex.cpp
-    test_dwgunits.cpp
-)
-target_link_libraries(musacad_tests_2 PRIVATE
-    musacad::core
-    musacad::cli
-    musacad::render
-    musacad::command
-    Catch2::Catch2WithMain)
+    test_dwgunits.cpp)
+
+set(_musacad_test_binaries "")
+list(LENGTH _musacad_test_files _musacad_n)
+set(_first 0)
+while(_first LESS _musacad_n)
+    list(SUBLIST _musacad_test_files ${_first} ${_musacad_files_per_binary} _part)
+    list(LENGTH _musacad_test_binaries _k)
+    if(_k EQUAL 0)
+        set(_t musacad_tests)
+    else()
+        math(EXPR _num "${_k} + 1")
+        set(_t musacad_tests_${_num})
+    endif()
+    add_executable(${_t} ${_part})
+    list(APPEND _musacad_test_binaries ${_t})
+    math(EXPR _first "${_first} + ${_musacad_files_per_binary}")
+endwhile()
 
 # Sanitizers (ASan/UBSan or TSan) follow the active preset; warnings are not
-# promoted to errors for the test target (Catch2 macros are noisy under the
+# promoted to errors for the test targets (Catch2 macros are noisy under the
 # strict set), but musacad_core is still built warnings-as-errors.
-musacad_enable_sanitizers(musacad_tests)
-musacad_enable_sanitizers(musacad_tests_2)
+foreach(_t IN LISTS _musacad_test_binaries)
+    target_link_libraries(${_t} PRIVATE
+        musacad::core
+        musacad::cli
+        musacad::render
+        musacad::command
+        Catch2::Catch2WithMain)
+    musacad_enable_sanitizers(${_t})
+endforeach()
 
 list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
 include(Catch)
@@ -259,8 +273,9 @@ if(WIN32)
             list(APPEND _musacad_dl_paths "${_musacad_sdk_bin}/ucrt")
         endif()
     endif()
-    catch_discover_tests(musacad_tests DL_PATHS ${_musacad_dl_paths})
-    catch_discover_tests(musacad_tests_2 DL_PATHS ${_musacad_dl_paths})
+    foreach(_t IN LISTS _musacad_test_binaries)
+        catch_discover_tests(${_t} DL_PATHS ${_musacad_dl_paths})
+    endforeach()
     # The same directories, as CTest environment edits, for the tests below that run the
     # application binary.
     set(_musacad_path_mods "")
@@ -268,8 +283,9 @@ if(WIN32)
         list(APPEND _musacad_path_mods "PATH=path_list_prepend:${_dir}")
     endforeach()
 else()
-    catch_discover_tests(musacad_tests)
-    catch_discover_tests(musacad_tests_2)
+    foreach(_t IN LISTS _musacad_test_binaries)
+        catch_discover_tests(${_t})
+    endforeach()
 endif()
 
 # The portable fallbacks (parse_double without floating-point from_chars, the jthread /

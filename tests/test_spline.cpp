@@ -145,7 +145,7 @@ TEST_CASE("#23 SPLINE entity: created, drawn, moved (stays a spline), gripped") 
     REQUIRE(sp->degree == 3);
 }
 
-TEST_CASE("#23 SPLINE DXF: export writes our knots; import keeps a uniform spline, fits fit points, tessellates non-uniform") {
+TEST_CASE("#23 SPLINE DXF: export writes our knots; import keeps a uniform spline, fits fit points, keeps a non-uniform one with its knots") {
     GeometryStore store;
     store.add_spline(std::vector<Vec2>{{0, 0}, {10, 20}, {20, -20}, {30, 0}, {40, 5}}, 3);
     io::Document doc = io::document_from_store(store);
@@ -179,7 +179,7 @@ TEST_CASE("#23 SPLINE DXF: export writes our knots; import keeps a uniform splin
         REQUIRE(passes_through(fd.splines[0].control_points, fit, 3, spline::FitParam::Chord));
         std::filesystem::remove(f);
     }
-    // A genuinely non-uniform knot vector cannot be represented: tessellated polyline.
+    // A non-uniform knot vector: a real spline with those knots, written back as they were.
     {
         const std::string dxf =
             "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\n0\n71\n3\n72\n8\n73\n4\n"
@@ -194,8 +194,10 @@ TEST_CASE("#23 SPLINE DXF: export writes our knots; import keeps a uniform splin
         }
         io::Document nd;
         REQUIRE(io::load_dxf(f.string(), nd).ok);
-        REQUIRE(nd.splines.empty());
-        REQUIRE(nd.polylines.size() == 1);
+        REQUIRE(nd.polylines.empty());
+        REQUIRE(nd.splines.size() == 1);
+        REQUIRE(nd.splines[0].knots == std::vector<double>{0, 0, 0, 0, 0.2, 1, 1, 1});
+        REQUIRE(io::serialize_dxf(nd).find("\n40\n0.2\n") != std::string::npos);
         std::filesystem::remove(f);
     }
 }
@@ -244,7 +246,7 @@ TEST_CASE("#23 SPLINE command: Fit passes through the points; CV takes them as v
         h.proc.submit_line("C");
         const auto* sp = h.only();
         REQUIRE(sp != nullptr);
-        REQUIRE(sp->control_points.size() == 5);
+        REQUIRE(sp->control_points.size() == 7); // five points passed through, two for the seam's direction
         REQUIRE(near(spline::evaluate(sp->control_points, 3, 1.0), {0, 0}));
     }
     { // Undo drops the last point; then finishing uses the remaining three.

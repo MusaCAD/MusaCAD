@@ -21,6 +21,8 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QSettings>
+#include <QStringList>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -433,6 +435,13 @@ void RibbonPanel::style_buttons(bool compact) {
     }
 }
 
+void RibbonPanel::set_title_only(bool on) {
+    title_only_ = on;
+    if (flyout_btn_ != nullptr) {
+        flyout_btn_->setToolButtonStyle(on ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextUnderIcon);
+    }
+}
+
 void RibbonPanel::set_state(PanelState s) {
     if (s == state_ && s != PanelState::Full) {
         return; // Full is idempotent-safe to re-apply (re-styles after un-collapse)
@@ -474,6 +483,7 @@ void RibbonPanel::set_state(PanelState s) {
         flyout_btn_->setIcon(repr_icon_);
         flyout_btn_->setText(title_);
         flyout_btn_->setToolTip(title_);
+        flyout_btn_->setToolButtonStyle(title_only_ ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextUnderIcon);
         // The popout: a child frame of the top-level window so it overlays inline below the
         // tab strip (and is captured by a per-window screenshot, unlike a Qt::Popup menu).
         if (popout_ == nullptr) {
@@ -652,6 +662,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     tabs_->setObjectName(QStringLiteral("RibbonTabs"));
     tabs_->setExpanding(false);
     tabs_->setDrawBase(false); // no full-width base line under the tab row
+    tabs_->setMovable(true);   // tabs dragged into the order wanted (kept, see save_shown)
     tab_layout->addWidget(tabs_);
     minimize_btn_ = new QToolButton(tab_row);
     minimize_btn_->setObjectName(QStringLiteral("RibbonMinimize"));
@@ -661,7 +672,12 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     tab_layout->addWidget(minimize_btn_);
     tab_layout->addStretch(1);
     root->addWidget(tab_row);
-    connect(minimize_btn_, &QToolButton::clicked, this, [this] { set_minimized(!minimized_); });
+    connect(minimize_btn_, &QToolButton::clicked, this, [this] {
+        // AutoCAD's cycle: tabs, panel titles, panel buttons, then the full ribbon again.
+        static constexpr MinimizeMode kNext[] = {MinimizeMode::Tabs, MinimizeMode::PanelTitles,
+                                                 MinimizeMode::PanelButtons, MinimizeMode::Full};
+        set_mode(kNext[static_cast<int>(mode_)]);
+    });
     connect(tabs_, &QTabBar::tabBarDoubleClicked, this, [this](int) {
         if (!just_restored_) { // not the second click of the one that brought the panels back
             set_minimized(!minimized_);
@@ -683,6 +699,15 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     // bar -- which would otherwise eat into this height -- only appears when fully collapsed.)
     pages_->setMinimumHeight(94); // three small rows (or a large button) plus the title row
     root->addWidget(pages_);
+
+    connect(tabs_, &QTabBar::tabMoved, this, [this](int, int) { save_shown(); });
+    // A right-click on the tabs or the panels: Show Tabs and Show Panels.
+    tabs_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabs_, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint& at) { show_customize_menu(tabs_->mapToGlobal(at)); });
+    pages_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(pages_, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint& at) { show_customize_menu(pages_->mapToGlobal(at)); });
 
     // Tab index is decoupled from page (stack) index via tabData -- contextual tabs can
     // appear/disappear without renumbering the stable pages behind them.
@@ -725,7 +750,136 @@ void RibbonBar::set_qat_below(bool below) {
     root_->insertWidget(below ? root_->count() : 0, qat_strip_);
 }
 
+void RibbonBar::show_customize_menu(const QPoint& global) {
+    QMenu menu(this);
+    QMenu* tabs_menu = menu.addMenu(QStringLiteral("Show Tabs"));
+    int shown = 0;
+    for (int i = 0; i < tabs_->count(); ++i) {
+        shown += tabs_->isTabVisible(i) ? 1 : 0;
+    }
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page < 0 || is_contextual_page(page)) {
+            continue; // contextual tabs come and go with the selection
+        }
+        QAction* a = tabs_menu->addAction(tabs_->tabText(i));
+        a->setCheckable(true);
+        a->setChecked(tabs_->isTabVisible(i));
+        a->setEnabled(!(tabs_->isTabVisible(i) && shown <= 1)); // one tab always stays
+        connect(a, &QAction::toggled, this, [this, i](bool on) {
+            tabs_->setTabVisible(i, on);
+            save_shown();
+        });
+    }
+    QMenu* panels_menu = menu.addMenu(QStringLiteral("Show Panels"));
+    for (RibbonPanel* p : panels_of(pages_->currentIndex())) {
+        QAction* a = panels_menu->addAction(p->title());
+        a->setCheckable(true);
+        a->setChecked(!p->isHidden());
+        connect(a, &QAction::toggled, this, [this, p](bool on) {
+            p->setVisible(on);
+            schedule_relayout();
+            save_shown();
+        });
+    }
+    menu.exec(global);
+}
+
+void RibbonBar::save_shown() const {
+    if (!persist_) {
+        return;
+    }
+    QStringList tabs;
+    QStringList panels;
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page < 0 || is_contextual_page(page)) {
+            continue;
+        }
+        if (!tabs_->isTabVisible(i)) {
+            tabs << tabs_->tabText(i);
+        }
+        for (RibbonPanel* p : panels_of(page)) {
+            if (p->isHidden()) {
+                panels << tabs_->tabText(i) + QLatin1Char('/') + p->title();
+            }
+        }
+    }
+    QStringList order; // the fixed tabs as the user has arranged them
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page >= 0 && !is_contextual_page(page)) {
+            order << tabs_->tabText(i);
+        }
+    }
+    QSettings s;
+    s.setValue(QStringLiteral("ribbon/hidden_tabs"), tabs);
+    s.setValue(QStringLiteral("ribbon/hidden_panels"), panels);
+    s.setValue(QStringLiteral("ribbon/tab_order"), order);
+}
+
+void RibbonBar::restore_shown() {
+    if (!persist_) {
+        return;
+    }
+    const QSettings s;
+    const QStringList tabs = s.value(QStringLiteral("ribbon/hidden_tabs")).toStringList();
+    const QStringList panels = s.value(QStringLiteral("ribbon/hidden_panels")).toStringList();
+    // The order the tabs were dragged into: each named one moved to its place in turn (a tab
+    // this version does not have is passed over; a new one stays where it is).
+    const QStringList order = s.value(QStringLiteral("ribbon/tab_order")).toStringList();
+    {
+        const QSignalBlocker block(tabs_);
+        int place = 0;
+        for (const QString& name : order) {
+            for (int i = place; i < tabs_->count(); ++i) {
+                const int page = page_of_tab(i);
+                if (page >= 0 && !is_contextual_page(page) && tabs_->tabText(i) == name) {
+                    tabs_->moveTab(i, place);
+                    ++place;
+                    break;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const int page = page_of_tab(i);
+        if (page < 0 || is_contextual_page(page)) {
+            continue;
+        }
+        tabs_->setTabVisible(i, !tabs.contains(tabs_->tabText(i)));
+        for (RibbonPanel* p : panels_of(page)) {
+            p->setVisible(!panels.contains(tabs_->tabText(i) + QLatin1Char('/') + p->title()));
+        }
+    }
+    schedule_relayout();
+}
+
+void RibbonBar::set_mode(MinimizeMode m) {
+    const bool was_panels = mode_ == MinimizeMode::PanelTitles || mode_ == MinimizeMode::PanelButtons;
+    mode_ = m;
+    if (m == MinimizeMode::Tabs || m == MinimizeMode::Full) {
+        set_minimized(m == MinimizeMode::Tabs);
+    } else {
+        set_minimized(false);
+        mode_ = m; // set_minimized(false) reads it as the full ribbon
+    }
+    const bool panels = m == MinimizeMode::PanelTitles || m == MinimizeMode::PanelButtons;
+    minimize_btn_->setToolTip(m == MinimizeMode::Full           ? QStringLiteral("Minimize to tabs.")
+                              : m == MinimizeMode::Tabs         ? QStringLiteral("Minimize to panel titles.")
+                              : m == MinimizeMode::PanelTitles  ? QStringLiteral("Minimize to panel buttons.")
+                                                                : QStringLiteral("Show the full ribbon."));
+    if (panels || was_panels) {
+        schedule_relayout();
+    }
+}
+
 void RibbonBar::set_minimized(bool on) {
+    if (!on && mode_ == MinimizeMode::Tabs) {
+        mode_ = MinimizeMode::Full;
+    } else if (on) {
+        mode_ = MinimizeMode::Tabs;
+    }
     minimized_ = on;
     pages_->setVisible(!on);
     minimize_btn_->setText(on ? QStringLiteral("\u25BE") : QStringLiteral("\u25B4"));
@@ -856,7 +1010,20 @@ void RibbonBar::relayout_page(int page_index) {
         }
     } guard{page, &in_fit_};
 
+    if (mode_ == MinimizeMode::PanelTitles || mode_ == MinimizeMode::PanelButtons) {
+        // Minimized to panel titles or buttons: every panel folds, whatever the width.
+        for (RibbonPanel* p : panels) {
+            p->set_title_only(mode_ == MinimizeMode::PanelTitles);
+            p->set_state(PanelState::Collapsed);
+        }
+        if (QLayout* lay = page->layout(); lay != nullptr) {
+            lay->invalidate();
+            lay->activate();
+        }
+        return;
+    }
     for (RibbonPanel* p : panels) {
+        p->set_title_only(false);
         p->set_state(PanelState::Full); // set_state force-settles each panel in-line
     }
     if (QLayout* lay = page->layout(); lay != nullptr) {

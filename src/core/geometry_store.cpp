@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/linetype.hpp"
+#include "musacad/core/spline_eval.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -47,6 +49,42 @@ bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
         return true;
     }
     return false;
+}
+
+bool GeometryStore::set_dim_unassoc(EntityHandle h, bool unassoc) noexcept {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    d->unassoc = unassoc;
+    return true;
+}
+
+bool GeometryStore::set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept {
+    MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+    if (m == nullptr) {
+        return false;
+    }
+    m->leader_flags = flags;
+    return true;
+}
+
+bool GeometryStore::set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    d->flip = static_cast<std::uint8_t>(flip & 3u);
+    return true;
+}
+
+bool GeometryStore::set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept {
+    HatchData* d = h.kind == EntityKind::Hatch ? hatches_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    d->unassoc = unassoc;
+    return true;
 }
 
 bool GeometryStore::set_dim_breaks(EntityHandle h, std::span<const Vec2> pts) {
@@ -173,11 +211,17 @@ EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
 }
 
 EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
-                                       EntityProps props) {
+                                       EntityProps props, std::span<const double> knots) {
     const auto offset = static_cast<std::uint32_t>(spline_pool_.size());
     spline_pool_.insert(spline_pool_.end(), control_points.begin(), control_points.end());
-    const auto slot = splines_.insert(
-        SplineData{offset, static_cast<std::uint32_t>(control_points.size()), degree, props});
+    SplineData d{offset, static_cast<std::uint32_t>(control_points.size()), degree, props};
+    // Knots only when they fit the curve as it is drawn; anything else draws as the default.
+    const int count = static_cast<int>(control_points.size());
+    if (spline::usable_knots(knots, count, spline::effective_degree(count, static_cast<int>(degree)))) {
+        d.knot_offset = static_cast<std::uint32_t>(spline_knot_pool_.size());
+        spline_knot_pool_.insert(spline_knot_pool_.end(), knots.begin(), knots.end());
+    }
+    const auto slot = splines_.insert(d);
     return EntityHandle{slot.index, slot.generation, EntityKind::Spline};
 }
 
@@ -340,6 +384,45 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
     return EntityHandle{slot.index, slot.generation, EntityKind::Table};
 }
 
+namespace {
+bool same_name(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::toupper(static_cast<unsigned char>(x)) == std::toupper(static_cast<unsigned char>(y));
+           });
+}
+} // namespace
+
+void GeometryStore::add_custom_pattern(hatch::Pattern p) {
+    for (hatch::Pattern& q : custom_patterns_) {
+        if (same_name(q.name, p.name)) {
+            q = std::move(p);
+            return;
+        }
+    }
+    custom_patterns_.push_back(std::move(p));
+}
+
+const hatch::Pattern* GeometryStore::pattern(std::string_view name) const noexcept {
+    for (const hatch::Pattern& q : custom_patterns_) {
+        if (same_name(q.name, name)) {
+            return &q;
+        }
+    }
+    return hatch::builtin_pattern(name);
+}
+
+std::uint16_t GeometryStore::mleader_style_index(std::string_view name) const noexcept {
+    for (std::size_t i = 0; i < mleader_styles_.size(); ++i) {
+        const std::string& n = mleader_styles_[i].name;
+        if (n.size() == name.size() && std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return 0xFFFF;
+}
+
 std::uint16_t GeometryStore::data_link_index(std::string_view name) const noexcept {
     for (std::size_t i = 0; i < data_links_.size(); ++i) {
         const std::string& n = data_links_[i].name;
@@ -448,8 +531,20 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     b.str_len = static_cast<std::uint32_t>(content.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot = mleaders_.insert(MLeaderData{
-        voff, static_cast<std::uint32_t>(vertices.size()), style, b, props, overrides});
+        voff, static_cast<std::uint32_t>(vertices.size()), style, 0, 0, 0, b, props, overrides});
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
+}
+
+bool GeometryStore::set_mleader_extra(EntityHandle h, std::span<const Vec2> tips) {
+    MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+    if (m == nullptr) {
+        return false;
+    }
+    const std::size_t n = std::min<std::size_t>(tips.size(), 255);
+    m->extra_offset = static_cast<std::uint32_t>(polyline_pool_.size());
+    m->extra_count = static_cast<std::uint8_t>(n);
+    polyline_pool_.insert(polyline_pool_.end(), tips.begin(), tips.begin() + static_cast<std::ptrdiff_t>(n));
+    return true;
 }
 
 namespace {
@@ -691,6 +786,7 @@ void GeometryStore::clear() noexcept {
     bulge_pool_.clear();
     width_pool_.clear();
     spline_pool_.clear();
+    spline_knot_pool_.clear();
     string_pool_.clear();
     hatch_vtx_pool_.clear();
     hatch_loop_lens_.clear();
@@ -733,6 +829,8 @@ void GeometryStore::clear() noexcept {
     drawing_props_ = DrawingProps{};
     times_ = DrawingTimes{};
     blocks_.clear();
+    ++blocks_serial_;
+    linetypes_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font
 }
 
@@ -871,6 +969,12 @@ std::string_view GeometryStore::string_of(const MTextBlock& b) const noexcept {
 std::span<const Vec2> GeometryStore::vertices_of(const MLeaderData& m) const noexcept {
     return std::span<const Vec2>(polyline_pool_).subspan(m.vtx_offset, m.vtx_count);
 }
+std::span<const Vec2> GeometryStore::extra_tips_of(const MLeaderData& m) const noexcept {
+    if (m.extra_count == 0) {
+        return {};
+    }
+    return std::span<const Vec2>(polyline_pool_).subspan(m.extra_offset, m.extra_count);
+}
 std::string_view GeometryStore::string_of(const HatchData& h) const noexcept {
     return std::string_view(string_pool_.data() + h.str_offset, h.str_len);
 }
@@ -962,6 +1066,14 @@ std::span<const double> GeometryStore::widths_of(const PolylineData& pl) const n
 }
 std::span<const Vec2> GeometryStore::control_points_of(const SplineData& sp) const noexcept {
     return std::span<const Vec2>(spline_pool_).subspan(sp.offset, sp.count);
+}
+std::span<const double> GeometryStore::knots_of(const SplineData& sp) const noexcept {
+    if (sp.knot_offset == SplineData::kNoKnots) {
+        return {};
+    }
+    const int count = static_cast<int>(sp.count);
+    const auto n = static_cast<std::size_t>(count + spline::effective_degree(count, static_cast<int>(sp.degree)) + 1);
+    return std::span<const double>(spline_knot_pool_).subspan(sp.knot_offset, n);
 }
 
 // --- per-entity properties -------------------------------------------------
@@ -1209,6 +1321,45 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
     return false;
 }
 
+// --- linetypes (same_name: above) -------------------------------------------------
+
+std::optional<Linetype> GeometryStore::add_linetype(const LinetypeDef& def) {
+    for (std::size_t i = 0; i < linetypes_.size(); ++i) {
+        if (same_name(linetypes_[i].name, def.name)) {
+            linetypes_[i] = def;
+            return static_cast<Linetype>(kFirstLoadedLinetype + i);
+        }
+    }
+    if (linetypes_.size() >= kMaxLoadedLinetypes) {
+        return std::nullopt;
+    }
+    linetypes_.push_back(def);
+    return static_cast<Linetype>(kFirstLoadedLinetype + linetypes_.size() - 1);
+}
+
+std::optional<Linetype> GeometryStore::linetype_by_name(std::string_view name) const {
+    for (std::size_t i = 0; i < linetypes_.size(); ++i) {
+        if (same_name(linetypes_[i].name, name)) {
+            return static_cast<Linetype>(kFirstLoadedLinetype + i);
+        }
+    }
+    for (const Linetype lt : {Linetype::Continuous, Linetype::Dashed, Linetype::Center, Linetype::Hidden}) {
+        if (same_name(builtin_linetype_name(lt), name)) {
+            return lt;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string GeometryStore::linetype_name(Linetype lt, bool dxf) const {
+    const auto v = static_cast<std::size_t>(lt);
+    if (v < kFirstLoadedLinetype) {
+        return builtin_linetype_name(lt, dxf);
+    }
+    return v - kFirstLoadedLinetype < linetypes_.size() ? linetypes_[v - kFirstLoadedLinetype].name
+                                                        : std::string("Continuous");
+}
+
 // --- block-definition table ------------------------------------------------
 
 const BlockDef* GeometryStore::block(std::uint16_t index) const noexcept {
@@ -1221,14 +1372,19 @@ std::uint16_t GeometryStore::add_block(const BlockDef& def) {
         }
     }
     blocks_.push_back(def);
+    ++blocks_serial_;
     return static_cast<std::uint16_t>(blocks_.size() - 1);
 }
-void GeometryStore::set_block_table(std::vector<BlockDef> blocks) { blocks_ = std::move(blocks); }
+void GeometryStore::set_block_table(std::vector<BlockDef> blocks) {
+    blocks_ = std::move(blocks);
+    ++blocks_serial_;
+}
 bool GeometryStore::redefine_block(std::uint16_t index, const BlockDef& def) {
     if (index >= blocks_.size()) {
         return false;
     }
     blocks_[index] = def;
+    ++blocks_serial_;
     return true;
 }
 
@@ -1506,6 +1662,7 @@ bool GeometryStore::remove_block(std::uint16_t index) {
         return false;
     }
     blocks_.erase(blocks_.begin() + index);
+    ++blocks_serial_;
     for_each_live_mut(inserts_, [&](InsertData& i) {
         if (i.block > index) {
             --i.block;

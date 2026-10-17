@@ -122,6 +122,129 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
   asked for, at the size it will be; placed from the Insert Table window, its first cell
   opens for typing.
+- **Show Tabs and Show Panels** (#73) -- the ribbon's right-click menu: tabs and panels ticked on
+  or off, kept for the next session. The tabs can be dragged into another order, kept too.
+- **The ribbon's minimize states** (#78) -- the button after the tabs steps through Minimize to
+  Tabs, to Panel Titles and to Panel Buttons, then the full ribbon.
+- **LAYMRG and LAYDEL** (#55, #69) -- a layer's objects moved to a target layer, or erased, after
+  AutoCAD's warning; one undo step. The emptied layer stays until PURGE.
+- **Associative dimensions** (#59) -- a dimension follows the objects its points are on: MOVE,
+  ROTATE, SCALE, MIRROR (erasing the source) and grip edits of a line, arc, circle or polyline
+  take its points along, and it measures again; TRIM, EXTEND, LENGTHEN, BREAK, FILLET and
+  CHAMFER too (a point at a trimmed end goes to the new end). A linear dimension keeps its direction. A point
+  at a corner where another object stays is left where it is. **DIMASSOC** (2, the default:
+  dimensions drawn are associative; 1, not; 0, drawn exploded), **DIMDISASSOCIATE** and
+  **DIMREASSOCIATE**; saved with the drawing (format v40).
+- **The dimension text's Vertical and Horizontal placement** (#58) -- the Text tab's Centered,
+  Above, Outside (on the side of the line away from what is measured), JIS and Below (DIMTAD 0
+  to 4), and Centered, At Ext Line 1 or 2, Over Ext Line 1 or 2 (DIMJUST); read from and
+  written to DXF.
+- **SPLINE's start and end Tangency, and toLerance** (#39) -- `Specify start tangent:` after the
+  first point and `Specify end tangent:` (which ends it) once there are two: the fitted spline
+  leaves and arrives in those directions, the preview turning with the cursor. toLerance
+  (`Specify fit tolerance <0.0000>:`) fits the spline near its points rather than through them,
+  with as few control points as keep it within the tolerance. Close makes a fitted spline smooth
+  across its seam.
+- **ARRAY's prompts and preview** (#51) -- ARRAYRECT draws 4 columns by 3 rows at once (spaced
+  one and a half times the objects' size), ARRAYPOLAR 6 items round the centre, ARRAYPATH items
+  all along the path; then `Select grip to edit array or [...]` changes COUnt, Spacing (or a
+  Unit cell), COLumns, Rows (with Total), Items, Angle between, Fill angle, ROWs (rings),
+  ROTate items, Method, Align items and Base point, the preview following, until eXit. Numbers
+  can be Expressions. **-ARRAY** asks AutoCAD's classic prompts: rows (---) and columns (|||),
+  the distance between rows or a unit cell, and polar's items, angle to fill or angle between.
+- **HATCHEDIT's Disassociate, separate Hatches, hatch COlor and LAyer** (#41) -- separate Hatches
+  makes each area of a hatch (with its islands) a hatch of its own.
+- **Curved boundaries from a selection** (#41) -- HATCH's Select objects takes circles, whole
+  ellipses, closed splines and closed polylines with arcs, the curves followed.
+- **Hatch patterns from .pat files** (#41) -- a pattern name HATCH, -HATCH or HATCHEDIT does not
+  know is looked for in the .pat files of the drawing's folder and of the support folder in
+  Musa CAD's settings, and brought into the drawing (as AutoCAD keeps a pattern with its
+  hatches); `?` lists them too.
+- **Associative hatches** (#41) -- a hatch follows its boundary: MOVE, ROTATE, SCALE, MIRROR
+  (erasing the source), grip edits, TRIM, EXTEND and the like of the objects around it take
+  the hatch along, or its edge with the part that changed, in the same undo step. **HPASSOC** (1, the default; 0, the
+  hatches made do not follow); DXF's associativity flag is read. Saved with the drawing.
+- **Dimension grip menus** (#59) -- right-click a selected dimension's grip: on its text,
+  Stretch, Move with Dim Line, Move Text Only, Move with Leader (the dimension keeps that text
+  movement), Above Dim Line, Center Vertically and Reset Text Position; on its other grips,
+  Stretch, Continue Dimension, Baseline Dimension (from that extension line) and Flip Arrow.
+- **Shared grips and several hot grips** (#54) -- a grip that selected objects share (two lines'
+  common end) drags all of them; Shift + click makes several grips hot, and a click on one then
+  moves them all together (both ends of a line: the whole line). The grip menus of a line's
+  and an arc's ends (Stretch, **Lengthen**) and an arc's middle (Stretch, **Radius**), and
+  Stretch Vertex / Stretch on a polyline's. **Ctrl** at a hot grip's pick, or as a grip drag
+  ends, copies (`** STRETCH (multiple) **`). The grip menus open when the cursor rests on a
+  grip, or at once on a right-click.
+- **-HATCH's Advanced options** (#41) -- `Enter an option [Boundary set/Retain boundary/Island
+  detection/Style/Associativity/Gap tolerance/separate Hatches]:`, as AutoCAD asks them: the
+  hatching style (Normal, Outer or Ignore for the islands inside an area), island detection
+  (off: no islands), the boundaries kept as polylines, a boundary set (only the objects
+  selected for it bound an area), HPASSOC, a gap tolerance (ends that far apart or closer are
+  taken as meeting, so an area open by a small gap still hatches) and separate hatches. Unless
+  separate hatches are asked for, the areas picked in one HATCH are now one hatch, as in AutoCAD.
+- **-HATCH's Origin, hatch COlor and LAyer** (#41) -- the pattern origin set, or a corner of the
+  boundary's extents; a colour and a layer for new hatches; remembered.
+- **Custom hatch patterns from DXF** (#41) -- an AutoCAD drawing's own patterns come with it (the
+  line families DXF carries with each hatch) and draw; kept in the drawing and written back.
+- **The hatch pattern gallery** (#78) -- the Hatch Editor tab's pattern drop-down shows the
+  patterns' swatches in a grid.
+- **The down arrow's option list** (#65) -- at a prompt with options, the down arrow lists them
+  at the cursor (Dynamic Input's menu); the one picked is entered.
+- **TEXTFIT on Aligned and Fit text** (#77) -- the text's two points move to the start and the
+  end picked.
+- **The Insert Table window's preview and Specify window** (#44) -- the table style's title,
+  header and data rows, at its text heights and in its colours, redrawn as the style and the
+  rows change; Insertion behavior Specify window fits the columns' width and the data rows to a
+  window.
+- **Excel workbooks as data links** (#71) -- a data link to an .xlsx file takes its first
+  sheet: text, numbers and booleans, cell for cell, as from a CSV file; DATALINKUPDATE reads it
+  again. Writing back goes to CSV links only -- a workbook is never overwritten.
+- **Spline leaders** (#61) -- MLEADER's Leader type sPline (the landing left straight) and None
+  (no leader line), also a multileader style's Leader type; LEADER's Format Spline and None (no
+  arrowhead); kept in the drawing and written to DXF's leader path type and arrowhead flag.
+- **Attribute values kept by tag when a block is redefined** (#75) -- BLOCK under the same name,
+  REFEDIT, the Block Editor and INSERT of a drawing file: each reference's values follow their
+  tags into the new definition.
+- **BLOCKREPLACE** (#75) -- the block to be replaced and the one to replace it, picked from
+  lists (-BLOCKREPLACE: typed); every reference of the first, nested ones too, becomes one of the
+  second where it was, attribute values kept by tag. The first's definition stays until PURGE.
+- **The Block Editor tab** (#75) -- while BEDIT is open the ribbon shows its own Block Editor tab:
+  Edit Block and Save Block, and Close Block Editor.
+- **Layer group and property filters** (#69) -- the Layer Properties Manager's New Group Filter
+  makes a named filter of the selected layers; New Property Filter one of the layers whose name
+  matches a pattern and whose on, freeze, lock and plot settings are as asked. Listed after the
+  built-in filters (Invert filter works on them too); Delete Filter takes one away. Kept in the
+  drawing.
+- **Layer states Import and Export** (#69) -- the Layer States Manager's Import... and Export...
+  and -LAYERSTATE's Import / EXport read and write AutoCAD's layer state files (.las): each
+  layer's on, frozen, locked, plot and new-viewport settings, colour (a true colour too),
+  linetype, lineweight and transparency, and the current layer.
+- **View categories** (#72) -- New View's View category, kept with the view; the View Manager
+  lists the views by category.
+- **Layer snapshots with views** (#72) -- New View's Save layer snapshot with view (and NEWVIEW):
+  restoring the view restores the layers as they were.
+- **-TABLE's Auto and table style colours** (#44) -- the columns and data rows fitted to a
+  window; the Table Style window's grid and text colours.
+- **The Block Editor** (#75) -- BEDIT (BE; Insert > Block Definition > Block Editor) and -BEDIT:
+  a block's objects at its own coordinates to edit, the rest of the drawing hidden; BCLOSE
+  saves what is shown as the block (or discards it), BSAVE saves and stays.
+- **SPLINE's Object** (#39) -- the polylines picked made splines through their vertices.
+- **DONUT drags at the cursor** (#40) -- the ring follows the cursor while its centre is asked
+  for.
+- **Feature control frames in rows** (#62) -- the Geometric Tolerance window's Height, Projected
+  Tolerance Zone and Datum Identifier, as rows under the frame; rows (AutoCAD's `^J`) in DXF
+  too, and an AutoCAD frame's empty compartments are no longer drawn.
+- **A page setup for each layout** (#74) -- in a layout, the Page Setup Manager's Set Current
+  gives the layout that setup: its paper, orientation and plot settings.
+- **Multileader styles** (#61, #78) -- MLEADERSTYLE (MLS): the Multileader Style Manager -- the
+  arrowhead and its size, leader points, landing and its length, Mtext or None, text height
+  and landing gap; MLEADER draws with the current style. Annotate > Leaders: the Multileader
+  Style combo and the launcher. Kept in the drawing.
+- **Zero feet and zero inches** (#58) -- the Primary Units tab's 0 feet and 0 inches (DIMZIN):
+  `0'-6"` reads `6"` and `1'-0"` reads `1'`, as AutoCAD's imperial drawings show them; in DXF
+  too. Drawings saved before keep showing both.
+- **Alternate units below the primary value** (#58, #81) -- the Alternate Units tab's Placement:
+  After primary value or Below primary value (`\X` in DIMAPOST, as AutoCAD writes it).
 - **EXTRIM** (#77) -- everything crossing a cutting edge trimmed away on the side picked, inside
   or outside a closed edge.
 - **VPSYNC** (#77) -- layout viewports lined up with a master viewport, at its scale.
@@ -271,6 +394,65 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **Units across drawings** (#81) -- copying between drawings in different units, or
   attaching one as a reference, scales the objects into the drawing's own units
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.
+- **Splines from AutoCAD drawings stay splines** (#39, #48) -- a spline whose knots are not
+  evenly spaced (as nearly every spline AutoCAD draws through fit points is) now opens as a
+  spline with its own knots, where it opened as a polyline, and is saved and written to DXF
+  with them.
+- **TRIM, EXTEND, LENGTHEN and BREAK on splines** (#48, #52) -- a spline is trimmed at the
+  edges that cross it and broken between two points or at one, each piece the same curve over
+  its part; a closed spline trims and breaks open into one. EXTEND and LENGTHEN keep the curve
+  as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
+  spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
+  spline without changing its shape.
+- **-HATCH's draW boundary** (#41) -- `Retain polyline boundary? [Yes/No] <N>:`, then the
+  boundary point by point (`Specify next point or [Arc/Close/Length/Undo]:`), then `Specify
+  start point for new boundary or <Accept>:` for an island; the hatch fills what was drawn,
+  with no objects around it unless the boundaries are retained.
+- **-HATCH's remove Boundaries** (#41) -- `Select objects or [Add boundaries]:`: an island's
+  object picked comes out of the hatch the last pick made; Undo puts it back.
+- **ATTREDEF** (#75) -- `Enter name of the block you wish to redefine:`, the objects with the
+  new attribute definitions, `Specify insertion base point of new Block:`: the block made again
+  of them, its references keeping their values by tag and new attributes taking their
+  defaults; `New block has no attributes.` when none were selected.
+- **Flip Arrow on radial and angular dimensions** (#59) -- the grip menu's Flip Arrow turns
+  the arrowhead nearer the grip of a radius, diameter or angular dimension, as it does for a
+  linear one.
+- **Data links to a sheet and a range** (#71) -- the Data Link Manager's Link Options (asked
+  for a new link, and by its own button): an Excel workbook's sheet to link to, and the whole
+  sheet (or file) or a range of its cells (`B2:E20`), as AutoCAD's New Excel Data Link asks
+  them; kept with the link. A link to part of a file is not written back to it.
+- **Linetypes loaded from .lin files** (#68) -- **-LINETYPE** Load (`Enter linetype(s) to load:`,
+  wild cards too, then the file; one already loaded is reloaded if you say so) and Create
+  (`Descriptive text:`, `Enter linetype pattern (on next line):`), and the Linetype Manager's
+  **Load...**, which lists a .lin file's linetypes (AutoCAD's own acad.lin and acadiso.lin
+  read as they are) or Musa CAD's own: BORDER, CENTER, DASHDOT, DASHED, DIVIDE, DOT, HIDDEN and
+  PHANTOM, each in its 2 and X2 sizes. A loaded linetype draws its dashes, gaps and dots, is
+  offered wherever a linetype is chosen (the Properties palette, the ribbon, the Layer
+  Properties Manager, CHPROP, -LAYER, CELTYPE, Quick Select) and is kept in the drawing. An
+  AutoCAD drawing's linetypes now come with it and draw as they do there; before, any but
+  DASHED, CENTER and HIDDEN was drawn solid. A linetype named BYLAYER on an object in a DXF
+  file now leaves it ByLayer.
+- **MTEXT format codes** (#43) -- an MTEXT from an AutoCAD drawing is drawn as AutoCAD draws
+  it: its runs in their own heights (`\H`), widths (`\W`), slant (`\Q`), letter spacing
+  (`\T`), colours (`\C`, `\c`) and fonts (`\f`), underlined, overlined or struck through
+  (`\L`, `\O`, `\K`), with stacked fractions and tolerances (`\S1/2;`, `\S+0.1^-0.1;`) and
+  grouping braces; a line is as tall as its tallest run. The codes were taken out on
+  opening before; they are now kept, so they go back to DXF as they came.
+- **The block gallery** (#78) -- Insert's drop-down on Home > Block and Insert > Block shows
+  the drawing's blocks as pictures, as AutoCAD's gallery does; a pick inserts that block.
+  More Options... opens the Insert window, From Drawing... inserts a drawing file.
+- **MLEADEREDIT** (#61) -- `Select a multileader:`, then `Specify leader arrowhead location or
+  [Remove leaders]:` for each leader to add, straight to the landing with its own arrowhead,
+  or `Specify leaders to remove or [Add leaders]:`. Annotate > Leaders has Add Leader and
+  Remove Leader. Kept in the drawing; in DXF each added leader is a LEADER of its own.
+- **TABLEEXPORT** (#44) -- `Select a table:`, then a file: the table's cells written as CSV,
+  which a spreadsheet opens.
+- **FILLET with ellipses and splines** (#49) -- an elliptical arc, a whole ellipse or a spline
+  rounded with a line, an arc, a circle or another of them: the arc tangent to both, each cut
+  back to it on the side picked (a whole ellipse, like a circle, is left whole).
+- **BREAK on ellipses** (#52) -- an elliptical arc breaks between two points or at one, and a
+  whole ellipse loses the part counter-clockwise from the first point to the second, as a
+  circle does.
 
 ### Fixed
 - **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now

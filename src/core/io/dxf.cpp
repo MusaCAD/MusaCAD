@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
 #include "musacad/core/text/parse_double.hpp"
@@ -9,11 +10,16 @@
 #include "musacad/core/spline_eval.hpp"
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/geometry_store.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <filesystem>
 #include <optional>
 #include <fstream>
@@ -259,7 +265,22 @@ std::string gdt_from_dxf(std::string cell) {
     return cell;
 }
 
+// The drawing's loaded linetypes while it is read or written: entities and layers name
+// theirs through it.
+thread_local const std::vector<LinetypeDef>* t_ltypes = nullptr;
+struct LinetypeScope {
+    explicit LinetypeScope(const std::vector<LinetypeDef>* table) { t_ltypes = table; }
+    ~LinetypeScope() { t_ltypes = nullptr; }
+    LinetypeScope(const LinetypeScope&) = delete;
+    LinetypeScope& operator=(const LinetypeScope&) = delete;
+};
+
 const char* linetype_name(Linetype t) {
+    if (const auto v = static_cast<std::size_t>(t); v >= kFirstLoadedLinetype) {
+        return t_ltypes != nullptr && v - kFirstLoadedLinetype < t_ltypes->size()
+                   ? (*t_ltypes)[v - kFirstLoadedLinetype].name.c_str()
+                   : "Continuous";
+    }
     switch (t) {
     case Linetype::Dashed:
         return "DASHED";
@@ -276,6 +297,15 @@ Linetype linetype_from(const std::string& name) {
     std::string u = name;
     for (char& ch : u) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    for (std::size_t k = 0; t_ltypes != nullptr && k < t_ltypes->size(); ++k) {
+        std::string ln = (*t_ltypes)[k].name;
+        for (char& ch : ln) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+        if (ln == u) {
+            return static_cast<Linetype>(kFirstLoadedLinetype + k);
+        }
     }
     if (u == "DASHED") {
         return Linetype::Dashed;
@@ -488,10 +518,45 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     code(s, 0, "TABLE");
     code(s, 2, "LTYPE");
     code_i(s, 70, 4);
+    // The drawing's own loaded linetypes after the built-in ones (one of those it has
+    // loaded by a built-in name is written in its place).
+    const auto loaded = [&](const char* name) {
+        return std::any_of(doc.linetypes.begin(), doc.linetypes.end(), [&](const LinetypeDef& d) {
+            std::string u = d.name;
+            for (char& ch : u) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            return u == name;
+        });
+    };
     emit_ltype(s, "Continuous", {});
-    emit_ltype(s, "DASHED", {5.0, -2.5});
-    emit_ltype(s, "HIDDEN", {2.5, -1.25});
-    emit_ltype(s, "CENTER", {12.5, -2.5, 2.5, -2.5});
+    if (!loaded("DASHED")) {
+        emit_ltype(s, "DASHED", {5.0, -2.5});
+    }
+    if (!loaded("HIDDEN")) {
+        emit_ltype(s, "HIDDEN", {2.5, -1.25});
+    }
+    if (!loaded("CENTER")) {
+        emit_ltype(s, "CENTER", {12.5, -2.5, 2.5, -2.5});
+    }
+    for (const LinetypeDef& d : doc.linetypes) {
+        code(s, 0, "LTYPE");
+        emit_handle(s);
+        code(s, 2, d.name);
+        code_i(s, 70, 0);
+        code(s, 3, d.description);
+        code_i(s, 72, 65);
+        code_i(s, 73, static_cast<long>(d.pattern.size()));
+        double total = 0.0;
+        for (const double e : d.pattern) {
+            total += std::abs(e);
+        }
+        code_d(s, 40, total);
+        for (const double e : d.pattern) {
+            code_d(s, 49, e);
+            code_i(s, 74, 0); // a plain dash, gap or dot
+        }
+    }
     code(s, 0, "ENDTAB");
     // VPORT table: the model window's tiled viewports, each an *Active entry with its
     // corners in window fractions, its centre and its view height (AutoCAD's form).
@@ -586,7 +651,8 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 41, ds.arrow_size);   // DIMASZ
         code_d(s, 42, ds.ext_offset);   // DIMEXO
         code_d(s, 44, ds.ext_extension); // DIMEXE
-        code_i(s, 77, ds.text_above ? 1 : 0); // DIMTAD
+        code_i(s, 77, dim_text_vpos(ds)); // DIMTAD
+        code_i(s, 280, ds.text_just);      // DIMJUST
         code_i(s, 78, ds.zero_suppression);   // DIMZIN
         code_i(s, 271, ds.precision);   // DIMDEC
         code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
@@ -726,14 +792,15 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 42, e.end);
     }
     // SPLINE: 70 flags (8 = planar), 71 degree, 72/73 knot/control counts, 40 knots
-    // (the clamped uniform vector we draw with), 10/20 control points.
+    // (the spline's own, or the clamped uniform vector it is drawn with), 10/20 control points.
     for (const DocSpline& sp : doc.splines) {
         const int n = static_cast<int>(sp.control_points.size());
         if (n < 2) {
             continue;
         }
         const int deg = spline::effective_degree(n, static_cast<int>(sp.degree));
-        const std::vector<double> knots = spline::clamped_knots(n, deg);
+        const std::vector<double> knots =
+            spline::usable_knots(sp.knots, n, deg) ? sp.knots : spline::clamped_knots(n, deg);
         code(s, 0, "SPLINE");
         emit_props(s, doc, sp.props);
         code(s, 70, "8");
@@ -961,7 +1028,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 30, 0.0);
         std::string text;
         for (std::size_t i = 0; i < f.cells.size(); ++i) {
-            if (i > 0) {
+            if (f.cells[i] == "^J") {
+                text += "^J"; // the next row, as AutoCAD writes it
+                continue;
+            }
+            if (i > 0 && f.cells[i - 1] != "^J") {
                 text += "%%v";
             }
             text += gdt_to_dxf(f.cells[i]);
@@ -1043,14 +1114,30 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // format; through DXF it comes back as a leader line + MTEXT (association not
     // preserved -- stated fidelity gap).
     for (const DocMLeader& m : doc.mleaders) {
-        if (m.vertices.size() >= 2) {
+        if (m.vertices.size() >= 2 && (m.leader_flags & 2u) == 0) {
             code(s, 0, "LEADER");
             emit_props(s, doc, m.props);
+            code_i(s, 71, (m.leader_flags & 4u) != 0 ? 0 : 1); // arrowhead flag
+            code_i(s, 72, (m.leader_flags & 1u) != 0 ? 1 : 0); // path type: straight / spline
             code_i(s, 76, static_cast<long>(m.vertices.size()));
             for (const Vec2& v : m.vertices) {
                 code_d(s, 10, v.x);
                 code_d(s, 20, v.y);
                 code_d(s, 30, 0.0);
+            }
+            // The leaders MLEADEREDIT added: each a LEADER of its own, to the landing.
+            const Vec2 attach = mleader_attach(m.vertices, m.leader_flags);
+            for (const Vec2& tip : m.extra_tips) {
+                code(s, 0, "LEADER");
+                emit_props(s, doc, m.props);
+                code_i(s, 71, (m.leader_flags & 4u) != 0 ? 0 : 1);
+                code_i(s, 72, 0);
+                code_i(s, 76, 2);
+                for (const Vec2& v : {tip, attach}) {
+                    code_d(s, 10, v.x);
+                    code_d(s, 20, v.y);
+                    code_d(s, 30, 0.0);
+                }
             }
         }
         if (m.block.str_len != 0 || !m.content.empty()) {
@@ -1098,9 +1185,35 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         // User-defined (_USER, _USERDOUBLE here): AutoCAD's type 0 with its line families
         // written out, as it has no file to look them up in.
         const bool user = h.pattern_name == "_USER" || h.pattern_name == "_USERDOUBLE";
-        code_i(s, 76, user ? 0 : 1);  // pattern type = user-defined / predefined
+        // The drawing's own pattern: AutoCAD's custom type, its line families written out.
+        const hatch::Pattern* custom = nullptr;
+        for (const hatch::Pattern& p : doc.patterns) {
+            custom = p.name == h.pattern_name ? &p : custom;
+        }
+        code_i(s, 76, user ? 0 : custom != nullptr ? 2 : 1); // user-defined / predefined / custom
         code_d(s, 52, to_degrees(h.pattern_angle));
         code_d(s, 41, h.pattern_scale);
+        if (custom != nullptr) {
+            const double sc = h.pattern_scale > 0.0 ? h.pattern_scale : 1.0;
+            const auto turn = [](Vec2 v, double a) {
+                return Vec2{v.x * std::cos(a) - v.y * std::sin(a), v.x * std::sin(a) + v.y * std::cos(a)};
+            };
+            code_i(s, 78, static_cast<long>(custom->lines.size()));
+            for (const hatch::PatternLine& l : custom->lines) {
+                const double drawn = to_radians(l.angle) + h.pattern_angle;
+                const Vec2 o = turn(l.origin * sc, h.pattern_angle);
+                const Vec2 d = turn(l.delta * sc, drawn);
+                code_d(s, 53, to_degrees(drawn));
+                code_d(s, 43, o.x);
+                code_d(s, 44, o.y);
+                code_d(s, 45, d.x);
+                code_d(s, 46, d.y);
+                code_i(s, 79, static_cast<long>(l.dashes.size()));
+                for (const double dash : l.dashes) {
+                    code_d(s, 49, dash * sc);
+                }
+            }
+        }
         if (user) {
             const bool twice = h.pattern_name == "_USERDOUBLE";
             code_i(s, 77, twice ? 1 : 0);
@@ -1432,7 +1545,174 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     code(s, 0, "ENDSEC");
 }
 
+std::string serialize_las(const LayerState& state) {
+    std::string s;
+    const auto put = [&](int code, const std::string& value) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%3d", code);
+        s += buf;
+        s += "\r\n";
+        s += value;
+        s += "\r\n";
+    };
+    put(0, "LAYERSTATEDICTIONARY");
+    put(0, "LAYERSTATE");
+    put(1, state.name);
+    put(91, "2047"); // every property restored
+    put(301, "");
+    put(290, "0");
+    put(302, state.current);
+    for (const Layer& l : state.layers) {
+        put(8, l.name);
+        put(90, std::to_string((l.on ? 0 : 1) | (l.frozen ? 2 : 0) | (l.locked ? 4 : 0) | (l.plot ? 8 : 0) |
+                               (l.vp_freeze_new ? 16 : 0)));
+        // The nearest colour index; a colour that is not one also goes as a true colour.
+        long aci = 7;
+        long best = std::numeric_limits<long>::max();
+        for (long i = 1; i <= 255; ++i) {
+            const Rgb p = aci_to_rgb(i);
+            const long dr = static_cast<long>(p.r) - l.color.r;
+            const long dg = static_cast<long>(p.g) - l.color.g;
+            const long db = static_cast<long>(p.b) - l.color.b;
+            const long d2 = dr * dr + dg * dg + db * db;
+            if (d2 < best) {
+                best = d2;
+                aci = i;
+            }
+        }
+        put(62, std::to_string(aci));
+        put(370, std::to_string(static_cast<int>(l.lineweight)));
+        put(6, linetype_name(l.linetype));
+        put(2, "Color_" + std::to_string(aci));
+        const long alpha = std::lround(255.0 * (100.0 - std::min<int>(l.transparency, 90)) / 100.0);
+        put(440, std::to_string(l.transparency == 0 ? 0L : (0x02000000L | alpha)));
+        if (best != 0) {
+            put(92, std::to_string(static_cast<std::int32_t>(0xC2000000u | static_cast<std::uint32_t>(true_color(l.color)))));
+        }
+    }
+    return s;
+}
+
+bool parse_las(std::string_view text, LayerState& out, std::string& error) {
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.remove_prefix(3); // a UTF-8 byte order mark
+    }
+    std::vector<std::string_view> lines;
+    while (!text.empty()) {
+        const std::size_t nl = text.find('\n');
+        std::string_view line = text.substr(0, nl);
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        lines.push_back(line);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+    }
+    const auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) {
+            v.remove_prefix(1);
+        }
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) {
+            v.remove_suffix(1);
+        }
+        return v;
+    };
+    const auto number = [&](std::string_view v, long& n) {
+        v = trim(v);
+        const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), n);
+        return ec == std::errc{} && ptr == v.data() + v.size();
+    };
+    out = LayerState{};
+    bool dict = false;
+    bool state = false;
+    for (std::size_t i = 0; i + 1 < lines.size(); i += 2) {
+        long code = 0;
+        if (!number(lines[i], code)) {
+            error = "line " + std::to_string(i + 1) + " is not a group code";
+            return false;
+        }
+        const std::string_view value = lines[i + 1];
+        const std::string_view word = trim(value);
+        long n = 0;
+        if (code == 0) {
+            if (word == "LAYERSTATEDICTIONARY" || word == "LAYERSTATEDICT") {
+                dict = true;
+                continue;
+            }
+            if (word == "LAYERSTATE" && dict && !state) {
+                state = true;
+                continue;
+            }
+            break; // a second state: one per file
+        }
+        if (!state) {
+            error = "not a layer state file";
+            return false;
+        }
+        Layer* l = out.layers.empty() ? nullptr : &out.layers.back();
+        switch (code) {
+        case 1:
+            if (l == nullptr) {
+                out.name = std::string(value);
+            }
+            break;
+        case 302:
+            out.current = std::string(value);
+            break;
+        case 8:
+            out.layers.push_back(Layer{});
+            out.layers.back().name = std::string(value);
+            break;
+        case 90:
+            if (l != nullptr && number(value, n)) {
+                l->on = (n & 1) == 0;
+                l->frozen = (n & 2) != 0;
+                l->locked = (n & 4) != 0;
+                l->plot = (n & 8) != 0;
+                l->vp_freeze_new = (n & 16) != 0;
+            }
+            break;
+        case 62:
+            if (l != nullptr && number(value, n) && n != 0) {
+                l->color = aci_to_rgb(std::labs(n) > 255 ? 7 : std::labs(n));
+                l->on = l->on && n > 0; // a negative colour is a layer that is off
+            }
+            break;
+        case 92:
+            if (l != nullptr && number(value, n)) {
+                l->color = from_true_color(n & 0xFFFFFF);
+            }
+            break;
+        case 370:
+            if (l != nullptr && number(value, n)) {
+                l->lineweight = static_cast<std::uint8_t>(n < 0 ? 25 : std::min<long>(n, 211));
+            }
+            break;
+        case 6:
+            if (l != nullptr) {
+                l->linetype = linetype_from(std::string(word));
+            }
+            break;
+        case 440:
+            if (l != nullptr && number(value, n)) {
+                const long alpha = n & 0xFF;
+                l->transparency = static_cast<std::uint8_t>(
+                    n == 0 ? 0 : std::clamp<long>(std::lround((255.0 - static_cast<double>(alpha)) * 100.0 / 255.0), 0, 90));
+            }
+            break;
+        default:
+            break; // 91, 301, 290, 2: kept by AutoCAD, not by Musa CAD
+        }
+    }
+    if (!state || out.name.empty()) {
+        error = "not a layer state file";
+        return false;
+    }
+    return true;
+}
+
 std::string serialize_dxf(const Document& doc) {
+    const LinetypeScope ltypes_scope(&doc.linetypes);
     g_handle = 0x20;
     WriterRefs refs;
     std::string body;
@@ -1504,99 +1784,34 @@ double getd(const std::vector<Pair>& body, int c, double def = 0.0) {
 // is plain, so we honour structure (\P -> newline, \~ -> space, escaped literals) and DROP
 // the styling runs rather than render them verbatim as "\fCambria...". Losing font/bold/
 // colour is an intentional, catalogued fidelity gap -- not garbled output.
-std::string strip_mtext(const std::string& in) {
+// An MTEXT's content as Musa CAD keeps it: its format codes as AutoCAD wrote them (they
+// are drawn: heights, colours, fonts, underlines, stacked fractions), its paragraphs \P as
+// line breaks, a ^I tab as a space and ^J as a line break.
+std::string mtext_from_dxf(const std::string& in) {
     std::string out;
     out.reserve(in.size());
     for (std::size_t i = 0; i < in.size(); ++i) {
         const char c = in[i];
-        if (c == '{' || c == '}') {
-            continue; // grouping delimiters -- formatting scope, no glyphs
-        }
-        if (c == '^' && i + 1 < in.size()) {
-            // Caret notation for control chars: ^I = tab (used to indent list items after
-            // \P), ^J/^M = lf/cr. Without this the bare 'I' leaks in as "\P^I 2." -> "I 2.".
-            const char n2 = in[i + 1];
-            if (n2 == 'I') {
-                out += ' '; // tab -> space (keeps the indent, drops the stray glyph)
-                ++i;
-                continue;
+        if (c == '\\' && i + 1 < in.size()) {
+            if (in[i + 1] == 'P') {
+                out += '\n';
+            } else {
+                out += c;
+                out += in[i + 1]; // a code, or an escaped \\ \{ \}: kept as it is
             }
-            if (n2 == 'J' || n2 == 'M') {
-                ++i; // line feed / carriage return -- \P already drives breaks
-                continue;
-            }
-            // any other ^x: a literal caret, emitted by the normal path below
-        }
-        if (c != '\\' || i + 1 >= in.size()) {
-            out += c;
+            ++i;
             continue;
         }
-        const char n = in[i + 1];
-        switch (n) {
-        case 'P':
-            out += '\n'; // hard paragraph break (note: \P upper; \p... is a format run)
+        if (c == '^' && i + 1 < in.size() && (in[i + 1] == 'I' || in[i + 1] == 'J' || in[i + 1] == 'M')) {
+            out += in[i + 1] == 'I' ? std::string(" ") : in[i + 1] == 'J' ? std::string("\n") : std::string();
             ++i;
-            break;
-        case '~':
-            out += ' '; // non-breaking space
-            ++i;
-            break;
-        case '\\':
-        case '{':
-        case '}':
-            out += n; // escaped literal
-            ++i;
-            break;
-        case 'L':
-        case 'l':
-        case 'O':
-        case 'o':
-        case 'K':
-        case 'k':
-            i += 1; // underline/overline/strike toggles: no argument
-            break;
-        case 'U':
-        case 'u':
-            if (i + 2 < in.size() && in[i + 2] == '+') {
-                out += "\\U+"; // keep the Unicode escape -- it expands at render time
-                i += 2;        // step past 'U'; the loop's ++i steps past '+'
-            } else {
-                out += n; // bare \U: drop the backslash (default behaviour)
-                ++i;
-            }
-            break;
-        case 'f':
-        case 'F':
-        case 'C':
-        case 'c':
-        case 'H':
-        case 'W':
-        case 'T':
-        case 'Q':
-        case 'A':
-        case 'p':
-        case 'S': {
-            // A formatting run with an argument terminated by ';' (or, for \S stacking,
-            // the fraction body). Skip through the ';'. For \S keep the operands so a
-            // fraction like 1^2; / 1/2; still reads as text.
-            const std::size_t semi = in.find(';', i + 2);
-            const std::size_t end = (semi == std::string::npos) ? in.size() : semi;
-            if (n == 'S') {
-                for (std::size_t k = i + 2; k < end; ++k) {
-                    const char s = in[k];
-                    out += (s == '^' || s == '#') ? '/' : s;
-                }
-            }
-            i = end; // loop ++i steps past the ';'
-            break;
+            continue;
         }
-        default:
-            out += n; // unknown escape: keep the char, drop the backslash
-            ++i;
-            break;
-        }
+        out += c;
     }
-    return out;
+    // Codes the plain layout would show as text (\~, \\, braces, a lone toggle) when no
+    // other code makes the text formatted: read, as they were before.
+    return text::has_mtext_codes(out) ? out : text::mtext_plain(out, true);
 }
 
 } // namespace
@@ -1628,6 +1843,46 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     Document doc;
     doc.layers.assign(1, Layer{"0"}); // layer 0 always exists
+    // The drawing's linetypes (its LTYPE table): those beyond the built-in four, and one by a
+    // built-in name that the drawing draws otherwise, come with it; entities and layers then
+    // take theirs by name.
+    for (std::size_t k = 0; k < pairs.size(); ++k) {
+        if (pairs[k].code != 0 || pairs[k].value != "LTYPE") {
+            continue;
+        }
+        LinetypeDef d;
+        std::size_t j = k + 1;
+        for (; j < pairs.size() && pairs[j].code != 0; ++j) {
+            if (pairs[j].code == 2) {
+                d.name = pairs[j].value;
+            } else if (pairs[j].code == 3) {
+                d.description = pairs[j].value;
+            } else if (pairs[j].code == 49) {
+                d.pattern.push_back(to_d(pairs[j].value));
+            }
+        }
+        k = j - 1;
+        std::string u = d.name;
+        for (char& ch : u) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+        const std::vector<double> builtin = u == "DASHED"   ? std::vector<double>{5.0, -2.5}
+                                            : u == "HIDDEN" ? std::vector<double>{2.5, -1.25}
+                                            : u == "CENTER" ? std::vector<double>{12.5, -2.5, 2.5, -2.5}
+                                                            : std::vector<double>{};
+        bool same = !builtin.empty() && builtin.size() == d.pattern.size();
+        for (std::size_t e = 0; same && e < builtin.size(); ++e) {
+            same = std::abs(builtin[e] - d.pattern[e]) <= 1e-9 * std::max(1.0, std::abs(builtin[e]));
+        }
+        if (u.empty() || u == "CONTINUOUS" || u == "BYLAYER" || u == "BYBLOCK" || same || d.pattern.empty() ||
+            doc.linetypes.size() >= kMaxLoadedLinetypes) {
+            continue;
+        }
+        if (std::none_of(doc.linetypes.begin(), doc.linetypes.end(), [&](const LinetypeDef& o) { return o.name == d.name; })) {
+            doc.linetypes.push_back(std::move(d));
+        }
+    }
+    const LinetypeScope ltypes_scope(&doc.linetypes);
     std::map<std::string, std::uint16_t> layer_index{{"0", std::uint16_t{0}}};
     const auto ensure_layer = [&](const std::string& name) -> std::uint16_t {
         const auto it = layer_index.find(name);
@@ -1802,8 +2057,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
         }
         if (const std::string* lt = find(body, 6)) {
-            p.set_linetype_by_layer(false);
-            p.linetype = linetype_from(*lt);
+            std::string u = *lt;
+            for (char& ch : u) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            if (u != "BYLAYER" && u != "BYBLOCK") { // those are the layer's
+                p.set_linetype_by_layer(false);
+                p.linetype = linetype_from(*lt);
+            }
         }
         if (const std::string* lw = find(body, 370)) {
             // 0..211 = an explicit width; -1/-2/-3 (ByLayer/ByBlock/Default) or anything
@@ -1838,11 +2099,17 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (const std::string* v = find(body, 44)) {
             ds.ext_extension = to_d(*v);
         }
+        if (const std::string* v = find(body, 280)) {
+            const long just = to_l(*v);
+            ds.text_just = just >= 0 && just <= 4 ? static_cast<std::uint8_t>(just) : std::uint8_t{0};
+        }
         if (const std::string* v = find(body, 77)) {
-            ds.text_above = to_l(*v) != 0;
+            const long tad = to_l(*v);
+            ds.text_above = tad != 0 && tad != 4;
+            ds.text_vpos = tad >= 2 && tad <= 4 ? static_cast<std::uint8_t>(tad) : std::uint8_t{0};
         }
         if (const std::string* v = find(body, 78)) {
-            ds.zero_suppression = static_cast<std::uint8_t>(to_l(*v) & (kDimZinLeading | kDimZinTrailing));
+            ds.zero_suppression = static_cast<std::uint8_t>(to_l(*v) & 0x0F); // the feet/inch bits too
         }
         if (const std::string* v = find(body, 278)) {
             ds.decimal_separator = to_l(*v) == ',' ? ',' : '.';
@@ -1872,11 +2139,15 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         ranged(273, 1, 6, [&](long x) { ds.alt_unit = static_cast<std::uint8_t>(x); });
         ranged(171, 0, 8, [&](long x) { ds.alt_precision = static_cast<std::uint8_t>(x); });
         // The Tolerances tab.
-        const double tp = find(body, 47) != nullptr ? to_d(*find(body, 47)) : 0.0;
-        const double tm = find(body, 48) != nullptr ? to_d(*find(body, 48)) : 0.0;
-        const bool dimlim = find(body, 72) != nullptr && to_l(*find(body, 72)) != 0;
-        const bool dimtol = find(body, 71) != nullptr && to_l(*find(body, 71)) != 0;
-        const bool basic = find(body, 147) != nullptr && to_d(*find(body, 147)) < 0.0;
+        const double tp = getd(body, 47);
+        const double tm = getd(body, 48);
+        const auto flag = [&](int code) {
+            const std::string* v = find(body, code);
+            return v != nullptr && to_l(*v) != 0;
+        };
+        const bool dimlim = flag(72);
+        const bool dimtol = flag(71);
+        const bool basic = getd(body, 147) < 0.0;
         ds.tol_method = static_cast<std::uint8_t>(dimlim ? 3 : dimtol ? (std::abs(tp - tm) < 1e-12 ? 1 : 2) : basic ? 4 : 0);
         ds.tol_upper = tp;
         ds.tol_lower = tm;
@@ -2003,7 +2274,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* c = find(body, 1)) {
                 raw += *c;
             }
-            m.content = strip_mtext(raw);
+            m.content = mtext_from_dxf(raw);
             m.font = font_of_entity(body);
             sink.mtexts->push_back(std::move(m));
             return;
@@ -2188,16 +2459,32 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
             const std::string* tol_ptr = find(body, 1);
             const std::string tol_text = tol_ptr != nullptr ? *tol_ptr : std::string{};
-            // Cells are separated by %%v; symbols come back as \U+ escapes.
-            std::size_t start = 0;
+            // Rows are separated by ^J and cells by %%v; symbols come back as \U+ escapes.
+            std::size_t row_start = 0;
             for (;;) {
-                const std::size_t sep = tol_text.find("%%v", start);
-                f.cells.push_back(gdt_from_dxf(
-                    tol_text.substr(start, sep == std::string::npos ? std::string::npos : sep - start)));
-                if (sep == std::string::npos) {
+                const std::size_t row_end = tol_text.find("^J", row_start);
+                const std::string row =
+                    tol_text.substr(row_start, row_end == std::string::npos ? std::string::npos : row_end - row_start);
+                std::size_t start = 0;
+                for (;;) {
+                    const std::size_t sep = row.find("%%v", start);
+                    std::string cell = gdt_from_dxf(row.substr(start, sep == std::string::npos ? std::string::npos : sep - start));
+                    if (!cell.empty()) { // an empty compartment is not drawn, as in AutoCAD
+                        f.cells.push_back(std::move(cell));
+                    }
+                    if (sep == std::string::npos) {
+                        break;
+                    }
+                    start = sep + 3;
+                }
+                if (row_end == std::string::npos) {
                     break;
                 }
-                start = sep + 3;
+                f.cells.push_back("^J");
+                row_start = row_end + 2;
+            }
+            while (!f.cells.empty() && f.cells.back() == "^J") {
+                f.cells.pop_back(); // no row after the last break
             }
             sink.fcfs->push_back(std::move(f));
             return;
@@ -2241,6 +2528,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (const std::string* pn = find(body, 2)) {
                 h.pattern_name = *pn;
             }
+            h.unassoc = getd(body, 71, 0.0) == 0.0; // 71: the associativity flag
             if (getd(body, 76, 1.0) == 0.0 || h.pattern_name == "_USER" || h.pattern_name == "_user") {
                 h.pattern_name = getd(body, 77, 0.0) != 0.0 ? "_USERDOUBLE" : "_USER"; // user-defined
             }
@@ -2287,6 +2575,54 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 }
                 h.pattern_name = "GRADIENT";
                 h.pattern_angle = getd(body, 460, 0.0);
+            }
+            // A pattern Musa CAD does not have (an AutoCAD drawing's custom one): its line
+            // families come with the hatch, scaled and turned as it draws them -- taken back
+            // to the definition and kept with the drawing, so it draws here too.
+            if (h.pattern_name != "SOLID" && h.pattern_name != "GRADIENT" && h.pattern_name != "_USER" &&
+                h.pattern_name != "_USERDOUBLE" && hatch::builtin_pattern(h.pattern_name) == nullptr &&
+                std::none_of(doc.patterns.begin(), doc.patterns.end(),
+                             [&](const hatch::Pattern& p) { return p.name == h.pattern_name; })) {
+                const double s = h.pattern_scale > 0.0 ? h.pattern_scale : 1.0;
+                const auto turn = [](Vec2 v, double a) {
+                    return Vec2{v.x * std::cos(a) - v.y * std::sin(a), v.x * std::sin(a) + v.y * std::cos(a)};
+                };
+                hatch::Pattern pat;
+                pat.name = h.pattern_name;
+                bool in_lines = false;
+                for (const Pair& pr : body) {
+                    if (pr.code == 78) {
+                        in_lines = true;
+                    } else if (!in_lines) {
+                        continue;
+                    } else if (pr.code == 53) {
+                        pat.lines.emplace_back();
+                        pat.lines.back().angle = to_d(pr.value); // the line's angle as drawn
+                    } else if (pat.lines.empty()) {
+                        continue;
+                    } else if (pr.code == 43) {
+                        pat.lines.back().origin.x = to_d(pr.value);
+                    } else if (pr.code == 44) {
+                        pat.lines.back().origin.y = to_d(pr.value);
+                    } else if (pr.code == 45) {
+                        pat.lines.back().delta.x = to_d(pr.value);
+                    } else if (pr.code == 46) {
+                        pat.lines.back().delta.y = to_d(pr.value);
+                    } else if (pr.code == 49) {
+                        pat.lines.back().dashes.push_back(to_d(pr.value) / s);
+                    } else if (pr.code == 98) {
+                        break; // the seed points follow the pattern data
+                    }
+                }
+                for (hatch::PatternLine& l : pat.lines) {
+                    const double drawn = to_radians(l.angle);
+                    l.origin = turn(l.origin, -h.pattern_angle) / s;
+                    l.delta = turn(l.delta, -drawn) / s; // the offset in the line's own frame
+                    l.angle = l.angle - to_degrees(h.pattern_angle);
+                }
+                if (!pat.lines.empty()) {
+                    doc.patterns.push_back(std::move(pat));
+                }
             }
             sink.hatches->push_back(std::move(h));
             return;
@@ -2436,9 +2772,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             if (sink.splines != nullptr) {
                 // A REAL spline whenever it can be represented exactly: fit points are
                 // interpolated (chord parameterisation, AutoCAD's default), and control
-                // points whose knot vector is (or defaults to) our clamped uniform one are
-                // taken as they are. Anything else -- a genuinely non-uniform knot vector --
-                // is drawn faithfully as a tessellated polyline below.
+                // points are taken as they are -- with their own knots when those are not
+                // our clamped uniform ones (as an AutoCAD spline's almost never are). Knots
+                // that do not fit the control points draw as a tessellated polyline below.
                 const auto is_clamped_uniform = [&](const std::vector<double>& k) {
                     const int cp_count = static_cast<int>(ctrl.size());
                     const int deg = spline::effective_degree(cp_count, degree);
@@ -2467,11 +2803,17 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     sink.splines->push_back(std::move(sp));
                     return;
                 }
-                if (ctrl.size() >= 2 && (knots.empty() || is_clamped_uniform(knots))) {
+                const int cp_n = static_cast<int>(ctrl.size());
+                const bool own = cp_n >= 2 && !knots.empty() && !is_clamped_uniform(knots) &&
+                                 spline::usable_knots(knots, cp_n, spline::effective_degree(cp_n, degree));
+                if (ctrl.size() >= 2 && (knots.empty() || is_clamped_uniform(knots) || own)) {
                     DocSpline sp;
                     sp.control_points = ctrl;
                     sp.degree = static_cast<std::uint32_t>(degree);
                     sp.props = props_of(body);
+                    if (own) {
+                        sp.knots = knots;
+                    }
                     sink.splines->push_back(std::move(sp));
                     return;
                 }

@@ -403,6 +403,62 @@ std::string serialize_native(const Document& doc) {
             s += '\n';
         }
     }
+    // v40: LTYPEDEF name description n e1..en (spaces as 0x1f): a loaded linetype, in the
+    // table's order (an entity's linetype is its place there).
+    for (const LinetypeDef& d : doc.linetypes) {
+        const auto word = [](const std::string& in) {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& ch : out) {
+                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                    ch = '\x1f';
+                }
+            }
+            return out;
+        };
+        s += "LTYPEDEF ";
+        s += word(d.name);
+        s += ' ';
+        s += word(d.description);
+        s += ' ';
+        append_uint(s, d.pattern.size());
+        for (const double e : d.pattern) {
+            s += ' ';
+            append_double(s, e);
+        }
+        s += '\n';
+    }
+    // v40: LAYERFILTER name layer... (spaces as 0x1f): a layer group filter.
+    for (const LayerGroupFilter& f : doc.layer_filters) {
+        const auto word = [](const std::string& in) {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& ch : out) {
+                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                    ch = '\x1f';
+                }
+            }
+            return out;
+        };
+        if (f.property) {
+            // LAYERPFILTER name pattern on frozen locked plot: a property filter.
+            s += "LAYERPFILTER ";
+            s += word(f.name);
+            s += ' ';
+            s += word(f.pattern);
+            for (const unsigned v : {unsigned{f.on}, unsigned{f.frozen}, unsigned{f.locked}, unsigned{f.plot}}) {
+                s += ' ';
+                append_uint(s, v);
+            }
+            s += '\n';
+            continue;
+        }
+        s += "LAYERFILTER ";
+        s += word(f.name);
+        for (const std::string& l : f.layers) {
+            s += ' ';
+            s += word(l);
+        }
+        s += '\n';
+    }
     // v40: LAYERSTATE name current (spaces as 0x1f, "-" = empty), then one LSLAYER per
     // layer: r g b linetype lineweight on frozen locked plot vpfreeze name...
     for (const LayerState& st : doc.layer_states) {
@@ -458,7 +514,7 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, ds.precision);
         s += ' ';
-        append_uint(s, ds.text_above ? 1 : 0);
+        append_uint(s, dim_text_vpos(ds)); // DIMTAD, 0..4 (v40; 0 or 1 before)
         s += ' ';
         append_uint(s, ds.dim_lineweight);
         s += ' ';
@@ -480,6 +536,16 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         s += ds.name;
         s += '\n';
+    }
+    // v40: DIMJUST idx just -- a style whose text is not centred along its line.
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        if (doc.dimstyles[i].text_just != 0) {
+            s += "DIMJUST ";
+            append_uint(s, i);
+            s += ' ';
+            append_uint(s, doc.dimstyles[i].text_just);
+            s += '\n';
+        }
     }
     // v40: DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost
     // (the two texts with spaces as 0x1f, "-" for none) -- for a style whose units differ
@@ -608,6 +674,10 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, ps.plot_lineweights ? 1 : 0);
         s += ' ';
         append_uint(s, ps.style);
+        if (!ps.name.empty()) {
+            s += ' ';
+            s += enc(ps.name); // v40: the page setup the layout was given
+        }
         s += '\n';
     }
     s += "ACTIVESPACE ";
@@ -745,6 +815,15 @@ std::string serialize_native(const Document& doc) {
             append_vec(s, v);
         }
         append_props(s, sp.props);
+        // v40: its own knots after the properties, as a count and the values.
+        if (!sp.knots.empty()) {
+            s += ' ';
+            append_uint(s, sp.knots.size());
+            for (const double k : sp.knots) {
+                s += ' ';
+                append_double(s, k);
+            }
+        }
         s += '\n';
     }
     // TEXT params then the content on its own (raw) line, preserving spaces.
@@ -845,6 +924,19 @@ std::string serialize_native(const Document& doc) {
             s += d.inspect_rate;
             s += '\n';
         }
+        if (d.unassoc) {
+            s += "DIMNOASSOC\n"; // v40: the DIM just written is not associative
+        }
+        if (d.flip != 0) {
+            s += "DIMFLIP "; // v40: its flipped arrowheads
+            append_uint(s, d.flip);
+            s += '\n';
+        }
+        if (d.overrides.has(DimOverrides::kTextMove)) {
+            s += "DIMTMOVE "; // v40: its own DIMTMOVE (outside the override block's fixed fields)
+            append_uint(s, d.overrides.text_move);
+            s += '\n';
+        }
         if (!d.breaks.empty()) {
             // v40: DIMBREAKS n x y ... -- the breaks of the DIM just written.
             s += "DIMBREAKS ";
@@ -934,6 +1026,20 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += m.font; // v10
         s += '\n';
+        if (m.leader_flags != 0) {
+            s += "MLEADERFORM "; // v40: the leader's form (spline, no line, no arrowhead, landing)
+            append_uint(s, m.leader_flags);
+            s += '\n';
+        }
+        if (!m.extra_tips.empty()) {
+            s += "MLEADERTIPS "; // v40: MLEADEREDIT's added leaders, by their arrowheads
+            append_uint(s, m.extra_tips.size());
+            for (const Vec2& v : m.extra_tips) {
+                s += ' ';
+                append_vec(s, v);
+            }
+            s += '\n';
+        }
     }
     // v14: HATCH. One line: loop count, then each loop (vertex count + x y pairs), then
     // scale, angle(radians), origin, props. The pattern name is on the next line.
@@ -965,6 +1071,9 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += escape(h.pattern_name);
         s += '\n';
+        if (h.unassoc) {
+            s += "HATCHNOASSOC\n"; // v40: the HATCH just written does not follow its boundary
+        }
     }
     // v31: paper-space viewports.
     for (const DocViewport& v : doc.viewports) {
@@ -1253,6 +1362,14 @@ std::string serialize_native(const Document& doc) {
         append_double(s, v.scale);
         s += ' ';
         s += enc(v.name);
+        if (!v.layer_state.empty() || !v.category.empty()) {
+            s += ' '; // v40: the layer snapshot
+            s += enc(v.layer_state);
+        }
+        if (!v.category.empty()) {
+            s += ' '; // v40: the view category
+            s += enc(v.category);
+        }
         s += '\n';
     }
     // v35: VPORTS -- the model window's tiles, then the saved configurations.
@@ -1331,9 +1448,59 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, doc.current_table_style);
         s += '\n';
     }
+    // v40: MLEADERSTYLE arrow size landing distance text_height gap max_points text leader_type <name>
+    // (written only when there is more than Standard as it starts).
+    if (!(doc.mleader_styles.empty() || (doc.mleader_styles.size() == 1 && doc.mleader_styles[0] == MLeaderStyle{}))) {
+        for (const MLeaderStyle& ms : doc.mleader_styles) {
+            s += "MLEADERSTYLE ";
+            append_uint(s, ms.arrow);
+            s += ' ';
+            append_double(s, ms.arrow_size);
+            s += ' ';
+            append_uint(s, ms.landing ? 1 : 0);
+            s += ' ';
+            append_double(s, ms.landing_distance);
+            s += ' ';
+            append_double(s, ms.text_height);
+            s += ' ';
+            append_double(s, ms.landing_gap);
+            s += ' ';
+            append_uint(s, ms.max_points);
+            s += ' ';
+            append_uint(s, ms.text ? 1 : 0);
+            s += ' ';
+            append_uint(s, ms.leader_type);
+            s += ' ';
+            s += ms.name; // absorbs the rest of the line
+            s += '\n';
+        }
+        s += "CURMLEADERSTYLE ";
+        append_uint(s, doc.current_mleader_style);
+        s += '\n';
+    }
     // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
     // column widths, one of row heights, then per cell: "span_cols span_rows align" and
     // the raw text on the following line (it may contain spaces, so it cannot be a token).
+    // v40: PATTERN <name>, then a PATLINE angle ox oy dx dy [dashes...] for each family --
+    // the drawing's own hatch patterns.
+    for (const hatch::Pattern& p : doc.patterns) {
+        s += "PATTERN ";
+        s += enc(p.name);
+        s += '\n';
+        for (const hatch::PatternLine& l : p.lines) {
+            s += "PATLINE ";
+            append_double(s, l.angle);
+            s += ' ';
+            append_vec(s, l.origin);
+            s += ' ';
+            append_vec(s, l.delta);
+            for (const double d : l.dashes) {
+                s += ' ';
+                append_double(s, d);
+            }
+            s += '\n';
+        }
+    }
     // v40: DATALINK <name> <path> (spaces escaped as in PAGESETUP); a linked TABLE carries
     // the link's index as one more token.
     for (const DataLink& dl : doc.data_links) {
@@ -1341,6 +1508,12 @@ std::string serialize_native(const Document& doc) {
         s += enc(dl.name);
         s += ' ';
         s += enc(dl.path);
+        if (!dl.sheet.empty() || !dl.range.empty()) { // v40: the sheet and the range
+            s += ' ';
+            s += enc(dl.sheet);
+            s += ' ';
+            s += enc(dl.range);
+        }
         s += '\n';
     }
     for (const DocTable& t : doc.tables) {
@@ -1727,8 +1900,29 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed POINTMODE");
             }
             doc.pdmode = static_cast<std::uint8_t>(std::min<std::uint64_t>(mode, 100));
+        } else if (key == "PATTERN") {
+            if (tok.size() != 2) {
+                return fail("malformed PATTERN");
+            }
+            hatch::Pattern p;
+            p.name = std::string(tok[1]);
+            for (char& ch : p.name) {
+                ch = ch == '\x1f' ? ' ' : ch;
+            }
+            doc.patterns.push_back(std::move(p));
+        } else if (key == "PATLINE") {
+            vals.clear();
+            if (doc.patterns.empty() || tok.size() < 6 || !parse_doubles(tok, 1, tok.size() - 1, vals)) {
+                return fail("malformed PATLINE");
+            }
+            hatch::PatternLine l;
+            l.angle = vals[0];
+            l.origin = {vals[1], vals[2]};
+            l.delta = {vals[3], vals[4]};
+            l.dashes.assign(vals.begin() + 5, vals.end());
+            doc.patterns.back().lines.push_back(std::move(l));
         } else if (key == "DATALINK") {
-            if (tok.size() != 3) {
+            if (tok.size() != 3 && tok.size() != 5) {
                 return fail("malformed DATALINK");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1740,7 +1934,8 @@ IoResult parse_native(std::string_view text, Document& out) {
                 }
                 return r == "-" ? std::string{} : r;
             };
-            doc.data_links.push_back(DataLink{dec(tok[1]), dec(tok[2])});
+            doc.data_links.push_back(DataLink{dec(tok[1]), dec(tok[2]), tok.size() == 5 ? dec(tok[3]) : std::string(),
+                                              tok.size() == 5 ? dec(tok[4]) : std::string()});
         } else if (key == "INSBASE") {
             vals.clear();
             if (tok.size() != 3 || !parse_doubles(tok, 1, 2, vals)) {
@@ -1769,6 +1964,32 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed CURDIMSTYLE");
             }
             doc.current_dimstyle = static_cast<std::uint16_t>(i);
+        } else if (key == "MLEADERSTYLE") {
+            std::uint64_t arrow = 0, landing = 1, maxp = 2, txt = 1, ltype = 0;
+            MLeaderStyle ms;
+            if (tok.size() < 11 || !to_uint(tok[1], arrow) || !to_double(tok[2], ms.arrow_size) ||
+                !to_uint(tok[3], landing) || !to_double(tok[4], ms.landing_distance) ||
+                !to_double(tok[5], ms.text_height) || !to_double(tok[6], ms.landing_gap) || !to_uint(tok[7], maxp) ||
+                !to_uint(tok[8], txt) || !to_uint(tok[9], ltype) || ltype > 2) {
+                return fail("malformed MLEADERSTYLE");
+            }
+            ms.leader_type = static_cast<std::uint8_t>(ltype);
+            ms.arrow = static_cast<std::uint8_t>(std::min<std::uint64_t>(arrow, 3));
+            ms.landing = landing != 0;
+            ms.max_points = static_cast<std::uint8_t>(std::min<std::uint64_t>(maxp, 99));
+            ms.text = txt != 0;
+            ms.name = std::string(tok[10]);
+            for (std::size_t i = 11; i < tok.size(); ++i) {
+                ms.name += ' ';
+                ms.name += std::string(tok[i]);
+            }
+            doc.mleader_styles.push_back(std::move(ms));
+        } else if (key == "CURMLEADERSTYLE") {
+            std::uint64_t i = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], i)) {
+                return fail("malformed CURMLEADERSTYLE");
+            }
+            doc.current_mleader_style = static_cast<std::uint16_t>(i);
         } else if (key == "CURTABLESTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {
@@ -1840,7 +2061,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             doc.saved_vports.push_back(VportConfig{name == "-" ? std::string() : name, {}});
         } else if (key == "VIEW") {
-            if (tok.size() != 5) {
+            if (tok.size() < 5 || tok.size() > 7) {
                 return fail("malformed VIEW");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1858,6 +2079,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed VIEW");
             }
             v.name = dec(tok[4]);
+            if (tok.size() >= 6) {
+                v.layer_state = dec(tok[5]);
+            }
+            if (tok.size() == 7) {
+                v.category = dec(tok[6]);
+            }
             doc.views.push_back(std::move(v));
         } else if (key == "GROUP") {
             std::uint64_t sel = 0;
@@ -1891,7 +2118,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         } else if (key == "LAYOUT") {
             // LAYOUT id name paper target pw ph land area wminx wminy wmaxx wmaxy fit snum sden
             //        center offx offy plw style   (the PAGESETUP fields after the id)
-            if (tok.size() != 21) {
+            if (tok.size() != 21 && tok.size() != 22) {
                 return fail("malformed LAYOUT");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1935,6 +2162,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             l.page.fit = u[2] != 0;
             l.page.scale_num = d[4];
             l.page.scale_den = d[5];
+            if (tok.size() == 22) {
+                l.page.name = dec(tok[21]);
+            }
             doc.layouts.push_back(std::move(l));
         } else if (key == "ACTIVESPACE") {
             std::uint64_t sp = 0;
@@ -2038,7 +2268,8 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.ext_offset = eo;
             ds.ext_extension = ee;
             ds.precision = static_cast<std::uint8_t>(pr);
-            ds.text_above = ta != 0;
+            ds.text_above = ta != 0 && ta != 4;
+            ds.text_vpos = ta >= 2 && ta <= 4 ? static_cast<std::uint8_t>(ta) : std::uint8_t{0};
             // v4 appends: dim_lineweight + 4 element colours (by_layer r g b) before name.
             std::size_t name_at = 8;
             if (version >= 4 && tok.size() >= 25) {
@@ -2080,7 +2311,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                     to_uint(tok[27], zin);
                     to_uint(tok[28], tmove);
                     ds.decimal_separator = sep == ',' ? ',' : '.';
-                    ds.zero_suppression = static_cast<std::uint8_t>(zin & (kDimZinLeading | kDimZinTrailing));
+                    ds.zero_suppression = static_cast<std::uint8_t>(zin & 0x0F);
                     ds.text_move = static_cast<std::uint8_t>(std::min<std::uint64_t>(tmove, 2));
                     name_at = 29;
                 }
@@ -2091,6 +2322,11 @@ IoResult parse_native(std::string_view text, Document& out) {
                 name += std::string(tok[i]);
             }
             ds.name = name;
+            if (version < 40) {
+                // Before v40 feet and inches always showed both (0'-6", 1'-0"): DIMZIN 1.
+                ds.zero_suppression = static_cast<std::uint8_t>(
+                    (static_cast<unsigned>(ds.zero_suppression) & ~static_cast<unsigned>(kDimZinFeetInches)) | 1u);
+            }
             doc.dimstyles.push_back(std::move(ds));
         } else if (key == "TEXT") {
             // params: px py height rotation justify <props7>; content on next line.
@@ -2289,6 +2525,44 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       static_cast<std::uint8_t>(dinspect),
                                       dinspect_label,
                                       dinspect_rate});
+        } else if (key == "DIMFLIP" || key == "DIMTMOVE") {
+            std::uint64_t v = 0;
+            if (doc.dims.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 3 ||
+                (key == "DIMTMOVE" && v > 2)) {
+                return fail("malformed " + std::string(key));
+            }
+            if (key == "DIMFLIP") {
+                doc.dims.back().flip = static_cast<std::uint8_t>(v);
+            } else {
+                doc.dims.back().overrides.text_move = static_cast<std::uint8_t>(v);
+                doc.dims.back().overrides.set(DimOverrides::kTextMove, true);
+            }
+        } else if (key == "MLEADERTIPS") {
+            std::uint64_t n = 0;
+            vals.clear();
+            if (doc.mleaders.empty() || tok.size() < 2 || !to_uint(tok[1], n) || n > 255 || tok.size() != 2 + n * 2 ||
+                !parse_doubles(tok, 2, n * 2, vals)) {
+                return fail("malformed MLEADERTIPS");
+            }
+            for (std::uint64_t i = 0; i < n; ++i) {
+                doc.mleaders.back().extra_tips.push_back({vals[i * 2], vals[i * 2 + 1]});
+            }
+        } else if (key == "MLEADERFORM") {
+            std::uint64_t v = 0;
+            if (doc.mleaders.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 15) {
+                return fail("malformed MLEADERFORM");
+            }
+            doc.mleaders.back().leader_flags = static_cast<std::uint8_t>(v);
+        } else if (key == "HATCHNOASSOC") {
+            if (doc.hatches.empty()) {
+                return fail("HATCHNOASSOC without a HATCH");
+            }
+            doc.hatches.back().unassoc = true;
+        } else if (key == "DIMNOASSOC") {
+            if (doc.dims.empty()) {
+                return fail("DIMNOASSOC without a DIM");
+            }
+            doc.dims.back().unassoc = true;
         } else if (key == "DIMBREAKS") {
             std::uint64_t n = 0;
             vals.clear();
@@ -2451,6 +2725,59 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("VPFRZNEW record malformed");
             }
             doc.layers[li].vp_freeze_new = true;
+        } else if (key == "LAYERPFILTER") {
+            std::uint64_t v[4] = {};
+            if (tok.size() != 7 || !to_uint(tok[3], v[0]) || !to_uint(tok[4], v[1]) || !to_uint(tok[5], v[2]) ||
+                !to_uint(tok[6], v[3]) || v[0] > 2 || v[1] > 2 || v[2] > 2 || v[3] > 2) {
+                return fail("malformed LAYERPFILTER");
+            }
+            const auto word = [](std::string_view t) {
+                std::string spelled(t);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            LayerGroupFilter rule;
+            rule.property = true;
+            rule.name = word(tok[1]);
+            rule.pattern = word(tok[2]);
+            rule.on = static_cast<std::uint8_t>(v[0]);
+            rule.frozen = static_cast<std::uint8_t>(v[1]);
+            rule.locked = static_cast<std::uint8_t>(v[2]);
+            rule.plot = static_cast<std::uint8_t>(v[3]);
+            doc.layer_filters.push_back(std::move(rule));
+        } else if (key == "LTYPEDEF") {
+            std::uint64_t n = 0;
+            vals.clear();
+            if (tok.size() < 4 || !to_uint(tok[3], n) || tok.size() != 4 + n || !parse_doubles(tok, 4, n, vals)) {
+                return fail("malformed LTYPEDEF");
+            }
+            const auto word = [](std::string_view t) {
+                std::string spelled(t);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            doc.linetypes.push_back(LinetypeDef{word(tok[1]), word(tok[2]), vals});
+        } else if (key == "LAYERFILTER") {
+            if (tok.size() < 2) {
+                return fail("malformed LAYERFILTER");
+            }
+            const auto word = [](std::string_view t) {
+                std::string spelled(t);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            LayerGroupFilter group;
+            group.name = word(tok[1]);
+            for (std::size_t i = 2; i < tok.size(); ++i) {
+                group.layers.push_back(word(tok[i]));
+            }
+            doc.layer_filters.push_back(std::move(group));
         } else if (key == "LAYERSTATE") {
             // LAYERSTATE name current (v40); its layers follow as LSLAYER records.
             if (tok.size() != 3) {
@@ -2512,6 +2839,13 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.tol_upper = up;
             ds.tol_lower = lo;
             ds.tol_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(prec, 9)) - 1);
+        } else if (key == "DIMJUST") {
+            std::uint64_t idx = 0;
+            std::uint64_t v = 0;
+            if (tok.size() != 3 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size() || !to_uint(tok[2], v) || v > 4) {
+                return fail("malformed DIMJUST");
+            }
+            doc.dimstyles[idx].text_just = static_cast<std::uint8_t>(v);
         } else if (key == "DIMUNITS") {
             // DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost (v40)
             std::uint64_t idx = 0;
@@ -2956,8 +3290,17 @@ IoResult parse_native(std::string_view text, Document& out) {
                 sp.control_points.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
             if (version >= 2) {
-                if (!parse_props(tok, 3 + n * 2, sp.props) || tok.size() != 3 + n * 2 + 7) {
+                if (!parse_props(tok, 3 + n * 2, sp.props) || tok.size() < 3 + n * 2 + 7) {
                     return fail("SPLINE properties malformed");
+                }
+                const std::size_t at = 3 + n * 2 + 7;
+                std::uint64_t nk = 0;
+                if (tok.size() > at) {
+                    vals.clear();
+                    if (!to_uint(tok[at], nk) || tok.size() != at + 1 + nk || !parse_doubles(tok, at + 1, nk, vals)) {
+                        return fail("SPLINE knots malformed");
+                    }
+                    sp.knots = vals;
                 }
             } else if (tok.size() != 3 + n * 2) {
                 return fail("SPLINE record malformed");

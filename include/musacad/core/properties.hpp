@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -31,6 +32,20 @@ enum class Linetype : std::uint8_t {
     Hidden = 3,
 };
 
+/// A linetype loaded into the drawing (-LINETYPE Load, the Linetype Manager, an AutoCAD
+/// drawing's own): its name, description and pattern as a .lin file writes it -- a dash
+/// positive, a gap negative, 0 a dot -- in drawing units. It is the Linetype value
+/// kFirstLoadedLinetype plus its place in the drawing's linetype table.
+struct LinetypeDef {
+    std::string name;
+    std::string description{};
+    std::vector<double> pattern{};
+    friend bool operator==(const LinetypeDef&, const LinetypeDef&) = default;
+};
+inline constexpr std::uint8_t kFirstLoadedLinetype = 4;
+/// The most a drawing loads (the Linetype values up to 255).
+inline constexpr std::size_t kMaxLoadedLinetypes = 252;
+
 /// A drawing layer: name + default properties + display state. Lineweight is in
 /// hundredths of a millimetre (the DXF unit, code 370; 0..211).
 struct Layer {
@@ -55,6 +70,22 @@ struct LayerState {
     std::string current;
     std::vector<Layer> layers;
     friend bool operator==(const LayerState&, const LayerState&) = default;
+};
+
+/// A layer filter of the drawing's own (the Layer Properties Manager): a group filter, a named
+/// set of layers by name; or, with `property`, a property filter -- the layers whose name matches
+/// `pattern` (* and ? wild cards; empty: any) and whose on, frozen, locked and plot settings
+/// are as asked (0 any, 1 yes, 2 no).
+struct LayerGroupFilter {
+    std::string name;
+    std::vector<std::string> layers;
+    bool property = false;
+    std::string pattern{};
+    std::uint8_t on = 0;
+    std::uint8_t frozen = 0;
+    std::uint8_t locked = 0;
+    std::uint8_t plot = 0;
+    friend bool operator==(const LayerGroupFilter&, const LayerGroupFilter&) = default;
 };
 
 /// Dimension subtype. Linear/Aligned are fully implemented; the rest are staged.
@@ -153,6 +184,12 @@ struct DimStyle {
     double ext_extension = 1.25; ///< how far the extension line passes the dim line
     std::uint8_t precision = 2;  ///< decimal places in the measured text
     bool text_above = true;      ///< text sits above the dim line (else centred)
+    /// DIMTAD beyond Centered and Above: 2 Outside (on the side away from what is measured),
+    /// 3 JIS, 4 Below; 0 leaves it to text_above. dim_text_vpos() reads the two together.
+    std::uint8_t text_vpos = 0;
+    /// DIMJUST, the Text tab's Horizontal: 0 Centered, 1 At Ext Line 1, 2 At Ext Line 2,
+    /// 3 Over Ext Line 1, 4 Over Ext Line 2 (linear and aligned dimensions).
+    std::uint8_t text_just = 0;
     std::uint8_t dim_lineweight = 25; ///< dimension/extension line weight (hundredths mm)
     std::uint8_t text_fit = 0;   ///< TextFit: narrow-dimension value placement (Auto)
 
@@ -208,12 +245,34 @@ struct DimStyle {
 /// DIMZIN's two decimal bits.
 inline constexpr std::uint8_t kDimZinLeading = 4;  ///< "0.50" is written ".50"
 inline constexpr std::uint8_t kDimZinTrailing = 8; ///< "12.50" is written "12.5", "12.00" "12"
+/// DIMZIN's feet-and-inches bits (Engineering, Architectural), AutoCAD's values: 0 both zero
+/// feet and zero inches left out (6", 1'), 1 both kept (0'-6", 1'-0"), 2 zero feet kept
+/// and zero inches left out, 3 zero inches kept and zero feet left out.
+inline constexpr std::uint8_t kDimZinFeetInches = 3;
 
 /// Per-dimension property overrides (AutoCAD's PR "this dimension only"). Mirrors
 /// the ByLayer/override pattern: a bit in `mask` means "this field is overridden;
 /// use the value here instead of the dimension's DimStyle". No bit => ByStyle. The
 /// effective value is resolved once, in compute_dim_geometry (override-first). Kept
 /// compact and only in the dimension's arena -- hot structs are untouched.
+/// A multileader style (MLEADERSTYLE): what MLEADER draws a new multileader with -- the
+/// arrowhead and its size, whether there is a landing and how long, the text height and
+/// its gap from the landing, how many leader points, and whether it carries text.
+/// Standard is the multileader Musa CAD drew before there were styles.
+struct MLeaderStyle {
+    std::string name = "Standard";
+    std::uint8_t arrow = 0;          ///< ArrowType
+    double arrow_size = 2.5;
+    bool landing = true;             ///< Automatically include landing
+    double landing_distance = 5.0;   ///< the landing's length
+    double text_height = 2.5;
+    double landing_gap = 1.25;       ///< between the landing and the text
+    std::uint8_t max_points = 2;     ///< leader points before the text (0: no limit)
+    bool text = true;                ///< Multileader type: MText (false: None)
+    std::uint8_t leader_type = 0;    ///< Leader Format > Type: 0 Straight, 1 Spline, 2 None
+    friend bool operator==(const MLeaderStyle&, const MLeaderStyle&) = default;
+};
+
 struct DimOverrides {
     enum Bit : std::uint16_t {
         kTextHeight = 1u << 0,
@@ -225,12 +284,14 @@ struct DimOverrides {
         kExtColor = 1u << 6,
         kTextColor = 1u << 7,
         kTextFit = 1u << 8,
+        kTextMove = 1u << 9, ///< DIMTMOVE (the text grip's Move with Dim Line / Text Only / with Leader)
     };
     std::uint16_t mask = 0;
     std::uint8_t arrow_type = 0;
     std::uint8_t precision = 2;
     std::uint8_t text_fit = 0; ///< TextFit
     bool text_above = true;
+    std::uint8_t text_move = 0; ///< DimStyle::text_move
     double text_height = 2.5;
     double arrow_size = 2.5;
     Rgb dim_color{};
@@ -245,6 +306,21 @@ struct DimOverrides {
 
 /// Apply a dimension's overrides onto a copy of its style, producing the effective
 /// style. The ONE place override-vs-style is decided (called from compute_dim_geometry).
+/// A multileader's form (MLEADER's Leader type, LEADER's Format), as bits: a spline through
+/// the points (the landing, the last segment when kLanding, left straight), no leader line
+/// at all, no arrowhead.
+struct LeaderForm {
+    static constexpr std::uint8_t kSpline = 1u << 0;
+    static constexpr std::uint8_t kNoLine = 1u << 1;
+    static constexpr std::uint8_t kNoArrow = 1u << 2;
+    static constexpr std::uint8_t kLanding = 1u << 3;
+};
+
+/// The Text tab's Vertical position, DIMTAD: 0 Centered, 1 Above, 2 Outside, 3 JIS, 4 Below.
+[[nodiscard]] inline std::uint8_t dim_text_vpos(const DimStyle& s) noexcept {
+    return s.text_vpos != 0 ? s.text_vpos : static_cast<std::uint8_t>(s.text_above ? 1 : 0);
+}
+
 [[nodiscard]] inline DimStyle apply_dim_overrides(DimStyle s, const DimOverrides& o) noexcept {
     if (o.has(DimOverrides::kTextHeight)) {
         s.text_height = o.text_height;
@@ -260,6 +336,7 @@ struct DimOverrides {
     }
     if (o.has(DimOverrides::kTextAbove)) {
         s.text_above = o.text_above;
+        s.text_vpos = 0; // the dimension's own Above or Centered
     }
     if (o.has(DimOverrides::kDimColor)) {
         s.dim_color = ElementColor{false, o.dim_color};
@@ -273,6 +350,9 @@ struct DimOverrides {
     }
     if (o.has(DimOverrides::kTextFit)) {
         s.text_fit = o.text_fit;
+    }
+    if (o.has(DimOverrides::kTextMove)) {
+        s.text_move = o.text_move;
     }
     return s;
 }

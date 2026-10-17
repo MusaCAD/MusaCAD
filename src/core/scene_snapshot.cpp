@@ -22,6 +22,7 @@
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 #include "musacad/core/text/text_codes.hpp"
@@ -267,6 +268,36 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         auto& v = fill_groups[color_key(c)];
         v.insert(v.end(), tris.begin(), tris.end());
     };
+    // A paragraph's layout in its colour, the runs a format code colours (\C, \c) in theirs.
+    std::vector<Vec2> mtext_part;
+    const auto add_mtext = [&](const text::MTextLayout& lay, Rgb c, std::uint8_t lw, double text_height) {
+        if (lay.colors.empty()) {
+            add_lines(c, lw, lay.segments, /*is_text=*/true, text_height);
+            add_fills(c, lay.fills);
+            return;
+        }
+        const auto emit = [&](Rgb rc, std::size_t s0, std::size_t s1, std::size_t f0, std::size_t f1) {
+            if (s1 > s0) {
+                mtext_part.assign(lay.segments.begin() + static_cast<std::ptrdiff_t>(s0),
+                                  lay.segments.begin() + static_cast<std::ptrdiff_t>(s1));
+                add_lines(rc, lw, mtext_part, /*is_text=*/true, text_height);
+            }
+            if (f1 > f0) {
+                mtext_part.assign(lay.fills.begin() + static_cast<std::ptrdiff_t>(f0),
+                                  lay.fills.begin() + static_cast<std::ptrdiff_t>(f1));
+                add_fills(rc, mtext_part);
+            }
+        };
+        std::size_t seg = 0;
+        std::size_t fill = 0;
+        for (const text::MTextColorSpan& span : lay.colors) {
+            emit(c, seg, span.seg_begin, fill, span.fill_begin);
+            emit(span.color, span.seg_begin, span.seg_end, span.fill_begin, span.fill_end);
+            seg = span.seg_end;
+            fill = span.fill_end;
+        }
+        emit(c, seg, lay.segments.size(), fill, lay.fills.size());
+    };
     const auto add_gradient_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
         auto& v = gradient_groups[color_key(c)];
         v.insert(v.end(), tris.begin(), tris.end());
@@ -369,7 +400,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         // Effective linetype scale = document LTSCALE x this entity's CELTSCALE. This is
         // the ONE multiplication feeding the Ph23 dash renderer; the plot path uses the
         // same build_render_snapshot, so plot honours it with no fork.
-        dash_polyline(seg, r.linetype, ltscale * store.celtscale(h), dashed);
+        dash_polyline(seg, r.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
         add_lines(r.color, r.lineweight, dashed);
     });
 
@@ -383,7 +414,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         // Dash by arc-length along the tessellated curve (phase carries across the
         // tessellation vertices), so the pattern stays even and zoom-consistent.
         dashed.clear();
-        dash_polyline(tess, r.linetype, ltscale * store.celtscale(h), dashed);
+        dash_polyline(tess, r.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
         add_lines(r.color, r.lineweight, dashed);
     };
     for_each_live(store.circles(), EntityKind::Circle,
@@ -419,7 +450,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                 seg_right.clear();
                 pline::detail::segment_rows(v[i], v[(i + 1) % n], i < b.size() ? b[i] : 0.0, 0.0, 0.0, tolerance,
                                             seg_left, seg_right);
-                dash_polyline(seg_left, rp.linetype, ltscale * store.celtscale(h), dashed);
+                dash_polyline(seg_left, rp.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
             }
             add_lines(rp.color, rp.lineweight, dashed);
             return;
@@ -436,7 +467,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             // A dashed wide polyline: every dash is a piece of the band.
             kernel.tessellate(store, h, tolerance, tess);
             dashed.clear();
-            dash_polyline(tess, r.linetype, ltscale * store.celtscale(h), dashed);
+            dash_polyline(tess, r.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
             const std::array<double, 4> ww{*uniform, *uniform, *uniform, *uniform};
             for (std::size_t i = 0; i + 1 < dashed.size(); i += 2) {
                 const std::array<Vec2, 2> piece{dashed[i], dashed[i + 1]};
@@ -708,8 +739,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         const ResolvedProps r = entity_resolved(store, m->props);
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(r.color, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);
-        add_fills(r.color, lay.fills);
+        add_mtext(lay, r.color, r.lineweight, m->text.height);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
@@ -729,21 +759,50 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         const Rgb arrow_c = s.arrow_color.resolve(r.color);
         const Rgb text_c = s.text_color.resolve(r.color);
         const std::span<const Vec2> v = store.vertices_of(*m);
-        for (std::size_t i = 1; i < v.size(); ++i) {
-            add_line(r.color, r.lineweight, v[i - 1], v[i]);
+        // The leader's path: its points, or a spline through them (the landing, the last
+        // segment, left straight); none at all for a leader type of None.
+        std::vector<Vec2> path(v.begin(), v.end());
+        const bool landing = (m->leader_flags & LeaderForm::kLanding) != 0;
+        if ((m->leader_flags & LeaderForm::kSpline) != 0 && v.size() >= (landing ? 4u : 3u)) {
+            const std::size_t through = landing ? v.size() - 1 : v.size();
+            const std::vector<Vec2> ctrl =
+                spline::fit_or_fallback(std::span<const Vec2>(v.data(), through), 3, spline::FitParam::Chord);
+            path.clear();
+            spline::tessellate(ctrl, 3, path);
+            if (landing) {
+                path.push_back(v.back());
+            }
         }
-        if (v.size() >= 2) {
+        const bool line = (m->leader_flags & LeaderForm::kNoLine) == 0;
+        for (std::size_t i = 1; line && i < path.size(); ++i) {
+            add_line(r.color, r.lineweight, path[i - 1], path[i]);
+        }
+        if (line && path.size() >= 2 && (m->leader_flags & LeaderForm::kNoArrow) == 0) {
             afill.clear();
             aline.clear();
-            append_arrowhead(afill, aline, v[0], v[1] - v[0], s.arrow_size,
+            append_arrowhead(afill, aline, path[0], path[1] - path[0], s.arrow_size,
                              static_cast<ArrowType>(s.arrow_type));
             add_fills(arrow_c, afill);
             add_lines(arrow_c, r.lineweight, aline);
         }
+        // MLEADEREDIT's added leaders: straight from each arrowhead to the landing.
+        const Vec2 attach = mleader_attach(v, m->leader_flags);
+        for (const Vec2& tip : store.extra_tips_of(*m)) {
+            if (!line || distance(tip, attach) < 1e-12) {
+                continue;
+            }
+            add_line(r.color, r.lineweight, tip, attach);
+            if ((m->leader_flags & LeaderForm::kNoArrow) == 0) {
+                afill.clear();
+                aline.clear();
+                append_arrowhead(afill, aline, tip, attach - tip, s.arrow_size, static_cast<ArrowType>(s.arrow_type));
+                add_fills(arrow_c, afill);
+                add_lines(arrow_c, r.lineweight, aline);
+            }
+        }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(text_c, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);
-        add_fills(text_c, lay.fills);
+        add_mtext(lay, text_c, r.lineweight, m->text.height);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
@@ -859,7 +918,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     }
                 }
             }
-        } else if (const hatch::Pattern* pat = hatch::builtin_pattern(pname)) {
+        } else if (const hatch::Pattern* pat = store.pattern(pname)) {
             // Line patterns (ANSI31 etc.): generate the clipped line families here
             // (derived-not-baked) and route them into the colour/lineweight line groups, so
             // they batch like every other line and plot as PDF vectors with no special case.

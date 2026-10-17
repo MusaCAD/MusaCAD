@@ -140,7 +140,7 @@ TEST_CASE("The -LAYER prompts; LAYER without a window works the same way") {
     H h;
     h.proc.submit_line("-LAYER");
     REQUIRE(h.out.prompt ==
-            "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/LOck/Unlock/Description]: ");
+            "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/LOck/Unlock/stAte/Description/rEconcile/Xref]: ");
     h.proc.submit_line("N");
     REQUIRE(h.out.prompt == "Enter name list for new layer(s): ");
     h.proc.submit_line("A,B");
@@ -176,7 +176,7 @@ TEST_CASE("The -LAYER prompts; LAYER without a window works the same way") {
 
     h.proc.submit_line("LA"); // no window to open the manager in: the command line
     REQUIRE(h.out.prompt ==
-            "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/LOck/Unlock/Description]: ");
+            "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/LOck/Unlock/stAte/Description/rEconcile/Xref]: ");
     h.proc.submit_line("?");
     REQUIRE(h.out.prompt == "Enter layer name(s) to list <*>: ");
     h.proc.submit_line("");

@@ -181,6 +181,8 @@ Document document_from_store(const GeometryStore& store) {
     doc.page_setups = store.page_setups();
     doc.views = store.named_views();
     doc.layer_states = store.layer_states();
+    doc.layer_filters = store.layer_filters();
+    doc.linetypes = store.linetypes();
     doc.vports = store.vports();
     doc.vports_active = store.vports_active();
     doc.saved_vports = store.saved_vports();
@@ -188,6 +190,12 @@ Document document_from_store(const GeometryStore& store) {
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
     doc.current_table_style = store.current_table_style();
+    // A lone Standard as it starts is the empty list (what a file with no MLEADERSTYLE reads as).
+    if (!(store.mleader_styles().size() == 1 && store.mleader_styles()[0] == MLeaderStyle{})) {
+        doc.mleader_styles = store.mleader_styles();
+    }
+    doc.patterns = store.custom_patterns();
+    doc.current_mleader_style = store.current_mleader_style();
     doc.current_dimstyle = store.current_dimstyle();
     doc.wipeout_frames = store.wipeout_frames();
     doc.wipeout_frames_plot = store.wipeout_frames_plot();
@@ -283,8 +291,9 @@ Document document_from_store(const GeometryStore& store) {
         if (splines.alive(i)) {
             const SplineData& s = splines.data()[i];
             const std::span<const Vec2> cp = store.control_points_of(s);
+            const std::span<const double> k = store.knots_of(s);
             doc.splines.push_back(DocSpline{std::vector<Vec2>(cp.begin(), cp.end()), s.degree,
-                                            s.props});
+                                            s.props, std::vector<double>(k.begin(), k.end())});
         }
     }
     doc.dimstyles.assign(store.dimstyles().begin(), store.dimstyles().end());
@@ -324,6 +333,8 @@ Document document_from_store(const GeometryStore& store) {
                                       std::string(store.dim_inspect_rate(dd))});
             const std::span<const Vec2> brk = store.dim_breaks(dd);
             doc.dims.back().breaks.assign(brk.begin(), brk.end());
+            doc.dims.back().unassoc = dd.unassoc;
+            doc.dims.back().flip = dd.flip;
         }
     }
     const auto& leaders = store.leaders();
@@ -348,10 +359,12 @@ Document document_from_store(const GeometryStore& store) {
         if (mld.alive(i)) {
             const MLeaderData& m = mld.data()[i];
             const auto v = store.vertices_of(m);
+            const auto tips = store.extra_tips_of(m);
             doc.mleaders.push_back(DocMLeader{std::vector<Vec2>(v.begin(), v.end()), m.style,
                                               m.text, std::string(store.string_of(m.text)), m.props,
                                               std::string(store.font_name(m.text.font)),
-                                              m.overrides});
+                                              m.overrides, m.leader_flags,
+                                              std::vector<Vec2>(tips.begin(), tips.end())});
         }
     }
     const auto& hatch_arena = store.hatches();
@@ -361,7 +374,8 @@ Document document_from_store(const GeometryStore& store) {
             doc.hatches.push_back(DocHatch{store.hatch_loops(h), std::string(store.string_of(h)),
                                            h.pattern_scale, h.pattern_angle, h.pattern_origin,
                                            h.props,
-                                           h.color2});
+                                           h.color2,
+                                           h.unassoc});
         }
     }
     const auto& fcf_arena = store.fcfs();
@@ -620,6 +634,12 @@ void populate_store(GeometryStore& store, const Document& doc) {
         if (!d.breaks.empty()) {
             store.set_dim_breaks(dh, d.breaks);
         }
+        if (d.unassoc) {
+            store.set_dim_unassoc(dh, true);
+        }
+        if (d.flip != 0) {
+            store.set_dim_flip(dh, d.flip);
+        }
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
@@ -633,11 +653,20 @@ void populate_store(GeometryStore& store, const Document& doc) {
     for (const DocMLeader& m : doc.mleaders) {
         MTextBlock b = m.block;
         b.font = store.add_font(m.font);
-        store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
+        const EntityHandle mh = store.add_mleader(m.vertices, m.style, b, m.content, m.props, m.overrides);
+        if (m.leader_flags != 0) {
+            store.set_mleader_flags(mh, m.leader_flags);
+        }
+        if (!m.extra_tips.empty()) {
+            store.set_mleader_extra(mh, m.extra_tips);
+        }
     }
     for (const DocHatch& h : doc.hatches) {
-        store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin,
-                        h.props, h.color2);
+        const EntityHandle hh = store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle,
+                                                h.pattern_origin, h.props, h.color2);
+        if (h.unassoc) {
+            store.set_hatch_unassoc(hh, true);
+        }
     }
     {
         std::vector<ImageDef> defs;
@@ -665,6 +694,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_table_style_table(doc.table_styles);
     }
     store.set_current_table_style(doc.current_table_style);
+    store.set_mleader_styles(doc.mleader_styles);
+    store.set_custom_patterns(doc.patterns);
+    store.set_current_mleader_style(doc.current_mleader_style);
     store.set_data_links(doc.data_links);
     for (const DocTable& t : doc.tables) {
         std::vector<TableCell> cells;
@@ -714,10 +746,12 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_polyline_ltype_gen(ph, p.ltype_gen);
     }
     for (const DocSpline& s : doc.splines) {
-        store.add_spline(s.control_points, s.degree, s.props);
+        store.add_spline(s.control_points, s.degree, s.props, s.knots);
     }
     store.set_named_views(doc.views);
     store.set_layer_states(doc.layer_states);
+    store.set_layer_filters(doc.layer_filters);
+    store.set_linetypes(doc.linetypes);
     store.set_vports(doc.vports, doc.vports_active);
     store.set_saved_vports(doc.saved_vports);
     store.set_units(doc.display_units);

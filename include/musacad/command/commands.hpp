@@ -537,24 +537,52 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool in_selection_phase() const override { return !done_ && mode_ == Mode::Select && select_.active(); }
+    bool in_selection_phase() const override {
+        return !done_ && (mode_ == Mode::Select || mode_ == Mode::AdvBoundarySelect) && select_.active();
+    }
     bool selection_removing() const override { return select_.removing(); }
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
+                      Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer, Advanced, AdvBoundarySet,
+                      AdvBoundarySelect, AdvRetain, AdvIsland, AdvRayCast, AdvRayAngle, AdvStyle, AdvAssoc, AdvGap,
+                      AdvSeparate, DrawRetain, DrawStart, DrawNext, DrawLength, DrawNewBoundary, RemoveBoundaries };
+    [[nodiscard]] core::HatchExtras extras() const; ///< -HATCH's Origin, LAyer, COlor and Advanced
     void main_prompt(CommandContext& ctx);
+    void advanced_prompt(CommandContext& ctx);
+    void advanced_input(CommandContext& ctx, const std::string& t, const std::string& up);
+    /// draW boundary: the points of the boundary being drawn, then the next or <Accept>.
+    void draw_input(CommandContext& ctx, const std::string& text, const std::string& t, const std::string& up);
+    void draw_next_prompt(CommandContext& ctx);
+    std::vector<core::Vec2> draw_pts_;
+    std::vector<std::vector<core::Vec2>> drawn_;
+    std::vector<std::uint64_t> removals_; ///< remove Boundaries: each removal's undo group
+    static inline bool draw_retain_ = false; // Retain polyline boundary
     void fill_selection(CommandContext& ctx);
     bool typed_;
     bool gradient_; ///< GRADIENT: HATCH with the gradient fill
     bool done_ = false;
     int picks_ = 0;
+    bool picked_area_ = false;      ///< an area picked in this command (the next one joins its hatch)
+    std::uint8_t boundary_set_ = 0; ///< HatchExtras::boundary_set for the next pick
     Mode mode_ = Mode::PickPoint;
     SelectObjectsPhase select_;
     static inline std::string pattern_ = "ANSI31"; // HPNAME: SOLID, GRADIENT or a line pattern
     static inline double scale_ = 1.0;             // HPSCALE
     static inline double angle_ = 0.0;             // HPANG, radians (also the gradient's direction)
     static inline core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
+    static inline std::optional<core::Vec2> origin_;    // HPORIGIN when set
+    static inline std::uint8_t origin_corner_ = 0;      // Default to boundary extents
+    static inline std::string layer_;                   // HPLAYER ("": the current layer)
+    static inline std::optional<core::Rgb> color_;      // HPCOLOR (unset: ByLayer)
+    static inline std::uint8_t island_style_ = 0;       // HPISLANDDETECTION: 0 Normal, 1 Outer, 2 Ignore
+    static inline bool island_detect_ = true;           // HPISLANDDETECTIONMODE
+    static inline std::string ray_cast_ = "Nearest";    // Island detection No: the ray casting
+    static inline bool retain_ = false;                 // Retain boundary
+    static inline double gap_tol_ = 0.0;                // HPGAPTOL
+    static inline bool separate_ = false;               // HPSEPARATE
+    bool free_text() const override { return mode_ == Mode::HatchLayer; }
 };
 
 /// WIPEOUT: a mask polygon (a hatch with the WIPEOUT pattern) from picked points, or
@@ -1243,7 +1271,10 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace };
+    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace, AutoFirst, AutoSecond };
+    bool auto_cols_ = false; ///< [Auto] at the columns prompt (else at the data rows one)
+    bool window_cols_ = false; ///< the Insert Table window's Specify window: the columns' width from it
+    core::Vec2 auto_corner_{};
     void place_prompt(CommandContext& ctx);
     void outline(CommandContext& ctx) const; ///< the table's grid carried at the cursor
     bool dialog_;
@@ -1262,6 +1293,24 @@ private:
 
 /// TABLEEDIT: `Pick a table cell:` -- the cell's text editor, as a double-click opens it;
 /// without a window, `Enter new text:`.
+/// TABLEEXPORT: `Select a table:`, then the file -- the table's cells written as CSV.
+class TableExportUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLEEXPORT"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select a table: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return pick_.has_value(); } // the file name
+
+private:
+    std::optional<core::Vec2> pick_;
+    bool done_ = false;
+};
+
 class TableEditCommand final : public ICommand {
 public:
     std::string name() const override { return "TABLEEDIT"; }
@@ -1408,7 +1457,14 @@ private:
 /// point makes a copy and the mode goes on until eXit; without, one point ends it.
 class GripModeCommand final : public ICommand {
 public:
-    GripModeCommand(core::EntityHandle h, std::uint32_t index, core::Vec2 pos) : handle_(h), index_(index), base_(pos) {}
+    GripModeCommand(core::EntityHandle h, std::uint32_t index, core::Vec2 pos) : handle_(h), index_(index), base_(pos) {
+        begin_.handle = h;
+        begin_.grip = index;
+    }
+    /// `begin`: the drag as it began (Shift's other hot grips, a grip menu's Lengthen or text
+    /// movement), begun again so for each copy.
+    GripModeCommand(const core::GripDragCommand& begin, core::Vec2 pos)
+        : handle_(begin.handle), index_(begin.grip), base_(pos), begin_(begin) {}
     std::string name() const override { return "GRIP"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
@@ -1423,6 +1479,7 @@ private:
     core::EntityHandle handle_;
     std::uint32_t index_ = 0;
     core::Vec2 base_{};
+    core::GripDragCommand begin_{};
     Mode mode_ = Mode::Stretch;
     bool copy_ = false;
     bool asking_base_ = false;
@@ -1851,7 +1908,8 @@ private:
 /// HATCHEDIT (HE): `Select hatch object:`, then `Enter hatch option [Disassociate/Style/
 /// Properties/DRaw order/ADd boundaries/Remove boundaries/recreate Boundary/ASsociative/
 /// separate Hatches/Origin/ANnotative/hatch COlor/LAyer/Transparency] <Properties>:` --
-/// Properties (the pattern, scale and angle) and recreate Boundary.
+/// Properties (the pattern, scale and angle), recreate Boundary, Disassociate, separate
+/// Hatches, hatch COlor and LAyer.
 class HatchEditUiCommand final : public ICommand {
 public:
     std::string name() const override { return "HATCHEDIT"; }
@@ -1859,9 +1917,10 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::Layer; } // a layer name may have spaces
 
 private:
-    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble };
+    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble, Color, Layer };
     double user_angle_ = 0.0;   ///< User defined: the lines' angle, degrees
     double user_spacing_ = 1.0; ///< and the distance between them
     void options(CommandContext& ctx);
@@ -1920,6 +1979,28 @@ private:
     static inline std::uint8_t s_shape_ = 1;
     static inline std::string s_label_{};
     static inline std::string s_rate_ = "100%";
+};
+
+/// MLEADEREDIT: `Select a multileader:`, then `Specify leader arrowhead location or [Remove
+/// leaders]:` for each leader to add, or `Specify leaders to remove or [Add leaders]:`; Enter
+/// ends it. AIMLEADEREDITADD and AIMLEADEREDITREMOVE (the Leaders panel's Add Leader and
+/// Remove Leader) start adding or removing.
+class MLeaderEditUiCommand final : public ICommand {
+public:
+    explicit MLeaderEditUiCommand(bool remove = false, std::string name = "MLEADEREDIT")
+        : remove_(remove), name_(std::move(name)) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select a multileader: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    void prompt(CommandContext& ctx);
+    bool remove_;
+    std::string name_;
+    bool picked_ = false;
+    bool done_ = false;
 };
 
 /// SPLINEDIT (SPE): `Select spline:`, then `Enter an option [Close/Join/Fit data/Edit vertex/
@@ -2522,13 +2603,18 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Object && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class State { First, MethodPick, KnotsPick, DegreePick, Next };
+    enum class State { First, MethodPick, KnotsPick, DegreePick, Next, Object, StartTangent, EndTangent, Tolerance };
+    void convert_selection(CommandContext& ctx); ///< [Object]: the polylines picked, made splines
+    SelectObjectsPhase select_;
     void prompt_first(CommandContext& ctx) const;
     void prompt_next(CommandContext& ctx) const;
     void refresh_preview(CommandContext& ctx) const;
-    void finish(CommandContext& ctx, bool close);
+    void finish(CommandContext& ctx, bool close, std::optional<core::Vec2> end_tangent = std::nullopt);
 
     inline static bool s_fit_ = true;
     inline static int s_degree_ = 3;
@@ -2539,6 +2625,8 @@ private:
     int degree_ = 3;
     int knots_ = 0;
     std::vector<core::Vec2> pts_;
+    std::optional<core::Vec2> start_tangent_; ///< start Tangency: the curve's direction at its start
+    double tolerance_ = 0.0; ///< toLerance: 0 through the points, else within this of them
     bool done_ = false;
 };
 
@@ -2587,6 +2675,31 @@ private:
 /// BLOCK (B, -BLOCK): name, base point, then "Select objects:"; Enter makes the
 /// selection a block definition and replaces it with one insert in place. Redefining an
 /// existing name updates every insert of it.
+/// ATTREDEF: `Enter name of the block you wish to redefine:`, `Select objects for new
+/// Block...` and `Select objects:`, `Specify insertion base point of new Block:` -- the block
+/// made again of the objects (attribute definitions among them), its references keeping
+/// their values by tag, new attributes taking their defaults.
+class AttRedefCommand final : public ICommand {
+public:
+    std::string name() const override { return "ATTREDEF"; }
+    void start(CommandContext& ctx) override {
+        ctx.clear_last_point();
+        ctx.set_prompt("Enter name of the block you wish to redefine: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+
+private:
+    enum class State : std::uint8_t { Name, Select, Base } state_ = State::Name;
+    std::string name_;
+    bool done_ = false;
+};
+
 class BlockCommand final : public ICommand {
 public:
     std::string name() const override { return "BLOCK"; }
@@ -2779,15 +2892,26 @@ public:
     }
     bool done() const override { return done_; }
 
+    bool free_text() const override { return step_ == Step::LtCreateDesc || step_ == Step::LtLoadFile; }
+
 private:
-    enum class Step : std::uint8_t { Value, TrueColor, LtOption, LtList, LtSet };
+    enum class Step : std::uint8_t { Value, TrueColor, LtOption, LtList, LtSet, LtLoadNames, LtLoadFile, LtReload,
+                                     LtCreateName, LtCreateDesc, LtCreatePattern };
     void ask(CommandContext& ctx);
     void set(CommandContext& ctx, const core::EntityProps& p);
+    /// -LINETYPE Load: the linetypes named (`names_`, wild cards too) from `defs`, each already
+    /// loaded one asked about.
+    void load_from(CommandContext& ctx, const std::vector<core::LinetypeDef>& defs);
+    void next_reload(CommandContext& ctx);
     Kind kind_;
     std::string name_;
     bool dialog_;
     Step step_ = Step::Value;
     bool done_ = false;
+    std::string names_;                     ///< Load: the names asked for
+    std::vector<core::LinetypeDef> pending_; ///< Load: found, waiting for Reload it?
+    std::vector<core::LinetypeDef> accepted_;
+    core::LinetypeDef created_;             ///< Create: the linetype being made
 };
 
 /// LWDISPLAY: `Enter new value for LWDISPLAY <OFF>:` -- ON or OFF, as LWT on the status bar.
@@ -2940,6 +3064,57 @@ private:
     bool done_ = false;
 };
 
+/// LAYMRG / LAYDEL: `Select object on layer to merge or [Name]:` (or `... to delete ...`)
+/// again and again, Enter ending; LAYMRG then `Select object on target layer or [Name]:`;
+/// then AutoCAD's warning and `Do you wish to continue? [Yes/No] <No>:`. The objects move to
+/// the target layer, or are erased; the emptied layers stay for PURGE.
+class LayerMergeUiCommand final : public ICommand {
+public:
+    explicit LayerMergeUiCommand(bool erase) : erase_(erase) {}
+    std::string name() const override { return erase_ ? "LAYDEL" : "LAYMRG"; }
+    void start(CommandContext& ctx) override { ask_source(ctx); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::SourceName || step_ == Step::TargetName; }
+
+private:
+    enum class Step : std::uint8_t { Source, SourceName, Target, TargetName, Confirm };
+    void ask_source(CommandContext& ctx);
+    void ask_confirm(CommandContext& ctx);
+    bool erase_;
+    Step step_ = Step::Source;
+    core::LayerMergeCommand cmd_;
+    bool done_ = false;
+};
+
+/// BEDIT / -BEDIT: the Block Editor on a block -- `Enter block name or [?]:` (BEDIT picks it
+/// in the Edit Block Definition window where there is one). BCLOSE: `Save changes to block?
+/// [Yes/No] <Yes>:`, then the drawing back. BSAVE: the block saved, the editor kept open.
+class BlockEditUiCommand final : public ICommand {
+public:
+    enum class Mode : std::uint8_t { Open, OpenTyped, Close, Save };
+    explicit BlockEditUiCommand(Mode mode) : mode_(mode) {}
+    std::string name() const override {
+        return mode_ == Mode::Close ? "BCLOSE" : mode_ == Mode::Save ? "BSAVE" : mode_ == Mode::OpenTyped ? "-BEDIT" : "BEDIT";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return mode_ == Mode::OpenTyped || mode_ == Mode::Open; }
+
+private:
+    Mode mode_;
+    bool done_ = false;
+};
+
 /// EXTRIM (Express Tools): `Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for
 /// cutting edge..`, then `Specify the side to trim on:` -- everything crossing the edge is
 /// trimmed away on that side.
@@ -3059,6 +3234,119 @@ private:
         }
         done_ = true;
     }
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// DIMASSOC: `Enter new value for DIMASSOC <2>:` -- 2, the dimensions drawn follow the
+/// objects their points are on; 1, they do not; 0, they are drawn exploded (lines, solids
+/// and text).
+class DimAssocUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMASSOC"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Enter new value for DIMASSOC <" + std::to_string(s_value_) + ">: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    inline static int s_value_ = 2; ///< the session's DIMASSOC
+
+private:
+    bool done_ = false;
+};
+
+/// HPASSOC: `Enter new value for HPASSOC <1>:` -- 1, the hatches made follow their boundaries
+/// when those are moved or reshaped; 0, they do not.
+class HpAssocCommand final : public ICommand {
+public:
+    std::string name() const override { return "HPASSOC"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Enter new value for HPASSOC <" + std::to_string(s_value_) + ">: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    inline static int s_value_ = 1; ///< the session's HPASSOC
+
+private:
+    bool done_ = false;
+};
+
+/// BLOCKREPLACE (Express Tools): the block to be replaced and the block to replace it, picked
+/// from lists (or, with no window -- -BLOCKREPLACE -- typed); every reference of the first
+/// becomes one of the second. The first's definition stays until PURGE.
+class BlockReplaceCommand final : public ICommand {
+public:
+    explicit BlockReplaceCommand(bool dialog) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "BLOCKREPLACE" : "-BLOCKREPLACE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return true; } // block names may have spaces
+
+private:
+    void finish(CommandContext& ctx);
+    bool dialog_ = true;
+    int step_ = 0; ///< 0 the block to be replaced, 1 the replacement
+    std::string from_;
+    std::string to_;
+    bool done_ = false;
+};
+
+/// DIMDISASSOCIATE: `Select dimensions to disassociate:` -- they no longer follow the objects
+/// their points are on. DIMREASSOCIATE: `Select dimensions to reassociate:` -- they follow
+/// them again.
+class DimDisassociateCommand final : public ICommand {
+public:
+    explicit DimDisassociateCommand(bool reassociate = false) : reassociate_(reassociate) {}
+    std::string name() const override { return reassociate_ ? "DIMREASSOCIATE" : "DIMDISASSOCIATE"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.has_selection()) {
+            after(ctx);
+            return;
+        }
+        select_.begin(ctx, reassociate_ ? "Select dimensions to reassociate: " : "Select dimensions to disassociate: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+
+private:
+    void after(CommandContext& ctx) {
+        if (ctx.has_selection()) {
+            core::DimAssocCommand c;
+            c.op = reassociate_ ? core::DimAssocCommand::Op::Reassociate : core::DimAssocCommand::Op::Disassociate;
+            c.group = ctx.group_id();
+            ctx.submit(std::move(c));
+        }
+        done_ = true;
+    }
+    bool reassociate_ = false;
     SelectObjectsPhase select_;
     bool done_ = false;
 };
@@ -4010,88 +4298,109 @@ private:
     bool done_ = false;
 };
 
-/// The whole AutoCAD array family in one state machine.
-///
-/// ARRAY (AR) and -ARRAY ask for the type, exactly as AutoCAD does; ARRAYRECT,
-/// ARRAYPOLAR and ARRAYPATH jump straight to their own prompts. One class because the
-/// three types differ only in which prompts they ask -- splitting them would duplicate
-/// the selection guard, the parsing and the cancel path three ways.
-///
-/// ARRAYEDIT and ARRAYCLOSE are deliberately absent: both edit an ASSOCIATIVE array,
-/// which is a parametric entity that remembers its source and parameters. Musa CAD's
-/// arrays are non-associative -- the same thing AutoCAD's own -ARRAY produces -- so
-/// there is no association to reopen. See docs/COMMANDS.md.
+/// ARRAY (AR), ARRAYRECT, ARRAYPOLAR and ARRAYPATH, as AutoCAD asks them: the array is
+/// drawn at once with its defaults (4 columns and 3 rows; 6 items round a full turn; items
+/// along the whole path), and `Select grip to edit array or [...]` changes it option by
+/// option, the preview following, until eXit or Enter makes it. The items are separate
+/// copies (an associative array object is not there yet). -ARRAY is ArrayClassicCommand.
 class ArrayCommand final : public ICommand {
 public:
-    /// Which prompts to ask. `Ask` is ARRAY/-ARRAY; the rest are the direct commands.
     enum class Type { Ask, Rect, Polar, Path };
-
     explicit ArrayCommand(Type type = Type::Ask) : type_(type) {}
-
     std::string name() const override {
-        switch (type_) {
-        case Type::Rect:
-            return "ARRAYRECT";
-        case Type::Polar:
-            return "ARRAYPOLAR";
-        case Type::Path:
-            return "ARRAYPATH";
-        case Type::Ask:
-            break;
-        }
-        return "ARRAY";
+        return type_ == Type::Rect ? "ARRAYRECT" : type_ == Type::Polar ? "ARRAYPOLAR" : type_ == Type::Path ? "ARRAYPATH" : "ARRAY";
     }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    /// The path pick selects a curve, but it is a COORDINATE pick here (the engine
-    /// resolves the curve from the point), so the normal snap rules apply.
     bool wants_selection() const override { return false; }
     bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
     bool selection_removing() const override { return select_.removing(); }
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    void begin(CommandContext& ctx);
-    SelectObjectsPhase select_;
-    enum class State {
-        Select,
-        Type,
-        // Rectangular
-        Rows,
-        Cols,
-        RowSpace,
-        ColSpace,
-        Angle,
-        // Polar
-        Center,
-        Count,
-        Fill,
-        RotateItems,
-        // Path
-        PathPick,
-        PathMethod,
-        PathCount,
-        PathSpacing,
-        PathAlign,
+    enum class State { Select, Type, Center, PathPick, Main, Ask };
+    /// The questions an option asks, in turn.
+    enum class Q {
+        Assoc, Base, Cols, Rows, ColSpace, RowSpace, ColTotal, RowTotal, RowElev, Levels, LevelSpace,
+        Items, AngleBetween, Fill, RotItems, PolarRows, PolarRowSpace, PolarRowTotal, Method, PathSpace,
+        PathItems, PathDivideItems, Align, ZDir, Tangent, CellCorner1, CellCorner2, Expression,
     };
-    void begin_rect(CommandContext& ctx);
-    void begin_polar(CommandContext& ctx);
-    void begin_path(CommandContext& ctx);
+    void begin(CommandContext& ctx);
+    void begin_type(CommandContext& ctx);
+    void main_prompt(CommandContext& ctx);
+    void ask(CommandContext& ctx, std::vector<Q> qs);
+    void ask_next(CommandContext& ctx);
+    void answer(CommandContext& ctx, const std::string& text);
+    void preview(CommandContext& ctx);
+    void finish(CommandContext& ctx);
+    [[nodiscard]] double angle_between() const;
+    [[nodiscard]] std::string len(CommandContext& ctx, double v) const;
 
     Type type_ = Type::Ask;
-    State state_ = State::Type;
+    State state_ = State::Select;
+    SelectObjectsPhase select_;
+    std::vector<Q> queue_;
+    std::optional<Q> expression_for_; ///< Expression: the question it answers
+    // Rectangular
+    int cols_ = 4;
+    int rows_ = 3;
+    double dx_ = 0.0;
+    double dy_ = 0.0;
+    bool auto_spacing_ = true; ///< dx_/dy_ not known yet: the engine's 1.5 x the selection
+    int levels_ = 1;
+    double level_space_ = 1.0;
+    core::Vec2 cell1_{};
+    // Polar
+    core::Vec2 center_{};
+    bool center_set_ = false;
+    int items_ = 6;
+    double fill_ = 360.0; ///< degrees, + counter-clockwise
+    bool rotate_ = true;
+    int polar_rows_ = 1;
+    double polar_row_space_ = 0.0;
+    // Path
+    core::Vec2 path_pick_{};
+    bool measure_ = true;
+    double path_space_ = 0.0;
+    bool path_auto_ = true;
+    int path_items_ = 0; ///< 0: as many as the path holds (Measure), or Divide's 5
+    bool align_ = true;
+    std::optional<core::Vec2> base_{};
+    bool done_ = false;
+};
+
+/// -ARRAY, AutoCAD's classic prompts: `Enter the type of array [Rectangular/Polar] <R>:`;
+/// rectangular asks the rows (---) and columns (|||) and their distances (or a unit cell),
+/// polar the centre, the number of items, the angle to fill (or the angle between items)
+/// and whether the items turn. No preview, no path: those are ARRAY's.
+class ArrayClassicCommand final : public ICommand {
+public:
+    std::string name() const override { return "-ARRAY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool wants_selection() const override { return false; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class State { Select, Type, Rows, Cols, RowSpace, CellCorner, ColSpace, Center, Base, Items, Fill, Between, Rotate };
+    void begin(CommandContext& ctx);
+    void make_rect(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    State state_ = State::Select;
     int rows_ = 1;
     int cols_ = 1;
     double row_space_ = 0.0;
     double col_space_ = 0.0;
-    int count_ = 1;
-    double fill_ = 0.0;
+    core::Vec2 corner_{};
     core::Vec2 center_{};
-    // Path
-    core::Vec2 path_pick_{};
-    double path_spacing_ = 0.0;
+    int items_ = 0;       ///< 0: not given (Enter), the angle between items decides
+    double fill_ = 360.0; ///< degrees
     bool done_ = false;
 };
 
@@ -4455,6 +4764,8 @@ private:
     State state_ = State::Start;
     std::vector<core::Vec2> pts_;
     std::vector<std::string> lines_;
+    bool spline_ = false;   ///< Format Spline: the leader a spline through its points
+    bool no_arrow_ = false; ///< Format None: no arrowhead
     bool done_ = false;
 };
 
@@ -4486,6 +4797,8 @@ private:
     static inline int s_max_points_ = 2;
     static inline bool s_content_ = true;
     static inline bool s_landing_ = true;
+    static inline int s_leader_type_ = 0; ///< Leader type: 0 Straight, 1 sPline, 2 None
+    core::MLeaderStyle style_{}; ///< the current multileader style, taken at the start
 };
 
 /// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph

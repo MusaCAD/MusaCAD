@@ -467,13 +467,19 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     QDoubleSpinBox* text_height = length_box(style.text_height, 0.0001, this);
     auto* text_color = color_box(style.text_color, this);
     auto* vertical = new QComboBox(this);
-    vertical->addItems({QStringLiteral("Above"), QStringLiteral("Centred")});
-    vertical->setCurrentIndex(style.text_above ? 0 : 1);
+    vertical->addItems({QStringLiteral("Centered"), QStringLiteral("Above"), QStringLiteral("Outside"),
+                        QStringLiteral("JIS"), QStringLiteral("Below")});
+    vertical->setCurrentIndex(core::dim_text_vpos(style)); // DIMTAD's order
     QFormLayout* ta = form();
     row(ta, QStringLiteral("Text height:"), text_height);
     row(ta, QStringLiteral("Text colour:"), text_color);
+    auto* horizontal = new QComboBox(this);
+    horizontal->addItems({QStringLiteral("Centered"), QStringLiteral("At Ext Line 1"), QStringLiteral("At Ext Line 2"),
+                          QStringLiteral("Over Ext Line 1"), QStringLiteral("Over Ext Line 2")});
+    horizontal->setCurrentIndex(style.text_just); // DIMJUST's order
     QFormLayout* tp = form();
     row(tp, QStringLiteral("Vertical:"), vertical);
+    row(tp, QStringLiteral("Horizontal:"), horizontal);
     tabs->addTab(page(tabs, {group(QStringLiteral("Text appearance"), ta, this),
                              group(QStringLiteral("Text placement"), tp, this)}),
                  QStringLiteral("Text"));
@@ -573,11 +579,19 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     leading->setChecked((style.zero_suppression & core::kDimZinLeading) != 0);
     auto* trailing = new QCheckBox(QStringLiteral("Trailing  (12.50 reads 12.5)"), this);
     trailing->setChecked((style.zero_suppression & core::kDimZinTrailing) != 0);
+    // Feet and inches (Engineering, Architectural): AutoCAD's 0 feet and 0 inches boxes.
+    const int fi = style.zero_suppression & core::kDimZinFeetInches;
+    auto* zero_feet = new QCheckBox(QStringLiteral("0 feet  (0'-6\" reads 6\")"), this);
+    zero_feet->setChecked(fi == 0 || fi == 3);
+    auto* zero_inches = new QCheckBox(QStringLiteral("0 inches  (1'-0\" reads 1')"), this);
+    zero_inches->setChecked(fi == 0 || fi == 2);
     auto* zeros = new QVBoxLayout;
     zeros->setContentsMargins(12, 12, 12, 12);
     zeros->setSpacing(8);
     zeros->addWidget(leading);
     zeros->addWidget(trailing);
+    zeros->addWidget(zero_feet);
+    zeros->addWidget(zero_inches);
     tabs->addTab(page(tabs, {group(QStringLiteral("Linear dimensions"), lu, this),
                              group(QStringLiteral("Zero suppression"), zeros, this),
                              group(QStringLiteral("Angular dimensions"), au, this)}),
@@ -603,7 +617,13 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     fill_alt_precision(style.alt_precision);
     QDoubleSpinBox* alt_factor = length_box(style.alt_factor, 0.0001, this);
     QDoubleSpinBox* alt_round = length_box(style.alt_round, 0.0, this);
-    const auto [apost_pre, apost_suf] = post_parts(style.alt_post, "[]");
+    // Placement: after the primary value, or below it -- AutoCAD writes the latter as "\X"
+    // at the start of DIMAPOST.
+    const bool alt_below = style.alt_post.rfind("\\X", 0) == 0;
+    const auto [apost_pre, apost_suf] = post_parts(alt_below ? style.alt_post.substr(2) : style.alt_post, "[]");
+    auto* place_after = new QRadioButton(QStringLiteral("After primary value"), this);
+    auto* place_below = new QRadioButton(QStringLiteral("Below primary value"), this);
+    (alt_below ? place_below : place_after)->setChecked(true);
     auto* alt_prefix = new QLineEdit(apost_pre, this);
     auto* alt_suffix = new QLineEdit(apost_suf, this);
     QFormLayout* alt = form();
@@ -613,6 +633,8 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     row(alt, QStringLiteral("Round distances to:"), alt_round);
     row(alt, QStringLiteral("Prefix:"), alt_prefix);
     row(alt, QStringLiteral("Suffix:"), alt_suffix);
+    row(alt, QStringLiteral("Placement:"), place_after);
+    row(alt, QString(), place_below);
     auto* alt_head = new QVBoxLayout;
     alt_head->setContentsMargins(12, 12, 12, 12);
     alt_head->addWidget(alt_on);
@@ -662,13 +684,17 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.arrow_color = read_color(arrow_color);
         s.text_height = text_height->value();
         s.text_color = read_color(text_color);
-        s.text_above = vertical->currentIndex() == 0;
+        s.text_above = vertical->currentIndex() != 0 && vertical->currentIndex() != 4;
+        s.text_vpos = vertical->currentIndex() >= 2 ? static_cast<std::uint8_t>(vertical->currentIndex())
+                                                    : std::uint8_t{0};
+        s.text_just = static_cast<std::uint8_t>(std::max(horizontal->currentIndex(), 0));
         s.text_fit = static_cast<std::uint8_t>(std::max(0, fits->checkedId()));
         s.text_move = static_cast<std::uint8_t>(std::max(0, moves->checkedId()));
         s.precision = static_cast<std::uint8_t>(std::max(0, precision->currentIndex()));
         s.decimal_separator = separator->currentIndex() == 1 ? ',' : '.';
+        const int feet_inches = zero_feet->isChecked() ? (zero_inches->isChecked() ? 0 : 3) : (zero_inches->isChecked() ? 2 : 1);
         s.zero_suppression = static_cast<std::uint8_t>((leading->isChecked() ? core::kDimZinLeading : 0) |
-                                                       (trailing->isChecked() ? core::kDimZinTrailing : 0));
+                                                       (trailing->isChecked() ? core::kDimZinTrailing : 0) | feet_inches);
         s.linear_unit = static_cast<std::uint8_t>(unit->currentIndex() + 1);
         s.fraction_format = static_cast<std::uint8_t>(std::max(0, fraction->currentIndex()));
         s.round_off = round_off->value();
@@ -682,6 +708,9 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.alt_factor = alt_factor->value();
         s.alt_round = alt_round->value();
         s.alt_post = post_of(alt_prefix->text(), alt_suffix->text(), "[]");
+        if (place_below->isChecked()) {
+            s.alt_post = "\\X" + s.alt_post;
+        }
         s.tol_method = static_cast<std::uint8_t>(std::max(0, tol_method->currentIndex()));
         s.tol_precision = static_cast<std::int8_t>(tol_precision->currentIndex() - 1);
         s.tol_upper = tol_upper->value();

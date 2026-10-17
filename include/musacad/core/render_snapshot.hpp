@@ -212,6 +212,7 @@ struct RenderSnapshot {
     Vec2 limits_max{420.0, 297.0};
     bool limits_on = false;             // LIMCHECK
     Vec2 insbase{0.0, 0.0};             // INSBASE (BASE)
+    bool block_editor = false;          // BEDIT is open
     std::vector<DataLink> data_links;   // DATALINK
     std::vector<std::uint8_t> layer_used; // per layer: 1 when an entity is on it
     std::uint64_t checksum = 0;
@@ -235,7 +236,10 @@ struct RenderSnapshot {
     std::uint16_t current_dimstyle = 0; // DIMSTYLE's current style
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
+    std::vector<std::string> custom_patterns; // the drawing's own hatch pattern names
     std::vector<std::string> layer_state_names; // LAYERSTATE (for the Layer States Manager)
+    std::vector<LayerGroupFilter> layer_filters; // the Layer Properties Manager's group filters
+    std::vector<LinetypeDef> linetypes; // the linetypes loaded beyond the built-in four
     std::vector<TiledViewport> vports;  // VPORTS: the model window's tiles (fewer than two = one)
     int vports_active = 0;
     std::uint32_t vports_version = 0;   // a change = the UI applies `vports`
@@ -243,11 +247,17 @@ struct RenderSnapshot {
     std::vector<std::string> group_names; // GROUP table names (for GROUP ?)
     std::vector<std::string> block_names; // block-definition names (INSERT ?)
     std::vector<std::vector<BlockAttDefInfo>> block_attdefs; // per block: its attributes (INSERT prompts)
+    /// Per block (as block_names): its geometry as segment pairs, at its own scale about its
+    /// base point -- the Insert gallery's pictures. Shared, and made again only when the
+    /// blocks change.
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> block_previews;
     DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
     std::vector<TextStyle> text_styles;    // STYLE table (TEXT, the palette)
     std::uint16_t current_text_style = 0;
     std::vector<TableStyle> table_styles;  // TABLESTYLE (TABLE, the Table Style window)
     std::uint16_t current_table_style = 0;
+    std::vector<MLeaderStyle> mleader_styles; // MLEADERSTYLE (MLEADER, the Multileader Style window)
+    std::uint16_t current_mleader_style = 0;
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
     // any future hatching. `lineweight_display` is the LWDISPLAY toggle.
@@ -279,6 +289,7 @@ struct RenderSnapshot {
     // are those entities' segments, for the highlight and move/mirror ghosts.
     // Interaction state, not part of the checksum.
     std::vector<EntityHandle> selection;
+    Vec2 selection_size{}; ///< the selection's extents, width and height
     std::vector<Vec2> selected_line_vertices;
     // Filled (SOLID hatch) triangles of the selection, overlaid in the highlight
     // colour so a picked fill reads as selected (the fill itself stays in the scene
@@ -406,6 +417,8 @@ struct RenderSnapshot {
         page_setups.clear();
         named_views.clear();
         layer_state_names.clear();
+        layer_filters.clear();
+        linetypes.clear();
         vports.clear();
         vports_active = 0;
         vports_version = 0;
@@ -413,6 +426,7 @@ struct RenderSnapshot {
         group_names.clear();
         block_names.clear();
         block_attdefs.clear();
+        block_previews.reset();
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;
@@ -434,6 +448,7 @@ struct RenderSnapshot {
         snap_point = {};
         snap_type = SnapType::None;
         selection.clear();
+        selection_size = {};
         selected_line_vertices.clear();
         selected_fill_vertices.clear();
         hover = EntityHandle{};
