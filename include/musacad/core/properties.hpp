@@ -4,9 +4,12 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "musacad/core/math/vec2.hpp"
 
 namespace musacad::core {
 
@@ -41,6 +44,7 @@ struct Layer {
     bool vp_freeze_new = false;   ///< frozen in every viewport created later (VPLAYER Vpvisdflt)
     bool plot = true;             ///< plotted (the manager's Plot column; DXF 290)
     std::string description{};    ///< the manager's Description column
+    std::uint8_t transparency = 0; ///< 0..90 percent (the manager's Transparency column, -LAYER TRansparency)
     friend bool operator==(const Layer&, const Layer&) = default;
 };
 
@@ -77,6 +81,7 @@ enum class TolMode : std::uint8_t {
     Limits = 2,    ///< value+upper stacked over value+lower (two lines)
     Basic = 3,     ///< the value in a box (ASME Y14.5 theoretically-exact dimension)
     Reference = 4, ///< the value in parentheses
+    Deviation = 5, ///< the value, then +upper stacked over -lower beside it
 };
 
 /// A dimension's tolerance decoration. `lower` is the (usually negative) deviation;
@@ -100,6 +105,10 @@ struct DimTextParts {
     /// DIMINSPECT's label and inspection rate (DimData::inspect says whether they show).
     std::string_view inspect_label{};
     std::string_view inspect_rate{};
+    /// DIMBREAK's breaks, as pairs: two equal points are a break centred there (an object
+    /// crossing; the gap is the style's break size), two different ones the stretch
+    /// between them (Manual).
+    std::span<const Vec2> breaks{};
 };
 
 /// Where a dimension's value is placed when it does not fit between the extension
@@ -184,6 +193,14 @@ struct DimStyle {
     std::string post{};
     /// DIMAPOST: "[]" stands for the alternate value.
     std::string alt_post{};
+    /// The Tolerances tab: the method a dimension without a tolerance of its own takes --
+    /// 0 None, 1 Symmetrical, 2 Deviation, 3 Limits, 4 Basic (DIMTOL / DIMLIM / DIMGAP < 0) --
+    /// the upper and lower values (DIMTP, DIMTM; the lower one entered positive, below the
+    /// value) and their precision (DIMTDEC; -1: as the primary units').
+    std::uint8_t tol_method = 0;
+    double tol_upper = 0.0;
+    double tol_lower = 0.0;
+    std::int8_t tol_precision = -1;
 
     friend bool operator==(const DimStyle&, const DimStyle&) = default;
 };

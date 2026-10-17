@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <QVariant>
+#include <QMap>
 #include <QMainWindow>
 #include <QImage>
 #include <QByteArray>
@@ -34,10 +35,15 @@ class QEvent;
 class QObject;
 class QCloseEvent;
 class QTabBar;
+class QToolBar;
+class QMenu;
+class QListWidget;
 class QPoint;
 
 namespace musacad::command {
 class CommandProcessor;
+struct InsertTableSettings;
+struct QLeaderSettings;
 }
 
 namespace musacad::ui {
@@ -296,6 +302,18 @@ private:
     void open_layer_states_manager(); ///< LAYERSTATE
     int open_dim_inspect_dialog(core::DimInspectCommand& io); ///< DIMINSPECT (1 OK, 0 cancelled)
     void open_table_style_dialog(); ///< TABLESTYLE
+    // The user's own command aliases, a PGP file in the settings folder (ALIASEDIT, REINIT).
+    static QString user_pgp_path();
+    QString load_user_aliases(); ///< reads the file again; says what it found
+    void open_alias_editor();    ///< ALIASEDIT
+    void open_cui_dialog();      ///< CUI: keyboard shortcuts of the user's own
+    void apply_user_shortcuts(); ///< the saved ones made live (QSettings shortcuts/map)
+    std::vector<QAction*> user_shortcut_actions_;
+    int open_tolerance_dialog(std::vector<std::string>& cells); ///< TOLERANCE (1 OK, 0 cancelled)
+    int open_field_dialog(std::string& code);                   ///< FIELD (1 OK, 0 cancelled)
+    void open_data_link_manager();                              ///< DATALINK
+    std::vector<core::DataLink> pending_data_links_; ///< the Data Link Manager's list as edited
+    bool user_aliases_applied_ = false;
     std::string prepare_paste();
     bool paste_at(core::Vec2 at, bool original);
     QByteArray last_clipboard_token_;
@@ -409,6 +427,38 @@ private:
     void set_performance_overlay(bool on);
     void open_plot_dialog();
     void open_plot_dialog_seeded(const PlotSpec& seed); // re-opens after a window pick
+    /// What PLOT starts from on the sheet in front: a layout's paper 1:1, the whole sheet;
+    /// in model space the last plot's settings, the paper turned to the drawing.
+    [[nodiscard]] PlotSpec current_plot_seed();
+    void export_pdf(); ///< EXPORTPDF: the sheet in front to a PDF file
+    void publish();    ///< PUBLISH: the sheets chosen, one PDF page each
+    void open_page_setup_manager(); ///< PAGESETUP
+    void show_navbar(bool on);      ///< NAVBAR
+    // Workspaces (WORKSPACE, WSCURRENT, WSSAVE, the status bar's Workspace Switching): the
+    // palettes, the ribbon and the Quick Access Toolbar as they were saved.
+    QVariantMap capture_workspace() const;
+    void apply_workspace(const QVariantMap& w);
+    QStringList workspace_names() const; ///< the built-in one first
+    bool workspace_op(const std::string& op, const QString& name, const QString& to);
+    void open_save_workspace(); ///< WSSAVE: Save Workspace
+    void init_workspaces();
+    // TOOLPALETTES (Ctrl+3): commands, hatches and the drawing's blocks a click away.
+    void build_tool_palettes();
+    void show_tool_palettes(bool on);
+    void refill_palette_blocks();
+    QDockWidget* tool_palettes_dock_ = nullptr;
+    QListWidget* palette_blocks_ = nullptr;
+    QMenu* qat_menu_ = nullptr;   ///< Customize Quick Access Toolbar
+    QStringList qat_default_shown_;
+    QVariantMap default_workspace_;
+    QVariantMap saved_workspaces_; ///< name -> workspace
+    QString current_workspace_;
+    bool workspace_harness_ = false; ///< under a developer hook: nothing read or kept
+    int open_insert_table_dialog(command::InsertTableSettings& io); ///< TABLE (1 OK, 0 cancelled)
+    int open_qleader_settings(command::QLeaderSettings& io);        ///< QLEADER Settings (1 OK, 0 cancelled)
+    int open_select_color(bool& by_layer, core::Rgb& color);         ///< COLOR: Select Color (1 OK, 0 cancelled)
+    int open_lineweight_settings(bool& by_layer, std::uint8_t& lw);  ///< LWEIGHT (1 OK, 0 cancelled)
+    void open_linetype_manager();                                    ///< LINETYPE
     /// Resolve the plot area to a world rect and build the fine plot snapshot. Returns
     /// false (with a message) if there's nothing to plot.
     [[nodiscard]] bool prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2& amax);
@@ -480,7 +530,9 @@ private:
     bool tick_constrained_pending_ = false;
     QString coord_text_shown_;
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
+    std::vector<core::Layer> layer_combo_shown_; // the layers the combo shows (names and state icons)
     QComboBox* text_style_combo_ = nullptr; // Annotate > Text: the current text style
+    QComboBox* text_height_combo_ = nullptr; // Annotate > Text: TEXTSIZE
     QComboBox* dim_style_combo_ = nullptr;  // Annotate > Dimensions: the current dimension style
     QComboBox* table_style_combo_ = nullptr; // Annotate > Tables: the current table style
     QComboBox* color_combo_ = nullptr;      // ribbon Properties panel: colour / linetype /
@@ -494,6 +546,14 @@ private:
     QAction* snap_action_ = nullptr;
     QAction* polar_action_ = nullptr;
     QAction* otrack_action_ = nullptr;
+    QAction* selcycle_action_ = nullptr; ///< SC: SELECTIONCYCLING, in step with Ctrl+W and the command
+    QAction* tpy_action_ = nullptr;      ///< TPY: TRANSPARENCYDISPLAY
+    QAction* iso_action_ = nullptr;      ///< ISODRAFT: isometric drafting on or off
+    void cycle_isoplane();               ///< F5 / Ctrl+E: Left, Top, Right
+    QToolBar* navbar_ = nullptr;          ///< the navigation bar (NAVBAR): Pan and the Zoom tools
+    QToolButton* navbar_toggle_ = nullptr; ///< View > Viewport Tools > Navigation Bar
+    QToolButton* ucsicon_toggle_ = nullptr; ///< View > Viewport Tools > UCS Icon
+    std::string current_page_setup_; ///< the Page Setup Manager's Set Current (empty: none)
     bool polar_restore_ = false; ///< listing_shot switched POLAR on for its picture
     bool tracking_restore_ = false; ///< ... and set its own polar increment
     command::TrackingSettings tracking_saved_{};

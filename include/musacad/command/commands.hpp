@@ -542,7 +542,7 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble };
     void main_prompt(CommandContext& ctx);
     void fill_selection(CommandContext& ctx);
     bool typed_;
@@ -1007,7 +1007,7 @@ public:
 
 private:
     enum class Step : std::uint8_t {
-        Main, AspectX, AspectY, Type, Style, Legacy, Major, Adaptive, Subdivide, Limits, Follow
+        Main, AspectX, AspectY, Type, Style, Legacy, Major, Adaptive, Subdivide, Limits, Follow, IsoSpacing
     };
     void main_prompt(CommandContext& ctx);
     /// GRID: the setting changed, and the grid on (a spacing or an option turns it on).
@@ -1231,17 +1231,25 @@ private:
     core::Vec2 base_{};
 };
 
+/// TABLE (TB) opens the Insert Table window where there is one, then asks `Specify
+/// insertion point:`; -TABLE, and TABLE without a window, ask everything on the command line.
 class TableCommand final : public ICommand {
 public:
-    std::string name() const override { return "TABLE"; }
+    explicit TableCommand(bool dialog = false) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "TABLE" : "-TABLE"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style };
+    enum class Mode { Cols, Rows, Place, ColWidth, RowHeight, Style, DialogPlace };
     void place_prompt(CommandContext& ctx);
+    void outline(CommandContext& ctx) const; ///< the table's grid carried at the cursor
+    bool dialog_;
+    bool title_ = true;
+    bool header_ = true;
+    std::string link_; ///< the Insert Table window's data link, if one was chosen
     bool done_ = false;
     Mode mode_ = Mode::Cols;
     int rows_ = 1; ///< data rows; a title and a header row come with them
@@ -1250,6 +1258,23 @@ private:
     int row_lines_ = 1;
     std::uint16_t style_ = 0; ///< the table style: the current one unless Style chose another
     static constexpr double kLine = 9.0; ///< one line of the Standard table style's text, with its margins
+};
+
+/// TABLEEDIT: `Pick a table cell:` -- the cell's text editor, as a double-click opens it;
+/// without a window, `Enter new text:`.
+class TableEditCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLEEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool picked_ = false;
+    core::Vec2 at_{};
+    double radius_ = 0.0;
+    bool done_ = false;
 };
 
 /// TABLESTYLE (TS): the Table Style window where there is one -- the styles, Set Current,
@@ -1403,6 +1428,8 @@ private:
     bool asking_base_ = false;
     bool stretching_ = false; ///< the engine's grip drag is under way
     int copies_ = 0;
+    int ref_step_ = 0;        ///< Reference: 1 the reference angle or length asked, 2 the new one
+    double ref_value_ = 0.0;
     bool done_ = false;
 };
 
@@ -1452,6 +1479,185 @@ private:
 };
 
 /// PREVIEW (PRE): the plot preview, with the settings of the last plot.
+/// RENAME (REN) and -RENAME: `Enter object type to rename [Block/Dimstyle/LAyer/LType/
+/// Material/multileadeRstyle/Plotstyle/textStyle/Tablestyle/Ucs/VPort/View]:`, `Enter old
+/// <type> name:`, `Enter new <type> name:`.
+class RenameCommand final : public ICommand {
+public:
+    explicit RenameCommand(bool dash) : dash_(dash) {}
+    std::string name() const override { return dash_ ? "-RENAME" : "RENAME"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Kind, From, To };
+    bool dash_;
+    Step step_ = Step::Kind;
+    core::RenameObjectCommand c_{};
+    std::string what_;
+    bool done_ = false;
+};
+
+/// NCOPY (Express Tools): `Select nested objects to copy:` (one pick after another, Enter to
+/// end), then `Specify base point or displacement, or [Multiple]:` -- Enter copies them in
+/// place -- and `Specify second point of displacement, or <use first point as
+/// displacement>:` (Multiple: again and again until Enter).
+class NcopyCommand final : public ICommand {
+public:
+    std::string name() const override { return "NCOPY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, Base, Second };
+    void copy_all(CommandContext& ctx, core::Vec2 offset);
+    Step step_ = Step::Pick;
+    std::vector<core::Vec2> picks_;
+    double radius_ = 0.0;
+    core::Vec2 base_{};
+    bool multiple_ = false;
+    bool done_ = false;
+};
+
+/// DATAEXTRACTION (DX): the block references counted by name and attribute values --
+/// `Extract from [Drawing/Selection] <Drawing>:` (Selection: `Select objects:`), `Output to
+/// [Table/File/Both] <Table>:`, the CSV file (a Save window, or `Enter file name:`) and the
+/// table's `Specify insertion point:`.
+class DataExtractionCommand final : public ICommand {
+public:
+    std::string name() const override { return "DATAEXTRACTION"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { From, Select, Output, File, Place };
+    void ask_output(CommandContext& ctx);
+    void after_file(CommandContext& ctx);
+    Step step_ = Step::From;
+    SelectObjectsPhase select_;
+    core::DataExtractCommand c_{};
+    bool table_ = true;
+    bool file_ = false;
+    bool done_ = false;
+};
+
+/// DBLIST: every object in the drawing listed, as LIST lists one.
+class DbListCommand final : public ICommand {
+public:
+    std::string name() const override { return "DBLIST"; }
+    void start(CommandContext& ctx) override {
+        ctx.submit(core::ListQueryCommand{{}, 0.0, false, true});
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// PLAN: `Enter an option [Current ucs/Ucs/World] <Current>:` -- the drawing seen from
+/// above, its extents filling the view (every view here is the plan view of the WCS).
+class PlanCommand final : public ICommand {
+public:
+    std::string name() const override { return "PLAN"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter an option [Current ucs/Ucs/World] <Current>: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// SETVAR: `Enter variable name or [?]:`, then the variable's own prompt (the system
+/// variables Musa CAD has: PICKBOX, LTSCALE, PDMODE, GRIPSIZE ...).
+class SetVarCommand final : public ICommand {
+public:
+    std::string name() const override { return "SETVAR"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter variable name or [?]: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        if (sub_) {
+            sub_->cancel(ctx);
+        } else {
+            ctx.echo("*Cancel*");
+        }
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    std::unique_ptr<ICommand> sub_;
+    bool done_ = false;
+};
+
+/// A file command the window carries out (NEW, OPEN, QSAVE, SAVEAS, CLOSE, CLOSEALL, QUIT,
+/// IMPORT, EXPORT); where there is no window it says so.
+class WindowActionCommand final : public ICommand {
+public:
+    WindowActionCommand(std::string name, std::string action) : name_(std::move(name)), action_(std::move(action)) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !ctx.view()->window_action(action_)) {
+            ctx.echo(name_ + " needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    std::string name_;
+    std::string action_;
+    bool done_ = false;
+};
+
+/// A command the drawing window carries out itself (EXPORTPDF, PUBLISH); where there is no
+/// window it says so.
+class WindowCommand final : public ICommand {
+public:
+    WindowCommand(std::string name, bool (ViewControl::*run)()) : name_(std::move(name)), run_(run) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override {
+        if (ctx.view() == nullptr || !(ctx.view()->*run_)()) {
+            ctx.echo(name_ + " needs the drawing window.");
+        }
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    std::string name_;
+    bool (ViewControl::*run_)();
+    bool done_ = false;
+};
+
 class PlotPreviewCommand final : public ICommand {
 public:
     std::string name() const override { return "PREVIEW"; }
@@ -1655,13 +1861,15 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate };
+    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble };
+    double user_angle_ = 0.0;   ///< User defined: the lines' angle, degrees
+    double user_spacing_ = 1.0; ///< and the distance between them
     void options(CommandContext& ctx);
     Step step_ = Step::Pick;
     bool done_ = false;
 };
 
-/// TEXTMASK (Express Tools): `Select text or [Masktype/Offset]:` -- a wipeout behind each
+/// TEXTMASK (Express Tools): `Select text objects to mask or [Masktype/Offset]:` -- a wipeout behind each
 /// text selected, the offset (text heights) clear of it.
 class TextMaskUiCommand final : public ICommand {
 public:
@@ -1687,7 +1895,7 @@ private:
 /// DIMINSPECT and -DIMINSPECT: `Select dimensions:` (or the ones selected), then the
 /// Inspection Dimension window where there is one; otherwise, and always for -DIMINSPECT,
 /// `Add inspection data or [Remove] <Add>:`, `Enter shape option [Round/Angular/None]
-/// <Round>:`, `Enter label value or <None>:` (`.` for none) and `Enter inspection rate
+/// <Round>:`, `Enter label data or <None>:` (`.` for none) and `Enter inspection rate
 /// <100%>:`. The shape, label and rate are offered again the next time.
 class DimInspectUiCommand final : public ICommand {
 public:
@@ -1736,6 +1944,39 @@ private:
     core::Vec2 pick_{};
     core::Vec2 from_{};
     int edits_ = 0;
+    bool done_ = false;
+};
+
+/// DIMBREAK: `Select dimension to add/remove break or [Multiple]:`, then `Select object to
+/// break dimension or [Auto/Manual/Remove] <Auto>:` -- a picked object breaks the
+/// dimension where it crosses (asked again until Enter); Auto breaks it at every object
+/// crossing it; Manual asks for two points on it; Remove takes the breaks away. Multiple:
+/// `Select dimensions:`, then `Enter an option [Auto/Remove] <Auto>:`.
+class DimBreakUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMBREAK"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Select dimension to add/remove break or [Multiple]: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Multiple && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Dim, Object, First, Second, Multiple, MultipleOption };
+    void submit(CommandContext& ctx, core::DimBreakCommand c);
+    void after_select(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    Step step_ = Step::Dim;
+    core::Vec2 pick_{};
+    core::Vec2 first_{};
+    bool broke_ = false; ///< an object picked already: the prompt loses its options
     bool done_ = false;
 };
 
@@ -2180,6 +2421,28 @@ private:
 /// angle. Commits a real ellipse entity; the second axis may come out longer than the
 /// first, in which case the axes swap so the stored major is the longer one (AutoCAD's
 /// rule), and arc angles are still measured from the FIRST axis the user gave.
+/// ISOPLANE (`Enter isometric plane setting [Left/Top/Right] <next>:`) and ISODRAFT
+/// (`Enter isometric drafting option [Orthographic/isoplane Left/isoplane Top/isoplane
+/// Right] <...>:`): the isometric plane the crosshair, ORTHO and the isocircles follow;
+/// ISODRAFT turns isometric drafting on with a plane, or off (Orthographic). F5 and
+/// Ctrl+E cycle the plane.
+class IsoPlaneCommand final : public ICommand {
+public:
+    explicit IsoPlaneCommand(bool draft) : draft_(draft) {}
+    std::string name() const override { return draft_ ? "ISODRAFT" : "ISOPLANE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool draft_;
+    bool done_ = false;
+};
+
 class EllipseCommand final : public ICommand {
 public:
     std::string name() const override { return "ELLIPSE"; }
@@ -2198,8 +2461,15 @@ private:
         Rotation,   ///< rotation angle about the major axis
         ArcStart,   ///< start angle or [Parameter]
         ArcEnd,     ///< end angle or [Parameter/Included angle]
-        ArcIncluded ///< included angle
+        ArcIncluded, ///< included angle
+        IsoCenter,   ///< Isocircle: its centre
+        IsoRadius,   ///< and its radius or [Diameter]
+        IsoDiameter
     };
+    /// The isocircle of radius `r` about `c` in the current isoplane: an ellipse whose axes
+    /// are r*sqrt(3/2) and r*sqrt(1/2), the long one square to the plane's missing axis.
+    void commit_isocircle(CommandContext& ctx, double r);
+    core::Vec2 iso_center_{};
     void define_axes(CommandContext& ctx, double other_half);
     void after_axes(CommandContext& ctx);
     double param_from_input(const std::string& text, bool parameter_mode, bool* ok,
@@ -2277,7 +2547,9 @@ private:
 /// Decurve, Reverse, Undo. Width, Fit and Ltype gen are reported as not supported.
 class PeditCommand final : public ICommand {
 public:
-    std::string name() const override { return "PEDIT"; }
+    /// `multiple`: MPEDIT (Express Tools) -- PEDIT's Multiple from the start.
+    explicit PeditCommand(bool multiple = false) : mpedit_(multiple) {}
+    std::string name() const override { return mpedit_ ? "MPEDIT" : "PEDIT"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -2300,6 +2572,7 @@ private:
         VWidthEnd,   ///< ... and its ending width
     };
     double vw_start_ = 0.0;
+    bool mpedit_ = false;
     bool multiple_ = false;
     SelectObjectsPhase select_;
     void prompt_option(CommandContext& ctx) const;
@@ -2331,6 +2604,9 @@ private:
 };
 
 /// INSERT (I, -INSERT): block name (? lists), insertion point, X and Y scale, rotation.
+/// A drawing file in place of the name -- `~` to choose one, or its path -- is read in
+/// as a block named after the file, at its base point (BASE); a block of that name
+/// already in the drawing is redefined only when the user says so.
 class InsertCommand final : public ICommand {
 public:
     std::string name() const override { return "INSERT"; }
@@ -2340,9 +2616,10 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Name, Point, ScaleX, ScaleY, Rotation, Attrib } state_ = State::Name;
+    enum class State { Name, Redefine, Point, ScaleX, ScaleY, Rotation, Attrib } state_ = State::Name;
     inline static std::string s_last_;
     std::string name_;
+    std::string file_; ///< the drawing file being inserted, if any
     core::Vec2 pos_{};
     double sx_ = 1.0;
     double sy_ = 1.0;
@@ -2459,6 +2736,358 @@ private:
 };
 
 /// IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown on screen only.
+/// DIMEX (Express Tools): `Dimension styles to export <*>:`, then the file (a Save window,
+/// or `Export filename:` on the command line). DIMIM: the file (an Open window, or `Import
+/// filename:`), then `Existing styles of the same name [Keep/Overwrite] <Keep>:`.
+class DimStyleFileCommand final : public ICommand {
+public:
+    explicit DimStyleFileCommand(bool import) : import_(import) {}
+    std::string name() const override { return import_ ? "DIMIM" : "DIMEX"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Names, File, Overwrite };
+    void ask_file(CommandContext& ctx);
+    void got_file(CommandContext& ctx, const std::string& path);
+    bool import_;
+    Step step_ = Step::Names;
+    std::string names_;
+    std::string path_;
+    bool done_ = false;
+};
+
+/// The current colour, linetype or lineweight -- what new objects take. COLOR (COL) opens
+/// the Select Color window; -COLOR and CECOLOR ask `Enter default object color
+/// [Truecolor/COlorbook] <BYLAYER>:` (BYLAYER, a colour number 1 to 255 or a name, or
+/// Truecolor and `Red, Green, Blue:`). LWEIGHT (LW) opens Lineweight Settings; -LWEIGHT asks
+/// `Enter default lineweight for new objects or [?]:` (mm, BYLAYER or DEFAULT), CELWEIGHT
+/// its value (-1 ByLayer, -3 Default, or 1/100 mm). LINETYPE (LT) opens the Linetype
+/// Manager; -LINETYPE asks `Enter an option [?/Create/Load/Set]:`, CELTYPE the name.
+class CurrentPropCommand final : public ICommand {
+public:
+    enum class Kind : std::uint8_t { Color, Linetype, Lineweight };
+    CurrentPropCommand(Kind kind, std::string name, bool dialog) : kind_(kind), name_(std::move(name)), dialog_(dialog) {}
+    std::string name() const override { return name_; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Value, TrueColor, LtOption, LtList, LtSet };
+    void ask(CommandContext& ctx);
+    void set(CommandContext& ctx, const core::EntityProps& p);
+    Kind kind_;
+    std::string name_;
+    bool dialog_;
+    Step step_ = Step::Value;
+    bool done_ = false;
+};
+
+/// LWDISPLAY: `Enter new value for LWDISPLAY <OFF>:` -- ON or OFF, as LWT on the status bar.
+class LwDisplayCommand final : public ICommand {
+public:
+    std::string name() const override { return "LWDISPLAY"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// NAVBAR: `Enter an option [ON/OFF] <ON>:` -- the navigation bar at the drawing's right
+/// edge (Pan, the Zoom tools).
+class NavBarCommand final : public ICommand {
+public:
+    std::string name() const override { return "NAVBAR"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Enter an option [ON/OFF] <ON>: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// UCSICON: `Enter an option [ON/OFF/All/Noorigin/ORigin] <ON>:` -- the UCS icon shown or
+/// not, at the origin when it is on screen or always in the lower-left corner. All is
+/// taken (every viewport shares the setting) and the options asked again without it.
+class UcsIconCommand final : public ICommand {
+public:
+    std::string name() const override { return "UCSICON"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    void ask(CommandContext& ctx);
+    bool all_ = false;
+    bool done_ = false;
+};
+
+/// WORKSPACE: `Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>:` -- a
+/// workspace (the window's palettes, the ribbon and the Quick Access Toolbar as they were
+/// saved) made current, saved, renamed, deleted or listed. WSCURRENT asks for the one to
+/// make current; WSSAVE opens Save Workspace.
+class WorkspaceCommand final : public ICommand {
+public:
+    enum class Mode : std::uint8_t { Workspace, Current, Save };
+    explicit WorkspaceCommand(Mode mode = Mode::Workspace) : mode_(mode) {}
+    std::string name() const override {
+        return mode_ == Mode::Current ? "WSCURRENT" : mode_ == Mode::Save ? "WSSAVE" : "WORKSPACE";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ != Step::Option && step_ != Step::Replace; }
+
+private:
+    enum class Step : std::uint8_t { Option, Current, SaveAs, Replace, Rename, RenameTo, Delete };
+    void ask(CommandContext& ctx, Step step);
+    void list(CommandContext& ctx) const;
+    Mode mode_;
+    Step step_ = Step::Option;
+    std::string name_;
+    bool done_ = false;
+};
+
+/// TFRAMES (Express Tools): the frames of wipeouts and images off, or on again.
+class ToggleFramesUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TFRAMES"; }
+    void start(CommandContext& ctx) override {
+        ctx.submit(core::ToggleFramesCommand{});
+        done_ = true;
+    }
+    void input(CommandContext& /*ctx*/, const std::string& /*text*/) override { done_ = true; }
+    void cancel(CommandContext& /*ctx*/) override { done_ = true; }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// UPDATEFIELD: `Select objects:` -- the fields in them worked out again (they are each
+/// time the drawing is drawn, so this redraws it) and counted.
+class UpdateFieldCommand final : public ICommand {
+public:
+    std::string name() const override { return "UPDATEFIELD"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// ATTOUT / ATTIN (Express Tools): ATTOUT's `Select objects:`, then the file to write the
+/// attribute values to (tab-separated, for a spreadsheet); ATTIN's file to read them back
+/// from. Where there is no window the file name is asked for.
+class AttFileCommand final : public ICommand {
+public:
+    explicit AttFileCommand(bool in) : in_(in) {}
+    std::string name() const override { return in_ ? "ATTIN" : "ATTOUT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            ask_file(ctx);
+        }
+    }
+    bool free_text() const override { return asking_name_; }
+
+private:
+    void ask_file(CommandContext& ctx);
+    void finish(CommandContext& ctx, const std::string& path);
+    bool in_;
+    bool asking_name_ = false;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// EXTRIM (Express Tools): `Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for
+/// cutting edge..`, then `Specify the side to trim on:` -- everything crossing the edge is
+/// trimmed away on that side.
+class ExtrimUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "EXTRIM"; }
+    void start(CommandContext& ctx) override {
+        ctx.set_prompt("Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for cutting edge..");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    std::optional<core::Vec2> edge_;
+    bool done_ = false;
+};
+
+/// VPSYNC (Express Tools): `Select master viewport:`, then `Select viewports to be aligned to
+/// master viewport:` -- they take its scale and line up with it.
+class VpSyncUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "VPSYNC"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select master viewport: "); }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && picked_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            finish(ctx);
+        }
+    }
+
+private:
+    void finish(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    core::Vec2 master_{};
+    bool picked_ = false;
+    bool done_ = false;
+};
+
+/// XLIST (Express Tools): `Select nested xref or block object to list:` -- the object inside a
+/// block reference under the pick: what it is, the block, and its layer, colour and linetype.
+class XListCommand final : public ICommand {
+public:
+    std::string name() const override { return "XLIST"; }
+    void start(CommandContext& ctx) override { ctx.set_prompt("Select nested xref or block object to list: "); }
+    void input(CommandContext& ctx, const std::string& text) override {
+        if (trimmed_empty(text)) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = pick_point(ctx, text)) {
+            core::NestedCopyCommand c{*p, ctx.pick_radius(), {}, 0};
+            c.list = true;
+            ctx.submit(std::move(c));
+            done_ = true;
+        }
+    }
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    static bool trimmed_empty(const std::string& t);
+    static std::optional<core::Vec2> pick_point(CommandContext& ctx, const std::string& text);
+    bool done_ = false;
+};
+
+/// DIMREASSOC (Express Tools): `Select dimension objects:` -- each one's text override taken
+/// away, so it shows its measurement again.
+class DimReassocCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMREASSOC"; }
+    void start(CommandContext& ctx) override {
+        if (ctx.has_selection()) {
+            after(ctx);
+            return;
+        }
+        select_.begin(ctx, "Select dimension objects: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override {
+        if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+    }
+
+private:
+    void after(CommandContext& ctx) {
+        if (ctx.has_selection()) {
+            core::DimEditCommand c;
+            c.op = core::DimEditCommand::Op::New; // an empty override: the measurement
+            c.group = ctx.group_id();
+            ctx.submit(std::move(c));
+        }
+        done_ = true;
+    }
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// DATALINKUPDATE: `Select an option [Update data link/Write data link] <Update data link>:`
+/// then, to update, `Select objects or [Data link/all data linKs]:` (the tables picked,
+/// those of one link, or every linked table read again from its file); to write,
+/// `Select objects:` (the tables picked written back to their files).
+class DataLinkUpdateUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DATALINKUPDATE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+    bool free_text() const override { return step_ == Step::LinkName; }
+
+private:
+    enum class Step : std::uint8_t { Option, Objects, LinkName };
+    void after_select(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    Step step_ = Step::Option;
+    bool write_ = false;
+    bool done_ = false;
+};
+
 class ImageFrameCommand final : public ICommand {
 public:
     std::string name() const override { return "IMAGEFRAME"; }
@@ -2731,12 +3360,16 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Step : std::uint8_t { Select, Base, Direction };
+    enum class Step : std::uint8_t { Select, Base, Direction, Option, Spacing, First, Second };
+    using Mode = core::MLeaderAlignCommand::Mode;
     void base_prompt(CommandContext& ctx);
     Step step_ = Step::Select;
     SelectObjectsPhase select_;
     core::Vec2 base_{};
+    core::Vec2 first_{};
     bool done_ = false;
+    static inline Mode s_mode_ = Mode::UseCurrent; ///< remembered, as AutoCAD does
+    static inline double s_spacing_ = 0.0;
 };
 
 /// -DWGUNITS: the drawing's unit (`Unit for length <3>:` from Inches, Feet, Millimeters,
@@ -3131,9 +3764,9 @@ private:
 };
 
 /// REVCLOUD (AutoCAD). Arc length, Object (with Reverse direction), Rectangular,
-/// Polygonal, and Freehand as a clicked path (the cursor is not tracked while a button
-/// is held here, so the path is picked point by point and Enter closes it). Style
-/// accepts Normal only; Modify is not offered. The lobes come from
+/// Polygonal, and Freehand: a press and drag draws the cloud along the cursor (closed when
+/// it ends back near its start), or the path is clicked point by point and Enter closes
+/// it. Style: Normal or Calligraphy; Modify is not offered. The lobes come from
 /// core::polyline_ops::revcloud_from_path, so an Object conversion and a drawn cloud
 /// produce identical arcs.
 class RevcloudCommand final : public ICommand {
@@ -3143,6 +3776,9 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// Freehand: a press and drag from the first point draws the cloud along the cursor.
+    bool wants_freehand() const override { return !done_ && s_type_ == 2 && state_ == State::Main; }
+    void freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) override;
 
 private:
     enum class State {
@@ -3275,6 +3911,62 @@ private:
     Var var_;
     bool sizing_ = false;
     std::uint8_t mode_ = 0;
+    bool done_ = false;
+};
+
+/// INSUNITSDEFSOURCE / INSUNITSDEFTARGET: `Enter new value for INSUNITSDEFSOURCE <4>:` (an
+/// INSUNITS code, 0 to 24) -- the units a unitless drawing inserted or attached is taken
+/// to be in, and those this drawing is taken to be in when it is unitless.
+class UnitsDefaultCommand final : public ICommand {
+public:
+    explicit UnitsDefaultCommand(bool target) : target_(target) {}
+    std::string name() const override { return target_ ? "INSUNITSDEFTARGET" : "INSUNITSDEFSOURCE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool target_;
+    bool done_ = false;
+    inline static int s_source_ = 4;
+    inline static int s_target_ = 4;
+};
+
+/// TEXTSIZE: `Enter new value for TEXTSIZE <2.5000>:` -- the height TEXT offers.
+class TextSizeCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTSIZE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// BASE: `Enter base point <0.0000,0.0000,0.0000>:` -- the drawing's insertion base point
+/// (INSBASE): where it sits on the cursor when inserted into another drawing as a block,
+/// or attached as an xref.
+class BaseCommand final : public ICommand {
+public:
+    std::string name() const override { return "BASE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 
@@ -3468,6 +4160,14 @@ private:
 
 class TextCommand final : public ICommand {
 public:
+    /// TEXTSIZE: the height TEXT offers (the last one used), also set from Annotate's
+    /// text-height field and by the TEXTSIZE variable.
+    [[nodiscard]] static double text_size() noexcept { return s_height_; }
+    static void set_text_size(double h) noexcept {
+        if (h > 0.0) {
+            s_height_ = h;
+        }
+    }
     std::string name() const override { return "TEXT"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
@@ -3830,12 +4530,17 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool free_text() const override { return !done_ && state_ == State::Content; }
+    bool free_text() const override { return !done_ && (state_ == State::FirstLine || state_ == State::NextLine); }
 
 private:
-    enum class State { Arrow, Vertices, Content } state_ = State::Arrow;
+    enum class State { Arrow, Vertices, Width, FirstLine, NextLine } state_ = State::Arrow;
+    void after_points(CommandContext& ctx);
+    void finish(CommandContext& ctx);
     std::vector<core::Vec2> verts_;
+    std::vector<std::string> lines_;
+    double width_ = 0.0;
     bool done_ = false;
+    static inline QLeaderSettings s_{}; ///< the Leader Settings, kept for the session
 };
 
 /// TEXTEDIT / DDEDIT (ED): pick a text-bearing entity (TEXT / MTEXT / QLEADER

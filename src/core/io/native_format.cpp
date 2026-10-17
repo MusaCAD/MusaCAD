@@ -386,6 +386,13 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, i);
             s += '\n';
         }
+        if (doc.layers[i].transparency != 0) { // v40: LAYERTPY idx percent
+            s += "LAYERTPY ";
+            append_uint(s, i);
+            s += ' ';
+            append_uint(s, doc.layers[i].transparency);
+            s += '\n';
+        }
         if (!doc.layers[i].description.empty()) {
             s += "LAYERDESC ";
             append_uint(s, i);
@@ -525,6 +532,24 @@ std::string serialize_native(const Document& doc) {
         s += word(ds.post);
         s += ' ';
         s += word(ds.alt_post);
+        s += '\n';
+    }
+    // v40: DIMTOL idx method upper lower precision+1 -- a style's Tolerances tab, when set.
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        const DimStyle& ds = doc.dimstyles[i];
+        if (ds.tol_method == 0 && ds.tol_upper == 0.0 && ds.tol_lower == 0.0 && ds.tol_precision < 0) {
+            continue;
+        }
+        s += "DIMTOL ";
+        append_uint(s, i);
+        s += ' ';
+        append_uint(s, ds.tol_method);
+        s += ' ';
+        append_double(s, ds.tol_upper);
+        s += ' ';
+        append_double(s, ds.tol_lower);
+        s += ' ';
+        append_uint(s, static_cast<std::uint64_t>(ds.tol_precision + 1));
         s += '\n';
     }
 
@@ -820,6 +845,16 @@ std::string serialize_native(const Document& doc) {
             s += d.inspect_rate;
             s += '\n';
         }
+        if (!d.breaks.empty()) {
+            // v40: DIMBREAKS n x y ... -- the breaks of the DIM just written.
+            s += "DIMBREAKS ";
+            append_uint(s, d.breaks.size());
+            for (const Vec2& p : d.breaks) {
+                s += ' ';
+                append_vec(s, p);
+            }
+            s += '\n';
+        }
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
     for (const DocLeader& l : doc.leaders) {
@@ -1097,6 +1132,10 @@ std::string serialize_native(const Document& doc) {
     for (const DocBlockDef& b : doc.block_defs) {
         s += "BLOCKDEF ";
         append_vec(s, b.base);
+        if (b.units != 0) {
+            s += ' '; // v40: the block unit
+            append_uint(s, b.units);
+        }
         s += '\n';
         s += escape(b.name);
         s += '\n';
@@ -1178,6 +1217,11 @@ std::string serialize_native(const Document& doc) {
     s += ' ';
     append_uint(s, doc.limits_on ? 1 : 0);
     s += '\n';
+    if (doc.insbase != Vec2{0.0, 0.0}) {
+        s += "INSBASE "; // v40
+        append_vec(s, doc.insbase);
+        s += '\n';
+    }
     s += "ATTDISP ";
     append_uint(s, doc.attdisp);
     s += '\n';
@@ -1290,6 +1334,15 @@ std::string serialize_native(const Document& doc) {
     // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
     // column widths, one of row heights, then per cell: "span_cols span_rows align" and
     // the raw text on the following line (it may contain spaces, so it cannot be a token).
+    // v40: DATALINK <name> <path> (spaces escaped as in PAGESETUP); a linked TABLE carries
+    // the link's index as one more token.
+    for (const DataLink& dl : doc.data_links) {
+        s += "DATALINK ";
+        s += enc(dl.name);
+        s += ' ';
+        s += enc(dl.path);
+        s += '\n';
+    }
     for (const DocTable& t : doc.tables) {
         s += "TABLE ";
         append_uint(s, t.rows);
@@ -1306,6 +1359,10 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, t.style);
         append_props(s, t.props);
+        if (t.link != 0xFFFF) {
+            s += ' ';
+            append_uint(s, t.link);
+        }
         s += '\n';
         for (std::size_t k = 0; k < t.col_widths.size(); ++k) {
             if (k != 0) {
@@ -1670,6 +1727,26 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed POINTMODE");
             }
             doc.pdmode = static_cast<std::uint8_t>(std::min<std::uint64_t>(mode, 100));
+        } else if (key == "DATALINK") {
+            if (tok.size() != 3) {
+                return fail("malformed DATALINK");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            doc.data_links.push_back(DataLink{dec(tok[1]), dec(tok[2])});
+        } else if (key == "INSBASE") {
+            vals.clear();
+            if (tok.size() != 3 || !parse_doubles(tok, 1, 2, vals)) {
+                return fail("malformed INSBASE");
+            }
+            doc.insbase = {vals[0], vals[1]};
         } else if (key == "LIMITS") {
             std::uint64_t on = 0;
             vals.clear();
@@ -2158,7 +2235,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                     !to_double(tok[db + 2], tol.lower)) {
                     return fail("DIM decoration malformed");
                 }
-                tol.mode = static_cast<TolMode>(std::min<std::uint64_t>(mode, 4));
+                tol.mode = static_cast<TolMode>(std::min<std::uint64_t>(mode, 5));
                 // The two raw strings follow on their own lines (they may be empty and
                 // may contain spaces, so they cannot be tokens).
                 if (!read_line(dprefix) || !read_line(dsuffix)) {
@@ -2212,6 +2289,16 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       static_cast<std::uint8_t>(dinspect),
                                       dinspect_label,
                                       dinspect_rate});
+        } else if (key == "DIMBREAKS") {
+            std::uint64_t n = 0;
+            vals.clear();
+            if (doc.dims.empty() || tok.size() < 2 || !to_uint(tok[1], n) || n % 2 != 0 || tok.size() != 2 + 2 * n ||
+                !parse_doubles(tok, 2, 2 * n, vals)) {
+                return fail("malformed DIMBREAKS");
+            }
+            for (std::size_t k = 0; k + 1 < vals.size(); k += 2) {
+                doc.dims.back().breaks.push_back({vals[k], vals[k + 1]});
+            }
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");
@@ -2247,10 +2334,11 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::uint64_t rows = 0, cols = 0, title = 0, header = 0, style = 0;
             vals.clear();
             EntityProps props;
-            if (tok.size() != 9 + 7 || !to_uint(tok[1], rows) || !to_uint(tok[2], cols) ||
+            std::uint64_t link = 0xFFFF;
+            if ((tok.size() != 9 + 7 && tok.size() != 9 + 7 + 1) || !to_uint(tok[1], rows) || !to_uint(tok[2], cols) ||
                 !to_uint(tok[3], title) || !to_uint(tok[4], header) ||
                 !parse_doubles(tok, 5, 3, vals) || !to_uint(tok[8], style) ||
-                !parse_props(tok, 9, props)) {
+                !parse_props(tok, 9, props) || (tok.size() == 17 && !to_uint(tok[16], link))) {
                 return fail("TABLE record malformed");
             }
             DocTable t;
@@ -2262,6 +2350,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             t.rotation = vals[2];
             t.style = static_cast<std::uint16_t>(style);
             t.props = props;
+            t.link = static_cast<std::uint16_t>(std::min<std::uint64_t>(link, 0xFFFF));
             const auto read_doubles = [&](std::size_t n, std::vector<double>& dest) {
                 std::string line;
                 if (!read_line(line)) {
@@ -2407,6 +2496,22 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             l.name = std::move(name);
             doc.layer_states.back().layers.push_back(std::move(l));
+        } else if (key == "DIMTOL") {
+            // DIMTOL idx method upper lower precision+1 (v40): the Tolerances tab.
+            std::uint64_t idx = 0;
+            std::uint64_t method = 0;
+            std::uint64_t prec = 0;
+            double up = 0.0;
+            double lo = 0.0;
+            if (tok.size() != 6 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size() || !to_uint(tok[2], method) ||
+                !to_double(tok[3], up) || !to_double(tok[4], lo) || !to_uint(tok[5], prec)) {
+                return fail("malformed DIMTOL");
+            }
+            DimStyle& ds = doc.dimstyles[idx];
+            ds.tol_method = static_cast<std::uint8_t>(std::min<std::uint64_t>(method, 4));
+            ds.tol_upper = up;
+            ds.tol_lower = lo;
+            ds.tol_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(prec, 9)) - 1);
         } else if (key == "DIMUNITS") {
             // DIMUNITS idx lunit frac rnd lfac aunit adec+1 alt altu altd altf altrnd post apost (v40)
             std::uint64_t idx = 0;
@@ -2449,6 +2554,14 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("NOPLOT record malformed");
             }
             doc.layers[li].plot = false;
+        } else if (key == "LAYERTPY") {
+            // LAYERTPY idx percent (v40): the layer's transparency, 0..90.
+            std::uint64_t li = 0;
+            std::uint64_t pct = 0;
+            if (tok.size() != 3 || !to_uint(tok[1], li) || li >= doc.layers.size() || !to_uint(tok[2], pct)) {
+                return fail("LAYERTPY record malformed");
+            }
+            doc.layers[li].transparency = static_cast<std::uint8_t>(std::min<std::uint64_t>(pct, 90));
         } else if (key == "LAYERDESC") {
             // LAYERDESC idx text (v40): the layer's description, spaces as 0x1f.
             std::uint64_t li = 0;
@@ -2902,6 +3015,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             cur_block = DocBlockDef{};
             cur_block.name = unescape(name);
             cur_block.base = {vals[0], vals[1]};
+            if (std::uint64_t units = 0; tok.size() >= 4 && to_uint(tok[3], units)) {
+                cur_block.units = static_cast<std::uint8_t>(std::min<std::uint64_t>(units, 24));
+            }
             in_block = true;
             target_block();
         } else if (key == "XREFPATH") {

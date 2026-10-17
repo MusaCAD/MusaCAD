@@ -88,28 +88,31 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
         const DimStyle* st = store.dimstyle(d->style);
-        return AddDimensionCommand{static_cast<std::uint8_t>(d->type),
-                                   d->a,
-                                   d->b,
-                                   d->line_pt,
-                                   d->style,
-                                   0,
-                                   d->props,
-                                   d->overrides,
-                                   st != nullptr ? *st : DimStyle{},
-                                   std::string(store.dim_prefix(*d)),
-                                   std::string(store.dim_suffix(*d)),
-                                   d->tol,
-                                   std::string(store.dim_override(*d)),
-                                   d->text_offset,
-                                   d->aux,
-                                   d->text_angle,
-                                   d->arc_leader,
-                                   d->oblique,
-                                   d->jog,
-                                   d->inspect,
-                                   std::string(store.dim_inspect_label(*d)),
-                                   std::string(store.dim_inspect_rate(*d))};
+        AddDimensionCommand dc{static_cast<std::uint8_t>(d->type),
+                              d->a,
+                              d->b,
+                              d->line_pt,
+                              d->style,
+                              0,
+                              d->props,
+                              d->overrides,
+                              st != nullptr ? *st : DimStyle{},
+                              std::string(store.dim_prefix(*d)),
+                              std::string(store.dim_suffix(*d)),
+                              d->tol,
+                              std::string(store.dim_override(*d)),
+                              d->text_offset,
+                              d->aux,
+                              d->text_angle,
+                              d->arc_leader,
+                              d->oblique,
+                              d->jog,
+                              d->inspect,
+                              std::string(store.dim_inspect_label(*d)),
+                              std::string(store.dim_inspect_rate(*d))};
+        const std::span<const Vec2> brk = store.dim_breaks(*d);
+        dc.breaks.assign(brk.begin(), brk.end());
+        return dc;
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -206,6 +209,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         c.has_title = td->has_title;
         c.has_header = td->has_header;
         c.props = td->props;
+        c.link = td->link;
         return c;
     }
     case EntityKind::Viewport: {
@@ -336,6 +340,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 if (c.inspect != 0) {
                     store.set_dim_inspect(handle, c.inspect, c.inspect_label, c.inspect_rate);
                 }
+                if (!c.breaks.empty()) {
+                    store.set_dim_breaks(handle, c.breaks);
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -371,7 +378,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 }
                 handle = store.add_table(c.rows, c.cols, cells, c.col_widths, c.row_heights,
                                          c.pos, c.rotation, c.style, c.has_title, c.has_header,
-                                         props_of(c.props));
+                                         props_of(c.props), c.link);
             } else if constexpr (std::is_same_v<T, AddViewportCommand>) {
                 handle = store.add_viewport(c.center, c.width, c.height, c.view_center, c.scale, c.on,
                                             props_of(c.props), c.frozen_layers);

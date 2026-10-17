@@ -11,6 +11,8 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
+#include <QRegularExpression>
 #include <QString>
 #include <QTableWidget>
 #include <QTimer>
@@ -36,6 +38,7 @@ enum Col {
     kNewVpFreeze,
     kVpFreeze,
     kDescription,
+    kTransparency, // 0..90 percent
     kColCount
 };
 
@@ -47,9 +50,9 @@ const std::vector<int>& lineweights() {
 } // namespace
 
 LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit, QWidget* parent,
-                         VpFrozenGetter vp_frozen)
+                         VpFrozenGetter vp_frozen, UsedGetter used)
     : QDialog(parent), layers_(std::move(layers)), current_(std::move(current)),
-      submit_(std::move(submit)), vp_frozen_(std::move(vp_frozen)) {
+      submit_(std::move(submit)), vp_frozen_(std::move(vp_frozen)), used_(std::move(used)) {
     setWindowTitle(QStringLiteral("Layer Properties Manager"));
     setModal(false);
     resize(640, 320);
@@ -66,11 +69,31 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
     toolbar->addWidget(cur_btn);
     toolbar->addWidget(assign_btn);
     toolbar->addStretch(1);
+    // AutoCAD's filters: the layers shown by what they are, and Invert filter.
+    filter_ = new QComboBox(this);
+    filter_->setObjectName(QStringLiteral("LayerFilter"));
+    filter_->addItems({QStringLiteral("All"), QStringLiteral("All Used Layers"), QStringLiteral("Layers On"),
+                       QStringLiteral("Layers Off"), QStringLiteral("Frozen"), QStringLiteral("Thawed"),
+                       QStringLiteral("Locked"), QStringLiteral("Unlocked")});
+    filter_->setToolTip(QStringLiteral("Filter: the layers shown."));
+    toolbar->addWidget(filter_);
+    invert_ = new QCheckBox(QStringLiteral("Invert filter"), this);
+    invert_->setObjectName(QStringLiteral("LayerFilterInvert"));
+    toolbar->addWidget(invert_);
+    connect(filter_, &QComboBox::currentIndexChanged, this, [this] { apply_filter(); });
+    connect(invert_, &QCheckBox::toggled, this, [this] { apply_filter(); });
+    search_ = new QLineEdit(this);
+    search_->setObjectName(QStringLiteral("LayerSearch"));
+    search_->setPlaceholderText(QStringLiteral("Search for layer"));
+    search_->setClearButtonEnabled(true);
+    search_->setToolTip(QStringLiteral("Show the layers whose name holds this text; * and ? are wild cards."));
+    toolbar->addWidget(search_);
+    connect(search_, &QLineEdit::textChanged, this, [this] { apply_filter(); });
     outer->addLayout(toolbar);
 
     table_ = new QTableWidget(0, kColCount, this);
     table_->setHorizontalHeaderLabels({"Name", "On", "Frozen", "Locked", "Color", "Linetype",
-                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description"});
+                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description", "Transparency"});
     table_->horizontalHeader()->setStretchLastSection(false);
     table_->horizontalHeader()->setSectionResizeMode(kName, QHeaderView::Stretch);
     table_->verticalHeader()->setVisible(false);
@@ -117,6 +140,51 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 }
 
 int LayerDialog::row_count() const { return table_->rowCount(); }
+
+void LayerDialog::apply_filter() {
+    const QString f = search_ != nullptr ? search_->text().trimmed() : QString();
+    const bool wild = f.contains(QLatin1Char('*')) || f.contains(QLatin1Char('?'));
+    const QRegularExpression re(wild ? QRegularExpression::wildcardToRegularExpression(f) : QString(),
+                                QRegularExpression::CaseInsensitiveOption);
+    const std::vector<std::uint8_t> used = used_ ? used_() : std::vector<std::uint8_t>{};
+    const int which = filter_ != nullptr ? filter_->currentIndex() : 0;
+    const bool invert = invert_ != nullptr && invert_->isChecked() && which != 0;
+    for (int row = 0; row < table_->rowCount(); ++row) {
+        const auto i = static_cast<std::size_t>(row);
+        const QString name = i < shown_.size() ? QString::fromStdString(shown_[i].name) : QString();
+        bool pass = true;
+        if (i < shown_.size()) {
+            const core::Layer& l = shown_[i];
+            switch (which) {
+            case 1: // All Used Layers (layer 0 and the current layer count as used)
+                pass = (i < used.size() && used[i] != 0) || i == 0 || i == shown_current_;
+                break;
+            case 2:
+                pass = l.on;
+                break;
+            case 3:
+                pass = !l.on;
+                break;
+            case 4:
+                pass = l.frozen;
+                break;
+            case 5:
+                pass = !l.frozen;
+                break;
+            case 6:
+                pass = l.locked;
+                break;
+            case 7:
+                pass = !l.locked;
+                break;
+            default:
+                break;
+            }
+        }
+        const bool found = f.isEmpty() || (wild ? re.match(name).hasMatch() : name.contains(f, Qt::CaseInsensitive));
+        table_->setRowHidden(row, !(found && (pass != invert)));
+    }
+}
 
 void LayerDialog::refresh() {
     const std::vector<core::Layer> layers = layers_();
@@ -217,8 +285,21 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
             }
         });
         table_->setCellWidget(row, kLineweight, lw);
+
+        auto* tpy = new QSpinBox(this);
+        tpy->setRange(0, 90);
+        tpy->setSuffix(QStringLiteral(" %"));
+        tpy->setValue(l.transparency);
+        tpy->setToolTip(QStringLiteral("How see-through the layer's objects are on screen, 0 to 90 percent."));
+        connect(tpy, &QSpinBox::valueChanged, this, [this, row] {
+            if (!building_) {
+                submit_row(row);
+            }
+        });
+        table_->setCellWidget(row, kTransparency, tpy);
     }
     building_ = false;
+    apply_filter(); // a rebuilt table keeps the search
 }
 
 core::Layer LayerDialog::layer_from_row(int row) const {
@@ -258,6 +339,9 @@ core::Layer LayerDialog::layer_from_row(int row) const {
     }
     if (auto* lw = qobject_cast<QComboBox*>(table_->cellWidget(row, kLineweight))) {
         l.lineweight = static_cast<std::uint8_t>(lw->currentData().toInt());
+    }
+    if (auto* tpy = qobject_cast<QSpinBox*>(table_->cellWidget(row, kTransparency))) {
+        l.transparency = static_cast<std::uint8_t>(tpy->value());
     }
     return l;
 }

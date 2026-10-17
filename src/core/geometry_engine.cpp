@@ -21,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <span>
 #include <optional>
@@ -3260,6 +3261,9 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
         case Op::Description:
             l.description = c.description;
             break;
+        case Op::Transparency:
+            l.transparency = std::min<std::uint8_t>(c.transparency, 90);
+            break;
         default:
             break;
         }
@@ -3694,14 +3698,18 @@ std::string GeometryEngine::list_block(EntityHandle h) const {
 
 void GeometryEngine::apply_list_query(const ListQueryCommand& c) {
     std::vector<EntityHandle> targets;
-    if (c.selection) {
+    if (c.everything) {
+        targets = all_live();
+    } else if (c.selection) {
         prune_selection();
         targets = selection_;
     } else if (const EntityHandle h = pick_nearest(c.at, c.pick_radius); store_.is_valid(h)) {
         targets.push_back(h);
     }
     if (targets.empty()) {
-        report(c.selection ? "LIST: nothing selected." : "LIST: no object found at that point.");
+        report(c.everything ? "DBLIST: the drawing is empty."
+               : c.selection ? "LIST: nothing selected."
+                             : "LIST: no object found at that point.");
         return;
     }
     std::string out;
@@ -6052,7 +6060,7 @@ void GeometryEngine::apply_revcloud_reverse(std::uint64_t group) {
     report("Reversed the arc direction.");
 }
 
-void GeometryEngine::apply_explode(std::uint64_t group, bool burst) {
+void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const NestedCopyCommand* ncopy) {
     prune_selection();
     if (selection_.empty()) {
         report("Nothing selected to explode.");
@@ -6402,6 +6410,76 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst) {
         return;
     }
     std::vector<EntityHandle> result;
+    if (ncopy != nullptr) {
+        // NCOPY: the part under the pick, found by placing each a moment and measuring.
+        std::size_t best = parts.size();
+        double best_d = 0.0;
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            const EntityHandle th = create_indexed(parts[i]);
+            Vec2 cp{};
+            if (kernel_.closest_point(store_, th, ncopy->pick, cp)) {
+                const double dd = length(cp - ncopy->pick);
+                if (best == parts.size() || dd < best_d) {
+                    best = i;
+                    best_d = dd;
+                }
+            }
+            remove_indexed(th);
+        }
+        if (best == parts.size() || best_d > std::max(ncopy->radius, 1e-9) * 4.0) {
+            report("No object inside the block reference there.");
+            return;
+        }
+        if (ncopy->list) {
+            // XLIST: what the object is, and its properties as the block holds them.
+            Command probe = parts[best];
+            std::string kind = "Object";
+            std::visit(
+                [&](const auto& x) {
+                    using P = std::decay_t<decltype(x)>;
+                    if constexpr (std::is_same_v<P, AddLineCommand>) {
+                        kind = "Line";
+                    } else if constexpr (std::is_same_v<P, AddCircleCommand>) {
+                        kind = "Circle";
+                    } else if constexpr (std::is_same_v<P, AddArcCommand>) {
+                        kind = "Arc";
+                    } else if constexpr (std::is_same_v<P, AddPolylineCommand>) {
+                        kind = "Polyline";
+                    } else if constexpr (std::is_same_v<P, AddTextCommand>) {
+                        kind = "Text";
+                    } else if constexpr (std::is_same_v<P, AddMTextCommand>) {
+                        kind = "MText";
+                    } else if constexpr (std::is_same_v<P, AddInsertCommand>) {
+                        kind = "Block Reference";
+                    }
+                },
+                probe);
+            EntityProps pr{};
+            modify_cmd_props(probe, [&](EntityProps& p) { pr = p; });
+            static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
+            const InsertData* in = store_.insert(exploded.front());
+            const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+            const std::string layer = pr.layer < store_.layers().size() ? store_.layers()[pr.layer].name : "0";
+            const std::string color = pr.color_by_layer() ? "BYLAYER"
+                                                          : std::to_string(pr.color.r) + "," + std::to_string(pr.color.g) +
+                                                                "," + std::to_string(pr.color.b);
+            const std::string ltype =
+                pr.linetype_by_layer() ? "BYLAYER" : kLt[std::min<std::size_t>(static_cast<std::size_t>(pr.linetype), 3)];
+            report("Object: " + kind + "  Block name: " + (bd != nullptr ? bd->name : std::string()) + "  Layer: " + layer +
+                   "  Color: " + color + "  Linetype: " + ltype);
+            return;
+        }
+        Command part = parts[best];
+        translate_cmd(part, ncopy->offset);
+        const EntityHandle nh = create_indexed(part);
+        push_create_item(group, nh, part);
+        selection_ = {nh};
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("1 object copied out of the block reference.");
+        return;
+    }
     for (const EntityHandle h : exploded) {
         const Command original = capture_entity(h);
         remove_indexed(h);
@@ -6844,6 +6922,7 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
     BlockDef def;
     def.name = c.name;
     def.base = c.base;
+    def.units = store_.units().insunits; // the Block unit: the drawing's
     std::vector<EntityHandle> taken;
     int skipped = 0;
     collect_block_content(selection_, def.content, taken, skipped);
@@ -7528,6 +7607,168 @@ void GeometryEngine::apply_create_viewport(const CreateViewportCommand& c) {
                                                 : " (the model is empty)."));
 }
 
+namespace {
+Vec2 nearest_on_segment(Vec2 p, Vec2 a, Vec2 b); // below, with DIMBREAK
+} // namespace
+
+void GeometryEngine::apply_extrim(const ExtrimCommand& c) {
+    const EntityHandle e = pick_nearest(c.edge, c.pick_radius);
+    if (e.is_null() || (e.kind != EntityKind::Line && e.kind != EntityKind::Arc && e.kind != EntityKind::Circle &&
+                        e.kind != EntityKind::Polyline && e.kind != EntityKind::Ellipse)) {
+        report("Pick a polyline, line, circle, arc or ellipse for the cutting edge.");
+        return;
+    }
+    std::vector<Vec2> edge_pts;
+    kernel_.tessellate(store_, e, kDefaultTessTolerance, edge_pts);
+    if (edge_pts.size() < 2) {
+        return;
+    }
+    bool closed = e.kind == EntityKind::Circle;
+    if (const PolylineData* pl = e.kind == EntityKind::Polyline ? store_.polyline(e) : nullptr; pl != nullptr) {
+        closed = pl->closed;
+    }
+    if (e.kind == EntityKind::Ellipse) {
+        closed = distance(edge_pts.front(), edge_pts.back()) < 1e-9;
+    }
+    // Which side of the edge a point is on: inside or outside a closed one; left or right
+    // of an open one, where it passes nearest.
+    const auto side_of = [&](Vec2 p) -> int {
+        if (closed) {
+            bool in = false;
+            for (std::size_t i = 0, j = edge_pts.size() - 1; i < edge_pts.size(); j = i++) {
+                const Vec2 a = edge_pts[i];
+                const Vec2 b = edge_pts[j];
+                if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+                    in = !in;
+                }
+            }
+            return in ? 1 : -1;
+        }
+        std::size_t best = 0;
+        double best_d = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i + 1 < edge_pts.size(); ++i) {
+            const double dd = distance(p, nearest_on_segment(p, edge_pts[i], edge_pts[i + 1]));
+            if (dd < best_d) {
+                best_d = dd;
+                best = i;
+            }
+        }
+        return cross(edge_pts[best + 1] - edge_pts[best], p - edge_pts[best]) >= 0.0 ? 1 : -1;
+    };
+    const int want = side_of(c.side);
+    // A pick on each crossing object just past each crossing, on the side wanted.
+    std::vector<Vec2> picks;
+    std::vector<Vec2> hits;
+    std::vector<Vec2> tess;
+    for (const EntityHandle o : all_live()) {
+        if (o == e || (o.kind != EntityKind::Line && o.kind != EntityKind::Arc && o.kind != EntityKind::Circle &&
+                       o.kind != EntityKind::Polyline && o.kind != EntityKind::Ellipse)) {
+            continue;
+        }
+        hits.clear();
+        kernel_.intersect(store_, o, e, hits);
+        if (hits.empty()) {
+            continue;
+        }
+        tess.clear();
+        kernel_.tessellate(store_, o, kDefaultTessTolerance, tess);
+        Vec2 lo;
+        Vec2 hi;
+        const double size = entity_aabb(store_, o, lo, hi) ? distance(lo, hi) : 1.0;
+        const double step = std::max(size * 1e-4, 1e-7);
+        for (const Vec2& x : hits) {
+            std::size_t seg = tess.size();
+            double best_d = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i + 1 < tess.size(); ++i) {
+                const double dd = distance(x, nearest_on_segment(x, tess[i], tess[i + 1]));
+                if (dd < best_d) {
+                    best_d = dd;
+                    seg = i;
+                }
+            }
+            if (seg >= tess.size() || distance(tess[seg], tess[seg + 1]) < 1e-12) {
+                continue;
+            }
+            const Vec2 t = (tess[seg + 1] - tess[seg]) / distance(tess[seg], tess[seg + 1]);
+            for (const Vec2 p : {x + t * step, x - t * step}) {
+                if (side_of(p) == want) {
+                    picks.push_back(p);
+                }
+            }
+        }
+    }
+    // TRIM's own planning, with this edge as the only cutting edge.
+    const std::vector<EntityHandle> kept_edges = trim_edges_;
+    const bool kept_set = trim_edges_set_;
+    const bool kept_extend = trim_edge_extend_;
+    trim_edges_ = {e};
+    trim_edges_set_ = true;
+    trim_edge_extend_ = false;
+    int trimmed = 0;
+    for (const Vec2& p : picks) {
+        TrimPlan plan;
+        const double r = std::max(c.pick_radius * 1e-3, 1e-6);
+        if (!plan_trim(p, r, plan) || plan.h == e) {
+            continue;
+        }
+        const Command original = capture_entity(plan.h);
+        remove_indexed(plan.h);
+        push_erase_item(c.group, plan.h, original);
+        for (const Command& piece : plan.pieces) {
+            push_create_item(c.group, create_indexed(piece), piece);
+        }
+        ++trimmed;
+    }
+    trim_edges_ = kept_edges;
+    trim_edges_set_ = kept_set;
+    trim_edge_extend_ = kept_extend;
+    if (trimmed > 0) {
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    report(trimmed == 0 ? "Nothing crosses the cutting edge on that side."
+                        : std::to_string(trimmed) + (trimmed == 1 ? " object trimmed." : " objects trimmed."));
+}
+
+void GeometryEngine::apply_vpsync(const VpSyncCommand& c) {
+    const EntityHandle mh = pick_nearest(c.master, c.pick_radius);
+    const ViewportData* m = store_.viewport(mh);
+    if (m == nullptr) {
+        report("Select a viewport for the master.");
+        return;
+    }
+    const ViewportData master = *m;
+    prune_selection();
+    std::vector<EntityHandle> renewed;
+    for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+        if (h == mh || store_.viewport(h) == nullptr) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        AddViewportCommand edited = std::get<AddViewportCommand>(original);
+        // The master's scale, and the view centre where the master's model would be seen
+        // through this viewport's place on the sheet.
+        edited.scale = master.scale;
+        edited.view_center = master.view_center + (edited.center - master.center) / master.scale;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const Command add = edited;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+    }
+    if (renewed.empty()) {
+        report("Select the viewports to line up with the master.");
+        return;
+    }
+    selection_ = renewed;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(renewed.size()) + (renewed.size() == 1 ? " viewport" : " viewports") + " aligned to the master.");
+}
+
 void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     if (store_.viewport(h) == nullptr) {
@@ -7925,7 +8166,7 @@ void GeometryEngine::apply_vplayer(const SetViewportLayerFreezeCommand& c) {
 std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
                                                    const std::string& name,
                                                    const std::string& xref_path, std::string& err,
-                                                   std::uint8_t* src_insunits) {
+                                                   std::uint8_t* src_insunits, bool bind) {
     io::Document doc;
     const io::IoResult r = lower_ext(full_path) == ".dxf" ? io::load_dxf(full_path, doc)
                                                           : io::load_native(full_path, doc);
@@ -7942,6 +8183,7 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     // The source's own blocks come along as "name|block" so its references keep
     // working; their indices are remapped from the source table to ours.
     std::vector<std::uint16_t> remap(tmp.block_count(), 0xFFFF);
+    std::vector<bool> added(tmp.block_count(), true); // false: one of ours, kept as it is
     const auto find_block = [&](const std::string& n) -> std::uint16_t {
         for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
             if (store_.block(i)->name == n) {
@@ -7952,10 +8194,15 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     };
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(tmp.block_count()); ++i) {
         BlockDef nested = *tmp.block(i);
-        nested.name = name + "|" + nested.name;
+        if (!bind) {
+            nested.name = name + "|" + nested.name;
+        }
         nested.xref_path.clear();
         const std::uint16_t existing = find_block(nested.name);
-        if (existing != 0xFFFF) {
+        if (existing != 0xFFFF && bind) {
+            remap[i] = existing; // AutoCAD keeps the drawing's own definition
+            added[i] = false;
+        } else if (existing != 0xFFFF) {
             store_.redefine_block(existing, nested);
             remap[i] = existing;
         } else {
@@ -7968,14 +8215,22 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
         }
     };
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(tmp.block_count()); ++i) {
+        if (!added[i]) {
+            continue;
+        }
         BlockDef fixed = *store_.block(remap[i]);
         remap_inserts(fixed.content);
         store_.redefine_block(remap[i], fixed);
     }
     BlockDef def;
     def.name = name;
-    def.base = {0.0, 0.0};
+    def.base = doc.insbase; // the drawing's INSBASE (BASE), as AutoCAD inserts and attaches it
     def.xref_path = xref_path;
+    if (bind) {
+        // Inserted at this drawing's units (an xref is scaled as it is attached); a
+        // unitless drawing counts as INSUNITSDEFSOURCE's.
+        def.units = doc.display_units.insunits != 0 ? doc.display_units.insunits : insunits_def_source_;
+    }
     std::vector<EntityHandle> taken;
     int skipped = 0;
     collect_block_content_from(tmp, block_material(tmp), def.content, taken, skipped);
@@ -7986,6 +8241,593 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
         return existing;
     }
     return store_.add_block(def);
+}
+
+namespace {
+/// A CSV file's rows (RFC 4180: quoted fields may hold commas, quotes doubled, line
+/// breaks); false when it cannot be read.
+bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& rows) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    rows.clear();
+    std::vector<std::string> row;
+    std::string field;
+    bool quoted = false;
+    bool any = false; // the row has something (a lone line break ends no row)
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (quoted) {
+            if (ch == '"' && i + 1 < text.size() && text[i + 1] == '"') {
+                field += '"';
+                ++i;
+            } else if (ch == '"') {
+                quoted = false;
+            } else {
+                field += ch;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            quoted = true;
+            any = true;
+        } else if (ch == ',') {
+            row.push_back(std::move(field));
+            field.clear();
+            any = true;
+        } else if (ch == '\n' || ch == '\r') {
+            if (ch == '\r' && i + 1 < text.size() && text[i + 1] == '\n') {
+                ++i;
+            }
+            if (any || !field.empty()) {
+                row.push_back(std::move(field));
+                rows.push_back(std::move(row));
+            }
+            row.clear();
+            field.clear();
+            any = false;
+        } else {
+            field += ch;
+            any = true;
+        }
+    }
+    if (any || !field.empty()) {
+        row.push_back(std::move(field));
+        rows.push_back(std::move(row));
+    }
+    return true;
+}
+
+bool write_csv(const std::string& path, const std::vector<std::vector<std::string>>& rows) {
+    std::ofstream f(path, std::ios::binary);
+    const auto field = [](const std::string& v) {
+        if (v.find_first_of(",\"\r\n") == std::string::npos) {
+            return v;
+        }
+        std::string q = "\"";
+        for (const char ch : v) {
+            q += ch == '"' ? std::string("\"\"") : std::string(1, ch);
+        }
+        return q + "\"";
+    };
+    for (const auto& line : rows) {
+        for (std::size_t i = 0; i < line.size(); ++i) {
+            f << (i == 0 ? "" : ",") << field(line[i]);
+        }
+        f << "\r\n";
+    }
+    return f.good();
+}
+
+/// A table holding `grid` (rows of cells), sized for the style's data text.
+AddTableCommand table_from_grid(const std::vector<std::vector<std::string>>& grid, const TableStyle* st) {
+    std::size_t ncols = 1;
+    for (const auto& line : grid) {
+        ncols = std::max(ncols, line.size());
+    }
+    const double h = st != nullptr ? st->data_height : 2.5;
+    const double margin = st != nullptr ? st->margin : 0.4;
+    AddTableCommand t;
+    t.rows = static_cast<std::uint16_t>(std::min<std::size_t>(std::max<std::size_t>(grid.size(), 1), 0xFFFF));
+    t.cols = static_cast<std::uint16_t>(std::min<std::size_t>(ncols, 0xFFFF));
+    for (std::size_t col = 0; col < t.cols; ++col) {
+        std::size_t longest = 4;
+        for (const auto& line : grid) {
+            longest = std::max(longest, col < line.size() ? line[col].size() : std::size_t{0});
+        }
+        t.col_widths.push_back(h * 0.8 * static_cast<double>(longest) + 2.0 * margin * h + h);
+    }
+    t.row_heights.assign(t.rows, h * 3.6);
+    for (std::size_t r = 0; r < t.rows; ++r) {
+        for (std::size_t col = 0; col < t.cols; ++col) {
+            t.cells.push_back(TableCell{});
+            t.texts.push_back(r < grid.size() && col < grid[r].size() ? grid[r][col] : std::string());
+        }
+    }
+    return t;
+}
+} // namespace
+
+namespace {
+/// The point of segment ab nearest p.
+Vec2 nearest_on_segment(Vec2 p, Vec2 a, Vec2 b) {
+    const Vec2 ab = b - a;
+    const double len2 = dot(ab, ab);
+    if (len2 < 1e-24) {
+        return a;
+    }
+    const double t = std::clamp(dot(p - a, ab) / len2, 0.0, 1.0);
+    return a + ab * t;
+}
+} // namespace
+
+void GeometryEngine::apply_dim_break(const DimBreakCommand& c) {
+    using Mode = DimBreakCommand::Mode;
+    std::vector<EntityHandle> dims;
+    if (c.selection) {
+        prune_selection();
+        for (const EntityHandle h : selection_) {
+            if (h.kind == EntityKind::Dimension) {
+                dims.push_back(h);
+            }
+        }
+    } else if (const EntityHandle h = pick_nearest(c.pick, c.pick_radius); h.kind == EntityKind::Dimension && !h.is_null()) {
+        dims.push_back(h);
+    }
+    if (dims.empty()) {
+        report("Select a dimension.");
+        return;
+    }
+    EntityHandle breaker = EntityHandle::null();
+    if (c.mode == Mode::Object) {
+        breaker = pick_nearest(c.object, c.pick_radius);
+        if (breaker.is_null() || breaker == dims.front()) {
+            report("Select an object that crosses the dimension.");
+            return;
+        }
+    }
+    int changed = 0;
+    std::vector<EntityHandle> renewed;
+    for (const EntityHandle h : dims) {
+        const Command original = capture_entity(h);
+        const auto* was = std::get_if<AddDimensionCommand>(&original);
+        const DimData* d = store_.dimension(h);
+        if (was == nullptr || d == nullptr) {
+            continue;
+        }
+        std::vector<Vec2> brk = c.mode == Mode::Remove ? std::vector<Vec2>{} : was->breaks;
+        if (c.mode != Mode::Remove) {
+            // The dimension's own lines, as they are with no breaks.
+            const DimStyle* st = store_.dimstyle(d->style);
+            DimTextParts parts = store_.dim_text_parts(*d);
+            parts.breaks = {};
+            const DimGeometry g = compute_dim_geometry(*d, st != nullptr ? *st : DimStyle{}, Rgb{}, parts);
+            std::vector<Vec2> segs = g.dim_lines;
+            segs.insert(segs.end(), g.ext_lines.begin(), g.ext_lines.end());
+            if (c.mode == Mode::Manual) {
+                // Both points onto the line nearest the first.
+                std::size_t best = segs.size();
+                double best_d = std::numeric_limits<double>::infinity();
+                for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+                    const double dd = distance(c.p1, nearest_on_segment(c.p1, segs[i], segs[i + 1]));
+                    if (dd < best_d) {
+                        best_d = dd;
+                        best = i;
+                    }
+                }
+                if (best < segs.size()) {
+                    brk.push_back(nearest_on_segment(c.p1, segs[best], segs[best + 1]));
+                    brk.push_back(nearest_on_segment(c.p2, segs[best], segs[best + 1]));
+                }
+            } else {
+                Vec2 lo{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+                Vec2 hi{-lo.x, -lo.y};
+                for (const Vec2& p : segs) {
+                    lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+                    hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+                }
+                const std::vector<EntityHandle> others =
+                    c.mode == Mode::Object ? std::vector<EntityHandle>{breaker} : all_live();
+                std::vector<Vec2> tess;
+                for (const EntityHandle o : others) {
+                    if (o == h || o.kind == EntityKind::Text || o.kind == EntityKind::MText) {
+                        continue;
+                    }
+                    Vec2 omin;
+                    Vec2 omax;
+                    if (entity_aabb(store_, o, omin, omax) &&
+                        (omax.x < lo.x || omin.x > hi.x || omax.y < lo.y || omin.y > hi.y)) {
+                        continue; // nowhere near
+                    }
+                    tess.clear();
+                    kernel_.tessellate(store_, o, kDefaultTessTolerance, tess);
+                    const bool pairs = o.kind == EntityKind::Insert || o.kind == EntityKind::Dimension;
+                    const std::size_t step = pairs ? 2 : 1;
+                    for (std::size_t j = 0; j + 1 < tess.size(); j += step) {
+                        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+                            Vec2 x;
+                            if (!segment_intersection(segs[i], segs[i + 1], tess[j], tess[j + 1], x)) {
+                                continue;
+                            }
+                            bool known = false;
+                            for (std::size_t k = 0; k + 1 < brk.size(); k += 2) {
+                                known = known || distance(brk[k], x) < 1e-6;
+                            }
+                            if (!known) {
+                                brk.push_back(x); // a break centred on the crossing
+                                brk.push_back(x);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (brk == was->breaks) {
+            continue;
+        }
+        AddDimensionCommand edited = *was;
+        edited.breaks = std::move(brk);
+        edited.group = c.group;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const Command add = edited;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+        ++changed;
+    }
+    if (!renewed.empty()) {
+        selection_ = renewed;
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    report(std::to_string(changed) + (changed == 1 ? " object modified." : " objects modified."));
+}
+
+namespace {
+std::string handle_text(EntityHandle h) {
+    return "'" + std::to_string(h.index) + ":" + std::to_string(h.generation);
+}
+std::optional<EntityHandle> handle_from_text(std::string_view t) {
+    if (!t.empty() && t.front() == '\'') {
+        t.remove_prefix(1);
+    }
+    const std::size_t colon = t.find(':');
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+    try {
+        const unsigned long index = std::stoul(std::string(t.substr(0, colon)));
+        const unsigned long generation = std::stoul(std::string(t.substr(colon + 1)));
+        return EntityHandle{static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(generation), EntityKind::Insert};
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+std::vector<std::string> split_tabs(const std::string& line) {
+    std::vector<std::string> out(1);
+    for (const char ch : line) {
+        if (ch == '\t') {
+            out.emplace_back();
+        } else if (ch != '\r') {
+            out.back() += ch;
+        }
+    }
+    return out;
+}
+} // namespace
+
+void GeometryEngine::apply_attout(const AttOutCommand& c) {
+    prune_selection();
+    std::vector<EntityHandle> refs;
+    std::vector<std::string> tags;
+    for (const EntityHandle h : selection_) {
+        const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+        const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+        if (bd == nullptr || bd->content.attdefs.empty()) {
+            continue;
+        }
+        refs.push_back(h);
+        for (const BlockAttDef& a : bd->content.attdefs) {
+            if (std::find(tags.begin(), tags.end(), a.tag) == tags.end()) {
+                tags.push_back(a.tag);
+            }
+        }
+    }
+    if (refs.empty()) {
+        report("No block references with attributes selected.");
+        return;
+    }
+    const auto clean = [](std::string v) {
+        std::replace(v.begin(), v.end(), '\t', ' ');
+        std::replace(v.begin(), v.end(), '\n', ' ');
+        return v;
+    };
+    std::ofstream f(c.path, std::ios::binary);
+    f << "HANDLE\tBLOCKNAME";
+    for (const std::string& t : tags) {
+        f << '\t' << clean(t);
+    }
+    f << "\r\n";
+    for (const EntityHandle h : refs) {
+        const InsertData* in = store_.insert(h);
+        const BlockDef* bd = store_.block(in->block);
+        const std::vector<std::string> values = store_.insert_attribs(*in);
+        f << handle_text(h) << '\t' << clean(bd->name);
+        for (const std::string& t : tags) {
+            std::string v = "<>";
+            for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                if (bd->content.attdefs[i].tag == t) {
+                    v = i < values.size() ? values[i] : bd->content.attdefs[i].def;
+                }
+            }
+            f << '\t' << clean(v);
+        }
+        f << "\r\n";
+    }
+    report(f.good() ? std::to_string(refs.size()) + (refs.size() == 1 ? " block reference" : " block references") +
+                          " written to " + c.path + "."
+                    : "ATTOUT: could not write " + c.path + ".");
+}
+
+void GeometryEngine::apply_attin(const AttInCommand& c) {
+    std::ifstream f(c.path, std::ios::binary);
+    if (!f) {
+        report("ATTIN: cannot read " + c.path + ".");
+        return;
+    }
+    std::string line;
+    if (!std::getline(f, line)) {
+        report("ATTIN: " + c.path + " is empty.");
+        return;
+    }
+    const std::vector<std::string> head = split_tabs(line);
+    if (head.size() < 2 || head[0] != "HANDLE") {
+        report("ATTIN: " + c.path + " does not start with HANDLE and BLOCKNAME columns.");
+        return;
+    }
+    int updated = 0;
+    int missing = 0;
+    std::vector<EntityHandle> renewed;
+    while (std::getline(f, line)) {
+        const std::vector<std::string> row = split_tabs(line);
+        if (row.empty() || row[0].empty()) {
+            continue;
+        }
+        const std::optional<EntityHandle> h = handle_from_text(row[0]);
+        const InsertData* in = h ? store_.insert(*h) : nullptr;
+        const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+        if (bd == nullptr) {
+            ++missing;
+            continue;
+        }
+        std::vector<std::string> values = store_.insert_attribs(*in);
+        for (std::size_t i = values.size(); i < bd->content.attdefs.size(); ++i) {
+            values.push_back(bd->content.attdefs[i].def);
+        }
+        values.resize(bd->content.attdefs.size());
+        bool changed = false;
+        for (std::size_t col = 2; col < head.size() && col < row.size(); ++col) {
+            if (row[col] == "<>") {
+                continue;
+            }
+            for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                if (bd->content.attdefs[i].tag == head[col] && values[i] != row[col]) {
+                    values[i] = row[col];
+                    changed = true;
+                }
+            }
+        }
+        if (!changed) {
+            continue;
+        }
+        const Command original = capture_entity(*h);
+        remove_indexed(*h);
+        push_erase_item(c.group, *h, original);
+        AddInsertCommand nc = std::get<AddInsertCommand>(original);
+        nc.attribs = values;
+        const Command add = nc;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+        ++updated;
+    }
+    if (!renewed.empty()) {
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    std::string said = std::to_string(updated) + (updated == 1 ? " block reference updated" : " block references updated");
+    if (missing > 0) {
+        said += "; " + std::to_string(missing) + (missing == 1 ? " not found" : " not found (the file is from another session or drawing)");
+    }
+    report(said + ".");
+}
+
+void GeometryEngine::apply_set_data_link(const SetDataLinkCommand& c) {
+    std::vector<DataLink> links = store_.data_links();
+    const std::uint16_t i = store_.data_link_index(c.name);
+    if (c.remove) {
+        if (i == 0xFFFF) {
+            report("Data link \"" + c.name + "\" not found.");
+            return;
+        }
+        links[i] = DataLink{}; // the slot stays, so other tables' links keep their places
+        report("Data link \"" + c.name + "\" deleted.");
+    } else {
+        if (c.name.empty()) {
+            report("A data link needs a name.");
+            return;
+        }
+        if (i != 0xFFFF) {
+            links[i].path = c.path;
+        } else {
+            links.push_back(DataLink{c.name, c.path});
+        }
+        report("Data link \"" + c.name + "\": " + c.path + ".");
+    }
+    store_.set_data_links(std::move(links));
+    geom_dirty_ = true;
+    dirty_ = true;
+}
+
+void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c) {
+    const std::uint16_t li = store_.data_link_index(c.link);
+    if (li == 0xFFFF) {
+        report("Data link \"" + c.link + "\" not found.");
+        return;
+    }
+    const DataLink link = store_.data_links()[li];
+    std::vector<std::vector<std::string>> grid;
+    if (!read_csv(link.path, grid)) {
+        report("Data link \"" + link.name + "\": cannot read " + link.path + ".");
+        return;
+    }
+    const std::uint16_t style = c.style < store_.table_styles().size() ? c.style : store_.current_table_style();
+    AddTableCommand t = table_from_grid(grid, store_.table_style(style));
+    t.pos = c.pos;
+    t.style = style;
+    t.group = c.group;
+    t.link = li;
+    const Command add = t;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Table from data link \"" + link.name + "\": " + std::to_string(t.rows) + " rows, " +
+           std::to_string(t.cols) + " columns.");
+}
+
+void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
+    const std::vector<DataLink>& links = store_.data_links();
+    const auto linked = [&](EntityHandle h) -> const DataLink* {
+        const TableData* td = h.kind == EntityKind::Table ? store_.table(h) : nullptr;
+        return td != nullptr && td->link < links.size() && !links[td->link].name.empty() ? &links[td->link] : nullptr;
+    };
+    std::vector<EntityHandle> targets;
+    if (c.selection) {
+        prune_selection();
+        for (const EntityHandle h : selection_) {
+            if (linked(h) != nullptr) {
+                targets.push_back(h);
+            }
+        }
+    } else {
+        const std::uint16_t want = c.link.empty() ? 0xFFFF : store_.data_link_index(c.link);
+        if (!c.link.empty() && want == 0xFFFF) {
+            report("Data link \"" + c.link + "\" not found.");
+            return;
+        }
+        for (const EntityHandle h : all_live()) {
+            if (const DataLink* l = linked(h); l != nullptr && (want == 0xFFFF || store_.table(h)->link == want)) {
+                targets.push_back(h);
+            }
+        }
+    }
+    if (targets.empty()) {
+        report("No tables with a data link.");
+        return;
+    }
+    int done = 0;
+    int failed = 0;
+    std::vector<EntityHandle> renewed;
+    for (const EntityHandle h : targets) {
+        const DataLink link = *linked(h);
+        const Command original = capture_entity(h);
+        const auto* was = std::get_if<AddTableCommand>(&original);
+        if (was == nullptr) {
+            continue;
+        }
+        if (c.write) {
+            std::vector<std::vector<std::string>> grid(was->rows);
+            for (std::size_t r = 0; r < was->rows; ++r) {
+                for (std::size_t col = 0; col < was->cols; ++col) {
+                    const std::size_t k = r * was->cols + col;
+                    grid[r].push_back(k < was->texts.size() ? was->texts[k] : std::string());
+                }
+            }
+            if (write_csv(link.path, grid)) {
+                ++done;
+            } else {
+                ++failed;
+            }
+            continue;
+        }
+        std::vector<std::vector<std::string>> grid;
+        if (!read_csv(link.path, grid)) {
+            ++failed;
+            continue;
+        }
+        AddTableCommand now = table_from_grid(grid, store_.table_style(was->style));
+        if (now.rows == was->rows && now.cols == was->cols) {
+            now = *was; // the same grid: only the contents change; sizes and merges stay
+            for (std::size_t k = 0; k < now.texts.size(); ++k) {
+                const std::size_t r = k / now.cols;
+                const std::size_t col = k % now.cols;
+                now.texts[k] = r < grid.size() && col < grid[r].size() ? grid[r][col] : std::string();
+            }
+        } else {
+            now.pos = was->pos;
+            now.rotation = was->rotation;
+            now.style = was->style;
+            now.props = was->props;
+            now.link = was->link;
+        }
+        now.group = c.group;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const Command add = now;
+        const EntityHandle nh = create_indexed(add);
+        push_create_item(c.group, nh, add);
+        renewed.push_back(nh);
+        ++done;
+    }
+    if (!renewed.empty()) {
+        selection_ = renewed;
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    std::string said = std::to_string(done) + (c.write ? (done == 1 ? " data link written" : " data links written")
+                                                       : (done == 1 ? " table updated" : " tables updated"));
+    if (failed > 0) {
+        said += "; " + std::to_string(failed) + (failed == 1 ? " file" : " files") + " could not be " +
+                (c.write ? "written" : "read");
+    }
+    report(said + ".");
+}
+
+void GeometryEngine::apply_load_block_file(const LoadBlockFileCommand& c) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (c.path.empty() || !fs::is_regular_file(fs::path(c.path), ec)) {
+        report("INSERT: cannot read \"" + c.path + "\".");
+        return;
+    }
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        if (store_.block(i)->name != c.name) {
+            continue;
+        }
+        if (!store_.block(i)->xref_path.empty()) {
+            report("INSERT: \"" + c.name + "\" is an attached xref.");
+            return;
+        }
+        if (!c.redefine) {
+            return; // the block the drawing has is inserted
+        }
+    }
+    std::string err;
+    if (load_xref_definition(c.path, c.name, std::string(), err, nullptr, true) == 0xFFFF) {
+        report("INSERT: " + err);
+        return;
+    }
+    geom_dirty_ = true;
+    dirty_ = true;
 }
 
 void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
@@ -8022,7 +8864,9 @@ void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
     }
     // A drawing in other units comes in at this drawing's (INSUNITS): millimetres into
     // inches at 1/25.4.
-    const double sc = (c.scale > 0.0 ? c.scale : 1.0) * units::insunits_factor(src_units, store_.units().insunits);
+    const double sc = (c.scale > 0.0 ? c.scale : 1.0) *
+                      units::insunits_factor(src_units != 0 ? src_units : insunits_def_source_,
+                                             store_.units().insunits != 0 ? store_.units().insunits : insunits_def_target_);
     AddInsertCommand ins{bi, c.pos, sc, sc, c.rotation, 0, {}, {}};
     const Command add = ins;
     const EntityHandle nh = create_indexed(add);
@@ -8186,8 +9030,20 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
 // %<Date>%, %<Time>%, %<Filename>% and %<Login>%. Refreshed on every rebuild, so a
 // field is as current as the last edit or REGEN (AutoCAD's FIELDEVAL on regen).
 text::FieldContext GeometryEngine::field_context_now() const {
-    return text::make_field_context(active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].path
-                                                                    : std::string());
+    text::FieldContext fc = text::make_field_context(active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].path
+                                                                                     : std::string());
+    // The drawing's own: its properties (DWGPROPS) and when it was created and saved.
+    const DrawingProps& dp = store_.drawing_props();
+    fc.title = dp.title;
+    fc.subject = dp.subject;
+    fc.author = dp.author;
+    fc.keywords = dp.keywords;
+    fc.comments = dp.comments;
+    fc.hyperlink_base = dp.hyperlink_base;
+    fc.custom = dp.custom;
+    fc.created = store_.times().created;
+    fc.saved = store_.times().updated;
+    return fc;
 }
 
 void GeometryEngine::apply_audit(bool fix) {
@@ -8962,8 +9818,19 @@ void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) 
     report("Dimension created from object.");
 }
 
-void GeometryEngine::apply_grip_commit(std::uint64_t group) {
+void GeometryEngine::apply_grip_commit(std::uint64_t group, bool copy) {
     if (!grip_active_ || !store_.is_valid(grip_handle_)) {
+        return;
+    }
+    if (copy) {
+        // STRETCH's Copy: the original stays (and keeps its grips); the stretched one is new.
+        const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(group, nh, edited);
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Copied.");
         return;
     }
     // Erase the original and create the grip-edited entity as ONE undo group --
@@ -13468,7 +14335,7 @@ void GeometryEngine::apply_one(const Command& command) {
                     grip_pos_ = c.pos; // preview recomputed in rebuild_and_publish
                 } else if (c.phase == P::Commit) {
                     grip_pos_ = c.pos;
-                    apply_grip_commit(c.group);
+                    apply_grip_commit(c.group, c.copy);
                     grip_active_ = false;
                 } else { // Cancel
                     grip_active_ = false;
@@ -13769,6 +14636,15 @@ void GeometryEngine::apply_one(const Command& command) {
                 geom_dirty_ = true; // republish so the snapshot carries the new setup
                 report("Page setup \"" + c.setup.name + "\" saved.");
             }
+            if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
+                if (store_.remove_page_setup(c.name)) {
+                    dirty_ = true;
+                    geom_dirty_ = true; // republish without it
+                    report("Page setup \"" + c.name + "\" deleted.");
+                } else {
+                    report("No page setup is called \"" + c.name + "\".");
+                }
+            }
             if constexpr (std::is_same_v<T, VportsCommand>) {
                 using Op = VportsCommand::Op;
                 if (c.op == Op::Set) {
@@ -13910,7 +14786,11 @@ void GeometryEngine::apply_one(const Command& command) {
                 if (bi == 0xFFFF) {
                     report("Block \"" + c.name + "\" not found.");
                 } else {
-                    AddInsertCommand ins{bi, c.pos, c.scale_x, c.scale_y, c.rotation, 0, {}, {}};
+                    // The block's units to the drawing's (a block in millimetres into a drawing in
+                    // inches comes in at 1/25.4), as AutoCAD's Block unit scales it.
+                    const double f = units::insunits_factor(
+                        store_.block(bi)->units, store_.units().insunits != 0 ? store_.units().insunits : insunits_def_target_);
+                    AddInsertCommand ins{bi, c.pos, c.scale_x * f, c.scale_y * f, c.rotation, 0, {}, {}};
                     ins.attribs = c.attribs;
                     const Command add = ins;
                     const EntityHandle nh = create_indexed(add);
@@ -14381,10 +15261,21 @@ void GeometryEngine::apply_one(const Command& command) {
                 } else if (c.remove && dd->jog < 0.0) {
                     report("That dimension has no jog.");
                 } else {
-                    double t = 0.25;
                     const double span = distance(fa, fb);
+                    // Enter: midway between the first extension line and the text when the
+                    // text is on the line, else the middle of the line (AutoCAD's placement).
+                    double t = 0.5;
                     if (c.at && span > 1e-12) {
                         t = std::clamp(dot(*c.at - fa, (fb - fa) / span) / span, 0.0, 1.0);
+                    } else if (span > 1e-12) {
+                        const DimStyle* st = store_.dimstyle(dd->style);
+                        const DimGeometry g =
+                            compute_dim_geometry(*dd, st != nullptr ? *st : DimStyle{}, Rgb{}, store_.dim_text_parts(*dd));
+                        const double along = dot(g.text_pos - fa, (fb - fa) / span) / span;
+                        const double half = (text::text_width(g.label, g.text_height) * 0.5 + g.text_height * 0.4) / span;
+                        if (along > 0.0 && along < 1.0 && along - half > 0.0) {
+                            t = (along - half) * 0.5;
+                        }
                     }
                     Command cmd = capture_entity(h);
                     if (auto* x = std::get_if<AddDimensionCommand>(&cmd)) {
@@ -14809,55 +15700,140 @@ void GeometryEngine::apply_one(const Command& command) {
                                  : std::to_string(made) + (made == 1 ? " boundary created." : " boundaries created."));
             }
             if constexpr (std::is_same_v<T, MLeaderAlignCommand>) {
-                const EntityHandle base = pick_nearest(c.base_pick, c.radius);
-                if (base.is_null() || base.kind != EntityKind::MLeader) {
+                using Mode = MLeaderAlignCommand::Mode;
+                // The text, and the landing (a level last segment) with it, moved by `delta`;
+                // the arrowhead and the rest of the leader stay.
+                const auto shift = [](AddMLeaderCommand& m, Vec2 delta) {
+                    const std::size_t n = m.vertices.size();
+                    const bool landing = n >= 3 && std::abs(m.vertices[n - 1].y - m.vertices[n - 2].y) < 1e-9;
+                    m.vertices[n - 1] += delta;
+                    if (landing) {
+                        m.vertices[n - 2] += delta;
+                    }
+                    m.block.pos += delta;
+                };
+                // The last leader segment (before the landing, if any): where it starts and ends.
+                const auto has_landing = [](const std::vector<Vec2>& v) {
+                    const std::size_t n = v.size();
+                    return n >= 3 && std::abs(v[n - 1].y - v[n - 2].y) < 1e-9;
+                };
+                const auto segment_start = [&](const std::vector<Vec2>& v) {
+                    const std::size_t n = v.size();
+                    return has_landing(v) ? v[n - 3] : (n >= 2 ? v[n - 2] : v[0]);
+                };
+                const auto segment_end = [&](const std::vector<Vec2>& v) {
+                    return has_landing(v) ? v[v.size() - 2] : v.back();
+                };
+                // How far the text reaches along `d`.
+                const auto extent = [this](const AddMLeaderCommand& m, Vec2 d) {
+                    const text::MTextLayout lay =
+                        text::layout_mtext(m.block, m.content, font_engine_, m.font);
+                    return std::abs(d.x) * (lay.max.x - lay.min.x) + std::abs(d.y) * (lay.max.y - lay.min.y);
+                };
+                prune_selection();
+                const EntityHandle base = c.mode == Mode::Distribute ? EntityHandle::null() : pick_nearest(c.base_pick, c.radius);
+                std::vector<std::pair<EntityHandle, Command>> items;
+                for (const EntityHandle h : selection_) {
+                    if (h == base || h.kind != EntityKind::MLeader || !selectable(h)) {
+                        continue;
+                    }
+                    Command cmd = capture_entity(h);
+                    if (const auto* m = std::get_if<AddMLeaderCommand>(&cmd); m != nullptr && !m->vertices.empty()) {
+                        items.emplace_back(h, std::move(cmd));
+                    }
+                }
+                std::vector<Vec2> deltas(items.size(), Vec2{});
+                const auto anchor_of = [&](std::size_t i) { return std::get<AddMLeaderCommand>(items[i].second).vertices.back(); };
+                bool ok = true;
+                if (c.mode == Mode::Distribute) {
+                    const Vec2 span = c.to - c.from;
+                    const double len = length(span);
+                    if (len < 1e-12 || items.empty()) {
+                        ok = false;
+                        report("Specify two points apart, and select multileaders.");
+                    } else {
+                        const Vec2 d = span / len;
+                        std::vector<std::size_t> order(items.size());
+                        for (std::size_t i = 0; i < order.size(); ++i) {
+                            order[i] = i;
+                        }
+                        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                            return dot(anchor_of(a) - c.from, d) < dot(anchor_of(b) - c.from, d);
+                        });
+                        const double n = static_cast<double>(order.size());
+                        for (std::size_t k = 0; k < order.size(); ++k) {
+                            const double f = n > 1.0 ? static_cast<double>(k) / (n - 1.0) : 0.0;
+                            deltas[order[k]] = c.from + span * f - anchor_of(order[k]);
+                        }
+                    }
+                } else if (base.is_null() || base.kind != EntityKind::MLeader) {
+                    ok = false;
                     report("Select a multileader to align to.");
                 } else {
-                    const auto bv = store_.vertices_of(*store_.mleader(base));
-                    const Vec2 origin = bv.empty() ? c.base_pick : bv.back();
-                    const Vec2 d = normalized(c.toward - origin);
-                    std::size_t moved = 0;
-                    if (length(c.toward - origin) > 1e-12) {
-                        prune_selection();
-                        const std::vector<EntityHandle> sel = selection_;
-                        std::vector<EntityHandle> made;
-                        for (const EntityHandle h : sel) {
-                            if (h == base || h.kind != EntityKind::MLeader || !selectable(h)) {
-                                continue;
-                            }
-                            Command cmd = capture_entity(h);
-                            auto* m = std::get_if<AddMLeaderCommand>(&cmd);
-                            if (m == nullptr || m->vertices.empty()) {
-                                continue;
-                            }
-                            const Vec2 anchor = m->vertices.back();
-                            const Vec2 target = origin + d * dot(anchor - origin, d);
-                            const Vec2 delta = target - anchor;
-                            if (length(delta) < 1e-12) {
-                                continue;
-                            }
-                            // The landing (a level last segment) moves with the text; the rest stays.
-                            const std::size_t n = m->vertices.size();
-                            const bool landing = n >= 3 && std::abs(m->vertices[n - 1].y - m->vertices[n - 2].y) < 1e-9;
-                            m->vertices[n - 1] += delta;
-                            if (landing) {
-                                m->vertices[n - 2] += delta;
-                            }
-                            m->block.pos += delta;
-                            const Command original = capture_entity(h);
-                            remove_indexed(h);
-                            push_erase_item(c.group, h, original);
-                            const EntityHandle nh = create_indexed(cmd);
-                            push_create_item(c.group, nh, cmd);
-                            made.push_back(nh);
-                            ++moved;
+                    const Command base_cmd = capture_entity(base);
+                    const auto& bm = std::get<AddMLeaderCommand>(base_cmd);
+                    const Vec2 origin = bm.vertices.empty() ? c.base_pick : bm.vertices.back();
+                    if (c.mode == Mode::Parallel) {
+                        const Vec2 bd = normalized(segment_end(bm.vertices) - segment_start(bm.vertices));
+                        for (std::size_t i = 0; i < items.size(); ++i) {
+                            const auto& m = std::get<AddMLeaderCommand>(items[i].second);
+                            const Vec2 s0 = segment_start(m.vertices);
+                            const Vec2 s1 = segment_end(m.vertices);
+                            deltas[i] = s0 + bd * length(s1 - s0) - s1;
                         }
-                        if (moved > 0) {
-                            selection_ = made;
-                            redo_.clear();
-                            geom_dirty_ = true;
-                            dirty_ = true;
+                    } else if (length(c.toward - origin) <= 1e-12) {
+                        ok = false;
+                        report("Specify a direction away from the multileader.");
+                    } else {
+                        const Vec2 d = normalized(c.toward - origin);
+                        if (c.mode == Mode::Spacing) {
+                            // One after another along the line from the base, `spacing` apart.
+                            std::vector<std::size_t> order(items.size());
+                            for (std::size_t i = 0; i < order.size(); ++i) {
+                                order[i] = i;
+                            }
+                            std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                                return dot(anchor_of(a) - origin, d) < dot(anchor_of(b) - origin, d);
+                            });
+                            double at = 0.0;
+                            double prev = extent(bm, d);
+                            for (const std::size_t i : order) {
+                                const auto& m = std::get<AddMLeaderCommand>(items[i].second);
+                                at += prev + c.spacing;
+                                prev = extent(m, d);
+                                deltas[i] = origin + d * at - anchor_of(i);
+                            }
+                        } else {
+                            for (std::size_t i = 0; i < items.size(); ++i) {
+                                deltas[i] = origin + d * dot(anchor_of(i) - origin, d) - anchor_of(i);
+                            }
                         }
+                    }
+                }
+                std::size_t moved = 0;
+                if (ok) {
+                    std::vector<EntityHandle> made;
+                    for (std::size_t i = 0; i < items.size(); ++i) {
+                        if (length(deltas[i]) < 1e-12) {
+                            made.push_back(items[i].first);
+                            continue;
+                        }
+                        Command cmd = items[i].second;
+                        shift(std::get<AddMLeaderCommand>(cmd), deltas[i]);
+                        const EntityHandle h = items[i].first;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        made.push_back(nh);
+                        ++moved;
+                    }
+                    if (moved > 0) {
+                        selection_ = made;
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
                     }
                     report(std::to_string(moved) + (moved == 1 ? " multileader aligned." : " multileaders aligned."));
                 }
@@ -14973,12 +15949,304 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SetFillModeCommand>) {
                 apply_fillmode(c.on);
             }
+            if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
+                io::Document doc;
+                doc.dimstyles.clear();
+                for (const DimStyle& ds : store_.dimstyles()) {
+                    if (c.names.empty() || glob_match(c.names, ds.name)) {
+                        doc.dimstyles.push_back(ds);
+                    }
+                }
+                if (doc.dimstyles.empty()) {
+                    report("No dimension style is called \"" + c.names + "\".");
+                } else if (const io::IoResult r = io::save_native(doc, c.path); !r.ok) {
+                    report("DIMEX: " + r.message);
+                } else {
+                    const std::size_t n = doc.dimstyles.size();
+                    report(std::to_string(n) + (n == 1 ? " dimension style" : " dimension styles") + " exported to " +
+                           c.path + ".");
+                }
+            }
+            if constexpr (std::is_same_v<T, ImportDimStylesCommand>) {
+                io::Document doc;
+                if (const io::IoResult r = io::load_native(c.path, doc); !r.ok) {
+                    report("DIMIM: " + r.message);
+                } else {
+                    std::size_t added = 0;
+                    std::size_t replaced = 0;
+                    std::size_t kept = 0;
+                    for (const DimStyle& ds : doc.dimstyles) {
+                        const std::uint16_t i = store_.dimstyle_index(ds.name);
+                        if (i == 0xFFFF) {
+                            store_.add_dimstyle(ds);
+                            ++added;
+                        } else if (c.overwrite) {
+                            store_.set_dimstyle(i, ds);
+                            ++replaced;
+                        } else {
+                            ++kept;
+                        }
+                    }
+                    if (added + replaced > 0) {
+                        purge_cache_valid_ = false;
+                        geom_dirty_ = true; // dimensions in a replaced style are drawn again
+                    }
+                    report(std::to_string(added) + " added, " + std::to_string(replaced) + " overwritten, " +
+                           std::to_string(kept) + " kept as they were.");
+                }
+            }
+            if constexpr (std::is_same_v<T, NestedCopyCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.radius);
+                if (h.kind != EntityKind::Insert) {
+                    report("Select an object inside a block reference.");
+                } else {
+                    selection_ = {h};
+                    apply_explode(c.group, false, &c);
+                }
+            }
+            if constexpr (std::is_same_v<T, DataExtractCommand>) {
+                // The rows: (name, the values in tag order) -> count, in first-seen order.
+                std::vector<std::string> tags;
+                std::vector<std::pair<std::pair<std::string, std::vector<std::pair<std::string, std::string>>>, int>> rows;
+                std::vector<EntityHandle> refs;
+                if (c.all) {
+                    refs = all_live();
+                } else {
+                    prune_selection();
+                    refs = selection_;
+                }
+                for (const EntityHandle h : refs) {
+                    const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+                    const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+                    if (bd == nullptr || bd->name.starts_with("*")) {
+                        continue; // anonymous blocks (dimensions, hatches from DXF) are not parts
+                    }
+                    const std::vector<std::string> values = store_.insert_attribs(*in);
+                    std::vector<std::pair<std::string, std::string>> attrs;
+                    for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                        const std::string& tag = bd->content.attdefs[i].tag;
+                        attrs.emplace_back(tag, i < values.size() ? values[i] : bd->content.attdefs[i].def);
+                        if (std::find(tags.begin(), tags.end(), tag) == tags.end()) {
+                            tags.push_back(tag);
+                        }
+                    }
+                    const auto key = std::make_pair(bd->name, attrs);
+                    auto it = std::find_if(rows.begin(), rows.end(), [&](const auto& r) { return r.first == key; });
+                    if (it == rows.end()) {
+                        rows.emplace_back(key, 1);
+                    } else {
+                        ++it->second;
+                    }
+                }
+                if (rows.empty()) {
+                    report("No block references to extract.");
+                } else {
+                    // The table of cells: Count, Name, then each tag.
+                    std::vector<std::vector<std::string>> grid;
+                    std::vector<std::string> head{"Count", "Name"};
+                    head.insert(head.end(), tags.begin(), tags.end());
+                    grid.push_back(head);
+                    for (const auto& [key, count] : rows) {
+                        std::vector<std::string> line{std::to_string(count), key.first};
+                        for (const std::string& tag : tags) {
+                            const auto a = std::find_if(key.second.begin(), key.second.end(),
+                                                        [&](const auto& kv) { return kv.first == tag; });
+                            line.push_back(a != key.second.end() ? a->second : std::string());
+                        }
+                        grid.push_back(std::move(line));
+                    }
+                    std::string said = std::to_string(rows.size()) + (rows.size() == 1 ? " row" : " rows") + " extracted";
+                    if (!c.path.empty()) {
+                        std::ofstream f(c.path, std::ios::binary);
+                        const auto field = [](const std::string& v) {
+                            if (v.find_first_of(",\"\n") == std::string::npos) {
+                                return v;
+                            }
+                            std::string q = "\"";
+                            for (const char ch : v) {
+                                q += ch == '"' ? std::string("\"\"") : std::string(1, ch);
+                            }
+                            return q + "\"";
+                        };
+                        for (const auto& line : grid) {
+                            for (std::size_t i = 0; i < line.size(); ++i) {
+                                f << (i == 0 ? "" : ",") << field(line[i]);
+                            }
+                            f << "\r\n";
+                        }
+                        said += f.good() ? " to " + c.path : " -- " + c.path + " could not be written";
+                    }
+                    if (c.table_at) {
+                        const std::size_t ncols = head.size();
+                        AddTableCommand t;
+                        t.rows = static_cast<std::uint16_t>(grid.size());
+                        t.cols = static_cast<std::uint16_t>(ncols);
+                        t.has_header = true;
+                        t.pos = *c.table_at;
+                        t.style = store_.current_table_style();
+                        t.group = c.group;
+                        for (std::size_t col = 0; col < ncols; ++col) {
+                            std::size_t longest = 4;
+                            for (const auto& line : grid) {
+                                longest = std::max(longest, line[col].size());
+                            }
+                            t.col_widths.push_back(2.5 * 0.8 * static_cast<double>(longest) + 4.0);
+                        }
+                        t.row_heights.assign(grid.size(), 9.0);
+                        for (const auto& line : grid) {
+                            for (const std::string& v : line) {
+                                t.cells.push_back(TableCell{});
+                                t.texts.push_back(v);
+                            }
+                        }
+                        const Command add = t;
+                        push_create_item(c.group, create_indexed(add), add);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        said += c.path.empty() ? " into a table" : ", and into a table";
+                    }
+                    report(said + ".");
+                }
+            }
+            if constexpr (std::is_same_v<T, RenameObjectCommand>) {
+                using K = RenameObjectCommand::Kind;
+                static constexpr const char* kWhat[6] = {"Block", "Dimension style", "Layer", "Text style",
+                                                         "Table style", "View"};
+                bool ok = false;
+                if (!c.to.empty() && c.to != c.from) {
+                    switch (c.kind) {
+                    case K::Block:
+                        ok = store_.rename_block(c.from, c.to);
+                        break;
+                    case K::TextStyle:
+                        ok = store_.rename_text_style(c.from, c.to);
+                        break;
+                    case K::View:
+                        ok = store_.rename_named_view(c.from, c.to);
+                        break;
+                    case K::Layer: {
+                        const auto& ls = store_.layers();
+                        std::size_t at = ls.size();
+                        bool taken = false;
+                        for (std::size_t i = 0; i < ls.size(); ++i) {
+                            at = ls[i].name == c.from ? i : at;
+                            taken = taken || ls[i].name == c.to;
+                        }
+                        if (at != 0 && at < ls.size() && !taken) {
+                            Layer l = ls[at];
+                            l.name = c.to;
+                            store_.set_layer(static_cast<std::uint16_t>(at), l);
+                            ok = true;
+                        }
+                        break;
+                    }
+                    case K::DimStyle: {
+                        const std::uint16_t i = store_.dimstyle_index(c.from);
+                        if (i != 0 && i != 0xFFFF && store_.dimstyle_index(c.to) == 0xFFFF) {
+                            DimStyle st = store_.dimstyles()[i];
+                            st.name = c.to;
+                            ok = store_.set_dimstyle(i, st);
+                        }
+                        break;
+                    }
+                    case K::TableStyle: {
+                        const std::uint16_t i = store_.table_style_index(c.from);
+                        if (i != 0 && i != 0xFFFF && store_.table_style_index(c.to) == 0xFFFF) {
+                            TableStyle st = store_.table_styles()[i];
+                            st.name = c.to;
+                            ok = store_.set_table_style(i, st);
+                        }
+                        break;
+                    }
+                    }
+                }
+                const std::string what = kWhat[static_cast<int>(c.kind)];
+                if (ok) {
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    purge_cache_valid_ = false;
+                    report(what + " \"" + c.from + "\" renamed to \"" + c.to + "\".");
+                } else {
+                    report(what + " \"" + c.from + "\" was not renamed: there is none by that name, \"" + c.to +
+                           "\" is taken, or it keeps its name.");
+                }
+            }
+            if constexpr (std::is_same_v<T, UpdateFieldsCommand>) {
+                prune_selection();
+                std::size_t found = 0;
+                const auto count = [&found](std::string_view s) {
+                    for (std::size_t at = s.find("%<"); at != std::string_view::npos; at = s.find("%<", at + 2)) {
+                        ++found;
+                    }
+                };
+                for (const EntityHandle h : selection_) {
+                    if (h.kind == EntityKind::Text) {
+                        count(store_.string_of(*store_.text(h)));
+                    } else if (h.kind == EntityKind::MText) {
+                        count(store_.string_of(store_.mtext(h)->text));
+                    } else if (h.kind == EntityKind::Insert) {
+                        for (const std::string& v : store_.insert_attribs(*store_.insert(h))) {
+                            count(v);
+                        }
+                    } else if (h.kind == EntityKind::Table) {
+                        for (const TableCell& cell : store_.table_cells(*store_.table(h))) {
+                            count(store_.string_of(cell));
+                        }
+                    }
+                }
+                geom_dirty_ = true; // worked out again as the drawing is drawn
+                report(std::to_string(found) + " field(s) found. " + std::to_string(found) + " field(s) updated.");
+            }
+            if constexpr (std::is_same_v<T, ToggleFramesCommand>) {
+                const bool on = !store_.wipeout_frames();
+                store_.set_wipeout_frames(on);
+                store_.set_image_frame(on ? 1 : 0);
+                dirty_ = true;
+                geom_dirty_ = true;
+                report(on ? "IMAGE/WIPEOUT frames are toggled ON." : "IMAGE/WIPEOUT frames are toggled OFF.");
+            }
             if constexpr (std::is_same_v<T, SetPointDisplayCommand>) {
                 store_.set_point_display(c.mode, c.size);
                 geom_dirty_ = true; // the points are drawn again
                 char buf[96];
                 std::snprintf(buf, sizeof(buf), "PDMODE=%u  PDSIZE=%.4f", static_cast<unsigned>(c.mode), c.size);
                 report(buf);
+            }
+            if constexpr (std::is_same_v<T, SetInsBaseCommand>) {
+                store_.set_insbase(c.base);
+                geom_dirty_ = true; // the snapshot carries it
+            }
+            if constexpr (std::is_same_v<T, LoadBlockFileCommand>) {
+                apply_load_block_file(c);
+            }
+            if constexpr (std::is_same_v<T, SetDataLinkCommand>) {
+                apply_set_data_link(c);
+            }
+            if constexpr (std::is_same_v<T, DimBreakCommand>) {
+                apply_dim_break(c);
+            }
+            if constexpr (std::is_same_v<T, ExtrimCommand>) {
+                apply_extrim(c);
+            }
+            if constexpr (std::is_same_v<T, VpSyncCommand>) {
+                apply_vpsync(c);
+            }
+            if constexpr (std::is_same_v<T, AttOutCommand>) {
+                apply_attout(c);
+            }
+            if constexpr (std::is_same_v<T, AttInCommand>) {
+                apply_attin(c);
+            }
+            if constexpr (std::is_same_v<T, SetUnitsDefaultsCommand>) {
+                insunits_def_source_ = c.source;
+                insunits_def_target_ = c.target;
+            }
+            if constexpr (std::is_same_v<T, InsertLinkedTableCommand>) {
+                apply_insert_linked_table(c);
+            }
+            if constexpr (std::is_same_v<T, DataLinkUpdateCommand>) {
+                apply_data_link_update(c);
             }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),
@@ -15085,6 +16353,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 std::is_same_v<T, AreaQueryCommand> || std::is_same_v<T, ListQueryCommand> ||
                 std::is_same_v<T, MeasureQueryCommand> || std::is_same_v<T, MassPropQueryCommand> ||
                 std::is_same_v<T, TimeCommand> || std::is_same_v<T, StatusQueryCommand> ||
+                std::is_same_v<T, AttOutCommand> ||           // writes a file, not the drawing
+                std::is_same_v<T, SetUnitsDefaultsCommand> || // a setting, not an edit
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             bool edit = !view_or_io;
             if constexpr (std::is_same_v<T, PasteDocumentCommand>) {
@@ -15092,6 +16362,12 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, LayerToolCommand>) {
                 edit = layer_tool_changed_; // "No object found." changes nothing
+            }
+            if constexpr (std::is_same_v<T, NestedCopyCommand>) {
+                edit = !c.list; // XLIST only says what is there
+            }
+            if constexpr (std::is_same_v<T, DataLinkUpdateCommand>) {
+                edit = !c.write; // Write data link writes the files, not the drawing
             }
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 edit = layer_edit_changed_; // ? lists; a name not found changes nothing
@@ -15101,6 +16377,15 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
                 edit = false; // a question
+            }
+            if constexpr (std::is_same_v<T, RemovePageSetupCommand>) {
+                edit = false; // marks the drawing changed itself, when there was one to delete
+            }
+            if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
+                edit = false; // writes a file, changes nothing
+            }
+            if constexpr (std::is_same_v<T, UpdateFieldsCommand>) {
+                edit = false; // the fields' values are not stored
             }
             if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
                 edit = layerp_changed_;
@@ -15468,6 +16753,13 @@ void GeometryEngine::rebuild_and_publish() {
         // stored geometry stays parametric -- only this render payload is sampled.
         text::set_field_context(field_context_now());
         build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_, store_.ltscale());
+        // Which layers hold something (the Layer Properties Manager's All Used Layers).
+        layer_used_.assign(store_.layer_count(), 0);
+        for (const EntityHandle h : all_live()) {
+            if (const EntityProps* p = store_.props(h); p != nullptr && p->layer < layer_used_.size()) {
+                layer_used_[p->layer] = 1;
+            }
+        }
         geom_dirty_ = false;
         ++geom_version_;
         ++geom_cache_id_; // never reset, so a slot stamp cannot collide across documents
@@ -15530,6 +16822,10 @@ void GeometryEngine::rebuild_and_publish() {
     buf.current_text_style = store_.current_text_style();
     buf.table_styles = store_.table_styles();
     buf.current_table_style = store_.current_table_style();
+    buf.page_setups = store_.page_setups(); // PAGESETUP, the Plot window's saved setups
+    buf.insbase = store_.insbase();       // BASE
+    buf.data_links = store_.data_links(); // DATALINK
+    buf.layer_used = layer_used_;
     buf.current_dimstyle = store_.current_dimstyle();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {

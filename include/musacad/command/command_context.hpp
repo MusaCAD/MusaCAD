@@ -44,6 +44,7 @@ enum class PreviewKind {
     Spline,     ///< SPLINE: the curve through/over points + cursor (see spline fields)
     Xline,      ///< XLINE / RAY: the construction line the click would make (xline_mode)
     Text,       ///< TEXT: the line being typed, where it will stand (see the text fields)
+    Outline,    ///< segment pairs in `points`, as offsets from the cursor (TABLE's grid)
 };
 
 /// The end of the last line or arc drawn and the heading there: what LINE and ARC
@@ -71,6 +72,10 @@ struct PreviewSpec {
     double rect_fillet = 0.0;
     double rect_chamfer_d1 = 0.0;
     double rect_chamfer_d2 = 0.0;
+    /// MTEXT's box (PreviewKind::Rectangle): the justification it hangs from (0..8: top,
+    /// middle, bottom rows of left, centre, right), shown as the way the text will flow;
+    /// -1: not a text box.
+    int mtext_attach = -1;
     /// Polygon preview: how many sides, and whether the cursor distance is the
     /// circumradius (inscribed) or the apothem (circumscribed). Parameterises the
     /// PreviewKind::Polygon path the same way fixed_w/fixed_h parameterise Rectangle.
@@ -206,6 +211,35 @@ public:
     virtual void set_prompt(const std::string& prompt) = 0;
 };
 
+/// The Insert Table window's settings (TABLE): the table style, the columns and their
+/// width, the data rows and their height in lines, and whether a title and a header row
+/// come above the data rows.
+struct InsertTableSettings {
+    std::uint16_t style = 0;
+    int cols = 5;
+    double col_width = 63.5;
+    int rows = 1;
+    int row_lines = 1;
+    bool title = true;
+    bool header = true;
+    std::string link{}; ///< From a data link: its name (the table takes the file's rows and columns)
+};
+
+/// QLEADER's Leader Settings: the annotation (MText, or None), whether the text width is
+/// asked and the text always left-justified, how many leader points before the text (0: no
+/// limit, Enter ends), the arrowhead (core::ArrowType; 255: the dimension style's), and the
+/// angle constraints of the first and second segments (0 any, 1 horizontal, 2 90, 3 45,
+/// 4 30, 5 15 degrees).
+struct QLeaderSettings {
+    bool mtext = true;
+    bool prompt_width = true;
+    bool left_justify = false;
+    int max_points = 3;
+    std::uint8_t arrow = 255;
+    std::uint8_t first_angle = 0;
+    std::uint8_t second_angle = 0;
+};
+
 /// View operations a command may request (ZOOM). Implemented by the viewport;
 /// kept on the render/UI side so it never involves the geometry thread.
 class ViewControl {
@@ -259,6 +293,89 @@ public:
     virtual bool text_style_dialog() { return false; }
     /// PREVIEW: the plot as it will come out, with the last plot's settings.
     virtual bool plot_preview() { return false; }
+    /// EXPORTPDF: the sheet in front to a PDF file; PUBLISH: the sheets chosen, one PDF page
+    /// each (false where there is no window to ask in).
+    virtual bool export_pdf() { return false; }
+    virtual bool publish() { return false; }
+    /// PAGESETUP: the Page Setup Manager.
+    virtual bool page_setup_manager() { return false; }
+    /// The file commands the window carries out: NEW, OPEN, QSAVE, SAVEAS, CLOSE, CLOSEALL,
+    /// QUIT, IMPORT (DXFIN) and EXPORT (DXFOUT). False where there is no window.
+    virtual bool window_action(const std::string& action) {
+        (void)action;
+        return false;
+    }
+    /// FIELD: the Field window sets `code` (a field expression, `%<\AcVar Date \f "M/d/yyyy">%`).
+    /// 1 OK, 0 cancelled, -1 no window (the command asks at the command line).
+    virtual int field_dialog(std::string& code) {
+        (void)code;
+        return -1;
+    }
+    /// TOLERANCE: the Geometric Tolerance window fills `cells` (the characteristic first,
+    /// then the tolerances and the datums, as raw cell text). 1 OK, 0 cancelled, -1 no
+    /// window (the command asks at the command line).
+    virtual int tolerance_dialog(std::vector<std::string>& cells) {
+        (void)cells;
+        return -1;
+    }
+    /// Workspaces (WORKSPACE, WSCURRENT, WSSAVE): the names, the built-in one first, and the
+    /// current one; empty where there is no window.
+    [[nodiscard]] virtual std::vector<std::string> workspaces() const { return {}; }
+    [[nodiscard]] virtual std::string current_workspace() const { return {}; }
+    /// A workspace made current ("current"), saved from the window as it is ("saveas"),
+    /// renamed ("rename", to `to`) or deleted ("delete"); "dialog" opens WSSAVE's Save
+    /// Workspace. False when it is not done.
+    virtual bool workspace_op(const std::string& op, const std::string& name, const std::string& to) {
+        (void)op;
+        (void)name;
+        (void)to;
+        return false;
+    }
+    /// NAVBAR: the navigation bar shown or hidden; false where there is no window.
+    virtual bool set_navbar(bool on) {
+        (void)on;
+        return false;
+    }
+    /// COLOR: the Select Color window over `io` (ByLayer, an index colour or a true colour;
+    /// `by_layer` and `color`). 1 = OK, 0 = cancelled, -1 = no window here.
+    virtual int select_color_dialog(bool& by_layer, core::Rgb& color) {
+        (void)by_layer;
+        (void)color;
+        return -1;
+    }
+    /// LWEIGHT: the Lineweight Settings window over the current lineweight (`by_layer`,
+    /// `lineweight` in 1/100 mm). 1 = OK, 0 = cancelled, -1 = no window here.
+    virtual int lineweight_dialog(bool& by_layer, std::uint8_t& lineweight) {
+        (void)by_layer;
+        (void)lineweight;
+        return -1;
+    }
+    /// LINETYPE: the Linetype Manager. False where there is no window.
+    virtual bool linetype_manager() { return false; }
+    /// QLEADER Settings: the Leader Settings window over `io`. 1 = OK, 0 = cancelled, -1 =
+    /// no window here.
+    virtual int qleader_settings_dialog(QLeaderSettings& io) {
+        (void)io;
+        return -1;
+    }
+    /// TABLE: the Insert Table window over `io`, the choice left in it. 1 = OK, 0 =
+    /// cancelled, -1 = no window here (the command line asks).
+    virtual int insert_table_dialog(InsertTableSettings& io) {
+        (void)io;
+        return -1;
+    }
+    /// TABLEEDIT: the text editor on the table cell (or text) at `at`, as a double-click
+    /// opens it; false where there is none there or no window.
+    virtual bool edit_text_at(core::Vec2 at) {
+        (void)at;
+        return false;
+    }
+    /// The same, as soon as something editable stands at `at` (a table just placed: the
+    /// engine adds it a moment later); false where there is no window.
+    virtual bool edit_text_soon(core::Vec2 at) {
+        (void)at;
+        return false;
+    }
     /// VIEW: the View Manager; LAYERSTATE: the Layer States Manager (false where there is
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }
@@ -290,6 +407,10 @@ public:
     [[nodiscard]] virtual std::string image_file_dialog() { return {}; }
     /// A generic open-file picker (XREF Attach); `filter` is a Qt-style filter string.
     [[nodiscard]] virtual std::string open_file_dialog(const std::string& /*filter*/) { return {}; }
+    /// A file to write (DIMEX): the path chosen, or empty when cancelled or there is no window.
+    [[nodiscard]] virtual std::string save_file_dialog(const std::string& /*filter*/, const std::string& /*suggested*/) {
+        return {};
+    }
     /// Toggle the Properties palette (PR). Default no-op (headless/tests).
     virtual void open_properties() {}
     /// DWG import/export via the external converter. Default no-op (headless/tests).
@@ -416,6 +537,9 @@ public:
     /// The drawing's table styles and the current one (TABLESTYLE), which TABLE uses.
     [[nodiscard]] virtual std::vector<core::TableStyle> table_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_table_style() const { return 0; }
+    /// The colour, linetype and lineweight new objects take (CECOLOR, CELTYPE, CELWEIGHT),
+    /// as last published; COLOR, LINETYPE and LWEIGHT change them.
+    [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).
@@ -464,6 +588,10 @@ public:
         bool on = false;
     };
     [[nodiscard]] virtual Limits limits() const { return {}; }
+    /// The drawing's insertion base point (INSBASE, BASE).
+    [[nodiscard]] virtual core::Vec2 insbase() const { return {}; }
+    /// The names of the drawing's data links (DATALINK).
+    [[nodiscard]] virtual std::vector<std::string> data_link_names() const { return {}; }
     /// GRID's settings (GRIDUNIT, GRIDMAJOR, GRIDDISPLAY), kept here and handed to the view.
     [[nodiscard]] virtual core::GridSettings grid_settings() const { return {}; }
     virtual void set_grid_settings(const core::GridSettings& g) { (void)g; }

@@ -49,6 +49,18 @@ bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
     return false;
 }
 
+bool GeometryStore::set_dim_breaks(EntityHandle h, std::span<const Vec2> pts) {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    const std::size_t n = std::min<std::size_t>(pts.size() / 2 * 2, 0xFFFE);
+    d->brk_offset = static_cast<std::uint32_t>(dim_break_pool_.size());
+    d->brk_count = static_cast<std::uint16_t>(n);
+    dim_break_pool_.insert(dim_break_pool_.end(), pts.begin(), pts.begin() + static_cast<std::ptrdiff_t>(n));
+    return true;
+}
+
 bool GeometryStore::set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label,
                                     std::string_view rate) {
     DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
@@ -304,7 +316,7 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
                                      const std::vector<double>& col_widths,
                                      const std::vector<double>& row_heights, Vec2 pos,
                                      double rotation, std::uint16_t style, bool has_title,
-                                     bool has_header, EntityProps props) {
+                                     bool has_header, EntityProps props, std::uint16_t link) {
     // Cells and sizes are variable-length, so they live in shared pools as (offset,count)
     // views -- the polyline/spline/FCF pattern. Cell TEXT is already in the char pool.
     const auto cell_offset = static_cast<std::uint32_t>(table_cell_pool_.size());
@@ -323,8 +335,22 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
     t.rotation = rotation;
     t.style = style;
     t.props = props;
+    t.link = link;
     const auto slot = tables_.insert(t);
     return EntityHandle{slot.index, slot.generation, EntityKind::Table};
+}
+
+std::uint16_t GeometryStore::data_link_index(std::string_view name) const noexcept {
+    for (std::size_t i = 0; i < data_links_.size(); ++i) {
+        const std::string& n = data_links_[i].name;
+        if (!n.empty() && n.size() == name.size() &&
+            std::equal(n.begin(), n.end(), name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return 0xFFFF;
 }
 
 std::uint16_t GeometryStore::add_table_style(const TableStyle& st) {

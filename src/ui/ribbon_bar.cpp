@@ -618,10 +618,12 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_StyledBackground, true);
 
     auto* root = new QVBoxLayout(this);
+    root_ = root;
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
     auto* qat = new QWidget(this);
+    qat_strip_ = qat;
     qat->setObjectName(QStringLiteral("QatStrip"));
     qat->setAttribute(Qt::WA_StyledBackground, true);
     qat_layout_ = new QHBoxLayout(qat);
@@ -641,11 +643,37 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     qat_layout_->addStretch(1); // quick-access buttons are inserted before this
     root->addWidget(qat);
 
-    tabs_ = new RibbonTabBar(this);
+    // The tab row, with AutoCAD's minimize toggle right after the last tab.
+    auto* tab_row = new QWidget(this);
+    auto* tab_layout = new QHBoxLayout(tab_row);
+    tab_layout->setContentsMargins(0, 0, 0, 0);
+    tab_layout->setSpacing(2);
+    tabs_ = new RibbonTabBar(tab_row);
     tabs_->setObjectName(QStringLiteral("RibbonTabs"));
     tabs_->setExpanding(false);
     tabs_->setDrawBase(false); // no full-width base line under the tab row
-    root->addWidget(tabs_);
+    tab_layout->addWidget(tabs_);
+    minimize_btn_ = new QToolButton(tab_row);
+    minimize_btn_->setObjectName(QStringLiteral("RibbonMinimize"));
+    minimize_btn_->setAutoRaise(true);
+    minimize_btn_->setText(QStringLiteral("\u25B4")); // a small up-pointing triangle
+    minimize_btn_->setToolTip(QStringLiteral("Minimize the ribbon to its tabs (or double-click a tab)."));
+    tab_layout->addWidget(minimize_btn_);
+    tab_layout->addStretch(1);
+    root->addWidget(tab_row);
+    connect(minimize_btn_, &QToolButton::clicked, this, [this] { set_minimized(!minimized_); });
+    connect(tabs_, &QTabBar::tabBarDoubleClicked, this, [this](int) {
+        if (!just_restored_) { // not the second click of the one that brought the panels back
+            set_minimized(!minimized_);
+        }
+    });
+    connect(tabs_, &QTabBar::tabBarClicked, this, [this](int) {
+        if (minimized_) {
+            set_minimized(false); // a tab clicked: its panels back
+            just_restored_ = true;
+            QTimer::singleShot(QApplication::doubleClickInterval(), this, [this] { just_restored_ = false; });
+        }
+    });
 
     pages_ = new QStackedWidget(this);
     pages_->setObjectName(QStringLiteral("RibbonPages"));
@@ -673,11 +701,44 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     });
 }
 
-void RibbonBar::add_qat_action(QAction* action) {
+QToolButton* RibbonBar::add_qat_action(QAction* action) {
     auto* btn = new QToolButton(this);
     btn->setDefaultAction(action);
     btn->setAutoRaise(true);
     qat_layout_->insertWidget(qat_layout_->count() - 1, btn); // before the trailing stretch
+    return btn;
+}
+
+void RibbonBar::set_qat_menu(QMenu* menu) {
+    auto* btn = new QToolButton(this);
+    btn->setObjectName(QStringLiteral("QatCustomize"));
+    btn->setAutoRaise(true);
+    btn->setText(QStringLiteral("\u25BE"));
+    btn->setToolTip(QStringLiteral("Customize Quick Access Toolbar"));
+    btn->setMenu(menu);
+    btn->setPopupMode(QToolButton::InstantPopup);
+    qat_layout_->insertWidget(qat_layout_->count() - 1, btn); // the last thing before the stretch
+}
+
+void RibbonBar::set_qat_below(bool below) {
+    root_->removeWidget(qat_strip_);
+    root_->insertWidget(below ? root_->count() : 0, qat_strip_);
+}
+
+void RibbonBar::set_minimized(bool on) {
+    minimized_ = on;
+    pages_->setVisible(!on);
+    minimize_btn_->setText(on ? QStringLiteral("\u25BE") : QStringLiteral("\u25B4"));
+    minimize_btn_->setToolTip(on ? QStringLiteral("Show the ribbon's panels again (or click a tab).")
+                                 : QStringLiteral("Minimize the ribbon to its tabs (or double-click a tab)."));
+    if (!on) {
+        schedule_relayout();
+    }
+}
+
+void RibbonBar::add_strip_widget(QWidget* widget) {
+    widget->setParent(this);
+    qat_layout_->addWidget(widget); // after the trailing stretch: the right end
 }
 
 int RibbonBar::create_page() {

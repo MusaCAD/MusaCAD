@@ -12,10 +12,16 @@
 // the Musa mark carries the file operations, as AutoCAD's does.
 #include "musacad/ui/main_window.hpp"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCompleter>
+#include <QDockWidget>
+#include <QLineEdit>
+#include <QStringList>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QLayout>
 #include <QIcon>
@@ -23,9 +29,15 @@
 #include <QMenu>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSettings>
 #include <QSignalBlocker>
+#include <QStatusBar>
+#include <QTabBar>
+#include <QToolBar>
 #include <QToolButton>
 
+#include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -126,6 +138,7 @@ void MainWindow::build_ribbon() {
     }
 
     // ------------------------------------------------------------------ the Quick Access Toolbar
+    std::vector<std::pair<QString, QToolButton*>> qat_items; // for its drop-down
     const auto qat = [&](const QString& icon, const QString& tip, const QKeySequence& shortcut,
                          void (MainWindow::*slot)()) {
         auto* a = new QAction(ribbon_icon(icon), tip, this);
@@ -135,7 +148,7 @@ void MainWindow::build_ribbon() {
             addAction(a); // the shortcut works app-wide
         }
         connect(a, &QAction::triggered, this, slot);
-        ribbon_->add_qat_action(a);
+        qat_items.emplace_back(tip, ribbon_->add_qat_action(a));
         return a;
     };
     qat(QStringLiteral("assets/ribbon/new.svg"), QStringLiteral("New"), QKeySequence::New, &MainWindow::file_new);
@@ -147,13 +160,89 @@ void MainWindow::build_ribbon() {
     qat_undo->setShortcut(QKeySequence::Undo);
     qat_undo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_undo, &QAction::triggered, this, [this] { processor_->undo(); });
-    ribbon_->add_qat_action(qat_undo);
+    qat_items.emplace_back(QStringLiteral("Undo"), ribbon_->add_qat_action(qat_undo));
     auto* qat_redo = new QAction(ribbon_icon(QStringLiteral("assets/ribbon/redo.svg")), QStringLiteral("Redo"), this);
     qat_redo->setShortcut(QKeySequence::Redo);
     qat_redo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_redo, &QAction::triggered, this, [this] { processor_->redo(); });
-    ribbon_->add_qat_action(qat_redo);
+    qat_items.emplace_back(QStringLiteral("Redo"), ribbon_->add_qat_action(qat_redo));
     qat(QStringLiteral("assets/ribbon/plot.svg"), QStringLiteral("Plot"), QKeySequence::Print, &MainWindow::open_plot_dialog);
+    // AutoCAD's Customize Quick Access Toolbar drop-down: tick the tools shown -- the ones
+    // above, and commands it can add -- and Show Below the Ribbon. Kept in the settings
+    // (except under the self-test and dump harnesses, which run with the defaults).
+    {
+        const struct Extra {
+            const char* name;
+            const char* alias;
+            const char* icon;
+        } kExtras[] = {{"Plot Preview", "PREVIEW", "assets/ribbon/preview.svg"},
+                       {"Batch Plot", "PUBLISH", "assets/ribbon/plot.svg"},
+                       {"Match Properties", "MA", "assets/ribbon/matchprop.svg"},
+                       {"Layer", "LA", "assets/ribbon/layer-props.svg"},
+                       {"Properties", "PR", "assets/ribbon/properties.svg"},
+                       {"Data Extraction", "DX", "assets/ribbon/table.svg"}};
+        std::vector<QString> defaults;
+        for (const auto& [name, btn] : qat_items) {
+            defaults.push_back(name);
+            qat_default_shown_ << name;
+        }
+        for (const Extra& e : kExtras) {
+            auto* a = new QAction(ribbon_icon(QString::fromLatin1(e.icon)), QString::fromLatin1(e.name), this);
+            const std::string alias = e.alias;
+            connect(a, &QAction::triggered, this, [this, alias] {
+                command_widget_->focus_input();
+                processor_->start_command(alias);
+            });
+            QToolButton* b = ribbon_->add_qat_action(a);
+            b->setVisible(false);
+            qat_items.emplace_back(QString::fromLatin1(e.name), b);
+        }
+        const bool harness = qEnvironmentVariableIsSet("MUSACAD_SELFTEST") || qEnvironmentVariableIsSet("MUSACAD_DUMP_UI") ||
+                             qEnvironmentVariableIsSet("MUSACAD_SMOKE");
+        QSettings settings;
+        QStringList shown;
+        for (const QString& d : defaults) {
+            shown << d;
+        }
+        if (!harness && settings.contains(QStringLiteral("qat/shown"))) {
+            shown = settings.value(QStringLiteral("qat/shown")).toStringList();
+        }
+        auto* menu = new QMenu(this);
+        menu->setTitle(QStringLiteral("Customize Quick Access Toolbar"));
+        for (const auto& [name, btn] : qat_items) {
+            QAction* tick = menu->addAction(name);
+            tick->setCheckable(true);
+            tick->setChecked(shown.contains(name));
+            btn->setVisible(tick->isChecked());
+            QToolButton* button = btn;
+            connect(tick, &QAction::toggled, this, [this, button, menu, harness](bool on) {
+                button->setVisible(on);
+                if (!harness) {
+                    QStringList now;
+                    for (QAction* a : menu->actions()) {
+                        if (a->isCheckable() && a->isChecked() && a->data().toString() != QStringLiteral("below")) {
+                            now << a->text();
+                        }
+                    }
+                    QSettings().setValue(QStringLiteral("qat/shown"), now);
+                }
+            });
+        }
+        menu->addSeparator();
+        QAction* below = menu->addAction(QStringLiteral("Show Below the Ribbon"));
+        below->setCheckable(true);
+        below->setData(QStringLiteral("below"));
+        below->setChecked(!harness && settings.value(QStringLiteral("qat/below"), false).toBool());
+        ribbon_->set_qat_below(below->isChecked());
+        connect(below, &QAction::toggled, this, [this, harness](bool on) {
+            ribbon_->set_qat_below(on);
+            if (!harness) {
+                QSettings().setValue(QStringLiteral("qat/below"), on);
+            }
+        });
+        ribbon_->set_qat_menu(menu);
+        qat_menu_ = menu;
+    }
 
     // Multi-document and clipboard shortcuts (app-wide).
     const auto add_app_shortcut = [this](const QKeySequence& seq, auto slot) {
@@ -460,8 +549,11 @@ void MainWindow::build_ribbon() {
         QWidget* col = layers->add_column(/*icon_only=*/true);
         layer_combo_ = new QComboBox(col);
         layer_combo_->setObjectName(QStringLiteral("CurrentLayerCombo"));
-        layer_combo_->setMinimumWidth(150);
-        layer_combo_->setToolTip(QStringLiteral("Current layer"));
+        layer_combo_->setMinimumWidth(190);
+        layer_combo_->setIconSize(QSize(64, 16));
+        layer_combo_->setToolTip(QStringLiteral("Current layer. In the list, click a layer's bulb, sun or padlock to turn "
+                                                "it off, freeze it or lock it there and then."));
+        layer_combo_->view()->viewport()->installEventFilter(this);
         connect(layer_combo_, &QComboBox::activated, this, [this](int index) {
             if (index >= 0) {
                 engine_->submit(core::SetCurrentLayerCommand{static_cast<std::uint16_t>(index)});
@@ -637,6 +729,16 @@ void MainWindow::build_ribbon() {
                     menu_of({action("B", QStringLiteral("Create Block")), action("W", QStringLiteral("Write Block"))}));
         small(iblock, col, QStringLiteral("Edit"), "REFEDIT");
         small(iblock, col, QStringLiteral("Explode"), "X");
+        // A drawing file inserted as a block (INSERT's ~), at its base point (BASE).
+        QWidget* col2 = iblock->add_column();
+        QToolButton* fd = iblock->add_small(col2, asset("insert"), QStringLiteral("From Drawing"));
+        fd->setObjectName(QStringLiteral("ribbon.insert_drawing"));
+        fd->setToolTip(QStringLiteral("<b>INSERT ~</b><br>Insert a drawing file as a block, at its base point."));
+        connect(fd, &QToolButton::clicked, this, [this] {
+            command_widget_->focus_input();
+            processor_->start_macro("-INSERT", {"~"});
+        });
+        small(iblock, col2, QStringLiteral("Set Base Point"), "BASE", "insert");
     }
     RibbonPanel* blockdef = ribbon_->add_panel(insert, QStringLiteral("Block Definition"), 55);
     blockdef->set_representative_icon(asset("attdef"));
@@ -686,8 +788,21 @@ void MainWindow::build_ribbon() {
     {
         QWidget* col = data->add_column();
         small(data, col, QStringLiteral("Table"), "TB");
-        todo_small(data, col, QStringLiteral("Update Fields"), "field");
-        todo_small(data, col, QStringLiteral("Data Link"), "field");
+        small(data, col, QStringLiteral("Update Fields"), "UPDATEFIELD", "field");
+        small(data, col, QStringLiteral("Data Link"), "DATALINK", "table");
+        QWidget* col2 = data->add_column();
+        small(data, col2, QStringLiteral("Extract Data"), "DX", "table");
+        // AutoCAD's Linking & Extraction: every linked table read again from its file, or
+        // the tables picked written back to theirs.
+        QToolButton* down = data->add_small(col2, asset("table"), QStringLiteral("Download from Source"));
+        down->setToolTip(QStringLiteral("<b>DATALINKUPDATE</b><br>Read every linked table again from its file."));
+        connect(down, &QToolButton::clicked, this, [this] { processor_->start_macro("DATALINKUPDATE", {"U", "K"}); });
+        QToolButton* up = data->add_small(col2, asset("table"), QStringLiteral("Upload to Source"));
+        up->setToolTip(QStringLiteral("<b>DATALINKUPDATE</b><br>Write the tables you pick back to their files."));
+        connect(up, &QToolButton::clicked, this, [this] {
+            command_widget_->focus_input();
+            processor_->start_macro("DATALINKUPDATE", {"W"});
+        });
     }
 
     // ================================================================== Annotate
@@ -710,8 +825,27 @@ void MainWindow::build_ribbon() {
             }
         });
         col->layout()->addWidget(text_style_combo_);
-        small(text, col, QStringLiteral("Edit Text"), "ED", "text");
+        // The text height new text takes (TEXTSIZE), typed or picked.
+        text_height_combo_ = new QComboBox(col);
+        text_height_combo_->setObjectName(QStringLiteral("ribbon.text_height"));
+        text_height_combo_->setEditable(true);
+        text_height_combo_->setInsertPolicy(QComboBox::NoInsert);
+        text_height_combo_->setToolTip(QStringLiteral("Text Height: the height new text takes (TEXTSIZE)."));
+        text_height_combo_->addItems({QStringLiteral("1.8"), QStringLiteral("2.5"), QStringLiteral("3.5"), QStringLiteral("5"),
+                                      QStringLiteral("7"), QStringLiteral("10")});
+        text_height_combo_->setEditText(QString::number(processor_->text_size()));
+        connect(text_height_combo_, &QComboBox::textActivated, this, [this](const QString& s) {
+            bool ok = false;
+            const double h = s.trimmed().toDouble(&ok);
+            if (ok && h > 0.0) {
+                processor_->set_text_size(h);
+            }
+            text_height_combo_->setEditText(QString::number(processor_->text_size()));
+        });
+        col->layout()->addWidget(text_height_combo_);
         small(text, col, QStringLiteral("Find Text"), "FIND", "find");
+        QWidget* col2 = text->add_column();
+        small(text, col2, QStringLiteral("Edit Text"), "ED", "text");
     }
     text->set_dialog_launcher(QStringLiteral("Text Style"), [this] { open_text_style_dialog(); });
     RibbonPanel* dims = ribbon_->add_panel(annotate, QStringLiteral("Dimensions"), 55);
@@ -752,6 +886,7 @@ void MainWindow::build_ribbon() {
         small(dims, c2, QStringLiteral("Jog Line"), "DJL", "dim");
         QWidget* c3 = dims->add_column_to(out);
         small(dims, c3, QStringLiteral("Inspect"), "DIMINSPECT", "dim");
+        small(dims, c3, QStringLiteral("Break"), "DIMBREAK", "dim");
     }
     dims->set_dialog_launcher(QStringLiteral("Dimension Style"), [this] { open_dimstyle_dialog(); });
     RibbonPanel* leaders = ribbon_->add_panel(annotate, QStringLiteral("Leaders"), 40);
@@ -841,6 +976,54 @@ void MainWindow::build_ribbon() {
         connect(zext, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
         small(nav, col, QStringLiteral("Pan"), "P", "pan");
     }
+    // --- Viewport Tools: the navigation bar shown or hidden (the UCS icon and the ViewCube
+    // are not there yet).
+    RibbonPanel* vtools = ribbon_->add_panel(view, QStringLiteral("Viewport Tools"), 30);
+    vtools->set_representative_icon(asset("pan"));
+    {
+        // The bar itself: Pan and the Zoom tools, at the drawing's right edge.
+        navbar_ = new QToolBar(QStringLiteral("Navigation Bar"), this);
+        navbar_->setObjectName(QStringLiteral("NavigationBar"));
+        navbar_->setOrientation(Qt::Vertical);
+        navbar_->setMovable(false);
+        navbar_->setIconSize(QSize(20, 20));
+        const auto nav_action = [&](const char* icon, const QString& tip, auto fn) {
+            QAction* a = navbar_->addAction(asset(icon), tip);
+            a->setToolTip(tip);
+            connect(a, &QAction::triggered, this, fn);
+        };
+        nav_action("pan", QStringLiteral("Pan"), [this] {
+            command_widget_->focus_input();
+            processor_->start_command("P");
+        });
+        nav_action("zoom-extents", QStringLiteral("Zoom Extents"), [this] { viewport_->zoom_extents(); });
+        nav_action("zoom", QStringLiteral("Zoom Window"), [this] {
+            command_widget_->focus_input();
+            processor_->start_macro("Z", {"W"});
+        });
+        nav_action("zoom", QStringLiteral("Zoom Previous"), [this] { processor_->start_macro("Z", {"P"}); });
+        nav_action("zoom", QStringLiteral("Zoom In"), [this] { processor_->start_macro("Z", {"2x"}); });
+        nav_action("zoom", QStringLiteral("Zoom Out"), [this] { processor_->start_macro("Z", {"0.5x"}); });
+        addToolBar(Qt::RightToolBarArea, navbar_);
+        navbar_->setVisible(false);
+        navbar_toggle_ = vtools->add_button(asset("pan"), QStringLiteral("Navigation\nBar"), RibbonTier::Primary);
+        navbar_toggle_->setObjectName(QStringLiteral("ribbon.navbar"));
+        navbar_toggle_->setCheckable(true);
+        navbar_toggle_->setToolTip(QStringLiteral("<b>NAVBAR</b><br>Show or hide the navigation bar: Pan and the Zoom tools at "
+                                                  "the drawing's right edge."));
+        connect(navbar_toggle_, &QToolButton::toggled, this, [this](bool on) { show_navbar(on); });
+        ucsicon_toggle_ = vtools->add_button(asset("view"), QStringLiteral("UCS\nIcon"), RibbonTier::Secondary);
+        ucsicon_toggle_->setObjectName(QStringLiteral("ribbon.ucsicon"));
+        ucsicon_toggle_->setCheckable(true);
+        ucsicon_toggle_->setChecked(true);
+        ucsicon_toggle_->setToolTip(QStringLiteral("<b>UCSICON</b><br>Show or hide the UCS icon."));
+        connect(ucsicon_toggle_, &QToolButton::toggled, this, [this](bool on) {
+            const int v = viewport_->selection_setting("UCSICON");
+            viewport_->set_selection_setting("UCSICON", on ? (v | 1) : (v & ~1));
+        });
+        vtools->add_placeholder(asset("view"), QStringLiteral("View\nCube"), RibbonTier::Secondary);
+    }
+
     RibbonPanel* named = ribbon_->add_panel(view, QStringLiteral("Named Views"), 50);
     named->set_representative_icon(asset("view"));
     large_split(named, QStringLiteral("Named\nViews"), "V",
@@ -893,7 +1076,37 @@ void MainWindow::build_ribbon() {
         lp->setObjectName(QStringLiteral("ribbon.layer_manager2"));
         lp->setToolTip(QStringLiteral("Open the Layer Properties manager."));
         connect(lp, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
-        palettes->add_placeholder(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        QToolButton* tp = palettes->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        tp->setObjectName(QStringLiteral("ribbon.tool_palettes"));
+        tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
+        connect(tp, &QToolButton::clicked, this,
+                [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
+    }
+
+    // --- Interface: the drawing tabs, the Model/layout tabs and the status bar, shown or not.
+    RibbonPanel* iface = ribbon_->add_panel(view, QStringLiteral("Interface"), 35);
+    iface->set_representative_icon(asset("view"));
+    {
+        const auto toggle = [&](QWidget* col, const QString& label, const char* name, const QString& tip,
+                                std::function<QWidget*()> target) {
+            QToolButton* b = iface->add_small(col, asset("view"), label);
+            b->setObjectName(QString::fromLatin1(name));
+            b->setCheckable(true);
+            b->setChecked(true);
+            b->setToolTip(tip);
+            connect(b, &QToolButton::toggled, this, [target](bool on) {
+                if (QWidget* w = target(); w != nullptr) {
+                    w->setVisible(on);
+                }
+            });
+        };
+        QWidget* col = iface->add_column();
+        toggle(col, QStringLiteral("File Tabs"), "ribbon.file_tabs", QStringLiteral("Show or hide the drawing tabs."),
+               [this]() -> QWidget* { return file_tabs_ != nullptr ? file_tabs_->parentWidget() : nullptr; });
+        toggle(col, QStringLiteral("Layout Tabs"), "ribbon.layout_tabs", QStringLiteral("Show or hide the Model and layout tabs."),
+               [this]() -> QWidget* { return layout_tabs_; });
+        toggle(col, QStringLiteral("Status Bar"), "ribbon.status_bar", QStringLiteral("Show or hide the status bar."),
+               [this]() -> QWidget* { return statusBar(); });
     }
 
     // ================================================================== Manage
@@ -904,8 +1117,17 @@ void MainWindow::build_ribbon() {
     large(cleanup, QStringLiteral("Audit"), "AUDIT", "audit");
     RibbonPanel* customize = ribbon_->add_panel(manage, QStringLiteral("Customization"), 40);
     customize->set_representative_icon(asset("settings"));
-    customize->add_placeholder(asset("settings"), QStringLiteral("User\nInterface"), RibbonTier::Primary);
-    customize->add_placeholder(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+    large(customize, QStringLiteral("User\nInterface"), "CUI", "settings");
+    {
+        QToolButton* tp = customize->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
+        connect(tp, &QToolButton::clicked, this,
+                [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
+    }
+    {
+        QWidget* col = customize->add_column();
+        small(customize, col, QStringLiteral("Edit Aliases"), "ALIASEDIT", "settings");
+    }
 
     // ================================================================== Output
     const int output = ribbon_->add_tab(QStringLiteral("Output"));
@@ -917,9 +1139,9 @@ void MainWindow::build_ribbon() {
         p->setToolTip(QStringLiteral("<b>PLOT (Ctrl+P)</b><br>Plot or print the drawing to paper or PDF."));
         connect(p, &QToolButton::clicked, this, &MainWindow::open_plot_dialog);
         QWidget* col = plot->add_column();
-        todo_small(plot, col, QStringLiteral("Batch Plot"), "plot");
+        small(plot, col, QStringLiteral("Batch Plot"), "PUBLISH", "plot");
         small(plot, col, QStringLiteral("Preview"), "PREVIEW", "preview");
-        todo_small(plot, col, QStringLiteral("Page Setup Manager"), "pagesetup");
+        small(plot, col, QStringLiteral("Page Setup Manager"), "PAGESETUP", "pagesetup");
     }
     RibbonPanel* export_p = ribbon_->add_panel(output, QStringLiteral("Export to DWG/DXF/PDF"), 40);
     export_p->set_representative_icon(asset("export"));
@@ -929,8 +1151,8 @@ void MainWindow::build_ribbon() {
                 this, &MainWindow::file_export_dxf);
         connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/export.svg")), QStringLiteral("DWG…")), &QAction::triggered,
                 this, &MainWindow::file_export_dwg);
-        connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/plot.svg")), QStringLiteral("PDF (Plot)…")), &QAction::triggered,
-                this, &MainWindow::open_plot_dialog);
+        connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/plot.svg")), QStringLiteral("PDF…")), &QAction::triggered,
+                this, [this] { processor_->start_command("EXPORTPDF"); });
         QToolButton* b = export_p->add_dropdown(asset("export"), QStringLiteral("Export"), m, /*split=*/false, RibbonTier::Primary);
         b->setObjectName(QStringLiteral("ribbon.export"));
         b->setToolTip(QStringLiteral("Export the drawing to a DXF or DWG file, or plot it to PDF."));
@@ -943,6 +1165,43 @@ void MainWindow::build_ribbon() {
 
     // Contextual tabs (hatch / text / block editor), shown reactively by the selection poll.
     build_contextual_tabs();
+
+    // ------------------------------------------------------------------ command search
+    // AutoCAD's InfoCenter field at the right of the strip: a few letters of a command's
+    // name or of what it does list the matches; Enter or a pick runs it.
+    {
+        auto* search = new QLineEdit;
+        search->setObjectName(QStringLiteral("CommandSearch"));
+        search->setPlaceholderText(QStringLiteral("Search commands"));
+        search->setClearButtonEnabled(true);
+        search->setMinimumWidth(180);
+        search->setMaximumWidth(280);
+        search->setToolTip(QStringLiteral("Type part of a command's name or of what it does; Enter runs it."));
+        QStringList entries;
+        std::set<std::string> seen;
+        for (const command::CommandSuggestion& s : processor_->registry().suggest("")) {
+            if (seen.insert(s.name).second) {
+                entries << QString::fromStdString(s.name + " - " + s.description);
+            }
+        }
+        entries.sort();
+        auto* completer = new QCompleter(entries, search);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setMaxVisibleItems(12);
+        search->setCompleter(completer);
+        const auto run = [this, search](const QString& text) {
+            const std::string name = text.section(QStringLiteral(" - "), 0, 0).trimmed().toStdString();
+            if (!name.empty() && processor_->registry().contains(name)) {
+                QTimer::singleShot(0, search, &QLineEdit::clear); // after the completer has written it
+                command_widget_->focus_input();
+                processor_->start_command(name);
+            }
+        };
+        connect(completer, qOverload<const QString&>(&QCompleter::activated), this, run);
+        connect(search, &QLineEdit::returnPressed, this, [search, run] { run(search->text()); });
+        ribbon_->add_strip_widget(search);
+    }
 
     setMenuWidget(ribbon_);
 }

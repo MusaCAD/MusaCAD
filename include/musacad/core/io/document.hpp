@@ -198,6 +198,7 @@ struct DocDim {
     std::uint8_t inspect = 0; ///< v40: DIMINSPECT's frame (DimData::inspect)
     std::string inspect_label{};
     std::string inspect_rate{};
+    std::vector<Vec2> breaks{}; ///< v40: DIMBREAK's breaks (pairs)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {
@@ -270,6 +271,7 @@ struct DocBlockDef {
     std::vector<DocAttDef> attdefs; ///< attribute definitions (v28)
     std::vector<DocInsert> inserts; ///< nested block references
     std::string xref_path;          ///< XREF source drawing (v32); "" for an ordinary block
+    std::uint8_t units = 0;         ///< v40: the block unit (an INSUNITS code; 0 unitless)
     friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
 };
 
@@ -318,6 +320,7 @@ struct DocTable {
     std::vector<double> row_heights;
     std::vector<DocTableCell> cells; ///< row-major, rows*cols
     EntityProps props{};
+    std::uint16_t link = 0xFFFF; ///< v40: its data link (an index into data_links)
     friend bool operator==(const DocTable&, const DocTable&) = default;
 };
 
@@ -379,6 +382,7 @@ struct Document {
     Vec2 limits_min{0.0, 0.0};        ///< LIMMIN (v40)
     Vec2 limits_max{420.0, 297.0};    ///< LIMMAX (v40)
     bool limits_on = false;           ///< LIMCHECK (v40)
+    Vec2 insbase{0.0, 0.0};           ///< INSBASE (v40): the base point when inserted elsewhere
     std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
     std::uint8_t image_frame = 1; ///< IMAGEFRAME (v29): 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts;  ///< the layout tabs (v30); entities refer to them by EntityProps::space
@@ -420,6 +424,7 @@ struct Document {
     std::vector<DocViewport> viewports;   ///< paper-space viewports (v31)
     std::vector<DocTable> tables;         ///< tables (v20)
     std::vector<TableStyle> table_styles; ///< table-style table (not in entity_count)
+    std::vector<DataLink> data_links;     ///< v40: DATALINK
     std::vector<DocImageDef> image_defs;  ///< image-definition table (not in entity_count)
     std::vector<DocInsert> inserts;        ///< model-space block references
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)

@@ -13,6 +13,8 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <QPoint>
 #include <QWindow>
@@ -69,6 +71,8 @@ public:
     /// PDMODE / PDSIZE and LIMITS from the last snapshot, for the commands that show them.
     std::pair<std::uint8_t, double> point_display();
     std::tuple<core::Vec2, core::Vec2, bool> limits();
+    core::Vec2 insbase();
+    std::vector<core::DataLink> data_links();
     std::vector<core::TextStyle> text_styles();
     std::uint16_t current_text_style();
     std::vector<core::DimStyle> dim_styles();
@@ -110,6 +114,60 @@ public:
     bool layer_walk_dialog() override;
     bool text_style_dialog() override;
     bool plot_preview() override;
+    bool export_pdf() override;
+    bool publish() override;
+    bool page_setup_manager() override;
+    bool set_navbar(bool on) override;
+    bool window_action(const std::string& action) override;
+    int field_dialog(std::string& code) override { return field_dialog_callback_ ? field_dialog_callback_(code) : -1; }
+    void set_field_dialog_callback(std::function<int(std::string&)> cb) { field_dialog_callback_ = std::move(cb); }
+    int tolerance_dialog(std::vector<std::string>& cells) override {
+        return tolerance_dialog_callback_ ? tolerance_dialog_callback_(cells) : -1;
+    }
+    void set_tolerance_dialog_callback(std::function<int(std::vector<std::string>&)> cb) {
+        tolerance_dialog_callback_ = std::move(cb);
+    }
+    std::vector<std::string> workspaces() const override {
+        return workspace_list_callback_ ? workspace_list_callback_().first : std::vector<std::string>{};
+    }
+    std::string current_workspace() const override {
+        return workspace_list_callback_ ? workspace_list_callback_().second : std::string{};
+    }
+    bool workspace_op(const std::string& op, const std::string& name, const std::string& to) override {
+        return workspace_op_callback_ && workspace_op_callback_(op, name, to);
+    }
+    void set_workspace_callbacks(std::function<std::pair<std::vector<std::string>, std::string>()> list,
+                                 std::function<bool(const std::string&, const std::string&, const std::string&)> op) {
+        workspace_list_callback_ = std::move(list);
+        workspace_op_callback_ = std::move(op);
+    }
+    void set_window_action_callback(std::function<bool(const std::string&)> cb) { window_action_callback_ = std::move(cb); }
+    void set_navbar_callback(std::function<void(bool)> cb) { navbar_callback_ = std::move(cb); }
+    int insert_table_dialog(command::InsertTableSettings& io) override;
+    int qleader_settings_dialog(command::QLeaderSettings& io) override;
+    int select_color_dialog(bool& by_layer, core::Rgb& color) override;
+    int lineweight_dialog(bool& by_layer, std::uint8_t& lineweight) override;
+    bool linetype_manager() override;
+    void set_property_dialogs(std::function<int(bool&, core::Rgb&)> color, std::function<int(bool&, std::uint8_t&)> lineweight,
+                              std::function<void()> linetypes) {
+        color_dialog_callback_ = std::move(color);
+        lineweight_dialog_callback_ = std::move(lineweight);
+        linetype_manager_callback_ = std::move(linetypes);
+    }
+    void set_qleader_settings_callback(std::function<int(command::QLeaderSettings&)> cb) {
+        qleader_settings_callback_ = std::move(cb);
+    }
+    bool edit_text_at(core::Vec2 at) override;
+    bool edit_text_soon(core::Vec2 at) override;
+    void set_insert_table_callback(std::function<int(command::InsertTableSettings&)> cb) {
+        insert_table_callback_ = std::move(cb);
+    }
+    void set_export_pdf_callbacks(std::function<void()> export_pdf, std::function<void()> publish,
+                                  std::function<void()> page_setups) {
+        export_pdf_callback_ = std::move(export_pdf);
+        publish_callback_ = std::move(publish);
+        page_setup_callback_ = std::move(page_setups);
+    }
     bool view_manager() override;
     bool layer_states_manager() override;
     int dim_inspect_dialog(core::DimInspectCommand& io) override;
@@ -230,6 +288,10 @@ public:
     [[nodiscard]] std::string image_file_dialog() override;
     [[nodiscard]] std::string open_file_dialog(const std::string& filter) override;
     void set_open_file_dialog(std::function<std::string(const std::string&)> cb) { open_file_dialog_ = std::move(cb); }
+    [[nodiscard]] std::string save_file_dialog(const std::string& filter, const std::string& suggested) override;
+    void set_save_file_dialog(std::function<std::string(const std::string&, const std::string&)> cb) {
+        save_file_dialog_ = std::move(cb);
+    }
     void set_image_file_dialog(std::function<std::string()> cb) { image_file_dialog_ = std::move(cb); }
     void set_osnap_settings_callback(std::function<void()> cb) { osnap_settings_callback_ = std::move(cb); }
     /// What stands in the command line's input field (TEXT draws its line from it; the
@@ -393,6 +455,11 @@ public:
     [[nodiscard]] std::vector<core::Layer> layers() const {
         std::scoped_lock lock(layers_mutex_);
         return layers_;
+    }
+    /// Per layer: 1 when an entity is on it (All Used Layers).
+    [[nodiscard]] std::vector<std::uint8_t> layer_used() const {
+        std::scoped_lock lock(layers_mutex_);
+        return layer_used_;
     }
     [[nodiscard]] std::uint16_t current_layer() const noexcept {
         return current_layer_.load(std::memory_order_relaxed);
@@ -748,6 +815,15 @@ private:
     int highlight_ = 1;
     int selectionpreview_ = 3;
     int selectioncycling_ = 2;
+    // The grip variables: GRIPS (0 none, 1 shown), GRIPSIZE (half a grip in pixels), and
+    // GRIPCOLOR / GRIPHOT as ACI numbers (0 here: the theme's own colours until set).
+    std::atomic<int> grips_on_{1};
+    std::atomic<int> gripsize_{5}; // AutoCAD's default
+    std::atomic<int> gripcolor_{0};
+    std::atomic<int> griphot_{0};
+    std::atomic<int> transparencydisplay_{1}; ///< TRANSPARENCYDISPLAY / TPY: layer transparency shown
+    std::atomic<int> ucsicon_{3};             ///< UCSICON: bit 1 on, bit 2 at the origin
+    std::atomic<int> lwdisplay_{1};           ///< LWDISPLAY as the drawing has it (from the snapshot)
     std::uint64_t pick_candidates_seen_ = 0;
     std::vector<core::RenderSnapshot::PickCandidate> pick_candidates_; ///< under layers_mutex_
     core::RenderSnapshot::PurgeCandidates purge_;                      ///< under layers_mutex_
@@ -764,6 +840,23 @@ private:
     std::function<void()> layer_walk_callback_;
     std::function<void()> text_style_callback_;
     std::function<void()> plot_preview_callback_;
+    std::function<void()> export_pdf_callback_;
+    std::function<void()> publish_callback_;
+    std::function<void()> page_setup_callback_;
+    std::function<void(bool)> navbar_callback_;
+    std::function<bool(const std::string&)> window_action_callback_;
+    std::function<std::pair<std::vector<std::string>, std::string>()> workspace_list_callback_;
+    std::function<int(std::vector<std::string>&)> tolerance_dialog_callback_;
+    std::function<int(std::string&)> field_dialog_callback_;
+    std::function<bool(const std::string&, const std::string&, const std::string&)> workspace_op_callback_;
+    std::function<int(command::InsertTableSettings&)> insert_table_callback_;
+    std::function<int(command::QLeaderSettings&)> qleader_settings_callback_;
+    std::function<int(bool&, core::Rgb&)> color_dialog_callback_;
+    std::function<int(bool&, std::uint8_t&)> lineweight_dialog_callback_;
+    std::function<void()> linetype_manager_callback_;
+    /// The text or table cell nearest `world` within `pad` (what a double-click edits).
+    bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline);
+    void retry_edit_text(core::Vec2 at, int tries); ///< edit_text_soon's later tries
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
     std::function<int(core::DimInspectCommand&)> dim_inspect_callback_;
@@ -892,6 +985,9 @@ private:
     core::Vec2 limits_min_{0.0, 0.0};
     core::Vec2 limits_max_{420.0, 297.0};
     bool limits_on_ = false;
+    core::Vec2 insbase_{0.0, 0.0};              ///< INSBASE, under layers_mutex_
+    std::vector<core::DataLink> data_links_;    ///< DATALINK, under layers_mutex_
+    std::vector<std::uint8_t> layer_used_;      ///< under layers_mutex_
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
     std::vector<core::DimStyle> dim_styles_;    ///< under layers_mutex_
@@ -911,6 +1007,7 @@ private:
     std::function<void()> osnap_settings_callback_;
     std::function<std::string()> image_file_dialog_;
     std::function<std::string(const std::string&)> open_file_dialog_;
+    std::function<std::string(const std::string&, const std::string&)> save_file_dialog_;
     QtImageDecoder image_decoder_; ///< raster decoding for the renderer's texture cache
     int dialog_ghost_mode_ = 0;
     core::Vec2 dialog_ghost_a_{};

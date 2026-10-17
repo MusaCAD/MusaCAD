@@ -619,7 +619,8 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             // taper the text weight to the glyph's on-screen size.
             const float world_to_px = static_cast<float>(camera.scale());
             const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
-                                        std::uint32_t count, bool is_text, float text_height) {
+                                        std::uint32_t count, bool is_text, float text_height,
+                                        float alpha = 1.0f) {
                 // Single-stroke TEXT gets a dedicated, heavier screen weight so it reads crisp
                 // and present (not the 1px hairline that looked dull) -- independent of the
                 // LWDISPLAY toggle, since text carries no real lineweight to display/suppress.
@@ -640,7 +641,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
                 cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
                 cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
                                        static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
-                                       1.0f);
+                                       alpha);
                 cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 4);
                 cmd_->draw_instanced(4, count); // 4-vertex triangle strip per segment
                 ++stats_.draw_calls;
@@ -655,7 +656,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             } else {
                 for (const core::ColorBatch& b : line_batches_) {
                     if (b.is_text == text_pass) {
-                        draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height);
+                        draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height, batch_alpha(b));
                     }
                 }
             }
@@ -670,7 +671,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
         for (const core::ColorBatch& b : fill_batches_) {
             cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
                                    static_cast<float>(b.color.g) / 255.0f,
-                                   static_cast<float>(b.color.b) / 255.0f, 1.0f);
+                                   static_cast<float>(b.color.b) / 255.0f, batch_alpha(b));
             cmd_->bind_vertex_buffer(0, *fill_buffer_, b.first * sizeof(float) * 2);
             cmd_->draw_instanced(b.count, 1); // b.count vertices, GL_TRIANGLES
             ++stats_.draw_calls;
@@ -720,7 +721,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
             for (const core::ColorBatch& b : point_batches_) {
                 cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
                                        static_cast<float>(b.color.g) / 255.0f,
-                                       static_cast<float>(b.color.b) / 255.0f, 1.0f);
+                                       static_cast<float>(b.color.b) / 255.0f, batch_alpha(b));
                 cmd_->bind_vertex_buffer(0, *point_instances_, b.first * sizeof(float) * 2);
                 cmd_->draw_instanced(1, b.count);
                 ++stats_.draw_calls;
@@ -729,11 +730,77 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
     }
 
     draw_construction_lines(*cmd_, snapshot, camera);
+    draw_ucs_icon(*cmd_, vw, vh, camera);
     draw_selection_and_interaction(*cmd_, snapshot, view);
     if (overlays) {
         draw_crosshair_and_snap(*cmd_, vw, vh, snapshot, camera);
         draw_dyn_labels(*cmd_, vw, vh, camera);
         draw_canvas_command(*cmd_, vw, vh);
+    }
+}
+
+void ViewportRenderer::draw_ucs_icon(GpuCommandBuffer& cmd, int width, int height, const Camera2D& camera) {
+    if ((ucs_icon_ & 1) == 0) {
+        return;
+    }
+    // Window pixels, y down. The X axis to the right and the Y axis up, each with its
+    // arrow and letter; the square at the corner says the UCS is the world's. In paper
+    // space, AutoCAD's triangle.
+    const double k = static_cast<double>(device_pixel_ratio_);
+    const double len = 34.0 * k;
+    const double margin = 12.0 * k;
+    const double reach = len + 12.0 * k; // the axis and its letter
+    core::Vec2 o{margin + 2.0 * k, static_cast<double>(height) - margin - 2.0 * k};
+    if ((ucs_icon_ & 2) != 0 && !ucs_paper_) {
+        const core::Vec2 w0 = camera.world_to_screen({0.0, 0.0});
+        if (w0.x >= margin && w0.x + reach <= static_cast<double>(width) - margin && w0.y - reach >= margin &&
+            w0.y <= static_cast<double>(height) - margin) {
+            o = w0; // the whole icon fits there
+        }
+    }
+    const double ah = 7.0 * k; // arrow length and half width
+    const double aw = 3.0 * k;
+    const double s = 3.5 * k; // letter half size
+    std::vector<core::Vec2> xs;
+    std::vector<core::Vec2> ys;
+    const core::Vec2 xe{o.x + len, o.y};
+    const core::Vec2 ye{o.x, o.y - len};
+    edge(xs, o, xe);
+    edge(ys, o, ye);
+    if (ucs_paper_) {
+        edge(xs, xe, ye);
+    } else {
+        edge(xs, xe, {xe.x - ah, xe.y - aw});
+        edge(xs, xe, {xe.x - ah, xe.y + aw});
+        edge(ys, ye, {ye.x - aw, ye.y + ah});
+        edge(ys, ye, {ye.x + aw, ye.y + ah});
+        const double b = 6.0 * k; // the world's square
+        edge(xs, {o.x, o.y - b}, {o.x + b, o.y - b});
+        edge(xs, {o.x + b, o.y - b}, {o.x + b, o.y});
+    }
+    const core::Vec2 xl{xe.x + 2.0 * k + s, xe.y + s + 3.0 * k}; // "X" just past the tip, below
+    edge(xs, {xl.x - s, xl.y - s}, {xl.x + s, xl.y + s});
+    edge(xs, {xl.x - s, xl.y + s}, {xl.x + s, xl.y - s});
+    const core::Vec2 yl{ye.x + s + 4.0 * k, ye.y + s}; // "Y" beside the tip
+    edge(ys, {yl.x - s, yl.y - s}, yl);
+    edge(ys, {yl.x + s, yl.y - s}, yl);
+    edge(ys, yl, {yl.x, yl.y + s});
+    cmd.bind_pipeline(*line_pipeline_);
+    cmd.set_uniform_mat3("u_transform", screen_to_ndc(width, height));
+    const auto draw = [&](const std::vector<core::Vec2>& seg, float r, float g, float bl) {
+        const std::size_t n = pack_segments(seg, scratch_);
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", r, g, bl, 1.0f);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    };
+    if (ucs_paper_) {
+        xs.insert(xs.end(), ys.begin(), ys.end());
+        draw(xs, kCrosshairColor[0], kCrosshairColor[1], kCrosshairColor[2]);
+    } else {
+        draw(xs, 0.90f, 0.32f, 0.32f); // X red, Y green, as AutoCAD draws them
+        draw(ys, 0.36f, 0.78f, 0.36f);
     }
 }
 
@@ -1117,8 +1184,20 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
         const double cx = static_cast<double>(cursor_x_);
         const double cy = static_cast<double>(cursor_y_);
         std::vector<core::Vec2> seg;
-        edge(seg, {0.0, cy}, {static_cast<double>(width), cy});  // horizontal
-        edge(seg, {cx, 0.0}, {cx, static_cast<double>(height)}); // vertical
+        if (grid_settings_.isometric) {
+            // Isometric drafting: the crosshair runs along the isoplane's two axes -- Left 90
+            // and 150 degrees, Top 30 and 150, Right 90 and 30 (screen y runs down).
+            static constexpr double kAxes[3][2] = {{90.0, 150.0}, {30.0, 150.0}, {90.0, 30.0}};
+            const double reach = static_cast<double>(width + height);
+            for (const double deg : kAxes[std::min<int>(grid_settings_.isoplane, 2)]) {
+                const double a = deg * 3.141592653589793 / 180.0;
+                const core::Vec2 d{std::cos(a) * reach, -std::sin(a) * reach};
+                edge(seg, {cx - d.x, cy - d.y}, {cx + d.x, cy + d.y});
+            }
+        } else {
+            edge(seg, {0.0, cy}, {static_cast<double>(width), cy});  // horizontal
+            edge(seg, {cx, 0.0}, {cx, static_cast<double>(height)}); // vertical
+        }
         // Center pick-box (square).
         const double h = kPickBoxHalfPx;
         edge(seg, {cx - h, cy - h}, {cx + h, cy - h});
@@ -1189,8 +1268,8 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
 
     // Grips of the selected set: small filled squares at a constant pixel size, the
     // grabbed/hovered one in the hot colour. Batched: at most two fill draws.
-    if (!snapshot.grips.empty()) {
-        const double hpx = theme::kGripHalfPx * device_pixel_ratio_; // physical-consistent
+    if (!snapshot.grips.empty() && grip_half_px_ > 0.0) {
+        const double hpx = grip_half_px_ * device_pixel_ratio_; // physical-consistent
         std::vector<core::Vec2> normal;
         std::vector<core::Vec2> hot;
         for (std::size_t i = 0; i < snapshot.grips.size(); ++i) {
@@ -1222,8 +1301,21 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
             cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
             ++stats_.draw_calls;
         };
-        draw_squares(normal, kGripColor);
-        draw_squares(hot, kHotGripColor);
+        // GRIPCOLOR / GRIPHOT when set, the theme's colours otherwise.
+        const auto rgba = [](std::uint32_t rgb, const float (&theme_col)[4], float (&out)[4]) -> const float (&)[4] {
+            if (rgb == 0) {
+                return theme_col;
+            }
+            out[0] = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            out[1] = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            out[2] = static_cast<float>(rgb & 0xFF) / 255.0f;
+            out[3] = 1.0f;
+            return out;
+        };
+        float normal_col[4];
+        float hot_col[4];
+        draw_squares(normal, rgba(grip_rgb_, kGripColor, normal_col));
+        draw_squares(hot, rgba(hot_grip_rgb_, kHotGripColor, hot_col));
     }
 }
 

@@ -8,7 +8,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <variant>
@@ -23,7 +26,9 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
+#include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
+#include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
 using namespace musacad::core;
@@ -415,7 +420,7 @@ TEST_CASE("BURST keeps the attribute values as text; TEXTMASK puts a wipeout beh
 
     H h;
     h.run({"TEXTMASK"});
-    REQUIRE(h.out.prompt == "Select text or [Masktype/Offset]: ");
+    REQUIRE(h.out.prompt == "Select text objects to mask or [Masktype/Offset]: ");
     h.run({"O", "0.2"});
     h.proc.set_selection_count(1);
     h.run({""});
@@ -475,9 +480,9 @@ TEST_CASE("DIMINSPECT frames a dimension's value with a label and an inspection 
     h.run({""});
     REQUIRE(h.out.prompt == "Enter shape option [Round/Angular/None] <Round>: ");
     h.run({"A"});
-    REQUIRE(h.out.prompt == "Enter label value or <None>: ");
+    REQUIRE(h.out.prompt == "Enter label data or <None>: ");
     h.run({"B2"});
-    REQUIRE(h.out.prompt == "Enter inspection rate, . for none <100%>: ");
+    REQUIRE(h.out.prompt == "Enter inspection rate <100%>: ");
     h.run({"75%"});
     const DimInspectCommand* c = h.last<DimInspectCommand>();
     REQUIRE(c != nullptr);
@@ -689,4 +694,1263 @@ TEST_CASE("GATTE changes an attribute on every reference of a block; VPSCALE nee
     REQUIRE(h.last<VpScaleQueryCommand>()->pick == Vec2{5, 5});
     h.run({"GRADIENT"});
     REQUIRE(h.out.prompt.starts_with("Pick internal point"));
+}
+
+TEST_CASE("EXPORTPDF, PUBLISH and PAGESETUP say so where there is no window; a page setup is deleted by name") {
+    H h;
+    h.run({"EXPORTPDF"});
+    REQUIRE(h.out.lines.back() == "EXPORTPDF needs the drawing window.");
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"PUBLISH"});
+    REQUIRE(h.out.lines.back() == "PUBLISH needs the drawing window.");
+    h.run({"PAGESETUP"});
+    REQUIRE(h.out.lines.back() == "PAGESETUP needs the drawing window.");
+
+    GeometryEngine engine;
+    engine.start();
+    PageSetup ps;
+    ps.name = "A3 sheet";
+    engine.submit(AddPageSetupCommand{ps});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.page_setups.size() == 1; }));
+    engine.submit(RemovePageSetupCommand{"A3 sheet"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Page setup \"A3 sheet\" deleted."; }));
+    REQUIRE(engine.snapshot().page_setups.empty());
+    engine.submit(RemovePageSetupCommand{"A3 sheet"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "No page setup is called \"A3 sheet\"."; }));
+    engine.stop();
+}
+
+TEST_CASE("REVCLOUD Freehand: a drag draws the cloud, closed when it comes back to its start") {
+    H h;
+    h.run({"REVCLOUD", "F"});
+    REQUIRE(h.proc.wants_freehand());
+    std::vector<Vec2> loop;
+    for (int i = 0; i <= 64; ++i) {
+        const double a = 2.0 * 3.141592653589793 * i / 64.0;
+        loop.push_back({10.0 * std::cos(a), 10.0 * std::sin(a)});
+    }
+    h.proc.submit_freehand(loop);
+    const AddPolylineCommand* c = h.last<AddPolylineCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->closed);
+    REQUIRE(c->points.size() > 20);
+    REQUIRE_FALSE(h.proc.has_active_command());
+
+    h.run({"REVCLOUD"});
+    std::vector<Vec2> line;
+    for (int i = 0; i <= 40; ++i) {
+        line.push_back({static_cast<double>(i), 0.0});
+    }
+    h.proc.submit_freehand(line);
+    REQUIRE_FALSE(h.last<AddPolylineCommand>()->closed);
+}
+
+TEST_CASE("TABLEEDIT edits a cell's text; TABLE without a window asks on the command line") {
+    H h;
+    h.run({"TABLEEDIT"});
+    REQUIRE(h.out.prompt == "Pick a table cell: ");
+    h.run({"5,5"});
+    REQUIRE(h.out.prompt == "Enter new text: ");
+    h.run({"QTY 4"});
+    const EditTextContentCommand* e = h.last<EditTextContentCommand>();
+    REQUIRE(e != nullptr);
+    REQUIRE(e->at == Vec2{5, 5});
+    REQUIRE(e->content == "QTY 4");
+    h.run({"TABLE"});
+    REQUIRE(h.out.prompt == "Enter number of columns or [Auto] <5>: ");
+    h.run({"2", "1", "0,0"});
+    REQUIRE(h.last<AddTableCommand>()->rows == 3); // a title and a header row with the data row
+}
+
+TEST_CASE("TFRAMES turns wipeout and image frames off and on together; UPDATEFIELD redraws the fields") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(ToggleFramesCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "IMAGE/WIPEOUT frames are toggled OFF."; }));
+    engine.submit(ToggleFramesCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "IMAGE/WIPEOUT frames are toggled ON."; }));
+    AddTextCommand t;
+    t.pos = {0, 0};
+    t.content = "Plotted %<\\AcVar Date>% by %<\\AcVar Login>%";
+    t.group = 1;
+    engine.submit(t);
+    engine.submit(SelectAllCommand{});
+    engine.submit(UpdateFieldsCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 field(s) found. 2 field(s) updated."; }));
+    engine.stop();
+
+    H h;
+    h.run({"TFRAMES"});
+    REQUIRE(h.last<ToggleFramesCommand>() != nullptr);
+    h.run({"UPDATEFIELD"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    h.proc.set_selection_count(1);
+    h.run({""});
+    REQUIRE(h.last<UpdateFieldsCommand>() != nullptr);
+}
+
+TEST_CASE("HATCH seTtings User defined: the angle, the spacing and Double") {
+    H h;
+    h.run({"H", "T", "U"});
+    REQUIRE(h.out.prompt.starts_with("Specify angle for crosshatch lines <"));
+    h.run({"45", "2"});
+    REQUIRE(h.out.prompt == "Double hatch area? [Yes/No] <N>: ");
+    h.run({"Y", "5,5"});
+    const HatchPickPointCommand* c = h.last<HatchPickPointCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->pattern_name == "_USERDOUBLE");
+    REQUIRE(c->pattern_scale == Approx(2.0));
+    REQUIRE(c->pattern_angle == Approx(3.141592653589793 / 4.0));
+}
+
+TEST_CASE("DIMEX writes dimension styles to a file and DIMIM takes them in, keeping or overwriting") {
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_dimex_test.dim").string();
+    {
+        GeometryEngine engine;
+        engine.start();
+        DimStyle arch;
+        arch.name = "Arch";
+        arch.text_height = 3.5;
+        engine.submit(AddDimStyleCommand{arch});
+        engine.submit(ExportDimStylesCommand{path, "ar*"});
+        REQUIRE(wait_until(engine, [&](const auto& s) { return s.status == "1 dimension style exported to " + path + "."; }));
+        engine.submit(ImportDimStylesCommand{path, false});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "0 added, 0 overwritten, 1 kept as they were."; }));
+        engine.stop();
+    }
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(ImportDimStylesCommand{path, true});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 added, 0 overwritten, 0 kept as they were."; }));
+        const auto& styles = engine.snapshot().dimstyles;
+        REQUIRE(std::any_of(styles.begin(), styles.end(),
+                            [](const DimStyle& d) { return d.name == "Arch" && d.text_height == 3.5; }));
+        engine.stop();
+    }
+    std::filesystem::remove(path);
+
+    H h;
+    h.run({"DIMEX"});
+    REQUIRE(h.out.prompt == "Dimension styles to export <*>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Export filename: "); // no window here
+    h.run({"/tmp/house"});
+    REQUIRE(h.last<ExportDimStylesCommand>()->path == "/tmp/house.dim");
+    REQUIRE(h.last<ExportDimStylesCommand>()->names.empty());
+    h.run({"DIMIM", "/tmp/house.dim"});
+    REQUIRE(h.out.prompt == "Existing styles of the same name [Keep/Overwrite] <Keep>: ");
+    h.run({"O"});
+    REQUIRE(h.last<ImportDimStylesCommand>()->overwrite);
+}
+
+TEST_CASE("GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT ask their value; without a window it is out of reach") {
+    H h;
+    h.run({"GRIPSIZE"});
+    REQUIRE(h.out.prompt == "Enter new value for GRIPSIZE <0>: ");
+    h.run({"6"});
+    REQUIRE(h.out.lines.back() == "Value out of range for GRIPSIZE.");
+    h.run({""});
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("NAVBAR asks ON or OFF and needs the window") {
+    H h;
+    h.run({"NAVBAR"});
+    REQUIRE(h.out.prompt == "Enter an option [ON/OFF] <ON>: ");
+    h.run({"maybe"});
+    REQUIRE(h.out.lines.back() == "Enter ON or OFF.");
+    h.run({"OFF"});
+    REQUIRE(h.out.lines.back() == "NAVBAR needs the drawing window.");
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("-LAYER TRansparency: the value, then the layers") {
+    H h;
+    h.run({"-LAYER", "TR"});
+    REQUIRE(h.out.prompt == "Enter transparency value (0-90): ");
+    h.run({"95"});
+    REQUIRE(h.out.lines.back() == "Requires a whole number from 0 to 90.");
+    h.run({"40"});
+    REQUIRE(h.out.prompt == "Enter name list of layer(s) for transparency 40% <current>: ");
+    h.run({"Glass"});
+    const LayerEditCommand* c = h.last<LayerEditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == LayerEditCommand::Op::Transparency);
+    REQUIRE(c->transparency == 40);
+    REQUIRE(c->names == "Glass");
+}
+
+TEST_CASE("Isometric drafting: the snap lattice, ORTHO on the isoplane's axes, ISOPLANE, ISODRAFT and isocircles") {
+    H h;
+    h.run({"SNAP", "S"});
+    REQUIRE(h.out.prompt == "Enter snap grid style [Standard/Isometric] <S>: ");
+    h.run({"I"});
+    REQUIRE(h.out.prompt.starts_with("Specify vertical spacing <"));
+    h.run({"10"});
+    REQUIRE(h.proc.grid_settings().isometric);
+    // The lattice: x a multiple of 10*cos30, y of 5, the two of the same parity.
+    h.proc.set_grid_snap(true);
+    const double sx = 10.0 * std::sqrt(3.0) * 0.5;
+    const Vec2 p = h.proc.resolve_pick({sx * 1.1, 4.0}, std::nullopt);
+    REQUIRE(p.x == Approx(sx));
+    REQUIRE(p.y == Approx(5.0));
+    h.proc.set_grid_snap(false);
+
+    // ORTHO in the Left isoplane: 90 and 150 degrees from the last point.
+    h.proc.set_ortho(true);
+    h.proc.set_last_point({0, 0});
+    const Vec2 up = h.proc.resolve_pick({1, 10}, std::nullopt);
+    REQUIRE(up.x == Approx(0.0).margin(1e-9));
+    REQUIRE(up.y == Approx(10.0));
+    const Vec2 along = h.proc.resolve_pick({-10, 6}, std::nullopt);
+    REQUIRE(along.y / along.x == Approx(std::tan(150.0 * 3.141592653589793 / 180.0)));
+    h.proc.set_ortho(false);
+
+    h.run({"ISOPLANE"});
+    REQUIRE(h.out.prompt == "Enter isometric plane setting [Left/Top/Right] <Top>: ");
+    h.run({""});
+    REQUIRE(h.proc.grid_settings().isoplane == 1);
+    REQUIRE(h.out.lines.back() == "Current isoplane: Top");
+
+    // An isocircle in the Top plane: the long axis level, r*sqrt(3/2) by r*sqrt(1/2).
+    h.run({"ELLIPSE"});
+    REQUIRE(h.out.prompt == "Specify axis endpoint of ellipse or [Arc/Center/Isocircle]: ");
+    h.run({"I"});
+    REQUIRE(h.out.prompt == "Specify center of isocircle: ");
+    h.run({"0,0"});
+    REQUIRE(h.out.prompt == "Specify radius of isocircle or [Diameter]: ");
+    h.run({"10"});
+    const AddEllipseCommand* e = h.last<AddEllipseCommand>();
+    REQUIRE(e != nullptr);
+    REQUIRE(e->major.x == Approx(10.0 * std::sqrt(1.5)));
+    REQUIRE(e->major.y == Approx(0.0).margin(1e-9));
+    REQUIRE(e->ratio == Approx(1.0 / std::sqrt(3.0)));
+
+    h.run({"ISODRAFT"});
+    REQUIRE(h.out.prompt == "Enter isometric drafting option [Orthographic/isoplane Left/isoplane Top/isoplane Right] <Orthographic>: ");
+    h.run({"O"});
+    REQUIRE_FALSE(h.proc.grid_settings().isometric);
+    h.run({"ELLIPSE"});
+    REQUIRE(h.out.prompt == "Specify axis endpoint of ellipse or [Arc/Center]: ");
+}
+
+TEST_CASE("MLEADERALIGN Options: Distribute between two points, Parallel last segments, a Spacing") {
+    using Mode = MLeaderAlignCommand::Mode;
+    const auto two_leaders = [](GeometryEngine& engine) {
+        MTextBlock a;
+        a.pos = {16, 10};
+        a.attach = 3;
+        engine.submit(AddMLeaderCommand{{{0, 0}, {10, 10}, {15, 10}}, 0, a, "A", 1});
+        MTextBlock b;
+        b.pos = {18, -5};
+        b.attach = 3;
+        engine.submit(AddMLeaderCommand{{{0, -20}, {12, -5}, {17, -5}}, 0, b, "B", 2});
+        engine.submit(SelectAllCommand{});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    };
+    const auto find = [](const io::Document& doc, const char* text) {
+        for (const auto& m : doc.mleaders) {
+            if (m.content == text) {
+                return m;
+            }
+        }
+        FAIL("multileader not found");
+        return doc.mleaders.front();
+    };
+    {
+        GeometryEngine engine;
+        engine.start();
+        two_leaders(engine);
+        MLeaderAlignCommand c{};
+        c.mode = Mode::Distribute;
+        c.from = {20, 0};
+        c.to = {20, 40};
+        c.group = 3;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 multileaders aligned."; }));
+        const io::Document doc = dump(engine, "musacad_mla_distribute.musa");
+        REQUIRE(find(doc, "B").vertices.back() == Vec2{20, 0}); // lowest first
+        REQUIRE(find(doc, "A").vertices.back() == Vec2{20, 40});
+        REQUIRE(find(doc, "A").vertices.front() == Vec2{0, 0}); // the arrowhead stays
+        engine.stop();
+    }
+    {
+        GeometryEngine engine;
+        engine.start();
+        two_leaders(engine);
+        MLeaderAlignCommand c{{12, 10}, 0.5, {}, 3};
+        c.mode = Mode::Parallel;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 multileader aligned."; }));
+        const auto b = find(dump(engine, "musacad_mla_parallel.musa"), "B");
+        const Vec2 seg = b.vertices[1] - b.vertices[0];
+        REQUIRE(seg.y / seg.x == Approx(1.0)); // as A's (0,0)-(10,10)
+        engine.stop();
+    }
+    {
+        GeometryEngine engine;
+        engine.start();
+        two_leaders(engine);
+        MLeaderAlignCommand c{{12, 10}, 0.5, {15, -30}, 3};
+        c.mode = Mode::Spacing;
+        c.spacing = 4.0;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 multileader aligned."; }));
+        const auto b = find(dump(engine, "musacad_mla_spacing.musa"), "B");
+        REQUIRE(b.vertices.back().x == Approx(15.0));
+        REQUIRE(b.vertices.back().y < 10.0 - 4.0);
+        engine.stop();
+    }
+
+    H h;
+    h.proc.set_selection_count(2);
+    h.run({"MLEADERALIGN", "O"});
+    REQUIRE(h.out.prompt == "Enter an option [Distribute/make leader segments Parallel/specify Spacing/Use current] <Use current>: ");
+    h.run({"D"});
+    REQUIRE(h.out.prompt == "Specify first point or [Options]: ");
+    h.run({"20,0", "20,40"});
+    REQUIRE(h.last<MLeaderAlignCommand>()->mode == Mode::Distribute);
+    REQUIRE(h.last<MLeaderAlignCommand>()->to == Vec2{20, 40});
+    h.run({"MLEADERALIGN", "O", "S", "4"});
+    REQUIRE(h.out.prompt == "Select multileader to align to or [Options]: ");
+    h.run({"12,10", "15,-30"});
+    REQUIRE(h.last<MLeaderAlignCommand>()->mode == Mode::Spacing);
+    REQUIRE(h.last<MLeaderAlignCommand>()->spacing == 4.0);
+    h.run({"MLEADERALIGN", "O", "U"});
+}
+
+TEST_CASE("QLEADER asks as AutoCAD does: the points up to the maximum, the text width, the lines") {
+    H h;
+    h.run({"LE"});
+    REQUIRE(h.out.prompt == "Specify first leader point, or [Settings] <Settings>: ");
+    h.run({""}); // Settings: no window here
+    REQUIRE(h.out.lines.back() == "Leader Settings need the drawing window.");
+    REQUIRE(h.out.prompt == "Specify first leader point, or [Settings] <Settings>: ");
+    h.run({"0,0"});
+    REQUIRE(h.out.prompt == "Specify next point: ");
+    h.run({"10,10", "20,10"}); // the third point: as many as the settings take
+    REQUIRE(h.out.prompt == "Specify text width <0.0000>: ");
+    h.run({"30"});
+    REQUIRE(h.out.prompt == "Enter first line of annotation text <Mtext>: ");
+    REQUIRE(h.proc.wants_free_text());
+    h.run({"PART 4"});
+    REQUIRE(h.out.prompt == "Enter next line of annotation text: ");
+    h.run({"SEE NOTE 2", ""});
+    const AddMLeaderCommand* m = h.last<AddMLeaderCommand>();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->vertices.size() == 3);
+    REQUIRE(m->content == "PART 4\nSEE NOTE 2");
+    REQUIRE(m->block.width == 30.0);
+    REQUIRE(m->block.pos == Vec2{20, 10});
+}
+
+TEST_CASE("-COLOR, CECOLOR, -LWEIGHT, CELWEIGHT, -LINETYPE and CELTYPE set what new objects take") {
+    H h;
+    h.run({"-COLOR"});
+    REQUIRE(h.out.prompt == "Enter default object color [Truecolor/COlorbook] <BYLAYER>: ");
+    h.run({"red"});
+    const SetCurrentPropsCommand* c = h.last<SetCurrentPropsCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE_FALSE(c->current.color_by_layer());
+    REQUIRE(c->current.color == Rgb{255, 0, 0});
+    h.run({"CECOLOR", "T", "10,20,30"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.color == Rgb{10, 20, 30});
+    h.run({"COLOR", "BYLAYER"}); // no window here: the command line asks
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.color_by_layer());
+
+    h.run({"-LWEIGHT"});
+    REQUIRE(h.out.lines.back() == "Current lineweight: BYLAYER");
+    REQUIRE(h.out.prompt == "Enter default lineweight for new objects or [?]: ");
+    h.run({"0.33"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.lineweight == 35); // the nearest of AutoCAD's
+    h.run({"CELWEIGHT", "50"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.lineweight == 50);
+
+    h.run({"-LINETYPE"});
+    REQUIRE(h.out.prompt == "Enter an option [?/Create/Load/Set]: ");
+    h.run({"S"});
+    REQUIRE(h.out.prompt == "Specify linetype name or [?] <BYLAYER>: ");
+    h.run({"hidden"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.linetype == Linetype::Hidden);
+    h.run({"CELTYPE", "Dashed"});
+    REQUIRE(h.last<SetCurrentPropsCommand>()->current.linetype == Linetype::Dashed);
+    h.run({"LWDISPLAY"});
+    REQUIRE(h.out.prompt == "Enter new value for LWDISPLAY <ON>: ");
+    h.run({"OFF"});
+    REQUIRE_FALSE(h.last<SetLineweightDisplayCommand>()->on);
+}
+
+TEST_CASE("RENAME renames layers, styles, blocks and views; SETVAR runs a variable; the file commands need the window") {
+    using K = RenameObjectCommand::Kind;
+    GeometryEngine engine;
+    engine.start();
+    Layer walls;
+    walls.name = "Walls";
+    engine.submit(AddLayerCommand{walls});
+    engine.submit(RenameObjectCommand{K::Layer, "Walls", "A-WALL"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Layer \"Walls\" renamed to \"A-WALL\"."; }));
+    engine.submit(RenameObjectCommand{K::Layer, "0", "Zero"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.starts_with("Layer \"0\" was not renamed"); }));
+    TextStyle notes;
+    notes.name = "Notes";
+    engine.submit(SetTextStyleCommand{notes, false});
+    engine.submit(RenameObjectCommand{K::TextStyle, "Notes", "Callouts"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Text style \"Notes\" renamed to \"Callouts\"."; }));
+    const io::Document doc = dump(engine, "musacad_rename.musa");
+    REQUIRE(std::any_of(doc.layers.begin(), doc.layers.end(), [](const Layer& l) { return l.name == "A-WALL"; }));
+    REQUIRE(std::any_of(doc.text_styles.begin(), doc.text_styles.end(), [](const TextStyle& t) { return t.name == "Callouts"; }));
+    engine.stop();
+
+    H h;
+    h.run({"REN"});
+    REQUIRE(h.out.prompt.starts_with("Enter object type to rename [Block/Dimstyle/LAyer/"));
+    h.run({"LA"});
+    REQUIRE(h.out.prompt == "Enter old layer name: ");
+    h.run({"Walls"});
+    REQUIRE(h.out.prompt == "Enter new layer name: ");
+    h.run({"A-WALL"});
+    REQUIRE(h.last<RenameObjectCommand>()->to == "A-WALL");
+
+    h.run({"SETVAR"});
+    REQUIRE(h.out.prompt == "Enter variable name or [?]: ");
+    h.run({"PDMODE"});
+    REQUIRE(h.out.prompt.starts_with("Enter new value for PDMODE"));
+    h.run({"3"});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"SETVAR", "LINE"});
+    REQUIRE(h.out.lines.back() == "Unknown variable name.  Type SETVAR ? for a list of variables.");
+    h.run({""});
+
+    for (const char* name : {"QSAVE", "OPEN", "CLOSE"}) {
+        h.run({name});
+        REQUIRE(h.out.lines.back() == std::string(name) + " needs the drawing window.");
+    }
+    h.run({"REDRAW"});
+    REQUIRE(h.last<RegenCommand>() != nullptr);
+}
+
+TEST_CASE("DBLIST lists every object; PLAN takes the World view") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(ListQueryCommand{{}, 0.0, false, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "DBLIST: the drawing is empty."; }));
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddCircleCommand{{20, 0}, 5, 2});
+    engine.submit(ListQueryCommand{{}, 0.0, false, true});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("LINE") != std::string::npos && s.status.find("CIRCLE") != std::string::npos;
+    }));
+    engine.stop();
+
+    H h;
+    h.run({"DBLIST"});
+    REQUIRE(h.last<ListQueryCommand>()->everything);
+    h.run({"PLAN"});
+    REQUIRE(h.out.prompt == "Enter an option [Current ucs/Ucs/World] <Current>: ");
+    h.run({"W"});
+    REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("DATAEXTRACTION counts block references by name and attribute values, into CSV and a table") {
+    GeometryEngine engine;
+    engine.start();
+    AddAttDefCommand ad;
+    ad.text.pos = {0, 0};
+    ad.text.height = 2.5;
+    ad.text.content = "SIZE";
+    ad.def = "M6";
+    ad.group = 1;
+    engine.submit(ad);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DefineBlockCommand{"BOLT", {0, 0}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.block_names.size() == 1; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{3});
+    const char* sizes[] = {"M6", "M8", "M6"};
+    for (int i = 0; i < 3; ++i) {
+        InsertBlockCommand ins;
+        ins.name = "BOLT";
+        ins.pos = {50.0 * i, 0};
+        ins.group = 4 + static_cast<std::uint64_t>(i);
+        ins.attribs = {sizes[i]};
+        engine.submit(ins);
+    }
+    const std::string path = (std::filesystem::temp_directory_path() / "musacad_extract.csv").string();
+    engine.submit(DataExtractCommand{true, path, Vec2{0, -50}, 10});
+    REQUIRE(wait_until(engine, [&](const auto& s) { return s.status == "2 rows extracted to " + path + ", and into a table."; }));
+    std::ifstream f(path);
+    std::string csv((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    REQUIRE(csv == "Count,Name,SIZE\r\n2,BOLT,M6\r\n1,BOLT,M8\r\n");
+    std::filesystem::remove(path);
+    const io::Document doc = dump(engine, "musacad_extract.musa");
+    REQUIRE(doc.tables.size() == 1);
+    REQUIRE(doc.tables[0].rows == 3);
+    REQUIRE(doc.tables[0].cols == 3);
+    engine.stop();
+
+    H h;
+    h.run({"DX"});
+    REQUIRE(h.out.prompt == "Extract from [Drawing/Selection] <Drawing>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Output to [Table/File/Both] <Table>: ");
+    h.run({"F"});
+    REQUIRE(h.out.prompt == "Enter file name: ");
+    h.run({"/tmp/parts"});
+    REQUIRE(h.last<DataExtractCommand>()->path == "/tmp/parts.csv");
+    REQUIRE_FALSE(h.last<DataExtractCommand>()->table_at.has_value());
+}
+
+TEST_CASE("NCOPY copies an object out of a block reference; the reference stays") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(AddCircleCommand{{5, 20}, 3, 2});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    engine.submit(DefineBlockCommand{"PART", {0, 0}, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.block_names.size() == 1; }));
+    engine.submit(SelectAllCommand{});
+    engine.submit(EraseSelectionCommand{4});
+    InsertBlockCommand ins;
+    ins.name = "PART";
+    ins.pos = {100, 100};
+    ins.group = 5;
+    engine.submit(ins);
+    engine.submit(NestedCopyCommand{{108, 120}, 1.0, {0, -50}, 6}); // on the circle (100+5+3, 100+20)
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 object copied out of the block reference."; }));
+    const io::Document doc = dump(engine, "musacad_ncopy.musa");
+    REQUIRE(doc.inserts.size() == 1);
+    REQUIRE(doc.circles.size() == 1);
+    REQUIRE(doc.circles[0].center.x == Approx(105.0));
+    REQUIRE(doc.circles[0].center.y == Approx(70.0));
+    REQUIRE(doc.lines.empty());
+    engine.submit(NestedCopyCommand{{0, 0}, 1.0, {}, 7});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Select an object inside a block reference."; }));
+    engine.stop();
+
+    H h;
+    h.run({"NCOPY"});
+    REQUIRE(h.out.prompt == "Select nested objects to copy: ");
+    h.run({"108,120", ""});
+    REQUIRE(h.out.prompt == "Specify base point or displacement, or [Multiple]: ");
+    h.run({""}); // in place
+    REQUIRE(h.last<NestedCopyCommand>()->offset == Vec2{0, 0});
+}
+
+TEST_CASE("A PGP file's aliases are read as acad.pgp writes them", "[alias][pgp]") {
+    const auto pgp = musacad::command::parse_pgp("; comment\r\n"
+                                                 "EXPLORER, START EXPLORER, 1,,\n"
+                                                 "c,  *copy\n"
+                                                 "  ZZ ,*ZOOM ; zoom\n"
+                                                 "BAD ALIAS, *LINE\n"
+                                                 "NOSTAR, LINE\n");
+    REQUIRE(pgp.size() == 2);
+    REQUIRE(pgp[0] == std::pair<std::string, std::string>{"C", "COPY"});
+    REQUIRE(pgp[1] == std::pair<std::string, std::string>{"ZZ", "ZOOM"});
+}
+
+TEST_CASE("A user alias starts its command, in place of a built-in one", "[alias][pgp]") {
+    using musacad::command::CommandRegistry;
+    CommandRegistry r = CommandRegistry::make_default();
+    REQUIRE(r.create("C")->name() == "CIRCLE");
+    REQUIRE(r.add_alias("C", "COPY"));
+    REQUIRE(r.create("C")->name() == "COPY");
+    REQUIRE(r.add_alias("QQ", "L")); // an alias of an alias
+    REQUIRE(r.create("qq")->name() == "LINE");
+    REQUIRE(r.find("QQ")->name == "LINE");
+    const auto s = r.suggest("QQ");
+    REQUIRE(!s.empty());
+    REQUIRE(s.front().name == "LINE");
+    REQUIRE_FALSE(r.add_alias("XX", "NOSUCHCOMMAND"));
+    REQUIRE_FALSE(r.contains("XX"));
+    REQUIRE(r.contains("ALIASEDIT"));
+    REQUIRE(r.contains("REINIT"));
+}
+
+namespace {
+struct WorkspaceView : musacad::command::ViewControl {
+    std::vector<std::string> names{"Drafting & Annotation", "Mine"};
+    std::string current = "Drafting & Annotation";
+    std::vector<std::string> ops;
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    std::vector<std::string> workspaces() const override { return names; }
+    std::string current_workspace() const override { return current; }
+    bool workspace_op(const std::string& op, const std::string& name, const std::string& to) override {
+        ops.push_back(op + ":" + name + ":" + to);
+        if (op == "current") {
+            current = name;
+        } else if (op == "saveas") {
+            if (name == names.front()) {
+                return false;
+            }
+            names.push_back(name);
+            current = name;
+        } else if (op == "delete" && name == current) {
+            return false;
+        }
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("WORKSPACE makes a workspace current, saves, renames and deletes one; WSCURRENT asks for it") {
+    WorkspaceView view;
+    Out out;
+    CommandProcessor proc{[](Command) {}, &view, out};
+    proc.submit_line("WORKSPACE");
+    REQUIRE(out.prompt == "Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>: ");
+    proc.submit_line("");
+    REQUIRE(out.prompt == "Enter name of workspace to make current [?] <Drafting & Annotation>: ");
+    proc.submit_line("mine"); // any case
+    REQUIRE(view.current == "Mine");
+    REQUIRE_FALSE(proc.has_active_command());
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("SA");
+    REQUIRE(out.prompt == "Enter name of workspace to save [?] <Mine>: ");
+    proc.submit_line("Plan view"); // a name with a space
+    REQUIRE(view.ops.back() == "saveas:Plan view:");
+    REQUIRE(view.current == "Plan view");
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("SA");
+    proc.submit_line("Mine");
+    REQUIRE(out.prompt == "Workspace \"Mine\" already exists. Replace it? [Yes/No] <N>: ");
+    proc.submit_line("");
+    REQUIRE(view.ops.back() == "saveas:Plan view:"); // nothing replaced
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("R");
+    REQUIRE(out.prompt == "Enter name of workspace to rename [?]: ");
+    proc.submit_line("Drafting & Annotation");
+    REQUIRE(out.lines.back() == "\"Drafting & Annotation\" is built in: it cannot be renamed or deleted.");
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("R");
+    proc.submit_line("Mine");
+    REQUIRE(out.prompt == "Enter new name for workspace \"Mine\": ");
+    proc.submit_line("Sections");
+    REQUIRE(view.ops.back() == "rename:Mine:Sections");
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("D");
+    proc.submit_line("Plan view");
+    REQUIRE(out.lines.back() == "The current workspace cannot be deleted.");
+
+    proc.submit_line("WORKSPACE");
+    proc.submit_line("?");
+    REQUIRE(out.lines.back() == "  * Plan view");
+    REQUIRE(out.prompt == "Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>: ");
+    proc.submit_line("C");
+    proc.submit_line("Nowhere");
+    REQUIRE(out.lines.back() == "Workspace \"Nowhere\" not found.");
+    proc.submit_line("");
+    REQUIRE_FALSE(proc.has_active_command());
+
+    proc.submit_line("WSCURRENT");
+    REQUIRE(out.prompt == "Enter new value for WSCURRENT <\"Plan view\">: ");
+    proc.submit_line("Drafting & Annotation");
+    REQUIRE(view.current == "Drafting & Annotation");
+    proc.submit_line("WSSAVE");
+    REQUIRE(view.ops.back() == "dialog::");
+}
+
+namespace {
+struct UcsView : musacad::command::ViewControl {
+    int ucsicon = 3;
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    int selection_setting(const std::string& name) const override { return name == "UCSICON" ? ucsicon : 0; }
+    bool set_selection_setting(const std::string& name, int value) override {
+        if (name != "UCSICON") {
+            return false;
+        }
+        ucsicon = value;
+        return true;
+    }
+};
+} // namespace
+
+TEST_CASE("UCSICON turns the icon off and on, and keeps it at the origin or in the corner") {
+    UcsView view;
+    Out out;
+    CommandProcessor proc{[](Command) {}, &view, out};
+    proc.submit_line("UCSICON");
+    REQUIRE(out.prompt == "Enter an option [ON/OFF/All/Noorigin/ORigin] <ON>: ");
+    proc.submit_line("OFF");
+    REQUIRE(view.ucsicon == 2);
+    proc.submit_line("UCSICON");
+    REQUIRE(out.prompt == "Enter an option [ON/OFF/All/Noorigin/ORigin] <OFF>: ");
+    proc.submit_line("A");
+    REQUIRE(out.prompt == "Enter an option [ON/OFF/Noorigin/ORigin] <OFF>: ");
+    proc.submit_line("N");
+    REQUIRE(view.ucsicon == 0);
+    proc.submit_line("UCSICON");
+    proc.submit_line("ON");
+    proc.submit_line("UCSICON");
+    proc.submit_line("OR");
+    REQUIRE(view.ucsicon == 3);
+    REQUIRE_FALSE(proc.has_active_command());
+}
+
+namespace {
+struct ToleranceView : musacad::command::ViewControl {
+    int answer = 1;
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    int tolerance_dialog(std::vector<std::string>& cells) override {
+        cells = {"\\U+2316", "%%c0.05 \\U+24C2", "A", "B\\U+24C2"};
+        return answer;
+    }
+};
+} // namespace
+
+TEST_CASE("TOLERANCE takes its frame from the Geometric Tolerance window, then asks where") {
+    ToleranceView view;
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, &view, out};
+    proc.submit_line("TOL");
+    REQUIRE(out.prompt == "Enter tolerance location: ");
+    proc.submit_line("10,20");
+    const auto* f = std::get_if<AddFcfCommand>(&cmds.back());
+    REQUIRE(f != nullptr);
+    REQUIRE(f->cells == std::vector<std::string>{"\\U+2316", "%%c0.05 \\U+24C2", "A", "B\\U+24C2"});
+    REQUIRE(f->pos == Vec2{10, 20});
+    view.answer = 0; // Cancel: nothing placed
+    const std::size_t before = cmds.size();
+    proc.submit_line("TOL");
+    REQUIRE_FALSE(proc.has_active_command());
+    REQUIRE(cmds.size() == before);
+}
+
+TEST_CASE("Fields in AutoCAD's form: date formats, the drawing's properties, text case") {
+    namespace text = musacad::core::text;
+    text::FieldContext fc;
+    fc.date = "2026-10-17";
+    fc.time = "01:30";
+    fc.filename = "site plan.musa";
+    fc.path = "/home/x/site plan.musa";
+    fc.login = "pranay";
+    std::tm t{};
+    t.tm_year = 2026 - 1900;
+    t.tm_mon = 9;
+    t.tm_mday = 7;
+    t.tm_hour = 14;
+    t.tm_min = 5;
+    t.tm_isdst = -1;
+    fc.now = static_cast<std::int64_t>(std::mktime(&t));
+    fc.created = fc.now;
+    fc.title = "Site plan";
+    fc.author = "";
+    fc.custom = {{"Client", "Musa Works"}};
+    text::set_field_context(fc);
+    CHECK(text::expand_fields("%<\\AcVar Date \\f \"M/d/yyyy\">%") == "10/7/2026");
+    CHECK(text::expand_fields("%<\\AcVar Date \\f \"dddd, MMMM dd, yy h:mm tt\">%") == "Wednesday, October 07, 26 2:05 PM");
+    CHECK(text::expand_fields("%<\\AcVar Date \\f \"yyyy-MM-dd HH:mm\">%") == "2026-10-07 14:05");
+    CHECK(text::expand_fields("%<\\AcVar CreateDate \\f \"MMM d\">%") == "Oct 7");
+    CHECK(text::expand_fields("%<\\AcVar SaveDate>%") == "----"); // never saved
+    CHECK(text::expand_fields("%<Date>%") == "2026-10-17");        // the short form as before
+    CHECK(text::expand_fields("%<\\AcVar Title \\f \"%tc1\">%") == "SITE PLAN");
+    CHECK(text::expand_fields("%<\\AcVar Title \\f \"%tc4\">%") == "Site Plan");
+    CHECK(text::expand_fields("%<\\AcVar Author>%") == "----");
+    CHECK(text::expand_fields("%<\\AcVar CustomDP.client>%") == "Musa Works");
+    CHECK(text::expand_fields("%<\\AcVar Filename \\f \"%fn1\">%") == "site plan");
+    CHECK(text::expand_fields("%<\\AcVar Filename \\f \"%fn6\">%") == "/home/x/site plan.musa");
+    CHECK(text::expand_fields("%<\\AcVar Nothing>%") == "####");
+    text::set_field_context(text::make_field_context(""));
+}
+
+namespace {
+struct FieldView : musacad::command::ViewControl {
+    void zoom_extents() override {}
+    void zoom_scale(double /*f*/) override {}
+    int field_dialog(std::string& code) override {
+        code = "%<\\AcVar Title \\f \"%tc1\">%";
+        return 1;
+    }
+};
+} // namespace
+
+TEST_CASE("FIELD takes its field from the Field window, then places the text") {
+    FieldView view;
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[&cmds](Command c) { cmds.push_back(std::move(c)); }, &view, out};
+    proc.submit_line("FIELD");
+    REQUIRE(out.prompt == "Specify start point: ");
+    proc.submit_line("5,5");
+    proc.submit_line("");
+    proc.submit_line("");
+    const auto* t = std::get_if<AddTextCommand>(&cmds.back());
+    REQUIRE(t != nullptr);
+    REQUIRE(t->content == "%<\\AcVar Title \\f \"%tc1\">%");
+    REQUIRE(t->pos == Vec2{5, 5});
+}
+
+TEST_CASE("BASE asks for the base point; INSERT takes a drawing file in place of a block name") {
+    H h;
+    h.run({"BASE"});
+    REQUIRE(h.out.prompt == "Enter base point <0.0000,0.0000,0.0000>: ");
+    h.run({"5,6"});
+    REQUIRE(h.last<SetInsBaseCommand>()->base == Vec2{5, 6});
+    h.run({"-INSERT", "/tmp/parts/bracket.dxf"});
+    REQUIRE(h.last<LoadBlockFileCommand>()->path == "/tmp/parts/bracket.dxf");
+    REQUIRE(h.last<LoadBlockFileCommand>()->name == "bracket");
+    REQUIRE_FALSE(h.last<LoadBlockFileCommand>()->redefine);
+    REQUIRE(h.out.prompt == "Specify insertion point or [Scale/Rotate]: ");
+    h.run({"0,0", "", "", ""});
+    REQUIRE(h.last<InsertBlockCommand>()->name == "bracket");
+}
+
+TEST_CASE("INSBASE is kept in the drawing and in DXF, and a drawing inserted as a block sits on it") {
+    namespace fs = std::filesystem;
+    const std::string part = (fs::temp_directory_path() / "musacad_part_insbase.musa").string();
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddCircleCommand{{10, 10}, 5, 1});
+        engine.submit(SetInsBaseCommand{{10, 10}});
+        engine.consume_snapshot();
+        const std::uint64_t before = engine.snapshot().document_version;
+        engine.submit(SaveDocumentCommand{part, false});
+        REQUIRE(wait_until(engine, [before](const auto& s) { return s.document_version > before; }));
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.insbase == Vec2{10, 10}; }));
+        engine.stop();
+    }
+    io::Document saved;
+    REQUIRE(io::load_native(part, saved).ok);
+    REQUIRE(saved.insbase == Vec2{10, 10});
+    const std::string dxf = (fs::temp_directory_path() / "musacad_insbase.dxf").string();
+    REQUIRE(io::save_dxf(saved, dxf).ok);
+    io::Document back;
+    REQUIRE(io::load_dxf(dxf, back).ok);
+    REQUIRE(back.insbase == Vec2{10, 10});
+    fs::remove(dxf);
+
+    GeometryEngine host;
+    host.start();
+    host.submit(LoadBlockFileCommand{part, "musacad_part_insbase", false});
+    const io::Document doc = dump(host, "musacad_host_insbase.musa");
+    const auto it = std::find_if(doc.block_defs.begin(), doc.block_defs.end(),
+                                 [](const io::DocBlockDef& b) { return b.name == "musacad_part_insbase"; });
+    REQUIRE(it != doc.block_defs.end());
+    REQUIRE(it->base == Vec2{10, 10});
+    REQUIRE(it->circles.size() == 1);
+    REQUIRE(it->xref_path.empty());
+    host.stop();
+    fs::remove(part);
+}
+
+TEST_CASE("TEXTSIZE sets the height TEXT offers") {
+    H h;
+    const double keep = h.proc.text_size();
+    h.proc.set_text_size(2.5);
+    h.run({"TEXTSIZE"});
+    REQUIRE(h.out.prompt == "Enter new value for TEXTSIZE <2.5000>: ");
+    h.run({"-1"});
+    REQUIRE(h.out.lines.back() == "Requires a positive value.");
+    h.run({"3.5"});
+    REQUIRE(h.proc.text_size() == 3.5);
+    h.run({"TEXT", "0,0"});
+    REQUIRE(h.out.prompt == "Specify height <3.5000>: ");
+    h.proc.cancel();
+    h.proc.set_text_size(keep);
+}
+
+TEST_CASE("A table from a CSV data link, read again and written back by DATALINKUPDATE") {
+    namespace fs = std::filesystem;
+    const std::string csv = (fs::temp_directory_path() / "musacad_link.csv").string();
+    {
+        std::ofstream f(csv, std::ios::binary);
+        f << "Tag,Qty\r\nM8 bolt,\"1,200\"\r\n\"Say \"\"hi\"\"\",3\r\n";
+    }
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(SetDataLinkCommand{"Parts", csv, false});
+    engine.submit(InsertLinkedTableCommand{"parts", {0, 0}, 1});
+    io::Document doc = dump(engine, "musacad_link1.musa");
+    REQUIRE(doc.data_links.size() == 1);
+    REQUIRE(doc.data_links[0].name == "Parts");
+    REQUIRE(doc.tables.size() == 1);
+    REQUIRE(doc.tables[0].link == 0);
+    REQUIRE(doc.tables[0].rows == 3);
+    REQUIRE(doc.tables[0].cols == 2);
+    REQUIRE(doc.tables[0].cells[3].text == "1,200");
+    REQUIRE(doc.tables[0].cells[4].text == "Say \"hi\"");
+
+    { // the file changes: the same grid, new values
+        std::ofstream f(csv, std::ios::binary | std::ios::trunc);
+        f << "Tag,Qty\nM8 bolt,1300\nWasher,9\n";
+    }
+    DataLinkUpdateCommand all;
+    all.group = 2;
+    engine.submit(all);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 table updated."; }));
+    doc = dump(engine, "musacad_link2.musa");
+    REQUIRE(doc.tables[0].cells[3].text == "1300");
+    REQUIRE(doc.tables[0].cells[4].text == "Washer");
+    REQUIRE(doc.tables[0].link == 0);
+
+    // Undo brings the old values back; the update was one step.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_link3.musa");
+    REQUIRE(doc.tables[0].cells[3].text == "1,200");
+    engine.submit(RedoLastGroupCommand{});
+
+    DataLinkUpdateCommand write;
+    write.write = true;
+    write.link = "Parts";
+    engine.submit(write);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 data link written."; }));
+    {
+        std::ifstream f(csv, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        REQUIRE(text == "Tag,Qty\r\nM8 bolt,1300\r\nWasher,9\r\n");
+    }
+    engine.submit(SetDataLinkCommand{"PARTS", {}, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Data link \"PARTS\" deleted."; }));
+    engine.submit(DataLinkUpdateCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "No tables with a data link."; }));
+    engine.stop();
+    fs::remove(csv);
+}
+
+TEST_CASE("DATALINKUPDATE asks Update or Write, then the tables, a link or all of them") {
+    H h;
+    h.proc.set_data_link_names({"Parts"});
+    h.run({"DATALINKUPDATE"});
+    REQUIRE(h.out.prompt == "Select an option [Update data link/Write data link] <Update data link>: ");
+    h.run({""});
+    REQUIRE(h.out.prompt == "Select objects or [Data link/all data linKs]: ");
+    h.run({"D"});
+    REQUIRE(h.out.prompt == "Enter data link name or [?]: ");
+    h.run({"Nope"});
+    REQUIRE(h.out.lines.back() == "Data link \"Nope\" not found.");
+    h.run({"parts"});
+    REQUIRE(h.last<DataLinkUpdateCommand>()->link == "parts");
+    REQUIRE_FALSE(h.last<DataLinkUpdateCommand>()->write);
+    h.run({"DLU", "", "K"});
+    REQUIRE(h.last<DataLinkUpdateCommand>()->link.empty());
+    REQUIRE_FALSE(h.last<DataLinkUpdateCommand>()->selection);
+    h.run({"DLU", "W"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    REQUIRE(h.proc.has_active_command());
+    h.proc.cancel();
+}
+
+TEST_CASE("DIMBREAK breaks a dimension's lines where a line crosses them, by hand, and takes the breaks away") {
+    GeometryEngine engine;
+    engine.start();
+    // A horizontal dimension 0..100 with its line at y=20; a vertical line crosses it at x=50.
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear), {0, 0}, {100, 0}, {50, 20}, 0, 1});
+    engine.submit(AddLineCommand{{50, -10}, {50, 40}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    DimBreakCommand brk;
+    brk.pick = {30, 20};
+    brk.pick_radius = 1.0;
+    brk.group = 2;
+    engine.submit(brk);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 object modified."; }));
+    io::Document doc = dump(engine, "musacad_dimbreak1.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].breaks.size() == 2);
+    REQUIRE(doc.dims[0].breaks[0].x == Approx(50.0));
+    REQUIRE(doc.dims[0].breaks[0].y == Approx(20.0));
+
+    // The dimension line now stops short of x=50 on both sides, by half the break (3.75).
+    GeometryStore store;
+    io::populate_store(store, doc);
+    const DimData* d = nullptr;
+    for (std::uint32_t i = 0; i < store.dimensions().slot_count(); ++i) {
+        if (store.dimensions().alive(i)) {
+            d = &store.dimensions().data()[i];
+        }
+    }
+    REQUIRE(d != nullptr);
+    const DimGeometry g = compute_dim_geometry(*d, *store.dimstyle(d->style), Rgb{}, store.dim_text_parts(*d));
+    bool gap = true;
+    for (std::size_t i = 0; i + 1 < g.dim_lines.size(); i += 2) {
+        const double x0 = std::min(g.dim_lines[i].x, g.dim_lines[i + 1].x);
+        const double x1 = std::max(g.dim_lines[i].x, g.dim_lines[i + 1].x);
+        if (std::abs(g.dim_lines[i].y - 20.0) < 1e-9 && x0 < 50.0 - 1.8 && x1 > 50.0 + 1.8) {
+            gap = false; // one piece runs through the crossing
+        }
+    }
+    REQUIRE(gap);
+
+    // Undo takes the breaks away again; Remove does too.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_dimbreak2.musa");
+    REQUIRE(doc.dims[0].breaks.empty());
+    DimBreakCommand manual;
+    manual.mode = DimBreakCommand::Mode::Manual;
+    manual.pick = {30, 20};
+    manual.pick_radius = 1.0;
+    manual.p1 = {10, 21};
+    manual.p2 = {20, 19};
+    manual.group = 3;
+    engine.submit(manual);
+    doc = dump(engine, "musacad_dimbreak3.musa");
+    REQUIRE(doc.dims[0].breaks.size() == 2);
+    REQUIRE(doc.dims[0].breaks[0].x == Approx(10.0));
+    REQUIRE(doc.dims[0].breaks[0].y == Approx(20.0)); // onto the line
+    REQUIRE(doc.dims[0].breaks[1].x == Approx(20.0));
+    DimBreakCommand remove;
+    remove.mode = DimBreakCommand::Mode::Remove;
+    remove.pick = {30, 20};
+    remove.pick_radius = 1.0;
+    engine.submit(remove);
+    doc = dump(engine, "musacad_dimbreak4.musa");
+    REQUIRE(doc.dims[0].breaks.empty());
+    engine.stop();
+}
+
+TEST_CASE("DIMBREAK asks for the dimension, then the object or Auto, Manual or Remove") {
+    H h;
+    h.run({"DIMBREAK"});
+    REQUIRE(h.out.prompt == "Select dimension to add/remove break or [Multiple]: ");
+    h.run({"30,20"});
+    REQUIRE(h.out.prompt == "Select object to break dimension or [Auto/Manual/Remove] <Auto>: ");
+    h.run({""});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Auto);
+    REQUIRE(h.last<DimBreakCommand>()->pick == Vec2{30, 20});
+    h.run({"DIMBREAK", "30,20", "M"});
+    REQUIRE(h.out.prompt == "Specify first break point: ");
+    h.run({"10,20", "20,20"});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Manual);
+    REQUIRE(h.last<DimBreakCommand>()->p2 == Vec2{20, 20});
+    h.run({"DIMBREAK", "30,20", "50,0"});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Object);
+    REQUIRE(h.out.prompt == "Select object to break dimension: ");
+    h.run({""});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    h.run({"DIMBREAK", "30,20", "R"});
+    REQUIRE(h.last<DimBreakCommand>()->mode == DimBreakCommand::Mode::Remove);
+}
+
+TEST_CASE("A block's units scale its inserts, and travel with it in the drawing and in DXF") {
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "MM_PART";
+    b.units = 4; // millimetres
+    b.lines.push_back(io::DocLine{{0, 0}, {25.4, 0}, {}});
+    doc.block_defs.push_back(b);
+    const std::string native = io::serialize_native(doc);
+    io::Document back;
+    REQUIRE(io::parse_native(native, back).ok);
+    REQUIRE(back.block_defs.size() == 1);
+    REQUIRE(back.block_defs[0].units == 4);
+    const std::string dxf = (std::filesystem::temp_directory_path() / "musacad_block_units.dxf").string();
+    REQUIRE(io::save_dxf(doc, dxf).ok);
+    io::Document dback;
+    REQUIRE(io::load_dxf(dxf, dback).ok);
+    std::filesystem::remove(dxf);
+    const auto it = std::find_if(dback.block_defs.begin(), dback.block_defs.end(),
+                                 [](const io::DocBlockDef& d) { return d.name == "MM_PART"; });
+    REQUIRE(it != dback.block_defs.end());
+    REQUIRE(it->units == 4);
+
+    // Into a drawing in inches: the millimetre block comes in at 1/25.4.
+    GeometryEngine engine;
+    engine.start();
+    io::Document host;
+    host.display_units.insunits = 1; // inches
+    host.block_defs.push_back(b);
+    const std::string hp = (std::filesystem::temp_directory_path() / "musacad_block_units_host.musa").string();
+    REQUIRE(io::save_native(host, hp).ok);
+    engine.submit(OpenDocumentCommand{hp});
+    engine.submit(InsertBlockCommand{"MM_PART", {0, 0}, 2.0, 2.0, 0.0, 1, {}});
+    const io::Document out = dump(engine, "musacad_block_units_out.musa");
+    REQUIRE(out.inserts.size() == 1);
+    REQUIRE(out.inserts[0].scale_x == Approx(2.0 / 25.4));
+    REQUIRE(out.inserts[0].scale_y == Approx(2.0 / 25.4));
+    engine.stop();
+    std::filesystem::remove(hp);
+}
+
+TEST_CASE("INSUNITSDEFSOURCE and INSUNITSDEFTARGET are asked for and handed to the engine") {
+    H h;
+    h.run({"INSUNITSDEFSOURCE"});
+    REQUIRE(h.out.prompt == "Enter new value for INSUNITSDEFSOURCE <4>: ");
+    h.run({"25"});
+    REQUIRE(h.out.lines.back() == "Requires an integer between 0 and 24.");
+    h.run({"1"});
+    REQUIRE(h.last<SetUnitsDefaultsCommand>()->source == 1);
+    REQUIRE(h.last<SetUnitsDefaultsCommand>()->target == 4);
+    h.run({"INSUNITSDEFSOURCE", "4"}); // as it was, for the other tests
+    REQUIRE(h.last<SetUnitsDefaultsCommand>()->source == 4);
+}
+
+TEST_CASE("The command list CUI shows has every command once, by name, in order") {
+    const auto all = musacad::command::CommandRegistry::make_default().commands();
+    REQUIRE(all.size() > 100);
+    REQUIRE(std::is_sorted(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.name < b.name; }));
+    REQUIRE(std::count_if(all.begin(), all.end(), [](const auto& c) { return c.name == "LINE"; }) == 1);
+    REQUIRE(std::none_of(all.begin(), all.end(), [](const auto& c) { return c.name == "L"; }));
+}
+
+TEST_CASE("STRETCH's Copy leaves the original where it is and adds the stretched one") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    engine.submit(SelectPickCommand{{5, 0}, 1.0, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.grips.empty(); }));
+    GripInfo gb{};
+    for (const GripInfo& g : engine.snapshot().grips) {
+        if (g.index == 1) {
+            gb = g;
+        }
+    }
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, gb.handle, gb.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {10, 10}, 7, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Copied."; }));
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, gb.handle, gb.index, {}, 0});
+    engine.submit(GripDragCommand{GripDragCommand::Phase::Commit, {}, 0, {10, -10}, 8, true});
+    const io::Document doc = dump(engine, "musacad_grip_copy.musa");
+    REQUIRE(doc.lines.size() == 3);
+    REQUIRE(doc.lines[0].b == Vec2{10, 0}); // the original
+    engine.stop();
+}
+
+TEST_CASE("MPEDIT starts at PEDIT's Multiple; DIMREASSOC takes dimension text overrides away") {
+    H h;
+    h.run({"MPEDIT"});
+    REQUIRE(h.out.prompt == "Select objects: ");
+    h.proc.cancel();
+    h.proc.set_selection_count(2);
+    h.run({"DIMREASSOC"});
+    const auto* c = h.last<DimEditCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->op == DimEditCommand::Op::New);
+    REQUIRE(c->text.empty());
+    REQUIRE_FALSE(c->pick.has_value());
+}
+
+TEST_CASE("ATTOUT writes attribute values to a tab-separated file; ATTIN reads them back") {
+    namespace fs = std::filesystem;
+    const std::string path = (fs::temp_directory_path() / "musacad_attout.txt").string();
+    GeometryEngine engine;
+    engine.start();
+    // A block with two attributes, and a reference of it.
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "TAGBOX";
+    io::DocAttDef a1;
+    a1.text.content = "NUM";
+    a1.def = "1";
+    io::DocAttDef a2;
+    a2.text.content = "NOTE";
+    a2.def = "";
+    b.attdefs = {a1, a2};
+    b.lines.push_back(io::DocLine{{0, 0}, {5, 0}, {}});
+    doc.block_defs.push_back(b);
+    io::DocInsert ins;
+    ins.block_name = "TAGBOX";
+    ins.attribs = {io::DocAttrib{"NUM", "7"}, io::DocAttrib{"NOTE", "old"}};
+    doc.inserts.push_back(ins);
+    const std::string dp = (fs::temp_directory_path() / "musacad_attout_src.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    engine.submit(OpenDocumentCommand{dp});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(AttOutCommand{path});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("1 block reference written to ", 0) == 0; }));
+    std::string text;
+    {
+        std::ifstream f(path, std::ios::binary);
+        text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    REQUIRE(text.rfind("HANDLE\tBLOCKNAME\tNUM\tNOTE\r\n'", 0) == 0);
+    REQUIRE(text.find("\tTAGBOX\t7\told\r\n") != std::string::npos);
+    { // the spreadsheet changes NOTE
+        const std::size_t at = text.find("\told\r\n");
+        text.replace(at, 6, "\tnew\r\n");
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << text;
+    }
+    engine.submit(AttInCommand{path, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "1 block reference updated."; }));
+    const io::Document out = dump(engine, "musacad_attin.musa");
+    REQUIRE(out.inserts.size() == 1);
+    REQUIRE(out.inserts[0].attribs.size() == 2);
+    REQUIRE(out.inserts[0].attribs[1].value == "new");
+    REQUIRE(out.inserts[0].attribs[0].value == "7");
+    engine.stop();
+    fs::remove(path);
+    fs::remove(dp);
+}
+
+TEST_CASE("XLIST says what an object inside a block reference is, and its properties") {
+    namespace fs = std::filesystem;
+    io::Document doc;
+    io::DocBlockDef b;
+    b.name = "PLATE";
+    b.lines.push_back(io::DocLine{{0, 0}, {10, 0}, {}});
+    doc.block_defs.push_back(b);
+    io::DocInsert ins;
+    ins.block_name = "PLATE";
+    ins.pos = {100, 100};
+    doc.inserts.push_back(ins);
+    const std::string dp = (fs::temp_directory_path() / "musacad_xlist.musa").string();
+    REQUIRE(io::save_native(doc, dp).ok);
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{dp});
+    NestedCopyCommand x{{105, 100}, 1.0, {}, 0};
+    x.list = true;
+    engine.submit(x);
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status == "Object: Line  Block name: PLATE  Layer: 0  Color: BYLAYER  Linetype: BYLAYER";
+    }));
+    const io::Document out = dump(engine, "musacad_xlist_out.musa");
+    REQUIRE(out.lines.empty()); // nothing copied
+    engine.stop();
+    fs::remove(dp);
+}
+
+TEST_CASE("VPSYNC asks for the master viewport, then the viewports to line up with it") {
+    H h;
+    h.run({"VPSYNC"});
+    REQUIRE(h.out.prompt == "Select master viewport: ");
+    h.run({"10,10"});
+    REQUIRE(h.out.prompt == "Select viewports to be aligned to master viewport: ");
+    h.proc.set_selection_count(2);
+    h.run({""});
+    REQUIRE(h.last<VpSyncCommand>() != nullptr);
+    REQUIRE(h.last<VpSyncCommand>()->master == Vec2{10, 10});
+}
+
+TEST_CASE("EXTRIM trims everything crossing a cutting edge on the side picked") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 10, 1});                // the cutting edge
+    engine.submit(AddLineCommand{{-20, 0}, {20, 0}, 1});           // crosses it twice
+    engine.submit(AddLineCommand{{0, -20}, {0, 5}, 1});            // crosses it once
+    engine.submit(AddLineCommand{{30, 30}, {40, 40}, 1});          // nowhere near
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(ExtrimCommand{{7.0710678, 7.0710678}, {0, 1}, 0.5, 2}); // the circle; inside goes
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "2 objects trimmed."; }));
+    const io::Document doc = dump(engine, "musacad_extrim.musa");
+    REQUIRE(doc.circles.size() == 1);
+    REQUIRE(doc.lines.size() == 4); // the long line in two, the short one cut back, the far one
+    for (const auto& l : doc.lines) {
+        const double mx = (l.a.x + l.b.x) * 0.5;
+        const double my = (l.a.y + l.b.y) * 0.5;
+        REQUIRE(std::hypot(mx, my) > 9.9); // nothing left inside
+    }
+    engine.stop();
+}
+
+TEST_CASE("EXTRIM asks for the cutting edge, then the side") {
+    H h;
+    h.run({"EXTRIM"});
+    REQUIRE(h.out.prompt == "Pick a POLYLINE, LINE, CIRCLE, ARC, ELLIPSE, IMAGE or TEXT for cutting edge..");
+    h.run({"10,0"});
+    REQUIRE(h.out.prompt == "Specify the side to trim on:");
+    h.run({"0,1"});
+    REQUIRE(h.last<ExtrimCommand>()->edge == Vec2{10, 0});
+    REQUIRE(h.last<ExtrimCommand>()->side == Vec2{0, 1});
 }

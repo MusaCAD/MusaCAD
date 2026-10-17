@@ -568,9 +568,21 @@ private:
     void reload_all_xrefs();
     /// Read `full_path` as block content named `name` into the block table (its own
     /// blocks as "name|block"); returns the index, or 0xFFFF with `err` set.
-    /// `src_insunits` (if given) receives the referenced drawing's INSUNITS.
+    /// `src_insunits` (if given) receives the referenced drawing's INSUNITS. `bind`
+    /// (INSERT of a file): its own blocks come by their names, and the ones this
+    /// drawing already has are kept as they are. The base point is its INSBASE.
     std::uint16_t load_xref_definition(const std::string& full_path, const std::string& name,
-                                       const std::string& xref_path, std::string& err, std::uint8_t* src_insunits = nullptr);
+                                       const std::string& xref_path, std::string& err, std::uint8_t* src_insunits = nullptr,
+                                       bool bind = false);
+    void apply_load_block_file(const LoadBlockFileCommand& c);
+    void apply_set_data_link(const SetDataLinkCommand& c);
+    void apply_dim_break(const DimBreakCommand& c);
+    void apply_attout(const AttOutCommand& c);
+    void apply_vpsync(const VpSyncCommand& c);
+    void apply_extrim(const ExtrimCommand& c);
+    void apply_attin(const AttInCommand& c);
+    void apply_insert_linked_table(const InsertLinkedTableCommand& c);
+    void apply_data_link_update(const DataLinkUpdateCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);
@@ -582,7 +594,9 @@ private:
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
     void apply_revcloud_reverse(std::uint64_t group);
-    void apply_explode(std::uint64_t group, bool burst = false);
+    /// With `ncopy`: NCOPY -- the selected reference left as it is, only the part nearest
+    /// `ncopy->pick` added, moved by `ncopy->offset`.
+    void apply_explode(std::uint64_t group, bool burst = false, const NestedCopyCommand* ncopy = nullptr);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
@@ -611,6 +625,9 @@ private:
 
     GeometryStore store_;
     NativeKernel2D kernel_;
+    std::vector<std::uint8_t> layer_used_; ///< per layer: holds an entity (set on each geometry rebuild)
+    std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
+    std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;
     MpscQueue<Command> queue_;
     TripleBuffer<RenderSnapshot> snapshots_;
@@ -692,7 +709,7 @@ private:
     // Active grip drag (direct manipulation). While armed, the dragged entity is
     // previewed on `grip_preview_store_` and published; the real store is untouched
     // until commit. Commit applies the edit as one undo group; cancel drops it.
-    void apply_grip_commit(std::uint64_t group);
+    void apply_grip_commit(std::uint64_t group, bool copy = false);
     // Edit a text entity's content in place (TEXT/MTEXT/QLEADER label), preserving
     // all other fields, as one undo group. Used by double-click + TEXTEDIT.
     void apply_text_edit(Vec2 at, double pick_radius, const std::string& content,

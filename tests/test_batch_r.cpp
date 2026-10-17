@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 //
-// Text styles drawn Backwards and Upside down (#62); TXTEXP (#77).
+// Text styles drawn Backwards and Upside down (#62); TXTEXP (#77); user-defined hatching (#41).
 
 #include <algorithm>
 #include <chrono>
@@ -13,8 +13,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "musacad/core/command.hpp"
+#include "musacad/core/dimension.hpp"
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
@@ -183,4 +185,110 @@ TEST_CASE("PEDIT Ltype gen: off, a polyline's dashes start again at every vertex
     doc.polylines[0].ltype_gen = true;
     REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
     REQUIRE(dxf.polylines.back().ltype_gen);
+}
+
+TEST_CASE("User-defined hatching: lines a spacing apart, crossed when double, through DXF as AutoCAD's type 0") {
+    const hatch::Pattern* one = hatch::builtin_pattern("_USER");
+    const hatch::Pattern* two = hatch::builtin_pattern("_USERDOUBLE");
+    REQUIRE(one != nullptr);
+    REQUIRE(two != nullptr);
+    REQUIRE(one->lines.size() == 1);
+    REQUIRE(two->lines.size() == 2);
+    const auto& names = hatch::builtin_pattern_names();
+    REQUIRE(std::find(names.begin(), names.end(), "_USER") == names.end()); // not offered by name
+
+    io::Document doc;
+    for (const char* name : {"_USER", "_USERDOUBLE", "ANSI31"}) {
+        io::DocHatch h;
+        h.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
+        h.pattern_name = name;
+        h.pattern_scale = 2.0;
+        h.pattern_angle = 0.5;
+        doc.hatches.push_back(h);
+    }
+    const std::string dxf = io::serialize_dxf(doc);
+    io::Document back;
+    REQUIRE(io::parse_dxf(dxf, back).ok);
+    REQUIRE(back.hatches.size() == 3);
+    REQUIRE(back.hatches[0].pattern_name == "_USER");
+    REQUIRE(back.hatches[1].pattern_name == "_USERDOUBLE");
+    REQUIRE(back.hatches[2].pattern_name == "ANSI31");
+    REQUIRE(back.hatches[1].pattern_scale == Catch::Approx(2.0));
+    REQUIRE(back.hatches[1].pattern_angle == Catch::Approx(0.5));
+}
+
+TEST_CASE("A layer's transparency reaches the drawn batches, the native file and DXF") {
+    GeometryEngine engine;
+    engine.start();
+    Layer glass;
+    glass.name = "Glass";
+    glass.transparency = 50;
+    engine.submit(AddLayerCommand{glass});
+    EntityProps on_glass;
+    on_glass.layer = 1;
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1, on_glass});
+    engine.submit(AddLineCommand{{0, 5}, {10, 5}, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_batches.size() >= 2; }));
+    const auto& batches = engine.snapshot().line_batches;
+    REQUIRE(std::any_of(batches.begin(), batches.end(), [](const ColorBatch& b) { return b.alpha == 128; }));
+    REQUIRE(std::any_of(batches.begin(), batches.end(), [](const ColorBatch& b) { return b.alpha == 255; }));
+    engine.stop();
+
+    io::Document doc;
+    doc.layers.push_back(glass);
+    io::Document native;
+    REQUIRE(io::parse_native(io::serialize_native(doc), native).ok);
+    REQUIRE(native.layers.back().transparency == 50);
+    io::Document dxf;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
+    const auto it = std::find_if(dxf.layers.begin(), dxf.layers.end(), [](const Layer& l) { return l.name == "Glass"; });
+    REQUIRE(it != dxf.layers.end());
+    REQUIRE(it->transparency == 50);
+}
+
+TEST_CASE("A dimension style's Tolerances: Symmetrical, Deviation, Limits and Basic, through the native file and DXF") {
+    DimData d;
+    d.type = DimType::Aligned;
+    d.a = {0, 0};
+    d.b = {50, 0};
+    d.line_pt = {25, 10};
+    DimStyle st;
+    st.precision = 2;
+    st.tol_upper = 0.1;
+    st.tol_lower = 0.05;
+    st.tol_method = 1;
+    REQUIRE(compose_dim_label(d, st, {}).line1 == "50.00 ±0.10");
+    st.tol_method = 2;
+    const DimLabel dev = compose_dim_label(d, st, {});
+    REQUIRE(dev.line1 == "50.00 +0.10");
+    REQUIRE(dev.line2 == "-0.05");
+    REQUIRE(dev.stack_at == 6);
+    st.tol_method = 3;
+    const DimLabel lim = compose_dim_label(d, st, {});
+    REQUIRE(lim.line1 == "50.10");
+    REQUIRE(lim.line2 == "49.95");
+    st.tol_method = 4;
+    REQUIRE(compose_dim_label(d, st, {}).boxed);
+    st.tol_precision = 3;
+    st.tol_method = 1;
+    REQUIRE(compose_dim_label(d, st, {}).line1 == "50.00 ±0.100");
+    d.tol.mode = TolMode::Reference; // the dimension's own wins
+    REQUIRE(compose_dim_label(d, st, {}).line1 == "(50.00)");
+
+    io::Document doc;
+    st.name = "Machined";
+    st.tol_method = 2;
+    doc.dimstyles.push_back(st);
+    io::Document native;
+    REQUIRE(io::parse_native(io::serialize_native(doc), native).ok);
+    REQUIRE(native.dimstyles.back().tol_method == 2);
+    REQUIRE(native.dimstyles.back().tol_precision == 3);
+    REQUIRE(native.dimstyles.back().tol_lower == Catch::Approx(0.05));
+    io::Document dxf;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dxf).ok);
+    const auto it = std::find_if(dxf.dimstyles.begin(), dxf.dimstyles.end(), [](const DimStyle& s) { return s.name == "Machined"; });
+    REQUIRE(it != dxf.dimstyles.end());
+    REQUIRE(it->tol_method == 2);
+    REQUIRE(it->tol_upper == Catch::Approx(0.1));
+    REQUIRE(it->tol_lower == Catch::Approx(0.05));
 }

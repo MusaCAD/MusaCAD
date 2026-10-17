@@ -40,6 +40,64 @@ void CommandRegistry::register_command(std::initializer_list<std::string_view> a
     }
 }
 
+bool CommandRegistry::add_alias(std::string_view alias, std::string_view command) {
+    const std::string key = upper(alias);
+    const auto it = table_.find(upper(command));
+    if (key.empty() || it == table_.end()) {
+        return false;
+    }
+    Factory factory = it->second; // copied before table_ can rehash
+    const CommandInfo meta = info_.at(upper(command));
+    table_[key] = std::move(factory);
+    info_[key] = meta;
+    const auto e = std::find_if(entries_.begin(), entries_.end(), [&](const CommandSuggestion& s) { return s.alias == key; });
+    if (e == entries_.end()) {
+        entries_.push_back(CommandSuggestion{key, meta.name, meta.description});
+    } else {
+        e->name = meta.name;
+        e->description = meta.description;
+    }
+    return true;
+}
+
+std::vector<std::pair<std::string, std::string>> parse_pgp(std::string_view text) {
+    std::vector<std::pair<std::string, std::string>> out;
+    const auto trim = [](std::string_view s) {
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) {
+            s.remove_prefix(1);
+        }
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())) != 0) {
+            s.remove_suffix(1);
+        }
+        return s;
+    };
+    while (!text.empty()) {
+        const std::size_t nl = text.find('\n');
+        std::string_view line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        if (const std::size_t semi = line.find(';'); semi != std::string_view::npos) {
+            line = line.substr(0, semi);
+        }
+        const std::size_t comma = line.find(',');
+        if (comma == std::string_view::npos) {
+            continue;
+        }
+        const std::string_view alias = trim(line.substr(0, comma));
+        std::string_view command = trim(line.substr(comma + 1));
+        if (alias.empty() || command.empty() || command.front() != '*') {
+            continue;
+        }
+        command = trim(command.substr(1));
+        if (const std::size_t end = command.find_first_of(" \t,"); end != std::string_view::npos) {
+            command = command.substr(0, end);
+        }
+        if (!command.empty() && alias.find_first_of(" \t") == std::string_view::npos) {
+            out.emplace_back(upper(alias), upper(command));
+        }
+    }
+    return out;
+}
+
 const CommandInfo* CommandRegistry::find(std::string_view alias) const {
     const auto it = info_.find(upper(alias));
     return it == info_.end() ? nullptr : &it->second;
@@ -52,6 +110,17 @@ std::unique_ptr<ICommand> CommandRegistry::create(std::string_view alias) const 
 
 bool CommandRegistry::contains(std::string_view alias) const {
     return table_.find(upper(alias)) != table_.end();
+}
+
+std::vector<CommandSuggestion> CommandRegistry::commands() const {
+    std::vector<CommandSuggestion> out;
+    for (const CommandSuggestion& e : entries_) {
+        if (!e.name.empty() && std::none_of(out.begin(), out.end(), [&](const CommandSuggestion& o) { return o.name == e.name; })) {
+            out.push_back(CommandSuggestion{e.name, e.name, e.description});
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const CommandSuggestion& a, const CommandSuggestion& b) { return a.name < b.name; });
+    return out;
 }
 
 std::vector<CommandSuggestion> CommandRegistry::suggest(std::string_view prefix) const {
@@ -181,6 +250,44 @@ CommandRegistry CommandRegistry::make_default() {
         "Change lines' ends, circles' radii, texts and blocks by a point, or their properties.");
     reg({"HATCHEDIT", "HE"}, [] { return std::make_unique<HatchEditUiCommand>(); }, "",
         "Edit a hatch: its pattern, scale and angle, or a new boundary round it.");
+    // The file commands, as AutoCAD names them; the window carries them out.
+    const auto file_cmd = [&](std::initializer_list<std::string_view> names, const char* action, const char* icon,
+                              const char* what) {
+        const std::string name(*names.begin());
+        const std::string act(action);
+        reg(names, [name, act] { return std::make_unique<WindowActionCommand>(name, act); }, icon, what);
+    };
+    file_cmd({"NEW"}, "NEW", "assets/ribbon/new.svg", "Start a new drawing.");
+    file_cmd({"OPEN"}, "OPEN", "assets/ribbon/open.svg", "Open a drawing.");
+    file_cmd({"QSAVE"}, "QSAVE", "assets/ribbon/save.svg", "Save the drawing under its name (Save As the first time).");
+    file_cmd({"SAVEAS", "SAVE"}, "SAVEAS", "assets/ribbon/saveas.svg", "Save the drawing under a name you choose.");
+    file_cmd({"CLOSE"}, "CLOSE", "", "Close the drawing in front.");
+    file_cmd({"ALIASEDIT"}, "ALIASEDIT", "assets/ribbon/settings.svg",
+             "Edit your command aliases: an alias of your own for any command, kept in your PGP file.");
+    file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
+    file_cmd({"CUI"}, "CUI", "assets/ribbon/settings.svg",
+             "Customize the user interface: keyboard shortcuts of your own for any command, and command aliases.");
+    file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
+             "Open the Tool Palettes: commands, hatches and the drawing's blocks a click away (Ctrl+3).");
+    file_cmd({"TOOLPALETTESCLOSE"}, "TOOLPALETTESCLOSE", "", "Close the Tool Palettes.");
+    reg({"UCSICON"}, [] { return std::make_unique<UcsIconCommand>(); }, "assets/ribbon/view.svg",
+        "Show or hide the UCS icon, at the origin or in the lower-left corner.");
+    reg({"WORKSPACE"}, [] { return std::make_unique<WorkspaceCommand>(); }, "",
+        "Make a workspace current, or save, rename, delete or list them.");
+    reg({"WSCURRENT"}, [] { return std::make_unique<WorkspaceCommand>(WorkspaceCommand::Mode::Current); }, "",
+        "The current workspace.");
+    reg({"WSSAVE"}, [] { return std::make_unique<WorkspaceCommand>(WorkspaceCommand::Mode::Save); }, "",
+        "Save the palettes, the ribbon and the Quick Access Toolbar as they are, as a workspace.");
+    file_cmd({"CLOSEALL"}, "CLOSEALL", "", "Close every open drawing.");
+    file_cmd({"QUIT", "EXIT"}, "QUIT", "", "Quit Musa CAD, asking to save what is not saved.");
+    file_cmd({"IMPORT", "IMP", "DXFIN"}, "IMPORT", "assets/ribbon/import.svg", "Bring a DXF file into the drawing.");
+    file_cmd({"EXPORT", "EXP", "DXFOUT"}, "EXPORT", "assets/ribbon/export.svg", "Write the drawing to a DXF file.");
+    reg({"EXPORTPDF"}, [] { return std::make_unique<WindowCommand>("EXPORTPDF", &ViewControl::export_pdf); },
+        "assets/ribbon/export.svg", "Save the layout in front, or the model, as a PDF file.");
+    reg({"PAGESETUP"}, [] { return std::make_unique<WindowCommand>("PAGESETUP", &ViewControl::page_setup_manager); },
+        "assets/ribbon/settings.svg", "Name, change and delete page setups, and choose the one PLOT starts from.");
+    reg({"PUBLISH"}, [] { return std::make_unique<WindowCommand>("PUBLISH", &ViewControl::publish); },
+        "assets/ribbon/plot.svg", "Plot the model and the layouts chosen into one PDF, a page each.");
     reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",
         "Show the plot as it will come out, with the last plot's settings.");
     reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
@@ -262,6 +369,20 @@ CommandRegistry CommandRegistry::make_default() {
         "The running object snaps as a bit sum (1 END, 2 MID, 4 CEN, 8 NOD, 16 QUA, 32 INT, ...).");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
         "Set the running object snaps from a list of modes.");
+    reg({"EXTRIM"}, [] { return std::make_unique<ExtrimUiCommand>(); }, "",
+        "Trim everything crossing a cutting edge on one side of it.");
+    reg({"VPSYNC"}, [] { return std::make_unique<VpSyncUiCommand>(); }, "",
+        "Line layout viewports up with a master viewport, at its scale.");
+    reg({"XLIST"}, [] { return std::make_unique<XListCommand>(); }, "",
+        "List an object nested in a block reference or xref: what it is, the block, its layer, colour and linetype.");
+    reg({"ATTOUT"}, [] { return std::make_unique<AttFileCommand>(false); }, "",
+        "Write the attribute values of block references to a tab-separated file, for a spreadsheet.");
+    reg({"ATTIN"}, [] { return std::make_unique<AttFileCommand>(true); }, "",
+        "Read attribute values back from a file ATTOUT wrote, and set them.");
+    reg({"MPEDIT"}, [] { return std::make_unique<PeditCommand>(true); }, "",
+        "Edit several polylines at once (PEDIT's Multiple).");
+    reg({"DIMREASSOC"}, [] { return std::make_unique<DimReassocCommand>(); }, "",
+        "Take the text overrides off dimensions so they show their measurements again.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
         "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
@@ -287,6 +408,54 @@ CommandRegistry CommandRegistry::make_default() {
         "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
     reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
         "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+    reg({"ISOPLANE"}, [] { return std::make_unique<IsoPlaneCommand>(false); }, "",
+        "The isometric plane: Left, Top or Right (F5 cycles them).");
+    reg({"ISODRAFT"}, [] { return std::make_unique<IsoPlaneCommand>(true); }, "",
+        "Isometric drafting on, in a plane (Left, Top, Right), or off (Orthographic).");
+    using CPK = CurrentPropCommand::Kind;
+    reg({"COL", "COLOR", "COLOUR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "COLOR", true); },
+        "assets/ribbon/color-swatch.svg", "The colour new objects take: the Select Color window.");
+    reg({"-COLOR", "-COL", "-COLOUR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "-COLOR", false); }, "",
+        "The colour new objects take, on the command line.");
+    reg({"CECOLOR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "CECOLOR", false); }, "",
+        "The colour new objects take: BYLAYER, a colour number or name.");
+    reg({"LW", "LWEIGHT", "LINEWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "LWEIGHT", true); },
+        "assets/ribbon/lwt.svg", "The lineweight new objects take, and whether lineweights show: Lineweight Settings.");
+    reg({"-LWEIGHT", "-LW"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "-LWEIGHT", false); }, "",
+        "The lineweight new objects take, on the command line.");
+    reg({"CELWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "CELWEIGHT", false); }, "",
+        "The lineweight new objects take: -1 ByLayer, -3 Default, or hundredths of a millimetre.");
+    reg({"LT", "LINETYPE", "LTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "LINETYPE", true); }, "",
+        "The Linetype Manager: the linetypes, the current one, and the linetype scales.");
+    reg({"-LINETYPE", "-LT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "-LINETYPE", false); }, "",
+        "Linetypes on the command line: ? lists them, Set makes one current.");
+    reg({"CELTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "CELTYPE", false); }, "",
+        "The linetype new objects take.");
+    reg({"LWDISPLAY"}, [] { return std::make_unique<LwDisplayCommand>(); }, "",
+        "Lineweights shown on screen or not (LWT on the status bar).");
+    reg({"REN", "RENAME"}, [] { return std::make_unique<RenameCommand>(false); }, "",
+        "Change the name of a block, dimension style, layer, text style, table style or view.");
+    reg({"-RENAME", "-REN"}, [] { return std::make_unique<RenameCommand>(true); }, "",
+        "Change the name of a named object, on the command line.");
+    reg({"NCOPY"}, [] { return std::make_unique<NcopyCommand>(); }, "",
+        "Copy objects out of a block reference, leaving the reference as it is.");
+    reg({"DX", "DATAEXTRACTION", "EATTEXT"}, [] { return std::make_unique<DataExtractionCommand>(); }, "",
+        "Count the block references by name and attribute values into a table or a CSV file.");
+    reg({"DBLIST"}, [] { return std::make_unique<DbListCommand>(); }, "", "List every object in the drawing.");
+    reg({"PLAN"}, [] { return std::make_unique<PlanCommand>(); }, "", "The drawing seen from above, its extents in view.");
+    reg({"DIMREGEN"}, [] { return std::make_unique<RegenCommand>(); }, "", "Redraw the dimensions (with the drawing).");
+    reg({"SETVAR", "SET"}, [] { return std::make_unique<SetVarCommand>(); }, "",
+        "Change a system variable by its name.");
+    reg({"NAVBAR"}, [] { return std::make_unique<NavBarCommand>(); }, "assets/ribbon/pan.svg",
+        "Show or hide the navigation bar: Pan and the Zoom tools at the drawing's right edge.");
+    reg({"DIMEX"}, [] { return std::make_unique<DimStyleFileCommand>(false); }, "",
+        "Write dimension styles to a file, for another drawing to take in with DIMIM.");
+    reg({"DIMIM"}, [] { return std::make_unique<DimStyleFileCommand>(true); }, "",
+        "Take in the dimension styles of a file DIMEX wrote.");
+    reg({"TFRAMES"}, [] { return std::make_unique<ToggleFramesUiCommand>(); }, "",
+        "Turn the frames of wipeouts and images off, or on again.");
+    reg({"UPDATEFIELD"}, [] { return std::make_unique<UpdateFieldCommand>(); }, "",
+        "Work out the fields in the selected objects again.");
     reg({"IMAGEFRAME"}, [] { return std::make_unique<ImageFrameCommand>(); }, "",
         "Image frames: hidden, shown and plotted, or shown on screen only.");
     reg({"XR", "XREF", "-XREF"}, [] { return std::make_unique<XrefCommand>(); }, "assets/ribbon/xref.svg",
@@ -314,7 +483,7 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"P", "PAN"}, [] { return std::make_unique<PanCommand>(false); }, "", "Move the view with a drag.");
     reg({"-P", "-PAN"}, [] { return std::make_unique<PanCommand>(true); }, "",
         "Move the view by a displacement: a base point and a second point.");
-    reg({"RE", "REGEN", "REA", "REGENALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
+    reg({"RE", "REGEN", "REA", "REGENALL", "R", "REDRAW", "RA", "REDRAWALL"}, [] { return std::make_unique<RegenCommand>(); }, "",
         "Rebuild and redraw the scene.");
     reg({"-ST", "-STYLE"}, [] { return std::make_unique<StyleCommand>(false); }, "",
         "Text styles at the command line: name, font, height, width factor and oblique angle.");
@@ -384,6 +553,16 @@ CommandRegistry CommandRegistry::make_default() {
         "Rollover and box preview highlighting: 0 off, 1 when no command is active, 2 when a command asks, 3 both.");
     reg({"SELECTIONCYCLING"}, [] { return std::make_unique<SelectionSettingCommand>("SELECTIONCYCLING"); }, "",
         "Overlapping objects under a pick: 2 offers the list (Ctrl+W toggles), 0 picks the nearest.");
+    reg({"TRANSPARENCYDISPLAY"}, [] { return std::make_unique<SelectionSettingCommand>("TRANSPARENCYDISPLAY"); }, "",
+        "Layer transparency on screen: 1 shown, 0 every object opaque (TPY on the status bar).");
+    reg({"GRIPS"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPS"); }, "",
+        "Grips on the selected objects: 1 shown, 0 none.");
+    reg({"GRIPSIZE"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPSIZE"); }, "",
+        "The size of a grip, in pixels from its centre to its edge (1 to 255).");
+    reg({"GRIPCOLOR"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPCOLOR"); }, "",
+        "The colour of the grips, an AutoCAD colour number (1 to 255).");
+    reg({"GRIPHOT"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPHOT"); }, "",
+        "The colour of a grip picked or under the cursor, an AutoCAD colour number (1 to 255).");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
         "Check the drawing for bad references and structure; optionally fix them.");
     reg({"FILL"}, [] { return std::make_unique<FillCommand>(false); }, "",
@@ -407,6 +586,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Make the selected dimensions inspection dimensions: a frame, a label and an inspection rate.");
     reg({"-DIMINSPECT"}, [] { return std::make_unique<DimInspectUiCommand>(false); }, "",
         "Add or remove inspection data on dimensions from the command line.");
+    reg({"DIMBREAK"}, [] { return std::make_unique<DimBreakUiCommand>(); }, "assets/ribbon/dim.svg",
+        "Break a dimension's lines where objects cross them, or take the breaks away.");
     reg({"DIMJOGLINE", "DJL"}, [] { return std::make_unique<DimJogLineCommand>(); }, "",
         "Add a jog to a linear or aligned dimension's line, or take one away.");
     reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },
@@ -433,8 +614,19 @@ CommandRegistry CommandRegistry::make_default() {
         "How points are drawn: 0 a dot, 1 nothing, 2 a plus, 3 a cross, 4 a tick; +32 in a circle, +64 in a square.");
     reg({"PDSIZE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Size); }, "",
         "The size of point markers: in drawing units, or 0 or less for a size on screen.");
-    reg({"PTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
+    reg({"PTYPE", "DDPTYPE"}, [] { return std::make_unique<PointDisplayCommand>(PointDisplayCommand::Var::Both); }, "",
         "The point display mode and size (PDMODE and PDSIZE).");
+    reg({"TEXTSIZE"}, [] { return std::make_unique<TextSizeCommand>(); }, "", "The height TEXT offers for new text.");
+    reg({"INSUNITSDEFSOURCE"}, [] { return std::make_unique<UnitsDefaultCommand>(false); }, "",
+        "The units a unitless drawing inserted or attached is taken to be in.");
+    reg({"INSUNITSDEFTARGET"}, [] { return std::make_unique<UnitsDefaultCommand>(true); }, "",
+        "The units this drawing is taken to be in, when it is unitless, for inserts and xrefs.");
+    file_cmd({"DATALINK", "DL"}, "DATALINK", "assets/ribbon/table.svg",
+             "Open the Data Link Manager: links from tables to CSV files of data.");
+    reg({"DATALINKUPDATE", "DLU"}, [] { return std::make_unique<DataLinkUpdateUiCommand>(); }, "assets/ribbon/table.svg",
+        "Read linked tables again from their files, or write them back.");
+    reg({"BASE"}, [] { return std::make_unique<BaseCommand>(); }, "",
+        "Set the drawing's insertion base point: where it sits when inserted into another drawing.");
     reg({"LIMITS"}, [] { return std::make_unique<LimitsCommand>(); }, "",
         "The drawing's limits, and whether points outside them are refused.");
     reg({"PO", "POINT"}, [] { return std::make_unique<PointCommand>(); },
@@ -472,7 +664,7 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/hatch.svg", "Fill an enclosed area with a pattern or solid color.");
 
     // --- Annotation (Phase 13) ---
-    reg({"DT", "TEXT"}, [] { return std::make_unique<TextCommand>(); }, "assets/ribbon/text.svg",
+    reg({"DT", "TEXT", "DTEXT"}, [] { return std::make_unique<TextCommand>(); }, "assets/ribbon/text.svg",
         "Create a single-line text object.");
     reg({"DLI", "DIMLINEAR"},
         [] { return std::make_unique<LinearDimensionCommand>(core::DimType::Linear, "DIMLINEAR"); },
@@ -591,7 +783,11 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/stretch.svg",
         "Move the parts of objects inside a crossing window, keeping the rest anchored.");
 
-    reg({"TB", "TABLE", "-TABLE"}, [] { return std::make_unique<TableCommand>(); },
+    reg({"-TABLE"}, [] { return std::make_unique<TableCommand>(false); }, "assets/ribbon/table.svg",
+        "Insert a table, asking its columns, rows and place on the command line.");
+    reg({"TABLEEDIT"}, [] { return std::make_unique<TableEditCommand>(); }, "assets/ribbon/table.svg",
+        "Edit the text of a table cell.");
+    reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(true); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");
 

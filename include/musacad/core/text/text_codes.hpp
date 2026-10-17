@@ -4,8 +4,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace musacad::core::text {
@@ -51,12 +53,33 @@ struct SubstitutedText {
 /// any text are replaced at layout time with the values the engine publishes before
 /// each rebuild (set_field_context); an unknown field shows as "####", as AutoCAD
 /// shows an invalid one. Expansion runs before the %% / \U+ codes.
+///
+/// AutoCAD's own form is read too: `%<\AcVar Name \f "format">%`. Date, CreateDate and
+/// SaveDate take a date format (M, MM, MMM, MMMM, d, dd, ddd, dddd, yy, yyyy, h, hh, H,
+/// HH, m, mm, s, ss, tt); Filename takes "%fn2" (the name), "%fn6" (with its path) or
+/// "%fn1" (the name without its extension); the text fields take %tc1 (UPPERCASE), %tc2
+/// (lowercase), %tc3 (First capital) and %tc4 (Title Case). Title, Subject, Author,
+/// Keywords, Comments, HyperlinkBase and CustomDP.<name> are the drawing's properties
+/// (DWGPROPS); one with no value shows "----", as AutoCAD shows it.
 struct FieldContext {
     std::string date;
     std::string time;
     std::string filename;
     std::string login;
+    std::int64_t now = 0;     ///< seconds since the epoch (a Date with a format)
+    std::int64_t created = 0; ///< CreateDate (0: not known)
+    std::int64_t saved = 0;   ///< SaveDate (0: not saved yet)
+    std::string path{};       ///< the drawing's file, with its folder
+    std::string title{};
+    std::string subject{};
+    std::string author{};
+    std::string keywords{};
+    std::string comments{};
+    std::string hyperlink_base{};
+    std::vector<std::pair<std::string, std::string>> custom{}; ///< CustomDP: name / value
 };
+/// A time (seconds since the epoch, local time) in AutoCAD's date format tokens.
+[[nodiscard]] std::string format_date(std::int64_t when, std::string_view format);
 void set_field_context(FieldContext ctx);
 [[nodiscard]] FieldContext field_context();
 /// The context for a drawing at `document_path` right now: today's date, the time to the

@@ -59,8 +59,11 @@ struct DimGeometry {
 /// tolerance mode is `Limits`. `boxed` requests the ASME Y14.5 basic-dimension frame.
 struct DimLabel {
     std::string line1;
-    std::string line2; ///< empty unless TolMode::Limits
+    std::string line2; ///< empty unless TolMode::Limits or Deviation
     bool boxed = false;
+    /// Deviation: where in line1 the +upper deviation starts -- line2 (the -lower one) stands
+    /// under it. npos for the other modes.
+    std::size_t stack_at = std::string::npos;
 };
 
 /// Builds a dimension's visible label from its MEASURED value plus its decoration.

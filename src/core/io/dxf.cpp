@@ -421,6 +421,10 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code_i("$PDMODE", doc.pdmode);
     code(s, 9, "$PDSIZE");
     code_d(s, 40, doc.pdsize);
+    code(s, 9, "$INSBASE");
+    code_d(s, 10, doc.insbase.x);
+    code_d(s, 20, doc.insbase.y);
+    code_d(s, 30, 0.0);
     code(s, 9, "$LIMMIN");
     code_d(s, 10, doc.limits_min.x);
     code_d(s, 20, doc.limits_min.y);
@@ -534,6 +538,13 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
             code(s, 1000, "");
             code(s, 1000, l.description);
         }
+        if (l.transparency != 0) {
+            // Where AutoCAD keeps a layer's transparency: AcCmTransparency XDATA, the alpha
+            // (0..255) flagged 0x02000000 "by alpha".
+            const long alpha = std::lround(255.0 * (100.0 - std::min<int>(l.transparency, 90)) / 100.0);
+            code(s, 1001, "AcCmTransparency");
+            code_i(s, 1071, 0x02000000L | alpha);
+        }
     }
     code(s, 0, "ENDTAB");
     // STYLE table (v26): Standard first, then the drawing's text styles -- name, font
@@ -598,23 +609,38 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_i(s, 275, ds.angular_unit);      // DIMAUNIT
         code_i(s, 276, ds.fraction_format);   // DIMFRAC
         code_i(s, 277, ds.linear_unit);       // DIMLUNIT
+        if (ds.tol_method != 0) {
+            // The Tolerances tab: DIMTOL / DIMLIM, the values, and a basic dimension's
+            // negative DIMGAP.
+            code_i(s, 71, ds.tol_method == 1 || ds.tol_method == 2 ? 1 : 0); // DIMTOL
+            code_i(s, 72, ds.tol_method == 3 ? 1 : 0);                      // DIMLIM
+            code_d(s, 47, ds.tol_upper);                                    // DIMTP
+            code_d(s, 48, ds.tol_method == 1 ? ds.tol_upper : ds.tol_lower); // DIMTM
+            if (ds.tol_method == 4) {
+                code_d(s, 147, -0.625); // DIMGAP < 0: the text boxed
+            }
+        }
+        if (ds.tol_precision >= 0) {
+            code_i(s, 272, ds.tol_precision); // DIMTDEC
+        }
     }
     code(s, 0, "ENDTAB");
     // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
     code(s, 0, "TABLE");
     code(s, 2, "BLOCK_RECORD");
     code_i(s, 70, static_cast<long>(doc.block_defs.size() + 2));
-    const auto block_record = [&](const std::string& name) {
+    const auto block_record = [&](const std::string& name, std::uint8_t units) {
         code(s, 0, "BLOCK_RECORD");
         emit_handle(s);
         code(s, 100, "AcDbSymbolTableRecord");
         code(s, 100, "AcDbBlockTableRecord");
         code(s, 2, name);
+        code_i(s, 70, units); // the block's insertion units
     };
-    block_record("*Model_Space");
-    block_record("*Paper_Space");
+    block_record("*Model_Space", 0);
+    block_record("*Paper_Space", 0);
     for (const DocBlockDef& b : doc.block_defs) {
-        block_record(b.name);
+        block_record(b.name, b.units);
     }
     code(s, 0, "ENDTAB");
     code(s, 0, "ENDSEC");
@@ -1069,9 +1095,26 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             }
         }
         code_i(s, 75, 0);  // hatch style = normal (odd parity)
-        code_i(s, 76, 1);  // pattern type = predefined
+        // User-defined (_USER, _USERDOUBLE here): AutoCAD's type 0 with its line families
+        // written out, as it has no file to look them up in.
+        const bool user = h.pattern_name == "_USER" || h.pattern_name == "_USERDOUBLE";
+        code_i(s, 76, user ? 0 : 1);  // pattern type = user-defined / predefined
         code_d(s, 52, to_degrees(h.pattern_angle));
         code_d(s, 41, h.pattern_scale);
+        if (user) {
+            const bool twice = h.pattern_name == "_USERDOUBLE";
+            code_i(s, 77, twice ? 1 : 0);
+            code_i(s, 78, twice ? 2 : 1);
+            for (int k = 0; k < (twice ? 2 : 1); ++k) {
+                const double a = h.pattern_angle + (k == 0 ? 0.0 : kPi * 0.5);
+                code_d(s, 53, to_degrees(a));
+                code_d(s, 43, h.pattern_origin.x);
+                code_d(s, 44, h.pattern_origin.y);
+                code_d(s, 45, -std::sin(a) * h.pattern_scale);
+                code_d(s, 46, std::cos(a) * h.pattern_scale);
+                code_i(s, 79, 0);
+            }
+        }
         code_i(s, 98, 1);  // one seed point = the pattern origin
         code_d(s, 10, h.pattern_origin.x);
         code_d(s, 20, h.pattern_origin.y);
@@ -1708,6 +1751,19 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         for (std::size_t k = 0; k < body.size(); ++k) {
             // AcAecLayerStandard XDATA: an empty string, then the description.
+            if (body[k].code == 1001 && body[k].value == "AcCmTransparency") {
+                for (std::size_t j = k + 1; j < body.size() && body[j].code != 1001; ++j) {
+                    if (body[j].code == 1071) {
+                        const long v = to_l(body[j].value);
+                        if ((v & 0x02000000L) != 0) { // by alpha
+                            const double alpha = static_cast<double>(v & 0xFF);
+                            l.transparency = static_cast<std::uint8_t>(
+                                std::clamp(std::lround(100.0 - alpha * 100.0 / 255.0), 0L, 90L));
+                        }
+                        break;
+                    }
+                }
+            }
             if (body[k].code == 1001 && body[k].value == "AcAecLayerStandard") {
                 int strings = 0;
                 for (std::size_t j = k + 1; j < body.size() && body[j].code != 1001; ++j) {
@@ -1815,6 +1871,16 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         ranged(170, 0, 1, [&](long x) { ds.alt = x != 0; });
         ranged(273, 1, 6, [&](long x) { ds.alt_unit = static_cast<std::uint8_t>(x); });
         ranged(171, 0, 8, [&](long x) { ds.alt_precision = static_cast<std::uint8_t>(x); });
+        // The Tolerances tab.
+        const double tp = find(body, 47) != nullptr ? to_d(*find(body, 47)) : 0.0;
+        const double tm = find(body, 48) != nullptr ? to_d(*find(body, 48)) : 0.0;
+        const bool dimlim = find(body, 72) != nullptr && to_l(*find(body, 72)) != 0;
+        const bool dimtol = find(body, 71) != nullptr && to_l(*find(body, 71)) != 0;
+        const bool basic = find(body, 147) != nullptr && to_d(*find(body, 147)) < 0.0;
+        ds.tol_method = static_cast<std::uint8_t>(dimlim ? 3 : dimtol ? (std::abs(tp - tm) < 1e-12 ? 1 : 2) : basic ? 4 : 0);
+        ds.tol_upper = tp;
+        ds.tol_lower = tm;
+        ranged(272, 0, 8, [&](long x) { ds.tol_precision = static_cast<std::int8_t>(x); });
         if (const std::string* v = find(body, 45); v != nullptr && to_d(*v) >= 0.0) {
             ds.round_off = to_d(*v);
         }
@@ -2174,6 +2240,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             h.props = props_of(body);
             if (const std::string* pn = find(body, 2)) {
                 h.pattern_name = *pn;
+            }
+            if (getd(body, 76, 1.0) == 0.0 || h.pattern_name == "_USER" || h.pattern_name == "_user") {
+                h.pattern_name = getd(body, 77, 0.0) != 0.0 ? "_USERDOUBLE" : "_USER"; // user-defined
             }
             h.pattern_scale = getd(body, 41, 1.0);
             h.pattern_angle = to_radians(getd(body, 52, 0.0));
@@ -2555,6 +2624,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     &block.attdefs, nullptr}; // hatches / images not held inside block definitions
     bool in_block = false;
     std::string current_dimstyle_name; // $DIMSTYLE
+    std::map<std::string, std::uint8_t> block_units; // BLOCK_RECORD 70, by block name
 
     while (i < n) {
         const Pair& p = pairs[i];
@@ -2604,6 +2674,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 doc.limits_on = to_l(q.value) != 0;
             } else if (var == "$FILLMODE" && q.code == 70) {
                 doc.fillmode = to_l(q.value) != 0;
+            } else if (var == "$INSBASE" && q.code == 10 && i + 2 < n && pairs[i + 2].code == 20) {
+                doc.insbase = Vec2{to_d(q.value), to_d(pairs[i + 2].value)};
+                i += 3;
+                continue;
             } else if ((var == "$LIMMIN" || var == "$LIMMAX") && q.code == 10 && i + 2 < n && pairs[i + 2].code == 20) {
                 (var == "$LIMMIN" ? doc.limits_min : doc.limits_max) = Vec2{to_d(q.value), to_d(pairs[i + 2].value)};
                 i += 3;
@@ -2653,6 +2727,24 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 t.center = {getd(body, 12), getd(body, 22)};
                 t.height = getd(body, 40, 0.0);
                 doc.vports.push_back(t);
+            }
+            continue;
+        }
+        if (section == "TABLES" && p.value == "BLOCK_RECORD") {
+            // A block's insertion units (70), matched to its definition by name below.
+            std::string name;
+            long units = 0;
+            ++i;
+            while (i < n && pairs[i].code != 0) {
+                if (pairs[i].code == 2) {
+                    name = pairs[i].value;
+                } else if (pairs[i].code == 70) {
+                    units = to_l(pairs[i].value);
+                }
+                ++i;
+            }
+            if (!name.empty() && units > 0 && units <= 24) {
+                block_units[name] = static_cast<std::uint8_t>(units);
             }
             continue;
         }
@@ -2839,6 +2931,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     for (std::size_t k = 0; k < doc.dimstyles.size(); ++k) {
         if (!current_dimstyle_name.empty() && doc.dimstyles[k].name == current_dimstyle_name) {
             doc.current_dimstyle = static_cast<std::uint16_t>(k);
+        }
+    }
+    for (DocBlockDef& b : doc.block_defs) {
+        if (const auto it = block_units.find(b.name); it != block_units.end()) {
+            b.units = it->second;
         }
     }
     std::string msg = "Imported " + std::to_string(doc.entity_count()) + " entities on " +

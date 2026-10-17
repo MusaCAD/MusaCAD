@@ -395,6 +395,60 @@ struct SetLimitsCommand {
     bool on = false;
     bool corners = true; ///< false: ON / OFF only, the corners kept
 };
+/// DIMBREAK: breaks in a dimension's lines where objects cross them. `mode` Auto: every
+/// object crossing; Object: the one at `object`; Manual: the stretch from `p1` to `p2`
+/// (taken onto the line nearest them); Remove: every break taken away. The dimension is
+/// the one at `pick`, or with `selection` (Multiple) every selected one. One undo step.
+struct DimBreakCommand {
+    enum class Mode : std::uint8_t { Auto, Object, Manual, Remove };
+    Mode mode = Mode::Auto;
+    bool selection = false;
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    Vec2 object{};
+    Vec2 p1{};
+    Vec2 p2{};
+    std::uint64_t group = 0;
+};
+/// EXTRIM (Express Tools): every object crossing the cutting edge at `edge` (a line, arc,
+/// circle, ellipse or polyline) trimmed away on the side `side` is on -- inside or outside
+/// a closed edge. One undo step.
+struct ExtrimCommand {
+    Vec2 edge{};
+    Vec2 side{};
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
+/// ATTOUT (Express Tools): the attribute values of the selected block references written to
+/// `path` as tab-separated text -- HANDLE, BLOCKNAME and a column per tag ("<>" where a
+/// block has no such tag) -- for a spreadsheet. ATTIN reads such a file back and sets the
+/// values in it, by handle (the handles hold while the drawing stays open), as one undo step.
+struct AttOutCommand {
+    std::string path;
+};
+struct AttInCommand {
+    std::string path;
+    std::uint64_t group = 0;
+};
+/// INSUNITSDEFSOURCE / INSUNITSDEFTARGET: the units taken for a unitless drawing inserted
+/// or attached (source), and for this drawing when it is unitless (target).
+struct SetUnitsDefaultsCommand {
+    std::uint8_t source = 4;
+    std::uint8_t target = 4;
+};
+/// BASE: the drawing's insertion base point (INSBASE).
+struct SetInsBaseCommand {
+    Vec2 base{};
+};
+/// INSERT of a drawing file: `path` read as the block `name` -- its model space, with
+/// its INSBASE as the base point; its own blocks come along by their names, the ones
+/// this drawing already has kept as they are. An existing `name` is only replaced
+/// when `redefine`.
+struct LoadBlockFileCommand {
+    std::string path;
+    std::string name;
+    bool redefine = false;
+};
 /// GROUP ?: list the groups with their descriptions and member counts.
 struct ListGroupsCommand {};
 /// PSLTSCALE / MSLTSCALE: whether linetypes in paper space (viewports) and in model
@@ -763,6 +817,8 @@ struct ListQueryCommand {
     double pick_radius = 0.0;
     /// LIST every selected object (the "Select objects:" form) instead of the one under `at`.
     bool selection = false;
+    /// DBLIST: every object in the drawing.
+    bool everything = false;
 };
 /// MEASUREGEOM (issue #63): `what` 0 Radius (an arc or circle under `at`), 1 Angle (two
 /// lines under `at` and `at2`, or one arc), 2 Quick (the object's own measurements).
@@ -1237,6 +1293,7 @@ struct AddDimensionCommand {
     std::uint8_t inspect = 0;     ///< DimData::inspect
     std::string inspect_label{};  ///< DIMINSPECT's label (raw)
     std::string inspect_rate{};   ///< and its inspection rate
+    std::vector<Vec2> breaks{};   ///< DIMBREAK's breaks (pairs; DimTextParts::breaks)
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1301,6 +1358,7 @@ struct GripDragCommand {
     std::uint32_t grip = 0;  ///< Begin: which grip index
     Vec2 pos;                ///< Move/Commit: resolved drag target
     std::uint64_t group = 0; ///< Commit: undo group id
+    bool copy = false;       ///< Commit: STRETCH's Copy -- the original stays, the stretched one is new
 };
 
 /// View scale (world units per pixel) for zoom-adaptive curve tessellation. Sent
@@ -1323,6 +1381,56 @@ struct BuildPlotSnapshotCommand {
 /// Marks the document dirty and republishes so the PLOT dialog sees it.
 struct AddPageSetupCommand {
     PageSetup setup;
+};
+/// DIMEX: the dimension styles matching `names` (* and ? wild cards; empty: all) written
+/// to the file at `path`, in Musa CAD's text format.
+struct ExportDimStylesCommand {
+    std::string path;
+    std::string names;
+};
+/// DIMIM: the dimension styles in the file at `path` added to the drawing; one whose name
+/// the drawing has already is kept, or replaced with `overwrite`.
+struct ImportDimStylesCommand {
+    std::string path;
+    bool overwrite = false;
+};
+/// NCOPY: the object inside the block reference at `pick` (one level down: a nested
+/// reference comes out whole) copied out into the drawing, moved by `offset`; the
+/// reference stays as it is. One undo step.
+struct NestedCopyCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    Vec2 offset{};
+    std::uint64_t group = 0;
+    bool list = false; ///< XLIST: the nested object's kind, block, layer, colour and linetype said, nothing copied
+};
+/// DATAEXTRACTION: the block references -- the selected ones, or every one with `all` --
+/// counted by name and attribute values (one row each, Count and Name then a column per
+/// attribute tag), written as CSV to `path` (when set) and placed as a table at `table_at`
+/// (when set). One undo step for the table.
+struct DataExtractCommand {
+    bool all = true;
+    std::string path{};
+    std::optional<Vec2> table_at{};
+    std::uint64_t group = 0;
+};
+/// RENAME: the named object `from` of `kind` called `to` (a block, a dimension style, a
+/// layer -- not 0 --, a text style or table style -- not Standard --, or a named view).
+struct RenameObjectCommand {
+    enum class Kind : std::uint8_t { Block, DimStyle, Layer, TextStyle, TableStyle, View };
+    Kind kind = Kind::Layer;
+    std::string from;
+    std::string to;
+};
+/// UPDATEFIELD: the fields in the selected texts, multiline texts, attributes and table
+/// cells counted and worked out again (each is, every time the drawing is drawn).
+struct UpdateFieldsCommand {};
+/// TFRAMES: the frames of wipeouts and images turned off together, or on together when
+/// the wipeout frames are off.
+struct ToggleFramesCommand {};
+/// The Page Setup Manager's Delete: the named page setup goes.
+struct RemovePageSetupCommand {
+    std::string name;
 };
 
 /// A quick leader: arrowhead at `tip`, line to `knee`, text label at `knee`.
@@ -1497,6 +1605,13 @@ struct CreateViewportCommand {
 };
 /// MVIEW ON / OFF / Scale / Center on the viewport under `pick`: fields left at their
 /// "keep" values (on = -1, scale = 0, no centre) are unchanged.
+/// VPSYNC (Express Tools): the selected layout viewports take the scale of the one at
+/// `master` and are panned so the model lines up across them. One undo step.
+struct VpSyncCommand {
+    Vec2 master{};
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
 struct SetViewportViewCommand {
     Vec2 pick{};
     double pick_radius = 0.0;
@@ -1661,6 +1776,32 @@ struct AddTableCommand {
     bool has_header = false;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::uint16_t link = 0xFFFF; ///< its data link (DATALINK), 0xFFFF: none
+};
+
+/// DATALINK: a data link `name` to the CSV file `path` made or changed; `remove` takes
+/// it away (the tables linked to it keep their contents, unlinked).
+struct SetDataLinkCommand {
+    std::string name;
+    std::string path;
+    bool remove = false;
+};
+/// A table from the data link `link`: the file's rows and columns, its top-left corner at
+/// `pos`, in the current table style; linked, so DATALINKUPDATE can read it again.
+struct InsertLinkedTableCommand {
+    std::string link;
+    Vec2 pos{};
+    std::uint64_t group = 0;
+    std::uint16_t style = 0xFFFF; ///< the table style; 0xFFFF: the current one
+};
+/// DATALINKUPDATE: the linked tables read again from their files (`write`: the tables
+/// written back to them). Which tables: the selection (`selection`), those linked to
+/// `link`, or every linked table (neither).
+struct DataLinkUpdateCommand {
+    bool write = false;
+    bool selection = false;
+    std::string link;
+    std::uint64_t group = 0;
 };
 
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
@@ -1906,11 +2047,20 @@ struct HatchBoundaryCommand {
 /// MLEADERALIGN: the selected multileaders' text (with its landing) moved onto the line
 /// through the text of the multileader at `base_pick`, toward `toward`; each keeps its place
 /// along the line, and the arrowheads stay where they are. One undo step.
+/// The Options: Spacing puts the content `spacing` apart along the line (between the
+/// extents of their text), Distribute spaces the content evenly between `from` and `to`
+/// (no multileader to align to), Parallel makes each last leader segment parallel to the
+/// one at `base_pick` (no direction).
 struct MLeaderAlignCommand {
+    enum class Mode : std::uint8_t { UseCurrent, Spacing, Distribute, Parallel };
     Vec2 base_pick{};
     double radius = 0.0;
     Vec2 toward{};
     std::uint64_t group = 0;
+    Mode mode = Mode::UseCurrent;
+    double spacing = 0.0;
+    Vec2 from{};
+    Vec2 to{};
 };
 /// -DWGUNITS: every model-space object (on any layer, locked or not) and the limits scaled
 /// by `factor` about the origin, one undo step -- the drawing taken to another unit.
@@ -1986,7 +2136,8 @@ struct LayerToolCommand {
 /// Plot sets whether they are plotted (`plot`); Description gives them `description`.
 struct LayerEditCommand {
     enum class Op : std::uint8_t {
-        List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight, Plot, Description
+        List, New, Make, Set, Rename, On, Off, Freeze, Thaw, Lock, Unlock, Color, Ltype, LWeight, Plot, Description,
+        Transparency
     };
     Op op = Op::List;
     std::string names;
@@ -1996,6 +2147,7 @@ struct LayerEditCommand {
     std::uint8_t lineweight = 25;
     bool plot = true;
     std::string description;
+    std::uint8_t transparency = 0; ///< TRansparency: percent, 0..90
 };
 /// Move every selected entity to layer `index` (one undo group).
 struct SetEntityLayerCommand {
@@ -2077,14 +2229,17 @@ using Command =
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
-                 BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
+                 BuildPlotSnapshotCommand, AddPageSetupCommand, RemovePageSetupCommand, ToggleFramesCommand, UpdateFieldsCommand, RenameObjectCommand, DataExtractCommand, NestedCopyCommand,
+                 ExportDimStylesCommand, ImportDimStylesCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand, PasteDocumentCommand,
                  PastePreviewCommand, TrimPathCommand, SetTrimEdgesCommand, TrimPreviewCommand, FilletPreviewCommand, DimArrangeCommand, SetDimLayerCommand, LayerToolCommand,
                  DimEditCommand, SetDimOverrideCommand, AddCenterMarkCommand,
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
-                 SetPointDisplayCommand, SetLimitsCommand,
+                 SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, DimBreakCommand,
+                 SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,

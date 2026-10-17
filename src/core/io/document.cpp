@@ -197,6 +197,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.limits_min = store.limits_min();
     doc.limits_max = store.limits_max();
     doc.limits_on = store.limits_on();
+    doc.insbase = store.insbase();
     doc.attdisp = store.attdisp();
     doc.image_frame = store.image_frame();
     doc.layouts = store.layouts();
@@ -321,6 +322,8 @@ Document document_from_store(const GeometryStore& store) {
                                       dd.aux, dd.text_angle, dd.arc_leader, dd.oblique, dd.jog,
                                       dd.inspect, std::string(store.dim_inspect_label(dd)),
                                       std::string(store.dim_inspect_rate(dd))});
+            const std::span<const Vec2> brk = store.dim_breaks(dd);
+            doc.dims.back().breaks.assign(brk.begin(), brk.end());
         }
     }
     const auto& leaders = store.leaders();
@@ -385,6 +388,7 @@ Document document_from_store(const GeometryStore& store) {
     for (const TableStyle& ts : store.table_styles()) {
         doc.table_styles.push_back(ts);
     }
+    doc.data_links = store.data_links();
     const auto& table_arena = store.tables();
     for (std::uint32_t i = 0; i < table_arena.slot_count(); ++i) {
         if (table_arena.alive(i)) {
@@ -398,6 +402,7 @@ Document document_from_store(const GeometryStore& store) {
             dt.rotation = t.rotation;
             dt.style = t.style;
             dt.props = t.props;
+            dt.link = t.link;
             const std::span<const double> cw = store.table_col_widths(t);
             const std::span<const double> rh = store.table_row_heights(t);
             dt.col_widths.assign(cw.begin(), cw.end());
@@ -430,6 +435,7 @@ Document document_from_store(const GeometryStore& store) {
         bd.name = b->name;
         bd.base = b->base;
         bd.xref_path = b->xref_path;
+        bd.units = b->units;
         for (const LineData& l : b->content.lines) {
             bd.lines.push_back(DocLine{l.a, l.b, l.props});
         }
@@ -488,6 +494,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_fillmode(doc.fillmode);
     store.set_point_display(doc.pdmode, doc.pdsize);
     store.set_limits(doc.limits_min, doc.limits_max, doc.limits_on);
+    store.set_insbase(doc.insbase);
     store.set_attdisp(doc.attdisp);
     store.set_image_frame(doc.image_frame);
     if (!doc.layouts.empty()) {
@@ -526,6 +533,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
             cb.name = bd.name;
             cb.base = bd.base;
             cb.xref_path = bd.xref_path;
+            cb.units = bd.units;
             for (const DocLine& l : bd.lines) {
                 cb.content.lines.push_back(LineData{l.a, l.b, l.props});
             }
@@ -609,6 +617,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         if (d.inspect != 0) {
             store.set_dim_inspect(dh, d.inspect, d.inspect_label, d.inspect_rate);
         }
+        if (!d.breaks.empty()) {
+            store.set_dim_breaks(dh, d.breaks);
+        }
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
@@ -654,6 +665,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_table_style_table(doc.table_styles);
     }
     store.set_current_table_style(doc.current_table_style);
+    store.set_data_links(doc.data_links);
     for (const DocTable& t : doc.tables) {
         std::vector<TableCell> cells;
         cells.reserve(t.cells.size());
@@ -667,7 +679,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
             cells.push_back(tc);
         }
         store.add_table(t.rows, t.cols, cells, t.col_widths, t.row_heights, t.pos, t.rotation,
-                        t.style, t.has_title, t.has_header, t.props);
+                        t.style, t.has_title, t.has_header, t.props,
+                        t.link < doc.data_links.size() ? t.link : std::uint16_t{0xFFFF});
     }
     for (const DocFcf& f : doc.fcfs) {
         store.add_fcf(f.cells, f.pos, f.rotation, f.style, f.props, f.overrides);

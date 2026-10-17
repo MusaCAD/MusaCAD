@@ -54,6 +54,14 @@ std::string first_token(const std::string& s) {
 
 } // namespace
 
+double CommandProcessor::text_size() const {
+    return TextCommand::text_size();
+}
+
+void CommandProcessor::set_text_size(double h) {
+    TextCommand::set_text_size(h);
+}
+
 CommandProcessor::CommandProcessor(CommandSink sink, ViewControl* view, CommandOutput& output)
     : sink_(std::move(sink)), view_(view), output_(output), registry_(CommandRegistry::make_default()) {
     show_ready();
@@ -452,7 +460,31 @@ core::Vec2 CommandProcessor::resolve_constraints(core::Vec2 world) const {
     // PolarSnap takes the snap grid's place while it is the snap type.
     TrackingSettings settings = tracking_;
     settings.polar_snap = grid_snap_ && polar_snap_type_;
-    if (grid_snap_ && grid_spacing_ > 0.0 && !settings.polar_snap) {
+    if (grid_snap_ && grid_spacing_ > 0.0 && !settings.polar_snap && grid_settings_.isometric) {
+        // Isometric snap: the lattice of points i*s*cos30, j*s/2 with i + j even (where
+        // the 30, 90 and 150 degree lines a vertical spacing `s` apart cross).
+        const double s = grid_spacing_y_ > 0.0 ? grid_spacing_y_ : grid_spacing_;
+        const double sx = s * std::sqrt(3.0) * 0.5;
+        const double sy = s * 0.5;
+        const auto i0 = static_cast<long long>(std::floor(p.x / sx));
+        core::Vec2 best = p;
+        double best_d2 = -1.0;
+        for (long long i = i0 - 1; i <= i0 + 2; ++i) {
+            const auto j0 = static_cast<long long>(std::round(p.y / sy));
+            for (long long j = j0 - 1; j <= j0 + 1; ++j) {
+                if (((i + j) % 2 + 2) % 2 != 0) {
+                    continue;
+                }
+                const core::Vec2 q{static_cast<double>(i) * sx, static_cast<double>(j) * sy};
+                const double d2 = core::length_squared(q - p);
+                if (best_d2 < 0.0 || d2 < best_d2) {
+                    best_d2 = d2;
+                    best = q;
+                }
+            }
+        }
+        p = best;
+    } else if (grid_snap_ && grid_spacing_ > 0.0 && !settings.polar_snap) {
         const double sy = grid_spacing_y_ > 0.0 ? grid_spacing_y_ : grid_spacing_;
         p.x = std::round(p.x / grid_spacing_) * grid_spacing_;
         p.y = std::round(p.y / sy) * sy;
@@ -471,6 +503,26 @@ core::Vec2 CommandProcessor::resolve_constraints(core::Vec2 world) const {
     }
     // TK moves along one axis at a time, whatever ORTHO says.
     const bool tracking = filter_.kind == PointFilter::Kind::Track && filter_.stage >= 1;
+    if (last_point_ && ortho && !tracking && grid_settings_.isometric) {
+        // ORTHO in isometric drafting: along whichever of the isoplane's two axes is
+        // nearer the cursor -- Left 90 and 150 degrees, Top 30 and 150, Right 90 and 30.
+        static constexpr double kAxes[3][2] = {{90.0, 150.0}, {30.0, 150.0}, {90.0, 30.0}};
+        const core::Vec2 d = p - *last_point_;
+        core::Vec2 best = *last_point_;
+        double best_d2 = -1.0;
+        for (const double deg : kAxes[std::min<int>(grid_settings_.isoplane, 2)]) {
+            const double a = core::to_radians(deg);
+            const core::Vec2 u{std::cos(a), std::sin(a)};
+            const core::Vec2 q = *last_point_ + u * core::dot(d, u);
+            const double d2 = core::length_squared(q - p);
+            if (best_d2 < 0.0 || d2 < best_d2) {
+                best_d2 = d2;
+                best = q;
+            }
+        }
+        tracked_.point = best;
+        return best;
+    }
     if (last_point_ && (ortho || tracking)) {
         const core::Vec2 d = p - *last_point_;
         const bool y_held = std::abs(d.x) >= std::abs(d.y); // running along x

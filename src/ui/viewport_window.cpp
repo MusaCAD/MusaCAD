@@ -58,6 +58,7 @@
 #include "musacad/render/frame_stats.hpp"
 #include "musacad/render/gl_backend.hpp"
 #include "musacad/render/viewport_renderer.hpp"
+#include "musacad/core/io/dxf.hpp"
 
 namespace musacad::ui {
 
@@ -197,6 +198,16 @@ std::tuple<core::Vec2, core::Vec2, bool> ViewportWindow::limits() {
     return {limits_min_, limits_max_, limits_on_};
 }
 
+core::Vec2 ViewportWindow::insbase() {
+    std::scoped_lock lock(layers_mutex_);
+    return insbase_;
+}
+
+std::vector<core::DataLink> ViewportWindow::data_links() {
+    std::scoped_lock lock(layers_mutex_);
+    return data_links_;
+}
+
 std::vector<core::TextStyle> ViewportWindow::text_styles() {
     std::scoped_lock lock(layers_mutex_);
     return text_styles_;
@@ -280,6 +291,13 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "HIGHLIGHT") return highlight_;
     if (name == "SELECTIONPREVIEW") return selectionpreview_;
     if (name == "SELECTIONCYCLING") return selectioncycling_;
+    if (name == "GRIPS") return grips_on_.load();
+    if (name == "GRIPSIZE") return gripsize_.load();
+    if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
+    if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
+    if (name == "TRANSPARENCYDISPLAY") return transparencydisplay_.load();
+    if (name == "UCSICON") return ucsicon_.load();
+    if (name == "LWDISPLAY") return lwdisplay_.load();
     return 0;
 }
 
@@ -301,6 +319,21 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         selectionpreview_ = value;
     } else if (name == "SELECTIONCYCLING" && in(-2, 2)) {
         selectioncycling_ = value;
+    } else if (name == "GRIPS" && in(0, 2)) {
+        grips_on_ = value;
+    } else if (name == "GRIPSIZE" && in(1, 255)) {
+        gripsize_ = value;
+    } else if (name == "GRIPCOLOR" && in(1, 255)) {
+        gripcolor_ = value;
+    } else if (name == "GRIPHOT" && in(1, 255)) {
+        griphot_ = value;
+    } else if (name == "TRANSPARENCYDISPLAY" && in(0, 1)) {
+        transparencydisplay_ = value;
+    } else if (name == "UCSICON" && in(0, 3)) {
+        ucsicon_ = value;
+    } else if (name == "LWDISPLAY" && in(0, 1)) {
+        lwdisplay_ = value;
+        engine_.submit(core::SetLineweightDisplayCommand{value != 0});
     } else {
         return false;
     }
@@ -349,6 +382,123 @@ bool ViewportWindow::plot_preview() {
         return false;
     }
     plot_preview_callback_();
+    return true;
+}
+
+bool ViewportWindow::export_pdf() {
+    if (!export_pdf_callback_) {
+        return false;
+    }
+    export_pdf_callback_();
+    return true;
+}
+
+bool ViewportWindow::publish() {
+    if (!publish_callback_) {
+        return false;
+    }
+    publish_callback_();
+    return true;
+}
+
+bool ViewportWindow::text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline) {
+    std::scoped_lock lock(grips_mutex_);
+    bool found = false;
+    double best = 0.0;
+    for (const core::TextEditTarget& t : text_targets_) {
+        if (world.x < t.min.x - pad || world.x > t.max.x + pad || world.y < t.min.y - pad ||
+            world.y > t.max.y + pad) {
+            continue;
+        }
+        const core::Vec2 c{(t.min.x + t.max.x) * 0.5, (t.min.y + t.max.y) * 0.5};
+        const double d2 = core::length_squared(world - c);
+        if (!found || d2 < best) {
+            found = true;
+            best = d2;
+            content = t.content;
+            multiline = t.multiline;
+        }
+    }
+    return found;
+}
+
+bool ViewportWindow::edit_text_at(core::Vec2 at) {
+    if (!text_edit_callback_) {
+        return false;
+    }
+    double scale = 1.0;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        scale = camera_.scale();
+    }
+    const double pad = pick_aperture(devicePixelRatio(), scale);
+    std::string content;
+    bool multiline = false;
+    if (!text_target_at(at, pad, content, multiline)) {
+        return false;
+    }
+    text_edit_callback_(TextEditRequest{at, pad, content, multiline});
+    return true;
+}
+
+bool ViewportWindow::edit_text_soon(core::Vec2 at) {
+    if (!text_edit_callback_) {
+        return false;
+    }
+    QTimer::singleShot(50, this, [this, at] { retry_edit_text(at, 1); });
+    return true;
+}
+
+void ViewportWindow::retry_edit_text(core::Vec2 at, int tries) {
+    // Tried every 50 ms for up to two seconds: the table appears once the engine has
+    // added it and the snapshot carries its cells.
+    if (edit_text_at(at) || tries >= 40) {
+        return;
+    }
+    QTimer::singleShot(50, this, [this, at, tries] { retry_edit_text(at, tries + 1); });
+}
+
+int ViewportWindow::select_color_dialog(bool& by_layer, core::Rgb& color) {
+    return color_dialog_callback_ ? color_dialog_callback_(by_layer, color) : -1;
+}
+
+int ViewportWindow::lineweight_dialog(bool& by_layer, std::uint8_t& lineweight) {
+    return lineweight_dialog_callback_ ? lineweight_dialog_callback_(by_layer, lineweight) : -1;
+}
+
+bool ViewportWindow::linetype_manager() {
+    if (!linetype_manager_callback_) {
+        return false;
+    }
+    linetype_manager_callback_();
+    return true;
+}
+
+int ViewportWindow::qleader_settings_dialog(command::QLeaderSettings& io) {
+    return qleader_settings_callback_ ? qleader_settings_callback_(io) : -1;
+}
+
+int ViewportWindow::insert_table_dialog(command::InsertTableSettings& io) {
+    return insert_table_callback_ ? insert_table_callback_(io) : -1;
+}
+
+bool ViewportWindow::window_action(const std::string& action) {
+    return window_action_callback_ && window_action_callback_(action);
+}
+
+bool ViewportWindow::set_navbar(bool on) {
+    if (!navbar_callback_) {
+        return false;
+    }
+    navbar_callback_(on);
+    return true;
+}
+
+bool ViewportWindow::page_setup_manager() {
+    if (!page_setup_callback_) {
+        return false;
+    }
+    page_setup_callback_();
     return true;
 }
 
@@ -616,6 +766,10 @@ std::string ViewportWindow::image_file_dialog() {
 
 std::string ViewportWindow::open_file_dialog(const std::string& filter) {
     return open_file_dialog_ ? open_file_dialog_(filter) : std::string();
+}
+
+std::string ViewportWindow::save_file_dialog(const std::string& filter, const std::string& suggested) {
+    return save_file_dialog_ ? save_file_dialog_(filter, suggested) : std::string();
 }
 
 void ViewportWindow::set_typed_text(std::string text) {
@@ -1501,8 +1655,12 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             limits_min_ = snap.limits_min;
             limits_max_ = snap.limits_max;
             limits_on_ = snap.limits_on;
+            insbase_ = snap.insbase;
+            data_links_ = snap.data_links;
+            layer_used_ = snap.layer_used;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
+            lwdisplay_ = snap.lineweight_display ? 1 : 0;
             dim_styles_ = snap.dimstyles;
             current_dim_style_ = snap.current_dimstyle;
             table_styles_ = snap.table_styles;
@@ -1591,6 +1749,20 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 static_cast<float>(scr->physicalDotsPerInch() / 25.4));
         }
         renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
+        {
+            const auto rgb_of = [](int aci) -> std::uint32_t {
+                if (aci <= 0) {
+                    return 0; // the theme's colour
+                }
+                const core::Rgb c = core::io::dxf_aci_to_rgb(aci);
+                const std::uint32_t v = (std::uint32_t{c.r} << 16) | (std::uint32_t{c.g} << 8) | c.b;
+                return v == 0 ? 1 : v; // black stays black, not "the theme's"
+            };
+            renderer.set_grip_style(grips_on_.load() == 0 ? 0.0 : static_cast<double>(gripsize_.load()),
+                                    rgb_of(gripcolor_.load()), rgb_of(griphot_.load()));
+            renderer.set_transparency_display(transparencydisplay_.load() != 0);
+            renderer.set_ucs_icon(ucsicon_.load(), snap.active_space != 0);
+        }
         // VPORTS: in model space with more than one tile, every tile draws through its own
         // camera (a tile never framed yet is fitted to the drawing first).
         std::vector<render::ViewportRenderer::TileView> tile_views;
@@ -1934,29 +2106,10 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
         scale = camera_.scale();
     }
     const double pad = pick_aperture(dpr, scale); // pick aperture in world units (DPR-aware)
-    bool found = false;
     std::string content;
     bool multiline = false;
-    {
-        std::scoped_lock lock(grips_mutex_);
-        double best = 0.0;
-        for (const core::TextEditTarget& t : text_targets_) {
-            if (world.x < t.min.x - pad || world.x > t.max.x + pad || world.y < t.min.y - pad ||
-                world.y > t.max.y + pad) {
-                continue;
-            }
-            const core::Vec2 c{(t.min.x + t.max.x) * 0.5, (t.min.y + t.max.y) * 0.5};
-            const double d2 = core::length_squared(world - c);
-            if (!found || d2 < best) {
-                found = true;
-                best = d2;
-                content = t.content;
-                multiline = t.multiline;
-            }
-        }
-    }
     // Open the editor OUTSIDE the lock (it runs a modal dialog).
-    if (found) {
+    if (text_target_at(world, pad, content, multiline)) {
         text_edit_callback_(TextEditRequest{world, pad, content, multiline});
         return;
     }
@@ -2357,6 +2510,9 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
 }
 
 int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
+    if (grips_on_.load() == 0) {
+        return -1; // GRIPS 0: none shown, none to grab
+    }
     std::scoped_lock lock(grips_mutex_);
     int best = -1;
     double best_d2 = radius_world * radius_world;
@@ -2555,6 +2711,35 @@ void ViewportWindow::rebuild_overlay() {
                 for (std::size_t i = 0; i < c.size(); ++i) {
                     append_bulge_segment(seg, c[i], c[(i + 1) % c.size()],
                                          i < bulges.size() ? bulges[i] : 0.0);
+                }
+                if (pv.mtext_attach >= 0) {
+                    // MTEXT: an arrow the way the text flows from where it hangs -- down from a
+                    // top justification, up from a bottom one, both ways from the middle.
+                    const double x0 = std::min(a.x, b.x);
+                    const double x1 = std::max(a.x, b.x);
+                    const double y0 = std::min(a.y, b.y);
+                    const double y1 = std::max(a.y, b.y);
+                    const double len = std::min(x1 - x0, y1 - y0) * 0.25;
+                    const double cx = (x0 + x1) * 0.5;
+                    const auto arrow = [&](double from_y, double to_y) {
+                        if (len <= 1e-9) {
+                            return;
+                        }
+                        const double dir = to_y < from_y ? -1.0 : 1.0;
+                        seg.push_back({cx, from_y});
+                        seg.push_back({cx, to_y});
+                        seg.push_back({cx, to_y});
+                        seg.push_back({cx - len * 0.3, to_y - dir * len * 0.4});
+                        seg.push_back({cx, to_y});
+                        seg.push_back({cx + len * 0.3, to_y - dir * len * 0.4});
+                    };
+                    const int row = pv.mtext_attach / 3;
+                    if (row != 2) {
+                        arrow(y0 + len * 1.2, y0 + len * 0.2); // down, at the foot
+                    }
+                    if (row != 0) {
+                        arrow(y1 - len * 1.2, y1 - len * 0.2); // up, at the head
+                    }
                 }
             }
             break;
@@ -2943,6 +3128,13 @@ void ViewportWindow::rebuild_overlay() {
             }
             break;
         }
+        case command::PreviewKind::Outline:
+            // An outline carried at the cursor (TABLE's grid at its insertion point).
+            for (std::size_t i = 0; i + 1 < pts.size(); i += 2) {
+                seg.push_back(cur + pts[i]);
+                seg.push_back(cur + pts[i + 1]);
+            }
+            break;
         case command::PreviewKind::None:
             break;
         }

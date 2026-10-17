@@ -178,6 +178,8 @@ struct DimData {
     double text_angle = 0.0;
     /// An arc-length dimension's Leader option (v39): a radial leader from the text to the arc.
     bool arc_leader = false;
+    std::uint16_t brk_count = 0;  ///< DIMBREAK: its breaks, pairs in the dim-break pool
+    std::uint32_t brk_offset = 0; ///< (in the padding after arc_leader: the size stays 240)
     /// DIMEDIT Oblique (v39, DXF 52): a linear or aligned dimension's extension lines at this
     /// angle (radians from the x axis) instead of square to the dimension line; 0 = square.
     double oblique = 0.0;
@@ -342,6 +344,7 @@ struct TableData {
     double rotation = 0.0;   ///< radians, CCW
     std::uint16_t style = 0; ///< index into the table-style table
     EntityProps props{};
+    std::uint16_t link = 0xFFFF; ///< index into the data-link table (DATALINK); 0xFFFF: none
 };
 
 /// A raster image DEFINITION, held in a table on the store parallel to the layer /
@@ -492,6 +495,9 @@ struct BlockDef {
     /// folder when inside it, else absolute); "" for an ordinary block. The content is
     /// the last read copy, re-read on open and on XREF Reload.
     std::string xref_path;
+    /// The block's units (an INSUNITS code; 0 unitless): an insert of it is scaled from
+    /// them to the drawing's, as AutoCAD's Block unit scales it.
+    std::uint8_t units = 0;
 };
 
 /// Structure-of-Arrays geometry storage. Each primitive kind lives in its own
@@ -586,6 +592,10 @@ public:
         limits_max_ = hi;
         limits_on_ = on;
     }
+    /// BASE: the drawing's insertion base point (INSBASE) -- where it sits on the cursor
+    /// when it is inserted into another drawing as a block or attached as an xref.
+    [[nodiscard]] Vec2 insbase() const noexcept { return insbase_; }
+    void set_insbase(Vec2 p) noexcept { insbase_ = p; }
     [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
     [[nodiscard]] std::uint8_t image_frame() const noexcept { return image_frame_; }
 
@@ -702,7 +712,7 @@ public:
                            const std::vector<double>& col_widths,
                            const std::vector<double>& row_heights, Vec2 pos, double rotation,
                            std::uint16_t style, bool has_title = false, bool has_header = false,
-                           EntityProps props = {});
+                           EntityProps props = {}, std::uint16_t link = 0xFFFF);
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {},
@@ -778,8 +788,16 @@ public:
         return {string_pool_.data() + d.inspect_rate_offset, d.inspect_rate_len};
     }
     [[nodiscard]] DimTextParts dim_text_parts(const DimData& d) const noexcept {
-        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d), dim_inspect_label(d), dim_inspect_rate(d)};
+        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d), dim_inspect_label(d), dim_inspect_rate(d),
+                            dim_breaks(d)};
     }
+    /// DIMBREAK: a dimension's breaks (pairs; see DimTextParts::breaks).
+    [[nodiscard]] std::span<const Vec2> dim_breaks(const DimData& d) const noexcept {
+        return d.brk_count == 0 ? std::span<const Vec2>{}
+                                : std::span<const Vec2>{dim_break_pool_.data() + d.brk_offset, d.brk_count};
+    }
+    /// Replaces a dimension's breaks (`pts` in pairs; empty: none).
+    bool set_dim_breaks(EntityHandle h, std::span<const Vec2> pts);
     /// Content of a paragraph-text block (MTEXT entity or QLEADER label).
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
     /// Leader-polyline vertices of an MLeader.
@@ -924,6 +942,12 @@ public:
     }
     /// The index of the style named `name` (any case), or 0xFFFF.
     [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
+    /// DATALINK: the drawing's data links (a link is never taken out from under a table:
+    /// removing one leaves its slot with an empty name, so table indices stay valid).
+    [[nodiscard]] const std::vector<DataLink>& data_links() const noexcept { return data_links_; }
+    void set_data_links(std::vector<DataLink> links) { data_links_ = std::move(links); }
+    /// The index of the link named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t data_link_index(std::string_view name) const noexcept;
 
     /// A table's cells / column widths / row heights, as spans into the shared pools.
     [[nodiscard]] std::span<const TableCell> table_cells(const TableData& t) const noexcept;
@@ -1036,6 +1060,44 @@ public:
         }
         text_styles_.push_back(ts);
         return static_cast<std::uint16_t>(text_styles_.size() - 1);
+    }
+    /// RENAME: the block, text style or named view called `from` takes the name `to`; false
+    /// when there is none by that name, `to` is taken, or it is the Standard text style.
+    bool rename_block(std::string_view from, std::string_view to) {
+        BlockDef* hit = nullptr;
+        for (BlockDef& b : blocks_) {
+            if (b.name == to) {
+                return false;
+            }
+            hit = b.name == from ? &b : hit;
+        }
+        if (hit == nullptr) {
+            return false;
+        }
+        hit->name = std::string(to);
+        return true;
+    }
+    bool rename_text_style(std::string_view from, std::string_view to) {
+        const std::uint16_t i = text_style_index(from);
+        if (i == 0 || i == 0xFFFF || text_style_index(to) != 0xFFFF) {
+            return false;
+        }
+        text_styles_[i].name = std::string(to);
+        return true;
+    }
+    bool rename_named_view(std::string_view from, std::string_view to) {
+        NamedView* hit = nullptr;
+        for (NamedView& v : named_views_) {
+            if (v.name == to) {
+                return false;
+            }
+            hit = v.name == from ? &v : hit;
+        }
+        if (hit == nullptr) {
+            return false;
+        }
+        hit->name = std::string(to);
+        return true;
     }
     [[nodiscard]] std::uint16_t text_style_index(std::string_view name) const noexcept {
         for (std::size_t i = 0; i < text_styles_.size(); ++i) {
@@ -1195,6 +1257,11 @@ public:
         }
         page_setups_.push_back(setup);
     }
+    /// PAGESETUP's Delete; false if there is no setup by that name.
+    bool remove_page_setup(std::string_view name) {
+        const auto n = std::erase_if(page_setups_, [&](const PageSetup& p) { return p.name == name; });
+        return n > 0;
+    }
 
     /// Adds a layer, or returns the existing index if the name is already taken
     /// (layer names are unique, AutoCAD-style).
@@ -1246,11 +1313,13 @@ private:
     std::vector<double> table_size_pool_;     ///< column widths then row heights
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
     std::uint16_t current_table_style_ = 0;
+    std::vector<DataLink> data_links_; // DATALINK
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool
 
     std::vector<Vec2> polyline_pool_;
+    std::vector<Vec2> dim_break_pool_; // DIMBREAK
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<double> width_pool_; // polyline widths, two per vertex
     std::vector<Vec2> spline_pool_;
@@ -1286,6 +1355,7 @@ private:
     Vec2 limits_min_{0.0, 0.0};
     Vec2 limits_max_{420.0, 297.0}; // an A3 sheet: AutoCAD's metric template
     bool limits_on_ = false;
+    Vec2 insbase_{0.0, 0.0}; // INSBASE
     std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
     std::uint8_t image_frame_ = 1; ///< IMAGEFRAME: 0 hidden, 1 shown and plotted, 2 shown only
     std::vector<Layout> layouts_{Layout{1, "Layout1", {}}, Layout{2, "Layout2", {}}};

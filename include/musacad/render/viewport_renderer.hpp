@@ -102,6 +102,25 @@ public:
         }
     }
 
+    /// UCSICON: 0 not drawn; bit 1 drawn; bit 2 at the origin when it is on screen, in the
+    /// lower-left corner otherwise. `paper`: the paper-space triangle. Off until set, so the
+    /// renderer's own tests and harnesses draw only what they ask for.
+    void set_ucs_icon(int mode, bool paper) {
+        ucs_icon_ = mode;
+        ucs_paper_ = paper;
+    }
+
+    /// TRANSPARENCYDISPLAY / TPY: layer transparency drawn (on) or every batch opaque.
+    void set_transparency_display(bool on) { transparency_display_ = on; }
+
+    /// The grips (GRIPS, GRIPSIZE, GRIPCOLOR, GRIPHOT): their half size in logical pixels
+    /// (0: not drawn) and their colours, packed 0xRRGGBB (0: the theme's).
+    void set_grip_style(double half_px, std::uint32_t normal_rgb, std::uint32_t hot_rgb) {
+        grip_half_px_ = half_px;
+        grip_rgb_ = normal_rgb;
+        hot_grip_rgb_ = hot_rgb;
+    }
+
     /// Transient interaction overlay (preview, selection rect, ghost), composed
     /// on the UI thread and handed in each frame.
     /// The overlay is shared, immutable, and referenced -- not copied -- per frame.
@@ -117,6 +136,7 @@ private:
     /// `vh` pixels through `camera`; the cursor-bound surfaces only when `overlays`.
     void render_view(const core::RenderSnapshot& snapshot, const Camera2D& camera, int vw, int vh,
                      bool overlays);
+    void draw_ucs_icon(GpuCommandBuffer& cmd, int width, int height, const Camera2D& camera);
     void draw_tile_borders(GpuCommandBuffer& cmd, int width, int height,
                            const std::vector<TileView>& tiles);
     void draw_overlay(GpuCommandBuffer& cmd, int width, int height);
@@ -160,6 +180,15 @@ private:
     core::GridSettings grid_settings_{};
     float device_px_per_mm_ = 96.0f / 25.4f; // ~3.78 px/mm @ 96 DPI (AutoCAD default)
     float device_pixel_ratio_ = 1.0f;        // Qt devicePixelRatio (HiDPI scaling)
+    double grip_half_px_ = 5.0;              // GRIPSIZE; 0 = GRIPS off
+    bool transparency_display_ = true;       // TRANSPARENCYDISPLAY
+    int ucs_icon_ = 0;                       // UCSICON (bits: 1 on, 2 at the origin)
+    bool ucs_paper_ = false;
+    [[nodiscard]] float batch_alpha(const core::ColorBatch& b) const noexcept {
+        return transparency_display_ ? static_cast<float>(b.alpha) / 255.0f : 1.0f;
+    }
+    std::uint32_t grip_rgb_ = 0;             // GRIPCOLOR as 0xRRGGBB, 0 = the theme's
+    std::uint32_t hot_grip_rgb_ = 0;         // GRIPHOT
     std::shared_ptr<const RenderOverlay> overlay_ptr_;
     [[nodiscard]] const RenderOverlay& overlay() const {
         static const RenderOverlay kEmpty{};

@@ -223,6 +223,13 @@ public:
         pdsize_ = size;
     }
     void set_limits(core::Vec2 lo, core::Vec2 hi, bool on) { limits_ = Limits{lo, hi, on}; }
+    void set_insbase(core::Vec2 p) { insbase_ = p; }
+    void set_data_link_names(std::vector<std::string> names) { data_link_names_ = std::move(names); }
+    [[nodiscard]] std::vector<std::string> data_link_names() const override { return data_link_names_; }
+    /// TEXTSIZE: the height TEXT offers (Annotate's text-height field).
+    [[nodiscard]] double text_size() const;
+    void set_text_size(double h);
+    [[nodiscard]] core::Vec2 insbase() const override { return insbase_; }
     [[nodiscard]] std::uint8_t pdmode() const override { return pdmode_; }
     [[nodiscard]] double pdsize() const override { return pdsize_; }
     [[nodiscard]] Limits limits() const override { return limits_; }
@@ -275,6 +282,8 @@ public:
     }
     [[nodiscard]] std::vector<core::TableStyle> table_styles() const override { return table_styles_; }
     [[nodiscard]] std::uint16_t current_table_style() const override { return current_table_style_; }
+    void set_current_props(const core::EntityProps& p) { current_props_ = p; }
+    [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
     void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
     [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const override { return purge_; }
@@ -452,6 +461,7 @@ private:
     std::uint16_t current_dim_style_ = 0;
     std::vector<core::TableStyle> table_styles_;
     std::uint16_t current_table_style_ = 0;
+    core::EntityProps current_props_{};
     std::vector<std::string> block_names_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;
@@ -488,6 +498,8 @@ private:
     std::uint8_t pdmode_ = 0;
     double pdsize_ = 0.0;
     Limits limits_{};
+    core::Vec2 insbase_{};
+    std::vector<std::string> data_link_names_;
     double pick_radius_ = 0.0;
     int selection_count_ = 0;
     std::uint32_t selection_kinds_ = ~0u; ///< bit per EntityKind; all bits: not known

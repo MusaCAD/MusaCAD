@@ -8,6 +8,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <sstream>
 #include <optional>
 #include <string>
@@ -2706,7 +2707,9 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (up == "U" || up == "USER DEFINED" || up == "USER") {
-            ctx.echo("User-defined patterns are not available yet.");
+            mode_ = Mode::UserAngle;
+            ctx.set_prompt("Specify angle for crosshatch lines <" + std::to_string(std::lround(core::to_degrees(angle_))) +
+                           ">: ");
             return;
         }
         if (up == "G" || up == "GRADIENT") {
@@ -2758,6 +2761,42 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         main_prompt(ctx);
         return;
     }
+    case Mode::UserAngle:
+    case Mode::UserSpacing: {
+        // User defined: parallel lines at an angle, a spacing apart (the pattern's scale),
+        // crossed at right angles when doubled.
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || (mode_ == Mode::UserSpacing && v <= 1e-9)) {
+                ctx.echo(mode_ == Mode::UserSpacing ? "Requires a positive spacing." : "Requires an angle in degrees.");
+                return;
+            }
+            if (mode_ == Mode::UserAngle) {
+                angle_ = core::to_radians(v);
+            } else {
+                scale_ = v;
+            }
+        }
+        if (mode_ == Mode::UserAngle) {
+            mode_ = Mode::UserSpacing;
+            ctx.set_prompt("Specify spacing between the lines <" + fmt4(scale_) + ">: ");
+            return;
+        }
+        mode_ = Mode::UserDouble;
+        ctx.set_prompt(std::string("Double hatch area? [Yes/No] <") + (pattern_ == "_USERDOUBLE" ? "Y" : "N") + ">: ");
+        return;
+    }
+    case Mode::UserDouble:
+        if (up == "Y" || up == "YES") {
+            pattern_ = "_USERDOUBLE";
+        } else if (up == "N" || up == "NO" || (t.empty() && pattern_ != "_USERDOUBLE")) {
+            pattern_ = "_USER";
+        } else if (!t.empty()) {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        main_prompt(ctx);
+        return;
     case Mode::GradientColor:
         // The second colour as r,g,b; Enter keeps the current one. The first colour is
         // the entity colour (ByLayer resolves through the layer), as AutoCAD's
@@ -4503,7 +4542,74 @@ void EllipseCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Start;
     arc_ = false;
-    ctx.set_prompt("Specify axis endpoint of ellipse or [Arc/Center]: ");
+    // Isocircle is offered while isometric drafting is on, as AutoCAD offers it.
+    ctx.set_prompt(ctx.grid_settings().isometric ? "Specify axis endpoint of ellipse or [Arc/Center/Isocircle]: "
+                                                 : "Specify axis endpoint of ellipse or [Arc/Center]: ");
+}
+
+void EllipseCommand::commit_isocircle(CommandContext& ctx, double r) {
+    if (r <= 1e-12) {
+        ctx.echo("Requires a radius greater than zero.");
+        return;
+    }
+    // Left: axes 90 and 150, the long axis square to 30 (at 120); Top: 30 and 150, long axis
+    // horizontal; Right: 90 and 30, long axis at 60.
+    static constexpr double kMajorDeg[3] = {120.0, 0.0, 60.0};
+    const double a = core::to_radians(kMajorDeg[std::min<int>(ctx.grid_settings().isoplane, 2)]);
+    const double major = r * std::sqrt(1.5);
+    core::AddEllipseCommand e;
+    e.center = iso_center_;
+    e.major = core::Vec2{std::cos(a), std::sin(a)} * major;
+    e.ratio = 1.0 / std::sqrt(3.0); // sqrt(1/2) / sqrt(3/2)
+    e.group = ctx.group_id();
+    ctx.set_preview({});
+    ctx.submit(std::move(e));
+    done_ = true;
+}
+
+void IsoPlaneCommand::start(CommandContext& ctx) {
+    static constexpr const char* kNames[3] = {"Left", "Top", "Right"};
+    const core::GridSettings g = ctx.grid_settings();
+    const int cur = std::min<int>(g.isoplane, 2);
+    if (draft_) {
+        ctx.set_prompt(std::string("Enter isometric drafting option [Orthographic/isoplane Left/isoplane Top/isoplane Right] <") +
+                       (g.isometric ? "Orthographic" : kNames[cur]) + ">: ");
+    } else {
+        ctx.set_prompt(std::string("Enter isometric plane setting [Left/Top/Right] <") + kNames[(cur + 1) % 3] + ">: ");
+    }
+}
+
+void IsoPlaneCommand::input(CommandContext& ctx, const std::string& text) {
+    static constexpr const char* kNames[3] = {"Left", "Top", "Right"};
+    const std::string u = upper(trimmed(text));
+    core::GridSettings g = ctx.grid_settings();
+    const int cur = std::min<int>(g.isoplane, 2);
+    int plane = -1;
+    if (u == "L" || u == "LEFT" || u == "ISOPLANE LEFT") {
+        plane = 0;
+    } else if (u == "T" || u == "TOP" || u == "ISOPLANE TOP") {
+        plane = 1;
+    } else if (u == "R" || u == "RIGHT" || u == "ISOPLANE RIGHT") {
+        plane = 2;
+    } else if ((draft_ && (u == "O" || u == "ORTHOGRAPHIC")) || (draft_ && u.empty() && g.isometric)) {
+        g.isometric = false;
+        ctx.set_grid_settings(g);
+        ctx.echo("Isometric drafting off.");
+        done_ = true;
+        return;
+    } else if (u.empty()) {
+        plane = draft_ ? cur : (cur + 1) % 3;
+    } else {
+        ctx.echo("Invalid option keyword.");
+        return;
+    }
+    g.isoplane = static_cast<std::uint8_t>(plane);
+    if (draft_) {
+        g.isometric = true;
+    }
+    ctx.set_grid_settings(g);
+    ctx.echo(std::string("Current isoplane: ") + kNames[plane]);
+    done_ = true;
 }
 
 void EllipseCommand::cancel(CommandContext& ctx) {
@@ -4649,6 +4755,15 @@ void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
                                 : "Specify center of ellipse: ");
             return;
         }
+        if ((u == "I" || u == "ISOCIRCLE") && !arc_) {
+            if (!ctx.grid_settings().isometric) {
+                ctx.echo("Isocircle needs isometric drafting: ISODRAFT, or SNAP Style Isometric.");
+                return;
+            }
+            state_ = State::IsoCenter;
+            ctx.set_prompt("Specify center of isocircle: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             axis_a_ = *p;
             ctx.set_last_point(*p);
@@ -4657,6 +4772,33 @@ void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt("Specify other endpoint of axis: ");
         }
         return;
+    case State::IsoCenter:
+        if (const auto p = read_point(ctx, text)) {
+            iso_center_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::IsoRadius;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify radius of isocircle or [Diameter]: ");
+        }
+        return;
+    case State::IsoRadius:
+    case State::IsoDiameter: {
+        if (state_ == State::IsoRadius && (u == "D" || u == "DIAMETER")) {
+            state_ = State::IsoDiameter;
+            ctx.set_prompt("Specify diameter of isocircle: ");
+            return;
+        }
+        double v = 0.0;
+        if (parse_number(t, v)) {
+            commit_isocircle(ctx, state_ == State::IsoDiameter ? v * 0.5 : v);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            const double d = core::distance(*p, iso_center_);
+            commit_isocircle(ctx, state_ == State::IsoDiameter ? d * 0.5 : d);
+        }
+        return;
+    }
     case State::Center:
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
@@ -5829,6 +5971,21 @@ void WipeoutCommand::input(CommandContext& ctx, const std::string& text) {
 void FieldCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Name;
+    if (ctx.view() != nullptr) {
+        // The Field window, as AutoCAD opens; the command line only where there is none.
+        std::string code;
+        const int r = ctx.view()->field_dialog(code);
+        if (r == 0 || (r == 1 && code.empty())) {
+            done_ = true;
+            return;
+        }
+        if (r == 1) {
+            code_ = code;
+            state_ = State::Point;
+            ctx.set_prompt("Specify start point: ");
+            return;
+        }
+    }
     ctx.set_prompt("Enter field name [Date/Time/Filename/Login]: ");
 }
 
@@ -5934,6 +6091,10 @@ void PeditCommand::prompt_vertex(CommandContext& ctx) const {
 void PeditCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     state_ = State::Select;
+    if (mpedit_) {
+        input(ctx, "M"); // MPEDIT: Multiple from the start
+        return;
+    }
     ctx.set_prompt("Select polyline or [Multiple]: ");
 }
 
@@ -6321,6 +6482,27 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.echo("A block name is required.");
             return;
         }
+        if (const bool pick = t == "~"; pick || u.ends_with(".MUSA") || u.ends_with(".DXF") ||
+                                        t.find_first_of("/\\") != std::string::npos) {
+            // A drawing: read in as a block named after the file.
+            file_ = pick && ctx.view() != nullptr
+                        ? ctx.view()->open_file_dialog("Drawings (*.musa *.dxf);;All files (*)")
+                        : (pick ? std::string() : t);
+            if (file_.empty()) {
+                return; // nothing chosen: the name is asked again
+            }
+            name_ = std::filesystem::path(file_).stem().string();
+            const std::vector<std::string> names = ctx.block_names();
+            if (std::find(names.begin(), names.end(), name_) != names.end()) {
+                state_ = State::Redefine;
+                ctx.set_prompt("Block \"" + name_ + "\" already exists. Redefine it? [Yes/No] <N>: ");
+                return;
+            }
+            ctx.submit(core::LoadBlockFileCommand{file_, name_, false});
+            state_ = State::Point;
+            ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+            return;
+        }
         name_ = t.empty() ? s_last_ : t;
         {
             bool known = false;
@@ -6332,6 +6514,15 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
         }
+        state_ = State::Point;
+        ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+        return;
+    case State::Redefine:
+        if (!u.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        ctx.submit(core::LoadBlockFileCommand{file_, name_, u == "Y" || u == "YES"});
         state_ = State::Point;
         ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
         return;
@@ -6831,6 +7022,1105 @@ void ImageClipCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
     }
+}
+
+namespace {
+constexpr const char* kAciNames[8] = {"", "RED", "YELLOW", "GREEN", "CYAN", "BLUE", "MAGENTA", "WHITE"};
+constexpr const char* kLinetypeNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
+constexpr const char* kLinetypeDescriptions[4] = {"Solid line", "Dashed __ __ __ __", "Center ____ _ ____ _",
+                                                  "Hidden __ __ __ __ (shorter)"};
+/// A colour as AutoCAD names it: BYLAYER, a colour name for 1..7, else r,g,b.
+std::string color_text(const core::EntityProps& p) {
+    if (p.color_by_layer()) {
+        return "BYLAYER";
+    }
+    for (long i = 1; i <= 7; ++i) {
+        if (core::io::dxf_aci_to_rgb(i) == p.color) {
+            return kAciNames[i];
+        }
+    }
+    return std::to_string(p.color.r) + "," + std::to_string(p.color.g) + "," + std::to_string(p.color.b);
+}
+std::string lineweight_text(const core::EntityProps& p) {
+    if (p.lineweight_by_layer()) {
+        return "BYLAYER";
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.2f mm", p.lineweight / 100.0);
+    return buf;
+}
+/// AutoCAD's lineweights (1/100 mm): a typed one goes to the nearest of them.
+constexpr int kStdLineweights[] = {0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211};
+int nearest_lineweight(double hundredths) {
+    int best = 0;
+    for (const int w : kStdLineweights) {
+        if (std::abs(w - hundredths) < std::abs(best - hundredths)) {
+            best = w;
+        }
+    }
+    return best;
+}
+} // namespace
+
+void CurrentPropCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr) {
+        core::EntityProps p = ctx.current_props();
+        int r = -1;
+        if (kind_ == Kind::Color) {
+            bool by_layer = p.color_by_layer();
+            core::Rgb c = p.color;
+            r = ctx.view()->select_color_dialog(by_layer, c);
+            if (r == 1) {
+                p.set_color_by_layer(by_layer);
+                p.color = c;
+            }
+        } else if (kind_ == Kind::Lineweight) {
+            bool by_layer = p.lineweight_by_layer();
+            std::uint8_t lw = p.lineweight;
+            r = ctx.view()->lineweight_dialog(by_layer, lw);
+            if (r == 1) {
+                p.set_lineweight_by_layer(by_layer);
+                p.lineweight = lw;
+            }
+        } else {
+            r = ctx.view()->linetype_manager() ? 0 : -1;
+        }
+        if (r >= 0) {
+            if (r == 1) {
+                set(ctx, p);
+            }
+            done_ = true;
+            return;
+        }
+    }
+    ask(ctx);
+}
+
+void CurrentPropCommand::ask(CommandContext& ctx) {
+    const core::EntityProps p = ctx.current_props();
+    switch (kind_) {
+    case Kind::Color:
+        step_ = Step::Value;
+        if (name_ == "CECOLOR") {
+            ctx.set_prompt("Enter new value for CECOLOR <\"" + color_text(p) + "\">: ");
+        } else {
+            ctx.set_prompt("Enter default object color [Truecolor/COlorbook] <" + color_text(p) + ">: ");
+        }
+        return;
+    case Kind::Lineweight:
+        step_ = Step::Value;
+        if (name_ == "CELWEIGHT") {
+            ctx.set_prompt("Enter new value for CELWEIGHT <" +
+                           std::to_string(p.lineweight_by_layer() ? -1 : static_cast<int>(p.lineweight)) + ">: ");
+        } else {
+            ctx.echo("Current lineweight: " + lineweight_text(p));
+            ctx.set_prompt("Enter default lineweight for new objects or [?]: ");
+        }
+        return;
+    case Kind::Linetype:
+        if (name_ == "CELTYPE") {
+            step_ = Step::LtSet;
+            ctx.set_prompt(std::string("Enter new value for CELTYPE <\"") +
+                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + "\">: ");
+        } else {
+            step_ = Step::LtOption;
+            ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+        }
+        return;
+    }
+}
+
+void CurrentPropCommand::set(CommandContext& ctx, const core::EntityProps& p) {
+    ctx.submit(core::SetCurrentPropsCommand{p});
+}
+
+void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    std::string u = upper(t);
+    if (u.size() >= 2 && u.front() == '"' && u.back() == '"') {
+        u = u.substr(1, u.size() - 2); // CECOLOR "RED" as the prompt shows it
+    }
+    core::EntityProps p = ctx.current_props();
+    switch (step_) {
+    case Step::Value:
+        if (kind_ == Kind::Color) {
+            if (t.empty()) {
+                done_ = true;
+                return;
+            }
+            if (u == "T" || u == "TRUECOLOR") {
+                step_ = Step::TrueColor;
+                ctx.set_prompt("Red, Green, Blue: ");
+                return;
+            }
+            if (u == "CO" || u == "COLORBOOK") {
+                ctx.echo("Color books are not available; use a colour number or Truecolor.");
+                return;
+            }
+            if (u == "BYLAYER") {
+                p.set_color_by_layer(true);
+            } else if (u == "BYBLOCK") {
+                ctx.echo("ByBlock is not available yet; the colour stays " + color_text(p) + ".");
+                return;
+            } else {
+                long aci = 0;
+                for (long i = 1; i <= 7; ++i) {
+                    aci = u == kAciNames[i] ? i : aci;
+                }
+                if (aci == 0) {
+                    double n = 0.0;
+                    const std::optional<double> v = parse_number(t, n) ? std::optional<double>(n) : std::nullopt;
+                    if (!v || *v < 1.0 || *v > 255.0 || *v != std::floor(*v)) {
+                        ctx.echo("Enter a colour number from 1 to 255, a colour name, BYLAYER or Truecolor.");
+                        return;
+                    }
+                    aci = static_cast<long>(*v);
+                }
+                p.set_color_by_layer(false);
+                p.color = core::io::dxf_aci_to_rgb(aci);
+            }
+            set(ctx, p);
+            done_ = true;
+            return;
+        }
+        // Lineweight.
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            std::string list = "BYLAYER, DEFAULT";
+            for (const int w : kStdLineweights) {
+                char buf[16];
+                std::snprintf(buf, sizeof buf, ", %.2f", w / 100.0);
+                list += buf;
+            }
+            ctx.echo(list + " (mm)");
+            return;
+        }
+        if (u == "BYLAYER" || (name_ == "CELWEIGHT" && t == "-1")) {
+            p.set_lineweight_by_layer(true);
+        } else if (u == "DEFAULT" || (name_ == "CELWEIGHT" && t == "-3")) {
+            p.set_lineweight_by_layer(false);
+            p.lineweight = 25; // LWDEFAULT
+        } else if (u == "BYBLOCK" || (name_ == "CELWEIGHT" && t == "-2")) {
+            ctx.echo("ByBlock is not available yet.");
+            return;
+        } else {
+            double n = 0.0;
+            const std::optional<double> v = parse_number(t, n) ? std::optional<double>(n) : std::nullopt;
+            const double hundredths = v ? (name_ == "CELWEIGHT" ? *v : *v * 100.0) : -1.0;
+            if (!v || hundredths < 0.0 || hundredths > 211.0) {
+                ctx.echo(name_ == "CELWEIGHT" ? "Requires -1, -3 or 0 to 211." : "Requires a lineweight from 0 to 2.11 mm.");
+                return;
+            }
+            p.set_lineweight_by_layer(false);
+            p.lineweight = static_cast<std::uint8_t>(nearest_lineweight(hundredths));
+        }
+        set(ctx, p);
+        done_ = true;
+        return;
+    case Step::TrueColor: {
+        int r = -1;
+        int g = -1;
+        int b = -1;
+        if (std::sscanf(t.c_str(), "%d,%d,%d", &r, &g, &b) != 3 || r < 0 || r > 255 || g < 0 || g > 255 || b < 0 ||
+            b > 255) {
+            ctx.echo("Enter red, green and blue, 0 to 255 each.");
+            return;
+        }
+        p.set_color_by_layer(false);
+        p.color = core::Rgb{static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g), static_cast<std::uint8_t>(b)};
+        set(ctx, p);
+        done_ = true;
+        return;
+    }
+    case Step::LtOption:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            step_ = Step::LtList;
+            ctx.set_prompt("Enter linetype(s) to list <*>: ");
+            return;
+        }
+        if (u == "S" || u == "SET") {
+            step_ = Step::LtSet;
+            ctx.set_prompt(std::string("Specify linetype name or [?] <") +
+                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + ">: ");
+            return;
+        }
+        if (u == "C" || u == "CREATE" || u == "L" || u == "LOAD") {
+            ctx.echo("Continuous, Dashed, Center and Hidden are loaded; other linetypes cannot be created or loaded yet.");
+            return;
+        }
+        ctx.echo("Invalid option keyword.");
+        return;
+    case Step::LtList:
+        ctx.echo("Name           Description");
+        for (int i = 0; i < 4; ++i) {
+            std::string line = kLinetypeNames[i];
+            line.resize(15, ' ');
+            ctx.echo(line + kLinetypeDescriptions[i]);
+        }
+        step_ = Step::LtOption;
+        ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+        return;
+    case Step::LtSet: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            ctx.echo("Linetypes: BYLAYER, Continuous, Dashed, Center, Hidden");
+            return;
+        }
+        if (u == "BYLAYER") {
+            p.set_linetype_by_layer(true);
+        } else {
+            int found = -1;
+            for (int i = 0; i < 4; ++i) {
+                found = u == upper(kLinetypeNames[i]) ? i : found;
+            }
+            if (found < 0) {
+                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+                return;
+            }
+            p.set_linetype_by_layer(false);
+            p.linetype = static_cast<core::Linetype>(found);
+        }
+        set(ctx, p);
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void LwDisplayCommand::start(CommandContext& ctx) {
+    const int on = ctx.view() != nullptr ? ctx.view()->selection_setting("LWDISPLAY") : 1;
+    ctx.set_prompt(std::string("Enter new value for LWDISPLAY <") + (on != 0 ? "ON" : "OFF") + ">: ");
+}
+
+void LwDisplayCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (!u.empty()) {
+        const bool on = u == "ON" || u == "1";
+        if (!on && u != "OFF" && u != "0") {
+            ctx.echo("Enter ON or OFF.");
+            return;
+        }
+        if (ctx.view() == nullptr || !ctx.view()->set_selection_setting("LWDISPLAY", on ? 1 : 0)) {
+            ctx.submit(core::SetLineweightDisplayCommand{on});
+        }
+    }
+    done_ = true;
+}
+
+void RenameCommand::start(CommandContext& ctx) {
+    step_ = Step::Kind;
+    ctx.set_prompt("Enter object type to rename "
+                   "[Block/Dimstyle/LAyer/LType/Material/multileadeRstyle/Plotstyle/textStyle/Tablestyle/Ucs/VPort/View]: ");
+}
+
+void RenameCommand::input(CommandContext& ctx, const std::string& text) {
+    using K = core::RenameObjectCommand::Kind;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Kind:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "B" || u == "BLOCK") {
+            c_.kind = K::Block;
+            what_ = "block";
+        } else if (u == "D" || u == "DIMSTYLE") {
+            c_.kind = K::DimStyle;
+            what_ = "dimension style";
+        } else if (u == "LA" || u == "LAYER") {
+            c_.kind = K::Layer;
+            what_ = "layer";
+        } else if (u == "S" || u == "TEXTSTYLE") {
+            c_.kind = K::TextStyle;
+            what_ = "text style";
+        } else if (u == "T" || u == "TABLESTYLE") {
+            c_.kind = K::TableStyle;
+            what_ = "table style";
+        } else if (u == "V" || u == "VIEW") {
+            c_.kind = K::View;
+            what_ = "view";
+        } else if (u == "LT" || u == "LTYPE" || u == "M" || u == "MATERIAL" || u == "R" || u == "MULTILEADERSTYLE" ||
+                   u == "P" || u == "PLOTSTYLE" || u == "U" || u == "UCS" || u == "VP" || u == "VPORT") {
+            ctx.echo("Those have no names to change here: the drawing has none of its own.");
+            return;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::From;
+        ctx.set_prompt("Enter old " + what_ + " name: ");
+        return;
+    case Step::From:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.from = t;
+        step_ = Step::To;
+        ctx.set_prompt("Enter new " + what_ + " name: ");
+        return;
+    case Step::To:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.to = t;
+        ctx.submit(c_);
+        done_ = true;
+        return;
+    }
+}
+
+void NcopyCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select nested objects to copy: ");
+}
+
+void NcopyCommand::copy_all(CommandContext& ctx, core::Vec2 offset) {
+    for (const core::Vec2& p : picks_) {
+        ctx.submit(core::NestedCopyCommand{p, radius_, offset, ctx.group_id()});
+    }
+}
+
+void NcopyCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            if (picks_.empty()) {
+                done_ = true;
+                return;
+            }
+            step_ = Step::Base;
+            ctx.set_prompt("Specify base point or displacement, or [Multiple]: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            picks_.push_back(*p);
+            radius_ = ctx.pick_radius();
+            ctx.set_prompt("Select nested objects to copy: ");
+        }
+        return;
+    case Step::Base:
+        if (t.empty()) {
+            copy_all(ctx, {}); // in place
+            done_ = true;
+            return;
+        }
+        if (u == "M" || u == "MULTIPLE") {
+            multiple_ = true;
+            ctx.set_prompt("Specify base point or displacement: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Second;
+            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+            ctx.set_prompt(multiple_ ? "Specify second point of displacement: "
+                                     : "Specify second point of displacement, or <use first point as displacement>: ");
+        }
+        return;
+    case Step::Second:
+        if (t.empty()) {
+            ctx.clear_preview();
+            if (!multiple_) {
+                copy_all(ctx, base_); // the first point as the displacement
+            }
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            copy_all(ctx, *p - base_);
+            if (!multiple_) {
+                ctx.clear_preview();
+                done_ = true;
+                return;
+            }
+            (void)ctx.new_group(); // each copy its own undo step
+        }
+        return;
+    }
+}
+
+void DataExtractionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    step_ = Step::From;
+    ctx.set_prompt("Extract from [Drawing/Selection] <Drawing>: ");
+}
+
+void DataExtractionCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        ask_output(ctx);
+    }
+}
+
+void DataExtractionCommand::ask_output(CommandContext& ctx) {
+    step_ = Step::Output;
+    ctx.set_prompt("Output to [Table/File/Both] <Table>: ");
+}
+
+void DataExtractionCommand::after_file(CommandContext& ctx) {
+    if (table_) {
+        step_ = Step::Place;
+        ctx.set_prompt("Specify insertion point: ");
+        return;
+    }
+    c_.group = ctx.group_id();
+    ctx.submit(c_);
+    done_ = true;
+}
+
+void DataExtractionCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::From:
+        if (u == "S" || u == "SELECTION") {
+            c_.all = false;
+            if (ctx.has_selection()) {
+                ask_output(ctx);
+                return;
+            }
+            step_ = Step::Select;
+            select_.begin(ctx, "Select objects: ");
+            return;
+        }
+        if (!t.empty() && u != "D" && u != "DRAWING") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        c_.all = true;
+        ask_output(ctx);
+        return;
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            ask_output(ctx);
+        }
+        return;
+    case Step::Output:
+        if (u == "F" || u == "FILE") {
+            table_ = false;
+            file_ = true;
+        } else if (u == "B" || u == "BOTH") {
+            table_ = true;
+            file_ = true;
+        } else if (t.empty() || u == "T" || u == "TABLE") {
+            table_ = true;
+            file_ = false;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        if (!file_) {
+            after_file(ctx);
+            return;
+        }
+        step_ = Step::File;
+        if (ctx.view() != nullptr) {
+            const std::string path = ctx.view()->save_file_dialog("CSV (comma delimited) (*.csv)", "extraction.csv");
+            if (!path.empty()) {
+                c_.path = path;
+                after_file(ctx);
+                return;
+            }
+        }
+        ctx.set_prompt("Enter file name: ");
+        return;
+    case Step::File:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.path = t.size() >= 4 && upper(t.substr(t.size() - 4)) == ".CSV" ? t : t + ".csv";
+        after_file(ctx);
+        return;
+    case Step::Place:
+        if (const auto p = read_point(ctx, text)) {
+            c_.table_at = *p;
+            c_.group = ctx.group_id();
+            ctx.submit(c_);
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void PlanCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    const bool ucs = u == "U" || u == "UCS";
+    if (!u.empty() && !ucs && u != "C" && u != "CURRENT" && u != "CURRENT UCS" && u != "W" && u != "WORLD") {
+        ctx.echo("Invalid option keyword.");
+        return;
+    }
+    if (ucs) {
+        ctx.echo("Only the World UCS is there; it is shown.");
+    }
+    if (ctx.view() != nullptr) {
+        ctx.view()->zoom_extents();
+    }
+    done_ = true;
+}
+
+void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
+    // The system variables there are commands for (each asks `Enter new value for X <..>:`).
+    static constexpr const char* kVariables[] = {
+        "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
+        "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
+        "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
+        "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
+        "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
+        "TEXTEDITMODE", "TEXTSIZE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};
+    if (sub_) {
+        sub_->input(ctx, text);
+        done_ = sub_->done();
+        return;
+    }
+    const std::string u = upper(trimmed(text));
+    if (u.empty()) {
+        done_ = true;
+        return;
+    }
+    if (u == "?") {
+        std::string list;
+        for (const char* v : kVariables) {
+            list += (list.empty() ? "" : ", ") + std::string(v);
+        }
+        ctx.echo(list);
+        return;
+    }
+    const bool known = std::any_of(std::begin(kVariables), std::end(kVariables), [&](const char* v) { return u == v; });
+    sub_ = known ? ctx.make_command(u) : nullptr;
+    if (!sub_) {
+        ctx.echo("Unknown variable name.  Type SETVAR ? for a list of variables.");
+        return;
+    }
+    sub_->start(ctx);
+    done_ = sub_->done();
+}
+
+void NavBarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (!u.empty() && u != "ON" && u != "OFF") {
+        ctx.echo("Enter ON or OFF.");
+        return;
+    }
+    if (ctx.view() == nullptr || !ctx.view()->set_navbar(u != "OFF")) {
+        ctx.echo("NAVBAR needs the drawing window.");
+    }
+    done_ = true;
+}
+
+void UcsIconCommand::start(CommandContext& ctx) {
+    if (ctx.view() == nullptr) {
+        ctx.echo("UCSICON needs the drawing window.");
+        done_ = true;
+        return;
+    }
+    ask(ctx);
+}
+
+void UcsIconCommand::ask(CommandContext& ctx) {
+    const bool on = (ctx.view()->selection_setting("UCSICON") & 1) != 0;
+    ctx.set_prompt(std::string("Enter an option [ON/OFF/") + (all_ ? "" : "All/") + "Noorigin/ORigin] <" +
+                   (on ? "ON" : "OFF") + ">: ");
+}
+
+void UcsIconCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    int v = ctx.view()->selection_setting("UCSICON");
+    if (u.empty()) {
+        done_ = true;
+        return;
+    }
+    if ((u == "A" || u == "ALL") && !all_) {
+        all_ = true;
+        ask(ctx);
+        return;
+    }
+    if (u == "ON") {
+        v |= 1;
+    } else if (u == "OFF") {
+        v &= ~1;
+    } else if (u == "N" || u == "NOORIGIN") {
+        v &= ~2;
+    } else if (u == "OR" || u == "ORIGIN") {
+        v |= 2;
+    } else {
+        ctx.echo("Invalid option keyword.");
+        ask(ctx);
+        return;
+    }
+    (void)ctx.view()->set_selection_setting("UCSICON", v);
+    done_ = true;
+}
+
+void WorkspaceCommand::start(CommandContext& ctx) {
+    if (ctx.view() == nullptr || ctx.view()->workspaces().empty()) {
+        ctx.echo(name() + " needs the drawing window.");
+        done_ = true;
+        return;
+    }
+    if (mode_ == Mode::Save) {
+        (void)ctx.view()->workspace_op("dialog", {}, {});
+        done_ = true;
+        return;
+    }
+    ask(ctx, mode_ == Mode::Current ? Step::Current : Step::Option);
+}
+
+void WorkspaceCommand::ask(CommandContext& ctx, Step step) {
+    step_ = step;
+    const std::string cur = ctx.view()->current_workspace();
+    switch (step) {
+    case Step::Option:
+        ctx.set_prompt("Enter workspace option [setCurrent/SAveas/Rename/Delete/?] <setCurrent>: ");
+        break;
+    case Step::Current:
+        ctx.set_prompt(mode_ == Mode::Current ? "Enter new value for WSCURRENT <\"" + cur + "\">: "
+                                              : "Enter name of workspace to make current [?] <" + cur + ">: ");
+        break;
+    case Step::SaveAs:
+        ctx.set_prompt("Enter name of workspace to save [?] <" + cur + ">: ");
+        break;
+    case Step::Replace:
+        ctx.set_prompt("Workspace \"" + name_ + "\" already exists. Replace it? [Yes/No] <N>: ");
+        break;
+    case Step::Rename:
+        ctx.set_prompt("Enter name of workspace to rename [?]: ");
+        break;
+    case Step::RenameTo:
+        ctx.set_prompt("Enter new name for workspace \"" + name_ + "\": ");
+        break;
+    case Step::Delete:
+        ctx.set_prompt("Enter name of workspace to delete [?]: ");
+        break;
+    }
+}
+
+void WorkspaceCommand::list(CommandContext& ctx) const {
+    const std::string cur = ctx.view()->current_workspace();
+    ctx.echo("Workspaces:");
+    for (const std::string& w : ctx.view()->workspaces()) {
+        ctx.echo((w == cur ? "  * " : "    ") + w);
+    }
+}
+
+void WorkspaceCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const std::vector<std::string> names = ctx.view()->workspaces();
+    // A name as the user typed it, matched to a workspace whatever its case.
+    const auto known = [&](const std::string& n) -> std::string {
+        for (const std::string& w : names) {
+            if (upper(w) == upper(n)) {
+                return w;
+            }
+        }
+        return {};
+    };
+    if (u == "?" && step_ != Step::Replace && step_ != Step::RenameTo) {
+        list(ctx);
+        ask(ctx, step_);
+        return;
+    }
+    switch (step_) {
+    case Step::Option:
+        if (u.empty() || u == "C" || u == "SETCURRENT") {
+            ask(ctx, Step::Current);
+        } else if (u == "SA" || u == "SAVEAS") {
+            ask(ctx, Step::SaveAs);
+        } else if (u == "R" || u == "RENAME") {
+            ask(ctx, Step::Rename);
+        } else if (u == "D" || u == "DELETE") {
+            ask(ctx, Step::Delete);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            ask(ctx, Step::Option);
+        }
+        return;
+    case Step::Current: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::string w = known(t);
+        if (w.empty()) {
+            ctx.echo("Workspace \"" + t + "\" not found.");
+            ask(ctx, Step::Current);
+            return;
+        }
+        (void)ctx.view()->workspace_op("current", w, {});
+        done_ = true;
+        return;
+    }
+    case Step::SaveAs:
+        name_ = t.empty() ? ctx.view()->current_workspace() : t;
+        if (const std::string w = known(name_); !w.empty()) {
+            name_ = w;
+            if (!t.empty()) {
+                ask(ctx, Step::Replace);
+                return;
+            }
+        }
+        if (!ctx.view()->workspace_op("saveas", name_, {})) {
+            ctx.echo("\"" + name_ + "\" is built in: save the workspace under another name.");
+        }
+        done_ = true;
+        return;
+    case Step::Replace:
+        if (u == "Y" || u == "YES") {
+            if (!ctx.view()->workspace_op("saveas", name_, {})) {
+                ctx.echo("\"" + name_ + "\" is built in: save the workspace under another name.");
+            }
+        }
+        done_ = true;
+        return;
+    case Step::Rename:
+    case Step::Delete: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::string w = known(t);
+        if (w.empty()) {
+            ctx.echo("Workspace \"" + t + "\" not found.");
+            ask(ctx, step_);
+            return;
+        }
+        if (w == names.front()) {
+            ctx.echo("\"" + w + "\" is built in: it cannot be renamed or deleted.");
+            done_ = true;
+            return;
+        }
+        name_ = w;
+        if (step_ == Step::Rename) {
+            ask(ctx, Step::RenameTo);
+            return;
+        }
+        if (!ctx.view()->workspace_op("delete", name_, {})) {
+            ctx.echo("The current workspace cannot be deleted.");
+        }
+        done_ = true;
+        return;
+    }
+    case Step::RenameTo:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (!known(t).empty() && upper(t) != upper(name_)) {
+            ctx.echo("Workspace \"" + t + "\" already exists.");
+            ask(ctx, Step::RenameTo);
+            return;
+        }
+        (void)ctx.view()->workspace_op("rename", name_, t);
+        done_ = true;
+        return;
+    }
+}
+
+void DimStyleFileCommand::start(CommandContext& ctx) {
+    if (import_) {
+        ask_file(ctx);
+        return;
+    }
+    step_ = Step::Names;
+    ctx.set_prompt("Dimension styles to export <*>: ");
+}
+
+void DimStyleFileCommand::ask_file(CommandContext& ctx) {
+    step_ = Step::File;
+    if (ctx.view() != nullptr) {
+        const std::string filter = "Dimension styles (*.dim);;All files (*)";
+        const std::string path =
+            import_ ? ctx.view()->open_file_dialog(filter) : ctx.view()->save_file_dialog(filter, "styles.dim");
+        if (!path.empty()) {
+            got_file(ctx, path);
+            return;
+        }
+    }
+    ctx.set_prompt(import_ ? "Import filename: " : "Export filename: ");
+}
+
+void DimStyleFileCommand::got_file(CommandContext& ctx, const std::string& path) {
+    path_ = path;
+    if (!import_) {
+        if (path_.size() < 4 || upper(path_.substr(path_.size() - 4)) != ".DIM") {
+            path_ += ".dim";
+        }
+        ctx.submit(core::ExportDimStylesCommand{path_, names_ == "*" ? std::string() : names_});
+        done_ = true;
+        return;
+    }
+    step_ = Step::Overwrite;
+    ctx.set_prompt("Existing styles of the same name [Keep/Overwrite] <Keep>: ");
+}
+
+void DimStyleFileCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Names:
+        names_ = t.empty() ? std::string("*") : t;
+        ask_file(ctx);
+        return;
+    case Step::File:
+        if (t.empty()) {
+            done_ = true; // no file: nothing done
+            return;
+        }
+        got_file(ctx, t);
+        return;
+    case Step::Overwrite:
+        if (!t.empty() && u != "K" && u != "KEEP" && u != "O" && u != "OVERWRITE") {
+            ctx.echo("Enter Keep or Overwrite.");
+            return;
+        }
+        ctx.submit(core::ImportDimStylesCommand{path_, u == "O" || u == "OVERWRITE"});
+        done_ = true;
+        return;
+    }
+}
+
+void DimStyleFileCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void UpdateFieldCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select objects: ");
+}
+
+void UpdateFieldCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void UpdateFieldCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void UpdateFieldCommand::after(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::UpdateFieldsCommand{}); // counts them; a field is worked out each time it is drawn
+    }
+    done_ = true;
+}
+
+void UpdateFieldCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ExtrimUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (!edge_) {
+        edge_ = *p;
+        ctx.set_prompt("Specify the side to trim on:");
+        return;
+    }
+    ctx.submit(core::ExtrimCommand{*edge_, *p, ctx.pick_radius(), ctx.group_id()});
+    done_ = true;
+}
+
+void VpSyncUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (!picked_) {
+        if (trimmed(text).empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            master_ = *p;
+            picked_ = true;
+            select_.begin(ctx, "Select viewports to be aligned to master viewport: ");
+        }
+        return;
+    }
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        finish(ctx);
+    }
+}
+
+void VpSyncUiCommand::finish(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::VpSyncCommand{master_, ctx.pick_radius(), ctx.group_id()});
+    }
+    done_ = true;
+}
+
+bool XListCommand::trimmed_empty(const std::string& t) {
+    return trimmed(t).empty();
+}
+
+std::optional<core::Vec2> XListCommand::pick_point(CommandContext& ctx, const std::string& text) {
+    return read_point(ctx, text);
+}
+
+void AttFileCommand::start(CommandContext& ctx) {
+    if (in_ || ctx.has_selection()) {
+        ask_file(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select objects: ");
+}
+
+void AttFileCommand::ask_file(CommandContext& ctx) {
+    if (!in_ && !ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    if (ctx.view() != nullptr) {
+        const std::string filter = "Text files (*.txt);;All files (*)";
+        const std::string path =
+            in_ ? ctx.view()->open_file_dialog(filter) : ctx.view()->save_file_dialog(filter, "attributes.txt");
+        if (!path.empty()) {
+            finish(ctx, path);
+        }
+        done_ = true;
+        return;
+    }
+    asking_name_ = true;
+    ctx.set_prompt("Enter file name: ");
+}
+
+void AttFileCommand::finish(CommandContext& ctx, const std::string& path) {
+    if (in_) {
+        ctx.submit(core::AttInCommand{path, ctx.group_id()});
+    } else {
+        ctx.submit(core::AttOutCommand{path});
+    }
+}
+
+void AttFileCommand::input(CommandContext& ctx, const std::string& text) {
+    if (asking_name_) {
+        const std::string t = trimmed(text);
+        if (!t.empty()) {
+            finish(ctx, t);
+        }
+        done_ = true;
+        return;
+    }
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        ask_file(ctx);
+    }
+}
+
+void DataLinkUpdateUiCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Select an option [Update data link/Write data link] <Update data link>: ");
+}
+
+void DataLinkUpdateUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_select(ctx);
+    }
+}
+
+void DataLinkUpdateUiCommand::after_select(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        core::DataLinkUpdateCommand c;
+        c.write = write_;
+        c.selection = true;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+    }
+    done_ = true;
+}
+
+void DataLinkUpdateUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Option:
+        if (u.empty() || u == "U" || u == "UPDATE" || u == "UPDATE DATA LINK") {
+            write_ = false;
+        } else if (u == "W" || u == "WRITE" || u == "WRITE DATA LINK") {
+            write_ = true;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            start(ctx);
+            return;
+        }
+        step_ = Step::Objects;
+        select_.begin(ctx, write_ ? "Select objects: " : "Select objects or [Data link/all data linKs]: ");
+        return;
+    case Step::Objects:
+        if (!write_ && (u == "D" || u == "DATA LINK")) {
+            step_ = Step::LinkName;
+            ctx.set_prompt("Enter data link name or [?]: ");
+            return;
+        }
+        if (!write_ && (u == "K" || u == "ALL DATA LINKS")) {
+            core::DataLinkUpdateCommand c;
+            c.group = ctx.group_id();
+            ctx.submit(std::move(c));
+            done_ = true;
+            return;
+        }
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_select(ctx);
+        }
+        return;
+    case Step::LinkName: {
+        const std::vector<std::string> names = ctx.data_link_names();
+        if (u == "?") {
+            ctx.echo(names.empty() ? std::string("No data links in this drawing.") : "Data links:");
+            for (const std::string& n : names) {
+                ctx.echo("  " + n);
+            }
+            ctx.set_prompt("Enter data link name or [?]: ");
+            return;
+        }
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (std::none_of(names.begin(), names.end(), [&](const std::string& n) { return upper(n) == u; })) {
+            ctx.echo("Data link \"" + t + "\" not found.");
+            ctx.set_prompt("Enter data link name or [?]: ");
+            return;
+        }
+        core::DataLinkUpdateCommand c;
+        c.link = t;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void DataLinkUpdateUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
 }
 
 void ImageFrameCommand::start(CommandContext& ctx) {
@@ -8385,6 +9675,27 @@ void RevcloudCommand::emit_cloud(CommandContext& ctx, const std::vector<core::Ve
     ctx.submit(std::move(pc));
     ctx.echo("Revision cloud created.");
     done_ = true;
+}
+
+void RevcloudCommand::freehand(CommandContext& ctx, const std::vector<core::Vec2>& path) {
+    // Thin the drag to points an arc apart, then cloud it: closed when it ends back near
+    // where it started (within two arc lengths), open otherwise.
+    const double step = arc_len();
+    std::vector<core::Vec2> pts;
+    for (const core::Vec2& p : path) {
+        if (pts.empty() || core::distance(pts.back(), p) >= step) {
+            pts.push_back(p);
+        }
+    }
+    if (pts.size() < 2) {
+        ctx.echo("Drag further: the path is shorter than an arc.");
+        return;
+    }
+    const bool closed = pts.size() >= 3 && core::distance(pts.front(), path.back()) <= 2.0 * step;
+    if (!closed && core::distance(pts.back(), path.back()) > 1e-9) {
+        pts.push_back(path.back());
+    }
+    emit_cloud(ctx, pts, closed);
 }
 
 void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
@@ -11944,13 +13255,60 @@ void TableCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     mode_ = Mode::Cols;
     style_ = ctx.current_table_style();
+    if (dialog_ && ctx.view() != nullptr) {
+        InsertTableSettings io{style_, cols_, col_w_, rows_, row_lines_, title_, header_};
+        const int r = ctx.view()->insert_table_dialog(io);
+        if (r == 0) {
+            done_ = true; // cancelled
+            return;
+        }
+        if (r == 1) {
+            style_ = io.style;
+            cols_ = std::clamp(io.cols, 1, 500);
+            col_w_ = io.col_width > 1e-6 ? io.col_width : col_w_;
+            rows_ = std::clamp(io.rows, 1, 500);
+            row_lines_ = std::max(io.row_lines, 1);
+            title_ = io.title;
+            header_ = io.header;
+            link_ = io.link;
+            mode_ = Mode::DialogPlace;
+            outline(ctx);
+            ctx.set_prompt("Specify insertion point: ");
+            return;
+        }
+    }
     ctx.echo("Current table style: " + table_style_name(ctx.table_styles(), style_) + "  Cell width: " + fmt4(col_w_) +
              "  Cell height: " + std::to_string(row_lines_) + " line(s)");
     ctx.set_prompt("Enter number of columns or [Auto] <" + std::to_string(cols_) + ">: ");
 }
 
+void TableCommand::outline(CommandContext& ctx) const {
+    if (!link_.empty()) {
+        return; // the file decides its size
+    }
+    const std::vector<core::TableStyle> styles = ctx.table_styles();
+    const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
+    const int rows = rows_ + (title_ ? 1 : 0) + (header_ ? 1 : 0);
+    const double w = col_w_ * cols_;
+    const double h = line * row_lines_;
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Outline;
+    for (int r = 0; r <= rows; ++r) { // the top-left corner at the cursor
+        pv.points.push_back({0.0, -h * r});
+        pv.points.push_back({w, -h * r});
+    }
+    for (int c = 0; c <= cols_; ++c) {
+        // The title row is one cell across: its column lines start below it.
+        const double top = (title_ && c > 0 && c < cols_) ? -h : 0.0;
+        pv.points.push_back({col_w_ * c, top});
+        pv.points.push_back({col_w_ * c, -h * rows});
+    }
+    ctx.set_preview(std::move(pv));
+}
+
 void TableCommand::place_prompt(CommandContext& ctx) {
     mode_ = Mode::Place;
+    outline(ctx);
     ctx.set_prompt("Specify insertion point or [Style/Width/Height]: ");
 }
 
@@ -12021,25 +13379,33 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         }
         place_prompt(ctx);
         return;
+    case Mode::DialogPlace:
     case Mode::Place:
-        if (u == "W" || u == "WIDTH") {
+        if (mode_ == Mode::Place && (u == "W" || u == "WIDTH")) {
             mode_ = Mode::ColWidth;
             ctx.set_prompt("Specify column width <" + fmt4(col_w_) + ">: ");
             return;
         }
-        if (u == "H" || u == "HEIGHT") {
+        if (mode_ == Mode::Place && (u == "H" || u == "HEIGHT")) {
             mode_ = Mode::RowHeight;
             ctx.set_prompt("Specify row height in lines <" + std::to_string(row_lines_) + ">: ");
             return;
         }
-        if (u == "S" || u == "STYLE") {
+        if (mode_ == Mode::Place && (u == "S" || u == "STYLE")) {
             mode_ = Mode::Style;
             ctx.set_prompt("Enter a table style name or [?] <" + table_style_name(ctx.table_styles(), style_) + ">: ");
             return;
         }
-        if (const auto p = read_point(ctx, text)) {
-            // A title row and a header row above the data rows, as AutoCAD's Standard style.
-            const int rows = rows_ + 2;
+        if (const auto p = read_point(ctx, text); p && !link_.empty()) {
+            // From a data link: the file's rows and columns, read by the engine.
+            ctx.submit(core::InsertLinkedTableCommand{link_, *p, ctx.group_id(), style_});
+            done_ = true;
+            return;
+        } else if (p) {
+            ctx.set_preview({});
+            // A title row and a header row above the data rows, as AutoCAD's Standard style
+            // (the Insert Table window can leave either out).
+            const int rows = rows_ + (title_ ? 1 : 0) + (header_ ? 1 : 0);
             const std::vector<core::TableStyle> styles = ctx.table_styles();
             // A line is Standard's (2.5 text) scaled to the style's data text height.
             const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
@@ -12049,15 +13415,19 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
             cmd.style = style_;
             cmd.col_widths.assign(static_cast<std::size_t>(cols_), col_w_);
             cmd.row_heights.assign(static_cast<std::size_t>(rows), line * row_lines_);
-            cmd.has_title = true;
-            cmd.has_header = true;
+            cmd.has_title = title_;
+            cmd.has_header = header_;
             const std::size_t n = static_cast<std::size_t>(rows) * cols_;
             cmd.cells.assign(n, core::TableCell{});
             cmd.texts.assign(n, std::string{});
             cmd.pos = *p;
             cmd.group = ctx.group_id();
             ctx.submit(std::move(cmd));
-            ctx.echo("Table placed. Double-click a cell to edit it.");
+            // From the Insert Table window the first cell opens for typing, as in AutoCAD.
+            const core::Vec2 first{p->x + col_w_ * 0.5, p->y - line * row_lines_ * 0.5};
+            if (!dialog_ || ctx.view() == nullptr || !ctx.view()->edit_text_soon(first)) {
+                ctx.echo("Table placed. Double-click a cell to edit it.");
+            }
             done_ = true;
         }
         return;
@@ -12065,6 +13435,39 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void TableCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void TableEditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Pick a table cell: ");
+}
+
+void TableEditCommand::input(CommandContext& ctx, const std::string& text) {
+    if (picked_) {
+        ctx.submit(core::EditTextContentCommand{at_, radius_, text, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        if (ctx.view() != nullptr && ctx.view()->edit_text_at(*p)) {
+            done_ = true; // the editor does the rest
+            return;
+        }
+        at_ = *p;
+        radius_ = ctx.pick_radius();
+        picked_ = true;
+        ctx.set_prompt("Enter new text: ");
+    }
+}
+
+void TableEditCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }
@@ -12118,6 +13521,22 @@ void ToleranceCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     cells_.clear();
     mode_ = Mode::Cells;
+    if (ctx.view() != nullptr) {
+        // The Geometric Tolerance window, as AutoCAD opens; the command line only where
+        // there is no window.
+        std::vector<std::string> cells;
+        const int r = ctx.view()->tolerance_dialog(cells);
+        if (r == 0 || (r == 1 && cells.empty())) {
+            done_ = true;
+            return;
+        }
+        if (r == 1) {
+            cells_ = std::move(cells);
+            mode_ = Mode::Place;
+            ctx.set_prompt("Enter tolerance location: ");
+            return;
+        }
+    }
     prompt_cell(ctx);
 }
 
@@ -12131,13 +13550,13 @@ void ToleranceCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
             mode_ = Mode::Place;
-            ctx.set_prompt("Specify frame location: ");
+            ctx.set_prompt("Enter tolerance location: ");
             return;
         }
         if (cells_.size() >= 5) { // characteristic + tolerance + up to three datums
             ctx.echo("A feature control frame carries at most five cells.");
             mode_ = Mode::Place;
-            ctx.set_prompt("Specify frame location: ");
+            ctx.set_prompt("Enter tolerance location: ");
             return;
         }
         cells_.push_back(t); // stored RAW; codes expand at layout time
@@ -12593,7 +14012,9 @@ void MTextCommand::start(CommandContext& ctx) {
 
 void MTextCommand::corner_prompt(CommandContext& ctx) {
     state_ = State::Second;
-    ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
+    PreviewSpec pv{PreviewKind::Rectangle, {c1_}};
+    pv.mtext_attach = attach_; // the box shows the way the text will flow
+    ctx.set_preview(std::move(pv));
     ctx.set_prompt("Specify opposite corner or [Height/Justify/Line spacing/Rotation/Style/Width/Columns]: ");
 }
 
@@ -12815,39 +14236,124 @@ void MTextCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void QLeaderCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify leader arrow point: ");
+    ctx.set_prompt("Specify first leader point, or [Settings] <Settings>: ");
+}
+
+void QLeaderCommand::after_points(CommandContext& ctx) {
+    ctx.clear_preview();
+    if (!s_.mtext) {
+        finish(ctx); // annotation None: the leader alone
+        return;
+    }
+    if (s_.prompt_width) {
+        state_ = State::Width;
+        ctx.set_prompt("Specify text width <" + fmt4(width_) + ">: ");
+        return;
+    }
+    state_ = State::FirstLine;
+    ctx.set_prompt("Enter first line of annotation text <Mtext>: ");
+}
+
+void QLeaderCommand::finish(CommandContext& ctx) {
+    std::string content;
+    for (std::size_t i = 0; i < lines_.size(); ++i) {
+        content += (i == 0 ? "" : "\n") + lines_[i];
+    }
+    core::MTextBlock b;
+    b.pos = verts_.back(); // the text at the last point
+    b.height = current_dim_text_height(ctx);
+    b.width = width_;
+    // Text to the right of a leader coming from the left, to the left of one from the right
+    // (Always left justify: to the right whichever way it comes).
+    const bool leftward = verts_.size() >= 2 && verts_.back().x < verts_[verts_.size() - 2].x;
+    b.attach = (leftward && !s_.left_justify) ? 2 : 0; // TR or TL
+    core::AddMLeaderCommand m{verts_, ctx.current_dim_style(), b, content, ctx.group_id()};
+    if (s_.arrow != 255) {
+        m.overrides.arrow_type = s_.arrow;
+        m.overrides.set(core::DimOverrides::kArrowType, true);
+    }
+    ctx.submit(std::move(m));
+    ctx.echo("Leader placed.");
+    done_ = true;
 }
 
 void QLeaderCommand::input(CommandContext& ctx, const std::string& text) {
-    if (state_ == State::Content) {
-        core::MTextBlock b;
-        b.pos = verts_.empty() ? core::Vec2{} : verts_.back(); // landing = text anchor
-        b.height = current_dim_text_height(ctx);
-        b.attach = 0;
-        ctx.submit(core::AddMLeaderCommand{verts_, ctx.current_dim_style(), b, text, ctx.group_id()});
-        ctx.echo("Leader placed.");
-        ctx.clear_preview();
-        done_ = true;
-        return;
-    }
-    // Empty input finishes the vertex chain (needs an arrow + at least one vertex).
-    if (state_ == State::Vertices && text.empty()) {
-        if (verts_.size() >= 2) {
-            state_ = State::Content;
-            ctx.clear_preview();
-            ctx.set_prompt("Enter annotation text: ");
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Arrow:
+        if (t.empty() || u == "S" || u == "SETTINGS") {
+            QLeaderSettings io = s_;
+            const int r = ctx.view() != nullptr ? ctx.view()->qleader_settings_dialog(io) : -1;
+            if (r == 1) {
+                s_ = io;
+            } else if (r < 0) {
+                ctx.echo("Leader Settings need the drawing window.");
+            }
+            start(ctx);
+            return;
         }
+        break;
+    case State::Vertices:
+        if (t.empty()) {
+            if (verts_.size() >= 2) {
+                after_points(ctx);
+            }
+            return;
+        }
+        break;
+    case State::Width: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (parse_number(t, v) && v >= 0.0) {
+                width_ = v;
+            } else if (const auto p = read_point(ctx, text)) {
+                width_ = core::distance(*p, verts_.back());
+            } else {
+                return;
+            }
+        }
+        state_ = State::FirstLine;
+        ctx.set_prompt("Enter first line of annotation text <Mtext>: ");
         return;
     }
-    const auto p = read_point(ctx, text);
+    case State::FirstLine:
+    case State::NextLine:
+        if (text.empty()) {
+            finish(ctx); // the lines typed so far (none: the leader alone)
+            return;
+        }
+        lines_.push_back(text);
+        state_ = State::NextLine;
+        ctx.set_prompt("Enter next line of annotation text: ");
+        return;
+    }
+    auto p = read_point(ctx, text);
     if (!p) {
         return;
+    }
+    // Angle constraints: the first and second segments held to multiples of the angle set.
+    const std::size_t seg = verts_.size(); // 1: the first segment, 2: the second
+    if (seg == 1 || seg == 2) {
+        static constexpr double kStep[6] = {0.0, 180.0, 90.0, 45.0, 30.0, 15.0};
+        const std::uint8_t c = seg == 1 ? s_.first_angle : s_.second_angle;
+        if (c > 0 && c < 6) {
+            const core::Vec2 d = *p - verts_.back();
+            const double len = core::length(d);
+            const double step = core::to_radians(kStep[c]);
+            const double a = std::round(std::atan2(d.y, d.x) / step) * step;
+            p = verts_.back() + core::Vec2{std::cos(a), std::sin(a)} * len;
+        }
     }
     verts_.push_back(*p);
     ctx.set_last_point(*p);
     state_ = State::Vertices;
+    if (s_.max_points > 0 && static_cast<int>(verts_.size()) >= s_.max_points) {
+        after_points(ctx); // as many points as the settings take
+        return;
+    }
     ctx.set_preview(PreviewSpec{PreviewKind::Polyline, verts_});
-    ctx.set_prompt("Specify next leader point (Enter to finish): ");
+    ctx.set_prompt("Specify next point: ");
 }
 
 void QLeaderCommand::cancel(CommandContext& ctx) {
@@ -14677,7 +16183,9 @@ void LayerCommand::option_prompt(CommandContext& ctx) {
     edit_ = {};
     value_text_.clear();
     ctx.set_prompt(
-        "Enter an option [?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/Plot/Freeze/Thaw/LOck/Unlock/Description]: ");
+        "Enter an option "
+        "[?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/LOck/Unlock/stAte/"
+        "Description/rEconcile/Xref]: ");
 }
 
 void LayerCommand::names_prompt(CommandContext& ctx) {
@@ -14720,6 +16228,7 @@ void LayerCommand::names_prompt(CommandContext& ctx) {
     case Op::Color:
     case Op::Ltype:
     case Op::LWeight:
+    case Op::Transparency:
         ctx.set_prompt("Enter name list of layer(s) for " + value_text_ + " <current>: ");
         return;
     case Op::Plot:
@@ -14753,7 +16262,20 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
                                        {"LTYPE", "L", Op::Ltype},     {"LWEIGHT", "LW", Op::LWeight},
                                        {"FREEZE", "F", Op::Freeze},   {"THAW", "T", Op::Thaw},
                                        {"LOCK", "LO", Op::Lock},      {"UNLOCK", "U", Op::Unlock},
-                                       {"PLOT", "P", Op::Plot},       {"DESCRIPTION", "D", Op::Description}};
+                                       {"PLOT", "P", Op::Plot},       {"DESCRIPTION", "D", Op::Description},
+                                       {"TRANSPARENCY", "TR", Op::Transparency}};
+        if (u == "MAT" || u == "MATERIAL" || u == "E" || u == "RECONCILE" || u == "X" || u == "XREF") {
+            ctx.echo(u.front() == 'M' ? "Layers carry no materials here: drawings are 2D."
+                     : u.front() == 'E' ? "Every layer counts as reconciled: new layers are not tracked."
+                                         : "Xref layers are set through the xref, not here yet.");
+            option_prompt(ctx);
+            return;
+        }
+        if (u == "A" || u == "STATE") {
+            ctx.echo("Layer states: -LAYERSTATE on the command line, LAYERSTATE for the Layer States Manager.");
+            option_prompt(ctx);
+            return;
+        }
         const Kw* hit = nullptr;
         for (const Kw& k : kKeys) {
             if (u == k.full || u == k.abbr) {
@@ -14781,6 +16303,9 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (hit->op == Op::Description) {
             state_ = State::Value;
             ctx.set_prompt("Enter layer description: ");
+        } else if (hit->op == Op::Transparency) {
+            state_ = State::Value;
+            ctx.set_prompt("Enter transparency value (0-90): ");
         } else {
             names_prompt(ctx);
         }
@@ -14835,6 +16360,14 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
             }
         } else if (edit_.op == Op::Description) {
             edit_.description = trimmed(text); // as typed, capitals and all
+        } else if (edit_.op == Op::Transparency) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0 || *v > 90.0 || *v != std::floor(*v)) {
+                ctx.echo("Requires a whole number from 0 to 90.");
+                return;
+            }
+            edit_.transparency = static_cast<std::uint8_t>(*v);
+            value_text_ = "transparency " + std::to_string(edit_.transparency) + "%";
         } else {
             const std::optional<double> v = parse_number(t);
             if (!v || *v < 0.0 || *v > 2.11) {
@@ -14977,12 +16510,40 @@ void DraftModeCommand::input(CommandContext& ctx, const std::string& text) {
         }
         done_ = true;
         return;
-    case Step::Style:
+    case Step::Style: {
+        core::GridSettings g = ctx.grid_settings();
         if (u == "I" || u == "ISOMETRIC") {
-            ctx.echo("Isometric snap is not available yet; the snap stays Standard.");
+            step_ = Step::IsoSpacing;
+            ctx.set_prompt("Specify vertical spacing <" + fmt4(ctx.snap_spacing_y()) + ">: ");
+            return;
         }
+        if (!t.empty() && u != "S" && u != "STANDARD") {
+            ctx.echo("Enter Standard or Isometric.");
+            return;
+        }
+        g.isometric = false;
+        ctx.set_grid_settings(g);
         done_ = true;
         return;
+    }
+    case Step::IsoSpacing: {
+        double v = ctx.snap_spacing_y();
+        if (!t.empty()) {
+            const std::optional<double> n = parse_number(t);
+            if (!n || *n <= 0.0) {
+                ctx.echo("Requires a positive spacing.");
+                return;
+            }
+            v = *n;
+        }
+        core::GridSettings g = ctx.grid_settings();
+        g.isometric = true;
+        ctx.set_grid_settings(g);
+        ctx.set_snap_spacing_xy(v, v);
+        ctx.set_snap_mode(true);
+        done_ = true;
+        return;
+    }
     case Step::Legacy:
         if (u == "Y" || u == "YES") {
             ctx.echo("Legacy snap behaviour is not available; the cursor snaps only at a point prompt.");
@@ -15534,7 +17095,7 @@ void GripModeCommand::apply(CommandContext& ctx, core::Vec2 p, std::optional<dou
     const std::uint64_t group = ctx.new_group();
     switch (mode_) {
     case Mode::Stretch:
-        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, p, group});
+        ctx.submit(core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, p, group, copy_});
         stretching_ = false;
         break;
     case Mode::Move:
@@ -15606,11 +17167,43 @@ void GripModeCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Specify base point: ");
         return;
     }
-    if (u == "C" || u == "COPY") {
-        if (mode_ == Mode::Stretch) {
-            ctx.echo("Copy with STRETCH is not available yet; cycle to MOVE, ROTATE, SCALE or MIRROR.");
+    if (ref_step_ != 0) {
+        // Reference: the angle or length there is, then the one wanted -- typed, or a point
+        // (its angle or distance from the base point).
+        const bool rot = mode_ == Mode::Rotate;
+        double v = 0.0;
+        if (t.empty()) {
+            v = ref_step_ == 1 ? (rot ? 0.0 : 1.0) : ref_value_;
+        } else if (t.find(',') == std::string::npos && !ctx.input_is_pick() && parse_number(t, v)) {
+            // typed
+        } else if (const auto p = read_point(ctx, text)) {
+            v = rot ? core::to_degrees(std::atan2(p->y - base_.y, p->x - base_.x)) : core::distance(*p, base_);
+        } else {
             return;
         }
+        if (ref_step_ == 1) {
+            if (!rot && v <= 0.0) {
+                ctx.echo("Requires a positive length.");
+                return;
+            }
+            ref_value_ = v;
+            ref_step_ = 2;
+            ctx.set_prompt(rot ? "Specify new angle <0>: " : "Specify new length <1.0000>: ");
+            return;
+        }
+        ref_step_ = 0;
+        if (!rot && v <= 0.0) {
+            ctx.echo("Requires a positive length.");
+            prompt(ctx);
+            return;
+        }
+        apply(ctx, base_, rot ? v - ref_value_ : v / ref_value_);
+        if (!done_) {
+            prompt(ctx);
+        }
+        return;
+    }
+    if (u == "C" || u == "COPY") {
         copy_ = true;
         prompt(ctx);
         return;
@@ -15625,8 +17218,9 @@ void GripModeCommand::input(CommandContext& ctx, const std::string& text) {
         prompt(ctx);
         return;
     }
-    if (u == "R" || u == "REFERENCE") {
-        ctx.echo("Reference is not available with grips yet.");
+    if ((u == "R" || u == "REFERENCE") && (mode_ == Mode::Rotate || mode_ == Mode::Scale)) {
+        ref_step_ = 1;
+        ctx.set_prompt(mode_ == Mode::Rotate ? "Specify reference angle <0>: " : "Specify reference length <1.0000>: ");
         return;
     }
     if ((mode_ == Mode::Rotate || mode_ == Mode::Scale) && t.find(',') == std::string::npos && !ctx.input_is_pick()) {
@@ -15756,8 +17350,14 @@ void MLeaderAlignUiCommand::start(CommandContext& ctx) {
 }
 
 void MLeaderAlignUiCommand::base_prompt(CommandContext& ctx) {
+    static constexpr const char* kModes[4] = {"Use current spacing", "Specify spacing", "Distribute", "Parallel"};
+    ctx.echo(std::string("Current mode: ") + kModes[static_cast<int>(s_mode_)]);
+    if (s_mode_ == Mode::Distribute) {
+        step_ = Step::First;
+        ctx.set_prompt("Specify first point or [Options]: ");
+        return;
+    }
     step_ = Step::Base;
-    ctx.echo("Current mode: Use current spacing");
     ctx.set_prompt("Select multileader to align to or [Options]: ");
 }
 
@@ -15784,26 +17384,87 @@ void MLeaderAlignUiCommand::input(CommandContext& ctx, const std::string& text) 
         }
         return;
     case Step::Base:
+    case Step::First:
         if (u.empty()) {
             done_ = true;
             return;
         }
         if (u == "O" || u == "OPTIONS") {
-            ctx.echo("Only Use current spacing is available here.");
+            step_ = Step::Option;
+            ctx.set_prompt("Enter an option [Distribute/make leader segments Parallel/specify Spacing/Use current] "
+                           "<Use current>: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
-            base_ = *p;
             ctx.set_last_point(*p);
+            if (step_ == Step::First) {
+                first_ = *p;
+                step_ = Step::Second;
+                ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
+                ctx.set_prompt("Specify second point: ");
+                return;
+            }
+            base_ = *p;
+            if (s_mode_ == Mode::Parallel) {
+                core::MLeaderAlignCommand c{base_, ctx.pick_radius(), {}, ctx.group_id()};
+                c.mode = Mode::Parallel;
+                ctx.submit(c);
+                done_ = true;
+                return;
+            }
             step_ = Step::Direction;
             ctx.set_preview(PreviewSpec{PreviewKind::Segment, {*p}});
             ctx.set_prompt("Specify direction: ");
         }
         return;
+    case Step::Option:
+        if (u == "D" || u == "DISTRIBUTE") {
+            s_mode_ = Mode::Distribute;
+        } else if (u == "P" || u == "PARALLEL") {
+            s_mode_ = Mode::Parallel;
+        } else if (u == "S" || u == "SPACING") {
+            step_ = Step::Spacing;
+            ctx.set_prompt("Specify spacing <" + fmt4(s_spacing_) + ">: ");
+            return;
+        } else if (u.empty() || u == "U" || u == "USE CURRENT") {
+            s_mode_ = Mode::UseCurrent;
+        } else {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        base_prompt(ctx);
+        return;
+    case Step::Spacing:
+        if (!u.empty()) {
+            const std::optional<double> v = parse_number(u);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a spacing of zero or more.");
+                return;
+            }
+            s_spacing_ = *v;
+        }
+        s_mode_ = Mode::Spacing;
+        base_prompt(ctx);
+        return;
+    case Step::Second:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.clear_preview();
+            core::MLeaderAlignCommand c{};
+            c.mode = Mode::Distribute;
+            c.from = first_;
+            c.to = *p;
+            c.group = ctx.group_id();
+            ctx.submit(c);
+            done_ = true;
+        }
+        return;
     case Step::Direction:
         if (const auto p = read_point(ctx, text)) {
             ctx.clear_preview();
-            ctx.submit(core::MLeaderAlignCommand{base_, ctx.pick_radius(), *p, ctx.group_id()});
+            core::MLeaderAlignCommand c{base_, ctx.pick_radius(), *p, ctx.group_id()};
+            c.mode = s_mode_;
+            c.spacing = s_spacing_;
+            ctx.submit(c);
             done_ = true;
         }
         return;
@@ -16731,7 +18392,8 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "U" || u == "USER DEFINED") {
-            ctx.echo("User-defined patterns are not available yet.");
+            step_ = Step::UserAngle;
+            ctx.set_prompt("Specify angle for crosshatch lines <" + fmt4(user_angle_) + ">: ");
             return;
         }
         if (!t.empty()) {
@@ -16771,6 +18433,43 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         }
         done_ = true;
         return;
+    case Step::UserAngle:
+    case Step::UserSpacing: {
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || (step_ == Step::UserSpacing && v <= 1e-9)) {
+                ctx.echo(step_ == Step::UserSpacing ? "Requires a positive spacing." : "Requires an angle in degrees.");
+                return;
+            }
+            (step_ == Step::UserAngle ? user_angle_ : user_spacing_) = v;
+        }
+        if (step_ == Step::UserAngle) {
+            step_ = Step::UserSpacing;
+            ctx.set_prompt("Specify spacing between the lines <" + fmt4(user_spacing_) + ">: ");
+            return;
+        }
+        step_ = Step::UserDouble;
+        ctx.set_prompt("Double hatch area? [Yes/No] <N>: ");
+        return;
+    }
+    case Step::UserDouble: {
+        const bool twice = u == "Y" || u == "YES";
+        if (!t.empty() && !twice && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        core::PropertyValue name;
+        name.text = twice ? "_USERDOUBLE" : "_USER";
+        set(core::PropertyId::HatchPattern, name);
+        core::PropertyValue spacing;
+        spacing.num = user_spacing_;
+        set(core::PropertyId::HatchScale, spacing);
+        core::PropertyValue angle;
+        angle.num = user_angle_;
+        set(core::PropertyId::HatchAngle, angle);
+        done_ = true;
+        return;
+    }
     case Step::BoundaryType:
         if (u == "R" || u == "REGION") {
             ctx.echo("Regions are not available; the boundary is a polyline.");
@@ -16802,7 +18501,7 @@ void HatchEditUiCommand::cancel(CommandContext& ctx) {
 void TextMaskUiCommand::prompt(CommandContext& ctx) {
     ctx.echo("Current settings: Offset factor = " + fmt4(s_offset_) + ", Mask type = Wipeout");
     step_ = Step::Select;
-    select_.begin(ctx, "Select text or [Masktype/Offset]: ");
+    select_.begin(ctx, "Select text objects to mask or [Masktype/Offset]: ");
 }
 
 void TextMaskUiCommand::start(CommandContext& ctx) {
@@ -16838,7 +18537,7 @@ void TextMaskUiCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "M" || u == "MASKTYPE") {
             step_ = Step::Masktype;
-            ctx.set_prompt("Specify entity type to use for mask [Wipeout/3dface/Solid/Color] <Wipeout>: ");
+            ctx.set_prompt("Specify object type to use for mask [Wipeout/3dface/Solid] <Wipeout>: ");
             return;
         }
         if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
@@ -16949,8 +18648,8 @@ void DimInspectUiCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         step_ = Step::Label;
-        ctx.set_prompt(s_label_.empty() ? std::string("Enter label value or <None>: ")
-                                        : "Enter label value, . for none <" + s_label_ + ">: ");
+        ctx.set_prompt(s_label_.empty() ? std::string("Enter label data or <None>: ")
+                                        : "Enter label data or <" + s_label_ + ">: ");
         return;
     case Step::Label:
         if (t == ".") {
@@ -16959,7 +18658,7 @@ void DimInspectUiCommand::input(CommandContext& ctx, const std::string& text) {
             s_label_ = t;
         }
         step_ = Step::Rate;
-        ctx.set_prompt("Enter inspection rate, . for none <" + (s_rate_.empty() ? std::string("None") : s_rate_) + ">: ");
+        ctx.set_prompt("Enter inspection rate <" + (s_rate_.empty() ? std::string("100%") : s_rate_) + ">: ");
         return;
     case Step::Rate:
         if (t == ".") {
@@ -17125,6 +18824,124 @@ void SplineEditUiCommand::cancel(CommandContext& ctx) {
 void DimJogLineCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     ctx.set_prompt("Select dimension to add jog or [Remove]: ");
+}
+
+void DimBreakUiCommand::submit(CommandContext& ctx, core::DimBreakCommand c) {
+    c.pick = pick_;
+    c.pick_radius = ctx.pick_radius();
+    c.group = ctx.group_id();
+    ctx.submit(std::move(c));
+}
+
+void DimBreakUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_select(ctx);
+    }
+}
+
+void DimBreakUiCommand::after_select(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    step_ = Step::MultipleOption;
+    ctx.set_prompt("Enter an option [Auto/Remove] <Auto>: ");
+}
+
+void DimBreakUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Mode = core::DimBreakCommand::Mode;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Dim:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "M" || u == "MULTIPLE") {
+            step_ = Step::Multiple;
+            select_.begin(ctx, "Select dimensions: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            step_ = Step::Object;
+            ctx.set_prompt("Select object to break dimension or [Auto/Manual/Remove] <Auto>: ");
+        }
+        return;
+    case Step::Object:
+        if (t.empty()) {
+            if (!broke_) {
+                core::DimBreakCommand c; // Enter: Auto
+                submit(ctx, c);
+            }
+            done_ = true;
+            return;
+        }
+        if (!broke_ && (u == "A" || u == "AUTO")) {
+            submit(ctx, core::DimBreakCommand{});
+            done_ = true;
+            return;
+        }
+        if (!broke_ && (u == "R" || u == "REMOVE")) {
+            core::DimBreakCommand c;
+            c.mode = Mode::Remove;
+            submit(ctx, c);
+            done_ = true;
+            return;
+        }
+        if (!broke_ && (u == "M" || u == "MANUAL")) {
+            step_ = Step::First;
+            ctx.set_prompt("Specify first break point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            core::DimBreakCommand c;
+            c.mode = Mode::Object;
+            c.object = *p;
+            submit(ctx, c);
+            broke_ = true;
+            ctx.set_prompt("Select object to break dimension: ");
+        }
+        return;
+    case Step::First:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Second;
+            ctx.set_prompt("Specify second break point: ");
+        }
+        return;
+    case Step::Second:
+        if (const auto p = read_point(ctx, text)) {
+            core::DimBreakCommand c;
+            c.mode = Mode::Manual;
+            c.p1 = first_;
+            c.p2 = *p;
+            submit(ctx, c);
+            done_ = true;
+        }
+        return;
+    case Step::Multiple:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_select(ctx);
+        }
+        return;
+    case Step::MultipleOption: {
+        if (!u.empty() && u != "A" && u != "AUTO" && u != "R" && u != "REMOVE") {
+            ctx.echo("Invalid option keyword.");
+            ctx.set_prompt("Enter an option [Auto/Remove] <Auto>: ");
+            return;
+        }
+        core::DimBreakCommand c;
+        c.selection = true;
+        c.mode = (u == "R" || u == "REMOVE") ? Mode::Remove : Mode::Auto;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    }
 }
 
 void DimJogLineCommand::input(CommandContext& ctx, const std::string& text) {
@@ -17535,6 +19352,58 @@ void PointDisplayCommand::input(CommandContext& ctx, const std::string& text) {
 void PointDisplayCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
+}
+
+void UnitsDefaultCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for " + name() + " <" + std::to_string(target_ ? s_target_ : s_source_) + ">: ");
+}
+
+void UnitsDefaultCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v != std::floor(v) || v < 0.0 || v > 24.0) {
+            ctx.echo("Requires an integer between 0 and 24.");
+            return;
+        }
+        (target_ ? s_target_ : s_source_) = static_cast<int>(v);
+        ctx.submit(core::SetUnitsDefaultsCommand{static_cast<std::uint8_t>(s_source_), static_cast<std::uint8_t>(s_target_)});
+    }
+    done_ = true;
+}
+
+void TextSizeCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for TEXTSIZE <" + fmt4(TextCommand::text_size()) + ">: ");
+}
+
+void TextSizeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (!t.empty()) {
+        double v = 0.0;
+        if (!parse_number(t, v) || v <= 0.0) {
+            ctx.echo("Requires a positive value.");
+            return;
+        }
+        TextCommand::set_text_size(v);
+    }
+    done_ = true;
+}
+
+void BaseCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    const core::Vec2 b = ctx.insbase();
+    ctx.set_prompt("Enter base point <" + fmt4(b.x) + "," + fmt4(b.y) + ",0.0000>: ");
+}
+
+void BaseCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true; // kept as it is
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::SetInsBaseCommand{*p});
+        done_ = true;
+    }
 }
 
 void LimitsCommand::start(CommandContext& ctx) {

@@ -95,6 +95,9 @@ struct ColorBatch {
     /// "near-white means the default pen, plot it black" rule is about the screen
     /// convention for entity colours and would punch a black band into a gradient.
     bool computed_color = false;
+    /// The batch's opacity, 255 = opaque, from its layer's transparency. The viewport draws
+    /// it while TRANSPARENCYDISPLAY is on; PLOT prints opaque, as AutoCAD's default does.
+    std::uint8_t alpha = 255;
 };
 
 /// An immutable (from the renderer's perspective) view of the scene, produced
@@ -208,6 +211,9 @@ struct RenderSnapshot {
     Vec2 limits_min{0.0, 0.0};          // LIMITS
     Vec2 limits_max{420.0, 297.0};
     bool limits_on = false;             // LIMCHECK
+    Vec2 insbase{0.0, 0.0};             // INSBASE (BASE)
+    std::vector<DataLink> data_links;   // DATALINK
+    std::vector<std::uint8_t> layer_used; // per layer: 1 when an entity is on it
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer

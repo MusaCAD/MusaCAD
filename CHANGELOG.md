@@ -50,6 +50,142 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   for MTEXT and QLEADER keeps its spaces.
 - **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
   and Output > Plot > Preview, with Plot from it.
+- **EXPORTPDF** and **PUBLISH** (#74) -- the sheet in front saved as a PDF; the model and the
+  layouts ticked plotted into one PDF, a page each on its own paper size (Output > Plot >
+  Batch Plot).
+- **NCOPY** (#55, #77) -- objects inside block references copied out, in place or moved, the
+  references left as they are.
+- **The Tolerances tab** (#58) -- a dimension style's tolerance method (None, Symmetrical,
+  Deviation, Limits, Basic), precision and upper and lower values, taken by every dimension
+  without a tolerance of its own; Deviation stacks -lower under +upper beside the value. Kept in
+  the drawing and in DXF.
+- **DATAEXTRACTION** (#71) -- the block references counted by name and attribute values, into a
+  CSV file and/or a table in the drawing: a parts list from the drawing's blocks.
+- **The file commands at the command line** -- NEW, OPEN, QSAVE, SAVEAS (SAVE), CLOSE, CLOSEALL,
+  QUIT (EXIT), IMPORT / DXFIN and EXPORT / DXFOUT, as AutoCAD names them; and RENAME, SETVAR,
+  REDRAW, DIMREGEN, DBLIST, PLAN, DTEXT and DDPTYPE.
+- **COLOR, LWEIGHT and LINETYPE** (#68) -- the colour, lineweight and linetype new objects take:
+  the Select Color window (the index colours and true colour), Lineweight Settings and the
+  Linetype Manager, -COLOR, -LWEIGHT, -LINETYPE on the command line, CECOLOR, CELWEIGHT,
+  CELTYPE and LWDISPLAY.
+- **QLEADER as AutoCAD has it** (#61) -- `Specify first leader point, or [Settings]`, the points up
+  to the number set, the text width and the lines of text; Settings opens the Leader Settings
+  window (annotation, width, justification, arrowhead, number of points, angle constraints).
+- **MLEADERALIGN's Options** (#61) -- Distribute between two points, make leader segments
+  Parallel, specify Spacing, and Use current; the choice is kept for the next time.
+- **Isometric drafting** (#65, #39) -- ISODRAFT, ISOPLANE, SNAP Style Isometric, F5 / Ctrl+E and
+  ISO on the status bar: the snap lattice, the grid and the crosshair on the isometric axes,
+  ORTHO along the isoplane's two axes, and ELLIPSE's Isocircle.
+- **Layer transparency** (#69) -- the Layer Properties Manager's Transparency column and -LAYER's
+  TRansparency (0 to 90 percent): the layer's objects drawn see-through, TPY on the status bar
+  (TRANSPARENCYDISPLAY) turning it off; plots print them opaque, as AutoCAD does by default.
+  Kept in the drawing and in DXF (the layer's AcCmTransparency data).
+- **The Quick Access Toolbar's drop-down** (#73) -- Customize Quick Access Toolbar: each tool
+  ticked on or off, Plot Preview, Batch Plot, Match Properties, Layer, Properties and Data
+  Extraction to add, and Show Below the Ribbon; the choice is kept for the next session.
+- **Keyboard shortcuts of your own** (#73) -- **CUI** (Manage > Customization > User Interface):
+  the commands with their descriptions, searchable; a key pressed in the Shortcut field and
+  Assign gives it to the command (a key already in use is said first), Remove takes it
+  away. Kept in the settings; Command Aliases opens ALIASEDIT.
+- **Command aliases of your own** (#73) -- **ALIASEDIT** (Manage > Customization > Edit Aliases):
+  an alias for any command, or one of Musa CAD's given to another command, added, removed or
+  loaded from another PGP file such as AutoCAD's acad.pgp; kept in `musacaduser.pgp` in the
+  settings folder and read at start-up. **REINIT** reads the file again.
+- **Workspaces** (#73) -- **WORKSPACE** (`[setCurrent/SAveas/Rename/Delete/?]`), **WSCURRENT**,
+  **WSSAVE** and Workspace Switching on the status bar: the palettes, the ribbon and the Quick
+  Access Toolbar saved under a name and put back; Drafting & Annotation is the window as it
+  starts. The current one comes back at the next start.
+- **The text-height field** (#78) -- Annotate > Text: the height new text takes, typed or
+  picked, and **TEXTSIZE**, which sets it at the command line.
+- **Hatch swatches** (#78) -- the Hatch Editor tab's pattern list shows each pattern as it draws.
+- **Tool Palettes** (#73) -- **TOOLPALETTES** (TP, Ctrl+3; View > Palettes and Manage >
+  Customization): Draw, Modify and Annotation tools, every hatch pattern with its swatch (a
+  click starts HATCH with it, at the internal point), and the drawing's blocks (a click
+  inserts one). **TOOLPALETTESCLOSE** closes them; a workspace keeps them open or closed.
+- **The UCS icon** (#72) -- X and Y arrows at the drawing's origin, or in the lower-left corner
+  when the origin is off screen; the triangle in paper space. **UCSICON**
+  (`[ON/OFF/All/Noorigin/ORigin]`) and View > Viewport Tools > UCS Icon turn it off and on.
+- **Block units** (#81) -- a block keeps the units it was made in (the drawing's, or those of
+  the drawing a file insert came from), and INSERT scales it to the drawing's: a block in
+  millimetres comes into a drawing in inches at 1/25.4. Kept in the drawing and in DXF (the
+  block record's insertion units). **INSUNITSDEFSOURCE** and **INSUNITSDEFTARGET** (millimetres
+  to begin with): the units taken for a unitless drawing inserted or attached, and for this
+  drawing when it is unitless.
+- **BASE, and drawings inserted as blocks** (#75) -- BASE (`Enter base point <0.0000,0.0000,0.0000>:`)
+  sets the drawing's insertion base point (INSBASE), kept in the drawing and in DXF. At
+  INSERT's block name, `~` chooses a drawing file and a path names one: it comes in as a
+  block named after the file, at its base point, its own blocks with it (the drawing's own
+  definitions kept; `Block "X" already exists. Redefine it?` before one is replaced). Xrefs
+  are attached at their INSBASE too. Insert > Block > From Drawing and Set Base Point.
+- **MTEXT's box shows the text's flow** (#43) -- an arrow down from a top justification, up from
+  a bottom one, both ways from the middle, while the opposite corner is asked for.
+- **TABLE's outline** (#44) -- the table's grid follows the cursor while its insertion point is
+  asked for, at the size it will be; placed from the Insert Table window, its first cell
+  opens for typing.
+- **EXTRIM** (#77) -- everything crossing a cutting edge trimmed away on the side picked, inside
+  or outside a closed edge.
+- **VPSYNC** (#77) -- layout viewports lined up with a master viewport, at its scale.
+- **XLIST** (#77) -- an object inside a block reference: what it is, the block, and its layer,
+  colour and linetype.
+- **ATTOUT** and **ATTIN** (#77) -- block attribute values out to a tab-separated file for a
+  spreadsheet, and back in (by handle, while the drawing stays open).
+- **MPEDIT** and **DIMREASSOC** (#77) -- PEDIT's Multiple from the start; dimensions' text
+  overrides taken away so they show their measurements again.
+- **DIMBREAK** (#60) -- `Select dimension to add/remove break or [Multiple]:` and `Select object to
+  break dimension or [Auto/Manual/Remove] <Auto>:`: the dimension and extension lines broken
+  where other objects cross them (3.75 for a 2.5 arrow), between two points, or the breaks
+  taken away; Multiple for several dimensions. Kept in the drawing; Annotate > Dimensions.
+- **Data links** (#71) -- **DATALINK** (DL) opens the Data Link Manager: links to CSV files
+  (a spreadsheet's Save As > CSV), made, pointed at another file or deleted; Insert Table's
+  **From a data link** makes a table of the file's rows and columns. **DATALINKUPDATE** (DLU)
+  -- `[Update data link/Write data link]`, then `Select objects or [Data link/all data
+  linKs]:` -- reads linked tables again (one undo step) or writes them back to their files.
+  Insert > Data: Data Link, Download from Source, Upload to Source. Kept in the drawing.
+- **The Field window** (#62, #71) -- FIELD opens it: Date, CreateDate and SaveDate with a date
+  format (M/d/yyyy, MMMM d, yyyy, h:mm tt and the rest, or one of your own), Filename with or
+  without its path or extension, the drawing's Title, Subject, Author, Keywords, Comments,
+  Hyperlink Base and custom properties (DWGPROPS) in upper, lower, first-capital or title
+  case, and Login; the preview shows the value. Fields in AutoCAD's own form,
+  `%<\AcVar Date \f "M/d/yyyy">%`, are read in any text.
+- **The Geometric Tolerance window** (#62) -- TOLERANCE opens it as AutoCAD does: the
+  characteristic picked from the fourteen symbols, two tolerances with the diameter symbol
+  and a material condition, three datums with theirs; then `Enter tolerance location:`.
+- **Layer filters** (#69) -- the Layer Properties Manager's Filter: All, All Used Layers, Layers
+  On / Off, Frozen / Thawed, Locked / Unlocked, and Invert filter; with the search.
+- **The Interface panel** (#72) -- View > Interface: File Tabs, Layout Tabs and Status Bar shown
+  or hidden.
+- **The navigation bar** (#72) -- NAVBAR and View > Viewport Tools > Navigation Bar: Pan and the
+  Zoom tools at the drawing's right edge.
+- **Grip modes' Copy and Reference** (#54) -- STRETCH's Copy leaves the object where it is and
+  adds a stretched copy at each pick; ROTATE's and SCALE's Reference ask the angle or length
+  there is, then the one wanted (typed, or a point's angle or distance from the base point).
+- **GRIPS, GRIPSIZE, GRIPCOLOR and GRIPHOT** (#54) -- grips shown or not, their size, and
+  their colour and the hot grip's.
+- **Plotting in inches** (#81) -- the Plot window's scale and offset in millimetres or inches,
+  inches to begin with on an ANSI or ARCH sheet.
+- **State icons in the layer combo** (#78) -- each layer with its bulb, sun or snowflake,
+  padlock and colour; a click on one in the list turns the layer off, freezes or locks it
+  there and then.
+- **Minimize the ribbon** (#78) -- the toggle after the last tab, or a double-click on a tab,
+  leaves the tab row alone; a click on a tab brings the panels back.
+- **Search commands** (#78) -- a field at the right of the quick-access strip, as AutoCAD's
+  InfoCenter: part of a command's name or of what it does lists the matches; Enter or a pick
+  runs it.
+- **Search for layer** (#69) -- the Layer Properties Manager's search field shows the layers
+  whose name holds the text, or matches it with `*` and `?`.
+- **User-defined hatching** (#41) -- HATCH's, -HATCH's and HATCHEDIT's `User defined`: the
+  lines' angle, their spacing and Double (crossed at right angles); written to DXF as
+  AutoCAD's user-defined type and read back from it.
+- **REVCLOUD Freehand follows a drag** (#40) -- press at the start point and drag: the cloud
+  runs along the cursor, closed when the drag comes back to its start, open otherwise.
+- **DIMEX** and **DIMIM** (#77) -- dimension styles written to a file and taken into another
+  drawing, those of the same name kept or overwritten.
+- **TFRAMES** (#77) and **UPDATEFIELD** (#71) -- wipeout and image frames off or on together;
+  the fields in the selected objects worked out again.
+- **Delete in the Text Style window** (#62) -- a style that is not Standard, not current and
+  not used goes.
+- **The Page Setup Manager** (#74) -- PAGESETUP names, changes and deletes page setups in the
+  Plot window's settings and sets the one PLOT starts from in model space.
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
   takes it away.
 - **DIMINSPECT** (#60) -- inspection dimensions: the value framed with round or angular ends,
@@ -94,8 +230,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   with Properties and Select objects.
 - **PEDIT Ltype gen** (#52) -- off, a polyline's dash pattern starts again at every vertex, as
   AutoCAD draws it; a DXF polyline without the flag is read that way.
-- **LWT on the status bar** (#69) -- lineweights shown or not, kept in step with Home >
-  Properties' Lineweight Display.
+- **LWT and SC on the status bar** (#69) -- lineweights shown or not, kept in step with Home >
+  Properties' Lineweight Display; selection cycling on or off, as Ctrl+W and SELECTIONCYCLING
+  set it.
 - **Style combos on Annotate** (#78) -- the Text panel's Text Style combo and the Dimensions
   panel's Dimension Style combo set the style new text and dimensions take; the Text panel's
   launcher opens the Text Style window. Find Text, Center Mark, Blend Curves, Delete Duplicate
@@ -115,6 +252,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or a spline, its points the sketch increment apart.
 - **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
   point with Style, Width and Height; a title and a header row come with the data rows.
+- **The Insert Table window and TABLEEDIT** (#44) -- TABLE opens the window (the style,
+  columns, rows, and the title and header rows), then asks the insertion point; -TABLE keeps
+  the command line. TABLEEDIT opens a cell's editor as a double-click does.
 - **TABLESTYLE** (#44) -- the Table Style window: Set Current, New, Modify (text heights,
   cell margin, lineweight) and Delete; the current table style is kept with the drawing,
   TABLE uses it (its Style option takes any of them), and Annotate > Tables has the Table
@@ -133,6 +273,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (millimetres into inches at 1/25.4); unitless drawings are not scaled.
 
 ### Fixed
+- **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now
+  list the setups saved with the drawing; they were saved but never shown.
 - DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other
   dimension command does, instead of the previous dimension's.
 - LAYUNISO works after switching to another drawing tab and back; LAYISO's list and
