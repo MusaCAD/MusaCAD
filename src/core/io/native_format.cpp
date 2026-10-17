@@ -2317,7 +2317,8 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.name = name;
             if (version < 40) {
                 // Before v40 feet and inches always showed both (0'-6", 1'-0"): DIMZIN 1.
-                ds.zero_suppression = static_cast<std::uint8_t>((ds.zero_suppression & ~kDimZinFeetInches) | 1u);
+                ds.zero_suppression = static_cast<std::uint8_t>(
+                    (static_cast<unsigned>(ds.zero_suppression) & ~static_cast<unsigned>(kDimZinFeetInches)) | 1u);
             }
             doc.dimstyles.push_back(std::move(ds));
         } else if (key == "TEXT") {
