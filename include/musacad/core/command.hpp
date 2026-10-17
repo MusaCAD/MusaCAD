@@ -1888,6 +1888,8 @@ struct SetDataLinkCommand {
     std::string name;
     std::string path;
     bool remove = false;
+    std::string sheet = {}; ///< DataLink::sheet
+    std::string range = {}; ///< DataLink::range
 };
 /// A table from the data link `link`: the file's rows and columns, its top-left corner at
 /// `pos`, in the current table style; linked, so DATALINKUPDATE can read it again.

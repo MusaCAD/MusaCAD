@@ -4036,3 +4036,40 @@ TEST_CASE("Linetypes loaded from .lin files and AutoCAD drawings: drawn, listed,
     REQUIRE(h.out.lines.back() == "Linetype PHANTOM is not loaded: Continuous, Dashed, Center or Hidden."); // not yet published
     h.proc.cancel();
 }
+
+TEST_CASE("Data links to a sheet of a workbook and to a range of cells") {
+    const std::string_view wb(reinterpret_cast<const char*>(kWorkbook), sizeof(kWorkbook));
+    std::vector<std::vector<std::string>> rows;
+    std::string error;
+    REQUIRE(io::parse_xlsx(wb, rows, error, "Parts")); // by its name
+    REQUIRE(rows.size() == 4);
+    REQUIRE_FALSE(io::parse_xlsx(wb, rows, error, "Prices"));
+    REQUIRE(error == "the workbook has no sheet \"Prices\"");
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_link_sheets.xlsx";
+    {
+        std::ofstream out(p, std::ios::binary);
+        out.write(wb.data(), static_cast<std::streamsize>(wb.size()));
+    }
+    REQUIRE(io::xlsx_sheet_names(p.string()) == std::vector<std::string>{"Parts"});
+    std::filesystem::remove(p);
+
+    // A range: the cells within it, the rest cut away; one cell; a bad range leaves them.
+    std::vector<std::vector<std::string>> grid{{"A1", "B1", "C1"}, {"A2", "B2", "C2"}, {"A3", "B3", "C3"}};
+    std::vector<std::vector<std::string>> part = grid;
+    REQUIRE(io::crop_to_range(part, "b2:$C$4"));
+    REQUIRE(part == std::vector<std::vector<std::string>>{{"B2", "C2"}, {"B3", "C3"}, {"", ""}});
+    part = grid;
+    REQUIRE(io::crop_to_range(part, "A3"));
+    REQUIRE(part == std::vector<std::vector<std::string>>{{"A3"}});
+    part = grid;
+    REQUIRE_FALSE(io::crop_to_range(part, "B"));
+    REQUIRE(part == grid);
+
+    // Kept in the drawing with the link.
+    io::Document doc;
+    doc.data_links.push_back(DataLink{"Parts list", "/data/parts list.xlsx", "Parts", "A1:B3"});
+    doc.data_links.push_back(DataLink{"Plain", "/data/plain.csv"});
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.data_links == doc.data_links);
+}

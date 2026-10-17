@@ -35,6 +35,10 @@ struct TableStyle {
 struct DataLink {
     std::string name;
     std::string path;
+    /// An Excel workbook's sheet by its name ("" the first), and the cells taken from it
+    /// ("B2:E20", "" all of them) -- for a CSV file the range only.
+    std::string sheet{};
+    std::string range{};
     friend bool operator==(const DataLink&, const DataLink&) = default;
 };
 

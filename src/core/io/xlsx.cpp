@@ -5,10 +5,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
 namespace musacad::core::io {
 
@@ -447,19 +449,33 @@ bool zip_entry(std::string_view archive, std::string_view name, std::string& out
     return false;
 }
 
-bool parse_xlsx(std::string_view bytes, std::vector<std::vector<std::string>>& rows, std::string& error) {
+bool parse_xlsx(std::string_view bytes, std::vector<std::vector<std::string>>& rows, std::string& error,
+                std::string_view sheet_name) {
     rows.clear();
     std::string workbook;
     if (!zip_entry(bytes, "xl/workbook.xml", workbook)) {
         error = "not an Excel workbook (.xlsx)";
         return false;
     }
-    // The first sheet: its relationship id, then the part it names.
+    // The sheet asked for (else the first): its relationship id, then the part it names.
     std::string sheet_path = "xl/worksheets/sheet1.xml";
     const auto sheets = elements(workbook, "sheet");
+    std::size_t which = 0;
+    if (!sheet_name.empty()) {
+        which = sheets.size();
+        for (std::size_t i = 0; i < sheets.size(); ++i) {
+            if (unescape_xml(attribute(sheets[i].first, "name")) == sheet_name) {
+                which = i;
+            }
+        }
+        if (which == sheets.size()) {
+            error = "the workbook has no sheet \"" + std::string(sheet_name) + "\"";
+            return false;
+        }
+    }
     std::string rels;
     if (!sheets.empty() && zip_entry(bytes, "xl/_rels/workbook.xml.rels", rels)) {
-        std::string id = attribute(sheets.front().first, "r:id");
+        std::string id = attribute(sheets[which].first, "r:id");
         for (const auto& [tag, inner] : elements(rels, "Relationship")) {
             if (attribute(tag, "Id") == id) {
                 std::string target = attribute(tag, "Target");
@@ -546,14 +562,81 @@ bool parse_xlsx(std::string_view bytes, std::vector<std::vector<std::string>>& r
     return true;
 }
 
-bool read_xlsx(const std::string& path, std::vector<std::vector<std::string>>& rows, std::string& error) {
+bool read_xlsx(const std::string& path, std::vector<std::vector<std::string>>& rows, std::string& error,
+               std::string_view sheet) {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         error = "cannot open " + path;
         return false;
     }
     const std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    return parse_xlsx(bytes, rows, error);
+    return parse_xlsx(bytes, rows, error, sheet);
+}
+
+std::vector<std::string> xlsx_sheet_names(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::string workbook;
+    std::vector<std::string> out;
+    if (!zip_entry(bytes, "xl/workbook.xml", workbook)) {
+        return out;
+    }
+    for (const auto& [tag, inner] : elements(workbook, "sheet")) {
+        out.push_back(unescape_xml(attribute(tag, "name")));
+    }
+    return out;
+}
+
+bool crop_to_range(std::vector<std::vector<std::string>>& rows, std::string_view range) {
+    // A cell reference: its column letters and row number, both from 1.
+    const auto cell = [](std::string_view ref, std::size_t& col, std::size_t& row) {
+        col = 0;
+        row = 0;
+        std::size_t i = 0;
+        while (i < ref.size() && ref[i] == '$') {
+            ++i;
+        }
+        for (; i < ref.size() && std::isalpha(static_cast<unsigned char>(ref[i])); ++i) {
+            col = col * 26 + static_cast<std::size_t>(std::toupper(static_cast<unsigned char>(ref[i])) - 'A' + 1);
+        }
+        while (i < ref.size() && ref[i] == '$') {
+            ++i;
+        }
+        for (; i < ref.size() && std::isdigit(static_cast<unsigned char>(ref[i])); ++i) {
+            row = row * 10 + static_cast<std::size_t>(ref[i] - '0');
+        }
+        return i == ref.size() && col > 0 && row > 0;
+    };
+    const std::size_t colon = range.find(':');
+    std::size_t c0 = 0;
+    std::size_t r0 = 0;
+    std::size_t c1 = 0;
+    std::size_t r1 = 0;
+    if (!cell(range.substr(0, colon), c0, r0)) {
+        return false;
+    }
+    if (colon == std::string_view::npos) {
+        c1 = c0;
+        r1 = r0;
+    } else if (!cell(range.substr(colon + 1), c1, r1)) {
+        return false;
+    }
+    if (c1 < c0) {
+        std::swap(c0, c1);
+    }
+    if (r1 < r0) {
+        std::swap(r0, r1);
+    }
+    std::vector<std::vector<std::string>> out;
+    for (std::size_t r = r0 - 1; r < r1; ++r) {
+        std::vector<std::string> line;
+        for (std::size_t c = c0 - 1; c < c1; ++c) {
+            line.push_back(r < rows.size() && c < rows[r].size() ? rows[r][c] : std::string());
+        }
+        out.push_back(std::move(line));
+    }
+    rows = std::move(out);
+    return true;
 }
 
 } // namespace musacad::core::io

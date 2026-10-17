@@ -9369,15 +9369,19 @@ bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& ro
     return true;
 }
 
-/// A data link's file as rows of cells: an Excel workbook's first sheet (.xlsx), else CSV.
-bool read_grid(const std::string& path, std::vector<std::vector<std::string>>& rows) {
-    std::string ext = std::filesystem::path(path).extension().string();
+/// A data link's cells: an Excel workbook's sheet (its first, or the one named), else a CSV
+/// file's -- all of them, or the link's range.
+bool read_grid(const DataLink& link, std::vector<std::vector<std::string>>& rows) {
+    std::string ext = std::filesystem::path(link.path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    bool ok = false;
     if (ext == ".xlsx" || ext == ".xlsm") {
         std::string error;
-        return io::read_xlsx(path, rows, error);
+        ok = io::read_xlsx(link.path, rows, error, link.sheet);
+    } else {
+        ok = read_csv(link.path, rows);
     }
-    return read_csv(path, rows);
+    return ok && (link.range.empty() || io::crop_to_range(rows, link.range));
 }
 
 bool write_csv(const std::string& path, const std::vector<std::vector<std::string>>& rows) {
@@ -9744,8 +9748,10 @@ void GeometryEngine::apply_set_data_link(const SetDataLinkCommand& c) {
         }
         if (i != 0xFFFF) {
             links[i].path = c.path;
+            links[i].sheet = c.sheet;
+            links[i].range = c.range;
         } else {
-            links.push_back(DataLink{c.name, c.path});
+            links.push_back(DataLink{c.name, c.path, c.sheet, c.range});
         }
         report("Data link \"" + c.name + "\": " + c.path + ".");
     }
@@ -9762,7 +9768,7 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
     }
     const DataLink link = store_.data_links()[li];
     std::vector<std::vector<std::string>> grid;
-    if (!read_grid(link.path, grid)) {
+    if (!read_grid(link, grid)) {
         report("Data link \"" + link.name + "\": cannot read " + link.path + ".");
         return;
     }
@@ -9943,8 +9949,8 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
             std::string ext = std::filesystem::path(link.path).extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
                            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-            if (ext == ".xlsx" || ext == ".xlsm") {
-                ++failed; // a workbook is never overwritten with plain text
+            if (ext == ".xlsx" || ext == ".xlsm" || !link.range.empty()) {
+                ++failed; // a workbook is never overwritten with plain text, nor a file with part of it
                 continue;
             }
             if (write_csv(link.path, grid)) {
@@ -9955,7 +9961,7 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
             continue;
         }
         std::vector<std::vector<std::string>> grid;
-        if (!read_grid(link.path, grid)) {
+        if (!read_grid(link, grid)) {
             ++failed;
             continue;
         }

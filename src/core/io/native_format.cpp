@@ -1504,6 +1504,12 @@ std::string serialize_native(const Document& doc) {
         s += enc(dl.name);
         s += ' ';
         s += enc(dl.path);
+        if (!dl.sheet.empty() || !dl.range.empty()) { // v40: the sheet and the range
+            s += ' ';
+            s += enc(dl.sheet);
+            s += ' ';
+            s += enc(dl.range);
+        }
         s += '\n';
     }
     for (const DocTable& t : doc.tables) {
@@ -1912,7 +1918,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             l.dashes.assign(vals.begin() + 5, vals.end());
             doc.patterns.back().lines.push_back(std::move(l));
         } else if (key == "DATALINK") {
-            if (tok.size() != 3) {
+            if (tok.size() != 3 && tok.size() != 5) {
                 return fail("malformed DATALINK");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1924,7 +1930,8 @@ IoResult parse_native(std::string_view text, Document& out) {
                 }
                 return r == "-" ? std::string{} : r;
             };
-            doc.data_links.push_back(DataLink{dec(tok[1]), dec(tok[2])});
+            doc.data_links.push_back(DataLink{dec(tok[1]), dec(tok[2]), tok.size() == 5 ? dec(tok[3]) : std::string(),
+                                              tok.size() == 5 ? dec(tok[4]) : std::string()});
         } else if (key == "INSBASE") {
             vals.clear();
             if (tok.size() != 3 || !parse_doubles(tok, 1, 2, vals)) {

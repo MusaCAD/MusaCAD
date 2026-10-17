@@ -106,6 +106,7 @@
 #include "musacad/command/calc.hpp"
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/io/xlsx.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/table_types.hpp"
@@ -4828,7 +4829,7 @@ void MainWindow::open_data_link_manager() {
     dlg.setObjectName(QStringLiteral("DataLinkManager"));
     dlg.setWindowTitle(QStringLiteral("Data Link Manager"));
     auto* lay = new QVBoxLayout(&dlg);
-    lay->addWidget(new QLabel(QStringLiteral("CSV links:"), &dlg));
+    lay->addWidget(new QLabel(QStringLiteral("Data links (Excel workbooks and CSV files):"), &dlg));
     auto* list = new QListWidget(&dlg);
     list->setObjectName(QStringLiteral("DataLinkList"));
     lay->addWidget(list, 1);
@@ -4862,11 +4863,55 @@ void MainWindow::open_data_link_manager() {
         }
         return nullptr;
     };
+    const auto describe = [](const core::DataLink& dl) {
+        QString text = QStringLiteral("File: %1").arg(QDir::toNativeSeparators(QString::fromStdString(dl.path)));
+        if (!dl.sheet.empty()) {
+            text += QStringLiteral("\nSheet: %1").arg(QString::fromStdString(dl.sheet));
+        }
+        text += QStringLiteral("\nCells: %1").arg(dl.range.empty() ? QStringLiteral("all") : QString::fromStdString(dl.range));
+        return text;
+    };
     connect(list, &QListWidget::currentRowChanged, &dlg, [&] {
         const core::DataLink* dl = current();
-        detail->setText(dl != nullptr ? QStringLiteral("File: %1").arg(QDir::toNativeSeparators(QString::fromStdString(dl->path)))
-                                      : QString());
+        detail->setText(dl != nullptr ? describe(*dl) : QString());
     });
+    // Link Options, as AutoCAD's New Excel Data Link asks them: the sheet of a workbook, and
+    // the whole sheet or a range of its cells. False when cancelled.
+    const auto link_options = [&dlg](const QString& path, std::string& sheet, std::string& range) {
+        QDialog opt(&dlg);
+        opt.setWindowTitle(QStringLiteral("Link Options"));
+        auto* form = new QFormLayout(&opt);
+        auto* sheets = new QComboBox(&opt);
+        const bool workbook = path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive) ||
+                              path.endsWith(QStringLiteral(".xlsm"), Qt::CaseInsensitive);
+        if (workbook) {
+            for (const std::string& n : core::io::xlsx_sheet_names(path.toStdString())) {
+                sheets->addItem(QString::fromStdString(n));
+            }
+            const int at = sheets->findText(QString::fromStdString(sheet));
+            sheets->setCurrentIndex(at >= 0 ? at : 0);
+            form->addRow(QStringLiteral("Select the Excel sheet to link to:"), sheets);
+        } else {
+            sheets->hide();
+        }
+        auto* whole = new QRadioButton(workbook ? QStringLiteral("Link entire sheet") : QStringLiteral("Link entire file"), &opt);
+        auto* part = new QRadioButton(QStringLiteral("Link to range:"), &opt);
+        auto* cells = new QLineEdit(QString::fromStdString(range), &opt);
+        cells->setPlaceholderText(QStringLiteral("A1:D10"));
+        (range.empty() ? whole : part)->setChecked(true);
+        form->addRow(whole);
+        form->addRow(part, cells);
+        auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &opt);
+        connect(bb, &QDialogButtonBox::accepted, &opt, &QDialog::accept);
+        connect(bb, &QDialogButtonBox::rejected, &opt, &QDialog::reject);
+        form->addRow(bb);
+        if (opt.exec() != QDialog::Accepted) {
+            return false;
+        }
+        sheet = workbook && sheets->currentIndex() > 0 ? sheets->currentText().toStdString() : std::string();
+        range = part->isChecked() ? cells->text().trimmed().toUpper().toStdString() : std::string();
+        return true;
+    };
     const auto pick_file = [&dlg](const QString& start) {
         return QFileDialog::getOpenFileName(&dlg, QStringLiteral("Data File"), start,
                                             QStringLiteral("Data files (*.xlsx *.csv);;Excel workbooks (*.xlsx);;"
@@ -4875,9 +4920,11 @@ void MainWindow::open_data_link_manager() {
     auto* row = new QHBoxLayout;
     auto* add = new QPushButton(QStringLiteral("New Data Link..."), &dlg);
     auto* change = new QPushButton(QStringLiteral("Change File..."), &dlg);
+    auto* options = new QPushButton(QStringLiteral("Link Options..."), &dlg);
     auto* remove = new QPushButton(QStringLiteral("Delete"), &dlg);
     row->addWidget(add);
     row->addWidget(change);
+    row->addWidget(options);
     row->addWidget(remove);
     lay->addLayout(row);
     connect(add, &QPushButton::clicked, &dlg, [&] {
@@ -4899,8 +4946,13 @@ void MainWindow::open_data_link_manager() {
         if (path.isEmpty()) {
             return;
         }
-        engine_->submit(core::SetDataLinkCommand{name.toStdString(), path.toStdString(), false});
-        pending_data_links_.push_back(core::DataLink{name.toStdString(), path.toStdString()});
+        std::string sheet;
+        std::string range;
+        if (!link_options(path, sheet, range)) {
+            return;
+        }
+        engine_->submit(core::SetDataLinkCommand{name.toStdString(), path.toStdString(), false, sheet, range});
+        pending_data_links_.push_back(core::DataLink{name.toStdString(), path.toStdString(), sheet, range});
         refill();
         const QList<QListWidgetItem*> found = list->findItems(name, Qt::MatchExactly);
         if (!found.isEmpty()) {
@@ -4916,10 +4968,27 @@ void MainWindow::open_data_link_manager() {
         if (path.isEmpty()) {
             return;
         }
+        std::string sheet = dl->sheet;
+        std::string range = dl->range;
+        if (!link_options(path, sheet, range)) {
+            return;
+        }
         dl->path = path.toStdString();
-        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false});
-        list->setCurrentRow(list->currentRow()); // the file shown again
-        detail->setText(QStringLiteral("File: %1").arg(QDir::toNativeSeparators(path)));
+        dl->sheet = sheet;
+        dl->range = range;
+        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false, dl->sheet, dl->range});
+        detail->setText(describe(*dl));
+    });
+    connect(options, &QPushButton::clicked, &dlg, [&] {
+        core::DataLink* dl = current();
+        if (dl == nullptr) {
+            return;
+        }
+        if (!link_options(QString::fromStdString(dl->path), dl->sheet, dl->range)) {
+            return;
+        }
+        engine_->submit(core::SetDataLinkCommand{dl->name, dl->path, false, dl->sheet, dl->range});
+        detail->setText(describe(*dl));
     });
     connect(remove, &QPushButton::clicked, &dlg, [&] {
         core::DataLink* dl = current();
