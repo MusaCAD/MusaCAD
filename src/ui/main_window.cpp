@@ -1373,9 +1373,11 @@ void MainWindow::dump_ui() {
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     // The layer combo's list: a click on a state icon switches the layer on or off, freezes
     // or thaws it, locks or unlocks it, in place, the list staying open.
-    if (layer_combo_ != nullptr && watched == layer_combo_->view()->viewport() &&
-        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
-         event->type() == QEvent::MouseButtonDblClick)) {
+    // The mouse first: view() makes the list when there is none yet, and the events of its
+    // making come back through this filter.
+    if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
+         event->type() == QEvent::MouseButtonDblClick) &&
+        layer_combo_ != nullptr && watched == layer_combo_->view()->viewport()) {
         const QPoint pos = static_cast<QMouseEvent*>(event)->position().toPoint();
         const QModelIndex index = layer_combo_->view()->indexAt(pos);
         if (index.isValid()) {
