@@ -452,9 +452,9 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"CELWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "CELWEIGHT", false); }, "",
         "The lineweight new objects take: -1 ByLayer, -3 Default, or hundredths of a millimetre.");
     reg({"LT", "LINETYPE", "LTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "LINETYPE", true); }, "",
-        "The Linetype Manager: the linetypes, the current one, and the linetype scales.");
+        "The Linetype Manager: the linetypes, the current one, the linetype scales, and Load... from a .lin file.");
     reg({"-LINETYPE", "-LT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "-LINETYPE", false); }, "",
-        "Linetypes on the command line: ? lists them, Set makes one current.");
+        "Linetypes on the command line: ? lists them, Load brings them from a .lin file, Create makes one, Set makes one current.");
     reg({"CELTYPE"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Linetype, "CELTYPE", false); }, "",
         "The linetype new objects take.");
     reg({"LWDISPLAY"}, [] { return std::make_unique<LwDisplayCommand>(); }, "",
