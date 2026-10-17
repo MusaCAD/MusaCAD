@@ -2565,17 +2565,35 @@ void GeometryEngine::apply_dim_grip_menu(const DimGripMenuCommand& c) {
     if (d == nullptr || !selectable(c.dim)) {
         return;
     }
-    if (c.op == Op::FlipArrow && d->type != DimType::Linear && d->type != DimType::Aligned) {
-        report("Flip Arrow is for linear and aligned dimensions.");
+    const auto type = d->type;
+    if (c.op == Op::FlipArrow && type != DimType::Linear && type != DimType::Aligned && type != DimType::Radius &&
+        type != DimType::Diameter && type != DimType::Angular) {
+        report("Flip Arrow is for linear, aligned, radial, diameter and angular dimensions.");
         return;
     }
     const Command original = capture_entity(c.dim);
     Command edited = original;
     auto& x = std::get<AddDimensionCommand>(edited);
     switch (c.op) {
-    case Op::FlipArrow:
-        x.flip = static_cast<std::uint8_t>(x.flip ^ (distance(c.at, x.a) <= distance(c.at, x.b) ? 1u : 2u));
+    case Op::FlipArrow: {
+        // The arrowhead nearer the grip: an extension line's (linear), the measured point's or
+        // the far end's (radial: b, or the diameter's other end), a ray's (angular: b or the
+        // second ray's point, by the angle round the vertex).
+        bool first = distance(c.at, x.a) <= distance(c.at, x.b);
+        if (type == DimType::Radius) {
+            first = true;
+        } else if (type == DimType::Diameter) {
+            first = distance(c.at, x.b) <= distance(c.at, x.a * 2.0 - x.b);
+        } else if (type == DimType::Angular) {
+            const auto off = [&](Vec2 p) {
+                const double ang = std::atan2(p.y - x.a.y, p.x - x.a.x) - std::atan2(c.at.y - x.a.y, c.at.x - x.a.x);
+                return std::abs(std::remainder(ang, kTwoPi));
+            };
+            first = off(x.b) <= off(x.line_pt);
+        }
+        x.flip = static_cast<std::uint8_t>(x.flip ^ (first ? 1u : 2u));
         break;
+    }
     case Op::AboveLine:
     case Op::CenterVertically:
         x.overrides.text_above = c.op == Op::AboveLine;

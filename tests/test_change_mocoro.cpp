@@ -4073,3 +4073,47 @@ TEST_CASE("Data links to a sheet of a workbook and to a range of cells") {
     REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
     REQUIRE(again.data_links == doc.data_links);
 }
+
+TEST_CASE("Flip Arrow on radial, diameter and angular dimensions") {
+    // A diameter: each arrowhead turns round by its own bit -- the arrow geometry changes,
+    // the dimension line stays.
+    DimData d;
+    d.type = DimType::Diameter;
+    d.a = {0, 0};
+    d.b = {10, 0};
+    d.line_pt = {5, 3};
+    const DimGeometry plain = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    d.flip = 2;
+    const DimGeometry flipped = compute_dim_geometry(d, DimStyle{}, Rgb{});
+    REQUIRE(flipped.arrow_fills.size() == plain.arrow_fills.size());
+    REQUIRE(flipped.arrow_fills != plain.arrow_fills);
+    REQUIRE(flipped.dim_lines == plain.dim_lines);
+    // An angular dimension likewise.
+    DimData ang;
+    ang.type = DimType::Angular;
+    ang.a = {0, 0};
+    ang.b = {10, 0};
+    ang.line_pt = {0, 10};
+    const DimGeometry a0 = compute_dim_geometry(ang, DimStyle{}, Rgb{});
+    ang.flip = 1;
+    REQUIRE(compute_dim_geometry(ang, DimStyle{}, Rgb{}).arrow_fills != a0.arrow_fills);
+
+    // The grip menu: the head nearer the grip -- the diameter's far end, the angle's second ray.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Diameter), {0, 0}, {10, 0}, {5, 3}, 0, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, engine.snapshot().selection.at(0), {-10, 0}, 2});
+    io::Document doc = dump(engine, "musacad_flip_dia.musa");
+    REQUIRE(doc.dims[0].flip == 2);
+    engine.submit(EraseSelectionCommand{3});
+    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Angular), {0, 0}, {10, 0}, {0, 10}, 0, 4});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, engine.snapshot().selection.at(0), {1, 9}, 5});
+    doc = dump(engine, "musacad_flip_ang.musa");
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].flip == 2);
+    engine.stop();
+}

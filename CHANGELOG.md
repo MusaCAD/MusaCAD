@@ -404,6 +404,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
   spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
   spline without changing its shape.
+- **Flip Arrow on radial and angular dimensions** (#59) -- the grip menu's Flip Arrow turns
+  the arrowhead nearer the grip of a radius, diameter or angular dimension, as it does for a
+  linear one.
 - **Data links to a sheet and a range** (#71) -- the Data Link Manager's Link Options (asked
   for a new link, and by its own button): an Excel workbook's sheet to link to, and the whole
   sheet (or file) or a range of its cells (`B2:E20`), as AutoCAD's New Excel Data Link asks

@@ -875,6 +875,10 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     g.arrow_color = style.arrow_color.resolve(base_color);
     g.text_color = style.text_color.resolve(base_color);
     const auto atype = static_cast<ArrowType>(style.arrow_type);
+    // Flip Arrow (the grip menu): a radial or angular dimension's arrowhead turned round --
+    // the first (at its measured point, or the first ray) by bit 1, the second by bit 2.
+    const double flip_a = (d.flip & 1u) != 0 ? -1.0 : 1.0;
+    const double flip_b = (d.flip & 2u) != 0 ? -1.0 : 1.0;
     // The label is composed ONCE, here, for every dimension type -- the measured value
     // (which is never authorable) plus its authored decoration. Placing it in the same
     // function that builds the geometry is what makes the text participate in layout,
@@ -1068,7 +1072,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
             const Vec2 land_end = t + Vec2{side * style.arrow_size, 0.0};
             seg(g.dim_lines, d.b, t);
             seg(g.dim_lines, t, land_end);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * flip_a, style.arrow_size, atype);
             // With the dimension line outside, the centre gets its mark (AutoCAD's DIMCEN
             // rule for DIMRADIUS / DIMDIAMETER), as large as an arrowhead.
             const double m = style.arrow_size * 0.5;
@@ -1116,9 +1120,9 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
             } else {
                 seg(g.dim_lines, from, d.b);
             }
-            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * -1.0, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, d.b, u * -flip_a, style.arrow_size, atype);
             if (d.type == DimType::Diameter) {
-                append_arrowhead(g.arrow_fills, g.arrow_lines, c - u * r, u, style.arrow_size, atype);
+                append_arrowhead(g.arrow_fills, g.arrow_lines, c - u * r, u * flip_b, style.arrow_size, atype);
             }
             g.text_justify = text::Justify::Center;
             g.text_pos = t + Vec2{0.0, -h * 0.5};
@@ -1134,12 +1138,12 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 u = normalized(edge - center);
         if (d.type == DimType::Radius) {
             seg(g.dim_lines, center, edge);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -flip_a, style.arrow_size, atype);
         } else {
             const Vec2 other = center - u * distance(center, edge);
             seg(g.dim_lines, other, edge);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
-            append_arrowhead(g.arrow_fills, g.arrow_lines, other, u, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -flip_a, style.arrow_size, atype);
+            append_arrowhead(g.arrow_fills, g.arrow_lines, other, u * flip_b, style.arrow_size, atype);
         }
         g.text_pos = edge + u * (style.text_height * 0.4);
         g.text_rotation = 0.0;
@@ -1299,10 +1303,10 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
             prev = p;
         }
         // Arrowheads at both ends, lying along the arc inside it.
-        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a0, r), Vec2{-std::sin(a0), std::cos(a0)}, style.arrow_size,
-                         atype);
-        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a1, r), Vec2{std::sin(a1), -std::cos(a1)}, style.arrow_size,
-                         atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a0, r), Vec2{-std::sin(a0), std::cos(a0)} * flip_a,
+                         style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, on(a1, r), Vec2{std::sin(a1), -std::cos(a1)} * flip_b,
+                         style.arrow_size, atype);
         // The text at the middle of the arc, or -- moved with the arc (DIMTMOVE 0) --
         // slid along it by text_offset.x (an arc length); past either ray the arc goes
         // on round to it.
@@ -1371,9 +1375,9 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 e1{v.x + r * std::cos(a1), v.y + r * std::sin(a1)};
         const double s = sweep >= 0 ? 1.0 : -1.0;
         append_arrowhead(g.arrow_fills, g.arrow_lines, e0,
-                         Vec2{std::sin(a0), -std::cos(a0)} * s, style.arrow_size, atype);
+                         Vec2{std::sin(a0), -std::cos(a0)} * (s * flip_a), style.arrow_size, atype);
         append_arrowhead(g.arrow_fills, g.arrow_lines, e1,
-                         Vec2{-std::sin(a1), std::cos(a1)} * s, style.arrow_size, atype);
+                         Vec2{-std::sin(a1), std::cos(a1)} * (s * flip_b), style.arrow_size, atype);
         const double am = a0 + sweep * 0.5;
         g.text_pos = {v.x + r * std::cos(am), v.y + r * std::sin(am)};
         g.text_rotation = 0.0;
