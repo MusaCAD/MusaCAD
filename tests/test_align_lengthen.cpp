@@ -293,7 +293,7 @@ TEST_CASE("#27: LENGTHEN refuses to erase the object or to touch a shape with no
     circle.group = 4;
     engine.submit(circle);
     REQUIRE(wait_until(engine, [](const auto& s) {
-        return s.status.find("only lines, arcs, polylines and elliptical arcs") != std::string::npos;
+        return s.status.find("only lines, arcs, polylines, elliptical arcs and splines") != std::string::npos;
     }));
     engine.consume_snapshot();
     REQUIRE(has_vertex_near(engine.snapshot(), {100, 0}, 1e-9)); // the line survived intact
