@@ -697,8 +697,9 @@ private:
     std::vector<EntityHandle> pick_hatches_;
     /// The hatch the next picked area joins: the last of pick_hatches_ still in the drawing.
     [[nodiscard]] EntityHandle last_pick_hatch() const;
-    /// MEASUREINIT: what a new drawing starts as -- MEASUREMENT, and the Dashed, Center and
-    /// Hidden of acad.lin (0) or acadiso.lin (1). Unset: Musa CAD's former definitions.
+    /// MEASUREINIT: what a new drawing starts as -- MEASUREMENT, its unit (INSUNITS: inches or
+    /// millimetres), and the Dashed, Center and Hidden of acad.lin (0) or acadiso.lin (1).
+    /// Unset: Musa CAD's former definitions, unitless.
     std::optional<std::uint8_t> measureinit_;
     void apply_measureinit(std::uint8_t m);
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)

@@ -19289,8 +19289,11 @@ void GeometryEngine::load_document_replace(const Command& command) {
 }
 
 void GeometryEngine::apply_measureinit(std::uint8_t m) {
+    // A drawing started from scratch, as AutoCAD starts one: metric in millimetres, imperial
+    // in inches, with acadiso.lin's or acad.lin's linetypes.
     DrawingUnits u = store_.units();
     u.measurement = m;
+    u.insunits = m == 1 ? 4 : 1;
     store_.set_units(u);
     store_.set_builtin_linetypes(standard_builtin_linetypes(m == 1));
     geom_dirty_ = true;

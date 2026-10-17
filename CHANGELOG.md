@@ -13,8 +13,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or metric (1). A new hatch takes its standard pattern from acad.pat or, metric, acadiso.pat
   -- the same patterns 25.4 times as large -- and keeps it: what is already drawn does not
   change with MEASUREMENT, and editing a hatch's pattern, scale or angle reads it again as
-  MEASUREMENT has it now. MEASUREINIT is what a new drawing starts with (metric unless you
-  set 0), kept between runs. Saved in the drawing (format v41) and as DXF's `$MEASUREMENT`,
+  MEASUREMENT has it now. MEASUREINIT is what a new drawing starts with (metric, in
+  millimetres, unless you set 0: imperial, in inches), kept between runs. Saved in the drawing (format v41) and as DXF's `$MEASUREMENT`,
   now read as well as written; a hatch from an AutoCAD drawing keeps its size, read from the
   pattern lines it carries. Standard patterns are now written to DXF with their pattern
   lines, as AutoCAD writes them.

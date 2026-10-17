@@ -192,6 +192,7 @@ TEST_CASE("MEASUREINIT starts a new drawing; a DXF's Dashed is the drawing's own
     engine.submit(init);
     const io::Document fresh = dump(engine, "musacad_measureinit.musa");
     REQUIRE(fresh.display_units.measurement == 1);
+    REQUIRE(fresh.display_units.insunits == 4); // millimetres
     REQUIRE(fresh.builtin_linetypes == standard_builtin_linetypes(true));
     engine.stop();
 
