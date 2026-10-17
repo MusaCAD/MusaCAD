@@ -246,7 +246,7 @@ TEST_CASE("#23 SPLINE command: Fit passes through the points; CV takes them as v
         h.proc.submit_line("C");
         const auto* sp = h.only();
         REQUIRE(sp != nullptr);
-        REQUIRE(sp->control_points.size() == 5);
+        REQUIRE(sp->control_points.size() == 7); // five points passed through, two for the seam's direction
         REQUIRE(near(spline::evaluate(sp->control_points, 3, 1.0), {0, 0}));
     }
     { // Undo drops the last point; then finishing uses the remaining three.
