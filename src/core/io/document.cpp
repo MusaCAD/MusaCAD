@@ -190,7 +190,10 @@ Document document_from_store(const GeometryStore& store) {
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
     doc.current_table_style = store.current_table_style();
-    doc.mleader_styles = store.mleader_styles();
+    // A lone Standard as it starts is the empty list (what a file with no MLEADERSTYLE reads as).
+    if (!(store.mleader_styles().size() == 1 && store.mleader_styles()[0] == MLeaderStyle{})) {
+        doc.mleader_styles = store.mleader_styles();
+    }
     doc.patterns = store.custom_patterns();
     doc.current_mleader_style = store.current_mleader_style();
     doc.current_dimstyle = store.current_dimstyle();
