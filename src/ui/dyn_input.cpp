@@ -260,8 +260,14 @@ void DynInput::submit() {
     const command::PreviewSpec& pv = processor_->preview();
     const core::Vec2 cur{cx_, cy_};
     std::string line;
+    // Pointer input: a coordinate typed for a second or next point is relative to the point
+    // before (DYNPICOORDS 0), `#` absolute, `@` relative.
+    const bool next = pv.kind != PreviewKind::None && !pv.points.empty();
+    const std::optional<std::string> pointer = command::dyn_pointer_input(p.toStdString(), next);
 
-    if (command::dyn_segment_like(pv) || pv.kind == PreviewKind::Circle ||
+    if (pointer) {
+        line = *pointer;
+    } else if (command::dyn_segment_like(pv) || pv.kind == PreviewKind::Circle ||
         pv.kind == PreviewKind::Rectangle) {
         // A dimensional drag: compose the same coordinate string the on-geometry
         // field tooltips do (one shared source). A non-empty, parseable field is a

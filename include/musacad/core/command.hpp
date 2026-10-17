@@ -781,6 +781,17 @@ struct QuickDimCommand {
     Vec2 at{};
     double spacing = 0.0;
     std::uint64_t group = 0;
+    /// datumPoint: where Baseline dimensions start and Ordinate ones measure from (unset:
+    /// the first point, and 0,0).
+    std::optional<Vec2> datum{};
+    /// Edit: the dimension points taken out (each the one within `pick_radius` of a pick) and
+    /// the points put in.
+    std::vector<Vec2> removed{};
+    std::vector<Vec2> added{};
+    double pick_radius = 0.0;
+    /// seTtings: the objects' intersections come first where they and an end are at one
+    /// place along the dimensions (Intersection), or the ends do (Endpoint).
+    bool intersection_priority = false;
 };
 /// DIMOVERRIDE: the selected dimensions take these dimension variables as their own
 /// (apply_dim_override), or with `clear` drop all of theirs. One undo step.
@@ -918,6 +929,8 @@ struct DimAssocCommand {
         Disassociate, ///< the selected dimensions no longer follow
         Reassociate,  ///< the selected dimensions follow again
         HatchVariable, ///< HPASSOC: whether new hatches follow their boundaries (1) or not (0)
+        MeasureInit,   ///< MEASUREINIT: the MEASUREMENT new drawings start with (and their linetypes)
+        MeasureInitNow, ///< the same at start-up, for the empty drawing open then too
     };
     Op op = Op::Variable;
     std::uint8_t value = 2;
@@ -1046,6 +1059,10 @@ struct JoinSelectionCommand {
     double radius = 0.0;
     std::uint64_t group = 0;
     bool polyline = false; ///< PEDIT Multiple's Join: see JoinPickCommand::polyline
+    /// PEDIT Multiple's Jointype, for ends apart by up to `radius`: 0 Extend (the straight
+    /// segments either side extended or trimmed to meet), 1 Add (a straight segment across the
+    /// gap), 2 Both (extended where they can be, else one added).
+    std::uint8_t jointype = 0;
 };
 
 /// Rotate the selection by `angle` (radians) about `base`.
@@ -1369,6 +1386,7 @@ struct AddDimensionCommand {
     std::vector<Vec2> breaks{};   ///< DIMBREAK's breaks (pairs; DimTextParts::breaks)
     bool unassoc = false;         ///< DimData::unassoc
     std::uint8_t flip = 0;        ///< DimData::flip
+    Vec2 origin{};                ///< DimData::origin (an ordinate dimension's)
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1594,6 +1612,7 @@ struct AddHatchCommand {
     std::optional<EntityProps> props = {};
     Rgb color2{}; ///< GRADIENT: the second colour
     bool unassoc = false; ///< HatchData::unassoc
+    bool iso = false;     ///< HatchData::iso: a standard pattern at acadiso.pat's size
 };
 
 /// ATTDEF: an attribute definition. `text` gives the placement, props, font and style
@@ -1958,6 +1977,9 @@ struct HatchExtras {
     /// Not separate hatches (HPSEPARATE 0): this pick's area joins the hatch the pick
     /// before it made, as one hatch.
     bool merge = false;
+    /// Separate hatches (HPSEPARATE 1): the areas of objects selected each make a hatch of
+    /// their own (an outer boundary with the islands in it).
+    bool separate = false;
 };
 struct HatchFromSelectionCommand {
     std::string pattern_name = "SOLID";

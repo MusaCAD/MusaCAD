@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <optional>
 #include <vector>
 
 #include "musacad/command/command.hpp"
+#include "musacad/command/sysvars.hpp"
 #include "musacad/core/math/arc_construct.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/properties.hpp"
@@ -581,7 +583,6 @@ private:
     static inline std::string ray_cast_ = "Nearest";    // Island detection No: the ray casting
     static inline bool retain_ = false;                 // Retain boundary
     static inline double gap_tol_ = 0.0;                // HPGAPTOL
-    static inline bool separate_ = false;               // HPSEPARATE
     bool free_text() const override { return mode_ == Mode::HatchLayer; }
 };
 
@@ -774,8 +775,10 @@ private:
 };
 
 /// QDIM: `Select geometry to dimension:`, then `Specify dimension line position, or
-/// [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter] <Continuous>:` -- the kind is
-/// remembered for the session.
+/// [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter/datumPoint/Edit/seTtings]
+/// <Continuous>:` -- datumPoint the point Baseline starts at and Ordinate measures from, Edit
+/// the dimension points taken out or put in, seTtings Endpoint or Intersection first. The kind
+/// and the priority are remembered for the session.
 class QuickDimUiCommand final : public ICommand {
 public:
     std::string name() const override { return "QDIM"; }
@@ -790,6 +793,12 @@ public:
 private:
     void position_prompt(CommandContext& ctx);
     static inline core::QuickDimCommand::Mode s_mode_ = core::QuickDimCommand::Mode::Continuous;
+    static inline bool s_intersection_ = false; ///< seTtings: Intersection (or Endpoint) priority
+    enum class Step : std::uint8_t { Position, Datum, EditRemove, EditAdd, Settings };
+    Step step_ = Step::Position;
+    std::optional<core::Vec2> datum_;
+    std::vector<core::Vec2> removed_;
+    std::vector<core::Vec2> added_;
     bool positioning_ = false;
     SelectObjectsPhase select_;
     bool done_ = false;
@@ -2636,6 +2645,8 @@ private:
 class PeditCommand final : public ICommand {
 public:
     /// `multiple`: MPEDIT (Express Tools) -- PEDIT's Multiple from the start.
+    /// PEDITACCEPT: a line or arc picked becomes a polyline without the question (1), or asks (0).
+    inline static int s_peditaccept_ = 0;
     explicit PeditCommand(bool multiple = false) : mpedit_(multiple) {}
     std::string name() const override { return mpedit_ ? "MPEDIT" : "PEDIT"; }
     void start(CommandContext& ctx) override;
@@ -2653,6 +2664,7 @@ private:
         VTangent,    ///< [Edit vertex] > [Tangent]: the direction
         Accept,      ///< a line or arc picked: `Do you want to turn it into one? <Y>`
         MultiSelect, ///< [Multiple]: `Select objects:`
+        Jointype,    ///< [Multiple] > [Join] > [Jointype]: `[Extend/Add/Both]`
         Fuzz,        ///< [Multiple] > [Join]: the fuzz distance
         LtypeGen,    ///< [Ltype gen]: ON / OFF
         WidthVal,    ///< [Width]: one width for every segment
@@ -2660,6 +2672,7 @@ private:
         VWidthEnd,   ///< ... and its ending width
     };
     double vw_start_ = 0.0;
+    inline static std::uint8_t s_jointype_ = 0; ///< Multiple Join's Jointype: 0 Extend, 1 Add, 2 Both
     bool mpedit_ = false;
     bool multiple_ = false;
     SelectObjectsPhase select_;
@@ -3276,6 +3289,37 @@ public:
     inline static int s_value_ = 1; ///< the session's HPASSOC
 
 private:
+    bool done_ = false;
+};
+
+/// A system variable that is a number: `Enter new value for NAME <now>:`. Whole numbers from
+/// `lo` to `hi`, or (`real`) a distance of `lo` or more, shown in the drawing's units -- an
+/// angle in degrees (`angle`) in its angle units. `get` gives the value now; `set` takes a new
+/// one in.
+class SysVarCommand final : public ICommand {
+public:
+    struct Spec {
+        std::string name;
+        bool real = false;
+        double lo = 0.0;
+        double hi = 1.0;
+        std::function<double(CommandContext&)> get;
+        std::function<void(CommandContext&, double)> set;
+        bool angle = false;
+    };
+    explicit SysVarCommand(Spec spec) : spec_(std::move(spec)) {}
+    std::string name() const override { return spec_.name; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    [[nodiscard]] std::string shown(CommandContext& ctx, double v) const;
+    Spec spec_;
     bool done_ = false;
 };
 
@@ -4413,6 +4457,9 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// FILLETRAD, and TRIMMODE -- which CHAMFER shares, as in AutoCAD.
+    static double& filletrad() noexcept { return s_radius_; }
+    static bool& trimmode() noexcept { return s_trim_; }
 
 private:
     /// AutoCAD's flow: `Select first object or [Undo/Polyline/Radius/Trim/Multiple]:`, then
@@ -4438,6 +4485,11 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// CHAMFERA and CHAMFERB (the distances), CHAMFERC (the length) and CHAMFERD (the angle).
+    static double& chamfera() noexcept { return s_dist1_; }
+    static double& chamferb() noexcept { return s_dist2_; }
+    static double& chamferc() noexcept { return s_length_; }
+    static double& chamferd() noexcept { return s_angle_; }
 
 private:
     /// AutoCAD's flow: `Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/
@@ -4454,7 +4506,7 @@ private:
     inline static double s_length_ = 0.0;
     inline static double s_angle_ = 0.0; ///< degrees
     inline static bool s_angle_method_ = false;
-    inline static bool s_trim_ = true;
+    static bool& s_trim() noexcept { return FilletCommand::trimmode(); } ///< TRIMMODE, shared with FILLET
     bool multiple_ = false;
     std::uint64_t last_group_ = 0;
     core::Vec2 pick1_{};

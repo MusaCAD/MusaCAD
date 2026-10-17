@@ -114,6 +114,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         dc.breaks.assign(brk.begin(), brk.end());
         dc.unassoc = d->unassoc;
         dc.flip = d->flip;
+        dc.origin = d->origin;
         return dc;
     }
     case EntityKind::Leader: {
@@ -167,7 +168,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                0,
                                hd->props,
                                hd->color2,
-                               hd->unassoc};
+                               hd->unassoc,
+                               hd->iso};
     }
     // GD&T: capture is authoritative for the overrides and carries a style SNAPSHOT for
     // PR's effective-value display (ignored on recreate) -- exactly AddDimensionCommand.
@@ -356,6 +358,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 if (c.flip != 0) {
                     store.set_dim_flip(handle, c.flip);
                 }
+                if (c.origin != Vec2{}) {
+                    store.set_dim_origin(handle, c.origin);
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -382,6 +387,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                          c.pattern_origin, props_of(c.props), c.color2);
                 if (c.unassoc) {
                     store.set_hatch_unassoc(handle, true);
+                }
+                if (c.iso) {
+                    store.set_hatch_iso(handle, true);
                 }
             } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
                 handle = store.add_fcf(c.cells, c.pos, c.rotation, c.style, props_of(c.props),

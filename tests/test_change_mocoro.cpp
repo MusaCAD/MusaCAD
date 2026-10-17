@@ -3960,7 +3960,7 @@ TEST_CASE("Linetypes loaded from .lin files and AutoCAD drawings: drawn, listed,
     REQUIRE(lin[0].description == "Dash dot (.5x) _._._");
     REQUIRE(lin[0].pattern == std::vector<double>{0.25, -0.125, 0.0, -0.125});
     REQUIRE(lin[1].pattern == std::vector<double>{0.5, -0.2, -0.25});
-    REQUIRE(linetype_library().size() == 24); // eight linetypes, each in three sizes
+    REQUIRE(linetype_library(false).size() == 38); // eight linetypes in three sizes, and the 14 ISO ones
 
     // Drawn by its own pattern: a dash, a gap, a dot, a gap ...
     const std::vector<Vec2> line{{0, 0}, {10, 0}};
@@ -4012,9 +4012,13 @@ TEST_CASE("Linetypes loaded from .lin files and AutoCAD drawings: drawn, listed,
         "0\nENDSEC\n0\nEOF\n";
     io::Document ad;
     REQUIRE(io::parse_dxf(acad, ad).ok);
-    REQUIRE(ad.linetypes.size() == 1); // its DASHED; its HIDDEN is Musa CAD's own
-    REQUIRE(ad.linetypes[0].pattern == std::vector<double>{0.5, -0.25});
-    REQUIRE(ad.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype));
+    // Its DASHED and HIDDEN are the drawing's own Dashed and Hidden; its CENTER, not in the
+    // file, as acad.lin has it (no $MEASUREMENT: imperial).
+    REQUIRE(ad.linetypes.empty());
+    REQUIRE(ad.builtin_linetypes[0] == std::vector<double>{0.5, -0.25});
+    REQUIRE(ad.builtin_linetypes[2] == std::vector<double>{2.5, -1.25});
+    REQUIRE(ad.builtin_linetypes[1] == standard_builtin_linetypes(false)[1]);
+    REQUIRE(ad.lines[0].props.linetype == Linetype::Dashed);
     REQUIRE(ad.lines[1].props.linetype == Linetype::Hidden);
     REQUIRE(ad.lines[2].props.linetype_by_layer()); // BYLAYER stays the layer's
 

@@ -183,6 +183,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.layer_states = store.layer_states();
     doc.layer_filters = store.layer_filters();
     doc.linetypes = store.linetypes();
+    doc.builtin_linetypes = store.builtin_linetypes();
     doc.vports = store.vports();
     doc.vports_active = store.vports_active();
     doc.saved_vports = store.saved_vports();
@@ -335,6 +336,7 @@ Document document_from_store(const GeometryStore& store) {
             doc.dims.back().breaks.assign(brk.begin(), brk.end());
             doc.dims.back().unassoc = dd.unassoc;
             doc.dims.back().flip = dd.flip;
+            doc.dims.back().origin = dd.origin;
         }
     }
     const auto& leaders = store.leaders();
@@ -375,7 +377,8 @@ Document document_from_store(const GeometryStore& store) {
                                            h.pattern_scale, h.pattern_angle, h.pattern_origin,
                                            h.props,
                                            h.color2,
-                                           h.unassoc});
+                                           h.unassoc,
+                                           h.iso});
         }
     }
     const auto& fcf_arena = store.fcfs();
@@ -640,6 +643,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         if (d.flip != 0) {
             store.set_dim_flip(dh, d.flip);
         }
+        if (d.origin != Vec2{}) {
+            store.set_dim_origin(dh, d.origin);
+        }
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
@@ -666,6 +672,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
                                                 h.pattern_origin, h.props, h.color2);
         if (h.unassoc) {
             store.set_hatch_unassoc(hh, true);
+        }
+        if (h.iso) {
+            store.set_hatch_iso(hh, true);
         }
     }
     {
@@ -752,6 +761,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     store.set_layer_states(doc.layer_states);
     store.set_layer_filters(doc.layer_filters);
     store.set_linetypes(doc.linetypes);
+    store.set_builtin_linetypes(doc.builtin_linetypes);
     store.set_vports(doc.vports, doc.vports_active);
     store.set_saved_vports(doc.saved_vports);
     store.set_units(doc.display_units);

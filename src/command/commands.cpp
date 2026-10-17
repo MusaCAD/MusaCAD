@@ -2438,6 +2438,38 @@ void HpAssocCommand::input(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+std::string SysVarCommand::shown(CommandContext& ctx, double v) const {
+    if (spec_.angle) {
+        return core::units::format_angle(core::to_radians(v), ctx.units());
+    }
+    return spec_.real ? core::units::format_length(v, ctx.units()) : std::to_string(static_cast<long>(std::lround(v)));
+}
+
+void SysVarCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for " + spec_.name + " <" + shown(ctx, spec_.get(ctx)) + ">: ");
+}
+
+void SysVarCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    double v = 0.0;
+    if (spec_.real) {
+        if (!parse_number(t, v) || v < spec_.lo) {
+            ctx.echo(spec_.lo > 0.0 ? "Requires a positive value." : "Requires a value of 0 or more.");
+            return;
+        }
+    } else if (!parse_number(t, v) || v != std::floor(v) || v < spec_.lo || v > spec_.hi) {
+        ctx.echo("Requires an integer between " + std::to_string(static_cast<long>(spec_.lo)) + " and " +
+                 std::to_string(static_cast<long>(spec_.hi)) + ".");
+        return;
+    }
+    spec_.set(ctx, v);
+    done_ = true;
+}
+
 void MirrtextCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
@@ -2749,7 +2781,7 @@ void JoinCommand::start(CommandContext& ctx) {
     // Noun-verb (the usual workflow): if objects are already selected, join all of them
     // that share endpoints -- each connected chain becomes one polyline -- in one step.
     if (ctx.has_selection()) {
-        ctx.submit(core::JoinSelectionCommand{ctx.pick_radius(), ctx.group_id()});
+        ctx.submit(core::JoinSelectionCommand{0.0, ctx.group_id()}); // ends that meet exactly
         done_ = true;
         return;
     }
@@ -2758,7 +2790,7 @@ void JoinCommand::start(CommandContext& ctx) {
 
 void JoinCommand::selection_gesture(CommandContext& ctx) {
     if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
-        ctx.submit(core::JoinSelectionCommand{ctx.pick_radius(), ctx.group_id()});
+        ctx.submit(core::JoinSelectionCommand{0.0, ctx.group_id()}); // ends that meet exactly
         done_ = true;
     }
 }
@@ -2792,7 +2824,7 @@ void JoinCommand::input(CommandContext& ctx, const std::string& text) {
     }
     // Enter commits the join (the engine joins what is selected and reports).
     if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
-        ctx.submit(core::JoinSelectionCommand{ctx.pick_radius(), ctx.group_id()});
+        ctx.submit(core::JoinSelectionCommand{0.0, ctx.group_id()}); // ends that meet exactly
         done_ = true;
     }
 }
@@ -2856,6 +2888,7 @@ core::HatchExtras HatchCommand::extras() const {
     x.retain = retain_;
     x.gap_tolerance = gap_tol_;
     x.boundary_set = boundary_set_;
+    x.separate = hpseparate();
     return x;
 }
 
@@ -3021,7 +3054,7 @@ void HatchCommand::advanced_input(CommandContext& ctx, const std::string& t, con
             ctx.set_prompt("Specify a boundary gap tolerance value <" + g + ">: ");
         } else if (up == "H" || up == "SEPARATE" || up == "SEPARATE HATCHES") {
             mode_ = Mode::AdvSeparate;
-            ctx.set_prompt("Create separate hatches? [Yes/No] <" + yn(separate_) + ">: ");
+            ctx.set_prompt("Create separate hatches? [Yes/No] <" + yn(hpseparate()) + ">: ");
         } else {
             ctx.echo("Invalid option keyword.");
         }
@@ -3124,7 +3157,7 @@ void HatchCommand::advanced_input(CommandContext& ctx, const std::string& t, con
         break;
     }
     case Mode::AdvSeparate:
-        if (!yes_no(separate_)) {
+        if (!yes_no(hpseparate())) {
             return;
         }
         break;
@@ -3448,7 +3481,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         // pick is its own undo group; the command stays active for more picks. Unless
         // separate hatches are asked for, the areas picked are one hatch (HPSEPARATE 0).
         core::HatchExtras x = extras();
-        x.merge = !separate_ && picked_area_;
+        x.merge = !hpseparate() && picked_area_;
         ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_, x});
         picked_area_ = true;
         boundary_set_ = boundary_set_ == 2 ? 1 : boundary_set_;
@@ -6815,8 +6848,8 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick_ = *p;
             ctx.set_last_point(*p);
-            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first.
-            if (ctx.input_is_pick() &&
+            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one).
+            if (s_peditaccept_ == 0 && ctx.input_is_pick() &&
                 (ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc)) {
                 state_ = State::Accept;
                 ctx.echo("Object selected is not a polyline");
@@ -6859,16 +6892,38 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         prompt_option(ctx);
         return;
     case State::Fuzz: {
+        if (u == "J" || u == "JOINTYPE") {
+            state_ = State::Jointype;
+            static constexpr const char* kTypes[] = {"Extend", "Add", "Both"};
+            ctx.set_prompt(std::string("Enter join type [Extend/Add/Both] <") + kTypes[s_jointype_] + ">: ");
+            return;
+        }
         double fuzz = 0.0;
         if (!t.empty() && (!parse_number(t, fuzz) || fuzz < 0.0)) {
             ctx.echo("Requires a distance of zero or more.");
             return;
         }
-        ctx.submit(core::JoinSelectionCommand{fuzz, ctx.new_group(), true}); // a polyline, as PEDIT makes
+        core::JoinSelectionCommand join{fuzz, ctx.new_group(), true}; // a polyline, as PEDIT makes
+        join.jointype = s_jointype_;
+        ctx.submit(join);
         state_ = State::Option;
         prompt_option(ctx);
         return;
     }
+    case State::Jointype:
+        if (u == "E" || u == "EXTEND") {
+            s_jointype_ = 0;
+        } else if (u == "A" || u == "ADD") {
+            s_jointype_ = 1;
+        } else if (u == "B" || u == "BOTH") {
+            s_jointype_ = 2;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        state_ = State::Fuzz;
+        ctx.set_prompt("Enter fuzz distance or [Jointype] <0.0000>: ");
+        return;
     case State::Option:
         if (t.empty() || u == "X" || u == "EXIT") {
             done_ = true;
@@ -6881,7 +6936,7 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if ((u == "J" || u == "JOIN") && multiple_) {
             // The ends within the fuzz distance of each other are joined.
             state_ = State::Fuzz;
-            ctx.set_prompt("Enter fuzz distance <0.0000>: ");
+            ctx.set_prompt("Enter fuzz distance or [Jointype] <0.0000>: ");
             return;
         } else if (u == "J" || u == "JOIN") {
             join_picks_ = {pick_};
@@ -8126,9 +8181,10 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
         }
         names_ = t;
         if (ctx.view() != nullptr) {
-            // The Select Linetype File window; without a file, Musa CAD's own linetypes.
+            // The Select Linetype File window; without a file, Musa CAD's own linetypes at the
+            // drawing's MEASUREMENT (acad.lin's sizes, or acadiso.lin's).
             const std::string path = ctx.view()->open_file_dialog("Linetype files (*.lin);;All files (*)");
-            load_from(ctx, path.empty() ? core::linetype_library() : read_lin_file(ctx, path));
+            load_from(ctx, path.empty() ? core::linetype_library(ctx.units().measurement == 1) : read_lin_file(ctx, path));
             return;
         }
         step_ = Step::LtLoadFile;
@@ -8136,10 +8192,14 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case Step::LtLoadFile: {
         if (t.empty() || u == "MUSACAD.LIN") {
-            load_from(ctx, core::linetype_library());
+            load_from(ctx, core::linetype_library(ctx.units().measurement == 1));
             return;
         }
         const std::vector<core::LinetypeDef> defs = read_lin_file(ctx, t);
+        if (defs.empty() && (u == "ACAD.LIN" || u == "ACADISO.LIN")) {
+            load_from(ctx, core::linetype_library(u == "ACADISO.LIN")); // the same linetypes at that size
+            return;
+        }
         if (defs.empty()) {
             ctx.echo("Cannot find a linetype file " + t + ".");
             ctx.set_prompt("Enter name of linetype file to search <musacad.lin>: ");
@@ -8233,11 +8293,14 @@ void CurrentPropCommand::load_from(CommandContext& ctx, const std::vector<core::
             continue;
         }
         any = true;
+        // DASHED, CENTER and HIDDEN are loaded in every drawing: as AutoCAD does with a loaded
+        // one, Load asks whether to reload it (its definition then comes from this file).
         const bool builtin = std::any_of(std::begin(kLinetypeNames), std::end(kLinetypeNames),
                                          [&](const char* n) { return upper(n) == upper(d.name); });
-        const bool again = std::any_of(loaded.begin(), loaded.end(),
-                                       [&](const core::LinetypeDef& l) { return upper(l.name) == upper(d.name); });
-        if (builtin) {
+        const bool again = builtin || std::any_of(loaded.begin(), loaded.end(), [&](const core::LinetypeDef& l) {
+                               return upper(l.name) == upper(d.name);
+                           });
+        if (upper(d.name) == "CONTINUOUS") {
             ctx.echo("Linetype " + d.name + " is already loaded.");
         } else if (again) {
             pending_.push_back(d);
@@ -8547,6 +8610,8 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNPICOORDS",
+        "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
@@ -8564,9 +8629,11 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (u == "?") {
+        std::vector<std::string> names(std::begin(kVariables), std::end(kVariables));
+        std::sort(names.begin(), names.end());
         std::string list;
-        for (const char* v : kVariables) {
-            list += (list.empty() ? "" : ", ") + std::string(v);
+        for (const std::string& v : names) {
+            list += (list.empty() ? "" : ", ") + v;
         }
         ctx.echo(list);
         return;
@@ -12299,7 +12366,7 @@ void ChamferCommand::prompt_first(CommandContext& ctx) {
 }
 
 void ChamferCommand::start(CommandContext& ctx) {
-    const std::string mode = s_trim_ ? "(TRIM mode) " : "(NOTRIM mode) ";
+    const std::string mode = s_trim() ? "(TRIM mode) " : "(NOTRIM mode) ";
     if (s_angle_method_) {
         ctx.echo(mode + "Current chamfer Length = " + core::units::format_length(s_length_, ctx.units()) +
                  ", Angle = " + core::units::format_angle(core::to_radians(s_angle_), ctx.units()));
@@ -12327,7 +12394,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (state_ == State::First) {
             prompt_first(ctx);
         } else if (state_ == State::Second) {
-            fillet_band(ctx, pick1_, 0.0, s_trim_, true, dist1(), dist2());
+            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         } else {
             ctx.set_prompt("Select 2D polyline or [Distance/Angle/mEthod]: ");
@@ -12380,7 +12447,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "T" || u == "TRIM") {
             state_ = State::TrimMode;
-            ctx.set_prompt(std::string("Enter Trim mode option [Trim/No trim] <") + (s_trim_ ? "Trim" : "No trim") + ">: ");
+            ctx.set_prompt(std::string("Enter Trim mode option [Trim/No trim] <") + (s_trim() ? "Trim" : "No trim") + ">: ");
             return;
         }
         if (u == "E" || u == "METHOD") {
@@ -12395,7 +12462,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick1_ = *p;
             state_ = State::Second;
-            fillet_band(ctx, pick1_, 0.0, s_trim_, true, dist1(), dist2());
+            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         }
         return;
@@ -12420,7 +12487,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_preview({});
             last_group_ = ctx.group_id();
             ctx.submit(core::ChamferPickCommand{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
-                                                ctx.pick_radius(), last_group_, s_trim_});
+                                                ctx.pick_radius(), last_group_, s_trim()});
             after_chamfer(ctx);
         }
         return;
@@ -12495,9 +12562,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::TrimMode:
         if (t.empty() || u == "T" || u == "TRIM") {
-            s_trim_ = true;
+            s_trim() = true;
         } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
-            s_trim_ = false;
+            s_trim() = false;
         } else {
             ctx.echo("Enter Trim or No trim.");
             return;
@@ -18556,9 +18623,10 @@ void QuickDimUiCommand::position_prompt(CommandContext& ctx) {
         return;
     }
     positioning_ = true;
+    step_ = Step::Position;
     static constexpr const char* kNames[] = {"Continuous", "Staggered", "Baseline", "Ordinate", "Radius", "Diameter"};
     ctx.set_prompt(std::string("Specify dimension line position, or [Continuous/Staggered/Baseline/Ordinate/Radius/"
-                               "Diameter] <") +
+                               "Diameter/datumPoint/Edit/seTtings] <") +
                    kNames[static_cast<std::size_t>(s_mode_)] + ">: ");
 }
 
@@ -18578,8 +18646,62 @@ void QuickDimUiCommand::input(CommandContext& ctx, const std::string& text) {
     }
     const std::string t = trimmed(text);
     const std::string u = upper(t);
+    switch (step_) {
+    case Step::Datum:
+        if (const auto p = read_point(ctx, text)) {
+            datum_ = *p;
+            position_prompt(ctx);
+        }
+        return;
+    case Step::EditRemove:
+    case Step::EditAdd:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            position_prompt(ctx);
+            return;
+        }
+        if (u == "A" || u == "ADD" || u == "R" || u == "REMOVE") {
+            step_ = u[0] == 'A' ? Step::EditAdd : Step::EditRemove;
+            ctx.set_prompt(step_ == Step::EditAdd ? "Indicate dimension point to add, or [Remove/eXit] <eXit>: "
+                                                  : "Indicate dimension point to remove, or [Add/eXit] <eXit>: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            (step_ == Step::EditAdd ? added_ : removed_).push_back(*p);
+            ctx.echo(step_ == Step::EditAdd ? "One dimension point added." : "One dimension point removed.");
+        }
+        return;
+    case Step::Settings:
+        if (u == "I" || u == "INTERSECTION") {
+            s_intersection_ = true;
+        } else if (u == "E" || u == "ENDPOINT") {
+            s_intersection_ = false;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        position_prompt(ctx);
+        return;
+    case Step::Position:
+        break;
+    }
     if (t.empty()) {
         done_ = true;
+        return;
+    }
+    if (u == "P" || u == "DATUMPOINT") {
+        step_ = Step::Datum;
+        ctx.set_prompt("Select new datum point: ");
+        return;
+    }
+    if (u == "E" || u == "EDIT") {
+        step_ = Step::EditRemove;
+        ctx.set_prompt("Indicate dimension point to remove, or [Add/eXit] <eXit>: ");
+        return;
+    }
+    if (u == "T" || u == "SETTINGS") {
+        step_ = Step::Settings;
+        ctx.set_prompt(std::string("Associative dimension priority [Endpoint/Intersection] <") +
+                       (s_intersection_ ? "Intersection" : "Endpoint") + ">: ");
         return;
     }
     const std::pair<const char*, Mode> keys[] = {{"CONTINUOUS", Mode::Continuous}, {"STAGGERED", Mode::Staggered},
@@ -18597,6 +18719,11 @@ void QuickDimUiCommand::input(CommandContext& ctx, const std::string& text) {
         c.mode = s_mode_;
         c.at = *p;
         c.group = ctx.group_id();
+        c.datum = datum_;
+        c.removed = removed_;
+        c.added = added_;
+        c.pick_radius = ctx.pick_radius();
+        c.intersection_priority = s_intersection_;
         ctx.submit(c);
         done_ = true;
     }

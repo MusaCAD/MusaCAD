@@ -24,6 +24,7 @@
 #include "musacad/core/named_view.hpp"
 #include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/layout.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
@@ -208,6 +209,10 @@ struct DimData {
     std::uint32_t inspect_label_len = 0;
     std::uint32_t inspect_rate_offset = 0;
     std::uint32_t inspect_rate_len = 0;
+    /// An ORDINATE dimension's origin (v41, DXF 10): its value is the feature's X or Y from
+    /// this point -- the UCS origin AutoCAD measured from, or QDIM's datum point. (0,0) for
+    /// one from before.
+    Vec2 origin{};
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
     /// so adding grips to any dimension type can never collide with it.
@@ -290,6 +295,9 @@ struct HatchData {
     /// Not associative (HPASSOC 0 when made, DXF 71 = 0): it does not follow its boundary
     /// when the boundary is moved or reshaped (#41).
     bool unassoc = false;
+    /// Made with MEASUREMENT 1: a standard pattern is acadiso.pat's, 25.4 times the size of
+    /// acad.pat's (GeometryStore::hatch_pattern_scale). In the padding after `unassoc`.
+    bool iso = false;
 };
 
 /// One cell of a feature control frame. A cell is TEXT -- the characteristic symbol,
@@ -579,10 +587,16 @@ public:
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
     bool set_dim_unassoc(EntityHandle h, bool unassoc) noexcept;
     bool set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept;
+    bool set_dim_origin(EntityHandle h, Vec2 origin) noexcept;
     bool set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept;
     /// MLEADEREDIT: the multileader's added leaders, by their arrowhead points (at most 255).
     bool set_mleader_extra(EntityHandle h, std::span<const Vec2> tips);
     bool set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept;
+    bool set_hatch_iso(EntityHandle h, bool iso) noexcept;
+    /// The scale a hatch's pattern is drawn at: its own, times 25.4 for a standard pattern
+    /// made with MEASUREMENT 1 (acadiso.pat's size); a pattern of the drawing's own, and the
+    /// user-defined ones, as they are.
+    [[nodiscard]] double hatch_pattern_scale(const HatchData& d) const noexcept;
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
     bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;
@@ -915,9 +929,14 @@ public:
             linetypes_.resize(kMaxLoadedLinetypes);
         }
     }
-    /// Loads `def`: a linetype of that name already loaded is replaced (reloaded). Nullopt
-    /// when the table is full.
+    /// Loads `def`: a linetype of that name already loaded is replaced (reloaded), and one by
+    /// a built-in name (DASHED, CENTER, HIDDEN) redefines that one. Nullopt when the table is
+    /// full.
     std::optional<Linetype> add_linetype(const LinetypeDef& def);
+    /// The drawing's own Dashed, Center and Hidden (Musa CAD's former sizes until a drawing
+    /// says otherwise; a new drawing takes acad.lin's or acadiso.lin's).
+    [[nodiscard]] const BuiltinLinetypes& builtin_linetypes() const noexcept { return builtin_linetypes_; }
+    void set_builtin_linetypes(const BuiltinLinetypes& b) { builtin_linetypes_ = b; }
     /// The linetype a name means (any case): one loaded by that name, else a built-in one.
     [[nodiscard]] std::optional<Linetype> linetype_by_name(std::string_view name) const;
     /// A linetype's name: a built-in one's as the Linetype Manager shows it, or (`dxf`) as
@@ -1428,6 +1447,7 @@ private:
     std::uint16_t current_layer_ = 0;
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
+    BuiltinLinetypes builtin_linetypes_ = legacy_builtin_linetypes(); // Dashed, Center, Hidden
     bool psltscale_ = true;                                 // PSLTSCALE
     bool msltscale_ = true;                                 // MSLTSCALE
     DrawingProps drawing_props_;                            // DWGPROPS

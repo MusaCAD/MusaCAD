@@ -105,6 +105,8 @@
 
 #include "musacad/command/calc.hpp"
 #include "musacad/command/command_processor.hpp"
+#include "musacad/command/sysvars.hpp"
+#include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/io/xlsx.hpp"
 #include "musacad/core/linetype.hpp"
@@ -621,6 +623,12 @@ MainWindow::~MainWindow() {
     delete takeCentralWidget(); // stops the viewport render thread before the engine
     if (engine_) {
         engine_->stop();
+    }
+    if (!developer_hook_active()) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("sysvar/HPSEPARATE"), command::hpseparate() ? 1 : 0);
+        settings.setValue(QStringLiteral("sysvar/MEASUREINIT"), command::measureinit());
+        settings.setValue(QStringLiteral("sysvar/DYNPICOORDS"), command::dynpicoords());
     }
     if (restore_dyn_pref_) {
         // A harness run leaves the saved Dynamic Input preference exactly as it found it
@@ -1222,6 +1230,23 @@ void MainWindow::build_status_bar() {
         dyn_action_->setChecked(false);
     }
 
+    // The system variables AutoCAD keeps in the registry, kept in Musa CAD's settings:
+    // HPSEPARATE, MEASUREINIT and DYNPICOORDS (a harness run starts from the defaults a fresh
+    // install has). The drawing open now is new: MEASUREINIT starts it.
+    {
+        const QSettings s;
+        const bool saved = !developer_hook_active();
+        const auto value = [&](const char* key, int def) {
+            return saved ? std::clamp(s.value(QStringLiteral("sysvar/") + QLatin1String(key), def).toInt(), 0, 1) : def;
+        };
+        command::hpseparate() = value("HPSEPARATE", 0) != 0;
+        command::measureinit() = value("MEASUREINIT", 1);
+        command::dynpicoords() = value("DYNPICOORDS", 0);
+        core::DimAssocCommand init;
+        init.op = core::DimAssocCommand::Op::MeasureInitNow;
+        init.value = static_cast<std::uint8_t>(command::measureinit());
+        engine_->submit(init);
+    }
     // OSNAP button dropdown: per-type running-osnap toggles (drive snap_mask).
     auto* osnap_menu = new QMenu(this);
     const std::pair<const char*, core::SnapType> kSnapTypes[] = {
@@ -4474,7 +4499,11 @@ void MainWindow::open_linetype_manager() {
         auto* lay = new QVBoxLayout(&pick);
         auto* file_row = new QHBoxLayout;
         auto* file_btn = new QPushButton(QStringLiteral("File..."), &pick);
-        auto* file_name = new QLabel(QStringLiteral("musacad.lin (Musa CAD's own)"), &pick);
+        // Musa CAD's own linetypes at the drawing's MEASUREMENT: acad.lin's sizes or acadiso.lin's.
+        const bool metric = viewport_->units().measurement == 1;
+        auto* file_name = new QLabel(metric ? QStringLiteral("musacad.lin (Musa CAD's own, acadiso.lin sizes)")
+                                            : QStringLiteral("musacad.lin (Musa CAD's own, acad.lin sizes)"),
+                                     &pick);
         file_row->addWidget(file_btn);
         file_row->addWidget(file_name, 1);
         lay->addLayout(file_row);
@@ -4486,7 +4515,7 @@ void MainWindow::open_linetype_manager() {
         avail->verticalHeader()->setVisible(false);
         avail->horizontalHeader()->setStretchLastSection(true);
         lay->addWidget(avail, 1);
-        auto defs = std::make_shared<std::vector<core::LinetypeDef>>(core::linetype_library());
+        auto defs = std::make_shared<std::vector<core::LinetypeDef>>(core::linetype_library(metric));
         const auto list = [avail, defs] {
             avail->setRowCount(static_cast<int>(defs->size()));
             for (std::size_t k = 0; k < defs->size(); ++k) {
@@ -4526,8 +4555,8 @@ void MainWindow::open_linetype_manager() {
             for (char& ch : u) {
                 ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
             }
-            if (u == "CONTINUOUS" || u == "DASHED" || u == "CENTER" || u == "HIDDEN") {
-                continue; // built in, always loaded
+            if (u == "CONTINUOUS") {
+                continue; // built in, always loaded (DASHED, CENTER and HIDDEN reload, as in AutoCAD)
             }
             c.defs.push_back((*defs)[r]);
         }
@@ -4771,12 +4800,29 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     form->addRow(QStringLiteral("Column width:"), col_w);
     form->addRow(QStringLiteral("Data rows:"), rows);
     form->addRow(QStringLiteral("Row height:"), row_h);
-    auto* title = new QCheckBox(QStringLiteral("First row: Title"), &dlg);
-    title->setChecked(io.title);
-    auto* header = new QCheckBox(QStringLiteral("Next row: Header"), &dlg);
-    header->setChecked(io.header);
-    form->addRow(title);
-    form->addRow(header);
+    // Set cell styles, as AutoCAD's window has them: the first row's, the second row's, and
+    // Data for the rest. A title row and a header row are what a table here can have, so the
+    // second row is a header only under a title.
+    auto* cell_box = new QGroupBox(QStringLiteral("Set cell styles"), &dlg);
+    auto* cell_form = new QFormLayout(cell_box);
+    const QStringList kinds{QStringLiteral("Title"), QStringLiteral("Header"), QStringLiteral("Data")};
+    auto* first_row = new QComboBox(cell_box);
+    first_row->addItems(kinds);
+    first_row->setCurrentIndex(io.title ? 0 : io.header ? 1 : 2);
+    auto* second_row = new QComboBox(cell_box);
+    second_row->addItems(kinds);
+    second_row->setCurrentIndex(io.title && io.header ? 1 : 2);
+    auto* other_rows = new QComboBox(cell_box);
+    other_rows->addItem(QStringLiteral("Data"));
+    other_rows->setEnabled(false);
+    cell_form->addRow(QStringLiteral("First row cell style:"), first_row);
+    cell_form->addRow(QStringLiteral("Second row cell style:"), second_row);
+    cell_form->addRow(QStringLiteral("All other row cell styles:"), other_rows);
+    form->addRow(cell_box);
+    const auto has_title = [first_row] { return first_row->currentIndex() == 0; };
+    const auto has_header = [first_row, second_row] {
+        return first_row->currentIndex() == 1 || (first_row->currentIndex() == 0 && second_row->currentIndex() == 1);
+    };
     // The preview, redrawn as the style and the rows change.
     auto* preview = new QLabel(&dlg);
     preview->setObjectName(QStringLiteral("InsertTablePreview"));
@@ -4785,11 +4831,11 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
         const int i = style->currentIndex();
         const core::TableStyle st =
             i >= 0 && static_cast<std::size_t>(i) < styles.size() ? styles[static_cast<std::size_t>(i)] : core::TableStyle{};
-        preview->setPixmap(table_preview(st, title->isChecked(), header->isChecked(), cols->value(), rows->value()));
+        preview->setPixmap(table_preview(st, has_title(), has_header(), cols->value(), rows->value()));
     };
     connect(style, &QComboBox::currentIndexChanged, &dlg, redraw);
-    connect(title, &QCheckBox::toggled, &dlg, redraw);
-    connect(header, &QCheckBox::toggled, &dlg, redraw);
+    connect(first_row, &QComboBox::currentIndexChanged, &dlg, redraw);
+    connect(second_row, &QComboBox::currentIndexChanged, &dlg, redraw);
     connect(cols, &QSpinBox::valueChanged, &dlg, redraw);
     connect(rows, &QSpinBox::valueChanged, &dlg, redraw);
     redraw();
@@ -4797,7 +4843,7 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     const auto sync_link = [=] {
         const bool linked = from_link->isChecked();
         link->setEnabled(linked);
-        for (QWidget* w : std::initializer_list<QWidget*>{cols, col_w, rows, row_h, title, header}) {
+        for (QWidget* w : std::initializer_list<QWidget*>{cols, col_w, rows, row_h, cell_box}) {
             w->setEnabled(!linked); // the file decides the grid
         }
     };
@@ -4815,8 +4861,8 @@ int MainWindow::open_insert_table_dialog(command::InsertTableSettings& io) {
     io.col_width = col_w->value();
     io.rows = rows->value();
     io.row_lines = row_h->value();
-    io.title = title->isChecked();
-    io.header = header->isChecked();
+    io.title = has_title();
+    io.header = has_header();
     io.link = from_link->isChecked() ? link->currentText().toStdString() : std::string();
     io.window = in_window->isChecked();
     return 1;

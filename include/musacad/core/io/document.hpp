@@ -9,6 +9,7 @@
 
 #include "musacad/core/drawing_props.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
@@ -69,7 +70,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 40;
+inline constexpr std::uint32_t kFormatVersion = 41;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -203,6 +204,7 @@ struct DocDim {
     std::vector<Vec2> breaks{}; ///< v40: DIMBREAK's breaks (pairs)
     bool unassoc = false;       ///< v40: not associative (DimData::unassoc)
     std::uint8_t flip = 0;      ///< v40: Flip Arrow (DimData::flip)
+    Vec2 origin{};              ///< v41: an ordinate dimension's origin (DimData::origin)
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {
@@ -247,6 +249,7 @@ struct DocHatch {
     EntityProps props{};
     Rgb color2{}; ///< GRADIENT second colour (v27)
     bool unassoc = false; ///< v40: not associative (HatchData::unassoc)
+    bool iso = false;     ///< v41: a standard pattern at acadiso.pat's size (HatchData::iso)
     friend bool operator==(const DocHatch&, const DocHatch&) = default;
 };
 
@@ -388,6 +391,9 @@ struct Document {
     std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)
     std::vector<LayerGroupFilter> layer_filters{}; ///< v40: the layer group filters
     std::vector<LinetypeDef> linetypes{}; ///< v40: the linetypes loaded beyond the built-in four
+    /// v41: the drawing's own Dashed, Center and Hidden (a file from before has Musa CAD's
+    /// former definitions).
+    BuiltinLinetypes builtin_linetypes = legacy_builtin_linetypes();
     bool fillmode = true;       ///< FILLMODE (v37)
     std::uint8_t pdmode = 0;    ///< PDMODE (v40): how points are drawn
     double pdsize = 0.0;        ///< PDSIZE (v40): their size (0 or less: on screen)

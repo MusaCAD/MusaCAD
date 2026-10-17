@@ -427,6 +427,18 @@ std::string serialize_native(const Document& doc) {
         }
         s += '\n';
     }
+    // v41: LTBUILTIN i n e1..en -- the drawing's own Dashed (0), Center (1) and Hidden (2).
+    for (std::size_t i = 0; i < doc.builtin_linetypes.size(); ++i) {
+        s += "LTBUILTIN ";
+        append_uint(s, i);
+        s += ' ';
+        append_uint(s, doc.builtin_linetypes[i].size());
+        for (const double e : doc.builtin_linetypes[i]) {
+            s += ' ';
+            append_double(s, e);
+        }
+        s += '\n';
+    }
     // v40: LAYERFILTER name layer... (spaces as 0x1f): a layer group filter.
     for (const LayerGroupFilter& f : doc.layer_filters) {
         const auto word = [](const std::string& in) {
@@ -932,6 +944,11 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, d.flip);
             s += '\n';
         }
+        if (d.origin != Vec2{}) {
+            s += "DIMORIGIN "; // v41: an ordinate dimension's origin
+            append_vec(s, d.origin);
+            s += '\n';
+        }
         if (d.overrides.has(DimOverrides::kTextMove)) {
             s += "DIMTMOVE "; // v40: its own DIMTMOVE (outside the override block's fixed fields)
             append_uint(s, d.overrides.text_move);
@@ -1073,6 +1090,9 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         if (h.unassoc) {
             s += "HATCHNOASSOC\n"; // v40: the HATCH just written does not follow its boundary
+        }
+        if (h.iso) {
+            s += "HATCHISO\n"; // v41: its standard pattern at acadiso.pat's size
         }
     }
     // v31: paper-space viewports.
@@ -1352,6 +1372,8 @@ std::string serialize_native(const Document& doc) {
     append_double(s, doc.display_units.base_angle);
     s += ' ';
     append_uint(s, doc.display_units.insunits); // v40: INSUNITS (older readers stop at 7)
+    s += ' ';
+    append_uint(s, doc.display_units.measurement); // v41: MEASUREMENT
     s += '\n';
     // v24: VIEW cx cy scale name  and  GROUP selectable n k1 i1 ... kn in name description
     // (names/descriptions space-escaped like PAGESETUP's strings; "-" = empty).
@@ -2005,13 +2027,15 @@ IoResult parse_native(std::string_view text, Document& out) {
         } else if (key == "UNITSFMT") {
             std::uint64_t v[5] = {2, 4, 0, 0, 0};
             std::uint64_t ins = 0;
-            if ((tok.size() != 7 && tok.size() != 8) || !to_uint(tok[1], v[0]) || !to_uint(tok[2], v[1]) ||
+            std::uint64_t meas = 0;
+            if (tok.size() < 7 || tok.size() > 9 || !to_uint(tok[1], v[0]) || !to_uint(tok[2], v[1]) ||
                 !to_uint(tok[3], v[2]) || !to_uint(tok[4], v[3]) || !to_uint(tok[5], v[4]) ||
                 !to_double(tok[6], doc.display_units.base_angle) ||
-                (tok.size() == 8 && !to_uint(tok[7], ins))) {
+                (tok.size() >= 8 && !to_uint(tok[7], ins)) || (tok.size() == 9 && !to_uint(tok[8], meas))) {
                 return fail("malformed UNITSFMT");
             }
             doc.display_units.insunits = static_cast<std::uint8_t>(std::min<std::uint64_t>(ins, 20));
+            doc.display_units.measurement = meas != 0 ? 1 : 0;
             doc.display_units.linear = static_cast<LinearFormat>(std::clamp<std::uint64_t>(v[0], 1, 5));
             doc.display_units.linear_precision = static_cast<std::uint8_t>(std::min<std::uint64_t>(v[1], 8));
             doc.display_units.angular = static_cast<AngleFormat>(std::min<std::uint64_t>(v[2], 4));
@@ -2525,6 +2549,13 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       static_cast<std::uint8_t>(dinspect),
                                       dinspect_label,
                                       dinspect_rate});
+        } else if (key == "DIMORIGIN") {
+            double ox = 0.0;
+            double oy = 0.0;
+            if (doc.dims.empty() || tok.size() != 3 || !to_double(tok[1], ox) || !to_double(tok[2], oy)) {
+                return fail("malformed DIMORIGIN");
+            }
+            doc.dims.back().origin = {ox, oy};
         } else if (key == "DIMFLIP" || key == "DIMTMOVE") {
             std::uint64_t v = 0;
             if (doc.dims.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 3 ||
@@ -2558,6 +2589,11 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("HATCHNOASSOC without a HATCH");
             }
             doc.hatches.back().unassoc = true;
+        } else if (key == "HATCHISO") {
+            if (doc.hatches.empty()) {
+                return fail("HATCHISO without a HATCH");
+            }
+            doc.hatches.back().iso = true;
         } else if (key == "DIMNOASSOC") {
             if (doc.dims.empty()) {
                 return fail("DIMNOASSOC without a DIM");
@@ -2747,6 +2783,15 @@ IoResult parse_native(std::string_view text, Document& out) {
             rule.locked = static_cast<std::uint8_t>(v[2]);
             rule.plot = static_cast<std::uint8_t>(v[3]);
             doc.layer_filters.push_back(std::move(rule));
+        } else if (key == "LTBUILTIN") {
+            std::uint64_t i = 0;
+            std::uint64_t n = 0;
+            vals.clear();
+            if (tok.size() < 3 || !to_uint(tok[1], i) || i > 2 || !to_uint(tok[2], n) || tok.size() != 3 + n ||
+                !parse_doubles(tok, 3, n, vals)) {
+                return fail("malformed LTBUILTIN");
+            }
+            doc.builtin_linetypes[i] = vals;
         } else if (key == "LTYPEDEF") {
             std::uint64_t n = 0;
             vals.clear();

@@ -200,7 +200,7 @@ double dim_measure(const DimData& d) {
         return to_degrees(std::acos(c));
     }
     case DimType::Ordinate:
-        return d.aux < 0.5 ? d.a.x : d.a.y; // the feature's coordinate from the origin
+        return d.aux < 0.5 ? d.a.x - d.origin.x : d.a.y - d.origin.y; // the feature's coordinate from its origin
     case DimType::Jogged:
         return distance(d.a, d.b); // the TRUE radius (a = true centre), never the override
     case DimType::ArcLength: {
