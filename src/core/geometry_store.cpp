@@ -1321,15 +1321,7 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
     return false;
 }
 
-// --- linetypes ------------------------------------------------------------------
-
-namespace {
-bool same_name(std::string_view a, std::string_view b) {
-    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
-               return std::toupper(static_cast<unsigned char>(x)) == std::toupper(static_cast<unsigned char>(y));
-           });
-}
-} // namespace
+// --- linetypes (same_name: above) -------------------------------------------------
 
 std::optional<Linetype> GeometryStore::add_linetype(const LinetypeDef& def) {
     for (std::size_t i = 0; i < linetypes_.size(); ++i) {
