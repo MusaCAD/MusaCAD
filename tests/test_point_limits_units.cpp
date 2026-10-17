@@ -157,7 +157,7 @@ TEST_CASE("The DXF header carries the units, the point display and the limits bo
 
     io::Document native;
     REQUIRE(io::parse_native(io::serialize_native(doc), native).ok);
-    REQUIRE(native.format_version == 40);
+    REQUIRE(native.format_version == io::kFormatVersion);
     REQUIRE(native.pdmode == 35);
     REQUIRE(native.pdsize == Approx(2.5));
     REQUIRE(native.limits_max == Vec2{300, 200});
