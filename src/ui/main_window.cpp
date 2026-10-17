@@ -1666,7 +1666,7 @@ bool MainWindow::selftest_modify() {
     processor_->set_selection_count(viewport_->selection_count());
     command_widget_->debug_set_input(QString());
     command_widget_->focus_input();
-    type("AR");
+    type("-ARRAY"); // the classic prompts: type, rows, columns, the two distances
     type("R");
     type("2");
     type("2");
@@ -9103,9 +9103,13 @@ bool MainWindow::selftest_commands() {
     const std::uint64_t sv4 = viewport_->status_version();
     type("ARRAYPATH");
     type("50,0"); // the path
-    type("D");    // Divide
+    type("M");    // Method:
+    type("D");    //   Divide
+    type("I");    // Items:
     type("5");
-    type("N");    // do not align
+    type("A");    // Align items:
+    type("N");    //   No
+    type("");     // the array made
     path_ok = path_ok && pump([this, sv4] {
         return viewport_->status_version() != sv4 &&
                viewport_->last_status().find("Path array created") != std::string::npos;
