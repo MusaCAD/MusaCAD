@@ -161,6 +161,20 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
     reg({"MOCORO"}, [] { return std::make_unique<MocoroCommand>(); }, "",
         "Move, rotate and scale the selection in one command, with copies if asked.");
+    reg({"TABLESTYLE", "TS"}, [] { return std::make_unique<TableStyleUiCommand>(); }, "",
+        "Create, change and set the current table style.");
+    reg({"GD", "GRADIENT"}, [] { return std::make_unique<HatchCommand>(false, true); }, "assets/ribbon/gradient.svg",
+        "Fill an enclosed area or selected objects with a gradient.");
+    reg({"TCOUNT"}, [] { return std::make_unique<TextCountUiCommand>(); }, "",
+        "Number texts in order: the number before, after or instead of the text, or in place of a search string.");
+    reg({"TEXTFIT"}, [] { return std::make_unique<TextFitUiCommand>(); }, "",
+        "Stretch or shrink a text between two points by its width factor.");
+    reg({"GATTE"}, [] { return std::make_unique<GlobalAttEditUiCommand>(); }, "",
+        "Change an attribute's value on every reference of a block.");
+    reg({"VPSCALE"}, [] { return std::make_unique<VpScaleUiCommand>(); }, "",
+        "Report the scale of a layout viewport.");
+    reg({"TXTEXP"}, [] { return std::make_unique<TextExplodeUiCommand>(); }, "",
+        "Turn text into polylines: the strokes of its letters, or their outlines in a TrueType font.");
     reg({"FLATTEN"}, [] { return std::make_unique<FlattenUiCommand>(); }, "",
         "Set the elevation and thickness of the selected polylines to 0.");
     reg({"CHANGE", "-CH"}, [] { return std::make_unique<ChangeUiCommand>(); }, "",
@@ -389,6 +403,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Put a wipeout behind the selected text.");
     reg({"SPLINEDIT", "SPE"}, [] { return std::make_unique<SplineEditUiCommand>(); }, "",
         "Edit a spline: its control points, reverse it, or make it a polyline.");
+    reg({"DIMINSPECT"}, [] { return std::make_unique<DimInspectUiCommand>(true); }, "",
+        "Make the selected dimensions inspection dimensions: a frame, a label and an inspection rate.");
+    reg({"-DIMINSPECT"}, [] { return std::make_unique<DimInspectUiCommand>(false); }, "",
+        "Add or remove inspection data on dimensions from the command line.");
     reg({"DIMJOGLINE", "DJL"}, [] { return std::make_unique<DimJogLineCommand>(); }, "",
         "Add a jog to a linear or aligned dimension's line, or take one away.");
     reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },

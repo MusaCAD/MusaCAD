@@ -37,6 +37,8 @@ public:
                                  double height) const override;
     void glyph_fills(std::string_view name, std::string_view text, core::Vec2 origin, double height,
                      double rotation, std::vector<core::Vec2>& tris) const override;
+    void glyph_outlines(std::string_view name, std::string_view text, core::Vec2 origin, double height,
+                        double rotation, std::vector<std::vector<core::Vec2>>& rings) const override;
     [[nodiscard]] std::vector<std::string> available() const override;
     [[nodiscard]] std::string substitute(std::string_view requested) const override;
 
@@ -45,6 +47,7 @@ private:
     // divided by the face's cap height so a draw at cap `height` is a plain scale.
     struct Glyph {
         std::vector<core::Vec2> tris;
+        std::vector<std::vector<core::Vec2>> rings; ///< the contours, normalised and y-up like `tris`
         double advance = 1.0;
     };
     struct Face {

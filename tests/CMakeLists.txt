@@ -216,6 +216,7 @@ target_link_libraries(musacad_tests PRIVATE
 # A second test binary: under the dev preset (ASan, debug) one binary with every test
 # outgrows the 2 GB that 32-bit relative relocations reach, and the link fails.
 add_executable(musacad_tests_2
+    test_batch_r.cpp
     test_change_mocoro.cpp
     test_point_limits_units.cpp
     test_layer_plot_followups.cpp

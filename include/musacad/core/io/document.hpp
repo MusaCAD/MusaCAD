@@ -136,6 +136,7 @@ struct DocPolyline {
     std::vector<double> widths = {}; ///< empty, or two per vertex (v37)
     double elevation = 0.0;          ///< DXF 38 (v37)
     double thickness = 0.0;          ///< DXF 39 (v37)
+    bool ltype_gen = true;           ///< v40: the dash pattern runs on across the vertices
     friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
 };
 struct DocSpline {
@@ -194,6 +195,9 @@ struct DocDim {
     bool arc_leader = false;  ///< v39: an arc-length dimension's leader
     double oblique = 0.0;     ///< v39: the extension lines' angle (DimData::oblique)
     double jog = -1.0;        ///< v40: DIMJOGLINE's place along the line (DimData::jog)
+    std::uint8_t inspect = 0; ///< v40: DIMINSPECT's frame (DimData::inspect)
+    std::string inspect_label{};
+    std::string inspect_rate{};
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {
@@ -365,6 +369,7 @@ struct Document {
     std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
     std::uint16_t current_text_style = 0;
     std::uint16_t current_dimstyle = 0; ///< v38: the style new dimensions use (DXF $DIMSTYLE)
+    std::uint16_t current_table_style = 0; ///< v40: the style new tables use (TABLESTYLE)
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted
     std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)

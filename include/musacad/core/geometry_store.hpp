@@ -82,6 +82,9 @@ struct PolylineData {
     /// Elevation and thickness (DXF 38 / 39): kept and round-tripped; the view is 2D.
     double elevation = 0.0;
     double thickness = 0.0;
+    /// Linetype generation (PEDIT Ltype gen, DXF 70 bit 128): the dash pattern runs on
+    /// across the vertices; off, it starts again at each one. On unless set off.
+    bool ltype_gen = true;
 };
 
 struct SplineData {
@@ -181,6 +184,14 @@ struct DimData {
     /// DIMJOGLINE (v40): where a linear or aligned dimension's line has its jog, 0..1 from
     /// the first extension line to the second; negative: no jog.
     double jog = -1.0;
+    /// DIMINSPECT (v40): 0, none; else the value is an inspection dimension -- 1 framed with
+    /// round ends, 2 with angular ends, 3 unframed. Its label (left of the value) and its
+    /// inspection rate (right of it) are in the shared char pool; either may be empty.
+    std::uint8_t inspect = 0;
+    std::uint32_t inspect_label_offset = 0;
+    std::uint32_t inspect_label_len = 0;
+    std::uint32_t inspect_rate_offset = 0;
+    std::uint32_t inspect_rate_len = 0;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
     /// so adding grips to any dimension type can never collide with it.
@@ -525,6 +536,9 @@ public:
     bool set_dim_text(EntityHandle h, double text_angle, bool arc_leader) noexcept;
     bool set_dim_oblique(EntityHandle h, double oblique) noexcept;
     bool set_dim_jog(EntityHandle h, double jog) noexcept;
+    /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
+    bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
+    bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},
@@ -757,8 +771,14 @@ public:
     [[nodiscard]] std::string_view dim_override(const DimData& d) const noexcept {
         return {string_pool_.data() + d.override_offset, d.override_len};
     }
+    [[nodiscard]] std::string_view dim_inspect_label(const DimData& d) const noexcept {
+        return {string_pool_.data() + d.inspect_label_offset, d.inspect_label_len};
+    }
+    [[nodiscard]] std::string_view dim_inspect_rate(const DimData& d) const noexcept {
+        return {string_pool_.data() + d.inspect_rate_offset, d.inspect_rate_len};
+    }
     [[nodiscard]] DimTextParts dim_text_parts(const DimData& d) const noexcept {
-        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d)};
+        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d), dim_inspect_label(d), dim_inspect_rate(d)};
     }
     /// Content of a paragraph-text block (MTEXT entity or QLEADER label).
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
@@ -895,6 +915,15 @@ public:
     }
     std::uint16_t add_table_style(const TableStyle& s);
     void set_table_style_table(std::vector<TableStyle> styles);
+    /// Replaces the style at `i` (its name too; Standard keeps its name). False if out of range.
+    bool set_table_style(std::uint16_t i, const TableStyle& s);
+    /// TABLESTYLE's Set Current: the style new tables take.
+    [[nodiscard]] std::uint16_t current_table_style() const noexcept { return current_table_style_; }
+    void set_current_table_style(std::uint16_t i) noexcept {
+        current_table_style_ = i < table_styles_.size() ? i : 0;
+    }
+    /// The index of the style named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t table_style_index(std::string_view name) const noexcept;
 
     /// A table's cells / column widths / row heights, as spans into the shared pools.
     [[nodiscard]] std::span<const TableCell> table_cells(const TableData& t) const noexcept;
@@ -1216,6 +1245,7 @@ private:
     std::vector<TableCell> table_cell_pool_;  ///< shared, like the polyline vertex pool
     std::vector<double> table_size_pool_;     ///< column widths then row heights
     std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
+    std::uint16_t current_table_style_ = 0;
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool

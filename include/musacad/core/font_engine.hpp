@@ -46,6 +46,18 @@ public:
     virtual void glyph_fills(std::string_view name, std::string_view text, Vec2 origin,
                              double height, double rotation, std::vector<Vec2>& tris) const = 0;
 
+    /// Appends the glyphs' closed outlines (outer rings and holes, world space), laid out as
+    /// glyph_fills lays them out: what TXTEXP turns text into. Appends nothing by default.
+    virtual void glyph_outlines(std::string_view name, std::string_view text, Vec2 origin, double height,
+                                double rotation, std::vector<std::vector<Vec2>>& rings) const {
+        (void)name;
+        (void)text;
+        (void)origin;
+        (void)height;
+        (void)rotation;
+        (void)rings;
+    }
+
     /// The selectable font names for the Properties palette (the built-in "Standard"
     /// stroke font plus the available system outline faces).
     [[nodiscard]] virtual std::vector<std::string> available() const = 0;

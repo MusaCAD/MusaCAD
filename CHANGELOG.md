@@ -52,6 +52,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   and Output > Plot > Preview, with Plot from it.
 - **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
   takes it away.
+- **DIMINSPECT** (#60) -- inspection dimensions: the value framed with round or angular ends,
+  or left unframed, a label on its left and an inspection rate on its right, set in the
+  Inspection Dimension window or with -DIMINSPECT, and Remove Inspection. Annotate >
+  Dimensions has Inspect in its slide-out.
 - **CHANGE** (#55) -- a change point for lines' ends and circles' radii; the insertion point,
   style, height, rotation and text of the selected texts; the insertion point and rotation of
   blocks; Properties as CHPROP.
@@ -62,6 +66,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   a wipeout behind text.
 - **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
   elevation and thickness to 0.
+- **TCOUNT, TEXTFIT, GATTE and VPSCALE** (#77) -- texts numbered in order (before, after or
+  instead of the text, or in place of a search string); a text stretched or shrunk to a point
+  by its width factor; an attribute's value changed on every reference of a block; a layout
+  viewport's scale.
+- **GRADIENT** (#41) -- HATCH with the gradient fill, from the command line and Home > Draw.
+- **TXTEXP** (#77) -- text turned into polylines as it is drawn: along the strokes of the
+  built-in font, or round the outlines of a TrueType font's letters.
 - **The View Manager and NEWVIEW** (#72) -- VIEW lists the saved views to make current, add
   and delete; NEWVIEW saves the view on screen by name; -VIEW keeps the command line.
 - **The Layer States Manager** (#69) -- LAYERSTATE lists the named layer states to restore,
@@ -81,6 +92,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   seTtings asks the pattern (`?` lists them), its scale and angle, and they are kept for the
   next hatch, ANSI31 to begin with as in AutoCAD; Undo takes the last pick back; **-HATCH**
   with Properties and Select objects.
+- **PEDIT Ltype gen** (#52) -- off, a polyline's dash pattern starts again at every vertex, as
+  AutoCAD draws it; a DXF polyline without the flag is read that way.
+- **LWT on the status bar** (#69) -- lineweights shown or not, kept in step with Home >
+  Properties' Lineweight Display.
+- **Style combos on Annotate** (#78) -- the Text panel's Text Style combo and the Dimensions
+  panel's Dimension Style combo set the style new text and dimensions take; the Text panel's
+  launcher opens the Text Style window. Find Text, Center Mark, Blend Curves, Delete Duplicate
+  Objects and Pan on the ribbon now run FIND, CENTERMARK, BLEND, OVERKILL and PAN.
+- **Text drawn Backwards and Upside down** (#62) -- the text style effects, in the Text Style
+  window and at -STYLE, kept in the drawing and in DXF.
 - **The Text Style window** (#62) -- STYLE lists the styles with their font, height, width
   factor and oblique angle, with Set Current, New and Apply; -STYLE keeps the command line.
 - **FIND** (#62) -- find and replace text in text, multiline text, leaders, table cells,
@@ -94,6 +115,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or a spline, its points the sketch increment apart.
 - **-TABLE** (#44) -- AutoCAD's prompts: the columns, the data rows, then the insertion
   point with Style, Width and Height; a title and a header row come with the data rows.
+- **TABLESTYLE** (#44) -- the Table Style window: Set Current, New, Modify (text heights,
+  cell margin, lineweight) and Delete; the current table style is kept with the drawing,
+  TABLE uses it (its Style option takes any of them), and Annotate > Tables has the Table
+  Style combo.
 - **Dimension units** (#81, #58) -- the Dimension Style Manager's Primary Units tab takes
   the unit format (Architectural `1'-6 1/2"`, Fractional, Engineering, Scientific or
   Decimal), the fraction format, round off, a prefix and suffix and the measurement scale

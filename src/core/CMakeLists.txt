@@ -17,6 +17,7 @@ add_library(musacad_core STATIC
     text/mtext.cpp
     text/text_codes.cpp
     text/text_frame.cpp
+    text/text_run.cpp
     text_check.cpp
     hatch.cpp
     hatch_pattern.cpp

@@ -41,6 +41,8 @@
 #include "musacad/core/polyline_width.hpp"
 #include "musacad/core/text/text_frame.hpp"
 #include "musacad/core/text/mtext.hpp"
+#include "musacad/core/text/text_run.hpp"
+#include "musacad/core/font_engine.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/table.hpp"
 
@@ -6448,7 +6450,7 @@ void GeometryEngine::collect_purge_candidates(RenderSnapshot::PurgeCandidates& o
         }
     }
     for (std::size_t i = 1; i < store_.table_styles().size(); ++i) {
-        if (!store_.table_style_in_use(static_cast<std::uint16_t>(i))) {
+        if (!store_.table_style_in_use(static_cast<std::uint16_t>(i)) && i != store_.current_table_style()) {
             out.tablestyles.push_back(store_.table_styles()[i].name);
         }
     }
@@ -10753,6 +10755,7 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
     std::vector<double> b;
     std::vector<double> w; // two per vertex, zeros for a plain polyline
     double elevation = 0.0;
+    bool ltype_gen = true;
     double thickness = 0.0;
     bool closed = false;
     EntityProps props{};
@@ -10769,6 +10772,7 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
             b.assign(bs.begin(), bs.end());
         }
         w.assign(ws.begin(), ws.end());
+        ltype_gen = pl->ltype_gen;
         elevation = pl->elevation;
         thickness = pl->thickness;
         closed = pl->closed;
@@ -10937,6 +10941,10 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         what = "Segment width set.";
         break;
     }
+    case 22: // Ltype gen: p1.x 1 on, 0 off
+        ltype_gen = c.p1.x != 0.0;
+        what = ltype_gen ? "Linetype generation on." : "Linetype generation off.";
+        break;
     case 10: { // Fit: arcs through the vertices, smooth at each (two per segment)
         if (!polyline_ops::fit_arcs(v, b, w, closed)) {
             say("PEDIT: Fit needs three vertices.");
@@ -10962,7 +10970,8 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
                                          cts,
                                          pline::has_width(w) ? w : std::vector<double>{},
                                          elevation,
-                                         thickness};
+                                         thickness,
+                                         ltype_gen};
     }
     const Command original = capture_entity(h);
     remove_indexed(h);
@@ -14392,6 +14401,388 @@ void GeometryEngine::apply_one(const Command& command) {
                     }
                 }
             }
+            if constexpr (std::is_same_v<T, TextCountCommand>) {
+                prune_selection();
+                struct Numbered {
+                    EntityHandle h;
+                    Vec2 at;
+                };
+                std::vector<Numbered> items;
+                for (const EntityHandle h : selection_) {
+                    if (h.kind == EntityKind::Text) {
+                        items.push_back({h, store_.text(h)->pos});
+                    } else if (h.kind == EntityKind::MText) {
+                        items.push_back({h, store_.mtext(h)->text.pos});
+                    }
+                }
+                if (c.sort == TextCountCommand::Sort::X) {
+                    std::stable_sort(items.begin(), items.end(), [](const Numbered& a, const Numbered& b) { return a.at.x < b.at.x; });
+                } else if (c.sort == TextCountCommand::Sort::Y) {
+                    std::stable_sort(items.begin(), items.end(), [](const Numbered& a, const Numbered& b) { return a.at.y > b.at.y; });
+                }
+                std::int64_t n = c.start;
+                std::size_t changed = 0;
+                std::vector<EntityHandle> made;
+                for (const Numbered& it : items) {
+                    Command cmd = capture_entity(it.h);
+                    std::string* s = nullptr;
+                    if (auto* t = std::get_if<AddTextCommand>(&cmd)) {
+                        s = &t->content;
+                    } else if (auto* m = std::get_if<AddMTextCommand>(&cmd)) {
+                        s = &m->content;
+                    }
+                    const std::string num = std::to_string(n);
+                    n += c.step;
+                    if (s == nullptr) {
+                        continue;
+                    }
+                    std::string next = *s;
+                    switch (c.place) {
+                    case TextCountCommand::Place::Overwrite:
+                        next = num;
+                        break;
+                    case TextCountCommand::Place::Prefix:
+                        next = num + " " + *s;
+                        break;
+                    case TextCountCommand::Place::Suffix:
+                        next = *s + " " + num;
+                        break;
+                    case TextCountCommand::Place::Replace:
+                        if (!c.find.empty()) {
+                            next.clear();
+                            for (std::size_t i = 0; i < s->size();) {
+                                if (s->compare(i, c.find.size(), c.find) == 0) {
+                                    next += num;
+                                    i += c.find.size();
+                                } else {
+                                    next += (*s)[i];
+                                    ++i;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    if (next == *s) {
+                        made.push_back(it.h);
+                        continue;
+                    }
+                    *s = next;
+                    const Command original = capture_entity(it.h);
+                    remove_indexed(it.h);
+                    push_erase_item(c.group, it.h, original);
+                    const EntityHandle nh = create_indexed(cmd);
+                    push_create_item(c.group, nh, cmd);
+                    made.push_back(nh);
+                    ++changed;
+                }
+                if (items.empty()) {
+                    report("No text selected.");
+                } else {
+                    selection_ = made;
+                    if (changed > 0) {
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                    }
+                    report(std::to_string(changed) + (changed == 1 ? " text numbered." : " texts numbered."));
+                }
+            }
+            if constexpr (std::is_same_v<T, TextFitCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.radius);
+                const TextData* t = h.kind == EntityKind::Text ? store_.text(h) : nullptr;
+                if (t == nullptr) {
+                    report("Select a single-line text.");
+                } else if (t->justify == 3 || t->justify == 5) {
+                    report("Aligned and Fit text is fitted between its own two points.");
+                } else {
+                    const text::TextFrame f = text::frame_of(store_, *t);
+                    const Vec2 dir{std::cos(f.rotation), std::sin(f.rotation)};
+                    const Vec2 s = c.start ? *c.start : f.origin;
+                    const double w_old = f.width();
+                    const double w_new = dot(c.end - s, dir);
+                    Command cmd = capture_entity(h);
+                    auto* x = std::get_if<AddTextCommand>(&cmd);
+                    if (w_old <= 1e-12 || w_new <= 1e-9 || x == nullptr) {
+                        report("The end point must lie past the start of the text.");
+                    } else {
+                        // The justification point keeps its place on the text: along the
+                        // baseline in proportion to the new width, across it as it was.
+                        const Vec2 delta = x->pos - f.origin;
+                        const double along = dot(delta, dir);
+                        const Vec2 across = delta - dir * along;
+                        x->width_factor *= w_new / w_old;
+                        x->pos = s + dir * (along * w_new / w_old) + across;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        selection_.clear();
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        char buf[32];
+                        std::snprintf(buf, sizeof buf, "%g", x->width_factor);
+                        report("Text width factor " + std::string(buf) + ".");
+                    }
+                }
+            }
+            if constexpr (std::is_same_v<T, GlobalAttEditCommand>) {
+                const auto same = [](std::string_view a, std::string_view b) {
+                    return a.size() == b.size() &&
+                           std::equal(a.begin(), a.end(), b.begin(), [](char p, char q) {
+                               return std::toupper(static_cast<unsigned char>(p)) == std::toupper(static_cast<unsigned char>(q));
+                           });
+                };
+                std::uint16_t block = 0xFFFF;
+                EntityHandle picked = EntityHandle::null();
+                if (c.pick) {
+                    picked = pick_nearest(*c.pick, c.radius);
+                    if (const InsertData* in = picked.kind == EntityKind::Insert ? store_.insert(picked) : nullptr) {
+                        block = in->block;
+                    }
+                } else {
+                    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+                        if (same(store_.block(i)->name, c.block)) {
+                            block = i;
+                        }
+                    }
+                }
+                const BlockDef* bd = block != 0xFFFF ? store_.block(block) : nullptr;
+                std::size_t tag_at = 0;
+                while (bd != nullptr && tag_at < bd->content.attdefs.size() && !same(bd->content.attdefs[tag_at].tag, c.tag)) {
+                    ++tag_at;
+                }
+                if (bd == nullptr) {
+                    report(c.pick ? "Select a block reference." : "Block \"" + c.block + "\" not found.");
+                } else if (tag_at >= bd->content.attdefs.size()) {
+                    report("Block \"" + bd->name + "\" has no attribute tagged \"" + c.tag + "\".");
+                } else {
+                    std::vector<EntityHandle> targets;
+                    const auto& ins = store_.inserts();
+                    for (std::uint32_t i = 0; i < ins.slot_count(); ++i) {
+                        if (ins.alive(i) && ins.data()[i].block == block) {
+                            const EntityHandle h{i, ins.generations()[i], EntityKind::Insert};
+                            if (c.all || h == picked) {
+                                targets.push_back(h);
+                            }
+                        }
+                    }
+                    std::size_t changed = 0;
+                    for (const EntityHandle h : targets) {
+                        const Command original = capture_entity(h);
+                        AddInsertCommand nc = std::get<AddInsertCommand>(original);
+                        for (std::size_t i = nc.attribs.size(); i < bd->content.attdefs.size(); ++i) {
+                            nc.attribs.push_back(bd->content.attdefs[i].def); // still at the default
+                        }
+                        if (nc.attribs[tag_at] == c.value) {
+                            continue;
+                        }
+                        nc.attribs[tag_at] = c.value;
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const Command add = nc;
+                        push_create_item(c.group, create_indexed(add), add);
+                        ++changed;
+                    }
+                    if (changed > 0) {
+                        prune_selection();
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                    }
+                    report(std::to_string(changed) + (changed == 1 ? " attribute changed." : " attributes changed."));
+                }
+            }
+            if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
+                EntityHandle target = EntityHandle::null();
+                const auto& vps = store_.viewports();
+                for (std::uint32_t i = 0; i < vps.slot_count(); ++i) {
+                    const ViewportData& v = vps.data()[i];
+                    if (vps.alive(i) && v.props.space() == store_.active_space() &&
+                        std::abs(c.pick.x - v.center.x) <= v.width * 0.5 && std::abs(c.pick.y - v.center.y) <= v.height * 0.5) {
+                        target = EntityHandle{i, vps.generations()[i], EntityKind::Viewport};
+                    }
+                }
+                if (target.is_null()) {
+                    const EntityHandle near = pick_nearest(c.pick, c.radius);
+                    if (near.kind == EntityKind::Viewport) {
+                        target = near;
+                    }
+                }
+                if (store_.active_space() == 0 && store_.mspace_viewport().is_null()) {
+                    report("VPSCALE works on a layout: select a viewport there.");
+                } else if (target.is_null()) {
+                    report("Select a viewport.");
+                } else {
+                    const double s = vps.data()[target.index].scale;
+                    char ratio[32];
+                    char scale[32];
+                    std::snprintf(ratio, sizeof ratio, "%g", s > 1e-12 ? 1.0 / s : 0.0);
+                    std::snprintf(scale, sizeof scale, "%g", s);
+                    report("PS:MS == 1:" + std::string(ratio) + "  Viewport Scale = " + std::string(scale));
+                }
+            }
+            if constexpr (std::is_same_v<T, TableStyleCommand>) {
+                using Op = TableStyleCommand::Op;
+                const std::uint16_t i = store_.table_style_index(c.op == Op::Add ? c.style.name : c.name);
+                const std::string quoted = "\"" + (c.op == Op::Add ? c.style.name : c.name) + "\"";
+                table_style_changed_ = false;
+                if (c.op == Op::Add) {
+                    if (c.style.name.empty() || i != 0xFFFF) {
+                        report(c.style.name.empty() ? "A table style needs a name." : "Table style " + quoted + " already exists.");
+                    } else {
+                        store_.add_table_style(c.style);
+                        table_style_changed_ = true;
+                        report("Table style " + quoted + " added.");
+                    }
+                } else if (i == 0xFFFF) {
+                    report("Table style " + quoted + " not found.");
+                } else if (c.op == Op::Modify) {
+                    const std::uint16_t clash = store_.table_style_index(c.style.name);
+                    if (c.style.name.empty() || (clash != 0xFFFF && clash != i)) {
+                        report("Another table style is called \"" + c.style.name + "\".");
+                    } else {
+                        store_.set_table_style(i, c.style);
+                        table_style_changed_ = true;
+                        geom_dirty_ = true; // the tables drawn in it change
+                        purge_cache_valid_ = false;
+                        report("Table style \"" + store_.table_styles()[i].name + "\" changed.");
+                    }
+                } else if (c.op == Op::SetCurrent) {
+                    store_.set_current_table_style(i);
+                    table_style_changed_ = true;
+                    purge_cache_valid_ = false; // the current style is never a purge candidate
+                    report("\"" + store_.table_styles()[i].name + "\" is now the current table style.");
+                } else if (store_.remove_table_style(i)) {
+                    table_style_changed_ = true;
+                    purge_cache_valid_ = false;
+                    report("Table style " + quoted + " deleted.");
+                } else {
+                    report("Table style " + quoted + " cannot be deleted: it is Standard, the current style or in use.");
+                }
+            }
+            if constexpr (std::is_same_v<T, TextExplodeCommand>) {
+                prune_selection();
+                std::vector<EntityHandle> made;
+                std::size_t texts = 0;
+                text::TextRunGeometry run;
+                for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+                    const EntityProps* props = store_.props(h);
+                    if (props == nullptr) {
+                        continue;
+                    }
+                    std::vector<std::vector<Vec2>> paths; // open: the strokes, chained end to end
+                    std::vector<std::vector<Vec2>> rings; // closed: an outline face's glyphs
+                    const auto add_segments = [&](const std::vector<Vec2>& segs) {
+                        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+                            if (!paths.empty() && length_squared(paths.back().back() - segs[i]) < 1e-18) {
+                                paths.back().push_back(segs[i + 1]);
+                            } else {
+                                paths.push_back({segs[i], segs[i + 1]});
+                            }
+                        }
+                    };
+                    if (h.kind == EntityKind::Text || h.kind == EntityKind::AttDef) {
+                        const TextData& t = h.kind == EntityKind::Text ? *store_.text(h) : store_.attdef(h)->text;
+                        const text::TextFrame frame = text::frame_of(store_, t);
+                        TextStyle ts = store_.text_style_of(t);
+                        ts.width_factor = frame.width_factor;
+                        text::text_run_geometry(store_.string_of(t), frame.origin, frame.height, frame.rotation,
+                                                text::Justify::Left, store_.font_name(t.font), font_engine_, &ts,
+                                                /*outlines=*/true, run);
+                        add_segments(run.segments);
+                        add_segments(run.bars);
+                        rings = std::move(run.rings);
+                    } else if (h.kind == EntityKind::MText) {
+                        const MTextData* m = store_.mtext(h);
+                        const std::string_view fname = store_.font_name(m->text.font);
+                        const text::MTextLayout lay =
+                            text::layout_mtext(m->text, store_.string_of(m->text), font_engine_, fname);
+                        add_segments(lay.segments);
+                        if (font_engine_ != nullptr && font_engine_->is_outline_font(fname)) {
+                            for (const text::MTextLine& line : lay.lines) {
+                                font_engine_->glyph_outlines(fname, line.text, line.origin, m->text.height,
+                                                             m->text.rotation, rings);
+                            }
+                        }
+                    } else {
+                        continue;
+                    }
+                    if (paths.empty() && rings.empty()) {
+                        continue; // nothing drawn (blank text): left as it is
+                    }
+                    ++texts;
+                    const EntityProps p = *props;
+                    for (std::vector<Vec2>& pts : paths) {
+                        const Command pl = AddPolylineCommand{std::move(pts), false, c.group, p};
+                        const EntityHandle nh = create_indexed(pl);
+                        push_create_item(c.group, nh, pl);
+                        made.push_back(nh);
+                    }
+                    for (std::vector<Vec2>& ring : rings) {
+                        if (ring.size() < 3) {
+                            continue;
+                        }
+                        const Command pl = AddPolylineCommand{std::move(ring), true, c.group, p};
+                        const EntityHandle nh = create_indexed(pl);
+                        push_create_item(c.group, nh, pl);
+                        made.push_back(nh);
+                    }
+                    const Command original = capture_entity(h);
+                    remove_indexed(h);
+                    push_erase_item(c.group, h, original);
+                }
+                if (texts == 0) {
+                    report("No text selected.");
+                } else {
+                    selection_ = made;
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    report(std::to_string(texts) + (texts == 1 ? " text" : " texts") + " exploded into " +
+                           std::to_string(made.size()) + (made.size() == 1 ? " polyline." : " polylines."));
+                }
+            }
+            if constexpr (std::is_same_v<T, DimInspectCommand>) {
+                prune_selection();
+                std::vector<EntityHandle> made;
+                std::size_t dims = 0;
+                for (const EntityHandle h : std::vector<EntityHandle>(selection_)) {
+                    const DimData* dd = h.kind == EntityKind::Dimension ? store_.dimension(h) : nullptr;
+                    if (dd == nullptr) {
+                        continue;
+                    }
+                    ++dims;
+                    if (c.remove && dd->inspect == 0) {
+                        made.push_back(h);
+                        continue;
+                    }
+                    Command cmd = capture_entity(h);
+                    if (auto* x = std::get_if<AddDimensionCommand>(&cmd)) {
+                        x->inspect = static_cast<std::uint8_t>(c.remove ? 0 : std::clamp<int>(c.shape, 1, 3));
+                        x->inspect_label = c.remove ? std::string() : c.label;
+                        x->inspect_rate = c.remove ? std::string() : c.rate;
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        const EntityHandle nh = create_indexed(cmd);
+                        push_create_item(c.group, nh, cmd);
+                        made.push_back(nh);
+                    }
+                }
+                if (dims == 0) {
+                    report("No dimensions selected.");
+                } else {
+                    selection_ = made;
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    const std::string n = std::to_string(dims) + (dims == 1 ? " dimension." : " dimensions.");
+                    report(c.remove ? "Inspection removed from " + n
+                                    : std::to_string(dims) + (dims == 1 ? " inspection dimension." : " inspection dimensions."));
+                }
+            }
             if constexpr (std::is_same_v<T, HatchBoundaryCommand>) {
                 prune_selection();
                 std::size_t made = 0;
@@ -14704,6 +15095,12 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, LayerEditCommand>) {
                 edit = layer_edit_changed_; // ? lists; a name not found changes nothing
+            }
+            if constexpr (std::is_same_v<T, TableStyleCommand>) {
+                edit = table_style_changed_;
+            }
+            if constexpr (std::is_same_v<T, VpScaleQueryCommand>) {
+                edit = false; // a question
             }
             if constexpr (std::is_same_v<T, LayerPreviousCommand>) {
                 edit = layerp_changed_;
@@ -15131,6 +15528,8 @@ void GeometryEngine::rebuild_and_publish() {
     buf.units = store_.units();
     buf.text_styles = store_.text_styles();
     buf.current_text_style = store_.current_text_style();
+    buf.table_styles = store_.table_styles();
+    buf.current_table_style = store_.current_table_style();
     buf.current_dimstyle = store_.current_dimstyle();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {

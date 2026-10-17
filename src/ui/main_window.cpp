@@ -268,6 +268,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_plot_preview_callback([this] { plot_preview(last_plot_spec_); });
     viewport_->set_view_manager_callback([this] { open_view_manager(); });
     viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
+    viewport_->set_dim_inspect_callback([this](core::DimInspectCommand& io) { return open_dim_inspect_dialog(io); });
+    viewport_->set_table_style_dialog_callback([this] { open_table_style_dialog(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -388,6 +390,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             processor_->set_text_styles(std::move(tstyles), cur);
         }
         processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
+        processor_->set_table_styles(viewport_->table_styles(), viewport_->current_table_style());
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_purge_candidates(viewport_->purge_candidates());
@@ -409,6 +412,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             b->setEnabled(sel > 0);
         }
         sync_layer_combo();
+        sync_style_combos();
         sync_properties_panel();
         sync_ribbon_context();  // show/hide contextual ribbon tabs per the selection
         refresh_property_combos(); // the ribbon's colour / linetype / lineweight controls
@@ -863,6 +867,27 @@ void MainWindow::build_status_bar() {
     add_toggle(snap_action_);
     QToolButton* polar_btn = add_toggle(polar_action_);
     add_toggle(otrack_action_);
+    // LWT: lineweights shown or not (LWDISPLAY) -- the switch Home > Properties' Lineweight
+    // Display is, the two kept in step.
+    QAction* lwt = make_mode_action(QStringLiteral("LWT"), 0, true,
+                                    QStringLiteral("Show lineweights on screen (LWDISPLAY)."));
+    lwt->setObjectName(QStringLiteral("status.lwt"));
+    if (auto* ribbon_lwt = findChild<QToolButton*>(QStringLiteral("ribbon.lwt")); ribbon_lwt != nullptr) {
+        lwt->setChecked(ribbon_lwt->isChecked());
+        connect(ribbon_lwt, &QToolButton::toggled, lwt, [lwt](bool on) {
+            if (lwt->isChecked() != on) {
+                lwt->setChecked(on);
+            }
+        });
+        connect(lwt, &QAction::toggled, ribbon_lwt, [ribbon_lwt](bool on) {
+            if (ribbon_lwt->isChecked() != on) {
+                ribbon_lwt->setChecked(on); // its own handler tells the engine
+            }
+        });
+    } else {
+        connect(lwt, &QAction::toggled, this, [this](bool on) { engine_->submit(core::SetLineweightDisplayCommand{on}); });
+    }
+    add_toggle(lwt);
     add_toggle(dyn_action_);
     // The POLAR dropdown: AutoCAD's increment angles, the one in force ticked.
     auto* polar_menu = new QMenu(this);
@@ -1564,6 +1589,54 @@ void MainWindow::sync_layer_combo() {
     if (cur >= 0 && cur < layer_combo_->count() && layer_combo_->currentIndex() != cur) {
         const QSignalBlocker block(layer_combo_);
         layer_combo_->setCurrentIndex(cur);
+    }
+}
+
+void MainWindow::sync_style_combos() {
+    if (viewport_ == nullptr) {
+        return;
+    }
+    // A combo listing `names` with `cur` showing; refilled only when the names change, and
+    // left alone while it is open or has the focus.
+    const auto sync = [](QComboBox* box, const std::vector<std::string>& names, int cur) {
+        if (box == nullptr || box->view()->isVisible()) {
+            return;
+        }
+        bool changed = static_cast<int>(names.size()) != box->count();
+        for (int i = 0; !changed && i < static_cast<int>(names.size()); ++i) {
+            changed = box->itemText(i).toStdString() != names[i];
+        }
+        const QSignalBlocker block(box);
+        if (changed) {
+            box->clear();
+            for (const std::string& n : names) {
+                box->addItem(QString::fromStdString(n));
+            }
+        }
+        if (cur >= 0 && cur < box->count() && box->currentIndex() != cur) {
+            box->setCurrentIndex(cur);
+        }
+    };
+    if (text_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::TextStyle& st : viewport_->text_styles()) {
+            names.push_back(st.name);
+        }
+        sync(text_style_combo_, names, viewport_->current_text_style());
+    }
+    if (dim_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::DimStyle& st : viewport_->dim_styles()) {
+            names.push_back(st.name);
+        }
+        sync(dim_style_combo_, names, viewport_->current_dim_style());
+    }
+    if (table_style_combo_ != nullptr) {
+        std::vector<std::string> names;
+        for (const core::TableStyle& st : viewport_->table_styles()) {
+            names.push_back(st.name);
+        }
+        sync(table_style_combo_, names, viewport_->current_table_style());
     }
 }
 
@@ -2753,6 +2826,185 @@ void MainWindow::open_view_manager() {
     d.dlg->show();
 }
 
+void MainWindow::open_table_style_dialog() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Table Style"));
+    d.dlg->setObjectName(QStringLiteral("TableStyleDialog"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        const std::vector<core::TableStyle> styles = viewport_->table_styles();
+        const std::uint16_t cur = viewport_->current_table_style();
+        d.list->clear();
+        for (const core::TableStyle& st : styles) {
+            d.list->addItem(QString::fromStdString(st.name));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(cur < styles.size() ? cur : 0) : found.front());
+        d.status->setText(cur < styles.size()
+                              ? QStringLiteral("Current table style: %1").arg(QString::fromStdString(styles[cur].name))
+                              : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    const auto style_named = [this](const QString& name) {
+        for (const core::TableStyle& st : viewport_->table_styles()) {
+            if (QString::fromStdString(st.name) == name) {
+                return st;
+            }
+        }
+        return core::TableStyle{"Standard"};
+    };
+    // The style's settings: its text heights, the cell margin and the line weight.
+    const auto edit = [this](QWidget* parent, const QString& title, core::TableStyle& st) {
+        QDialog dlg(parent);
+        dlg.setWindowTitle(title);
+        auto* form = new QFormLayout(&dlg);
+        const auto spin = [&](double v, double lo, double hi) {
+            auto* s = new QDoubleSpinBox(&dlg);
+            s->setDecimals(4);
+            s->setRange(lo, hi);
+            s->setValue(v);
+            return s;
+        };
+        QDoubleSpinBox* title_h = spin(st.title_height, 0.0001, 1e6);
+        QDoubleSpinBox* header_h = spin(st.header_height, 0.0001, 1e6);
+        QDoubleSpinBox* data_h = spin(st.data_height, 0.0001, 1e6);
+        QDoubleSpinBox* margin = spin(st.margin, 0.0, 10.0);
+        auto* lw = new QSpinBox(&dlg);
+        lw->setRange(0, 211);
+        lw->setSuffix(QStringLiteral(" (1/100 mm)"));
+        lw->setValue(st.lineweight);
+        form->addRow(QStringLiteral("Title text height:"), title_h);
+        form->addRow(QStringLiteral("Header text height:"), header_h);
+        form->addRow(QStringLiteral("Data text height:"), data_h);
+        form->addRow(QStringLiteral("Cell margin (x text height):"), margin);
+        form->addRow(QStringLiteral("Lineweight:"), lw);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        form->addRow(buttons);
+        if (dlg.exec() != QDialog::Accepted) {
+            return false;
+        }
+        st.title_height = title_h->value();
+        st.header_height = header_h->value();
+        st.data_height = data_h->value();
+        st.margin = margin->value();
+        st.lineweight = static_cast<std::uint8_t>(lw->value());
+        return true;
+    };
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* modify = new QPushButton(QStringLiteral("Modify..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, modify, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    using Op = core::TableStyleCommand::Op;
+    connect(set_current, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::TableStyleCommand{Op::SetCurrent, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(add, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        bool ok = false;
+        const QString base = current_name(d);
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("Create New Table Style"),
+                                                   QStringLiteral("New style name (starting from %1):").arg(base),
+                                                   QLineEdit::Normal, QStringLiteral("Copy of %1").arg(base), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        core::TableStyle st = style_named(base);
+        st.name = name.toStdString();
+        if (edit(d.dlg, QStringLiteral("New Table Style: %1").arg(name), st)) {
+            engine_->submit(core::TableStyleCommand{Op::Add, {}, st});
+            later();
+        }
+    });
+    connect(modify, &QPushButton::clicked, d.dlg, [this, d, later, style_named, edit] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        core::TableStyle st = style_named(name);
+        if (edit(d.dlg, QStringLiteral("Modify Table Style: %1").arg(name), st)) {
+            engine_->submit(core::TableStyleCommand{Op::Modify, name.toStdString(), st});
+            later();
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, modify, &QPushButton::click);
+    connect(remove, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::TableStyleCommand{Op::Delete, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+int MainWindow::open_dim_inspect_dialog(core::DimInspectCommand& io) {
+    // AutoCAD's Inspection Dimension window: the shape, the label and the inspection rate
+    // (each with its check box), and Remove Inspection.
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("DimInspectDialog"));
+    dlg.setWindowTitle(QStringLiteral("Inspection Dimension"));
+    auto* outer = new QVBoxLayout(&dlg);
+    auto* shape = new QGroupBox(QStringLiteral("Shape"), &dlg);
+    auto* sl = new QVBoxLayout(shape);
+    auto* round = new QRadioButton(QStringLiteral("Round"), shape);
+    auto* angular = new QRadioButton(QStringLiteral("Angular"), shape);
+    auto* none = new QRadioButton(QStringLiteral("None"), shape);
+    (io.shape == 2 ? angular : io.shape == 3 ? none : round)->setChecked(true);
+    sl->addWidget(round);
+    sl->addWidget(angular);
+    sl->addWidget(none);
+    outer->addWidget(shape);
+    auto* fields = new QGroupBox(QStringLiteral("Label/Inspection rate"), &dlg);
+    auto* fl = new QGridLayout(fields);
+    auto* use_label = new QCheckBox(QStringLiteral("Label"), fields);
+    auto* label = new QLineEdit(QString::fromStdString(io.label), fields);
+    use_label->setChecked(!io.label.empty());
+    auto* use_rate = new QCheckBox(QStringLiteral("Inspection rate"), fields);
+    auto* rate = new QLineEdit(QString::fromStdString(io.rate.empty() ? std::string("100%") : io.rate), fields);
+    use_rate->setChecked(!io.rate.empty());
+    fl->addWidget(use_label, 0, 0);
+    fl->addWidget(label, 0, 1);
+    fl->addWidget(use_rate, 1, 0);
+    fl->addWidget(rate, 1, 1);
+    label->setEnabled(use_label->isChecked());
+    rate->setEnabled(use_rate->isChecked());
+    connect(use_label, &QCheckBox::toggled, label, &QWidget::setEnabled);
+    connect(use_rate, &QCheckBox::toggled, rate, &QWidget::setEnabled);
+    outer->addWidget(fields);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    QPushButton* remove = buttons->addButton(QStringLiteral("Remove Inspection"), QDialogButtonBox::ResetRole);
+    bool removing = false;
+    connect(remove, &QPushButton::clicked, &dlg, [&] {
+        removing = true;
+        dlg.accept();
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    outer->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return 0;
+    }
+    io.remove = removing;
+    io.shape = static_cast<std::uint8_t>(angular->isChecked() ? 2 : none->isChecked() ? 3 : 1);
+    io.label = use_label->isChecked() ? label->text().trimmed().toStdString() : std::string();
+    io.rate = use_rate->isChecked() ? rate->text().trimmed().toStdString() : std::string();
+    return 1;
+}
+
 void MainWindow::open_layer_states_manager() {
     const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Layer States Manager"));
     const auto refill = [this, d] {
@@ -2846,10 +3098,10 @@ void MainWindow::open_text_style_dialog() {
     form->addRow(QStringLiteral("Height:"), height);
     form->addRow(QStringLiteral("Width factor:"), width);
     form->addRow(QStringLiteral("Oblique angle:"), oblique);
-    auto* effects = new QLabel(QStringLiteral("Upside down, Backwards and Vertical are not available yet."), dlg);
-    effects->setWordWrap(true);
-    effects->setEnabled(false);
-    form->addRow(QString(), effects);
+    auto* upside = new QCheckBox(QStringLiteral("Upside down"), dlg);
+    auto* backwards = new QCheckBox(QStringLiteral("Backwards"), dlg);
+    form->addRow(QStringLiteral("Effects:"), upside);
+    form->addRow(QString(), backwards);
     auto* current_label = new QLabel(dlg);
     auto* set_current = new QPushButton(QStringLiteral("Set Current"), dlg);
     auto* new_style = new QPushButton(QStringLiteral("New..."), dlg);
@@ -2887,6 +3139,8 @@ void MainWindow::open_text_style_dialog() {
         height->setValue(s.height);
         width->setValue(s.width_factor);
         oblique->setValue(core::to_degrees(s.oblique));
+        upside->setChecked(s.upside_down);
+        backwards->setChecked(s.backwards);
     };
     const auto fill = [=, this](const std::string& select) {
         list->clear();
@@ -2916,6 +3170,8 @@ void MainWindow::open_text_style_dialog() {
         s.height = height->value();
         s.width_factor = width->value();
         s.oblique = core::to_radians(oblique->value());
+        s.upside_down = upside->isChecked();
+        s.backwards = backwards->isChecked();
         return s;
     };
     connect(apply, &QPushButton::clicked, dlg, [=, this] {

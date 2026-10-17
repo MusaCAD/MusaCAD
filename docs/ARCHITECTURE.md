@@ -284,7 +284,9 @@ So editing re-shows `%%c50`, and native + DXF round-trip the codes byte-for-byte
 no longer bakes them — `strip_mtext` even preserves `\U+`). The pass returns the visible
 UTF-8 string plus the over/under-line runs; it is called at the three "raw string → layout"
 seams — `text_advance` (single-line measure), `layout_mtext` (paragraph measure+emit), and
-the single-line `emit_text_run` — so measurement, bounds, and glyphs never diverge.
+the single-line `text::text_run_geometry` (which the snapshot's `emit_text_run` and TXTEXP
+both call; TXTEXP asks it for an outline face's closed rings, `IFontEngine::glyph_outlines`,
+instead of triangles) — so measurement, bounds, and glyphs never diverge.
 Over/underline are drawn as a horizontal stroke spanning each toggled run (single-line
 today; the symbol codes work in both TEXT and MTEXT). The stroke font carries °, ±, ⌀ as
 glyphs; a TTF face supplies them when selected.
@@ -2666,6 +2668,22 @@ it as a 42nd token (41-token records read as no jog). `compute_dim_geometry` dra
 in pieces round a zigzag one and a half text heights tall; `dim_line_feet` gives DIMJOGLINE
 the line to place it on. The value is a fraction of the line, so moving, rotating and
 mirroring a dimension keep it.
+
+DIMINSPECT adds `inspect` (0 none, 1 Round, 2 Angular, 3 unframed) and two char-pool ranges
+for the label and the inspection rate, taking `DimData` to **240 B**; `DimTextParts` carries
+the two strings to `compute_dim_geometry`, which puts them either side of the value two
+spaces apart -- one label line, so the fit and the text gap treat the three as one -- and,
+once the text is placed, draws the frame and a divider in each gap as dimension-line
+geometry (picked, bounded and plotted with the dimension). The `DIM` record's 43rd token is
+the frame; when it is not 0 the label and the rate follow the override line. The Inspection
+Dimension window is `ViewControl::dim_inspect_dialog` (synchronous: 1 OK, 0 cancelled, -1 no
+window, and the command line asks).
+
+TABLESTYLE: the store keeps `current_table_style_` beside the table-style table (PURGE and
+delete leave the current one alone; clearing the store resets both), saved as the native
+`CURTABLESTYLE` record when not Standard. `TableStyleCommand` adds, modifies, sets current
+and deletes by name; the snapshot publishes the styles and the current index, which the
+main window hands to the command processor for TABLE's Style option and default.
 
 CHANGE needs to know which kinds are selected before it asks the text and block prompts:
 the viewport sets a bit per `EntityKind` from the published selection, and the main window

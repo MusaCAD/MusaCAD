@@ -25,6 +25,7 @@
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 #include "musacad/core/text/text_codes.hpp"
+#include "musacad/core/text/text_run.hpp"
 
 #include <cmath>
 
@@ -260,7 +261,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     // The two coexisting text paths share one layout; only the per-glyph geometry source
     // differs. An outline (TTF/OTF) font emits FILLED triangles; otherwise the built-in
     // stroke font emits LINE segments. Glyphs are generated here, never baked.
-    std::vector<Vec2> trun;
+    text::TextRunGeometry trun;
     // `lineweight` is the entity's RESOLVED weight (ByLayer already applied). Stroke
     // glyphs carry it into the line batches exactly like any other stroked geometry, so
     // PLOT prints text at the weight the author set. The viewport is unaffected: it
@@ -270,51 +271,16 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                                    double rotation, text::Justify justify, std::uint16_t font_id,
                                    Rgb color, std::uint8_t lineweight,
                                    const TextStyle* ts = nullptr) {
-        const double wf = ts != nullptr ? ts->width_factor : 1.0;
-        const double ob = ts != nullptr ? ts->oblique : 0.0;
-        // Expand control codes at render time (storage stays raw). `vis` drives every metric
-        // and glyph; the over/under-line toggles become decoration bars below.
-        const text::SubstitutedText sub = text::substitute_text_codes(raw);
-        const std::string_view str = sub.text;
-        const std::string_view fname = store.font_name(font_id);
-        const bool outline = fonts != nullptr && fonts->is_outline_font(fname);
-        const auto measure = [&](std::string_view s) {
-            return outline ? fonts->advance(fname, s, height) : text::text_width(s, height);
-        };
-        double off = 0.0; // justification along the baseline
-        if (justify != text::Justify::Left) {
-            const double w = measure(str);
-            off = justify == text::Justify::Center ? -w * 0.5 : -w;
-        }
-        const double cs = std::cos(rotation);
-        const double sn = std::sin(rotation);
-        const Vec2 o{origin.x + off * cs, origin.y + off * sn};
-        if (outline) {
-            trun.clear();
-            fonts->glyph_fills(fname, str, o, height, rotation, trun);
-            text::apply_text_style(trun, origin, rotation, wf, ob); // STYLE width/oblique
-            add_fills(color, trun);
+        text::text_run_geometry(raw, origin, height, rotation, justify, store.font_name(font_id), fonts, ts,
+                                /*outlines=*/false, trun);
+        if (trun.outline) {
+            add_fills(color, trun.tris);
         } else {
-            trun.clear();
-            text::append_text_segments(str, o, height, rotation, text::Justify::Left, trun);
-            text::apply_text_style(trun, origin, rotation, wf, ob);
-            add_lines(color, lineweight, trun, /*is_text=*/true, height);
+            add_lines(color, lineweight, trun.segments, /*is_text=*/true, height);
         }
-        // Overline (%%o) / underline (%%u): a horizontal stroke spanning each toggled run,
-        // placed just above the cap height / just below the baseline, in the text colour.
-        if (sub.has_decor()) {
-            const auto bar = [&](const std::vector<text::DecorSpan>& spans, double ly) {
-                for (const text::DecorSpan& s : spans) {
-                    const double x0 = measure(str.substr(0, s.begin));
-                    const double x1 = measure(str.substr(0, s.end));
-                    std::vector<Vec2> bar_pts{{o.x + x0 * cs - ly * sn, o.y + x0 * sn + ly * cs},
-                                              {o.x + x1 * cs - ly * sn, o.y + x1 * sn + ly * cs}};
-                    text::apply_text_style(bar_pts, origin, rotation, wf, ob);
-                    add_line(color, lineweight, bar_pts[0], bar_pts[1], /*is_text=*/true, height);
-                }
-            };
-            bar(sub.overline, height * 1.15);
-            bar(sub.underline, -height * 0.22);
+        // Overline (%%o) / underline (%%u) bars, in the text colour.
+        for (std::size_t i = 0; i + 1 < trun.bars.size(); i += 2) {
+            add_line(color, lineweight, trun.bars[i], trun.bars[i + 1], /*is_text=*/true, height);
         }
     };
 
@@ -414,11 +380,34 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     // (its outline with FILLMODE off); a segment of no width stays ordinary line work.
     // The band is derived here from the vertices and widths, like every other display.
     std::vector<Vec2> band;
+    std::vector<Vec2> seg_left;
+    std::vector<Vec2> seg_right;
     for_each_live(store.polylines(), EntityKind::Polyline, [&](EntityHandle h) {
         const PolylineData* pl = store.polyline(h);
         const std::span<const double> widths = store.widths_of(*pl);
         if (!pline::has_width(widths)) {
-            emit_curve(h, pl->props);
+            const ResolvedProps rp = entity_resolved(store, pl->props);
+            if (pl->ltype_gen || rp.linetype == Linetype::Continuous) {
+                emit_curve(h, pl->props);
+                return;
+            }
+            if (!visible(store, pl->props)) {
+                return;
+            }
+            // Linetype generation off: the pattern starts again at every vertex.
+            const std::span<const Vec2> v = store.vertices_of(*pl);
+            const std::span<const double> b = store.bulges_of(*pl);
+            const std::size_t n = v.size();
+            const std::size_t nseg = n < 2 ? 0 : (pl->closed ? n : n - 1);
+            dashed.clear();
+            for (std::size_t i = 0; i < nseg; ++i) {
+                seg_left.clear();
+                seg_right.clear();
+                pline::detail::segment_rows(v[i], v[(i + 1) % n], i < b.size() ? b[i] : 0.0, 0.0, 0.0, tolerance,
+                                            seg_left, seg_right);
+                dash_polyline(seg_left, rp.linetype, ltscale * store.celtscale(h), dashed);
+            }
+            add_lines(rp.color, rp.lineweight, dashed);
             return;
         }
         if (!visible(store, pl->props)) {

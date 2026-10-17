@@ -531,8 +531,8 @@ public:
 /// pattern, scale and angle are remembered (HPNAME, HPSCALE, HPANG).
 class HatchCommand final : public ICommand {
 public:
-    explicit HatchCommand(bool typed = false) : typed_(typed) {}
-    std::string name() const override { return typed_ ? "-HATCH" : "HATCH"; }
+    explicit HatchCommand(bool typed = false, bool gradient = false) : typed_(typed), gradient_(gradient) {}
+    std::string name() const override { return gradient_ ? "GRADIENT" : typed_ ? "-HATCH" : "HATCH"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
@@ -546,6 +546,7 @@ private:
     void main_prompt(CommandContext& ctx);
     void fill_selection(CommandContext& ctx);
     bool typed_;
+    bool gradient_; ///< GRADIENT: HATCH with the gradient fill
     bool done_ = false;
     int picks_ = 0;
     Mode mode_ = Mode::PickPoint;
@@ -1247,7 +1248,23 @@ private:
     int cols_ = 5;
     double col_w_ = 63.5;
     int row_lines_ = 1;
+    std::uint16_t style_ = 0; ///< the table style: the current one unless Style chose another
     static constexpr double kLine = 9.0; ///< one line of the Standard table style's text, with its margins
+};
+
+/// TABLESTYLE (TS): the Table Style window where there is one -- the styles, Set Current,
+/// New, Modify and Delete; otherwise `Enter table style name to make current or [?]
+/// <current>:`.
+class TableStyleUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLESTYLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
 };
 
 /// TRIM / EXTEND as AutoCAD has them. Quick mode (TRIMEXTENDMODE 1) takes every object as
@@ -1480,6 +1497,99 @@ private:
     bool done_ = false;
 };
 
+/// TCOUNT (Express Tools): `Select objects:`, `Sort selected objects by [X/Y/Select-order]
+/// <Select-order>:`, `Specify starting number and increment (Start,increment) <1,1>:` and
+/// `Placement of numbers in text [Overwrite/Prefix/Suffix/Find&replace..] <Prefix>:`
+/// (Find&replace asks `Enter search string:`). The answers are offered again next time.
+class TextCountUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TCOUNT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Sort, Numbers, Place, Find };
+    void after(CommandContext& ctx);
+    void submit(CommandContext& ctx);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+    static inline core::TextCountCommand s_{};
+};
+
+/// TEXTFIT (Express Tools): `Select Text to stretch or shrink:`, then `Specify end point or
+/// [Start point]:` (Start point: `Specify new starting point:` and `Specify end point:`).
+class TextFitUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TEXTFIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, End, Start, EndAfterStart };
+    Step step_ = Step::Pick;
+    core::TextFitCommand c_{};
+    bool done_ = false;
+};
+
+/// GATTE (Express Tools): `Select block or attribute [Block name]:` (Block name: `Enter block
+/// name:`), `Select attribute or type attribute name:` (the known tags listed), `Enter new
+/// text:`, then `Process all of them? [Yes/No] <Yes>:` -- No changes the picked reference only.
+class GlobalAttEditUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "GATTE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Pick, BlockName, Tag, Value, All };
+    void ask_tag(CommandContext& ctx);
+    Step step_ = Step::Pick;
+    core::GlobalAttEditCommand c_{};
+    bool done_ = false;
+};
+
+/// VPSCALE (Express Tools): `Select the viewport to list the scale:`.
+class VpScaleUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "VPSCALE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// TXTEXP (Express Tools): `Select objects:` (or those selected) -- texts, multiline texts
+/// and attribute definitions become polylines.
+class TextExplodeUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "TXTEXP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    void after(CommandContext& ctx);
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
 /// FLATTEN (Express Tools): `Select objects to convert to 2d:` -- polylines' elevation and
 /// thickness to 0.
 class FlattenUiCommand final : public ICommand {
@@ -1572,6 +1682,36 @@ private:
     SelectObjectsPhase select_;
     bool done_ = false;
     static inline double s_offset_ = 0.35;
+};
+
+/// DIMINSPECT and -DIMINSPECT: `Select dimensions:` (or the ones selected), then the
+/// Inspection Dimension window where there is one; otherwise, and always for -DIMINSPECT,
+/// `Add inspection data or [Remove] <Add>:`, `Enter shape option [Round/Angular/None]
+/// <Round>:`, `Enter label value or <None>:` (`.` for none) and `Enter inspection rate
+/// <100%>:`. The shape, label and rate are offered again the next time.
+class DimInspectUiCommand final : public ICommand {
+public:
+    explicit DimInspectUiCommand(bool dialog) : dialog_(dialog) {}
+    std::string name() const override { return dialog_ ? "DIMINSPECT" : "-DIMINSPECT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Option, Shape, Label, Rate };
+    void after(CommandContext& ctx);
+    void submit(CommandContext& ctx, bool remove);
+    bool dialog_;
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+    static inline std::uint8_t s_shape_ = 1;
+    static inline std::string s_label_{};
+    static inline std::string s_rate_ = "100%";
 };
 
 /// SPLINEDIT (SPE): `Select spline:`, then `Enter an option [Close/Join/Fit data/Edit vertex/
@@ -2154,6 +2294,7 @@ private:
         Accept,      ///< a line or arc picked: `Do you want to turn it into one? <Y>`
         MultiSelect, ///< [Multiple]: `Select objects:`
         Fuzz,        ///< [Multiple] > [Join]: the fuzz distance
+        LtypeGen,    ///< [Ltype gen]: ON / OFF
         WidthVal,    ///< [Width]: one width for every segment
         VWidthStart, ///< [Edit vertex] > [Width]: the starting width of the segment leaving the X
         VWidthEnd,   ///< ... and its ending width

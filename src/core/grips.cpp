@@ -47,7 +47,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                   store.celtscale(h),
                                   std::vector<double>(widths.begin(), widths.end()),
                                   p->elevation,
-                                  p->thickness};
+                                  p->thickness,
+                                  p->ltype_gen};
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
@@ -105,7 +106,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                    d->text_angle,
                                    d->arc_leader,
                                    d->oblique,
-                                   d->jog};
+                                   d->jog,
+                                   d->inspect,
+                                   std::string(store.dim_inspect_label(*d)),
+                                   std::string(store.dim_inspect_rate(*d))};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -264,6 +268,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_polyline(c.points, c.bulges, c.closed, props_of(c.props), widths,
                                             c.elevation, c.thickness);
                 store.set_celtscale(handle, c.celtscale);
+                store.set_polyline_ltype_gen(handle, c.ltype_gen);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 handle = store.add_circle(c.center, c.radius, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -328,6 +333,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 store.set_dim_text(handle, c.text_angle, c.arc_leader);
                 store.set_dim_oblique(handle, c.oblique);
                 store.set_dim_jog(handle, c.jog);
+                if (c.inspect != 0) {
+                    store.set_dim_inspect(handle, c.inspect, c.inspect_label, c.inspect_rate);
+                }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -819,6 +827,7 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.text_angle = x.text_angle; // where the label really is ...
                     probe.oblique = x.oblique;
                     probe.jog = x.jog;
+                    probe.inspect = x.inspect;
                     if (t == DimType::Angular) {
                         const double r = std::max(distance(x.a, newpos), 1e-9);
                         const double a0 = std::atan2(x.b.y - x.a.y, x.b.x - x.a.x);
@@ -835,7 +844,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                         return;
                     }
                     const DimGeometry base = compute_dim_geometry(
-                        probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
+                        probe, x.dim_style, Rgb{},
+                        {x.prefix, x.suffix, x.text_override, x.inspect_label, x.inspect_rate});
                     Vec2 q[4];
                     const Vec2 anchor = dim_label_quad(base, false, q) ? (q[0] + q[2]) * 0.5 : base.text_pos;
                     const Vec2 dir = dim_line_direction(probe);
@@ -863,8 +873,10 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     probe.text_angle = x.text_angle;
                     probe.oblique = x.oblique;
                     probe.jog = x.jog;
+                    probe.inspect = x.inspect;
                     const DimGeometry base = compute_dim_geometry(
-                        probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
+                        probe, x.dim_style, Rgb{},
+                        {x.prefix, x.suffix, x.text_override, x.inspect_label, x.inspect_rate});
                     Vec2 q[4];
                     const Vec2 anchor = dim_label_quad(base, false, q) ? (q[0] + q[2]) * 0.5
                                                                       : base.text_pos;

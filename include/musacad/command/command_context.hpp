@@ -263,6 +263,15 @@ public:
     /// no window: the command line asks).
     virtual bool view_manager() { return false; }
     virtual bool layer_states_manager() { return false; }
+    /// TABLESTYLE: the Table Style window (false where there is none: the command line asks).
+    virtual bool table_style_dialog() { return false; }
+    /// DIMINSPECT: the Inspection Dimension window, starting from `io` (shape, label, rate)
+    /// and leaving the choice in it (`remove` for Remove Inspection). 1 = OK, 0 = cancelled,
+    /// -1 = no window here (the command line asks).
+    virtual int dim_inspect_dialog(core::DimInspectCommand& io) {
+        (void)io;
+        return -1;
+    }
     /// HELP / F1: the command reference in the browser; false where there is none.
     virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
@@ -404,6 +413,9 @@ public:
     /// dimension, leader and GD&T frame is drawn in.
     [[nodiscard]] virtual std::vector<core::DimStyle> dim_styles() const { return {}; }
     [[nodiscard]] virtual std::uint16_t current_dim_style() const { return 0; }
+    /// The drawing's table styles and the current one (TABLESTYLE), which TABLE uses.
+    [[nodiscard]] virtual std::vector<core::TableStyle> table_styles() const { return {}; }
+    [[nodiscard]] virtual std::uint16_t current_table_style() const { return 0; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).

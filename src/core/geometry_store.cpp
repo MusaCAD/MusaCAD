@@ -4,6 +4,7 @@
 #include "musacad/core/geometry_store.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace musacad::core {
 
@@ -26,6 +27,17 @@ bool GeometryStore::set_dim_text(EntityHandle h, double text_angle, bool arc_lea
     return false;
 }
 
+bool GeometryStore::set_polyline_ltype_gen(EntityHandle h, bool on) noexcept {
+    if (h.kind != EntityKind::Polyline) {
+        return false;
+    }
+    if (PolylineData* p = polylines_.get(h.index, h.generation)) {
+        p->ltype_gen = on;
+        return true;
+    }
+    return false;
+}
+
 bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
     if (h.kind != EntityKind::Dimension) {
         return false;
@@ -35,6 +47,24 @@ bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
         return true;
     }
     return false;
+}
+
+bool GeometryStore::set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label,
+                                    std::string_view rate) {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    const auto loff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), label.begin(), label.end());
+    const auto roff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), rate.begin(), rate.end());
+    d->inspect = shape;
+    d->inspect_label_offset = loff;
+    d->inspect_label_len = static_cast<std::uint32_t>(label.size());
+    d->inspect_rate_offset = roff;
+    d->inspect_rate_len = static_cast<std::uint32_t>(rate.size());
+    return true;
 }
 
 bool GeometryStore::set_dim_oblique(EntityHandle h, double oblique) noexcept {
@@ -312,6 +342,31 @@ void GeometryStore::set_table_style_table(std::vector<TableStyle> styles) {
     if (table_styles_.empty()) {
         table_styles_.push_back(TableStyle{"Standard"});
     }
+    if (current_table_style_ >= table_styles_.size()) {
+        current_table_style_ = 0;
+    }
+}
+
+bool GeometryStore::set_table_style(std::uint16_t i, const TableStyle& s) {
+    if (i >= table_styles_.size()) {
+        return false;
+    }
+    const std::string name = i == 0 ? table_styles_[0].name : s.name;
+    table_styles_[i] = s;
+    table_styles_[i].name = name;
+    return true;
+}
+
+std::uint16_t GeometryStore::table_style_index(std::string_view name) const noexcept {
+    const auto lower = [](char ch) { return static_cast<char>(std::tolower(static_cast<unsigned char>(ch))); };
+    for (std::size_t i = 0; i < table_styles_.size(); ++i) {
+        const std::string& n = table_styles_[i].name;
+        if (n.size() == name.size() && std::equal(n.begin(), n.end(), name.begin(),
+                                                  [&](char a, char b) { return lower(a) == lower(b); })) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return 0xFFFF;
 }
 
 std::span<const TableCell> GeometryStore::table_cells(const TableData& t) const noexcept {
@@ -623,6 +678,8 @@ void GeometryStore::clear() noexcept {
     // store again, Standard text style included.
     text_styles_.assign(1, TextStyle{}); // [0] = Standard
     current_text_style_ = 0;
+    table_styles_.assign(1, TableStyle{"Standard"});
+    current_table_style_ = 0;
     named_views_.clear();
     layer_states_.clear();
     vports_.clear();
@@ -1386,10 +1443,13 @@ bool GeometryStore::table_style_in_use(std::uint16_t index) const noexcept {
 }
 
 bool GeometryStore::remove_table_style(std::uint16_t index) {
-    if (index == 0 || index >= table_styles_.size() || table_style_in_use(index)) {
+    if (index == 0 || index >= table_styles_.size() || index == current_table_style_ || table_style_in_use(index)) {
         return false;
     }
     table_styles_.erase(table_styles_.begin() + index);
+    if (current_table_style_ > index) {
+        --current_table_style_;
+    }
     for_each_live_mut(tables_, [&](TableData& t) {
         if (t.style > index) {
             --t.style;

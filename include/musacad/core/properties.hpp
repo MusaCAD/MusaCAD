@@ -97,6 +97,9 @@ struct DimTextParts {
     std::string_view suffix;
     /// The text override (issue #20). Empty = derive the label from the measurement.
     std::string_view text_override;
+    /// DIMINSPECT's label and inspection rate (DimData::inspect says whether they show).
+    std::string_view inspect_label{};
+    std::string_view inspect_rate{};
 };
 
 /// Where a dimension's value is placed when it does not fit between the extension

@@ -281,6 +281,9 @@ void append_polyline_extras(std::string& s, const DocPolyline& p) {
         s += ' ';
         append_double(s, p.thickness);
     }
+    if (!p.ltype_gen) {
+        s += " L"; // v40: the dash pattern starts again at each vertex
+    }
 }
 } // namespace
 
@@ -802,6 +805,8 @@ std::string serialize_native(const Document& doc) {
         append_double(s, d.oblique);
         s += ' '; // v40: DIMJOGLINE's place along the line
         append_double(s, d.jog);
+        s += ' '; // v40: DIMINSPECT's frame; its label and rate follow the override line
+        append_uint(s, d.inspect);
         s += '\n';
         s += d.prefix;
         s += '\n';
@@ -809,6 +814,12 @@ std::string serialize_native(const Document& doc) {
         s += '\n';
         s += d.text_override;
         s += '\n';
+        if (d.inspect != 0) {
+            s += d.inspect_label;
+            s += '\n';
+            s += d.inspect_rate;
+            s += '\n';
+        }
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
     for (const DocLeader& l : doc.leaders) {
@@ -1138,6 +1149,8 @@ std::string serialize_native(const Document& doc) {
         s += enc(ts.name);
         s += ' ';
         s += enc(ts.font);
+        s += ' '; // v40: the generation flags, 2 backwards, 4 upside down
+        append_uint(s, (ts.backwards ? 2u : 0u) | (ts.upside_down ? 4u : 0u));
         s += '\n';
     }
     s += "CURTEXTSTYLE ";
@@ -1267,6 +1280,11 @@ std::string serialize_native(const Document& doc) {
         append_ecolor(s, ts.line_color);
         append_ecolor(s, ts.text_color);
         s += ts.name; // absorbs the rest of the line, so it may contain spaces
+        s += '\n';
+    }
+    if (doc.current_table_style != 0) { // v40: TABLESTYLE's current style
+        s += "CURTABLESTYLE ";
+        append_uint(s, doc.current_table_style);
         s += '\n';
     }
     // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
@@ -1600,7 +1618,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             doc.psltscale = ps != 0;
             doc.msltscale = ms != 0;
         } else if (key == "TEXTSTYLE") {
-            if (tok.size() != 6) {
+            if (tok.size() != 6 && tok.size() != 7) {
                 return fail("malformed TEXTSTYLE");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -1619,6 +1637,14 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             ts.name = dec(tok[4]);
             ts.font = dec(tok[5]);
+            if (tok.size() == 7) {
+                std::uint64_t gen = 0;
+                if (!to_uint(tok[6], gen)) {
+                    return fail("malformed TEXTSTYLE flags");
+                }
+                ts.backwards = (gen & 2u) != 0;
+                ts.upside_down = (gen & 4u) != 0;
+            }
             doc.text_styles.push_back(std::move(ts));
         } else if (key == "IMAGEFRAME") {
             std::uint64_t mode = 1;
@@ -1666,6 +1692,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed CURDIMSTYLE");
             }
             doc.current_dimstyle = static_cast<std::uint16_t>(i);
+        } else if (key == "CURTABLESTYLE") {
+            std::uint64_t i = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], i)) {
+                return fail("malformed CURTABLESTYLE");
+            }
+            doc.current_table_style = static_cast<std::uint16_t>(i);
         } else if (key == "CURTEXTSTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {
@@ -2080,8 +2112,10 @@ IoResult parse_native(std::string_view text, Document& out) {
             // 37 = v19 (the override block's 16 fields + decoration + the 2-token offset)
             // 38 = v23 (+ the aux datum)
             // 40 = v39 (+ the text angle and the arc-length leader), 41 (+ the oblique angle)
-            // 42 = v40 (+ the jog)
-            const bool has_jog = tok.size() == 42;
+            // 42 = v40 (+ the jog), 43 (+ the inspection frame, then its label and rate
+            // lines after the override line when there is one)
+            const bool has_inspect = tok.size() == 43;
+            const bool has_jog = tok.size() == 42 || has_inspect;
             const bool has_oblique = tok.size() == 41 || has_jog;
             const bool has_text_angle = tok.size() == 40 || has_oblique;
             const bool has_aux = tok.size() == 38 || has_text_angle;
@@ -2112,6 +2146,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::uint64_t dleader = 0;
             double doblique = 0.0;
             double djog = -1.0;
+            std::uint64_t dinspect = 0;
+            std::string dinspect_label;
+            std::string dinspect_rate;
             if (has_decor) {
                 // The decoration follows the override block, which is one field wider
                 // from v16 -- so its offset is keyed to the same discriminator.
@@ -2147,6 +2184,12 @@ IoResult parse_native(std::string_view text, Document& out) {
                     if (has_jog && !to_double(tok[db + 9], djog)) {
                         return fail("DIM jog malformed");
                     }
+                    if (has_inspect && (!to_uint(tok[db + 10], dinspect) || dinspect > 3)) {
+                        return fail("DIM inspection malformed");
+                    }
+                    if (dinspect != 0 && (!read_line(dinspect_label) || !read_line(dinspect_rate))) {
+                        return fail("DIM missing inspection label/rate line");
+                    }
                 }
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
@@ -2165,7 +2208,10 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       dtext_angle,
                                       dleader != 0,
                                       doblique,
-                                      djog});
+                                      djog,
+                                      static_cast<std::uint8_t>(dinspect),
+                                      dinspect_label,
+                                      dinspect_rate});
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");
@@ -2740,7 +2786,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                 // v37: "W" and 2n widths, "Z" and elevation + thickness may end the record.
                 std::size_t end = tok.size();
                 for (std::size_t k = after; k < tok.size(); ++k) {
-                    if (tok[k] == "W" || tok[k] == "Z") {
+                    if (tok[k] == "W" || tok[k] == "Z" || tok[k] == "L") {
                         end = k;
                         break;
                     }
@@ -2753,11 +2799,15 @@ IoResult parse_native(std::string_view text, Document& out) {
                     k += 1 + n * 2;
                 }
                 if (k < tok.size() && tok[k] == "Z") {
-                    if (k + 3 != tok.size() || !to_double(tok[k + 1], pl.elevation) ||
+                    if (k + 3 > tok.size() || !to_double(tok[k + 1], pl.elevation) ||
                         !to_double(tok[k + 2], pl.thickness)) {
                         return fail("POLYLINE elevation malformed");
                     }
                     k += 3;
+                }
+                if (k < tok.size() && tok[k] == "L") {
+                    pl.ltype_gen = false;
+                    k += 1;
                 }
                 if (k != tok.size()) {
                     return fail("POLYLINE record malformed");

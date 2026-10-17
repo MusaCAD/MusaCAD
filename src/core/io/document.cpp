@@ -187,6 +187,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.display_units = store.units();
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
+    doc.current_table_style = store.current_table_style();
     doc.current_dimstyle = store.current_dimstyle();
     doc.wipeout_frames = store.wipeout_frames();
     doc.wipeout_frames_plot = store.wipeout_frames_plot();
@@ -273,7 +274,7 @@ Document document_from_store(const GeometryStore& store) {
                 std::vector<Vec2>(v.begin(), v.end()), p.closed, p.props,
                 std::vector<double>(b.begin(), b.end()),
                 store.celtscale(EntityHandle{i, plines.generations()[i], EntityKind::Polyline}),
-                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness});
+                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness, p.ltype_gen});
         }
     }
     const auto& splines = store.splines();
@@ -317,7 +318,9 @@ Document document_from_store(const GeometryStore& store) {
                                       std::string(store.dim_prefix(dd)),
                                       std::string(store.dim_suffix(dd)), dd.tol,
                                       std::string(store.dim_override(dd)), dd.text_offset,
-                                      dd.aux, dd.text_angle, dd.arc_leader, dd.oblique, dd.jog});
+                                      dd.aux, dd.text_angle, dd.arc_leader, dd.oblique, dd.jog,
+                                      dd.inspect, std::string(store.dim_inspect_label(dd)),
+                                      std::string(store.dim_inspect_rate(dd))});
         }
     }
     const auto& leaders = store.leaders();
@@ -603,6 +606,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_dim_text(dh, d.text_angle, d.arc_leader);
         store.set_dim_oblique(dh, d.oblique);
         store.set_dim_jog(dh, d.jog);
+        if (d.inspect != 0) {
+            store.set_dim_inspect(dh, d.inspect, d.inspect_label, d.inspect_rate);
+        }
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,
@@ -647,6 +653,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     if (!doc.table_styles.empty()) {
         store.set_table_style_table(doc.table_styles);
     }
+    store.set_current_table_style(doc.current_table_style);
     for (const DocTable& t : doc.tables) {
         std::vector<TableCell> cells;
         cells.reserve(t.cells.size());
@@ -688,9 +695,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
                             a.celtscale);
     }
     for (const DocPolyline& p : doc.polylines) {
-        store.set_celtscale(
-            store.add_polyline(p.points, p.bulges, p.closed, p.props, p.widths, p.elevation, p.thickness),
-            p.celtscale);
+        const EntityHandle ph =
+            store.add_polyline(p.points, p.bulges, p.closed, p.props, p.widths, p.elevation, p.thickness);
+        store.set_celtscale(ph, p.celtscale);
+        store.set_polyline_ltype_gen(ph, p.ltype_gen);
     }
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props);

@@ -2659,6 +2659,10 @@ void HatchCommand::main_prompt(CommandContext& ctx) {
 }
 
 void HatchCommand::start(CommandContext& ctx) {
+    if (gradient_ && pattern_ != "GRADIENT") {
+        pattern_ = "GRADIENT"; // GRADIENT: HATCH with the gradient fill, its colours and angle as last set
+        ctx.echo("Pattern: GRADIENT");
+    }
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
     if (ctx.has_selection()) {
@@ -6000,6 +6004,16 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             prompt_option(ctx);
         }
         return;
+    case State::LtypeGen:
+        if (u == "ON" || u == "OFF" || t.empty()) {
+            op(22, {u == "ON" ? 1.0 : 0.0, 0.0});
+        } else {
+            ctx.echo("Enter ON or OFF.");
+            return;
+        }
+        state_ = State::Option;
+        prompt_option(ctx);
+        return;
     case State::Fuzz: {
         double fuzz = 0.0;
         if (!t.empty() && (!parse_number(t, fuzz) || fuzz < 0.0)) {
@@ -6048,7 +6062,9 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "D" || u == "DECURVE") {
             op(3);
         } else if (u == "L" || u == "LTYPE GEN" || u == "LTYPE") {
-            ctx.echo("Ltype gen is not supported yet.");
+            state_ = State::LtypeGen;
+            ctx.set_prompt("Enter polyline linetype generation option [ON/OFF] <Off>: ");
+            return;
         } else if (u == "R" || u == "REVERSE") {
             op(2);
         } else if (u == "U" || u == "UNDO") {
@@ -7854,11 +7870,16 @@ void StyleCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Backwards:
     case State::Upside:
     case State::Vertical:
-        if (u == "Y" || u == "YES") {
-            ctx.echo("That option is not supported yet; the style keeps normal orientation.");
-        } else if (!t.empty() && u != "N" && u != "NO") {
+        if (!t.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
             ctx.echo("Enter Yes or No.");
             return;
+        }
+        if (state_ == State::Backwards) {
+            ts_.backwards = u == "Y" || u == "YES";
+        } else if (state_ == State::Upside) {
+            ts_.upside_down = u == "Y" || u == "YES";
+        } else if (u == "Y" || u == "YES") {
+            ctx.echo("Vertical text is not available yet; the style stays horizontal.");
         }
         if (state_ == State::Backwards) {
             state_ = State::Upside;
@@ -11890,11 +11911,41 @@ void StretchCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // TABLE: rows -> columns -> column width -> row height -> placement
 // ---------------------------------------------------------------------------
+namespace {
+/// The name of table style `i` in `styles` ("Standard" when the list is not known).
+std::string table_style_name(const std::vector<core::TableStyle>& styles, std::uint16_t i) {
+    return i < styles.size() ? styles[i].name : std::string("Standard");
+}
+/// The index of the table style named `name` (any case), if there is one.
+std::optional<std::uint16_t> find_table_style(const std::vector<core::TableStyle>& styles, const std::string& name) {
+    if (styles.empty()) {
+        return upper(name) == "STANDARD" ? std::optional<std::uint16_t>(0) : std::nullopt;
+    }
+    for (std::size_t i = 0; i < styles.size(); ++i) {
+        if (upper(styles[i].name) == upper(name)) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return std::nullopt;
+}
+std::string table_style_list(const std::vector<core::TableStyle>& styles) {
+    std::string s = "Table styles:";
+    if (styles.empty()) {
+        return s + " Standard";
+    }
+    for (std::size_t i = 0; i < styles.size(); ++i) {
+        s += (i == 0 ? " " : ", ") + styles[i].name;
+    }
+    return s;
+}
+} // namespace
+
 void TableCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     mode_ = Mode::Cols;
-    ctx.echo("Current table style: Standard  Cell width: " + fmt4(col_w_) + "  Cell height: " +
-             std::to_string(row_lines_) + " line(s)");
+    style_ = ctx.current_table_style();
+    ctx.echo("Current table style: " + table_style_name(ctx.table_styles(), style_) + "  Cell width: " + fmt4(col_w_) +
+             "  Cell height: " + std::to_string(row_lines_) + " line(s)");
     ctx.set_prompt("Enter number of columns or [Auto] <" + std::to_string(cols_) + ">: ");
 }
 
@@ -11957,12 +12008,16 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
     }
     case Mode::Style:
         if (t == "?") {
-            ctx.echo("Table styles: Standard");
+            ctx.echo(table_style_list(ctx.table_styles()));
             return;
         }
-        if (!t.empty() && u != "STANDARD") {
-            ctx.echo("Cannot find table style \"" + t + "\".");
-            return;
+        if (!t.empty()) {
+            const std::optional<std::uint16_t> i = find_table_style(ctx.table_styles(), t);
+            if (!i) {
+                ctx.echo("Cannot find table style \"" + t + "\".");
+                return;
+            }
+            style_ = *i;
         }
         place_prompt(ctx);
         return;
@@ -11979,17 +12034,21 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "S" || u == "STYLE") {
             mode_ = Mode::Style;
-            ctx.set_prompt("Enter a table style name or [?] <Standard>: ");
+            ctx.set_prompt("Enter a table style name or [?] <" + table_style_name(ctx.table_styles(), style_) + ">: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
             // A title row and a header row above the data rows, as AutoCAD's Standard style.
             const int rows = rows_ + 2;
+            const std::vector<core::TableStyle> styles = ctx.table_styles();
+            // A line is Standard's (2.5 text) scaled to the style's data text height.
+            const double line = style_ < styles.size() ? kLine * styles[style_].data_height / 2.5 : kLine;
             core::AddTableCommand cmd;
             cmd.rows = static_cast<std::uint16_t>(rows);
             cmd.cols = static_cast<std::uint16_t>(cols_);
+            cmd.style = style_;
             cmd.col_widths.assign(static_cast<std::size_t>(cols_), col_w_);
-            cmd.row_heights.assign(static_cast<std::size_t>(rows), kLine * row_lines_);
+            cmd.row_heights.assign(static_cast<std::size_t>(rows), line * row_lines_);
             cmd.has_title = true;
             cmd.has_header = true;
             const std::size_t n = static_cast<std::size_t>(rows) * cols_;
@@ -12006,6 +12065,36 @@ void TableCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void TableCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TableStyleUiCommand::start(CommandContext& ctx) {
+    if (ctx.view() != nullptr && ctx.view()->table_style_dialog()) {
+        done_ = true; // the Table Style window does the rest
+        return;
+    }
+    ctx.set_prompt("Enter table style name to make current or [?] <" +
+                   table_style_name(ctx.table_styles(), ctx.current_table_style()) + ">: ");
+}
+
+void TableStyleUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t == "?") {
+        ctx.echo(table_style_list(ctx.table_styles()));
+        return;
+    }
+    if (!t.empty()) {
+        if (!find_table_style(ctx.table_styles(), t)) {
+            ctx.echo("Cannot find table style \"" + t + "\".");
+            return;
+        }
+        ctx.submit(core::TableStyleCommand{core::TableStyleCommand::Op::SetCurrent, t, {}});
+    }
+    done_ = true;
+}
+
+void TableStyleUiCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }
@@ -16030,6 +16119,325 @@ void MocoroCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void TextCountUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx, "Select objects: ");
+}
+
+void TextCountUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextCountUiCommand::after(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    step_ = Step::Sort;
+    using S = core::TextCountCommand::Sort;
+    ctx.set_prompt(std::string("Sort selected objects by [X/Y/Select-order] <") +
+                   (s_.sort == S::X ? "X" : s_.sort == S::Y ? "Y" : "Select-order") + ">: ");
+}
+
+void TextCountUiCommand::submit(CommandContext& ctx) {
+    core::TextCountCommand c = s_;
+    c.group = ctx.group_id();
+    ctx.submit(std::move(c));
+    done_ = true;
+}
+
+void TextCountUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    using S = core::TextCountCommand::Sort;
+    using P = core::TextCountCommand::Place;
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Sort:
+        if (u == "X") {
+            s_.sort = S::X;
+        } else if (u == "Y") {
+            s_.sort = S::Y;
+        } else if (u == "S" || u == "SELECT-ORDER") {
+            s_.sort = S::Selected;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Numbers;
+        ctx.set_prompt("Specify starting number and increment (Start,increment) <" + std::to_string(s_.start) + "," +
+                       std::to_string(s_.step) + ">: ");
+        return;
+    case Step::Numbers:
+        if (!t.empty()) {
+            long long a = 0;
+            long long b = 1;
+            char tail = 0;
+            const int got = std::sscanf(t.c_str(), "%lld , %lld %c", &a, &b, &tail);
+            if (got < 1 || got > 2) {
+                ctx.echo("Enter the starting number, or the starting number and the increment, as whole numbers.");
+                return;
+            }
+            s_.start = a;
+            if (got == 2) {
+                s_.step = b;
+            }
+        }
+        step_ = Step::Place;
+        ctx.set_prompt(std::string("Placement of numbers in text [Overwrite/Prefix/Suffix/Find&replace..] <") +
+                       (s_.place == P::Overwrite ? "Overwrite"
+                        : s_.place == P::Suffix  ? "Suffix"
+                        : s_.place == P::Replace ? "Find&replace.."
+                                                 : "Prefix") +
+                       ">: ");
+        return;
+    case Step::Place:
+        if (u == "O" || u == "OVERWRITE") {
+            s_.place = P::Overwrite;
+        } else if (u == "P" || u == "PREFIX") {
+            s_.place = P::Prefix;
+        } else if (u == "S" || u == "SUFFIX") {
+            s_.place = P::Suffix;
+        } else if (u == "F" || u.starts_with("FIND")) {
+            s_.place = P::Replace;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        if (s_.place == P::Replace) {
+            step_ = Step::Find;
+            ctx.set_prompt(s_.find.empty() ? std::string("Enter search string: ")
+                                           : "Enter search string <" + s_.find + ">: ");
+            return;
+        }
+        submit(ctx);
+        return;
+    case Step::Find:
+        if (!t.empty()) {
+            s_.find = t;
+        }
+        if (s_.find.empty()) {
+            ctx.echo("Enter the text the numbers replace.");
+            return;
+        }
+        submit(ctx);
+        return;
+    }
+}
+
+void TextCountUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextFitUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select Text to stretch or shrink: ");
+}
+
+void TextFitUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.pick = *p;
+            c_.radius = ctx.pick_radius();
+            step_ = Step::End;
+            ctx.set_prompt("Specify end point or [Start point]: ");
+        }
+        return;
+    case Step::End:
+    case Step::EndAfterStart:
+        if (step_ == Step::End && (u == "S" || u == "START" || u == "START POINT")) {
+            step_ = Step::Start;
+            ctx.set_prompt("Specify new starting point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.end = *p;
+            c_.group = ctx.group_id();
+            ctx.submit(c_);
+            done_ = true;
+        }
+        return;
+    case Step::Start:
+        if (const auto p = read_point(ctx, text)) {
+            c_.start = *p;
+            step_ = Step::EndAfterStart;
+            ctx.set_prompt("Specify end point: ");
+        }
+        return;
+    }
+}
+
+void TextFitUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void GlobalAttEditUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select block or attribute [Block name]: ");
+}
+
+void GlobalAttEditUiCommand::ask_tag(CommandContext& ctx) {
+    step_ = Step::Tag;
+    if (!c_.block.empty()) {
+        std::string tags;
+        for (const core::BlockAttDefInfo& a : ctx.block_attdefs(c_.block)) {
+            tags += " " + a.tag;
+        }
+        ctx.echo("Known tag names for block:" + (tags.empty() ? std::string(" (none)") : tags));
+    }
+    ctx.set_prompt("Select attribute or type attribute name: ");
+}
+
+void GlobalAttEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "B" || u == "BLOCK" || u == "BLOCK NAME") {
+            step_ = Step::BlockName;
+            ctx.set_prompt("Enter block name: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            c_.pick = *p;
+            c_.radius = ctx.pick_radius();
+            ask_tag(ctx);
+        }
+        return;
+    case Step::BlockName: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        bool known = false;
+        for (const std::string& n : ctx.block_names()) {
+            if (upper(n) == u) {
+                c_.block = n;
+                known = true;
+            }
+        }
+        if (!known) {
+            ctx.echo("Block \"" + t + "\" not found.");
+            return;
+        }
+        ask_tag(ctx);
+        return;
+    }
+    case Step::Tag:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        c_.tag = t;
+        step_ = Step::Value;
+        ctx.set_prompt("Enter new text: ");
+        return;
+    case Step::Value:
+        c_.value = t;
+        if (!c_.pick) {
+            c_.group = ctx.group_id(); // by name: every reference
+            ctx.submit(c_);
+            done_ = true;
+            return;
+        }
+        step_ = Step::All;
+        ctx.set_prompt("Process all of them? [Yes/No] <Yes>: ");
+        return;
+    case Step::All:
+        if (u == "N" || u == "NO") {
+            c_.all = false;
+        } else if (!t.empty() && u != "Y" && u != "YES") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        c_.group = ctx.group_id();
+        ctx.submit(c_);
+        done_ = true;
+        return;
+    }
+}
+
+void GlobalAttEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void VpScaleUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select the viewport to list the scale: ");
+}
+
+void VpScaleUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true;
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::VpScaleQueryCommand{*p, ctx.pick_radius()});
+        done_ = true;
+    }
+}
+
+void VpScaleUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextExplodeUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select objects: ");
+}
+
+void TextExplodeUiCommand::after(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::TextExplodeCommand{ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void TextExplodeUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextExplodeUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextExplodeUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void FlattenUiCommand::start(CommandContext& ctx) {
     if (ctx.has_selection()) {
         after(ctx);
@@ -16459,6 +16867,112 @@ void TextMaskUiCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void TextMaskUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DimInspectUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx, "Select dimensions: ");
+}
+
+void DimInspectUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void DimInspectUiCommand::after(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    if (dialog_ && ctx.view() != nullptr) {
+        core::DimInspectCommand io{false, s_shape_, s_label_, s_rate_, 0};
+        const int r = ctx.view()->dim_inspect_dialog(io);
+        if (r >= 0) {
+            if (r == 1) {
+                s_shape_ = io.shape;
+                s_label_ = io.label;
+                s_rate_ = io.rate;
+                submit(ctx, io.remove);
+            }
+            done_ = true;
+            return;
+        }
+    }
+    step_ = Step::Option;
+    ctx.set_prompt("Add inspection data or [Remove] <Add>: ");
+}
+
+void DimInspectUiCommand::submit(CommandContext& ctx, bool remove) {
+    ctx.submit(core::DimInspectCommand{remove, s_shape_, s_label_, s_rate_, ctx.group_id()});
+    done_ = true;
+}
+
+void DimInspectUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Option:
+        if (u == "R" || u == "REMOVE") {
+            submit(ctx, true);
+            return;
+        }
+        if (!t.empty() && u != "A" && u != "ADD") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Shape;
+        ctx.set_prompt(std::string("Enter shape option [Round/Angular/None] <") +
+                       (s_shape_ == 2 ? "Angular" : s_shape_ == 3 ? "None" : "Round") + ">: ");
+        return;
+    case Step::Shape:
+        if (u == "R" || u == "ROUND") {
+            s_shape_ = 1;
+        } else if (u == "A" || u == "ANGULAR") {
+            s_shape_ = 2;
+        } else if (u == "N" || u == "NONE") {
+            s_shape_ = 3;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Label;
+        ctx.set_prompt(s_label_.empty() ? std::string("Enter label value or <None>: ")
+                                        : "Enter label value, . for none <" + s_label_ + ">: ");
+        return;
+    case Step::Label:
+        if (t == ".") {
+            s_label_.clear();
+        } else if (!t.empty()) {
+            s_label_ = t;
+        }
+        step_ = Step::Rate;
+        ctx.set_prompt("Enter inspection rate, . for none <" + (s_rate_.empty() ? std::string("None") : s_rate_) + ">: ");
+        return;
+    case Step::Rate:
+        if (t == ".") {
+            s_rate_.clear();
+        } else if (!t.empty()) {
+            s_rate_ = t;
+        }
+        submit(ctx, false);
+        return;
+    }
+}
+
+void DimInspectUiCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

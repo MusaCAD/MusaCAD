@@ -559,6 +559,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 40, ts.height);
         code_d(s, 41, ts.width_factor);
         code_d(s, 50, to_degrees(ts.oblique));
+        code_i(s, 71, (ts.backwards ? 2 : 0) | (ts.upside_down ? 4 : 0)); // generation flags
         code(s, 3, ts.font.empty() ? "txt" : ts.font);
     }
     code(s, 0, "ENDTAB");
@@ -778,7 +779,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code_d(s, 48, p.celtscale);
         }
         code_i(s, 90, static_cast<long>(p.points.size()));
-        code_i(s, 70, p.closed ? 1 : 0);
+        code_i(s, 70, (p.closed ? 1 : 0) | (p.ltype_gen ? 128 : 0)); // 128: linetype generation
         emit_polyline_widths_header(s, p);
         const bool has_bulge = p.bulges.size() == p.points.size();
         for (std::size_t i = 0; i < p.points.size(); ++i) {
@@ -1643,6 +1644,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             ts.height = getd(body, 40, 0.0);
             ts.width_factor = getd(body, 41, 1.0);
             ts.oblique = to_radians(getd(body, 50, 0.0));
+            if (const std::string* g = find(body, 71)) {
+                ts.backwards = (to_l(*g) & 2) != 0;
+                ts.upside_down = (to_l(*g) & 4) != 0;
+            }
             text_style_index[*name] = static_cast<std::uint16_t>(doc.text_styles.size());
             doc.text_styles.push_back(std::move(ts));
         }
@@ -2270,6 +2275,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             DocPolyline pl;
             const std::string* flag = find(body, 70);
             pl.closed = flag != nullptr && (to_l(*flag) & 1) != 0;
+            pl.ltype_gen = flag != nullptr && (to_l(*flag) & 128) != 0; // off unless set, as AutoCAD reads it
             double x = 0.0;
             bool have_x = false;
             bool any_bulge = false;
