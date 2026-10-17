@@ -8962,7 +8962,16 @@ void MLeaderEditUiCommand::prompt(CommandContext& ctx) {
 void MLeaderEditUiCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string up = upper(trimmed(text));
     if (!picked_) {
+        if (up.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::optional<core::EntityKind> kind = ctx.hovered_kind();
         if (const auto p = read_point(ctx, text)) {
+            if (ctx.input_is_pick() && kind != core::EntityKind::MLeader) {
+                ctx.echo("The object selected is not a multileader.");
+                return;
+            }
             ctx.submit(core::MLeaderEditCommand{core::MLeaderEditCommand::Op::Begin, *p, ctx.pick_radius(), 0});
             picked_ = true;
             prompt(ctx);

@@ -54,7 +54,9 @@ struct MTextLayout {
 
 /// The text `content` shows: its format codes taken out, paragraphs as '\n', a stack as
 /// "top/bottom". The %% codes and \U+ escapes stay as they are (they expand when drawn).
-[[nodiscard]] std::string mtext_plain(std::string_view content);
+/// Content has_mtext_codes does not take for formatted comes back as it is, unless
+/// `all_codes` (then \~, \\, \{ \}, { } and lone toggles are read as codes too).
+[[nodiscard]] std::string mtext_plain(std::string_view content, bool all_codes = false);
 
 /// Lays out `content` within `block`: splits on '\n', word-wraps each paragraph to
 /// `block.width` (0 = no wrap), stacks lines by `line_spacing`, anchors by `attach`

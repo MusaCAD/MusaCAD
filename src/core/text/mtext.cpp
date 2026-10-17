@@ -287,8 +287,8 @@ bool has_mtext_codes(std::string_view content) {
     return (has("\\L") && has("\\l")) || (has("\\O") && has("\\o")) || (has("\\K") && has("\\k"));
 }
 
-std::string mtext_plain(std::string_view content) {
-    if (!has_mtext_codes(content)) {
+std::string mtext_plain(std::string_view content, bool all_codes) {
+    if (!all_codes && !has_mtext_codes(content)) {
         return std::string(content);
     }
     std::string out;

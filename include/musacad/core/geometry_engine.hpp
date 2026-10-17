@@ -303,6 +303,7 @@ private:
         std::vector<BlockDef> src_blocks;
         std::vector<std::string> src_fonts; // source font table (index -> name)
         std::vector<ImageDef> src_image_defs; // source raster definitions (index -> def)
+        std::vector<LinetypeDef> src_linetypes; // source loaded linetypes (value - 4 -> def)
         Vec2 base{};                       // reference point (selection AABB min, or COPYBASE's)
         bool has = false;
         std::uint8_t src_insunits = 0;     // the source drawing's INSUNITS (a paste scales by it)

@@ -627,6 +627,16 @@ bool crop_to_range(std::vector<std::vector<std::string>>& rows, std::string_view
     if (r1 < r0) {
         std::swap(r0, r1);
     }
+    // A range as given, its empty cells too -- but one of a whole sheet (a million rows)
+    // goes no further than the data does.
+    if ((r1 - r0 + 1) * (c1 - c0 + 1) > 1000000) {
+        std::size_t width = 0;
+        for (const std::vector<std::string>& line : rows) {
+            width = std::max(width, line.size());
+        }
+        r1 = std::min(r1, std::max(rows.size(), r0));
+        c1 = std::min(c1, std::max(width, c0));
+    }
     std::vector<std::vector<std::string>> out;
     for (std::size_t r = r0 - 1; r < r1; ++r) {
         std::vector<std::string> line;

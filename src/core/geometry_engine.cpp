@@ -4966,6 +4966,7 @@ void GeometryEngine::fill_store_from_clipboard(GeometryStore& out, Vec2 offset, 
         out.add_font(f);
     }
     out.set_image_def_table(clipboard_.src_image_defs);
+    out.set_linetypes(clipboard_.src_linetypes);
     for (Command cmd : clipboard_.items) {
         translate_cmd(cmd, offset);
         if (factor != 1.0) {
@@ -4988,6 +4989,7 @@ void GeometryEngine::apply_copy_clipboard(std::optional<Vec2> base) {
     cb.src_blocks.assign(store_.blocks().begin(), store_.blocks().end());
     cb.src_fonts.assign(store_.fonts().begin(), store_.fonts().end());
     cb.src_image_defs.assign(store_.image_defs().begin(), store_.image_defs().end());
+    cb.src_linetypes = store_.linetypes();
     Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
     Vec2 hi{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
     bool any_bounds = false;
@@ -5075,13 +5077,42 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
     std::unordered_map<std::uint16_t, std::uint16_t> layer_map;
     std::unordered_map<std::uint16_t, std::uint16_t> dim_map;
     std::unordered_map<std::uint16_t, std::uint16_t> block_map;
+    // A loaded linetype by its name: the one this drawing has loaded by that name, else it is
+    // loaded here too. The built-in four are the same everywhere.
+    const auto ensure_linetype = [&](Linetype lt) -> Linetype {
+        const auto v = static_cast<std::size_t>(lt);
+        if (v < kFirstLoadedLinetype) {
+            return lt;
+        }
+        if (v - kFirstLoadedLinetype >= clipboard_.src_linetypes.size()) {
+            return Linetype::Continuous;
+        }
+        const LinetypeDef& def = clipboard_.src_linetypes[v - kFirstLoadedLinetype];
+        const auto lower = [](std::string s) {
+            for (char& ch : s) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return s;
+        };
+        const std::vector<LinetypeDef>& mine = store_.linetypes();
+        for (std::size_t k = 0; k < mine.size(); ++k) {
+            if (lower(mine[k].name) == lower(def.name)) {
+                return static_cast<Linetype>(kFirstLoadedLinetype + k);
+            }
+        }
+        return store_.add_linetype(def).value_or(Linetype::Continuous);
+    };
     const auto ensure_layer = [&](std::uint16_t i) -> std::uint16_t {
         const auto it = layer_map.find(i);
         if (it != layer_map.end()) {
             return it->second;
         }
-        const std::uint16_t out =
-            i < clipboard_.src_layers.size() ? store_.add_layer(clipboard_.src_layers[i]) : 0;
+        std::uint16_t out = 0;
+        if (i < clipboard_.src_layers.size()) {
+            Layer l = clipboard_.src_layers[i];
+            l.linetype = ensure_linetype(l.linetype);
+            out = store_.add_layer(l);
+        }
         layer_map[i] = out;
         return out;
     };
@@ -5118,26 +5149,33 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
         BlockDef def = clipboard_.src_blocks[i];
         for (auto& e : def.content.lines) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.circles) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.arcs) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.polylines) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.texts) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
         }
         for (auto& e : def.content.mtexts) {
             e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
             e.block.font = ensure_font(e.block.font);
         }
         for (auto& ins : def.content.inserts) {
             ins.block = ensure_block(ins.block); // recursive closure (block tree)
             ins.props.layer = ensure_layer(ins.props.layer);
+            ins.props.linetype = ensure_linetype(ins.props.linetype);
         }
         const std::uint16_t out = store_.add_block(def);
         block_map[i] = out;
@@ -5154,6 +5192,7 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
                 if constexpr (requires { c.props; }) {
                     if (c.props) {
                         c.props->layer = ensure_layer(c.props->layer);
+                        c.props->linetype = ensure_linetype(c.props->linetype);
                     }
                 }
                 if constexpr (std::is_same_v<T, AddDimensionCommand> ||
@@ -5209,6 +5248,7 @@ void GeometryEngine::apply_paste_document(const PasteDocumentCommand& c) {
     cb.src_blocks.assign(scratch.blocks().begin(), scratch.blocks().end());
     cb.src_fonts.assign(scratch.fonts().begin(), scratch.fonts().end());
     cb.src_image_defs.assign(scratch.image_defs().begin(), scratch.image_defs().end());
+    cb.src_linetypes = scratch.linetypes();
     Vec2 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
     bool any = false;
     for (const EntityHandle h : all_live_in(scratch)) {
@@ -9819,6 +9859,9 @@ void GeometryEngine::apply_mleader_edit(const MLeaderEditCommand& c) {
         return;
     }
     if (c.op == Op::End || !store_.is_valid(mleaderedit_)) {
+        if (c.op != Op::End) {
+            report("Select a multileader.");
+        }
         mleaderedit_ = EntityHandle::null();
         return;
     }
@@ -12553,9 +12596,9 @@ void GeometryEngine::apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pi
         }
     }
     struct Fit {
-        Vec2 center;
-        double t1;
-        double t2;
+        Vec2 center{};
+        double t1 = 0.0;
+        double t2 = 0.0;
     };
     std::optional<Fit> best;
     double best_score = std::numeric_limits<double>::infinity();
@@ -14804,9 +14847,70 @@ bool GeometryEngine::plan_trim(Vec2 pick, double radius, TrimPlan& out) const {
         const double u1 = curve.hi();
         const double eps = 1e-9 * (u1 - u0);
         const bool loop = distance(cps.front(), cps.back()) < 1e-9;
+        // A crossing is found on the chords of the curves; it is made exact against the edge
+        // through it -- a line, ray or construction line, a circle or an arc -- by bisecting
+        // on which side of that edge the spline is. Another kind of edge keeps the chord's.
+        const double step = (u1 - u0) / static_cast<double>(std::max<std::size_t>((cps.size() - 1) * 16, 2));
+        const auto exact = [&](double u, Vec2 p) {
+            const double reach = std::max(distance(curve.at(u - step), curve.at(u + step)), 1e-9);
+            std::vector<std::function<double(Vec2)>> sides; // signed distance to each edge near p
+            const auto line_side = [&](Vec2 a, Vec2 d) {
+                const double l = length(d);
+                if (l > 1e-12 && std::abs(cross(d, p - a)) / l <= reach) {
+                    sides.emplace_back([a, d, l](Vec2 q) { return cross(d, q - a) / l; });
+                }
+            };
+            const auto circle_side = [&](Vec2 c, double r) {
+                if (std::abs(distance(p, c) - r) <= reach) {
+                    sides.emplace_back([c, r](Vec2 q) { return distance(q, c) - r; });
+                }
+            };
+            std::vector<EntityHandle> around;
+            grid_.query(p - Vec2{reach, reach}, p + Vec2{reach, reach}, around);
+            for (const EntityHandle c : around) {
+                if (c == h || !is_trim_edge(c)) {
+                    continue;
+                }
+                if (const LineData* l = c.kind == EntityKind::Line ? store_.line(c) : nullptr) {
+                    line_side(l->a, l->b - l->a);
+                } else if (const CircleData* ci = c.kind == EntityKind::Circle ? store_.circle(c) : nullptr) {
+                    circle_side(ci->center, ci->radius);
+                } else if (const ArcData* ar = c.kind == EntityKind::Arc ? store_.arc(c) : nullptr) {
+                    circle_side(ar->center, ar->radius);
+                }
+            }
+            const auto& xl = store_.xlines();
+            for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+                if (xl.alive(i) && is_trim_edge(EntityHandle{i, xl.generations()[i], EntityKind::Xline})) {
+                    line_side(xl.data()[i].base, xl.data()[i].dir);
+                }
+            }
+            for (const auto& side : sides) {
+                for (double w = step; w <= 8.0 * step; w *= 2.0) {
+                    double lo_u = std::max(u - w, u0);
+                    double hi_u = std::min(u + w, u1);
+                    double f_lo = side(curve.at(lo_u));
+                    if ((f_lo < 0.0) == (side(curve.at(hi_u)) < 0.0)) {
+                        continue;
+                    }
+                    for (int it = 0; it < 60; ++it) {
+                        const double mid = 0.5 * (lo_u + hi_u);
+                        const double f_mid = side(curve.at(mid));
+                        if ((f_mid < 0.0) == (f_lo < 0.0)) {
+                            lo_u = mid;
+                            f_lo = f_mid;
+                        } else {
+                            hi_u = mid;
+                        }
+                    }
+                    return 0.5 * (lo_u + hi_u);
+                }
+            }
+            return u;
+        };
         std::vector<double> us;
         for (const Vec2& p : crossings) {
-            const double u = spline::param_near(curve, p);
+            const double u = exact(spline::param_near(curve, p), p);
             if (u > u0 + eps && u < u1 - eps) {
                 us.push_back(u);
             }
@@ -15307,6 +15411,9 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
 
 void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
                                             double angle, std::uint64_t group, Rgb color2) {
+    if (!hatch_extras_.merge) {
+        last_pick_hatch_ = EntityHandle::null(); // a HATCH's first pick: nothing of before to join
+    }
     if (hatch_extras_.boundary_set == 2) {
         hatch_boundary_set_ = selection_; // Boundary set > New: what was selected for it
     }

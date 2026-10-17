@@ -4117,3 +4117,62 @@ TEST_CASE("Flip Arrow on radial, diameter and angular dimensions") {
     REQUIRE(doc.dims[0].flip == 2);
     engine.stop();
 }
+
+TEST_CASE("Review follow-ups: a HATCH's first pick joins nothing; MTEXT literals read; linetypes go with a paste") {
+    // A pick that finds no area, then one that does, in a later HATCH: the hatch of the HATCH
+    // before is left alone.
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddPolylineCommand{{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, true, 1});
+        engine.submit(AddPolylineCommand{{{20, 0}, {30, 0}, {30, 10}, {20, 10}}, true, 2});
+        HatchPickPointCommand pick;
+        pick.point = {5, 5};
+        pick.group = 3;
+        engine.submit(pick); // the first HATCH
+        pick.point = {100, 100}; // the next HATCH: nothing there
+        pick.group = 4;
+        engine.submit(pick);
+        pick.point = {25, 5};
+        pick.group = 5;
+        pick.extras.merge = true; // its second pick
+        engine.submit(pick);
+        const io::Document d = dump(engine, "musacad_hatch_first_pick.musa");
+        REQUIRE(d.hatches.size() == 2);
+        REQUIRE(d.hatches[0].loops.size() == 1);
+        REQUIRE(d.hatches[1].loops.size() == 1);
+        engine.stop();
+    }
+    // An AutoCAD MTEXT whose only codes are a non-breaking space and braces reads as text.
+    {
+        const std::string dxf = "0\nSECTION\n2\nENTITIES\n0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n"
+                                "1\n5\\~mm {THICK}\n0\nENDSEC\n0\nEOF\n";
+        io::Document d;
+        REQUIRE(io::parse_dxf(dxf, d).ok);
+        REQUIRE(d.mtexts.size() == 1);
+        REQUIRE(d.mtexts[0].content == "5 mm THICK");
+    }
+    // A loaded linetype goes with a copy into another drawing.
+    {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(LoadLinetypesCommand{{LinetypeDef{"DOTTED", "dots", {0.0, -1.0}}}});
+        AddLineCommand l{{0, 0}, {10, 0}, 1};
+        EntityProps p;
+        p.set_linetype_by_layer(false);
+        p.linetype = static_cast<Linetype>(kFirstLoadedLinetype);
+        l.props = p;
+        engine.submit(l);
+        engine.submit(SelectAllCommand{});
+        engine.submit(CopyClipboardCommand{});
+        engine.submit(CreateDocumentCommand{});
+        engine.submit(LoadLinetypesCommand{{LinetypeDef{"OTHER", "", {1.0, -1.0}}}}); // the new drawing's own first
+        engine.submit(PasteClipboardCommand{{50, 50}, 2, true});
+        const io::Document d = dump(engine, "musacad_paste_linetype.musa");
+        REQUIRE(d.linetypes.size() == 2);
+        REQUIRE(d.linetypes[1].name == "DOTTED");
+        REQUIRE(d.lines.size() == 1);
+        REQUIRE(d.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+        engine.stop();
+    }
+}

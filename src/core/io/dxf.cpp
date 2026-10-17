@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/io/dxf.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_frame.hpp"
 
 #include "musacad/core/text/parse_double.hpp"
@@ -1808,7 +1809,9 @@ std::string mtext_from_dxf(const std::string& in) {
         }
         out += c;
     }
-    return out;
+    // Codes the plain layout would show as text (\~, \\, braces, a lone toggle) when no
+    // other code makes the text formatted: read, as they were before.
+    return text::has_mtext_codes(out) ? out : text::mtext_plain(out, true);
 }
 
 } // namespace
