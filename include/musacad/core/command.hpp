@@ -1970,6 +1970,13 @@ struct HatchFromSelectionCommand {
 
 /// HATCH "Pick internal point" mode: the engine traces the closed boundary enclosing
 /// `point` from the surrounding geometry (+ islands), then creates the hatch.
+/// -HATCH remove Boundaries: the island the object under `pick` makes taken out of the
+/// hatch the last picked area made.
+struct HatchRemoveBoundaryCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    std::uint64_t group = 0;
+};
 /// -HATCH draW boundary: a hatch inside boundaries drawn point by point (the first the
 /// outer one, any inside it an island), the boundaries kept as polylines with `retain`.
 struct HatchDrawnCommand {
@@ -2434,7 +2441,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, LoadLinetypesCommand, HatchDrawnCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, LoadLinetypesCommand, HatchDrawnCommand, HatchRemoveBoundaryCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

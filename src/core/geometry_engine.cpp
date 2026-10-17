@@ -18760,6 +18760,57 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
                 apply_mleader_edit(c);
             }
+            if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
+                // The nearest object under the pick other than a hatch, and the island loops of
+                // the last picked hatch that lie on it (the same tessellation made them).
+                EntityHandle obj = EntityHandle::null();
+                std::vector<EntityHandle> cand;
+                grid_.query(c.pick - Vec2{c.radius, c.radius}, c.pick + Vec2{c.radius, c.radius}, cand);
+                double best = c.radius * c.radius;
+                Vec2 cp{};
+                for (const EntityHandle e : cand) {
+                    if (e.kind != EntityKind::Hatch && selectable(e) && kernel_.closest_point(store_, e, c.pick, cp) &&
+                        length_squared(cp - c.pick) <= best) {
+                        best = length_squared(cp - c.pick);
+                        obj = e;
+                    }
+                }
+                const Command was = store_.is_valid(last_pick_hatch_) ? capture_entity(last_pick_hatch_) : Command{};
+                const auto* hc = std::get_if<AddHatchCommand>(&was);
+                if (hc == nullptr) {
+                    report("No hatch to remove boundaries from: pick an internal point first.");
+                } else if (obj.is_null()) {
+                    report("No object under the pick.");
+                } else {
+                    const auto on_edge = [&](Vec2 q) {
+                        Vec2 near_pt{};
+                        return kernel_.closest_point(store_, obj, q, near_pt) && distance(near_pt, q) <= 1e-6 * (1.0 + length(q));
+                    };
+                    AddHatchCommand now = *hc;
+                    std::vector<std::vector<Vec2>> kept{now.loops.empty() ? std::vector<Vec2>{} : now.loops.front()};
+                    std::size_t removed = 0;
+                    for (std::size_t i = 1; i < now.loops.size(); ++i) {
+                        const bool on = !now.loops[i].empty() && std::all_of(now.loops[i].begin(), now.loops[i].end(), on_edge);
+                        removed += on ? 1u : 0u;
+                        if (!on) {
+                            kept.push_back(now.loops[i]);
+                        }
+                    }
+                    if (removed == 0) {
+                        report("That object is not one of the hatch's islands.");
+                    } else {
+                        now.loops = std::move(kept);
+                        remove_indexed(last_pick_hatch_);
+                        push_erase_item(c.group, last_pick_hatch_, was);
+                        const Command made = now;
+                        last_pick_hatch_ = create_indexed(made);
+                        push_create_item(c.group, last_pick_hatch_, made);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        report(removed == 1 ? std::string("1 boundary removed.") : std::to_string(removed) + " boundaries removed.");
+                    }
+                }
+            }
             if constexpr (std::is_same_v<T, HatchDrawnCommand>) {
                 // -HATCH draW boundary: the boundaries as drawn, kept as polylines when asked.
                 std::vector<std::vector<Vec2>> loops;

@@ -4235,3 +4235,37 @@ TEST_CASE("-HATCH draW boundary and ATTREDEF, as AutoCAD asks them") {
     REQUIRE(d2.inserts.size() == 1);
     e2.stop();
 }
+
+TEST_CASE("-HATCH remove Boundaries takes an island out of the hatch just made") {
+    H h;
+    h.run({"-HATCH", "B"});
+    REQUIRE(h.out.prompt == "Select objects or [Add boundaries]: ");
+    h.run({"12,5"});
+    REQUIRE(h.last<HatchRemoveBoundaryCommand>()->pick == Vec2{12, 5});
+    REQUIRE(h.out.prompt == "Select objects or [Add boundaries/Undo]: ");
+    h.run({"U"});
+    REQUIRE(h.out.prompt == "Select objects or [Add boundaries]: ");
+    h.run({""});
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [", 0) == 0);
+    h.proc.cancel();
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPolylineCommand{{{0, 0}, {40, 0}, {40, 20}, {0, 20}}, true, 1});
+    engine.submit(AddCircleCommand{{10, 10}, 3, 2});
+    engine.submit(AddCircleCommand{{30, 10}, 3, 3});
+    HatchPickPointCommand pick;
+    pick.point = {20, 10};
+    pick.group = 4;
+    engine.submit(pick);
+    engine.submit(HatchRemoveBoundaryCommand{{13, 10}, 0.5, 5}); // the left circle
+    const io::Document d = dump(engine, "musacad_hatch_remove.musa");
+    REQUIRE(d.hatches.size() == 1);
+    REQUIRE(d.hatches[0].loops.size() == 2); // the outer one and the right circle
+    double x = 0.0;
+    for (const Vec2& v : d.hatches[0].loops[1]) {
+        x = std::max(x, v.x);
+    }
+    REQUIRE(x == Approx(33.0).margin(0.01));
+    engine.stop();
+}

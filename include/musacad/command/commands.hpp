@@ -547,7 +547,7 @@ private:
     enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
                       Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer, Advanced, AdvBoundarySet,
                       AdvBoundarySelect, AdvRetain, AdvIsland, AdvRayCast, AdvRayAngle, AdvStyle, AdvAssoc, AdvGap,
-                      AdvSeparate, DrawRetain, DrawStart, DrawNext, DrawLength, DrawNewBoundary };
+                      AdvSeparate, DrawRetain, DrawStart, DrawNext, DrawLength, DrawNewBoundary, RemoveBoundaries };
     [[nodiscard]] core::HatchExtras extras() const; ///< -HATCH's Origin, LAyer, COlor and Advanced
     void main_prompt(CommandContext& ctx);
     void advanced_prompt(CommandContext& ctx);
@@ -557,6 +557,7 @@ private:
     void draw_next_prompt(CommandContext& ctx);
     std::vector<core::Vec2> draw_pts_;
     std::vector<std::vector<core::Vec2>> drawn_;
+    std::vector<std::uint64_t> removals_; ///< remove Boundaries: each removal's undo group
     static inline bool draw_retain_ = false; // Retain polyline boundary
     void fill_selection(CommandContext& ctx);
     bool typed_;

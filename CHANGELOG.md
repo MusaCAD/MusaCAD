@@ -408,6 +408,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   boundary point by point (`Specify next point or [Arc/Close/Length/Undo]:`), then `Specify
   start point for new boundary or <Accept>:` for an island; the hatch fills what was drawn,
   with no objects around it unless the boundaries are retained.
+- **-HATCH's remove Boundaries** (#41) -- `Select objects or [Add boundaries]:`: an island's
+  object picked comes out of the hatch the last pick made; Undo puts it back.
 - **ATTREDEF** (#75) -- `Enter name of the block you wish to redefine:`, the objects with the
   new attribute definitions, `Specify insertion base point of new Block:`: the block made again
   of them, its references keeping their values by tag and new attributes taking their

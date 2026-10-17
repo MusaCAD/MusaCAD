@@ -3158,6 +3158,26 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     case Mode::DrawNewBoundary:
         draw_input(ctx, text, t, up);
         return;
+    case Mode::RemoveBoundaries:
+        // remove Boundaries: the islands of the hatch picked last, object by object.
+        if (t.empty() || up == "A" || up == "ADD" || up == "ADD BOUNDARIES") {
+            main_prompt(ctx);
+            return;
+        }
+        if (up == "U" || up == "UNDO") {
+            if (!removals_.empty()) {
+                ctx.submit(core::UndoLastGroupCommand{removals_.back()});
+                removals_.pop_back();
+            }
+        } else if (const auto p = read_point(ctx, text)) {
+            removals_.push_back(ctx.new_group());
+            ctx.submit(core::HatchRemoveBoundaryCommand{*p, ctx.pick_radius(), removals_.back()});
+        } else {
+            return;
+        }
+        ctx.set_prompt(removals_.empty() ? "Select objects or [Add boundaries]: "
+                                         : "Select objects or [Add boundaries/Undo]: ");
+        return;
     case Mode::Origin:
         if (up == "S" || up == "SET" || up == "SET NEW ORIGIN") {
             mode_ = Mode::OriginPoint;
@@ -3413,7 +3433,13 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt(std::string("Retain polyline boundary? [Yes/No] <") + (draw_retain_ ? "Y" : "N") + ">: ");
         return;
     }
-    if (typed_ && (up == "B" || up == "DR" || up == "AN" || up == "TR" || up == "DRAW")) {
+    if (typed_ && (up == "B" || up == "REMOVE BOUNDARIES")) {
+        mode_ = Mode::RemoveBoundaries;
+        removals_.clear();
+        ctx.set_prompt("Select objects or [Add boundaries]: ");
+        return;
+    }
+    if (typed_ && (up == "DR" || up == "AN" || up == "TR" || up == "DRAW")) {
         ctx.echo("That option is not available yet.");
         return;
     }
