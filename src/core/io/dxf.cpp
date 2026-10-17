@@ -2139,11 +2139,15 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         ranged(273, 1, 6, [&](long x) { ds.alt_unit = static_cast<std::uint8_t>(x); });
         ranged(171, 0, 8, [&](long x) { ds.alt_precision = static_cast<std::uint8_t>(x); });
         // The Tolerances tab.
-        const double tp = find(body, 47) != nullptr ? to_d(*find(body, 47)) : 0.0;
-        const double tm = find(body, 48) != nullptr ? to_d(*find(body, 48)) : 0.0;
-        const bool dimlim = find(body, 72) != nullptr && to_l(*find(body, 72)) != 0;
-        const bool dimtol = find(body, 71) != nullptr && to_l(*find(body, 71)) != 0;
-        const bool basic = find(body, 147) != nullptr && to_d(*find(body, 147)) < 0.0;
+        const double tp = getd(body, 47);
+        const double tm = getd(body, 48);
+        const auto flag = [&](int code) {
+            const std::string* v = find(body, code);
+            return v != nullptr && to_l(*v) != 0;
+        };
+        const bool dimlim = flag(72);
+        const bool dimtol = flag(71);
+        const bool basic = getd(body, 147) < 0.0;
         ds.tol_method = static_cast<std::uint8_t>(dimlim ? 3 : dimtol ? (std::abs(tp - tm) < 1e-12 ? 1 : 2) : basic ? 4 : 0);
         ds.tol_upper = tp;
         ds.tol_lower = tm;

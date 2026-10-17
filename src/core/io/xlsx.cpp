@@ -562,20 +562,39 @@ bool parse_xlsx(std::string_view bytes, std::vector<std::vector<std::string>>& r
     return true;
 }
 
+namespace {
+/// A file's bytes; false when it cannot be read.
+bool read_file(const std::string& path, std::string& out) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) {
+        return false;
+    }
+    const std::streamoff size = f.tellg();
+    if (size < 0) {
+        return false;
+    }
+    out.assign(static_cast<std::size_t>(size), '\0');
+    f.seekg(0);
+    f.read(out.data(), static_cast<std::streamsize>(size));
+    return static_cast<bool>(f);
+}
+} // namespace
+
 bool read_xlsx(const std::string& path, std::vector<std::vector<std::string>>& rows, std::string& error,
                std::string_view sheet) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
+    std::string bytes;
+    if (!read_file(path, bytes)) {
         error = "cannot open " + path;
         return false;
     }
-    const std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return parse_xlsx(bytes, rows, error, sheet);
 }
 
 std::vector<std::string> xlsx_sheet_names(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    const std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::string bytes;
+    if (!read_file(path, bytes)) {
+        return {};
+    }
     std::string workbook;
     std::vector<std::string> out;
     if (!zip_entry(bytes, "xl/workbook.xml", workbook)) {
