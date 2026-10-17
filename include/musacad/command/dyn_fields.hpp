@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "musacad/command/command_context.hpp"
@@ -52,5 +53,16 @@ struct DynField {
 [[nodiscard]] core::Vec2 apply_dyn_lock(const PreviewSpec& pv, core::Vec2 cursor,
                                         std::optional<double> primary,
                                         std::optional<double> secondary);
+
+/// DYNPICOORDS: Dynamic Input's pointer input takes a second or next point as relative (0,
+/// AutoCAD's default) or absolute (1) coordinates. Kept for the session, and by the UI in its
+/// settings, as AutoCAD keeps it in the registry.
+[[nodiscard]] int& dynpicoords() noexcept;
+
+/// A coordinate typed into Dynamic Input, as AutoCAD's pointer input takes it: for a second or
+/// next point (`next`: a rubber band from the point before) it is relative to that point -- `@`
+/// put in front -- unless DYNPICOORDS is 1; `#` in front makes it absolute (the `#` taken off)
+/// and `@` relative, either way. Nullopt for what is not a coordinate (`x,y` or `dist<angle`).
+[[nodiscard]] std::optional<std::string> dyn_pointer_input(std::string_view typed, bool next);
 
 } // namespace musacad::command

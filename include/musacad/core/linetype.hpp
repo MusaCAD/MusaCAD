@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <span>
 #include <vector>
 
@@ -49,9 +50,29 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const Linet
 /// and text elements ([...]) are left out, the gaps around them kept.
 [[nodiscard]] std::vector<LinetypeDef> parse_lin(std::string_view text);
 
-/// Musa CAD's own library of linetypes, by AutoCAD's standard names and patterns (BORDER,
-/// CENTER, DASHDOT, DASHED, DIVIDE, DOT, HIDDEN, PHANTOM, each with its 2 and X2 sizes), for
-/// -LINETYPE Load and the Linetype Manager when no .lin file is given.
-[[nodiscard]] const std::vector<LinetypeDef>& linetype_library();
+/// The built-in Dashed, Center and Hidden as a drawing defines them, in .lin form (a dash
+/// positive, a gap negative): [0] Dashed, [1] Center, [2] Hidden. A drawing keeps its own, as
+/// AutoCAD keeps a loaded linetype's definition in the drawing.
+using BuiltinLinetypes = std::array<std::vector<double>, 3>;
+
+/// The built-in three as Musa CAD defined them before a drawing kept its own (acad.lin x10,
+/// the sizes dash_pattern() gives) -- what a drawing saved then still draws with.
+[[nodiscard]] const BuiltinLinetypes& legacy_builtin_linetypes();
+
+/// The built-in three as AutoCAD loads them: from acad.lin (inches, MEASUREMENT 0) or, with
+/// `metric`, from acadiso.lin (millimetres, MEASUREMENT 1: the same 25.4 times as long).
+[[nodiscard]] const BuiltinLinetypes& standard_builtin_linetypes(bool metric);
+
+/// dash_polyline with the drawing's own built-in definitions: Dashed, Center and Hidden by
+/// `builtin`, a loaded linetype by `loaded`.
+void dash_polyline(std::span<const Vec2> pts, Linetype lt, const BuiltinLinetypes& builtin,
+                   std::span<const LinetypeDef> loaded, double ltscale, std::vector<Vec2>& out);
+
+/// The linetypes -LINETYPE Load and the Linetype Manager offer when no .lin file is given, by
+/// AutoCAD's names and patterns: BORDER, CENTER, DASHDOT, DASHED, DIVIDE, DOT, HIDDEN and
+/// PHANTOM, each with its 2 and X2 sizes, as acad.lin has them (inches) or, `metric`, as
+/// acadiso.lin has them (millimetres, 25.4 times as long), then the ISO linetypes
+/// ACAD_ISO02W100 to ACAD_ISO15W100 (millimetres in both).
+[[nodiscard]] const std::vector<LinetypeDef>& linetype_library(bool metric);
 
 } // namespace musacad::core

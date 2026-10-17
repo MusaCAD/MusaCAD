@@ -41,6 +41,10 @@ struct Pattern {
 /// Used both for the built-in library and for user-loaded .PAT files.
 [[nodiscard]] std::vector<Pattern> parse_pat(std::string_view text);
 
+/// acadiso.pat's standard patterns are acad.pat's 25.4 times as large (millimetres for
+/// inches); a hatch made with MEASUREMENT 1 draws its standard pattern at this factor.
+inline constexpr double kIsoPatternFactor = 25.4;
+
 /// Look up a built-in stock pattern by name (case-insensitive). Returns nullptr for an
 /// unknown name (and for "SOLID", which is not a line pattern). The library is authored
 /// from the public .PAT format -- it does NOT copy Autodesk's acad.pat; load that file with

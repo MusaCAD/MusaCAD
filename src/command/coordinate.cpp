@@ -88,16 +88,13 @@ CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> las
         return r;
     }
 
+    // `@` relative to the last point; `#` absolute (Dynamic Input's way of saying so).
     const bool relative = t.front() == '@';
-    const std::string_view body = relative ? trim(t.substr(1)) : t;
+    const std::string_view body = relative || t.front() == '#' ? trim(t.substr(1)) : t;
 
     if (const auto lt = body.find('<'); lt != std::string_view::npos) {
-        // Polar: dist<angle (only meaningful as relative).
-        if (!relative) {
-            r.error = "Polar coordinates must be relative (use @dist<angle).";
-            return r;
-        }
-        if (!last) {
+        // Polar: dist<angle -- from the last point (@), or from the origin.
+        if (relative && !last) {
             r.error = "No previous point for a relative coordinate.";
             return r;
         }
@@ -108,9 +105,10 @@ CoordParse parse_coordinate(std::string_view text, std::optional<core::Vec2> las
             return r;
         }
         const double a = core::to_radians(angle_deg);
-        r.point = *last + core::Vec2{dist * std::cos(a), dist * std::sin(a)};
+        const core::Vec2 from = relative ? *last : core::Vec2{0.0, 0.0};
+        r.point = from + core::Vec2{dist * std::cos(a), dist * std::sin(a)};
         r.ok = true;
-        r.interpretation = fmt_point(r.point) + "  (polar @" + std::to_string(dist) + "<" +
+        r.interpretation = fmt_point(r.point) + (relative ? "  (polar @" : "  (polar ") + std::to_string(dist) + "<" +
                            std::to_string(angle_deg) + ")";
         return r;
     }

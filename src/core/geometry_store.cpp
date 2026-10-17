@@ -78,12 +78,30 @@ bool GeometryStore::set_dim_flip(EntityHandle h, std::uint8_t flip) noexcept {
     return true;
 }
 
+bool GeometryStore::set_dim_origin(EntityHandle h, Vec2 origin) noexcept {
+    DimData* d = h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    d->origin = origin;
+    return true;
+}
+
 bool GeometryStore::set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept {
     HatchData* d = h.kind == EntityKind::Hatch ? hatches_.get(h.index, h.generation) : nullptr;
     if (d == nullptr) {
         return false;
     }
     d->unassoc = unassoc;
+    return true;
+}
+
+bool GeometryStore::set_hatch_iso(EntityHandle h, bool iso) noexcept {
+    HatchData* d = h.kind == EntityKind::Hatch ? hatches_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    d->iso = iso;
     return true;
 }
 
@@ -409,6 +427,18 @@ const hatch::Pattern* GeometryStore::pattern(std::string_view name) const noexce
         }
     }
     return hatch::builtin_pattern(name);
+}
+
+double GeometryStore::hatch_pattern_scale(const HatchData& d) const noexcept {
+    if (!d.iso) {
+        return d.pattern_scale;
+    }
+    const std::string_view name = string_of(d);
+    const hatch::Pattern* own = pattern(name);
+    return own != nullptr && own == hatch::builtin_pattern(name) && !same_name(name, "_USER") &&
+                   !same_name(name, "_USERDOUBLE")
+               ? d.pattern_scale * hatch::kIsoPatternFactor
+               : d.pattern_scale;
 }
 
 std::uint16_t GeometryStore::mleader_style_index(std::string_view name) const noexcept {
@@ -824,6 +854,7 @@ void GeometryStore::clear() noexcept {
     active_space_ = 0;
     clear_mspace();
     ltscale_ = 1.0;
+    builtin_linetypes_ = legacy_builtin_linetypes();
     psltscale_ = true;
     msltscale_ = true;
     drawing_props_ = DrawingProps{};
@@ -1324,6 +1355,15 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
 // --- linetypes (same_name: above) -------------------------------------------------
 
 std::optional<Linetype> GeometryStore::add_linetype(const LinetypeDef& def) {
+    // A built-in name, not one the drawing loaded as its own: AutoCAD's reload of it.
+    for (const Linetype lt : {Linetype::Dashed, Linetype::Center, Linetype::Hidden}) {
+        const bool own = std::any_of(linetypes_.begin(), linetypes_.end(),
+                                     [&](const LinetypeDef& o) { return same_name(o.name, def.name); });
+        if (!own && same_name(builtin_linetype_name(lt), def.name) && !def.pattern.empty()) {
+            builtin_linetypes_[lt == Linetype::Dashed ? 0 : lt == Linetype::Center ? 1 : 2] = def.pattern;
+            return lt;
+        }
+    }
     for (std::size_t i = 0; i < linetypes_.size(); ++i) {
         if (same_name(linetypes_[i].name, def.name)) {
             linetypes_[i] = def;

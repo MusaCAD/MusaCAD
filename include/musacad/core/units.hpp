@@ -50,6 +50,10 @@ struct DrawingUnits {
     /// microns, 14 decimetres, 15 decametres, 16 hectometres, 17 gigametres, 18
     /// astronomical units, 19 light years, 20 parsecs).
     std::uint8_t insunits = 0;
+    /// MEASUREMENT: 0 imperial, 1 metric -- whether new hatches take their standard patterns
+    /// from acad.pat or acadiso.pat (the same 25.4 times as large) and linetypes loaded from
+    /// the library come from acad.lin or acadiso.lin. What is already drawn keeps its own.
+    std::uint8_t measurement = 0;
     friend bool operator==(const DrawingUnits&, const DrawingUnits&) = default;
 };
 

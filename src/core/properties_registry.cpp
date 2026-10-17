@@ -1473,6 +1473,14 @@ int match_properties(const Command& source, Command& target, const MatchPropFilt
         d.write(target, d.read(source));
         ++applied;
     }
+    // A hatch's pattern goes over at its size (acad.pat's or acadiso.pat's), as AutoCAD copies
+    // the definition with it.
+    if (filter.allows(match_slot_for(PropertyId::HatchPattern))) {
+        const auto* sh = std::get_if<AddHatchCommand>(&source);
+        if (auto* th = std::get_if<AddHatchCommand>(&target); sh != nullptr && th != nullptr) {
+            th->iso = sh->iso;
+        }
+    }
     return applied;
 }
 

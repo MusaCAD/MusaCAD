@@ -3602,6 +3602,15 @@ bool ViewportWindow::dyn_commit() {
     if (processor_ == nullptr) {
         return false;
     }
+    // A coordinate typed in a field (`x,y`, `d<a`, `#`, `@`) is pointer input: relative to the
+    // point the rubber band starts from unless DYNPICOORDS is 1, as in AutoCAD.
+    for (const std::string& typed : dyn_buf_) {
+        if (const std::optional<std::string> pointer = command::dyn_pointer_input(typed, true)) {
+            dyn_reset();
+            processor_->submit_line(*pointer);
+            return true;
+        }
+    }
     const std::string line = command::compose_dyn_submit(processor_->preview(), dyn_cursor_,
                                                          dyn_parse(dyn_buf_[0]),
                                                          dyn_parse(dyn_buf_[1]));
@@ -4020,7 +4029,7 @@ bool ViewportWindow::dyn_handle_key(int key, const QString& text) {
     }
     const QChar c = text.at(0);
     if (c.isDigit() || c == QLatin1Char('.') || c == QLatin1Char('-') || c == QLatin1Char(',') ||
-        c == QLatin1Char('@') || c == QLatin1Char('<')) {
+        c == QLatin1Char('@') || c == QLatin1Char('<') || c == QLatin1Char('#')) {
         dyn_buf_[static_cast<std::size_t>(dyn_active_slot_)] += c.toLatin1();
         rebuild_overlay();
         return true;

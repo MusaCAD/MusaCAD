@@ -7,6 +7,7 @@
 #include <cctype>
 
 #include "musacad/command/commands.hpp"
+#include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/dimension.hpp"
 
 namespace musacad::command {
@@ -403,6 +404,54 @@ CommandRegistry CommandRegistry::make_default() {
         "Replace every reference of one block by another, at the command line.");
     reg({"HPASSOC"}, [] { return std::make_unique<HpAssocCommand>(); }, "",
         "Whether the hatches made follow their boundaries.");
+    // The system variables that are numbers (SysVarCommand).
+    const auto var = [&](const char* name, const char* help, SysVarCommand::Spec spec) {
+        spec.name = name;
+        reg({name}, [spec] { return std::make_unique<SysVarCommand>(spec); }, "", help);
+    };
+    var("HPSEPARATE", "Whether one HATCH makes one hatch of the areas picked or selected (0), or one each (1).",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return hpseparate() ? 1.0 : 0.0; },
+         [](CommandContext&, double v) { hpseparate() = v != 0.0; }});
+    var("MEASUREMENT", "Imperial (0) or metric (1): the size of the standard hatch patterns and of the linetypes loaded from now on.",
+        {"", false, 0.0, 1.0, [](CommandContext& ctx) { return static_cast<double>(ctx.units().measurement); },
+         [](CommandContext& ctx, double v) {
+             core::DrawingUnits u = ctx.units();
+             u.measurement = static_cast<std::uint8_t>(v);
+             ctx.submit(core::SetUnitsCommand{u});
+         }});
+    var("MEASUREINIT", "Imperial (0) or metric (1): what a new drawing's MEASUREMENT starts as.",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(measureinit()); },
+         [](CommandContext& ctx, double v) {
+             measureinit() = static_cast<int>(v);
+             core::DimAssocCommand c;
+             c.op = core::DimAssocCommand::Op::MeasureInit;
+             c.value = static_cast<std::uint8_t>(v);
+             ctx.submit(c);
+         }});
+    var("DYNPICOORDS", "Dynamic Input's second and next points as relative (0) or absolute (1) coordinates.",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(dynpicoords()); },
+         [](CommandContext&, double v) { dynpicoords() = static_cast<int>(v); }});
+    var("PEDITACCEPT", "Whether PEDIT turns a line or arc picked into a polyline without asking (1) or asks (0).",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(PeditCommand::s_peditaccept_); },
+         [](CommandContext&, double v) { PeditCommand::s_peditaccept_ = static_cast<int>(v); }});
+    var("TRIMMODE", "Whether FILLET and CHAMFER trim the objects to the corner (1) or leave them as they are (0).",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return FilletCommand::trimmode() ? 1.0 : 0.0; },
+         [](CommandContext&, double v) { FilletCommand::trimmode() = v != 0.0; }});
+    var("FILLETRAD", "The radius FILLET uses.",
+        {"", true, 0.0, 0.0, [](CommandContext&) { return FilletCommand::filletrad(); },
+         [](CommandContext&, double v) { FilletCommand::filletrad() = v; }});
+    var("CHAMFERA", "CHAMFER's first distance.",
+        {"", true, 0.0, 0.0, [](CommandContext&) { return ChamferCommand::chamfera(); },
+         [](CommandContext&, double v) { ChamferCommand::chamfera() = v; }});
+    var("CHAMFERB", "CHAMFER's second distance.",
+        {"", true, 0.0, 0.0, [](CommandContext&) { return ChamferCommand::chamferb(); },
+         [](CommandContext&, double v) { ChamferCommand::chamferb() = v; }});
+    var("CHAMFERC", "CHAMFER's length, by the Angle method.",
+        {"", true, 0.0, 0.0, [](CommandContext&) { return ChamferCommand::chamferc(); },
+         [](CommandContext&, double v) { ChamferCommand::chamferc() = v; }});
+    var("CHAMFERD", "CHAMFER's angle from the first line, by the Angle method.",
+        {"", true, 0.0, 0.0, [](CommandContext&) { return ChamferCommand::chamferd(); },
+         [](CommandContext&, double v) { ChamferCommand::chamferd() = v; }, true});
     reg({"DIMDISASSOCIATE", "DDA"}, [] { return std::make_unique<DimDisassociateCommand>(); }, "",
         "Dimensions no longer follow the objects they measure.");
     reg({"DIMREASSOCIATE", "DRE"}, [] { return std::make_unique<DimDisassociateCommand>(true); }, "",

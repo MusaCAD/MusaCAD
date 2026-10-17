@@ -562,7 +562,7 @@ private:
     void apply_offset(Vec2 pick, double radius, double distance, Vec2 side, std::uint64_t group);
     void apply_trim(Vec2 pick, double radius, std::uint64_t group);
     void apply_join(const std::vector<Vec2>& picks, double radius, std::uint64_t group, bool polyline);
-    void apply_join_selection(double radius, std::uint64_t group, bool polyline);
+    void apply_join_selection(double radius, std::uint64_t group, bool polyline, std::uint8_t jointype = 0);
     /// HATCH "Select objects" mode: build a hatch from the selected closed polylines.
     void apply_hatch_from_selection(const std::string& pattern, double scale, double angle,
                                     std::uint64_t group, Rgb color2 = {});
@@ -574,7 +574,7 @@ private:
     /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
     /// `polyline`: PEDIT's Join -- a polyline of what touches, never JOIN's same-kind result.
     void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group,
-                       bool polyline = false);
+                       bool polyline = false, std::uint8_t jointype = 0);
     /// JOIN's own kinds, before chaining into a polyline: lines along one line become one
     /// line, arcs on one circle one arc, elliptical arcs on one ellipse one elliptical arc
     /// (gaps allowed). False when the objects are not all one such kind.
@@ -692,7 +692,16 @@ private:
     std::vector<std::uint8_t> layer_used_; ///< per layer: holds an entity (set on each geometry rebuild)
     HatchExtras hatch_extras_{};           ///< the hatch command in hand's Origin, LAyer and COlor
     std::vector<EntityHandle> hatch_boundary_set_; ///< -HATCH Advanced > Boundary set > New
-    EntityHandle last_pick_hatch_{};       ///< the hatch the last picked area made (to join the next)
+    /// The hatches HATCH's picked areas made, in turn (each pick's joins the one before). Undo
+    /// brings an earlier one back under a new handle, which remap_history_handle writes in.
+    std::vector<EntityHandle> pick_hatches_;
+    /// The hatch the next picked area joins: the last of pick_hatches_ still in the drawing.
+    [[nodiscard]] EntityHandle last_pick_hatch() const;
+    /// MEASUREINIT: what a new drawing starts as -- MEASUREMENT, its unit (INSUNITS: inches or
+    /// millimetres), and the Dashed, Center and Hidden of acad.lin (0) or acadiso.lin (1).
+    /// Unset: Musa CAD's former definitions, unitless.
+    std::optional<std::uint8_t> measureinit_;
+    void apply_measureinit(std::uint8_t m);
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;

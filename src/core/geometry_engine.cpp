@@ -162,6 +162,10 @@ EntityHandle GeometryEngine::create_entity(const Command& add_command) {
     if (const auto* hc = std::get_if<AddHatchCommand>(&add_command); hc != nullptr && !hc->props && !hpassoc_) {
         store_.set_hatch_unassoc(h, true); // HPASSOC 0
     }
+    if (const auto* hc = std::get_if<AddHatchCommand>(&add_command);
+        hc != nullptr && !hc->props && store_.units().measurement == 1) {
+        store_.set_hatch_iso(h, true); // MEASUREMENT 1: the standard pattern as acadiso.pat has it
+    }
     return h;
 }
 
@@ -412,6 +416,16 @@ void GeometryEngine::remap_history_handle(EntityHandle from, EntityHandle to, Gr
         fix(g);
     }
     std::replace(trim_edges_.begin(), trim_edges_.end(), from, to); // TRIM's chosen edges
+    std::replace(pick_hatches_.begin(), pick_hatches_.end(), from, to); // HATCH's picked areas
+}
+
+EntityHandle GeometryEngine::last_pick_hatch() const {
+    for (auto it = pick_hatches_.rbegin(); it != pick_hatches_.rend(); ++it) {
+        if (it->kind == EntityKind::Hatch && store_.is_valid(*it)) {
+            return *it;
+        }
+    }
+    return EntityHandle::null();
 }
 
 void GeometryEngine::do_undo_op() {
@@ -1364,6 +1378,7 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
                 pull(x.a);
                 pull(x.b);
                 pull(x.line_pt);
+                pull(x.origin);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 pull(x.tip);
                 pull(x.knee);
@@ -1432,6 +1447,7 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.a += d;
                 x.b += d;
                 x.line_pt += d;
+                x.origin += d; // an ordinate keeps its value
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 x.tip += d;
                 x.knee += d;
@@ -1571,6 +1587,7 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
                 x.line_pt = refl(x.line_pt);
+                x.origin = refl(x.origin);
                 if (type == DimType::ArcLength) {
                     x.b = refl(arc_end);
                     const Vec2 s = refl(arc_start) - x.a;
@@ -1695,6 +1712,7 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
                 x.line_pt = rot(x.line_pt);
+                x.origin = rot(x.origin);
                 // The text's own angle and the extension lines' slant are absolute: they turn too.
                 if (x.text_angle != 0.0) {
                     x.text_angle = turned_dim_angle(x.text_angle + ang, kTwoPi);
@@ -1851,6 +1869,7 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
                 x.line_pt = scl(x.line_pt);
+                x.origin = scl(x.origin);
                 if (x.type == static_cast<std::uint8_t>(DimType::Angular) && x.aux > 0.0) {
                     x.aux *= std::abs(f); // the arc's radius
                 }
@@ -2296,6 +2315,14 @@ void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
         hpassoc_ = c.value != 0;
         return;
     }
+    if (c.op == Op::MeasureInit || c.op == Op::MeasureInitNow) {
+        measureinit_ = std::min<std::uint8_t>(c.value, 1);
+        // At start-up the drawing open is a new one, so far untouched: it starts so too.
+        if (c.op == Op::MeasureInitNow && document_version_ == 0 && !dirty_ && undo_.empty() && all_live().empty()) {
+            apply_measureinit(*measureinit_);
+        }
+        return;
+    }
     prune_selection();
     const bool to = c.op == Op::Disassociate;
     std::size_t n = 0;
@@ -2450,6 +2477,37 @@ void GeometryEngine::apply_replace_block(const ReplaceBlockCommand& c) {
            "\" replaced by \"" + to_name + "\".");
 }
 
+namespace {
+// A hatch's loops as separate areas: each outer loop (inside an even number of the others)
+// with the loops one level in from it as its islands.
+std::vector<std::vector<std::vector<Vec2>>> hatch_areas(const std::vector<std::vector<Vec2>>& loops) {
+    const std::size_t n = loops.size();
+    std::vector<std::size_t> depth(n, 0);
+    const auto inside = [&](std::size_t a, std::size_t b) {
+        return a != b && !loops[a].empty() && loops[b].size() >= 3 && point_in_polygon(loops[b], loops[a].front());
+    };
+    for (std::size_t a = 0; a < n; ++a) {
+        for (std::size_t b = 0; b < n; ++b) {
+            depth[a] += inside(a, b) ? 1u : 0u;
+        }
+    }
+    std::vector<std::vector<std::vector<Vec2>>> areas;
+    for (std::size_t a = 0; a < n; ++a) {
+        if (depth[a] % 2 != 0) {
+            continue;
+        }
+        std::vector<std::vector<Vec2>> one{loops[a]};
+        for (std::size_t b = 0; b < n; ++b) {
+            if (depth[b] == depth[a] + 1 && inside(b, a)) {
+                one.push_back(loops[b]);
+            }
+        }
+        areas.push_back(std::move(one));
+    }
+    return areas;
+}
+} // namespace
+
 void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     using Op = HatchEditCommand::Op;
     prune_selection();
@@ -2503,30 +2561,10 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
             made.push_back(x);
             break;
         case Op::Separate: {
-            // How many loops each loop is inside: the outer ones (an even count) each make a
-            // hatch, with the loops one level in from it as its islands.
-            const std::size_t n = x.loops.size();
-            std::vector<std::size_t> depth(n, 0);
-            const auto inside = [&](std::size_t a, std::size_t b) {
-                return a != b && !x.loops[a].empty() && x.loops[b].size() >= 3 &&
-                       point_in_polygon(x.loops[b], x.loops[a].front());
-            };
-            for (std::size_t a = 0; a < n; ++a) {
-                for (std::size_t b = 0; b < n; ++b) {
-                    depth[a] += inside(a, b) ? 1u : 0u;
-                }
-            }
-            for (std::size_t a = 0; a < n; ++a) {
-                if (depth[a] % 2 != 0) {
-                    continue;
-                }
+            // Each outer loop, with the loops one level in from it as its islands, a hatch.
+            for (std::vector<std::vector<Vec2>>& area : hatch_areas(x.loops)) {
                 AddHatchCommand one = x;
-                one.loops = {x.loops[a]};
-                for (std::size_t b = 0; b < n; ++b) {
-                    if (depth[b] == depth[a] + 1 && inside(b, a)) {
-                        one.loops.push_back(x.loops[b]);
-                    }
-                }
+                one.loops = std::move(area);
                 made.push_back(std::move(one));
             }
             if (made.size() < 2) {
@@ -4063,6 +4101,30 @@ void GeometryEngine::apply_quick_dim(const QuickDimCommand& c) {
             break;
         }
     }
+    // seTtings > Intersection: where the objects cross, too -- and first at that place.
+    std::vector<Vec2> crossings;
+    if (c.intersection_priority) {
+        for (std::size_t i = 0; i < selection_.size(); ++i) {
+            for (std::size_t j = i + 1; j < selection_.size(); ++j) {
+                if (store_.is_valid(selection_[i]) && store_.is_valid(selection_[j])) {
+                    kernel_.intersect(store_, selection_[i], selection_[j], crossings);
+                }
+            }
+        }
+        pts.insert(pts.end(), crossings.begin(), crossings.end());
+    }
+    // Edit: the points taken out, and those put in.
+    const double take_r = c.pick_radius > 0.0 ? c.pick_radius : 1e-6;
+    pts.erase(std::remove_if(pts.begin(), pts.end(),
+                             [&](Vec2 p) {
+                                 return std::any_of(c.removed.begin(), c.removed.end(),
+                                                    [&](Vec2 r) { return distance(p, r) <= take_r; });
+                             }),
+              pts.end());
+    pts.insert(pts.end(), c.added.begin(), c.added.end());
+    const auto is_crossing = [&](Vec2 p) {
+        return std::any_of(crossings.begin(), crossings.end(), [&](Vec2 q) { return distance(p, q) < 1e-9; });
+    };
     const std::uint16_t style = store_.current_dimstyle();
     const DimStyle* st = store_.dimstyle(style);
     const double text_h = st != nullptr ? st->text_height : 2.5;
@@ -4106,12 +4168,16 @@ void GeometryEngine::apply_quick_dim(const QuickDimCommand& c) {
         const auto along = [&](Vec2 p) { return horizontal ? p.x : p.y; };
         const auto across = [&](Vec2 p) { return horizontal ? p.y : p.x; };
         const double out_sign = horizontal ? (c.at.y >= hi.y ? 1.0 : -1.0) : (c.at.x >= hi.x ? 1.0 : -1.0);
-        // One point per position along the line: the one nearest the dimension line.
+        // One point per position along the line: the one nearest the dimension line (an
+        // intersection first, with Intersection priority).
         std::sort(pts.begin(), pts.end(), [&](Vec2 p, Vec2 q) { return along(p) < along(q); });
         std::vector<Vec2> u;
         for (const Vec2& p : pts) {
             if (!u.empty() && std::abs(along(p) - along(u.back())) < 1e-6) {
-                if (std::abs(across(p) - across(c.at)) < std::abs(across(u.back()) - across(c.at))) {
+                const bool pc = is_crossing(p);
+                const bool uc = is_crossing(u.back());
+                if (pc != uc ? pc
+                             : std::abs(across(p) - across(c.at)) < std::abs(across(u.back()) - across(c.at))) {
                     u.back() = p;
                 }
                 continue;
@@ -4142,6 +4208,16 @@ void GeometryEngine::apply_quick_dim(const QuickDimCommand& c) {
             }
             break;
         case Mode::Baseline:
+            if (c.datum) {
+                // datumPoint: every dimension starts there.
+                std::size_t k = 0;
+                for (const Vec2& p : u) {
+                    if (std::abs(along(p) - along(*c.datum)) > 1e-6) {
+                        linear(*c.datum, p, spacing * static_cast<double>(k++));
+                    }
+                }
+                break;
+            }
             for (std::size_t i = 1; i < u.size(); ++i) {
                 linear(u.front(), u[i], spacing * static_cast<double>(i - 1));
             }
@@ -4161,6 +4237,7 @@ void GeometryEngine::apply_quick_dim(const QuickDimCommand& c) {
                 d.b = horizontal ? Vec2{p.x, c.at.y} : Vec2{c.at.x, p.y};
                 d.line_pt = d.b;
                 d.aux = horizontal ? 0.0 : 1.0; // the X datum along a horizontal row
+                d.origin = c.datum.value_or(Vec2{}); // datumPoint: measured from there
                 add(std::move(d));
             }
             break;
@@ -7296,7 +7373,7 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
             const std::string_view pname = store_.string_of(*hd);
             if (const hatch::Pattern* pat = pname == "SOLID" ? nullptr : store_.pattern(pname)) {
                 std::vector<hatch::Segment> segs;
-                hatch::generate_pattern_segments(loops, *pat, hd->pattern_scale, hd->pattern_angle,
+                hatch::generate_pattern_segments(loops, *pat, store_.hatch_pattern_scale(*hd), hd->pattern_angle,
                                                  hd->pattern_origin, segs);
                 for (const hatch::Segment& sg : segs) {
                     line(sg.a, sg.b, hd->props);
@@ -12947,6 +13024,10 @@ void GeometryEngine::apply_set_property(PropertyId id, const PropertyValue& valu
         }
         Command modified = original;
         write_property(modified, id, value);
+        if (auto* hc = std::get_if<AddHatchCommand>(&modified);
+            hc != nullptr && (id == PropertyId::HatchPattern || id == PropertyId::HatchScale || id == PropertyId::HatchAngle)) {
+            hc->iso = store_.units().measurement == 1; // the pattern read again, as MEASUREMENT has it now
+        }
         remove_indexed(h);
         push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(modified);
@@ -15178,7 +15259,9 @@ void GeometryEngine::apply_join(const std::vector<Vec2>& picks, double radius, s
             ents.push_back(h);
         }
     }
-    join_entities(ents, radius, group, polyline);
+    // The radius finds what was picked; the ends join only where they meet (PEDIT Multiple's
+    // fuzz distance is the one tolerance, as in AutoCAD).
+    join_entities(ents, 0.0, group, polyline);
 }
 
 namespace {
@@ -15323,6 +15406,59 @@ bool GeometryEngine::join_same_kind(const std::vector<EntityHandle>& ents, doubl
         joined = AddEllipseCommand{s.center, s.major, s.ratio, whole ? 0.0 : from, whole ? kTwoPi : from + sweep, 0,
                                    s.props};
         what = whole ? "elliptical arcs into an ellipse" : "elliptical arcs into one";
+    } else if (kind == EntityKind::Spline) {
+        // Splines whose ends meet, of one degree, into one spline: each turned to run on from
+        // the last, its knots following on.
+        const SplineData* s = store_.spline(hs.front());
+        const int p = static_cast<int>(s->degree);
+        std::vector<spline::Piece> pieces;
+        for (const EntityHandle h : hs) {
+            const SplineData* sd = store_.spline(h);
+            const std::span<const Vec2> cv = store_.control_points_of(*sd);
+            const spline::Curve curve(cv, static_cast<int>(sd->degree), store_.knots_of(*sd));
+            const std::vector<double>& k = curve.knots;
+            const auto pp = static_cast<std::size_t>(curve.degree);
+            const bool clamped = curve.degree == p && k.size() == cv.size() + pp + 1 &&
+                                 std::all_of(k.begin(), k.begin() + static_cast<std::ptrdiff_t>(pp + 1),
+                                             [&](double v) { return v == k.front(); }) &&
+                                 std::all_of(k.end() - static_cast<std::ptrdiff_t>(pp + 1), k.end(),
+                                             [&](double v) { return v == k.back(); });
+            if (!clamped || cv.size() < 2 || distance(cv.front(), cv.back()) <= tol) {
+                return false; // another degree, unclamped ends, or closed: not joined here
+            }
+            pieces.push_back(spline::Piece{std::vector<Vec2>(cv.begin(), cv.end()), k});
+        }
+        spline::Piece chain = std::move(pieces.front());
+        pieces.erase(pieces.begin());
+        const auto reversed = [](spline::Piece q) {
+            std::reverse(q.ctrl.begin(), q.ctrl.end());
+            q.knots = spline::reversed_knots(q.knots);
+            return q;
+        };
+        while (!pieces.empty()) {
+            bool grew = false;
+            for (std::size_t i = 0; i < pieces.size() && !grew; ++i) {
+                const spline::Piece& q = pieces[i];
+                if (distance(chain.ctrl.back(), q.ctrl.front()) <= tol) {
+                    chain = spline::joined(chain, q, p);
+                } else if (distance(chain.ctrl.back(), q.ctrl.back()) <= tol) {
+                    chain = spline::joined(chain, reversed(q), p);
+                } else if (distance(chain.ctrl.front(), q.ctrl.back()) <= tol) {
+                    chain = spline::joined(q, chain, p);
+                } else if (distance(chain.ctrl.front(), q.ctrl.front()) <= tol) {
+                    chain = spline::joined(reversed(q), chain, p);
+                } else {
+                    continue;
+                }
+                pieces.erase(pieces.begin() + static_cast<std::ptrdiff_t>(i));
+                grew = true;
+            }
+            if (!grew || chain.ctrl.size() < 2) {
+                return false; // a spline whose ends meet none of the others
+            }
+        }
+        joined = AddSplineCommand{std::move(chain.ctrl), s->degree, 0, s->props, std::move(chain.knots)};
+        what = "splines into one spline";
     } else {
         return false;
     }
@@ -15365,9 +15501,9 @@ void GeometryEngine::join_close(EntityHandle h, std::uint64_t group) {
     report(h.kind == EntityKind::Arc ? "Arc converted to a circle." : "Elliptical arc converted to an ellipse.");
 }
 
-void GeometryEngine::apply_join_selection(double radius, std::uint64_t group, bool polyline) {
+void GeometryEngine::apply_join_selection(double radius, std::uint64_t group, bool polyline, std::uint8_t jointype) {
     const std::vector<EntityHandle> sel = selection_; // copy: join_entities reassigns selection_
-    join_entities(sel, radius, group, polyline);
+    join_entities(sel, radius, group, polyline, jointype);
 }
 
 void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, double scale,
@@ -15424,18 +15560,29 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
         report("Valid hatch boundary not found."); // AutoCAD's message
         return;
     }
-    AddHatchCommand cmd;
-    cmd.loops = std::move(loops);
-    cmd.pattern_name = pattern;
-    cmd.pattern_scale = scale;
-    cmd.pattern_angle = angle;
-    cmd.color2 = color2;
-    cmd.group = group; // props unset -> created on the current layer, ByLayer (AutoCAD default)
-    apply_hatch_extras(cmd, hatch_extras_);
-    const EntityHandle nh = create_indexed(cmd);
-    push_create_item(group, nh, cmd);
+    // HPSEPARATE 1: each area (an outer boundary with its islands) a hatch of its own;
+    // otherwise one hatch of them all.
+    std::vector<std::vector<std::vector<Vec2>>> areas;
+    if (hatch_extras_.separate) {
+        areas = hatch_areas(loops);
+    }
+    if (areas.size() < 2) {
+        areas.assign(1, std::move(loops));
+    }
     selection_.clear();
-    selection_.push_back(nh); // select the new hatch
+    for (std::vector<std::vector<Vec2>>& area : areas) {
+        AddHatchCommand cmd;
+        cmd.loops = std::move(area);
+        cmd.pattern_name = pattern;
+        cmd.pattern_scale = scale;
+        cmd.pattern_angle = angle;
+        cmd.color2 = color2;
+        cmd.group = group; // props unset -> created on the current layer, ByLayer (AutoCAD default)
+        apply_hatch_extras(cmd, hatch_extras_);
+        const EntityHandle nh = create_indexed(cmd);
+        push_create_item(group, nh, cmd);
+        selection_.push_back(nh); // select the new hatches
+    }
     redo_.clear();
     geom_dirty_ = true;
     report(pattern == "SOLID" ? "Solid hatch created." : "Hatch created.");
@@ -15444,7 +15591,7 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
 void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
                                             double angle, std::uint64_t group, Rgb color2) {
     if (!hatch_extras_.merge) {
-        last_pick_hatch_ = EntityHandle::null(); // a HATCH's first pick: nothing of before to join
+        pick_hatches_.clear(); // a HATCH's first pick: nothing of before to join
     }
     if (hatch_extras_.boundary_set == 2) {
         hatch_boundary_set_ = selection_; // Boundary set > New: what was selected for it
@@ -15485,14 +15632,14 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     cmd.loops = std::move(*loops);
     // Not separate hatches: the areas picked in one HATCH are one hatch -- the one the pick
     // before made gives way to one with its areas and this one's (in this pick's undo step).
-    if (hatch_extras_.merge && store_.is_valid(last_pick_hatch_) && last_pick_hatch_.kind == EntityKind::Hatch) {
-        const Command before = capture_entity(last_pick_hatch_);
+    if (const EntityHandle prev = last_pick_hatch(); hatch_extras_.merge && !prev.is_null()) {
+        const Command before = capture_entity(prev);
         if (const auto* bh = std::get_if<AddHatchCommand>(&before)) {
             std::vector<std::vector<Vec2>> all = bh->loops;
             all.insert(all.end(), cmd.loops.begin(), cmd.loops.end());
             cmd.loops = std::move(all);
-            remove_indexed(last_pick_hatch_);
-            push_erase_item(group, last_pick_hatch_, before);
+            remove_indexed(prev);
+            push_erase_item(group, prev, before);
         }
     }
     cmd.pattern_name = pattern;
@@ -15503,7 +15650,7 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     apply_hatch_extras(cmd, hatch_extras_);
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
-    last_pick_hatch_ = nh;
+    pick_hatches_.push_back(nh);
     selection_.clear();
     selection_.push_back(nh);
     redo_.clear();
@@ -15702,7 +15849,7 @@ std::optional<std::vector<std::vector<Vec2>>> GeometryEngine::boundary_loops(Vec
 }
 
 void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group,
-                                   bool polyline) {
+                                   bool polyline, std::uint8_t jointype) {
     // JOIN makes lines along one line one line, arcs on one circle one arc; PEDIT's Join
     // makes a polyline of what touches, as it always has.
     if (!polyline && join_same_kind(ents, radius > 0.0 ? radius : 1e-6, group)) {
@@ -15723,8 +15870,23 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
 
     const double tol = radius > 0.0 ? radius : 1e-6;
     const auto approx = [tol](Vec2 a, Vec2 b) { return length(a - b) <= tol; };
-    const auto append_tail = [](std::vector<Vec2>& cv, std::vector<double>& cb,
-                                const JoinSeg& seg) {
+    const auto append_tail = [jointype](std::vector<Vec2>& cv, std::vector<double>& cb, const JoinSeg& seg) {
+        // Ends apart (within the fuzz distance): PEDIT's Jointype closes the gap -- Extend
+        // takes the straight segments either side to where their lines meet, Add puts a
+        // straight segment across, Both extends where it can and adds where not.
+        const Vec2 a = cv.back();
+        const Vec2 b = seg.verts.front();
+        if (length(b - a) > 1e-9 && seg.verts.size() >= 2) {
+            Vec2 meet{};
+            const bool straight = cv.size() >= 2 && !cb.empty() && cb.back() == 0.0 && seg.bulges.front() == 0.0;
+            if (jointype != 1 && straight &&
+                NativeKernel2D::line_line_intersection(cv[cv.size() - 2], a, b, seg.verts[1], meet)) {
+                cv.back() = meet;
+            } else if (jointype != 0) {
+                cb.push_back(0.0);
+                cv.push_back(b);
+            }
+        }
         for (std::size_t k = 1; k < seg.verts.size(); ++k) {
             cb.push_back(seg.bulges[k - 1]);
             cv.push_back(seg.verts[k]);
@@ -16596,7 +16758,7 @@ void GeometryEngine::apply_one(const Command& command) {
                 }
             }
             if constexpr (std::is_same_v<T, JoinSelectionCommand>) {
-                apply_join_selection(c.radius, c.group, c.polyline);
+                apply_join_selection(c.radius, c.group, c.polyline, c.jointype);
             }
             if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
                 hatch_extras_ = c.extras;
@@ -18798,7 +18960,8 @@ void GeometryEngine::apply_one(const Command& command) {
                         obj = e;
                     }
                 }
-                const Command was = store_.is_valid(last_pick_hatch_) ? capture_entity(last_pick_hatch_) : Command{};
+                const EntityHandle last = last_pick_hatch();
+                const Command was = !last.is_null() ? capture_entity(last) : Command{};
                 const auto* hc = std::get_if<AddHatchCommand>(&was);
                 if (hc == nullptr) {
                     report("No hatch to remove boundaries from: pick an internal point first.");
@@ -18823,11 +18986,12 @@ void GeometryEngine::apply_one(const Command& command) {
                         report("That object is not one of the hatch's islands.");
                     } else {
                         now.loops = std::move(kept);
-                        remove_indexed(last_pick_hatch_);
-                        push_erase_item(c.group, last_pick_hatch_, was);
+                        remove_indexed(last);
+                        push_erase_item(c.group, last, was);
                         const Command made = now;
-                        last_pick_hatch_ = create_indexed(made);
-                        push_create_item(c.group, last_pick_hatch_, made);
+                        const EntityHandle nh = create_indexed(made);
+                        pick_hatches_.push_back(nh);
+                        push_create_item(c.group, nh, made);
                         redo_.clear();
                         geom_dirty_ = true;
                         report(removed == 1 ? std::string("1 boundary removed.") : std::to_string(removed) + " boundaries removed.");
@@ -19124,10 +19288,24 @@ void GeometryEngine::load_document_replace(const Command& command) {
     report(r.message);
 }
 
+void GeometryEngine::apply_measureinit(std::uint8_t m) {
+    // A drawing started from scratch, as AutoCAD starts one: metric in millimetres, imperial
+    // in inches, with acadiso.lin's or acad.lin's linetypes.
+    DrawingUnits u = store_.units();
+    u.measurement = m;
+    u.insunits = m == 1 ? 4 : 1;
+    store_.set_units(u);
+    store_.set_builtin_linetypes(standard_builtin_linetypes(m == 1));
+    geom_dirty_ = true;
+}
+
 void GeometryEngine::reset_active_state() {
     // Reset the live (active-document) heavy state to a fresh empty drawing.
     forget_document_state();
     store_.clear();
+    if (measureinit_) {
+        apply_measureinit(*measureinit_); // a new drawing, as MEASUREINIT starts one
+    }
     store_.set_font_engine(font_engine_); // re-bind metrics (clear may drop the engine)
     store_.set_image_decoder(image_decoder_);
     image_bytes_cache_.clear();

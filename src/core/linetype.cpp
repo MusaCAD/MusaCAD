@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 
@@ -77,15 +78,11 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, double ltscale,
     }
 }
 
-void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const LinetypeDef> loaded, double ltscale,
-                   std::vector<Vec2>& out) {
-    const auto v = static_cast<std::size_t>(lt);
-    if (v < kFirstLoadedLinetype) {
-        dash_polyline(pts, lt, ltscale, out);
-        return;
-    }
-    const std::size_t i = v - kFirstLoadedLinetype;
-    const std::vector<double>* pattern = i < loaded.size() ? &loaded[i].pattern : nullptr;
+namespace {
+// Walks `pts` with a .lin pattern: positive a dash, negative a gap, 0 a dot (drawn as a dash a
+// fiftieth of the pattern long, so it shows at any zoom the pattern does). An empty or
+// zero-length pattern draws solid.
+void dash_lin(std::span<const Vec2> pts, const std::vector<double>* pattern, double ltscale, std::vector<Vec2>& out) {
     double cycle = 0.0;
     if (pattern != nullptr) {
         for (const double e : *pattern) {
@@ -96,8 +93,6 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const Linet
         dash_polyline(pts, Linetype::Continuous, ltscale, out);
         return;
     }
-    // A .lin pattern: positive a dash, negative a gap, 0 a dot (drawn as a dash a fiftieth
-    // of the pattern long, so it shows at any zoom the pattern does).
     const double dot = cycle * ltscale / 50.0;
     const auto len_of = [&](std::size_t k) {
         const double e = (*pattern)[k];
@@ -130,6 +125,45 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const Linet
             }
         }
     }
+}
+} // namespace
+
+void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const LinetypeDef> loaded, double ltscale,
+                   std::vector<Vec2>& out) {
+    dash_polyline(pts, lt, legacy_builtin_linetypes(), loaded, ltscale, out);
+}
+
+void dash_polyline(std::span<const Vec2> pts, Linetype lt, const BuiltinLinetypes& builtin,
+                   std::span<const LinetypeDef> loaded, double ltscale, std::vector<Vec2>& out) {
+    const auto v = static_cast<std::size_t>(lt);
+    if (v == 0) {
+        dash_polyline(pts, Linetype::Continuous, ltscale, out);
+        return;
+    }
+    if (v < kFirstLoadedLinetype) {
+        // Dashed 1, Center 2, Hidden 3 -- the BuiltinLinetypes order is Dashed, Center, Hidden.
+        const std::size_t b = lt == Linetype::Dashed ? 0 : lt == Linetype::Center ? 1 : 2;
+        dash_lin(pts, &builtin[b], ltscale, out);
+        return;
+    }
+    const std::size_t i = v - kFirstLoadedLinetype;
+    dash_lin(pts, i < loaded.size() ? &loaded[i].pattern : nullptr, ltscale, out);
+}
+
+const BuiltinLinetypes& legacy_builtin_linetypes() {
+    static const BuiltinLinetypes kLegacy = {std::vector<double>{5.0, -2.5}, std::vector<double>{12.5, -2.5, 2.5, -2.5},
+                                             std::vector<double>{2.5, -1.25}};
+    return kLegacy;
+}
+
+const BuiltinLinetypes& standard_builtin_linetypes(bool metric) {
+    // acad.lin: DASHED .5,-.25; CENTER 1.25,-.25,.25,-.25; HIDDEN .25,-.125 (inches).
+    // acadiso.lin: the same in millimetres (x 25.4).
+    static const BuiltinLinetypes kInch = {std::vector<double>{0.5, -0.25}, std::vector<double>{1.25, -0.25, 0.25, -0.25},
+                                           std::vector<double>{0.25, -0.125}};
+    static const BuiltinLinetypes kIso = {std::vector<double>{12.7, -6.35}, std::vector<double>{31.75, -6.35, 6.35, -6.35},
+                                          std::vector<double>{6.35, -3.175}};
+    return metric ? kIso : kInch;
 }
 
 const char* builtin_linetype_name(Linetype lt, bool dxf) noexcept {
@@ -216,25 +250,24 @@ std::vector<LinetypeDef> parse_lin(std::string_view text) {
     return out;
 }
 
-const std::vector<LinetypeDef>& linetype_library() {
-    // At the size of Musa CAD's own Dashed (5, -2.5), Center and Hidden, so a library
-    // linetype and a built-in one look alike at the same LTSCALE; the 2 sizes are half,
-    // the X2 sizes double.
-    static const std::vector<LinetypeDef> kLibrary = [] {
+const std::vector<LinetypeDef>& linetype_library(bool metric) {
+    // acad.lin's sizes in inches; acadiso.lin has each 25.4 times as long. The 2 sizes are
+    // half, the X2 sizes double (CENTER2's long dash is not half CENTER's, as acad.lin has it).
+    const auto build = [](double unit) {
         struct Base {
             const char* name;
             const char* look;
             std::vector<double> pattern;
         };
         const std::vector<Base> bases = {
-            {"BORDER", "Border __ __ . __ __ . __ __ .", {5.0, -2.5, 5.0, -2.5, 0.0, -2.5}},
-            {"CENTER", "Center ____ _ ____ _ ____ _", {12.5, -2.5, 2.5, -2.5}},
-            {"DASHDOT", "Dash dot __ . __ . __ . __ .", {5.0, -2.5, 0.0, -2.5}},
-            {"DASHED", "Dashed __ __ __ __ __ __", {5.0, -2.5}},
-            {"DIVIDE", "Divide ____ . . ____ . . ____", {5.0, -2.5, 0.0, -2.5, 0.0, -2.5}},
-            {"DOT", "Dot . . . . . . . . . . . . .", {0.0, -2.5}},
-            {"HIDDEN", "Hidden __ __ __ __ __ __ __", {2.5, -1.25}},
-            {"PHANTOM", "Phantom ______ __ __ ______ __", {12.5, -2.5, 2.5, -2.5, 2.5, -2.5}},
+            {"BORDER", "Border __ __ . __ __ . __ __ .", {0.5, -0.25, 0.5, -0.25, 0.0, -0.25}},
+            {"CENTER", "Center ____ _ ____ _ ____ _", {1.25, -0.25, 0.25, -0.25}},
+            {"DASHDOT", "Dash dot __ . __ . __ . __ .", {0.5, -0.25, 0.0, -0.25}},
+            {"DASHED", "Dashed __ __ __ __ __ __", {0.5, -0.25}},
+            {"DIVIDE", "Divide ____ . . ____ . . ____", {0.5, -0.25, 0.0, -0.25, 0.0, -0.25}},
+            {"DOT", "Dot . . . . . . . . . . . . .", {0.0, -0.25}},
+            {"HIDDEN", "Hidden __ __ __ __ __ __ __", {0.25, -0.125}},
+            {"PHANTOM", "Phantom ______ __ __ ______ __", {1.25, -0.25, 0.25, -0.25, 0.25, -0.25}},
         };
         struct Size {
             const char* suffix;
@@ -249,17 +282,45 @@ const std::vector<LinetypeDef>& linetype_library() {
                 d.name = std::string(b.name) + z.suffix;
                 d.description = std::string(b.look) + z.label;
                 for (const double e : b.pattern) {
-                    d.pattern.push_back(e * z.factor);
+                    d.pattern.push_back(e * z.factor * unit);
                 }
                 if (d.name == "CENTER2") {
-                    d.pattern = {7.5, -1.25, 1.25, -1.25}; // its long dash is not half CENTER's
+                    d.pattern = {0.75 * unit, -0.125 * unit, 0.125 * unit, -0.125 * unit};
                 }
                 all.push_back(std::move(d));
             }
         }
+        // The ISO 128 linetypes, in millimetres in acad.lin and acadiso.lin alike.
+        struct Iso {
+            const char* name;
+            const char* look;
+            std::vector<double> pattern;
+        };
+        const std::vector<Iso> iso = {
+            {"ACAD_ISO02W100", "ISO dash __ __ __ __ __ __ __ __ __ __ __ __ __", {12.0, -3.0}},
+            {"ACAD_ISO03W100", "ISO dash space __    __    __    __    __    __", {12.0, -18.0}},
+            {"ACAD_ISO04W100", "ISO long-dash dot ____ . ____ . ____ . ____ . _", {24.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO05W100", "ISO long-dash double-dot ____ .. ____ .. ____ . ", {24.0, -3.0, 0.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO06W100", "ISO long-dash triple-dot ____ ... ____ ... ____", {24.0, -3.0, 0.0, -3.0, 0.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO07W100", "ISO dot . . . . . . . . . . . . . . . . . . . . ", {0.0, -3.0}},
+            {"ACAD_ISO08W100", "ISO long-dash short-dash ____ __ ____ __ ____ _", {24.0, -3.0, 6.0, -3.0}},
+            {"ACAD_ISO09W100", "ISO long-dash double-short-dash ____ __ __ ____", {24.0, -3.0, 6.0, -3.0, 6.0, -3.0}},
+            {"ACAD_ISO10W100", "ISO dash dot __ . __ . __ . __ . __ . __ . __ . ", {12.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO11W100", "ISO double-dash dot __ __ . __ __ . __ __ . __ _", {12.0, -3.0, 12.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO12W100", "ISO dash double-dot __ . . __ . . __ . . __ . .", {12.0, -3.0, 0.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO13W100", "ISO double-dash double-dot __ __ . . __ __ . . _", {12.0, -3.0, 12.0, -3.0, 0.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO14W100", "ISO dash triple-dot __ . . . __ . . . __ . . . _", {12.0, -3.0, 0.0, -3.0, 0.0, -3.0, 0.0, -3.0}},
+            {"ACAD_ISO15W100", "ISO double-dash triple-dot __ __ . . . __ __ . .",
+             {12.0, -3.0, 12.0, -3.0, 0.0, -3.0, 0.0, -3.0, 0.0, -3.0}},
+        };
+        for (const Iso& s : iso) {
+            all.push_back(LinetypeDef{s.name, s.look, s.pattern});
+        }
         return all;
-    }();
-    return kLibrary;
+    };
+    static const std::vector<LinetypeDef> kInch = build(1.0);
+    static const std::vector<LinetypeDef> kIso = build(25.4);
+    return metric ? kIso : kInch;
 }
 
 } // namespace musacad::core

@@ -400,7 +400,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         // Effective linetype scale = document LTSCALE x this entity's CELTSCALE. This is
         // the ONE multiplication feeding the Ph23 dash renderer; the plot path uses the
         // same build_render_snapshot, so plot honours it with no fork.
-        dash_polyline(seg, r.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
+        dash_polyline(seg, r.linetype, store.builtin_linetypes(), store.linetypes(), ltscale * store.celtscale(h), dashed);
         add_lines(r.color, r.lineweight, dashed);
     });
 
@@ -414,7 +414,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         // Dash by arc-length along the tessellated curve (phase carries across the
         // tessellation vertices), so the pattern stays even and zoom-consistent.
         dashed.clear();
-        dash_polyline(tess, r.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
+        dash_polyline(tess, r.linetype, store.builtin_linetypes(), store.linetypes(), ltscale * store.celtscale(h), dashed);
         add_lines(r.color, r.lineweight, dashed);
     };
     for_each_live(store.circles(), EntityKind::Circle,
@@ -450,7 +450,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                 seg_right.clear();
                 pline::detail::segment_rows(v[i], v[(i + 1) % n], i < b.size() ? b[i] : 0.0, 0.0, 0.0, tolerance,
                                             seg_left, seg_right);
-                dash_polyline(seg_left, rp.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
+                dash_polyline(seg_left, rp.linetype, store.builtin_linetypes(), store.linetypes(), ltscale * store.celtscale(h), dashed);
             }
             add_lines(rp.color, rp.lineweight, dashed);
             return;
@@ -467,7 +467,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             // A dashed wide polyline: every dash is a piece of the band.
             kernel.tessellate(store, h, tolerance, tess);
             dashed.clear();
-            dash_polyline(tess, r.linetype, store.linetypes(), ltscale * store.celtscale(h), dashed);
+            dash_polyline(tess, r.linetype, store.builtin_linetypes(), store.linetypes(), ltscale * store.celtscale(h), dashed);
             const std::array<double, 4> ww{*uniform, *uniform, *uniform, *uniform};
             for (std::size_t i = 0; i + 1 < dashed.size(); i += 2) {
                 const std::array<Vec2, 2> piece{dashed[i], dashed[i + 1]};
@@ -923,7 +923,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             // (derived-not-baked) and route them into the colour/lineweight line groups, so
             // they batch like every other line and plot as PDF vectors with no special case.
             hpsegs.clear();
-            hatch::generate_pattern_segments(store.hatch_loops(*hd), *pat, hd->pattern_scale,
+            hatch::generate_pattern_segments(store.hatch_loops(*hd), *pat, store.hatch_pattern_scale(*hd),
                                              hd->pattern_angle, hd->pattern_origin, hpsegs);
             for (const hatch::Segment& sg : hpsegs) {
                 add_line(r.color, r.lineweight, sg.a, sg.b);

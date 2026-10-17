@@ -183,11 +183,13 @@ TEST_CASE("The QDIM prompts; the kind is remembered") {
     h.proc.set_selection_count(2);
     h.proc.submit_line("");
     REQUIRE(h.out.prompt ==
-            "Specify dimension line position, or [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter] "
+            "Specify dimension line position, or [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter/"
+            "datumPoint/Edit/seTtings] "
             "<Continuous>: ");
     h.proc.submit_line("B");
     REQUIRE(h.out.prompt ==
-            "Specify dimension line position, or [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter] "
+            "Specify dimension line position, or [Continuous/Staggered/Baseline/Ordinate/Radius/Diameter/"
+            "datumPoint/Edit/seTtings] "
             "<Baseline>: ");
     h.proc.submit_line("20,50");
     REQUIRE(h.last<QuickDimCommand>()->mode == QuickDimCommand::Mode::Baseline);

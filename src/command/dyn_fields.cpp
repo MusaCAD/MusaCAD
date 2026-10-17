@@ -156,4 +156,33 @@ core::Vec2 apply_dyn_lock(const PreviewSpec& pv, core::Vec2 cursor, std::optiona
     }
 }
 
+int& dynpicoords() noexcept {
+    static int value = 0;
+    return value;
+}
+
+std::optional<std::string> dyn_pointer_input(std::string_view typed, bool next) {
+    while (!typed.empty() && (typed.front() == ' ' || typed.front() == '\t')) {
+        typed.remove_prefix(1);
+    }
+    while (!typed.empty() && (typed.back() == ' ' || typed.back() == '\t')) {
+        typed.remove_suffix(1);
+    }
+    if (typed.empty()) {
+        return std::nullopt;
+    }
+    const char lead = typed.front();
+    const std::string_view body = lead == '#' || lead == '@' ? typed.substr(1) : typed;
+    if (body.find(',') == std::string_view::npos && body.find('<') == std::string_view::npos) {
+        return std::nullopt; // a distance, a value or an option: not a coordinate
+    }
+    if (lead == '#') {
+        return std::string(body); // absolute
+    }
+    if (lead == '@' || !next || dynpicoords() == 1) {
+        return std::string(typed);
+    }
+    return "@" + std::string(typed); // relative to the point before, AutoCAD's default
+}
+
 } // namespace musacad::command

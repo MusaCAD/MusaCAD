@@ -2679,6 +2679,13 @@ the frame; when it is not 0 the label and the rate follow the override line. The
 Dimension window is `ViewControl::dim_inspect_dialog` (synchronous: 1 OK, 0 cancelled, -1 no
 window, and the command line asks).
 
+An ordinate dimension measures from its own `origin` (v41, DXF code 10 -- the UCS origin
+AutoCAD measured from, or QDIM's datumPoint), which takes `DimData` to **256 B**. Moving,
+rotating, scaling and mirroring carry the origin with the other definition points, so the
+value stays; a stretch moves it when it is in the window. A `DIMORIGIN x y` record follows
+the `DIM` record when the origin is not 0,0. A DXF ordinate whose 10 is its 14 (as Musa CAD
+wrote them before) measures from 0,0.
+
 TABLESTYLE: the store keeps `current_table_style_` beside the table-style table (PURGE and
 delete leave the current one alone; clearing the store resets both), saved as the native
 `CURTABLESTYLE` record when not Standard. `TableStyleCommand` adds, modifies, sets current

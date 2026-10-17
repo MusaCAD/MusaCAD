@@ -9,6 +9,47 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **MEASUREMENT and MEASUREINIT** (#81, #41, #68) -- as in AutoCAD, a drawing is imperial (0)
+  or metric (1). A new hatch takes its standard pattern from acad.pat or, metric, acadiso.pat
+  -- the same patterns 25.4 times as large -- and keeps it: what is already drawn does not
+  change with MEASUREMENT, and editing a hatch's pattern, scale or angle reads it again as
+  MEASUREMENT has it now. MEASUREINIT is what a new drawing starts with (metric, in
+  millimetres, unless you set 0: imperial, in inches), kept between runs. Saved in the drawing (format v41) and as DXF's `$MEASUREMENT`,
+  now read as well as written; a hatch from an AutoCAD drawing keeps its size, read from the
+  pattern lines it carries. Standard patterns are now written to DXF with their pattern
+  lines, as AutoCAD writes them.
+- **A drawing's own Dashed, Center and Hidden** (#68) -- each drawing keeps its definitions
+  of the three, as AutoCAD keeps a loaded linetype's. A new drawing has acad.lin's or, metric,
+  acadiso.lin's (DASHED 12.7, -6.35); a drawing saved before keeps the sizes it was drawn
+  with, and a DXF's DASHED, CENTER and HIDDEN are its own. -LINETYPE Load and the Linetype
+  Manager's Load offer acad.lin's sizes or acadiso.lin's as MEASUREMENT says, with the ISO
+  linetypes ACAD_ISO02W100 to ACAD_ISO15W100; loading DASHED, CENTER or HIDDEN asks
+  `Linetype DASHED is already loaded.  Reload it? <Y>` and redefines it. `acad.lin` and
+  `acadiso.lin` at the file prompt mean those sizes.
+- **HPSEPARATE** (#41) -- whether the areas one HATCH picks or selects make one hatch (0, the
+  default) or a hatch each (1), kept between runs; -HATCH Advanced's *Create separate
+  hatches* sets it too.
+- **Dynamic Input's pointer input** (#65) -- a coordinate typed for a second or next point is
+  relative to the point before, as AutoCAD takes it: `10,5` is `@10,5`. `#` in front makes
+  it absolute, `@` relative either way; **DYNPICOORDS** 1 makes them absolute, kept between
+  runs. A coordinate typed into a length or angle field is taken the same way. `dist<angle`
+  without `@` is now a point from the origin, as at AutoCAD's command line.
+- **FILLETRAD, CHAMFERA, CHAMFERB, CHAMFERC, CHAMFERD and TRIMMODE** (#49) as variables, and
+  FILLET and CHAMFER share one Trim mode, as in AutoCAD.
+- **QDIM's datumPoint, Edit and seTtings** (#60) -- `Select new datum point:` (where Baseline
+  dimensions start and Ordinate ones measure from), `Indicate dimension point to remove, or
+  [Add/eXit] <eXit>:` with Add, and `Associative dimension priority [Endpoint/Intersection]
+  <Endpoint>:` -- Intersection takes the points where the objects cross first.
+- **Ordinate dimensions keep their origin** (#60) -- the point their value is measured from:
+  QDIM's datum point, or the UCS origin of an AutoCAD drawing (DXF code 10), where it used to
+  be 0,0 always.
+- **JOIN of splines** (#52) -- splines of one degree whose ends meet become one spline.
+- **PEDIT Multiple's Jointype** (#52) -- `Enter fuzz distance or [Jointype] <0.0000>:`,
+  `Enter join type [Extend/Add/Both] <Extend>:`: ends apart by up to the fuzz distance meet
+  where their segments' lines do (Extend), get a segment across (Add), or either (Both).
+  **PEDITACCEPT** 1 turns a line or arc picked into a polyline without the question.
+- The Insert Table window's **cell styles** (#44) -- the first row's (Title, Header or Data),
+  the second row's, and Data for the rest, in place of the two tick boxes.
 - **Feet, inches and fractions at every prompt** (#81) -- `1'-6"`, `1'6`, `6 1/2`, `12-3/8`
   and `@3/8<90` are read wherever a length or a point is asked for, a foot being twelve
   drawing units as the Engineering and Architectural formats show them.
@@ -455,6 +496,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   circle does.
 
 ### Fixed
+- HATCH: after its Undo, the next area picked joins the hatch the Undo brought back, as one
+  hatch, where it used to start a hatch of its own.
+- JOIN chains into a polyline only ends that meet, as in AutoCAD; ends a pick's width apart
+  were joined.
 - **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now
   list the setups saved with the drawing; they were saved but never shown.
 - DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other

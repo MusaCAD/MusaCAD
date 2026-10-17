@@ -175,7 +175,7 @@ TEST_CASE("PEDIT's prompts: Multiple, Fit, the fuzz distance, and turning a line
     REQUIRE(h.last<PeditCommand>()->op == 10);
     REQUIRE(h.last<PeditCommand>()->selection);
     h.proc.submit_line("J");
-    REQUIRE(h.out.prompt == "Enter fuzz distance <0.0000>: ");
+    REQUIRE(h.out.prompt == "Enter fuzz distance or [Jointype] <0.0000>: ");
     h.proc.submit_line("0.5");
     REQUIRE(h.last<JoinSelectionCommand>()->radius == Approx(0.5));
     h.proc.submit_line("E"); // no vertex editing on several
