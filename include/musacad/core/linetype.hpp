@@ -34,4 +34,24 @@ namespace musacad::core {
 void dash_polyline(std::span<const Vec2> pts, Linetype lt, double ltscale,
                    std::vector<Vec2>& out);
 
+/// The same for any linetype: a built-in one as above, a loaded one (`lt` from
+/// kFirstLoadedLinetype on) by its definition in `loaded`, the drawing's table -- its
+/// .lin pattern walked as written (dashes, gaps, and dots drawn as short dashes). A loaded
+/// value with no definition draws solid.
+void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const LinetypeDef> loaded, double ltscale,
+                   std::vector<Vec2>& out);
+
+/// The built-in linetypes' names as the Linetype Manager shows them (Continuous, Dashed,
+/// Center, Hidden), and as DXF writes them (Continuous, DASHED, CENTER, HIDDEN).
+[[nodiscard]] const char* builtin_linetype_name(Linetype lt, bool dxf = false) noexcept;
+
+/// The linetypes of a .lin file: each `*NAME,description` with its `A,` pattern line. Shape
+/// and text elements ([...]) are left out, the gaps around them kept.
+[[nodiscard]] std::vector<LinetypeDef> parse_lin(std::string_view text);
+
+/// Musa CAD's own library of linetypes, by AutoCAD's standard names and patterns (BORDER,
+/// CENTER, DASHDOT, DASHED, DIVIDE, DOT, HIDDEN, PHANTOM, each with its 2 and X2 sizes), for
+/// -LINETYPE Load and the Linetype Manager when no .lin file is given.
+[[nodiscard]] const std::vector<LinetypeDef>& linetype_library();
+
 } // namespace musacad::core

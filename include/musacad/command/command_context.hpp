@@ -565,6 +565,8 @@ public:
     [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
+    /// The linetypes loaded beyond the built-in four (Linetype kFirstLoadedLinetype + i).
+    [[nodiscard]] virtual std::vector<core::LinetypeDef> linetypes() const { return {}; }
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).
     [[nodiscard]] virtual std::vector<std::string> layout_names() const { return {}; }
     [[nodiscard]] virtual std::uint8_t active_space() const { return 0; }

@@ -57,10 +57,11 @@ const std::vector<int>& lineweights() {
 } // namespace
 
 LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit submit, QWidget* parent,
-                         VpFrozenGetter vp_frozen, UsedGetter used, FiltersGetter filters)
+                         VpFrozenGetter vp_frozen, UsedGetter used, FiltersGetter filters,
+                         LinetypesGetter linetypes)
     : QDialog(parent), layers_(std::move(layers)), current_(std::move(current)),
       submit_(std::move(submit)), vp_frozen_(std::move(vp_frozen)), used_(std::move(used)),
-      filters_(std::move(filters)) {
+      filters_(std::move(filters)), linetypes_(std::move(linetypes)) {
     setWindowTitle(QStringLiteral("Layer Properties Manager"));
     setModal(false);
     resize(640, 320);
@@ -453,7 +454,12 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
 
         auto* lt = new QComboBox(this);
         lt->addItems({"Continuous", "Dashed", "Center", "Hidden"});
-        lt->setCurrentIndex(static_cast<int>(l.linetype));
+        if (linetypes_) {
+            for (const core::LinetypeDef& d : linetypes_()) { // the drawing's loaded ones, in their order
+                lt->addItem(QString::fromStdString(d.name));
+            }
+        }
+        lt->setCurrentIndex(std::min(static_cast<int>(l.linetype), lt->count() - 1));
         connect(lt, &QComboBox::currentIndexChanged, this, [this, row] {
             if (!building_) {
                 submit_row(row);

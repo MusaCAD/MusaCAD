@@ -404,6 +404,17 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
   spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
   spline without changing its shape.
+- **Linetypes loaded from .lin files** (#68) -- **-LINETYPE** Load (`Enter linetype(s) to load:`,
+  wild cards too, then the file; one already loaded is reloaded if you say so) and Create
+  (`Descriptive text:`, `Enter linetype pattern (on next line):`), and the Linetype Manager's
+  **Load...**, which lists a .lin file's linetypes (AutoCAD's own acad.lin and acadiso.lin
+  read as they are) or Musa CAD's own: BORDER, CENTER, DASHDOT, DASHED, DIVIDE, DOT, HIDDEN and
+  PHANTOM, each in its 2 and X2 sizes. A loaded linetype draws its dashes, gaps and dots, is
+  offered wherever a linetype is chosen (the Properties palette, the ribbon, the Layer
+  Properties Manager, CHPROP, -LAYER, CELTYPE, Quick Select) and is kept in the drawing. An
+  AutoCAD drawing's linetypes now come with it and draw as they do there; before, any but
+  DASHED, CENTER and HIDDEN was drawn solid. A linetype named BYLAYER on an object in a DXF
+  file now leaves it ByLayer.
 - **MTEXT format codes** (#43) -- an MTEXT from an AutoCAD drawing is drawn as AutoCAD draws
   it: its runs in their own heights (`\H`), widths (`\W`), slant (`\Q`), letter spacing
   (`\T`), colours (`\C`, `\c`) and fonts (`\f`), underlined, overlined or struck through

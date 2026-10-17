@@ -1900,6 +1900,11 @@ struct InsertLinkedTableCommand {
 /// DATALINKUPDATE: the linked tables read again from their files (`write`: the tables
 /// written back to them). Which tables: the selection (`selection`), those linked to
 /// `link`, or every linked table (neither).
+/// -LINETYPE Load / Create, the Linetype Manager's Load: the linetypes loaded into the
+/// drawing (one already loaded by a name is replaced -- reloaded).
+struct LoadLinetypesCommand {
+    std::vector<LinetypeDef> defs;
+};
 /// MLEADEREDIT: Begin takes the multileader under `pick`; Add gives it a leader with its
 /// arrowhead at `pick`; Remove takes away its leader under `pick`; End lets it go.
 struct MLeaderEditCommand {
@@ -2411,7 +2416,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, LoadLinetypesCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

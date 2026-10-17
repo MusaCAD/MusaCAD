@@ -387,6 +387,7 @@ struct Document {
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted
     std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)
     std::vector<LayerGroupFilter> layer_filters{}; ///< v40: the layer group filters
+    std::vector<LinetypeDef> linetypes{}; ///< v40: the linetypes loaded beyond the built-in four
     bool fillmode = true;       ///< FILLMODE (v37)
     std::uint8_t pdmode = 0;    ///< PDMODE (v40): how points are drawn
     double pdsize = 0.0;        ///< PDSIZE (v40): their size (0 or less: on screen)

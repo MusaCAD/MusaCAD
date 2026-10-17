@@ -2860,15 +2860,26 @@ public:
     }
     bool done() const override { return done_; }
 
+    bool free_text() const override { return step_ == Step::LtCreateDesc || step_ == Step::LtLoadFile; }
+
 private:
-    enum class Step : std::uint8_t { Value, TrueColor, LtOption, LtList, LtSet };
+    enum class Step : std::uint8_t { Value, TrueColor, LtOption, LtList, LtSet, LtLoadNames, LtLoadFile, LtReload,
+                                     LtCreateName, LtCreateDesc, LtCreatePattern };
     void ask(CommandContext& ctx);
     void set(CommandContext& ctx, const core::EntityProps& p);
+    /// -LINETYPE Load: the linetypes named (`names_`, wild cards too) from `defs`, each already
+    /// loaded one asked about.
+    void load_from(CommandContext& ctx, const std::vector<core::LinetypeDef>& defs);
+    void next_reload(CommandContext& ctx);
     Kind kind_;
     std::string name_;
     bool dialog_;
     Step step_ = Step::Value;
     bool done_ = false;
+    std::string names_;                     ///< Load: the names asked for
+    std::vector<core::LinetypeDef> pending_; ///< Load: found, waiting for Reload it?
+    std::vector<core::LinetypeDef> accepted_;
+    core::LinetypeDef created_;             ///< Create: the linetype being made
 };
 
 /// LWDISPLAY: `Enter new value for LWDISPLAY <OFF>:` -- ON or OFF, as LWT on the status bar.

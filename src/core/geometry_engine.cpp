@@ -749,7 +749,6 @@ void GeometryEngine::select_similar(std::uint32_t mode) {
 }
 
 void GeometryEngine::select_filter(const SelectFilterCommand& c) {
-    static constexpr const char* kLinetypeNames[] = {"Continuous", "Dashed", "Center", "Hidden"};
     const auto props_of = [this](EntityHandle h) { return store_.props(h); };
     // The property's value for `h`: a number and/or a text; false when `h` has no such
     // property (a circle has no text contents), which is simply "no match".
@@ -773,8 +772,7 @@ void GeometryEngine::select_filter(const SelectFilterCommand& c) {
             const Linetype lt = p->linetype_by_layer() && p->layer < store_.layers().size()
                                     ? store_.layers()[p->layer].linetype
                                     : p->linetype;
-            const auto i = static_cast<std::size_t>(lt);
-            text = i < 4 ? kLinetypeNames[i] : "Continuous";
+            text = store_.linetype_name(lt);
             return true;
         }
         case 4:
@@ -3851,7 +3849,6 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             }
         }
         std::string out = "Layer name  State  Color  Linetype  Lineweight";
-        static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
         for (const std::uint16_t i : which) {
             const Layer& l = store_.layers()[i];
             char rgb[32];
@@ -3861,7 +3858,7 @@ void GeometryEngine::apply_layer_edit(const LayerEditCommand& c) {
             out += "\n\"" + l.name + "\"  " + (l.on ? "On" : "Off") + (l.frozen ? " Frozen" : "") +
                    (l.locked ? " Locked" : "") + (l.plot ? "" : " No-plot") +
                    (i == store_.current_layer() ? " Current" : "") + "  " + rgb + "  " +
-                   kLt[std::min<std::size_t>(static_cast<std::size_t>(l.linetype), 3)] + "  " + lw +
+                   store_.linetype_name(l.linetype) + "  " + lw +
                    (l.description.empty() ? std::string() : "  " + l.description);
         }
         if (which.empty()) {
@@ -4368,9 +4365,7 @@ std::string GeometryEngine::list_block(EntityHandle h) const {
         const std::string color = pr->color_by_layer() ? "BYLAYER"
                                                        : std::to_string(pr->color.r) + "," + std::to_string(pr->color.g) + "," +
                                                              std::to_string(pr->color.b);
-        static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
-        const auto lti = static_cast<std::size_t>(pr->linetype);
-        const std::string ltype = pr->linetype_by_layer() ? "BYLAYER" : (lti < 4 ? kLt[lti] : "Continuous");
+        const std::string ltype = pr->linetype_by_layer() ? std::string("BYLAYER") : store_.linetype_name(pr->linetype);
         char lw[32];
         std::snprintf(lw, sizeof(lw), "%.2f mm", pr->lineweight / 100.0);
         out += "\n                            Color: " + color + "    Linetype: " + ltype +
@@ -4770,9 +4765,7 @@ void GeometryEngine::apply_status(const std::string& modes) {
     out += "\nCurrent layer:            \"" + (cur != nullptr ? cur->name : std::string("0")) + "\"";
     const EntityProps& cp = current_props_;
     out += "\nCurrent color:            " + (cp.color_by_layer() ? std::string("BYLAYER") : std::to_string(cp.color.r) + "," + std::to_string(cp.color.g) + "," + std::to_string(cp.color.b));
-    static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
-    const auto lti = static_cast<std::size_t>(cp.linetype);
-    out += "\nCurrent linetype:         " + (cp.linetype_by_layer() ? std::string("BYLAYER") : std::string(lti < 4 ? kLt[lti] : "Continuous"));
+    out += "\nCurrent linetype:         " + (cp.linetype_by_layer() ? std::string("BYLAYER") : store_.linetype_name(cp.linetype));
     char lw[32];
     std::snprintf(lw, sizeof(lw), "%.2f mm", cp.lineweight / 100.0);
     out += "\nCurrent lineweight:       " + (cp.lineweight_by_layer() ? std::string("BYLAYER") : std::string(lw));
@@ -7360,7 +7353,6 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                 probe);
             EntityProps pr{};
             modify_cmd_props(probe, [&](EntityProps& p) { pr = p; });
-            static constexpr const char* kLt[] = {"Continuous", "Dashed", "Center", "Hidden"};
             const InsertData* in = store_.insert(exploded.front());
             const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
             const std::string layer = pr.layer < store_.layers().size() ? store_.layers()[pr.layer].name : "0";
@@ -7368,7 +7360,7 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                                                           : std::to_string(pr.color.r) + "," + std::to_string(pr.color.g) +
                                                                 "," + std::to_string(pr.color.b);
             const std::string ltype =
-                pr.linetype_by_layer() ? "BYLAYER" : kLt[std::min<std::size_t>(static_cast<std::size_t>(pr.linetype), 3)];
+                pr.linetype_by_layer() ? std::string("BYLAYER") : store_.linetype_name(pr.linetype);
             report("Object: " + kind + "  Block name: " + (bd != nullptr ? bd->name : std::string()) + "  Layer: " + layer +
                    "  Color: " + color + "  Linetype: " + ltype);
             return;
@@ -18625,6 +18617,21 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
                 apply_mleader_edit(c);
             }
+            if constexpr (std::is_same_v<T, LoadLinetypesCommand>) {
+                std::size_t loaded = 0;
+                for (const LinetypeDef& d : c.defs) {
+                    if (store_.add_linetype(d)) {
+                        ++loaded;
+                        report("Linetype " + d.name + " loaded.");
+                    } else {
+                        report("Linetype " + d.name + " not loaded: a drawing loads at most " +
+                               std::to_string(kMaxLoadedLinetypes) + ".");
+                    }
+                }
+                if (loaded > 0) {
+                    geom_dirty_ = true; // what is drawn in a linetype loaded again changes
+                }
+            }
             if constexpr (std::is_same_v<T, SetLimitsCommand>) {
                 store_.set_limits(c.corners ? c.min : store_.limits_min(), c.corners ? c.max : store_.limits_max(),
                                   c.on);
@@ -19216,6 +19223,7 @@ void GeometryEngine::rebuild_and_publish() {
         buf.layer_state_names.push_back(st.name);
     }
     buf.layer_filters = store_.layer_filters(); // the Layer Properties Manager's group filters
+    buf.linetypes = store_.linetypes();
     buf.vports = store_.vports();           // VPORTS: the UI follows vports_version
     buf.vports_active = store_.vports_active();
     buf.vports_version = store_.vports_version();

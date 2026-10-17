@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <cstdlib>
 #include <string>
@@ -904,6 +905,24 @@ public:
     // Definitions are referenced by INSERTs by index. Few in number; a vector is
     // plenty. Indices are stable for a session.
     [[nodiscard]] const std::vector<BlockDef>& blocks() const noexcept { return blocks_; }
+
+    // --- linetypes loaded into the drawing (beyond the built-in four) ----------------
+    /// The table: Linetype value kFirstLoadedLinetype + i is linetypes()[i].
+    [[nodiscard]] const std::vector<LinetypeDef>& linetypes() const noexcept { return linetypes_; }
+    void set_linetypes(std::vector<LinetypeDef> table) {
+        linetypes_ = std::move(table);
+        if (linetypes_.size() > kMaxLoadedLinetypes) {
+            linetypes_.resize(kMaxLoadedLinetypes);
+        }
+    }
+    /// Loads `def`: a linetype of that name already loaded is replaced (reloaded). Nullopt
+    /// when the table is full.
+    std::optional<Linetype> add_linetype(const LinetypeDef& def);
+    /// The linetype a name means (any case): one loaded by that name, else a built-in one.
+    [[nodiscard]] std::optional<Linetype> linetype_by_name(std::string_view name) const;
+    /// A linetype's name: a built-in one's as the Linetype Manager shows it, or (`dxf`) as
+    /// DXF writes it; a loaded one's as loaded. "Continuous" for a value with no definition.
+    [[nodiscard]] std::string linetype_name(Linetype lt, bool dxf = false) const;
     [[nodiscard]] std::size_t block_count() const noexcept { return blocks_.size(); }
     /// Goes up whenever a block definition is added, changed, renamed or removed.
     [[nodiscard]] std::uint64_t blocks_serial() const noexcept { return blocks_serial_; }
@@ -1445,6 +1464,7 @@ private:
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::uint64_t blocks_serial_ = 0;                       // blocks_serial()
+    std::vector<LinetypeDef> linetypes_;                    // loaded linetypes (-LINETYPE Load)
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
     const IFontEngine* font_engine_ = nullptr;             // non-owning; injected service
 };

@@ -33,6 +33,7 @@
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/io/xlsx.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/text_frame.hpp"
@@ -3945,4 +3946,93 @@ TEST_CASE("MTEXT format codes are drawn: heights, colours, underlines, stacked f
     REQUIRE_FALSE(text::has_mtext_codes("C:\\Program Files\\Lib"));
     REQUIRE(text::layout_mtext(b, "C:\\Program Files").lines[0].text == "C:\\Program Files");
     REQUIRE(text::mtext_plain("\\fArial|b1;Title \\S1/2; {\\H3x;big}\nnext") == "Title 1/2 big\nnext");
+}
+
+TEST_CASE("Linetypes loaded from .lin files and AutoCAD drawings: drawn, listed, kept") {
+    // A .lin file: comments, a dot, a shape element left out (its gaps kept).
+    const std::vector<LinetypeDef> lin = parse_lin(";; a comment\n"
+                                                   "*DASHDOT2,Dash dot (.5x) _._._\n"
+                                                   "A,.25,-.125,0,-.125\n"
+                                                   "*GAS_LINE,Gas line ----GAS----\n"
+                                                   "A,.5,-.2,[\"GAS\",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05],-.25\n");
+    REQUIRE(lin.size() == 2);
+    REQUIRE(lin[0].name == "DASHDOT2");
+    REQUIRE(lin[0].description == "Dash dot (.5x) _._._");
+    REQUIRE(lin[0].pattern == std::vector<double>{0.25, -0.125, 0.0, -0.125});
+    REQUIRE(lin[1].pattern == std::vector<double>{0.5, -0.2, -0.25});
+    REQUIRE(linetype_library().size() == 24); // eight linetypes, each in three sizes
+
+    // Drawn by its own pattern: a dash, a gap, a dot, a gap ...
+    const std::vector<Vec2> line{{0, 0}, {10, 0}};
+    std::vector<Vec2> dashed;
+    dash_polyline(line, static_cast<Linetype>(kFirstLoadedLinetype), lin, 1.0, dashed);
+    REQUIRE(dashed.size() > 4);
+    REQUIRE(dashed[1].x == Approx(0.25));
+    REQUIRE(dashed[2].x == Approx(0.375)); // the dot after the gap
+    std::vector<Vec2> solid;
+    dash_polyline(line, static_cast<Linetype>(kFirstLoadedLinetype + 5), lin, 1.0, solid); // none loaded there
+    REQUIRE(solid.size() == 2);
+
+    // The drawing's table: by name, reloaded in place.
+    GeometryStore store;
+    REQUIRE(store.add_linetype(lin[0]) == static_cast<Linetype>(kFirstLoadedLinetype));
+    REQUIRE(store.add_linetype(lin[1]) == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+    REQUIRE(store.add_linetype(LinetypeDef{"dashdot2", "again", {1.0, -1.0}}) == static_cast<Linetype>(kFirstLoadedLinetype));
+    REQUIRE(store.linetypes().size() == 2);
+    REQUIRE(store.linetype_by_name("gas_line") == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+    REQUIRE(store.linetype_by_name("HIDDEN") == Linetype::Hidden);
+    REQUIRE_FALSE(store.linetype_by_name("PHANTOM").has_value());
+    REQUIRE(store.linetype_name(static_cast<Linetype>(kFirstLoadedLinetype + 1)) == "GAS_LINE");
+
+    // Kept in the drawing and in DXF; an AutoCAD drawing's own linetypes come with it, its
+    // DASHED too when drawn otherwise than Musa CAD's.
+    io::Document doc;
+    doc.linetypes = lin;
+    io::DocLine l;
+    l.a = {0, 0};
+    l.b = {10, 0};
+    l.props.set_linetype_by_layer(false);
+    l.props.linetype = static_cast<Linetype>(kFirstLoadedLinetype + 1);
+    doc.lines.push_back(l);
+    io::Document again;
+    REQUIRE(io::parse_native(io::serialize_native(doc), again).ok);
+    REQUIRE(again.linetypes == lin);
+    io::Document dx;
+    REQUIRE(io::parse_dxf(io::serialize_dxf(doc), dx).ok);
+    REQUIRE(dx.linetypes.size() == 2);
+    REQUIRE(dx.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype + 1));
+    const std::string acad =
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLTYPE\n"
+        "0\nLTYPE\n2\nDASHED\n70\n0\n3\nDashed __ __\n72\n65\n73\n2\n40\n0.75\n49\n0.5\n74\n0\n49\n-0.25\n74\n0\n"
+        "0\nLTYPE\n2\nHIDDEN\n70\n0\n3\nHidden\n72\n65\n73\n2\n40\n3.75\n49\n2.5\n74\n0\n49\n-1.25\n74\n0\n"
+        "0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n"
+        "0\nLINE\n8\n0\n6\nDASHED\n10\n0\n20\n0\n11\n5\n21\n0\n"
+        "0\nLINE\n8\n0\n6\nHIDDEN\n10\n0\n20\n1\n11\n5\n21\n1\n"
+        "0\nLINE\n8\n0\n6\nBYLAYER\n10\n0\n20\n2\n11\n5\n21\n2\n"
+        "0\nENDSEC\n0\nEOF\n";
+    io::Document ad;
+    REQUIRE(io::parse_dxf(acad, ad).ok);
+    REQUIRE(ad.linetypes.size() == 1); // its DASHED; its HIDDEN is Musa CAD's own
+    REQUIRE(ad.linetypes[0].pattern == std::vector<double>{0.5, -0.25});
+    REQUIRE(ad.lines[0].props.linetype == static_cast<Linetype>(kFirstLoadedLinetype));
+    REQUIRE(ad.lines[1].props.linetype == Linetype::Hidden);
+    REQUIRE(ad.lines[2].props.linetype_by_layer()); // BYLAYER stays the layer's
+
+    // -LINETYPE Load (from Musa CAD's own linetypes) and Create.
+    H h;
+    h.run({"-LINETYPE", "L"});
+    REQUIRE(h.out.prompt == "Enter linetype(s) to load: ");
+    h.run({"DASHED2,PHANTOM*"});
+    REQUIRE(h.out.prompt == "Enter name of linetype file to search <musacad.lin>: ");
+    h.run({""});
+    const auto* loaded = h.last<LoadLinetypesCommand>();
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->defs.size() == 4); // DASHED2, PHANTOM, PHANTOM2, PHANTOMX2
+    REQUIRE(h.out.prompt == "Enter an option [?/Create/Load/Set]: ");
+    h.run({"C", "BORDERLINE", "Border line", ".5,-.25,0,-.25"});
+    REQUIRE(h.last<LoadLinetypesCommand>()->defs.front().name == "BORDERLINE");
+    REQUIRE(h.last<LoadLinetypesCommand>()->defs.front().pattern == std::vector<double>{0.5, -0.25, 0.0, -0.25});
+    h.run({"S", "PHANTOM"});
+    REQUIRE(h.out.lines.back() == "Linetype PHANTOM is not loaded: Continuous, Dashed, Center or Hidden."); // not yet published
+    h.proc.cancel();
 }

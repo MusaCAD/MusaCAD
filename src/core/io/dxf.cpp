@@ -264,7 +264,22 @@ std::string gdt_from_dxf(std::string cell) {
     return cell;
 }
 
+// The drawing's loaded linetypes while it is read or written: entities and layers name
+// theirs through it.
+thread_local const std::vector<LinetypeDef>* t_ltypes = nullptr;
+struct LinetypeScope {
+    explicit LinetypeScope(const std::vector<LinetypeDef>* table) { t_ltypes = table; }
+    ~LinetypeScope() { t_ltypes = nullptr; }
+    LinetypeScope(const LinetypeScope&) = delete;
+    LinetypeScope& operator=(const LinetypeScope&) = delete;
+};
+
 const char* linetype_name(Linetype t) {
+    if (const auto v = static_cast<std::size_t>(t); v >= kFirstLoadedLinetype) {
+        return t_ltypes != nullptr && v - kFirstLoadedLinetype < t_ltypes->size()
+                   ? (*t_ltypes)[v - kFirstLoadedLinetype].name.c_str()
+                   : "Continuous";
+    }
     switch (t) {
     case Linetype::Dashed:
         return "DASHED";
@@ -281,6 +296,15 @@ Linetype linetype_from(const std::string& name) {
     std::string u = name;
     for (char& ch : u) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    for (std::size_t k = 0; t_ltypes != nullptr && k < t_ltypes->size(); ++k) {
+        std::string ln = (*t_ltypes)[k].name;
+        for (char& ch : ln) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+        if (ln == u) {
+            return static_cast<Linetype>(kFirstLoadedLinetype + k);
+        }
     }
     if (u == "DASHED") {
         return Linetype::Dashed;
@@ -493,10 +517,45 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     code(s, 0, "TABLE");
     code(s, 2, "LTYPE");
     code_i(s, 70, 4);
+    // The drawing's own loaded linetypes after the built-in ones (one of those it has
+    // loaded by a built-in name is written in its place).
+    const auto loaded = [&](const char* name) {
+        return std::any_of(doc.linetypes.begin(), doc.linetypes.end(), [&](const LinetypeDef& d) {
+            std::string u = d.name;
+            for (char& ch : u) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            return u == name;
+        });
+    };
     emit_ltype(s, "Continuous", {});
-    emit_ltype(s, "DASHED", {5.0, -2.5});
-    emit_ltype(s, "HIDDEN", {2.5, -1.25});
-    emit_ltype(s, "CENTER", {12.5, -2.5, 2.5, -2.5});
+    if (!loaded("DASHED")) {
+        emit_ltype(s, "DASHED", {5.0, -2.5});
+    }
+    if (!loaded("HIDDEN")) {
+        emit_ltype(s, "HIDDEN", {2.5, -1.25});
+    }
+    if (!loaded("CENTER")) {
+        emit_ltype(s, "CENTER", {12.5, -2.5, 2.5, -2.5});
+    }
+    for (const LinetypeDef& d : doc.linetypes) {
+        code(s, 0, "LTYPE");
+        emit_handle(s);
+        code(s, 2, d.name);
+        code_i(s, 70, 0);
+        code(s, 3, d.description);
+        code_i(s, 72, 65);
+        code_i(s, 73, static_cast<long>(d.pattern.size()));
+        double total = 0.0;
+        for (const double e : d.pattern) {
+            total += std::abs(e);
+        }
+        code_d(s, 40, total);
+        for (const double e : d.pattern) {
+            code_d(s, 49, e);
+            code_i(s, 74, 0); // a plain dash, gap or dot
+        }
+    }
     code(s, 0, "ENDTAB");
     // VPORT table: the model window's tiled viewports, each an *Active entry with its
     // corners in window fractions, its centre and its view height (AutoCAD's form).
@@ -1652,6 +1711,7 @@ bool parse_las(std::string_view text, LayerState& out, std::string& error) {
 }
 
 std::string serialize_dxf(const Document& doc) {
+    const LinetypeScope ltypes_scope(&doc.linetypes);
     g_handle = 0x20;
     WriterRefs refs;
     std::string body;
@@ -1780,6 +1840,46 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     Document doc;
     doc.layers.assign(1, Layer{"0"}); // layer 0 always exists
+    // The drawing's linetypes (its LTYPE table): those beyond the built-in four, and one by a
+    // built-in name that the drawing draws otherwise, come with it; entities and layers then
+    // take theirs by name.
+    for (std::size_t k = 0; k < pairs.size(); ++k) {
+        if (pairs[k].code != 0 || pairs[k].value != "LTYPE") {
+            continue;
+        }
+        LinetypeDef d;
+        std::size_t j = k + 1;
+        for (; j < pairs.size() && pairs[j].code != 0; ++j) {
+            if (pairs[j].code == 2) {
+                d.name = pairs[j].value;
+            } else if (pairs[j].code == 3) {
+                d.description = pairs[j].value;
+            } else if (pairs[j].code == 49) {
+                d.pattern.push_back(to_d(pairs[j].value));
+            }
+        }
+        k = j - 1;
+        std::string u = d.name;
+        for (char& ch : u) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+        const std::vector<double> builtin = u == "DASHED"   ? std::vector<double>{5.0, -2.5}
+                                            : u == "HIDDEN" ? std::vector<double>{2.5, -1.25}
+                                            : u == "CENTER" ? std::vector<double>{12.5, -2.5, 2.5, -2.5}
+                                                            : std::vector<double>{};
+        bool same = !builtin.empty() && builtin.size() == d.pattern.size();
+        for (std::size_t e = 0; same && e < builtin.size(); ++e) {
+            same = std::abs(builtin[e] - d.pattern[e]) <= 1e-9 * std::max(1.0, std::abs(builtin[e]));
+        }
+        if (u.empty() || u == "CONTINUOUS" || u == "BYLAYER" || u == "BYBLOCK" || same || d.pattern.empty() ||
+            doc.linetypes.size() >= kMaxLoadedLinetypes) {
+            continue;
+        }
+        if (std::none_of(doc.linetypes.begin(), doc.linetypes.end(), [&](const LinetypeDef& o) { return o.name == d.name; })) {
+            doc.linetypes.push_back(std::move(d));
+        }
+    }
+    const LinetypeScope ltypes_scope(&doc.linetypes);
     std::map<std::string, std::uint16_t> layer_index{{"0", std::uint16_t{0}}};
     const auto ensure_layer = [&](const std::string& name) -> std::uint16_t {
         const auto it = layer_index.find(name);
@@ -1954,8 +2054,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
         }
         if (const std::string* lt = find(body, 6)) {
-            p.set_linetype_by_layer(false);
-            p.linetype = linetype_from(*lt);
+            std::string u = *lt;
+            for (char& ch : u) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            if (u != "BYLAYER" && u != "BYBLOCK") { // those are the layer's
+                p.set_linetype_by_layer(false);
+                p.linetype = linetype_from(*lt);
+            }
         }
         if (const std::string* lw = find(body, 370)) {
             // 0..211 = an explicit width; -1/-2/-3 (ByLayer/ByBlock/Default) or anything

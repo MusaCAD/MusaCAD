@@ -40,6 +40,8 @@ public:
     /// faces). Set once from the font engine's registry by the host.
     void set_font_names(std::vector<std::string> names) { font_names_ = std::move(names); }
     void set_style_names(std::vector<std::string> names) { style_names_ = std::move(names); }
+    /// The linetypes loaded beyond the built-in four, for the Linetype field.
+    void set_linetype_names(std::vector<std::string> names) { linetype_names_ = std::move(names); }
 
     /// Refresh from the latest selection summary + layer table. Rebuilds the rows
     /// only when something actually changed (cheap no-op otherwise).
@@ -70,6 +72,7 @@ private:
     std::unordered_map<int, QWidget*> editors_; ///< PropertyId -> editor widget (rebuilt)
     std::vector<std::string> font_names_{"Standard"}; ///< PR Font dropdown options
     std::vector<std::string> style_names_{"Standard"}; ///< PR Style dropdown options (STYLE table)
+    std::vector<std::string> linetype_names_; ///< loaded linetypes, after the built-in four
 };
 
 } // namespace musacad::ui

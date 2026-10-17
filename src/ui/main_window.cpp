@@ -106,6 +106,7 @@
 #include "musacad/command/calc.hpp"
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
@@ -537,6 +538,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_mleader_styles(viewport_->mleader_styles(), viewport_->current_mleader_style());
         processor_->set_current_props(viewport_->current_props());
         processor_->set_block_names(viewport_->block_names());
+        {
+            std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
+            if (properties_panel_ != nullptr) {
+                std::vector<std::string> names;
+                for (const core::LinetypeDef& d : loaded) {
+                    names.push_back(d.name);
+                }
+                properties_panel_->set_linetype_names(std::move(names));
+            }
+            processor_->set_linetypes(std::move(loaded));
+        }
         processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_purge_candidates(viewport_->purge_candidates());
         processor_->set_ltscales(viewport_->ltscale(), viewport_->current_celtscale(), viewport_->psltscale(),
@@ -2402,6 +2414,9 @@ void MainWindow::open_quick_select_dialog(bool filter) {
         case 3:
             value->addItems({QStringLiteral("Continuous"), QStringLiteral("Dashed"), QStringLiteral("Center"),
                              QStringLiteral("Hidden")});
+            for (const core::LinetypeDef& d : viewport_->linetypes()) {
+                value->addItem(QString::fromStdString(d.name));
+            }
             break;
         case 9:
             for (const std::string& b : viewport_->block_names()) {
@@ -3041,7 +3056,8 @@ void MainWindow::open_layer_dialog() {
                                 [this](core::Command c) { engine_->submit(std::move(c)); }, this,
                                 [this] { return viewport_->mspace_frozen_layers(); },
                                 [this] { return viewport_->layer_used(); },
-                                [this] { return viewport_->layer_filters(); });
+                                [this] { return viewport_->layer_filters(); },
+                                [this] { return viewport_->linetypes(); });
     dlg->setObjectName(QStringLiteral("LayerManager"));
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
     dlg->show();
@@ -4377,34 +4393,53 @@ int MainWindow::open_lineweight_settings(bool& by_layer, std::uint8_t& lw) {
 }
 
 void MainWindow::open_linetype_manager() {
-    // AutoCAD's Linetype Manager, over the linetypes Musa CAD has: Current, and the global and
-    // current object linetype scales; Load says what can be loaded.
-    static constexpr const char* kNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
+    // AutoCAD's Linetype Manager: the linetypes in the drawing (the built-in four and those
+    // loaded), Load... from a .lin file or Musa CAD's own, Current, and the global and current
+    // object linetype scales.
     static constexpr const char* kLooks[4] = {"Solid line", "__ __ __ __ __", "____ _ ____ _ ____", "_ _ _ _ _ _"};
     auto* dlg = new QDialog(this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setObjectName(QStringLiteral("LinetypeManager"));
     dlg->setWindowTitle(QStringLiteral("Linetype Manager"));
     auto* outer = new QVBoxLayout(dlg);
-    auto* table = new QTableWidget(5, 2, dlg);
+    auto* table = new QTableWidget(0, 2, dlg);
     table->setHorizontalHeaderLabels({QStringLiteral("Linetype"), QStringLiteral("Appearance / Description")});
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setSelectionMode(QAbstractItemView::SingleSelection);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->verticalHeader()->setVisible(false);
     table->horizontalHeader()->setStretchLastSection(true);
-    table->setItem(0, 0, new QTableWidgetItem(QStringLiteral("ByLayer")));
-    table->setItem(0, 1, new QTableWidgetItem(QString()));
-    for (int i = 0; i < 4; ++i) {
-        table->setItem(i + 1, 0, new QTableWidgetItem(QString::fromLatin1(kNames[i])));
-        table->setItem(i + 1, 1, new QTableWidgetItem(QString::fromLatin1(kLooks[i])));
-    }
+    const auto name_of = [this](core::Linetype lt) {
+        const auto v = static_cast<std::size_t>(lt);
+        if (v < core::kFirstLoadedLinetype) {
+            return QString::fromLatin1(core::builtin_linetype_name(lt));
+        }
+        const std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
+        return v - core::kFirstLoadedLinetype < loaded.size()
+                   ? QString::fromStdString(loaded[v - core::kFirstLoadedLinetype].name)
+                   : QStringLiteral("Continuous");
+    };
+    const auto refill = [this, table] {
+        const std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
+        table->setRowCount(static_cast<int>(5 + loaded.size()));
+        table->setItem(0, 0, new QTableWidgetItem(QStringLiteral("ByLayer")));
+        table->setItem(0, 1, new QTableWidgetItem(QString()));
+        for (int i = 0; i < 4; ++i) {
+            table->setItem(i + 1, 0,
+                           new QTableWidgetItem(QString::fromLatin1(core::builtin_linetype_name(static_cast<core::Linetype>(i)))));
+            table->setItem(i + 1, 1, new QTableWidgetItem(QString::fromLatin1(kLooks[i])));
+        }
+        for (std::size_t k = 0; k < loaded.size(); ++k) {
+            table->setItem(static_cast<int>(5 + k), 0, new QTableWidgetItem(QString::fromStdString(loaded[k].name)));
+            table->setItem(static_cast<int>(5 + k), 1, new QTableWidgetItem(QString::fromStdString(loaded[k].description)));
+        }
+    };
+    refill();
     auto* current = new QLabel(dlg);
-    const auto show_current = [this, current] {
+    const auto show_current = [this, current, name_of] {
         const core::EntityProps p = viewport_->current_props();
         current->setText(QStringLiteral("Current Linetype: %1")
-                             .arg(p.linetype_by_layer() ? QStringLiteral("ByLayer")
-                                                        : QString::fromLatin1(kNames[static_cast<int>(p.linetype) & 3])));
+                             .arg(p.linetype_by_layer() ? QStringLiteral("ByLayer") : name_of(p.linetype)));
     };
     show_current();
     auto* buttons_row = new QHBoxLayout;
@@ -4428,10 +4463,75 @@ void MainWindow::open_linetype_manager() {
     df->addRow(QStringLiteral("Global scale factor:"), global);
     df->addRow(QStringLiteral("Current object scale:"), object);
     outer->addWidget(details);
-    connect(load, &QPushButton::clicked, dlg, [dlg] {
-        QMessageBox::information(dlg, QStringLiteral("Load Linetypes"),
-                                 QStringLiteral("Continuous, Dashed, Center and Hidden are loaded. Loading other "
-                                                "linetypes from a .lin file is not available yet."));
+    connect(load, &QPushButton::clicked, dlg, [this, dlg, refill] {
+        // Load or Reload Linetypes: a .lin file's linetypes (Musa CAD's own until File...
+        // picks one), ticked ones loaded -- one already in the drawing reloaded.
+        QDialog pick(dlg);
+        pick.setWindowTitle(QStringLiteral("Load or Reload Linetypes"));
+        auto* lay = new QVBoxLayout(&pick);
+        auto* file_row = new QHBoxLayout;
+        auto* file_btn = new QPushButton(QStringLiteral("File..."), &pick);
+        auto* file_name = new QLabel(QStringLiteral("musacad.lin (Musa CAD's own)"), &pick);
+        file_row->addWidget(file_btn);
+        file_row->addWidget(file_name, 1);
+        lay->addLayout(file_row);
+        auto* avail = new QTableWidget(0, 2, &pick);
+        avail->setHorizontalHeaderLabels({QStringLiteral("Linetype"), QStringLiteral("Description")});
+        avail->setSelectionBehavior(QAbstractItemView::SelectRows);
+        avail->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        avail->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        avail->verticalHeader()->setVisible(false);
+        avail->horizontalHeader()->setStretchLastSection(true);
+        lay->addWidget(avail, 1);
+        auto defs = std::make_shared<std::vector<core::LinetypeDef>>(core::linetype_library());
+        const auto list = [avail, defs] {
+            avail->setRowCount(static_cast<int>(defs->size()));
+            for (std::size_t k = 0; k < defs->size(); ++k) {
+                avail->setItem(static_cast<int>(k), 0, new QTableWidgetItem(QString::fromStdString((*defs)[k].name)));
+                avail->setItem(static_cast<int>(k), 1,
+                               new QTableWidgetItem(QString::fromStdString((*defs)[k].description)));
+            }
+        };
+        list();
+        connect(file_btn, &QPushButton::clicked, &pick, [&pick, file_name, defs, list] {
+            const QString path = QFileDialog::getOpenFileName(&pick, QStringLiteral("Select Linetype File"), QString(),
+                                                              QStringLiteral("Linetype files (*.lin);;All files (*)"));
+            if (path.isEmpty()) {
+                return;
+            }
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) {
+                return;
+            }
+            *defs = core::parse_lin(f.readAll().toStdString());
+            file_name->setText(QFileInfo(path).fileName());
+            list();
+        });
+        auto* ok = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &pick);
+        connect(ok, &QDialogButtonBox::accepted, &pick, &QDialog::accept);
+        connect(ok, &QDialogButtonBox::rejected, &pick, &QDialog::reject);
+        lay->addWidget(ok);
+        pick.resize(520, 420);
+        if (pick.exec() != QDialog::Accepted) {
+            return;
+        }
+        core::LoadLinetypesCommand c;
+        for (const QModelIndex& ix : avail->selectionModel()->selectedRows()) {
+            const auto r = static_cast<std::size_t>(ix.row());
+            const std::string& name = (*defs)[r].name;
+            std::string u = name;
+            for (char& ch : u) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            if (u == "CONTINUOUS" || u == "DASHED" || u == "CENTER" || u == "HIDDEN") {
+                continue; // built in, always loaded
+            }
+            c.defs.push_back((*defs)[r]);
+        }
+        if (!c.defs.empty()) {
+            engine_->submit(std::move(c));
+            QTimer::singleShot(300, dlg, refill);
+        }
     });
     connect(set_current, &QPushButton::clicked, dlg, [this, table, show_current] {
         const int row = table->currentRow();
@@ -4441,7 +4541,7 @@ void MainWindow::open_linetype_manager() {
         core::EntityProps p = viewport_->current_props();
         p.set_linetype_by_layer(row == 0);
         if (row > 0) {
-            p.linetype = static_cast<core::Linetype>(row - 1);
+            p.linetype = static_cast<core::Linetype>(row - 1); // the table's order is the Linetype values'
         }
         engine_->submit(core::SetCurrentPropsCommand{p});
         QTimer::singleShot(250, this, show_current);

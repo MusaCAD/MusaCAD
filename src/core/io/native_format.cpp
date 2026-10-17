@@ -403,6 +403,30 @@ std::string serialize_native(const Document& doc) {
             s += '\n';
         }
     }
+    // v40: LTYPEDEF name description n e1..en (spaces as 0x1f): a loaded linetype, in the
+    // table's order (an entity's linetype is its place there).
+    for (const LinetypeDef& d : doc.linetypes) {
+        const auto word = [](const std::string& in) {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& ch : out) {
+                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                    ch = '\x1f';
+                }
+            }
+            return out;
+        };
+        s += "LTYPEDEF ";
+        s += word(d.name);
+        s += ' ';
+        s += word(d.description);
+        s += ' ';
+        append_uint(s, d.pattern.size());
+        for (const double e : d.pattern) {
+            s += ' ';
+            append_double(s, e);
+        }
+        s += '\n';
+    }
     // v40: LAYERFILTER name layer... (spaces as 0x1f): a layer group filter.
     for (const LayerGroupFilter& f : doc.layer_filters) {
         const auto word = [](const std::string& in) {
@@ -2708,6 +2732,20 @@ IoResult parse_native(std::string_view text, Document& out) {
             rule.locked = static_cast<std::uint8_t>(v[2]);
             rule.plot = static_cast<std::uint8_t>(v[3]);
             doc.layer_filters.push_back(std::move(rule));
+        } else if (key == "LTYPEDEF") {
+            std::uint64_t n = 0;
+            vals.clear();
+            if (tok.size() < 4 || !to_uint(tok[3], n) || tok.size() != 4 + n || !parse_doubles(tok, 4, n, vals)) {
+                return fail("malformed LTYPEDEF");
+            }
+            const auto word = [](std::string_view t) {
+                std::string spelled(t);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            doc.linetypes.push_back(LinetypeDef{word(tok[1]), word(tok[2]), vals});
         } else if (key == "LAYERFILTER") {
             if (tok.size() < 2) {
                 return fail("malformed LAYERFILTER");

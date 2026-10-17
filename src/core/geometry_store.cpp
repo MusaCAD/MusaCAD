@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/spline_eval.hpp"
 
 #include <algorithm>
@@ -829,6 +830,7 @@ void GeometryStore::clear() noexcept {
     times_ = DrawingTimes{};
     blocks_.clear();
     ++blocks_serial_;
+    linetypes_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font
 }
 
@@ -1317,6 +1319,53 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     }
     return false;
+}
+
+// --- linetypes ------------------------------------------------------------------
+
+namespace {
+bool same_name(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::toupper(static_cast<unsigned char>(x)) == std::toupper(static_cast<unsigned char>(y));
+           });
+}
+} // namespace
+
+std::optional<Linetype> GeometryStore::add_linetype(const LinetypeDef& def) {
+    for (std::size_t i = 0; i < linetypes_.size(); ++i) {
+        if (same_name(linetypes_[i].name, def.name)) {
+            linetypes_[i] = def;
+            return static_cast<Linetype>(kFirstLoadedLinetype + i);
+        }
+    }
+    if (linetypes_.size() >= kMaxLoadedLinetypes) {
+        return std::nullopt;
+    }
+    linetypes_.push_back(def);
+    return static_cast<Linetype>(kFirstLoadedLinetype + linetypes_.size() - 1);
+}
+
+std::optional<Linetype> GeometryStore::linetype_by_name(std::string_view name) const {
+    for (std::size_t i = 0; i < linetypes_.size(); ++i) {
+        if (same_name(linetypes_[i].name, name)) {
+            return static_cast<Linetype>(kFirstLoadedLinetype + i);
+        }
+    }
+    for (const Linetype lt : {Linetype::Continuous, Linetype::Dashed, Linetype::Center, Linetype::Hidden}) {
+        if (same_name(builtin_linetype_name(lt), name)) {
+            return lt;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string GeometryStore::linetype_name(Linetype lt, bool dxf) const {
+    const auto v = static_cast<std::size_t>(lt);
+    if (v < kFirstLoadedLinetype) {
+        return builtin_linetype_name(lt, dxf);
+    }
+    return v - kFirstLoadedLinetype < linetypes_.size() ? linetypes_[v - kFirstLoadedLinetype].name
+                                                        : std::string("Continuous");
 }
 
 // --- block-definition table ------------------------------------------------

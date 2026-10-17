@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -30,6 +31,20 @@ enum class Linetype : std::uint8_t {
     Center = 2,
     Hidden = 3,
 };
+
+/// A linetype loaded into the drawing (-LINETYPE Load, the Linetype Manager, an AutoCAD
+/// drawing's own): its name, description and pattern as a .lin file writes it -- a dash
+/// positive, a gap negative, 0 a dot -- in drawing units. It is the Linetype value
+/// kFirstLoadedLinetype plus its place in the drawing's linetype table.
+struct LinetypeDef {
+    std::string name;
+    std::string description{};
+    std::vector<double> pattern{};
+    friend bool operator==(const LinetypeDef&, const LinetypeDef&) = default;
+};
+inline constexpr std::uint8_t kFirstLoadedLinetype = 4;
+/// The most a drawing loads (the Linetype values up to 255).
+inline constexpr std::size_t kMaxLoadedLinetypes = 252;
 
 /// A drawing layer: name + default properties + display state. Lineweight is in
 /// hundredths of a millimetre (the DXF unit, code 370; 0..211).

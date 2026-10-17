@@ -3,7 +3,11 @@
 
 #include "musacad/core/linetype.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <cstdlib>
+#include <string>
 
 namespace musacad::core {
 
@@ -71,6 +75,191 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, double ltscale,
             }
         }
     }
+}
+
+void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const LinetypeDef> loaded, double ltscale,
+                   std::vector<Vec2>& out) {
+    const auto v = static_cast<std::size_t>(lt);
+    if (v < kFirstLoadedLinetype) {
+        dash_polyline(pts, lt, ltscale, out);
+        return;
+    }
+    const std::size_t i = v - kFirstLoadedLinetype;
+    const std::vector<double>* pattern = i < loaded.size() ? &loaded[i].pattern : nullptr;
+    double cycle = 0.0;
+    if (pattern != nullptr) {
+        for (const double e : *pattern) {
+            cycle += std::abs(e);
+        }
+    }
+    if (pattern == nullptr || pattern->empty() || !(cycle > 1e-12) || ltscale <= 0.0 || pts.size() < 2) {
+        dash_polyline(pts, Linetype::Continuous, ltscale, out);
+        return;
+    }
+    // A .lin pattern: positive a dash, negative a gap, 0 a dot (drawn as a dash a fiftieth
+    // of the pattern long, so it shows at any zoom the pattern does).
+    const double dot = cycle * ltscale / 50.0;
+    const auto len_of = [&](std::size_t k) {
+        const double e = (*pattern)[k];
+        return e == 0.0 ? dot : std::abs(e) * ltscale;
+    };
+    std::size_t k = 0;
+    double remaining = len_of(0);
+    bool pen = (*pattern)[0] >= 0.0;
+    for (std::size_t s = 1; s < pts.size(); ++s) {
+        const Vec2 a = pts[s - 1];
+        const Vec2 d = pts[s] - a;
+        const double seg_len = length(d);
+        if (seg_len < 1e-12) {
+            continue;
+        }
+        const Vec2 dir = d / seg_len;
+        double pos = 0.0;
+        while (pos < seg_len - 1e-12) {
+            const double step = std::min(remaining, seg_len - pos);
+            if (pen) {
+                out.push_back(a + dir * pos);
+                out.push_back(a + dir * (pos + step));
+            }
+            pos += step;
+            remaining -= step;
+            if (remaining <= 1e-9) {
+                k = (k + 1) % pattern->size();
+                remaining = len_of(k);
+                pen = (*pattern)[k] >= 0.0;
+            }
+        }
+    }
+}
+
+const char* builtin_linetype_name(Linetype lt, bool dxf) noexcept {
+    switch (lt) {
+    case Linetype::Dashed:
+        return dxf ? "DASHED" : "Dashed";
+    case Linetype::Center:
+        return dxf ? "CENTER" : "Center";
+    case Linetype::Hidden:
+        return dxf ? "HIDDEN" : "Hidden";
+    case Linetype::Continuous:
+        break;
+    }
+    return "Continuous";
+}
+
+std::vector<LinetypeDef> parse_lin(std::string_view text) {
+    std::vector<LinetypeDef> out;
+    std::size_t at = 0;
+    bool want_pattern = false;
+    while (at < text.size()) {
+        std::size_t nl = text.find('\n', at);
+        if (nl == std::string_view::npos) {
+            nl = text.size();
+        }
+        std::string line(text.substr(at, nl - at));
+        at = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
+            line.pop_back();
+        }
+        const std::size_t lead = line.find_first_not_of(" \t");
+        if (lead == std::string::npos || line.compare(lead, 2, ";;") == 0) {
+            continue;
+        }
+        line.erase(0, lead);
+        if (line.front() == '*') {
+            const std::size_t comma = line.find(',');
+            LinetypeDef d;
+            d.name = line.substr(1, comma == std::string::npos ? std::string::npos : comma - 1);
+            d.description = comma == std::string::npos ? std::string() : line.substr(comma + 1);
+            while (!d.name.empty() && d.name.back() == ' ') {
+                d.name.pop_back();
+            }
+            out.push_back(std::move(d));
+            want_pattern = true;
+            continue;
+        }
+        if (!want_pattern || out.empty() || (line.front() != 'A' && line.front() != 'a')) {
+            continue;
+        }
+        want_pattern = false;
+        // A,.5,-.25,["GAS",STANDARD,S=.1,...],-.25: the numbers, a [...] element left out.
+        std::size_t i = line.find(',');
+        int depth = 0;
+        std::string item;
+        const auto take = [&] {
+            const std::size_t b = item.find_first_not_of(" \t");
+            if (b != std::string::npos) {
+                char* end = nullptr;
+                const double v = std::strtod(item.c_str() + b, &end);
+                if (end != item.c_str() + b) {
+                    out.back().pattern.push_back(v);
+                }
+            }
+            item.clear();
+        };
+        for (i = i == std::string::npos ? line.size() : i + 1; i < line.size(); ++i) {
+            const char c = line[i];
+            if (c == '[') {
+                ++depth;
+                item.clear();
+            } else if (c == ']') {
+                depth = std::max(depth - 1, 0);
+                item.clear();
+            } else if (depth == 0 && c == ',') {
+                take();
+            } else if (depth == 0) {
+                item += c;
+            }
+        }
+        take();
+    }
+    out.erase(std::remove_if(out.begin(), out.end(), [](const LinetypeDef& d) { return d.name.empty(); }), out.end());
+    return out;
+}
+
+const std::vector<LinetypeDef>& linetype_library() {
+    // At the size of Musa CAD's own Dashed (5, -2.5), Center and Hidden, so a library
+    // linetype and a built-in one look alike at the same LTSCALE; the 2 sizes are half,
+    // the X2 sizes double.
+    static const std::vector<LinetypeDef> kLibrary = [] {
+        struct Base {
+            const char* name;
+            const char* look;
+            std::vector<double> pattern;
+        };
+        const std::vector<Base> bases = {
+            {"BORDER", "Border __ __ . __ __ . __ __ .", {5.0, -2.5, 5.0, -2.5, 0.0, -2.5}},
+            {"CENTER", "Center ____ _ ____ _ ____ _", {12.5, -2.5, 2.5, -2.5}},
+            {"DASHDOT", "Dash dot __ . __ . __ . __ .", {5.0, -2.5, 0.0, -2.5}},
+            {"DASHED", "Dashed __ __ __ __ __ __", {5.0, -2.5}},
+            {"DIVIDE", "Divide ____ . . ____ . . ____", {5.0, -2.5, 0.0, -2.5, 0.0, -2.5}},
+            {"DOT", "Dot . . . . . . . . . . . . .", {0.0, -2.5}},
+            {"HIDDEN", "Hidden __ __ __ __ __ __ __", {2.5, -1.25}},
+            {"PHANTOM", "Phantom ______ __ __ ______ __", {12.5, -2.5, 2.5, -2.5, 2.5, -2.5}},
+        };
+        struct Size {
+            const char* suffix;
+            double factor;
+            const char* label;
+        };
+        static constexpr Size kSizes[] = {{"", 1.0, ""}, {"2", 0.5, " (.5x)"}, {"X2", 2.0, " (2x)"}};
+        std::vector<LinetypeDef> all;
+        for (const Base& b : bases) {
+            for (const Size& z : kSizes) {
+                LinetypeDef d;
+                d.name = std::string(b.name) + z.suffix;
+                d.description = std::string(b.look) + z.label;
+                for (const double e : b.pattern) {
+                    d.pattern.push_back(e * z.factor);
+                }
+                if (d.name == "CENTER2") {
+                    d.pattern = {7.5, -1.25, 1.25, -1.25}; // its long dash is not half CENTER's
+                }
+                all.push_back(std::move(d));
+            }
+        }
+        return all;
+    }();
+    return kLibrary;
 }
 
 } // namespace musacad::core

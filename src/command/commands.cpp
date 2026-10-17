@@ -18,6 +18,7 @@
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/linetype.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
@@ -7560,6 +7561,105 @@ constexpr const char* kAciNames[8] = {"", "RED", "YELLOW", "GREEN", "CYAN", "BLU
 constexpr const char* kLinetypeNames[4] = {"Continuous", "Dashed", "Center", "Hidden"};
 constexpr const char* kLinetypeDescriptions[4] = {"Solid line", "Dashed __ __ __ __", "Center ____ _ ____ _",
                                                   "Hidden __ __ __ __ (shorter)"};
+/// The linetype a name means at a prompt (any case): one loaded by that name, else a
+/// built-in one.
+std::optional<core::Linetype> linetype_named(const CommandContext& ctx, const std::string& name) {
+    const std::string u = upper(name);
+    const std::vector<core::LinetypeDef> loaded = ctx.linetypes();
+    for (std::size_t i = 0; i < loaded.size(); ++i) {
+        if (upper(loaded[i].name) == u) {
+            return static_cast<core::Linetype>(core::kFirstLoadedLinetype + i);
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (upper(kLinetypeNames[i]) == u) {
+            return static_cast<core::Linetype>(i);
+        }
+    }
+    return std::nullopt;
+}
+/// A linetype's name as the prompts show it.
+std::string linetype_label(const CommandContext& ctx, core::Linetype lt) {
+    const auto v = static_cast<std::size_t>(lt);
+    if (v < core::kFirstLoadedLinetype) {
+        return kLinetypeNames[v];
+    }
+    const std::vector<core::LinetypeDef> loaded = ctx.linetypes();
+    return v - core::kFirstLoadedLinetype < loaded.size() ? loaded[v - core::kFirstLoadedLinetype].name
+                                                          : std::string("Continuous");
+}
+/// Every loaded linetype's name, the built-in ones first: `a, b, c` or (`or_last`) `a, b or c`.
+std::string loaded_linetypes_text(const CommandContext& ctx, bool or_last = false) {
+    std::vector<std::string> names(std::begin(kLinetypeNames), std::end(kLinetypeNames));
+    for (const core::LinetypeDef& d : ctx.linetypes()) {
+        names.push_back(d.name);
+    }
+    std::string out;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        out += (i == 0 ? "" : (or_last && i + 1 == names.size()) ? " or " : ", ") + names[i];
+    }
+    return out;
+}
+/// AutoCAD's wild cards in a name list: `*` any run, `?` any one; names separated by commas.
+bool names_match(const std::string& list, const std::string& name) {
+    const std::string n = upper(name);
+    std::size_t at = 0;
+    while (at <= list.size()) {
+        std::size_t comma = list.find(',', at);
+        if (comma == std::string::npos) {
+            comma = list.size();
+        }
+        const std::string pat = upper(trimmed(list.substr(at, comma - at)));
+        // Wild-card match, backtracking on the last `*`.
+        std::size_t p = 0;
+        std::size_t t = 0;
+        std::size_t star = std::string::npos;
+        std::size_t mark = 0;
+        bool ok = true;
+        while (t < n.size()) {
+            if (p < pat.size() && (pat[p] == '?' || pat[p] == n[t])) {
+                ++p;
+                ++t;
+            } else if (p < pat.size() && pat[p] == '*') {
+                star = p++;
+                mark = t;
+            } else if (star != std::string::npos) {
+                p = star + 1;
+                t = ++mark;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        while (ok && p < pat.size() && pat[p] == '*') {
+            ++p;
+        }
+        if (ok && p == pat.size() && !pat.empty()) {
+            return true;
+        }
+        at = comma + 1;
+    }
+    return false;
+}
+/// The linetypes of a .lin file: a path, or a name found in the drawing's folder or the
+/// support folder. Empty when there is none.
+std::vector<core::LinetypeDef> read_lin_file(const CommandContext& ctx, const std::string& name) {
+    std::vector<std::filesystem::path> tries{std::filesystem::path(name)};
+    for (const std::string& dir : ctx.support_paths()) {
+        tries.push_back(std::filesystem::path(dir) / name);
+    }
+    for (const std::filesystem::path& p : tries) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(p, ec)) {
+            continue;
+        }
+        std::ifstream f(p, std::ios::binary);
+        std::ostringstream text;
+        text << f.rdbuf();
+        return core::parse_lin(text.str());
+    }
+    return {};
+}
 /// A colour as AutoCAD names it: BYLAYER, a colour name for 1..7, else r,g,b.
 std::string color_text(const core::EntityProps& p) {
     if (p.color_by_layer()) {
@@ -7652,7 +7752,7 @@ void CurrentPropCommand::ask(CommandContext& ctx) {
         if (name_ == "CELTYPE") {
             step_ = Step::LtSet;
             ctx.set_prompt(std::string("Enter new value for CELTYPE <\"") +
-                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + "\">: ");
+                           (p.linetype_by_layer() ? std::string("BYLAYER") : linetype_label(ctx, p.linetype)) + "\">: ");
         } else {
             step_ = Step::LtOption;
             ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
@@ -7779,53 +7879,189 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
         if (u == "S" || u == "SET") {
             step_ = Step::LtSet;
             ctx.set_prompt(std::string("Specify linetype name or [?] <") +
-                           (p.linetype_by_layer() ? "BYLAYER" : kLinetypeNames[static_cast<int>(p.linetype) & 3]) + ">: ");
+                           (p.linetype_by_layer() ? std::string("BYLAYER") : linetype_label(ctx, p.linetype)) + ">: ");
             return;
         }
-        if (u == "C" || u == "CREATE" || u == "L" || u == "LOAD") {
-            ctx.echo("Continuous, Dashed, Center and Hidden are loaded; other linetypes cannot be created or loaded yet.");
+        if (u == "L" || u == "LOAD") {
+            step_ = Step::LtLoadNames;
+            ctx.set_prompt("Enter linetype(s) to load: ");
+            return;
+        }
+        if (u == "C" || u == "CREATE") {
+            step_ = Step::LtCreateName;
+            ctx.set_prompt("Enter name of linetype to create: ");
             return;
         }
         ctx.echo("Invalid option keyword.");
         return;
-    case Step::LtList:
+    case Step::LtList: {
         ctx.echo("Name           Description");
+        const std::string pattern = t.empty() ? std::string("*") : t;
         for (int i = 0; i < 4; ++i) {
+            if (!names_match(pattern, kLinetypeNames[i])) {
+                continue;
+            }
             std::string line = kLinetypeNames[i];
             line.resize(15, ' ');
             ctx.echo(line + kLinetypeDescriptions[i]);
         }
+        for (const core::LinetypeDef& d : ctx.linetypes()) {
+            if (!names_match(pattern, d.name)) {
+                continue;
+            }
+            std::string line = d.name;
+            line.resize(std::max<std::size_t>(line.size() + 1, 15), ' ');
+            ctx.echo(line + d.description);
+        }
         step_ = Step::LtOption;
         ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
         return;
+    }
+    case Step::LtLoadNames:
+        if (t.empty()) {
+            step_ = Step::LtOption;
+            ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+            return;
+        }
+        names_ = t;
+        if (ctx.view() != nullptr) {
+            // The Select Linetype File window; without a file, Musa CAD's own linetypes.
+            const std::string path = ctx.view()->open_file_dialog("Linetype files (*.lin);;All files (*)");
+            load_from(ctx, path.empty() ? core::linetype_library() : read_lin_file(ctx, path));
+            return;
+        }
+        step_ = Step::LtLoadFile;
+        ctx.set_prompt("Enter name of linetype file to search <musacad.lin>: ");
+        return;
+    case Step::LtLoadFile: {
+        if (t.empty() || u == "MUSACAD.LIN") {
+            load_from(ctx, core::linetype_library());
+            return;
+        }
+        const std::vector<core::LinetypeDef> defs = read_lin_file(ctx, t);
+        if (defs.empty()) {
+            ctx.echo("Cannot find a linetype file " + t + ".");
+            ctx.set_prompt("Enter name of linetype file to search <musacad.lin>: ");
+            return;
+        }
+        load_from(ctx, defs);
+        return;
+    }
+    case Step::LtReload:
+        if (u.empty() || u == "Y" || u == "YES") {
+            accepted_.push_back(pending_.front());
+        } else if (u != "N" && u != "NO") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        pending_.erase(pending_.begin());
+        next_reload(ctx);
+        return;
+    case Step::LtCreateName: {
+        if (t.empty()) {
+            step_ = Step::LtOption;
+            ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+            return;
+        }
+        const bool builtin = std::any_of(std::begin(kLinetypeNames), std::end(kLinetypeNames),
+                                         [&](const char* n) { return upper(n) == u; });
+        if (builtin || t.find_first_of(" ,*?<>/\\\":;|=`") != std::string::npos) {
+            ctx.echo(builtin ? "Linetype " + t + " is built in." : std::string("Invalid linetype name."));
+            return;
+        }
+        created_ = core::LinetypeDef{t, {}, {}};
+        step_ = Step::LtCreateDesc;
+        ctx.set_prompt("Descriptive text: ");
+        return;
+    }
+    case Step::LtCreateDesc:
+        created_.description = t;
+        ctx.echo("Enter linetype pattern (on next line):");
+        step_ = Step::LtCreatePattern;
+        ctx.set_prompt("A,");
+        return;
+    case Step::LtCreatePattern: {
+        const std::vector<core::LinetypeDef> parsed = core::parse_lin("*X\nA," + t + "\n");
+        if (parsed.empty() || parsed.front().pattern.empty() ||
+            std::all_of(parsed.front().pattern.begin(), parsed.front().pattern.end(),
+                        [](double e) { return e == 0.0; })) {
+            ctx.echo("Enter the dash (positive), gap (negative) and dot (0) lengths, separated by commas.");
+            return;
+        }
+        created_.pattern = parsed.front().pattern;
+        ctx.submit(core::LoadLinetypesCommand{{created_}});
+        ctx.echo("Linetype " + created_.name + " created and loaded.");
+        step_ = Step::LtOption;
+        ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
+        return;
+    }
     case Step::LtSet: {
         if (t.empty()) {
             done_ = true;
             return;
         }
         if (u == "?") {
-            ctx.echo("Linetypes: BYLAYER, Continuous, Dashed, Center, Hidden");
+            ctx.echo("Linetypes: BYLAYER, " + loaded_linetypes_text(ctx));
             return;
         }
         if (u == "BYLAYER") {
             p.set_linetype_by_layer(true);
         } else {
-            int found = -1;
-            for (int i = 0; i < 4; ++i) {
-                found = u == upper(kLinetypeNames[i]) ? i : found;
-            }
-            if (found < 0) {
-                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            const std::optional<core::Linetype> found = linetype_named(ctx, t);
+            if (!found) {
+                ctx.echo("Linetype " + t + " is not loaded: " + loaded_linetypes_text(ctx, true) + ".");
                 return;
             }
             p.set_linetype_by_layer(false);
-            p.linetype = static_cast<core::Linetype>(found);
+            p.linetype = *found;
         }
         set(ctx, p);
         done_ = true;
         return;
     }
     }
+}
+
+void CurrentPropCommand::load_from(CommandContext& ctx, const std::vector<core::LinetypeDef>& defs) {
+    pending_.clear();
+    accepted_.clear();
+    const std::vector<core::LinetypeDef> loaded = ctx.linetypes();
+    bool any = false;
+    for (const core::LinetypeDef& d : defs) {
+        if (!names_match(names_, d.name)) {
+            continue;
+        }
+        any = true;
+        const bool builtin = std::any_of(std::begin(kLinetypeNames), std::end(kLinetypeNames),
+                                         [&](const char* n) { return upper(n) == upper(d.name); });
+        const bool again = std::any_of(loaded.begin(), loaded.end(),
+                                       [&](const core::LinetypeDef& l) { return upper(l.name) == upper(d.name); });
+        if (builtin) {
+            ctx.echo("Linetype " + d.name + " is already loaded.");
+        } else if (again) {
+            pending_.push_back(d);
+        } else {
+            accepted_.push_back(d);
+        }
+    }
+    if (!any) {
+        ctx.echo("No linetype matching " + names_ + " found.");
+    }
+    next_reload(ctx);
+}
+
+void CurrentPropCommand::next_reload(CommandContext& ctx) {
+    if (!pending_.empty()) {
+        step_ = Step::LtReload;
+        ctx.set_prompt("Linetype " + pending_.front().name + " is already loaded.  Reload it? <Y>: ");
+        return;
+    }
+    if (!accepted_.empty()) {
+        ctx.submit(core::LoadLinetypesCommand{accepted_});
+        accepted_.clear();
+    }
+    step_ = Step::LtOption;
+    ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
 }
 
 void LwDisplayCommand::start(CommandContext& ctx) {
@@ -17266,14 +17502,10 @@ void ChPropCommand::input(CommandContext& ctx, const std::string& text) {
     case State::Linetype:
         if (t.empty() || u == "BYLAYER" || u == "BYBLOCK") {
             c_.linetype = std::make_pair(true, core::Linetype::Continuous);
-        } else if (u == "CONTINUOUS" || u == "DASHED" || u == "CENTER" || u == "HIDDEN") {
-            const core::Linetype lt = u == "DASHED"   ? core::Linetype::Dashed
-                                      : u == "CENTER" ? core::Linetype::Center
-                                      : u == "HIDDEN" ? core::Linetype::Hidden
-                                                      : core::Linetype::Continuous;
-            c_.linetype = std::make_pair(false, lt);
+        } else if (const std::optional<core::Linetype> lt = linetype_named(ctx, t)) {
+            c_.linetype = std::make_pair(false, *lt);
         } else {
-            ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            ctx.echo("Linetype " + t + " is not loaded: " + loaded_linetypes_text(ctx, true) + ".");
             return;
         }
         property_prompt(ctx);
@@ -17726,14 +17958,12 @@ void LayerCommand::input(CommandContext& ctx, const std::string& text) {
             value_text_ = "color " + std::to_string(aci);
         } else if (edit_.op == Op::Ltype) {
             const std::string n = t.empty() ? std::string("CONTINUOUS") : u;
-            if (n != "CONTINUOUS" && n != "DASHED" && n != "CENTER" && n != "HIDDEN") {
-                ctx.echo("Linetype " + t + " is not loaded: Continuous, Dashed, Center or Hidden.");
+            const std::optional<core::Linetype> lt = linetype_named(ctx, n);
+            if (!lt) {
+                ctx.echo("Linetype " + t + " is not loaded: " + loaded_linetypes_text(ctx, true) + ".");
                 return;
             }
-            edit_.linetype = n == "DASHED" ? core::Linetype::Dashed
-                             : n == "CENTER" ? core::Linetype::Center
-                             : n == "HIDDEN" ? core::Linetype::Hidden
-                                             : core::Linetype::Continuous;
+            edit_.linetype = *lt;
             value_text_ = "linetype \"" + n + "\"";
         } else if (edit_.op == Op::Plot) {
             if (t.empty() || u == "P" || u == "PLOT") {

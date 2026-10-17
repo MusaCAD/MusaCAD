@@ -299,6 +299,8 @@ public:
     void set_current_props(const core::EntityProps& p) { current_props_ = p; }
     [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
+    void set_linetypes(std::vector<core::LinetypeDef> v) { linetypes_ = std::move(v); }
+    [[nodiscard]] std::vector<core::LinetypeDef> linetypes() const override { return linetypes_; }
     void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
     [[nodiscard]] core::RenderSnapshot::PurgeCandidates purge_candidates() const override { return purge_; }
     void set_ltscales(double ltscale, double celtscale, bool ps, bool ms) noexcept {
@@ -483,6 +485,7 @@ private:
     std::uint16_t current_mleader_style_ = 0;
     core::EntityProps current_props_{};
     std::vector<std::string> block_names_;
+    std::vector<core::LinetypeDef> linetypes_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;
     std::uint8_t active_space_ = 0;

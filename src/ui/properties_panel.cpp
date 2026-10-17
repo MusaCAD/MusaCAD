@@ -428,6 +428,9 @@ void PropertiesPanel::rebuild() {
             e->addItems({QStringLiteral("ByLayer"), QStringLiteral("Continuous"),
                          QStringLiteral("Dashed"), QStringLiteral("Center"),
                          QStringLiteral("Hidden")});
+            for (const std::string& nm : linetype_names_) { // the drawing's loaded ones
+                e->addItem(QString::fromStdString(nm));
+            }
             if (varies) {
                 e->addItem(QString::fromLatin1(kVaries));
                 e->setCurrentIndex(e->count() - 1);

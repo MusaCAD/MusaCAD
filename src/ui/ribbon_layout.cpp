@@ -1367,6 +1367,25 @@ void MainWindow::refresh_property_combos(bool force) {
     if (color_combo_ == nullptr || viewport_ == nullptr) {
         return;
     }
+    // The linetypes the drawing has loaded, after the built-in ones (an item's place is the
+    // linetype's value plus one, ByLayer first).
+    {
+        QStringList names{QStringLiteral("ByLayer"), QStringLiteral("Continuous"), QStringLiteral("Dashed"),
+                          QStringLiteral("Center"), QStringLiteral("Hidden")};
+        for (const core::LinetypeDef& d : viewport_->linetypes()) {
+            names << QString::fromStdString(d.name);
+        }
+        bool same = linetype_combo_->count() == names.size();
+        for (int i = 0; same && i < names.size(); ++i) {
+            same = linetype_combo_->itemText(i) == names[i];
+        }
+        if (!same) {
+            const QSignalBlocker block(linetype_combo_);
+            linetype_combo_->clear();
+            linetype_combo_->addItems(names);
+            force = true;
+        }
+    }
     const int sel = viewport_->selection_count();
     const core::EntityProps cur = viewport_->current_props();
     // What each control should show: -1 = varies across the selection.
