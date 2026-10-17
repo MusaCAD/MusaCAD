@@ -411,6 +411,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Take the text overrides off dimensions so they show their measurements again.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
         "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
+    reg({"ATTREDEF"}, [] { return std::make_unique<AttRedefCommand>(); }, "assets/ribbon/insert.svg",
+        "Redefine a block from objects with attribute definitions; its references keep their values by tag.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
     reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); },

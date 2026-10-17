@@ -94,6 +94,10 @@ struct DefineBlockCommand {
     std::string name;
     Vec2 base{};
     std::uint64_t group = 0;
+    /// ATTREDEF: the block must exist and the objects must hold attribute definitions; the
+    /// objects go into the definition (no reference is put in their place), and its
+    /// references keep their attribute values by tag.
+    bool attredef = false;
 };
 /// INSERT by block NAME (the command line's form).
 struct InsertBlockCommand {
@@ -1966,6 +1970,18 @@ struct HatchFromSelectionCommand {
 
 /// HATCH "Pick internal point" mode: the engine traces the closed boundary enclosing
 /// `point` from the surrounding geometry (+ islands), then creates the hatch.
+/// -HATCH draW boundary: a hatch inside boundaries drawn point by point (the first the
+/// outer one, any inside it an island), the boundaries kept as polylines with `retain`.
+struct HatchDrawnCommand {
+    std::vector<std::vector<Vec2>> loops;
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+    Rgb color2{};
+    HatchExtras extras{};
+    bool retain = false;
+};
 struct HatchPickPointCommand {
     Vec2 point;
     std::string pattern_name = "SOLID";
@@ -2418,7 +2434,7 @@ using Command =
                  ReverseSelectionCommand, CopyToLayerCommand, ChangePropsCommand, OverkillCommand,
                  BlendCommand, BoundaryCommand, CenterlineCommand, LayerEditCommand, QuickDimCommand,
                  SetPointDisplayCommand, SetLimitsCommand, SetInsBaseCommand, LoadBlockFileCommand,
-                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, LoadLinetypesCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
+                 SetDataLinkCommand, InsertLinkedTableCommand, DataLinkUpdateCommand, TableExportCommand, MLeaderEditCommand, LoadLinetypesCommand, HatchDrawnCommand, DimBreakCommand, MLeaderStyleCommand, SetLayoutPageCommand, BlockEditCommand, LayerMergeCommand,
                  SetUnitsDefaultsCommand, AttOutCommand, AttInCommand, VpSyncCommand, ExtrimCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,

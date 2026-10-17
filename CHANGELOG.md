@@ -404,6 +404,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   as it was and go straight on along the direction its end leaves by, as AutoCAD extends a
   spline; LENGTHEN shortens one along the curve. SPLINEDIT adds a control point to such a
   spline without changing its shape.
+- **-HATCH's draW boundary** (#41) -- `Retain polyline boundary? [Yes/No] <N>:`, then the
+  boundary point by point (`Specify next point or [Arc/Close/Length/Undo]:`), then `Specify
+  start point for new boundary or <Accept>:` for an island; the hatch fills what was drawn,
+  with no objects around it unless the boundaries are retained.
+- **ATTREDEF** (#75) -- `Enter name of the block you wish to redefine:`, the objects with the
+  new attribute definitions, `Specify insertion base point of new Block:`: the block made again
+  of them, its references keeping their values by tag and new attributes taking their
+  defaults; `New block has no attributes.` when none were selected.
 - **Flip Arrow on radial and angular dimensions** (#59) -- the grip menu's Flip Arrow turns
   the arrowhead nearer the grip of a radius, diameter or angular dimension, as it does for a
   linear one.

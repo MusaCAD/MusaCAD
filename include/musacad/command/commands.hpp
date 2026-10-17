@@ -547,11 +547,17 @@ private:
     enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
                       Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer, Advanced, AdvBoundarySet,
                       AdvBoundarySelect, AdvRetain, AdvIsland, AdvRayCast, AdvRayAngle, AdvStyle, AdvAssoc, AdvGap,
-                      AdvSeparate };
+                      AdvSeparate, DrawRetain, DrawStart, DrawNext, DrawLength, DrawNewBoundary };
     [[nodiscard]] core::HatchExtras extras() const; ///< -HATCH's Origin, LAyer, COlor and Advanced
     void main_prompt(CommandContext& ctx);
     void advanced_prompt(CommandContext& ctx);
     void advanced_input(CommandContext& ctx, const std::string& t, const std::string& up);
+    /// draW boundary: the points of the boundary being drawn, then the next or <Accept>.
+    void draw_input(CommandContext& ctx, const std::string& text, const std::string& t, const std::string& up);
+    void draw_next_prompt(CommandContext& ctx);
+    std::vector<core::Vec2> draw_pts_;
+    std::vector<std::vector<core::Vec2>> drawn_;
+    static inline bool draw_retain_ = false; // Retain polyline boundary
     void fill_selection(CommandContext& ctx);
     bool typed_;
     bool gradient_; ///< GRADIENT: HATCH with the gradient fill
@@ -2668,6 +2674,31 @@ private:
 /// BLOCK (B, -BLOCK): name, base point, then "Select objects:"; Enter makes the
 /// selection a block definition and replaces it with one insert in place. Redefining an
 /// existing name updates every insert of it.
+/// ATTREDEF: `Enter name of the block you wish to redefine:`, `Select objects for new
+/// Block...` and `Select objects:`, `Specify insertion base point of new Block:` -- the block
+/// made again of the objects (attribute definitions among them), its references keeping
+/// their values by tag, new attributes taking their defaults.
+class AttRedefCommand final : public ICommand {
+public:
+    std::string name() const override { return "ATTREDEF"; }
+    void start(CommandContext& ctx) override {
+        ctx.clear_last_point();
+        ctx.set_prompt("Enter name of the block you wish to redefine: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+
+private:
+    enum class State : std::uint8_t { Name, Select, Base } state_ = State::Name;
+    std::string name_;
+    bool done_ = false;
+};
+
 class BlockCommand final : public ICommand {
 public:
     std::string name() const override { return "BLOCK"; }

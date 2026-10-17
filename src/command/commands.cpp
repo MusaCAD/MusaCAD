@@ -2859,6 +2859,114 @@ core::HatchExtras HatchCommand::extras() const {
     return x;
 }
 
+void HatchCommand::draw_next_prompt(CommandContext& ctx) {
+    mode_ = Mode::DrawNext;
+    ctx.set_prompt(draw_pts_.size() >= 2 ? "Specify next point or [Arc/Close/Length/Undo]: "
+                                         : "Specify next point or [Arc/Length/Undo]: ");
+}
+
+// -HATCH draW boundary, as AutoCAD asks it: each boundary point by point (Close, or Enter
+// once it has three points, ends it), then `Specify start point for new boundary or
+// <Accept>:` -- another boundary (an island inside the first), or Enter: the hatch.
+void HatchCommand::draw_input(CommandContext& ctx, const std::string& text, const std::string& t,
+                              const std::string& up) {
+    const auto end_boundary = [&] {
+        if (draw_pts_.size() < 3) {
+            ctx.echo("A boundary needs three points or more.");
+            return false;
+        }
+        drawn_.push_back(draw_pts_);
+        draw_pts_.clear();
+        mode_ = Mode::DrawNewBoundary;
+        ctx.set_prompt("Specify start point for new boundary or <Accept>: ");
+        return true;
+    };
+    switch (mode_) {
+    case Mode::DrawRetain:
+        if (up == "Y" || up == "YES" || up == "N" || up == "NO") {
+            draw_retain_ = up[0] == 'Y';
+        } else if (!up.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        mode_ = Mode::DrawStart;
+        ctx.set_prompt("Specify start point: ");
+        return;
+    case Mode::DrawStart:
+    case Mode::DrawNewBoundary:
+        if (t.empty()) {
+            if (mode_ == Mode::DrawNewBoundary && !drawn_.empty()) {
+                core::HatchExtras x = extras();
+                core::HatchDrawnCommand c{drawn_, pattern_, scale_, angle_, ctx.new_group(), color2_, x, draw_retain_};
+                ctx.submit(std::move(c));
+                ++picks_;
+                drawn_.clear();
+            }
+            main_prompt(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            draw_pts_ = {*p};
+            ctx.set_last_point(*p);
+            draw_next_prompt(ctx);
+        }
+        return;
+    case Mode::DrawLength: {
+        double len = 0.0;
+        if (!parse_number(t, len) || len <= 0.0) {
+            ctx.echo("Requires a positive distance.");
+            return;
+        }
+        const std::size_t n = draw_pts_.size();
+        const core::Vec2 dir = n >= 2 ? core::normalized(draw_pts_[n - 1] - draw_pts_[n - 2]) : core::Vec2{1.0, 0.0};
+        draw_pts_.push_back(draw_pts_.back() + dir * len);
+        ctx.set_last_point(draw_pts_.back());
+        draw_next_prompt(ctx);
+        return;
+    }
+    case Mode::DrawNext:
+        if (t.empty()) {
+            end_boundary();
+            return;
+        }
+        if (up == "C" || up == "CLOSE") {
+            if (draw_pts_.size() >= 2) {
+                end_boundary();
+            } else {
+                ctx.echo("Invalid option keyword.");
+            }
+            return;
+        }
+        if (up == "U" || up == "UNDO") {
+            if (draw_pts_.size() > 1) {
+                draw_pts_.pop_back();
+                ctx.set_last_point(draw_pts_.back());
+            } else {
+                ctx.echo("All segments already undone.");
+            }
+            draw_next_prompt(ctx);
+            return;
+        }
+        if (up == "L" || up == "LENGTH") {
+            mode_ = Mode::DrawLength;
+            ctx.set_prompt("Specify length of line: ");
+            return;
+        }
+        if (up == "A" || up == "ARC") {
+            ctx.echo("Arc segments are not available in a drawn boundary yet; its sides are straight.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            draw_pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            draw_next_prompt(ctx);
+        }
+        return;
+    default:
+        return;
+    }
+}
+
 void HatchCommand::advanced_prompt(CommandContext& ctx) {
     mode_ = Mode::Advanced;
     ctx.set_prompt("Enter an option [Boundary set/Retain boundary/Island detection/Style/Associativity/Gap tolerance/"
@@ -3042,6 +3150,13 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     case Mode::AdvGap:
     case Mode::AdvSeparate:
         advanced_input(ctx, mode_ == Mode::AdvBoundarySelect ? text : t, up);
+        return;
+    case Mode::DrawRetain:
+    case Mode::DrawStart:
+    case Mode::DrawNext:
+    case Mode::DrawLength:
+    case Mode::DrawNewBoundary:
+        draw_input(ctx, text, t, up);
         return;
     case Mode::Origin:
         if (up == "S" || up == "SET" || up == "SET NEW ORIGIN") {
@@ -3291,7 +3406,14 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         advanced_prompt(ctx);
         return;
     }
-    if (typed_ && (up == "W" || up == "B" || up == "DR" || up == "AN" || up == "TR" || up == "DRAW")) {
+    if (typed_ && (up == "W" || up == "DRAW BOUNDARY")) {
+        mode_ = Mode::DrawRetain;
+        drawn_.clear();
+        draw_pts_.clear();
+        ctx.set_prompt(std::string("Retain polyline boundary? [Yes/No] <") + (draw_retain_ ? "Y" : "N") + ">: ");
+        return;
+    }
+    if (typed_ && (up == "B" || up == "DR" || up == "AN" || up == "TR" || up == "DRAW")) {
         ctx.echo("That option is not available yet.");
         return;
     }
@@ -6927,6 +7049,56 @@ void echo_block_names(CommandContext& ctx) {
     ctx.echo(line);
 }
 } // namespace
+
+void AttRedefCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Name: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::vector<std::string> names = ctx.block_names();
+        const auto it = std::find_if(names.begin(), names.end(), [&](const std::string& n) { return upper(n) == u; });
+        if (it == names.end()) {
+            ctx.echo("Block \"" + t + "\" does not exist.");
+            return;
+        }
+        name_ = *it;
+        ctx.echo("Select objects for new Block...");
+        state_ = State::Select;
+        ctx.set_prompt("Select objects: ");
+        return;
+    }
+    case State::Select:
+        if (t.empty()) {
+            if (ctx.selection_count() == 0) {
+                ctx.echo("Nothing selected.");
+                done_ = true;
+                return;
+            }
+            state_ = State::Base;
+            ctx.set_prompt("Specify insertion base point of new Block: ");
+            return;
+        }
+        if (u == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+        } else if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+        }
+        ctx.set_prompt("Select objects: ");
+        return;
+    case State::Base:
+        if (const auto p = read_point(ctx, text)) {
+            core::DefineBlockCommand c{name_, *p, ctx.group_id()};
+            c.attredef = true;
+            ctx.submit(std::move(c));
+            done_ = true;
+        }
+        return;
+    }
+}
 
 void BlockCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();

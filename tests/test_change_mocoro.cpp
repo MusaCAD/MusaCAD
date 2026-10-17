@@ -4176,3 +4176,62 @@ TEST_CASE("Review follow-ups: a HATCH's first pick joins nothing; MTEXT literals
         engine.stop();
     }
 }
+
+TEST_CASE("-HATCH draW boundary and ATTREDEF, as AutoCAD asks them") {
+    H h;
+    h.run({"-HATCH", "W"});
+    REQUIRE(h.out.prompt == "Retain polyline boundary? [Yes/No] <N>: ");
+    h.run({"Y"});
+    REQUIRE(h.out.prompt == "Specify start point: ");
+    h.run({"0,0"});
+    REQUIRE(h.out.prompt == "Specify next point or [Arc/Length/Undo]: ");
+    h.run({"10,0"});
+    REQUIRE(h.out.prompt == "Specify next point or [Arc/Close/Length/Undo]: ");
+    h.run({"L", "10"}); // on along the last side: 20,0
+    h.run({"20,10", "C"});
+    REQUIRE(h.out.prompt == "Specify start point for new boundary or <Accept>: ");
+    h.run({"5,2", "8,2", "8,5", ""}); // an island, ended by Enter
+    REQUIRE(h.out.prompt == "Specify start point for new boundary or <Accept>: ");
+    h.run({""});
+    const auto* drawn = h.last<HatchDrawnCommand>();
+    REQUIRE(drawn != nullptr);
+    REQUIRE(drawn->retain);
+    REQUIRE(drawn->loops.size() == 2);
+    REQUIRE(drawn->loops[0] == std::vector<Vec2>{{0, 0}, {10, 0}, {20, 0}, {20, 10}});
+    REQUIRE(drawn->loops[1].size() == 3);
+    REQUIRE(h.out.prompt.rfind("Specify internal point or [", 0) == 0);
+    h.run({"", "-HATCH", "W", "N", ""}); // Retain back as it was
+    h.proc.cancel();
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(*drawn);
+    const io::Document d = dump(engine, "musacad_hatch_drawn.musa");
+    REQUIRE(d.hatches.size() == 1);
+    REQUIRE(d.hatches[0].loops.size() == 2);
+    REQUIRE(d.polylines.size() == 2); // the boundaries kept
+
+    H a;
+    a.run({"ATTREDEF"});
+    REQUIRE(a.out.prompt == "Enter name of the block you wish to redefine: ");
+    a.run({"NOSUCH"});
+    REQUIRE(a.out.lines.back() == "Block \"NOSUCH\" does not exist.");
+    a.proc.cancel();
+    // The engine: a block redefined from objects with an attribute definition, its
+    // reference keeping its value by tag; without one, "New block has no attributes."
+    GeometryEngine e2;
+    e2.start();
+    e2.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    e2.submit(SelectAllCommand{});
+    e2.submit(DefineBlockCommand{"TAG", {0, 0}, 2});
+    e2.submit(AddLineCommand{{0, 5}, {10, 5}, 3});
+    e2.submit(SelectPickCommand{{5, 5}, 0.5, false});
+    DefineBlockCommand redo{"TAG", {0, 0}, 4};
+    redo.attredef = true;
+    e2.submit(redo);
+    REQUIRE(wait_until(e2, [](const auto& s) { return s.status == "New block has no attributes."; }));
+    const io::Document d2 = dump(e2, "musacad_attredef.musa");
+    REQUIRE(d2.lines.size() == 1); // left as it was
+    REQUIRE(d2.inserts.size() == 1);
+    e2.stop();
+}

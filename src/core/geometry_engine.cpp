@@ -7891,6 +7891,14 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
             bi = i;
         }
     }
+    if (c.attredef && bi == 0xFFFF) {
+        report("Block \"" + c.name + "\" does not exist.");
+        return;
+    }
+    if (c.attredef && def.content.attdefs.empty()) {
+        report("New block has no attributes.");
+        return;
+    }
     const bool redefined = bi != 0xFFFF;
     if (redefined) {
         redefine_block_by_tags(bi, def);
@@ -7902,10 +7910,14 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
         remove_indexed(h);
         push_erase_item(c.group, h, original);
     }
-    const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0, {}, {}};
-    const EntityHandle nh = create_indexed(ins);
-    push_create_item(c.group, nh, ins);
-    selection_ = {nh};
+    if (c.attredef) {
+        selection_.clear(); // ATTREDEF: the objects are the definition now; no reference in their place
+    } else {
+        const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0, {}, {}};
+        const EntityHandle nh = create_indexed(ins);
+        push_create_item(c.group, nh, ins);
+        selection_ = {nh};
+    }
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
@@ -18747,6 +18759,45 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
                 apply_mleader_edit(c);
+            }
+            if constexpr (std::is_same_v<T, HatchDrawnCommand>) {
+                // -HATCH draW boundary: the boundaries as drawn, kept as polylines when asked.
+                std::vector<std::vector<Vec2>> loops;
+                for (const std::vector<Vec2>& l : c.loops) {
+                    if (l.size() >= 3) {
+                        loops.push_back(l);
+                    }
+                }
+                if (loops.empty()) {
+                    report("A drawn boundary needs three points or more.");
+                } else {
+                    if (c.retain) {
+                        for (const std::vector<Vec2>& l : loops) {
+                            AddPolylineCommand edge;
+                            edge.points = l;
+                            edge.closed = true;
+                            edge.group = c.group;
+                            const Command ec = edge;
+                            push_create_item(c.group, create_indexed(ec), ec);
+                        }
+                    }
+                    AddHatchCommand hc;
+                    hc.loops = std::move(loops);
+                    hc.pattern_name = c.pattern_name;
+                    hc.pattern_scale = c.pattern_scale;
+                    hc.pattern_angle = c.pattern_angle;
+                    hc.color2 = c.color2;
+                    hc.group = c.group;
+                    hc.unassoc = true; // drawn, it has no objects to follow
+                    apply_hatch_extras(hc, c.extras);
+                    const Command made = hc;
+                    const EntityHandle nh = create_indexed(made);
+                    push_create_item(c.group, nh, made);
+                    selection_ = {nh};
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    report(c.pattern_name == "SOLID" ? "Solid hatch created." : "Hatch created.");
+                }
             }
             if constexpr (std::is_same_v<T, LoadLinetypesCommand>) {
                 std::size_t loaded = 0;
