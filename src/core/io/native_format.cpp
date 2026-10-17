@@ -674,6 +674,10 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, ps.plot_lineweights ? 1 : 0);
         s += ' ';
         append_uint(s, ps.style);
+        if (!ps.name.empty()) {
+            s += ' ';
+            s += enc(ps.name); // v40: the page setup the layout was given
+        }
         s += '\n';
     }
     s += "ACTIVESPACE ";
@@ -2114,7 +2118,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         } else if (key == "LAYOUT") {
             // LAYOUT id name paper target pw ph land area wminx wminy wmaxx wmaxy fit snum sden
             //        center offx offy plw style   (the PAGESETUP fields after the id)
-            if (tok.size() != 21) {
+            if (tok.size() != 21 && tok.size() != 22) {
                 return fail("malformed LAYOUT");
             }
             const auto dec = [](std::string_view t) -> std::string {
@@ -2158,6 +2162,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             l.page.fit = u[2] != 0;
             l.page.scale_num = d[4];
             l.page.scale_den = d[5];
+            if (tok.size() == 22) {
+                l.page.name = dec(tok[21]);
+            }
             doc.layouts.push_back(std::move(l));
         } else if (key == "ACTIVESPACE") {
             std::uint64_t sp = 0;

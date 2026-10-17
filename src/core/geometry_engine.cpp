@@ -8772,6 +8772,20 @@ void GeometryEngine::apply_extrim(const ExtrimCommand& c) {
     // Which side of the edge a point is on: inside or outside a closed one; left or right
     // of an open one, where it passes nearest.
     const auto side_of = [&](Vec2 p) -> int {
+        // Inside a circle or a whole ellipse by its own equation: the chords of its outline
+        // would put a point just inside, near a crossing, on the wrong side.
+        if (const CircleData* ci = e.kind == EntityKind::Circle ? store_.circle(e) : nullptr) {
+            return distance(p, ci->center) < ci->radius ? 1 : -1;
+        }
+        if (const EllipseData* el = e.kind == EntityKind::Ellipse ? store_.ellipse(e) : nullptr;
+            el != nullptr && closed && length(el->major) > 1e-12 && el->ratio > 1e-12) {
+            const double ml = length(el->major);
+            const Vec2 ax = el->major / ml;
+            const Vec2 q = p - el->center;
+            const double x = dot(q, ax) / ml;
+            const double y = cross(ax, q) / (ml * el->ratio);
+            return x * x + y * y < 1.0 ? 1 : -1;
+        }
         if (closed) {
             bool in = false;
             for (std::size_t i = 0, j = edge_pts.size() - 1; i < edge_pts.size(); j = i++) {
@@ -18399,19 +18413,21 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_fillmode(c.on);
             }
             if constexpr (std::is_same_v<T, ExportDimStylesCommand>) {
+                // The file's first style is a placeholder (a drawing's first is always read
+                // as Standard); the styles exported follow it, each by its own name.
                 io::Document doc;
-                doc.dimstyles.clear();
+                doc.dimstyles.assign(1, DimStyle{"Standard"});
                 for (const DimStyle& ds : store_.dimstyles()) {
                     if (c.names.empty() || glob_match(c.names, ds.name)) {
                         doc.dimstyles.push_back(ds);
                     }
                 }
-                if (doc.dimstyles.empty()) {
+                if (doc.dimstyles.size() == 1) {
                     report("No dimension style is called \"" + c.names + "\".");
                 } else if (const io::IoResult r = io::save_native(doc, c.path); !r.ok) {
                     report("DIMEX: " + r.message);
                 } else {
-                    const std::size_t n = doc.dimstyles.size();
+                    const std::size_t n = doc.dimstyles.size() - 1;
                     report(std::to_string(n) + (n == 1 ? " dimension style" : " dimension styles") + " exported to " +
                            c.path + ".");
                 }
@@ -18424,7 +18440,8 @@ void GeometryEngine::apply_one(const Command& command) {
                     std::size_t added = 0;
                     std::size_t replaced = 0;
                     std::size_t kept = 0;
-                    for (const DimStyle& ds : doc.dimstyles) {
+                    for (std::size_t k = 1; k < doc.dimstyles.size(); ++k) { // [0]: DIMEX's placeholder
+                        const DimStyle& ds = doc.dimstyles[k];
                         const std::uint16_t i = store_.dimstyle_index(ds.name);
                         if (i == 0xFFFF) {
                             store_.add_dimstyle(ds);

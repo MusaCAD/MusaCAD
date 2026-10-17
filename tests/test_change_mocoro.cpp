@@ -287,7 +287,7 @@ TEST_CASE("NEWVIEW saves the view on screen; VIEW without its window asks at the
     REQUIRE(out.prompt == "Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
     proc.submit_line("");
     proc.submit_line("LAYERSTATE");
-    REQUIRE(out.prompt == "Enter an option [?/Save/Restore/Delete/Name]: ");
+    REQUIRE(out.prompt == "Enter an option [?/Save/Restore/Delete/Name/Import/EXport]: ");
     proc.submit_line("");
 
     GeometryEngine engine;
@@ -4107,15 +4107,17 @@ TEST_CASE("Flip Arrow on radial, diameter and angular dimensions") {
     engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, engine.snapshot().selection.at(0), {-10, 0}, 2});
     io::Document doc = dump(engine, "musacad_flip_dia.musa");
     REQUIRE(doc.dims[0].flip == 2);
-    engine.submit(EraseSelectionCommand{3});
-    engine.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Angular), {0, 0}, {10, 0}, {0, 10}, 0, 4});
-    engine.submit(SelectAllCommand{});
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
-    engine.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, engine.snapshot().selection.at(0), {1, 9}, 5});
-    doc = dump(engine, "musacad_flip_ang.musa");
+    engine.stop();
+    GeometryEngine e2; // the angular one in a drawing of its own
+    e2.start();
+    e2.submit(AddDimensionCommand{static_cast<std::uint8_t>(DimType::Angular), {0, 0}, {10, 0}, {0, 10}, 0, 4});
+    e2.submit(SelectAllCommand{});
+    REQUIRE(wait_until(e2, [](const auto& s) { return s.selection.size() == 1; }));
+    e2.submit(DimGripMenuCommand{DimGripMenuCommand::Op::FlipArrow, e2.snapshot().selection.at(0), {1, 9}, 5});
+    doc = dump(e2, "musacad_flip_ang.musa");
     REQUIRE(doc.dims.size() == 1);
     REQUIRE(doc.dims[0].flip == 2);
-    engine.stop();
+    e2.stop();
 }
 
 TEST_CASE("Review follow-ups: a HATCH's first pick joins nothing; MTEXT literals read; linetypes go with a paste") {
@@ -4255,7 +4257,7 @@ TEST_CASE("-HATCH remove Boundaries takes an island out of the hatch just made")
     engine.submit(AddCircleCommand{{10, 10}, 3, 2});
     engine.submit(AddCircleCommand{{30, 10}, 3, 3});
     HatchPickPointCommand pick;
-    pick.point = {20, 10};
+    pick.point = {20, 4};
     pick.group = 4;
     engine.submit(pick);
     engine.submit(HatchRemoveBoundaryCommand{{13, 10}, 0.5, 5}); // the left circle

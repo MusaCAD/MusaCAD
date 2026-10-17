@@ -5658,6 +5658,9 @@ void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::
     } else {
         ctrl = std::move(through);
     }
+    if (close && ctrl.size() >= 2) {
+        ctrl.back() = ctrl.front(); // closed exactly, whatever the fit's rounding
+    }
     ctx.submit(core::AddSplineCommand{std::move(ctrl), static_cast<std::uint32_t>(degree_),
                                       ctx.group_id(), {}});
     ctx.set_preview({});
@@ -11076,7 +11079,7 @@ void RevcloudCommand::cancel(CommandContext& ctx) {
 void ExplodeCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     if (ctx.has_selection()) {
-        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id(), burst_});
         done_ = true; // the engine reports what it broke and what it could not (Ph10.1)
         return;
     }

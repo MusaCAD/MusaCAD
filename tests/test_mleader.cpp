@@ -319,7 +319,7 @@ TEST_CASE("HATCH: [Select objects/Undo/seTtings], the pattern asked and remember
     h.run({"?"});
     REQUIRE(h.out.lines.back().rfind("Patterns: SOLID", 0) == 0);
     h.run({"ANSI37"});
-    REQUIRE(h.out.prompt == "Specify a scale for the pattern <1.0000>: ");
+    REQUIRE(h.out.prompt.rfind("Specify a scale for the pattern <", 0) == 0); // the scale last given
     h.run({"2", "45"});
     REQUIRE(h.out.prompt == "Pick internal point or [Select objects/Undo/seTtings]: ");
     h.run({"5,5"});
