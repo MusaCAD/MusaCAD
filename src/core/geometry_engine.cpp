@@ -9386,11 +9386,17 @@ namespace {
 /// A CSV file's rows (RFC 4180: quoted fields may hold commas, quotes doubled, line
 /// breaks); false when it cannot be read.
 bool read_csv(const std::string& path, std::vector<std::vector<std::string>>& rows) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) {
         return false;
     }
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const std::streamoff size = f.tellg();
+    if (size < 0) {
+        return false;
+    }
+    std::string text(static_cast<std::size_t>(size), '\0');
+    f.seekg(0);
+    f.read(text.data(), static_cast<std::streamsize>(size));
     rows.clear();
     std::vector<std::string> row;
     std::string field;
