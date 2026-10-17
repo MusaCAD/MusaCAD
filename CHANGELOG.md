@@ -50,6 +50,23 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   for MTEXT and QLEADER keeps its spaces.
 - **PREVIEW** (#74) -- the plot preview with zoom and a drag to pan, from the command line
   and Output > Plot > Preview, with Plot from it.
+- **DIMJOGLINE** (#60) -- a jog in a linear or aligned dimension's line, where asked; Remove
+  takes it away.
+- **CHANGE** (#55) -- a change point for lines' ends and circles' radii; the insertion point,
+  style, height, rotation and text of the selected texts; the insertion point and rotation of
+  blocks; Properties as CHPROP.
+- **SPLINEDIT** (#55) -- add, delete and move control points, reverse, or make a polyline.
+- **HATCHEDIT** (#41, #55) -- a hatch's pattern, scale and angle, or a polyline round each of
+  its loops.
+- **BURST** and **TEXTMASK** (#77) -- blocks exploded with their attribute values as text;
+  a wipeout behind text.
+- **MOCORO** and **FLATTEN** (#77) -- move, rotate and scale in one command; polylines'
+  elevation and thickness to 0.
+- **The View Manager and NEWVIEW** (#72) -- VIEW lists the saved views to make current, add
+  and delete; NEWVIEW saves the view on screen by name; -VIEW keeps the command line.
+- **The Layer States Manager** (#69) -- LAYERSTATE lists the named layer states to restore,
+  add, rename and delete; -LAYERSTATE keeps the command line.
+- **-MTEXT** (#43) -- multiline text at the command line, line by line.
 - **HELP** and **F1** (#65) -- open the command reference in the browser.
 - **ZOOM's options and PAN** (#72) -- ZOOM Window, Center, Previous and Scale (`2x` against
   the view, `2` against the limits); PAN and -PAN; REGENALL.

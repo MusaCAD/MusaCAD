@@ -228,6 +228,7 @@ struct RenderSnapshot {
     std::uint16_t current_dimstyle = 0; // DIMSTYLE's current style
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
+    std::vector<std::string> layer_state_names; // LAYERSTATE (for the Layer States Manager)
     std::vector<TiledViewport> vports;  // VPORTS: the model window's tiles (fewer than two = one)
     int vports_active = 0;
     std::uint32_t vports_version = 0;   // a change = the UI applies `vports`
@@ -395,6 +396,7 @@ struct RenderSnapshot {
         dimstyles.clear();
         page_setups.clear();
         named_views.clear();
+        layer_state_names.clear();
         vports.clear();
         vports_active = 0;
         vports_version = 0;

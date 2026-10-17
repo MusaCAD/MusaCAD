@@ -259,6 +259,10 @@ public:
     virtual bool text_style_dialog() { return false; }
     /// PREVIEW: the plot as it will come out, with the last plot's settings.
     virtual bool plot_preview() { return false; }
+    /// VIEW: the View Manager; LAYERSTATE: the Layer States Manager (false where there is
+    /// no window: the command line asks).
+    virtual bool view_manager() { return false; }
+    virtual bool layer_states_manager() { return false; }
     /// HELP / F1: the command reference in the browser; false where there is none.
     virtual bool open_help() { return false; }
     /// EATTEDIT: open the attribute editor for the block reference under `pick` (the UI
@@ -365,6 +369,9 @@ public:
 
     /// Current selection state (published from the geometry side, cached UI-side).
     [[nodiscard]] virtual int selection_count() const = 0;
+    /// The kinds among the selected objects, one bit per core::EntityKind (all bits: not
+    /// known, ask as if any kind were there).
+    [[nodiscard]] virtual std::uint32_t selection_kinds() const { return ~0u; }
     [[nodiscard]] bool has_selection() const { return selection_count() > 0; }
 
     /// World-space pick aperture (pixels / camera scale), for pick-based commands.

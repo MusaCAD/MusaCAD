@@ -58,6 +58,9 @@ struct RevcloudReverseCommand {
 /// counted in the report.
 struct ExplodeSelectionCommand {
     std::uint64_t group = 0;
+    /// BURST: a block's attributes become text with the values the reference had (the
+    /// hidden ones go), instead of their definitions again.
+    bool burst = false;
 };
 
 /// PURGE (AutoCAD): drop symbol-table entries nothing refers to. Today that means
@@ -1229,6 +1232,7 @@ struct AddDimensionCommand {
     double text_angle = 0.0;
     bool arc_leader = false;
     double oblique = 0.0; ///< DimData::oblique
+    double jog = -1.0;    ///< DimData::jog
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -1776,6 +1780,59 @@ struct RemoveLayerCommand {
 struct SetCurrentLayerCommand {
     std::uint16_t index = 0;
 };
+/// SPLINEDIT: Begin takes the spline at `pick` (the later steps work on it, whatever they
+/// do to its curve); AddVertex puts a control point at `p1` into the nearest leg of the
+/// control polygon; DeleteVertex removes the one nearest `p1` (a spline keeps degree + 1);
+/// MoveVertex moves the one nearest `p1` to `p2`; Reverse turns it round; ToPolyline makes
+/// it a polyline of `precision` segments a span. Each edit one undo step; End stops.
+struct SplineEditCommand {
+    enum class Op : std::uint8_t { Begin, AddVertex, DeleteVertex, MoveVertex, Reverse, ToPolyline, End };
+    Op op = Op::Begin;
+    Vec2 pick{};
+    double radius = 0.0;
+    Vec2 p1{};
+    Vec2 p2{};
+    int precision = 10;
+    std::uint64_t group = 0;
+};
+/// DIMJOGLINE: a jog in the line of the linear or aligned dimension at `pick`, where `at`
+/// falls along it (unset: a quarter of the way along); `remove` takes it away. One undo step.
+struct DimJogCommand {
+    Vec2 pick{};
+    double radius = 0.0;
+    std::optional<Vec2> at{};
+    bool remove = false;
+    std::uint64_t group = 0;
+};
+/// TEXTMASK: a wipeout behind each selected text, multiline text and attribute, `offset`
+/// text heights clear of it all round. One undo step.
+struct TextMaskCommand {
+    double offset = 0.35;
+    std::uint64_t group = 0;
+};
+/// FLATTEN: the selected polylines' elevation and thickness set to 0 (a drawing from
+/// elsewhere can carry them). One undo step.
+struct FlattenCommand {
+    std::uint64_t group = 0;
+};
+/// CHANGE, on the selection: `point` moves each line's nearer end to it and makes each
+/// circle pass through it; the text settings go to every single-line text, the block ones
+/// to every block reference (unset: unchanged). One undo step.
+struct ChangeCommand {
+    std::optional<Vec2> point{};
+    std::optional<Vec2> text_pos{};
+    std::optional<std::string> text_style{};
+    std::optional<double> text_height{};
+    std::optional<double> text_rotation{}; ///< radians
+    std::optional<std::string> text_content{};
+    std::optional<Vec2> block_pos{};
+    std::optional<double> block_rotation{}; ///< radians
+    std::uint64_t group = 0;
+};
+/// HATCHEDIT recreate Boundary: a closed polyline round each loop of the selected hatches.
+struct HatchBoundaryCommand {
+    std::uint64_t group = 0;
+};
 /// MLEADERALIGN: the selected multileaders' text (with its landing) moved onto the line
 /// through the text of the multileader at `base_pick`, toward `toward`; each keeps its place
 /// along the line, and the arrowheads stay where they are. One undo step.
@@ -1933,6 +1990,8 @@ using Command =
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
                  LayerPreviousCommand, SetLayerpModeCommand, LayerStateCommand, FindTextCommand,
                  TextCaseCommand, PropsFromPickCommand, ScaleDrawingCommand, MLeaderAlignCommand,
+                 FlattenCommand, ChangeCommand, HatchBoundaryCommand, DimJogCommand, SplineEditCommand,
+                 TextMaskCommand,
                  SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
                  RefCloseCommand, PolylineVertexCommand, AttachImageCommand, SetImageClipCommand,
                  SetImageFrameCommand, SetActiveSpaceCommand, LayoutCommand, AddViewportCommand,

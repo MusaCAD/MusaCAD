@@ -64,6 +64,7 @@ public:
     bool viewport_size(int& w, int& h) const override;
     /// The drawing's saved views, from the last consumed snapshot (GUI thread).
     std::vector<core::NamedView> named_views();
+    std::vector<std::string> layer_state_names();
     core::DrawingUnits units();
     /// PDMODE / PDSIZE and LIMITS from the last snapshot, for the commands that show them.
     std::pair<std::uint8_t, double> point_display();
@@ -107,6 +108,8 @@ public:
     bool layer_walk_dialog() override;
     bool text_style_dialog() override;
     bool plot_preview() override;
+    bool view_manager() override;
+    bool layer_states_manager() override;
     bool units_dialog() override;
     void set_quick_select_callback(std::function<void(bool)> cb) { quick_select_callback_ = std::move(cb); }
     void set_purge_dialog_callback(std::function<void()> cb) { purge_dialog_callback_ = std::move(cb); }
@@ -114,6 +117,8 @@ public:
     void set_layer_walk_callback(std::function<void()> cb) { layer_walk_callback_ = std::move(cb); }
     void set_text_style_callback(std::function<void()> cb) { text_style_callback_ = std::move(cb); }
     void set_plot_preview_callback(std::function<void()> cb) { plot_preview_callback_ = std::move(cb); }
+    void set_view_manager_callback(std::function<void()> cb) { view_manager_callback_ = std::move(cb); }
+    void set_layer_states_callback(std::function<void()> cb) { layer_states_callback_ = std::move(cb); }
     void set_units_dialog_callback(std::function<void()> cb) { units_dialog_callback_ = std::move(cb); }
     bool quickcalc_dialog() override;
     bool dwgprops_dialog() override;
@@ -300,6 +305,10 @@ public:
     /// Number of currently-selected entities (for enabling Modify buttons).
     [[nodiscard]] int selection_count() const noexcept {
         return selection_count_.load(std::memory_order_relaxed);
+    }
+    /// The kinds among the selected objects, one bit per core::EntityKind.
+    [[nodiscard]] std::uint32_t selection_kinds() const noexcept {
+        return selection_kinds_.load(std::memory_order_relaxed);
     }
 
     /// Latest engine command-result message and its monotonically-rising version
@@ -747,12 +756,15 @@ private:
     std::function<void()> layer_walk_callback_;
     std::function<void()> text_style_callback_;
     std::function<void()> plot_preview_callback_;
+    std::function<void()> view_manager_callback_;
+    std::function<void()> layer_states_callback_;
     std::function<void()> units_dialog_callback_;
     std::function<void()> quickcalc_callback_;
     std::function<void()> dwgprops_callback_;
     core::DrawingProps drawing_props_; ///< under layers_mutex_
     core::DrawingTimes times_;         ///< under layers_mutex_
     std::atomic<int> selection_count_{0};
+    std::atomic<std::uint32_t> selection_kinds_{0};
     std::atomic<int> line_vertex_count_{0};
     std::atomic<int> grip_preview_count_{0};
     std::atomic<double> grip_preview_max_x_{0.0};
@@ -863,6 +875,7 @@ private:
     core::Vec2 pending_view_center_{};
     double pending_view_scale_ = 1.0;
     std::vector<core::NamedView> named_views_; ///< under layers_mutex_
+    std::vector<std::string> layer_state_names_; ///< under layers_mutex_
     core::DrawingUnits units_{};                ///< under layers_mutex_
     std::uint8_t pdmode_ = 0;                   ///< under layers_mutex_
     double pdsize_ = 0.0;

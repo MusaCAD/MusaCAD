@@ -177,6 +177,11 @@ std::vector<core::NamedView> ViewportWindow::named_views() {
     return named_views_;
 }
 
+std::vector<std::string> ViewportWindow::layer_state_names() {
+    std::scoped_lock lock(layers_mutex_);
+    return layer_state_names_;
+}
+
 core::DrawingUnits ViewportWindow::units() {
     std::scoped_lock lock(layers_mutex_);
     return units_;
@@ -298,6 +303,22 @@ bool ViewportWindow::quick_select_dialog(bool filter) {
         return false;
     }
     quick_select_callback_(filter);
+    return true;
+}
+
+bool ViewportWindow::view_manager() {
+    if (!view_manager_callback_) {
+        return false;
+    }
+    view_manager_callback_();
+    return true;
+}
+
+bool ViewportWindow::layer_states_manager() {
+    if (!layer_states_callback_) {
+        return false;
+    }
+    layer_states_callback_();
     return true;
 }
 
@@ -1385,6 +1406,13 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
         }
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
+        {
+            std::uint32_t kinds = 0;
+            for (const core::EntityHandle h : snap.selection) {
+                kinds |= 1u << (static_cast<unsigned>(h.kind) & 31u);
+            }
+            selection_kinds_.store(kinds, std::memory_order_relaxed);
+        }
         grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
                                   std::memory_order_relaxed);
         double band_max_x = -std::numeric_limits<double>::infinity();
@@ -1444,6 +1472,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             layers_ = snap.layers;
             current_props_ = snap.current_props;
             named_views_ = snap.named_views;
+            layer_state_names_ = snap.layer_state_names;
             units_ = snap.units;
             pdmode_ = snap.pdmode;
             pdsize_ = snap.pdsize;

@@ -266,6 +266,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_layer_walk_callback([this] { open_layer_walk_dialog(); });
     viewport_->set_text_style_callback([this] { open_text_style_dialog(); });
     viewport_->set_plot_preview_callback([this] { plot_preview(last_plot_spec_); });
+    viewport_->set_view_manager_callback([this] { open_view_manager(); });
+    viewport_->set_layer_states_callback([this] { open_layer_states_manager(); });
     viewport_->set_units_dialog_callback([this] { open_units_dialog(); });
     viewport_->set_quickcalc_callback([this] { open_quickcalc_dialog(); });
     viewport_->set_dwgprops_callback([this] { open_dwgprops_dialog(); });
@@ -364,6 +366,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         // Drive selection-dependent UI from the published selection count.
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
+        processor_->set_selection_kinds(viewport_->selection_kinds());
         processor_->set_named_views(viewport_->named_views());
         processor_->set_units(viewport_->units());
         {
@@ -2661,6 +2664,162 @@ void MainWindow::export_to_system_clipboard(const core::ClipboardExport& e) {
         md->setImageData(pic);
     }
     QGuiApplication::clipboard()->setMimeData(md);
+}
+
+// A list of names with buttons beside it, refilled from the drawing after each change.
+namespace {
+struct NamedListDialog {
+    QDialog* dlg = nullptr;
+    QListWidget* list = nullptr;
+    QVBoxLayout* buttons = nullptr;
+    QLabel* status = nullptr;
+};
+NamedListDialog make_named_list_dialog(QWidget* parent, const QString& title) {
+    NamedListDialog d;
+    d.dlg = new QDialog(parent);
+    d.dlg->setAttribute(Qt::WA_DeleteOnClose);
+    d.dlg->setWindowTitle(title);
+    d.list = new QListWidget(d.dlg);
+    d.buttons = new QVBoxLayout;
+    d.status = new QLabel(d.dlg);
+    d.status->setWordWrap(true);
+    auto* body = new QHBoxLayout;
+    body->addWidget(d.list, 1);
+    body->addLayout(d.buttons);
+    auto* layout = new QVBoxLayout(d.dlg);
+    layout->addLayout(body, 1);
+    layout->addWidget(d.status);
+    return d;
+}
+QString current_name(const NamedListDialog& d) {
+    return d.list->currentItem() != nullptr ? d.list->currentItem()->text() : QString();
+}
+} // namespace
+
+void MainWindow::open_view_manager() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("View Manager"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        d.list->clear();
+        for (const core::NamedView& v : viewport_->named_views()) {
+            d.list->addItem(QString::fromStdString(v.name));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());
+        d.status->setText(d.list->count() == 0 ? QStringLiteral("No saved views: New saves the view on screen.")
+                                               : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    connect(set_current, &QPushButton::clicked, d.dlg, [this, d] {
+        const std::string name = current_name(d).toStdString();
+        for (const core::NamedView& v : viewport_->named_views()) {
+            if (v.name == name) {
+                viewport_->set_view(v.center, v.scale);
+            }
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, set_current, &QPushButton::click);
+    connect(add, &QPushButton::clicked, d.dlg, [this, d, later] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New View"), QStringLiteral("View name:"),
+                                                   QLineEdit::Normal, QString(), &ok)
+                                 .trimmed();
+        core::Vec2 center;
+        double scale = 0.0;
+        if (ok && !name.isEmpty() && viewport_->current_view(center, scale)) {
+            engine_->submit(core::SaveNamedViewCommand{core::NamedView{name.toStdString(), center, scale}});
+            later();
+        }
+    });
+    connect(remove, &QPushButton::clicked, d.dlg, [this, d, later] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            engine_->submit(core::DeleteNamedViewCommand{name.toStdString()});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+void MainWindow::open_layer_states_manager() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Layer States Manager"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        d.list->clear();
+        for (const std::string& n : viewport_->layer_state_names()) {
+            d.list->addItem(QString::fromStdString(n));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(0) : found.front());
+        d.status->setText(d.list->count() == 0
+                              ? QStringLiteral("No layer states: New saves every layer's settings as they are now.")
+                              : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); };
+    const auto run = [this, later](core::LayerStateCommand::Op op, const QString& name, const QString& to = {}) {
+        engine_->submit(core::LayerStateCommand{op, name.toStdString(), to.toStdString()});
+        later();
+    };
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* restore = new QPushButton(QStringLiteral("Restore"), d.dlg);
+    auto* rename = new QPushButton(QStringLiteral("Rename..."), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {add, restore, rename, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    using Op = core::LayerStateCommand::Op;
+    connect(add, &QPushButton::clicked, d.dlg, [d, run] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("New Layer State"),
+                                                   QStringLiteral("Layer state name:"), QLineEdit::Normal, QString(), &ok)
+                                 .trimmed();
+        if (ok && !name.isEmpty()) {
+            run(Op::Save, name);
+        }
+    });
+    connect(restore, &QPushButton::clicked, d.dlg, [d, run] {
+        if (!current_name(d).isEmpty()) {
+            run(Op::Restore, current_name(d));
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, restore, &QPushButton::click);
+    connect(rename, &QPushButton::clicked, d.dlg, [d, run] {
+        const QString from = current_name(d);
+        if (from.isEmpty()) {
+            return;
+        }
+        bool ok = false;
+        const QString to = QInputDialog::getText(d.dlg, QStringLiteral("Rename Layer State"), QStringLiteral("New name:"),
+                                                 QLineEdit::Normal, from, &ok)
+                               .trimmed();
+        if (ok && !to.isEmpty() && to != from) {
+            run(Op::Rename, from, to);
+        }
+    });
+    connect(remove, &QPushButton::clicked, d.dlg, [d, run] {
+        if (!current_name(d).isEmpty()) {
+            run(Op::Delete, current_name(d));
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
 }
 
 void MainWindow::open_text_style_dialog() {

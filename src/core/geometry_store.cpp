@@ -26,6 +26,17 @@ bool GeometryStore::set_dim_text(EntityHandle h, double text_angle, bool arc_lea
     return false;
 }
 
+bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
+    if (h.kind != EntityKind::Dimension) {
+        return false;
+    }
+    if (DimData* d = dims_.get(h.index, h.generation)) {
+        d->jog = jog;
+        return true;
+    }
+    return false;
+}
+
 bool GeometryStore::set_dim_oblique(EntityHandle h, double oblique) noexcept {
     if (h.kind != EntityKind::Dimension) {
         return false;

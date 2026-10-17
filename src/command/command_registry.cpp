@@ -159,6 +159,14 @@ CommandRegistry CommandRegistry::make_default() {
         "Turn back on the layers the last LAYISO turned off.");
     reg({"LAYON"}, [] { return std::make_unique<LayToolCommand>(LK::AllOn); }, "", "Turn on every layer.");
     reg({"HELP", "?"}, [] { return std::make_unique<HelpCommand>(); }, "", "Open the command reference (F1).");
+    reg({"MOCORO"}, [] { return std::make_unique<MocoroCommand>(); }, "",
+        "Move, rotate and scale the selection in one command, with copies if asked.");
+    reg({"FLATTEN"}, [] { return std::make_unique<FlattenUiCommand>(); }, "",
+        "Set the elevation and thickness of the selected polylines to 0.");
+    reg({"CHANGE", "-CH"}, [] { return std::make_unique<ChangeUiCommand>(); }, "",
+        "Change lines' ends, circles' radii, texts and blocks by a point, or their properties.");
+    reg({"HATCHEDIT", "HE"}, [] { return std::make_unique<HatchEditUiCommand>(); }, "",
+        "Edit a hatch: its pattern, scale and angle, or a new boundary round it.");
     reg({"PREVIEW", "PRE"}, [] { return std::make_unique<PlotPreviewCommand>(); }, "assets/ribbon/preview.svg",
         "Show the plot as it will come out, with the last plot's settings.");
     reg({"FIND"}, [] { return std::make_unique<FindCommand>(); }, "",
@@ -177,7 +185,9 @@ CommandRegistry CommandRegistry::make_default() {
         "Put the layer settings back as they were before the last change.");
     reg({"LAYERPMODE"}, [] { return std::make_unique<LayerPreviousCommand>(true); }, "",
         "Whether LAYERP keeps track of layer changes.");
-    reg({"LAYERSTATE", "-LAYERSTATE", "LAS"}, [] { return std::make_unique<LayerStateCommand>(); }, "",
+    reg({"-LAYERSTATE"}, [] { return std::make_unique<LayerStateCommand>(false); }, "",
+        "Named layer states at the command line.");
+    reg({"LAYERSTATE", "LAS"}, [] { return std::make_unique<LayerStateCommand>(true); }, "",
         "Save, restore, rename and delete named layer states.");
     reg({"LAYTHW"}, [] { return std::make_unique<LayToolCommand>(LK::AllThaw); }, "", "Thaw every layer.");
     reg({"TRIMEXTENDMODE"},
@@ -370,7 +380,18 @@ CommandRegistry CommandRegistry::make_default() {
         "The width new polylines start with.");
     reg({"DO", "DONUT"}, [] { return std::make_unique<DonutCommand>(); },
         "assets/ribbon/donut.svg", "Draw a filled ring (or disc) from inside/outside diameters.");
-    reg({"V", "VIEW", "-VIEW"}, [] { return std::make_unique<ViewCommand>(); },
+    reg({"-V", "-VIEW"}, [] { return std::make_unique<ViewCommand>(false); }, "",
+        "Named views at the command line: ?, Delete, Restore, Save, Window.");
+    reg({"NEWVIEW"}, [] { return std::make_unique<NewViewCommand>(); }, "", "Save the current view under a name.");
+    reg({"BURST"}, [] { return std::make_unique<ExplodeCommand>(true); }, "",
+        "Explode blocks, keeping their attribute values as text.");
+    reg({"TEXTMASK"}, [] { return std::make_unique<TextMaskUiCommand>(); }, "",
+        "Put a wipeout behind the selected text.");
+    reg({"SPLINEDIT", "SPE"}, [] { return std::make_unique<SplineEditUiCommand>(); }, "",
+        "Edit a spline: its control points, reverse it, or make it a polyline.");
+    reg({"DIMJOGLINE", "DJL"}, [] { return std::make_unique<DimJogLineCommand>(); }, "",
+        "Add a jog to a linear or aligned dimension's line, or take one away.");
+    reg({"V", "VIEW"}, [] { return std::make_unique<ViewCommand>(true); },
         "assets/ribbon/view.svg", "Save, restore or delete named views.");
     reg({"G", "GROUP"}, [] { return std::make_unique<GroupCommand>(); },
         "assets/ribbon/group.svg", "Make the selected objects a named group.");
@@ -562,6 +583,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a feature control frame with geometric tolerance symbols.");
     reg({"DATUM", "DIMDATUM"}, [] { return std::make_unique<DatumCommand>(); },
         "assets/ribbon/datum.svg", "Place a datum feature symbol with its leader triangle.");
+    reg({"-MTEXT", "-T"}, [] { return std::make_unique<MTextCommand>(true); }, "",
+        "Multiline text at the command line, line by line until an empty line.");
     reg({"MT", "MTEXT", "T"}, [] { return std::make_unique<MTextCommand>(); },
         "assets/ribbon/mtext.svg", "Create a multiline (paragraph) text object.");
     reg({"LE", "QLEADER", "QL"}, [] { return std::make_unique<QLeaderCommand>(); },

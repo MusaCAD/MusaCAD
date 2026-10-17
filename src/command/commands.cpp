@@ -5213,6 +5213,10 @@ void PlinewidCommand::cancel(CommandContext& ctx) {
 // VIEW
 // ---------------------------------------------------------------------------
 void ViewCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->view_manager()) {
+        done_ = true; // the View Manager does the rest
+        return;
+    }
     ctx.clear_last_point();
     state_ = State::Option;
     ctx.set_prompt("Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
@@ -8532,7 +8536,7 @@ void ExplodeCommand::start(CommandContext& ctx) {
 
 void ExplodeCommand::finish(CommandContext& ctx) {
     if (ctx.has_selection()) {
-        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id(), burst_});
     }
     done_ = true;
 }
@@ -12516,7 +12520,7 @@ void MTextCommand::place(CommandContext& ctx, core::Vec2 other) {
     width_ = x1 - x0;
     state_ = State::Content;
     ctx.clear_preview();
-    ctx.set_prompt("Enter text: ");
+    ctx.set_prompt(typed_ ? "MText: " : "Enter text: ");
 }
 
 void MTextCommand::input(CommandContext& ctx, const std::string& text) {
@@ -12524,6 +12528,25 @@ void MTextCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(t);
     switch (state_) {
     case State::Content: {
+        if (typed_) {
+            // -MTEXT: one line at a time; an empty line ends the text.
+            if (!text.empty()) {
+                lines_.push_back(text);
+                ctx.set_prompt("MText: ");
+                return;
+            }
+            if (lines_.empty()) {
+                done_ = true;
+                return;
+            }
+        }
+        std::string content = text;
+        if (typed_) {
+            content.clear();
+            for (std::size_t i = 0; i < lines_.size(); ++i) {
+                content += (i > 0 ? "\n" : "") + lines_[i];
+            }
+        }
         core::MTextBlock b;
         b.pos = pos_;
         b.width = width_;
@@ -12531,7 +12554,7 @@ void MTextCommand::input(CommandContext& ctx, const std::string& text) {
         b.attach = attach_;
         b.rotation = rotation_;
         b.line_spacing = spacing_;
-        core::AddMTextCommand m{b, text, ctx.group_id()};
+        core::AddMTextCommand m{b, content, ctx.group_id()};
         m.font = font_;
         ctx.submit(std::move(m));
         ctx.echo("MText placed.");
@@ -15845,6 +15868,815 @@ void DwgUnitsCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// MOCORO and FLATTEN (issue #77), CHANGE and HATCHEDIT (issue #55)
+// ---------------------------------------------------------------------------
+void MocoroCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        step_ = Step::Base;
+        ctx.set_prompt("Base point: ");
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx);
+}
+
+void MocoroCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        step_ = Step::Base;
+        ctx.set_prompt("Base point: ");
+    }
+}
+
+void MocoroCommand::prompt(CommandContext& ctx) {
+    step_ = Step::Main;
+    ctx.set_last_point(base_);
+    PreviewSpec pv;
+    pv.points = {base_};
+    switch (mode_) {
+    case Mode::Move:
+        pv.kind = PreviewKind::Move;
+        ctx.set_prompt("Second point or [Copy/Base/Rotate/Scale/Undo] <eXit>: ");
+        break;
+    case Mode::Rotate:
+        pv.kind = PreviewKind::Rotate;
+        ctx.set_prompt("Rotation angle or [Copy/Base/Move/Scale/Undo] <eXit>: ");
+        break;
+    case Mode::Scale:
+        pv.kind = PreviewKind::Scale;
+        ctx.set_prompt("Scale factor or [Copy/Base/Move/Rotate/Undo] <eXit>: ");
+        break;
+    }
+    ctx.set_preview(std::move(pv));
+}
+
+void MocoroCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            if (!ctx.has_selection()) {
+                done_ = true;
+                return;
+            }
+            step_ = Step::Base;
+            ctx.set_prompt("Base point: ");
+        }
+        return;
+    case Step::Base:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            prompt(ctx);
+        }
+        return;
+    case Step::Main:
+        break;
+    }
+    if (new_base_) {
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            new_base_ = false;
+            prompt(ctx);
+        }
+        return;
+    }
+    if (t.empty() || u == "X" || u == "EXIT") {
+        ctx.clear_preview();
+        done_ = true;
+        return;
+    }
+    if (u == "C" || u == "COPY") {
+        copy_ = !copy_;
+        ctx.echo(copy_ ? "Copy mode on: the next ones are copies." : "Copy mode off.");
+        prompt(ctx);
+        return;
+    }
+    if (u == "B" || u == "BASE") {
+        new_base_ = true;
+        ctx.set_prompt("Base point: ");
+        return;
+    }
+    if (u == "M" || u == "MOVE" || u == "R" || u == "ROTATE" || u == "S" || u == "SCALE") {
+        mode_ = u[0] == 'M' ? Mode::Move : u[0] == 'R' ? Mode::Rotate : Mode::Scale;
+        prompt(ctx);
+        return;
+    }
+    if (u == "U" || u == "UNDO") {
+        if (ops_ == 0) {
+            ctx.echo("Nothing to undo.");
+        } else {
+            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+            --ops_;
+        }
+        prompt(ctx);
+        return;
+    }
+    std::optional<double> typed;
+    if (mode_ != Mode::Move && t.find(',') == std::string::npos && !ctx.input_is_pick()) {
+        double v = 0.0;
+        if (parse_number(t, v)) {
+            typed = v;
+        }
+    }
+    std::optional<core::Vec2> p;
+    if (!typed) {
+        p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+    }
+    const std::uint64_t group = ctx.new_group();
+    switch (mode_) {
+    case Mode::Move:
+        if (copy_) {
+            ctx.submit(core::CopySelectionCommand{*p - base_, group});
+        } else {
+            ctx.submit(core::MoveSelectionCommand{*p - base_, group});
+            base_ = *p; // the objects, and their base, are there now
+        }
+        break;
+    case Mode::Rotate: {
+        const double a = typed ? core::to_radians(*typed) : std::atan2(p->y - base_.y, p->x - base_.x);
+        ctx.submit(core::RotateSelectionCommand{base_, a, group, copy_});
+        break;
+    }
+    case Mode::Scale: {
+        const double f = typed ? *typed : core::distance(*p, base_);
+        if (f <= 0.0) {
+            ctx.echo("Requires a positive scale factor.");
+            return;
+        }
+        ctx.submit(core::ScaleSelectionCommand{base_, f, group, copy_});
+        break;
+    }
+    }
+    ++ops_;
+    prompt(ctx);
+}
+
+void MocoroCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
+void FlattenUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    selecting_ = true;
+    select_.begin(ctx, "Select objects to convert to 2d: ");
+}
+
+void FlattenUiCommand::after(CommandContext& ctx) {
+    selecting_ = false;
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    asked_ = true;
+    ctx.set_prompt("Remove hidden lines? <No>: ");
+}
+
+void FlattenUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void FlattenUiCommand::input(CommandContext& ctx, const std::string& text) {
+    if (selecting_) {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    }
+    const std::string u = upper(trimmed(text));
+    if (u == "Y" || u == "YES") {
+        ctx.echo("The drawing has no hidden lines to remove; everything stays.");
+    } else if (!u.empty() && u != "N" && u != "NO") {
+        ctx.echo("Enter Yes or No.");
+        return;
+    }
+    ctx.submit(core::FlattenCommand{ctx.group_id()});
+    done_ = true;
+}
+
+void FlattenUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ChangeUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        after_selection(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx);
+}
+
+void ChangeUiCommand::after_selection(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    step_ = Step::Point;
+    ctx.set_prompt("Specify change point or [Properties]: ");
+}
+
+void ChangeUiCommand::selection_gesture(CommandContext& ctx) {
+    if (sub_) {
+        sub_->selection_gesture(ctx);
+        done_ = sub_->done();
+        return;
+    }
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_selection(ctx);
+    }
+}
+
+void ChangeUiCommand::next(CommandContext& ctx, Step from) {
+    // The text prompts when texts are selected, the block ones when blocks are, then done.
+    const std::uint32_t kinds = ctx.selection_kinds();
+    const bool texts = (kinds & (1u << static_cast<unsigned>(core::EntityKind::Text))) != 0;
+    const bool blocks = (kinds & (1u << static_cast<unsigned>(core::EntityKind::Insert))) != 0;
+    const auto ask = [&](Step s) {
+        step_ = s;
+        switch (s) {
+        case Step::TextPos:
+            ctx.set_prompt("Specify new text insertion point <no change>: ");
+            return;
+        case Step::TextStyle:
+            ctx.set_prompt("Enter new text style <no change>: ");
+            return;
+        case Step::TextHeight:
+            ctx.set_prompt("Specify new height <no change>: ");
+            return;
+        case Step::TextRotation:
+            ctx.set_prompt("Specify new rotation angle <no change>: ");
+            return;
+        case Step::TextContent:
+            ctx.set_prompt("Enter new text <no change>: ");
+            return;
+        case Step::BlockPos:
+            ctx.set_prompt("Specify new block insertion point <no change>: ");
+            return;
+        case Step::BlockRotation:
+            ctx.set_prompt("Specify new block rotation angle <no change>: ");
+            return;
+        default:
+            return;
+        }
+    };
+    switch (from) {
+    case Step::Point:
+        if (texts) {
+            ask(Step::TextPos);
+            return;
+        }
+        [[fallthrough]];
+    case Step::TextContent:
+        if (blocks) {
+            ask(Step::BlockPos);
+            return;
+        }
+        break;
+    case Step::TextPos:
+        ask(Step::TextStyle);
+        return;
+    case Step::TextStyle:
+        ask(Step::TextHeight);
+        return;
+    case Step::TextHeight:
+        ask(Step::TextRotation);
+        return;
+    case Step::TextRotation:
+        ask(Step::TextContent);
+        return;
+    case Step::BlockPos:
+        ask(Step::BlockRotation);
+        return;
+    default:
+        break;
+    }
+    change_.group = ctx.group_id();
+    ctx.submit(change_);
+    done_ = true;
+}
+
+void ChangeUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_selection(ctx);
+        }
+        return;
+    case Step::Sub:
+        sub_->input(ctx, text);
+        done_ = sub_->done();
+        return;
+    case Step::Point:
+        if (u == "P" || u == "PROPERTIES") {
+            sub_ = ctx.make_command("CHPROP");
+            if (!sub_) {
+                done_ = true;
+                return;
+            }
+            step_ = Step::Sub;
+            sub_->start(ctx);
+            done_ = sub_->done();
+            return;
+        }
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            change_.point = *p;
+        }
+        next(ctx, Step::Point);
+        return;
+    case Step::TextPos:
+    case Step::BlockPos:
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            (step_ == Step::TextPos ? change_.text_pos : change_.block_pos) = *p;
+        }
+        next(ctx, step_);
+        return;
+    case Step::TextStyle:
+        if (!t.empty()) {
+            change_.text_style = t;
+        }
+        next(ctx, step_);
+        return;
+    case Step::TextHeight:
+    case Step::TextRotation:
+    case Step::BlockRotation:
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || (step_ == Step::TextHeight && v <= 0.0)) {
+                ctx.echo(step_ == Step::TextHeight ? "Requires a positive height." : "Requires an angle.");
+                return;
+            }
+            if (step_ == Step::TextHeight) {
+                change_.text_height = v;
+            } else {
+                (step_ == Step::TextRotation ? change_.text_rotation : change_.block_rotation) = core::to_radians(v);
+            }
+        }
+        next(ctx, step_);
+        return;
+    case Step::TextContent:
+        if (!text.empty()) {
+            change_.text_content = text;
+        }
+        next(ctx, step_);
+        return;
+    }
+}
+
+void ChangeUiCommand::cancel(CommandContext& ctx) {
+    if (sub_) {
+        sub_->cancel(ctx);
+    } else {
+        ctx.echo("*Cancel*");
+    }
+    done_ = true;
+}
+
+void HatchEditUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select hatch object: ");
+}
+
+void HatchEditUiCommand::options(CommandContext& ctx) {
+    step_ = Step::Option;
+    ctx.set_prompt("Enter hatch option [Disassociate/Style/Properties/DRaw order/ADd boundaries/Remove boundaries/"
+                   "recreate Boundary/ASsociative/separate Hatches/Origin/ANnotative/hatch COlor/LAyer/Transparency] "
+                   "<Properties>: ");
+}
+
+void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const auto set = [&](core::PropertyId id, core::PropertyValue v) {
+        ctx.submit(core::SetPropertyCommand{id, std::move(v), ctx.group_id()});
+    };
+    switch (step_) {
+    case Step::Pick: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::optional<core::EntityKind> kind = ctx.hovered_kind();
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (ctx.input_is_pick() && kind && *kind != core::EntityKind::Hatch) {
+            ctx.echo("The object selected is not a hatch.");
+            return;
+        }
+        ctx.submit(core::ClearSelectionCommand{});
+        ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius()});
+        options(ctx);
+        return;
+    }
+    case Step::Option:
+        if (t.empty() || u == "P" || u == "PROPERTIES") {
+            step_ = Step::Pattern;
+            ctx.set_prompt("Enter a pattern name or [?/Solid/User defined] <unchanged>: ");
+        } else if (u == "B" || u == "RECREATE BOUNDARY" || u == "BOUNDARY") {
+            step_ = Step::BoundaryType;
+            ctx.set_prompt("Enter type of boundary object [Region/Polyline] <Polyline>: ");
+        } else {
+            ctx.echo("That option is not available yet; Properties and recreate Boundary are.");
+            options(ctx);
+        }
+        return;
+    case Step::Pattern: {
+        if (t == "?") {
+            std::string line = "Patterns: SOLID";
+            for (const std::string& n : core::hatch::builtin_pattern_names()) {
+                line += " " + n;
+            }
+            ctx.echo(line);
+            return;
+        }
+        if (u == "U" || u == "USER DEFINED") {
+            ctx.echo("User-defined patterns are not available yet.");
+            return;
+        }
+        if (!t.empty()) {
+            const std::string name = (u == "S" || u == "SOLID") ? std::string("SOLID") : u;
+            if (name != "SOLID" && core::hatch::builtin_pattern(name) == nullptr) {
+                ctx.echo("Unknown pattern \"" + t + "\"; ? lists them.");
+                return;
+            }
+            core::PropertyValue v;
+            v.text = name;
+            set(core::PropertyId::HatchPattern, v);
+            if (name == "SOLID") {
+                done_ = true;
+                return;
+            }
+        }
+        step_ = Step::Scale;
+        ctx.set_prompt("Specify a scale for the pattern <unchanged>: ");
+        return;
+    }
+    case Step::Scale:
+    case Step::Angle:
+        if (!t.empty()) {
+            double v = 0.0;
+            if (!parse_number(t, v) || (step_ == Step::Scale && v <= 0.0)) {
+                ctx.echo(step_ == Step::Scale ? "Requires a positive scale." : "Requires an angle in degrees.");
+                return;
+            }
+            core::PropertyValue pv;
+            pv.num = v;
+            set(step_ == Step::Scale ? core::PropertyId::HatchScale : core::PropertyId::HatchAngle, pv);
+        }
+        if (step_ == Step::Scale) {
+            step_ = Step::Angle;
+            ctx.set_prompt("Specify an angle for the pattern <unchanged>: ");
+            return;
+        }
+        done_ = true;
+        return;
+    case Step::BoundaryType:
+        if (u == "R" || u == "REGION") {
+            ctx.echo("Regions are not available; the boundary is a polyline.");
+        } else if (!t.empty() && u != "P" && u != "POLYLINE") {
+            ctx.echo("Enter Region or Polyline.");
+            return;
+        }
+        step_ = Step::Associate;
+        ctx.set_prompt("Associate hatch with new boundary? [Yes/No] <N>: ");
+        return;
+    case Step::Associate:
+        if (u == "Y" || u == "YES") {
+            ctx.echo("Hatches here are not associative; the boundary is drawn alone.");
+        } else if (!t.empty() && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        ctx.submit(core::HatchBoundaryCommand{ctx.group_id()});
+        done_ = true;
+        return;
+    }
+}
+
+void HatchEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void TextMaskUiCommand::prompt(CommandContext& ctx) {
+    ctx.echo("Current settings: Offset factor = " + fmt4(s_offset_) + ", Mask type = Wipeout");
+    step_ = Step::Select;
+    select_.begin(ctx, "Select text or [Masktype/Offset]: ");
+}
+
+void TextMaskUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    prompt(ctx);
+}
+
+void TextMaskUiCommand::after(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        ctx.submit(core::TextMaskCommand{s_offset_, ctx.group_id()});
+    }
+    done_ = true;
+}
+
+void TextMaskUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void TextMaskUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (u == "O" || u == "OFFSET") {
+            step_ = Step::Offset;
+            ctx.set_prompt("Enter offset factor relative to text height <" + fmt4(s_offset_) + ">: ");
+            return;
+        }
+        if (u == "M" || u == "MASKTYPE") {
+            step_ = Step::Masktype;
+            ctx.set_prompt("Specify entity type to use for mask [Wipeout/3dface/Solid/Color] <Wipeout>: ");
+            return;
+        }
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Offset: {
+        double v = 0.0;
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v < 0.0) {
+                ctx.echo("Requires an offset of zero or more.");
+                return;
+            }
+            s_offset_ = v;
+        }
+        prompt(ctx);
+        return;
+    }
+    case Step::Masktype:
+        if (!t.empty() && u != "W" && u != "WIPEOUT") {
+            ctx.echo("Only Wipeout masks are available here.");
+        }
+        prompt(ctx);
+        return;
+    }
+}
+
+void TextMaskUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void SplineEditUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select spline: ");
+}
+
+void SplineEditUiCommand::options(CommandContext& ctx) {
+    step_ = Step::Option;
+    ctx.set_prompt("Enter an option [Close/Join/Fit data/Edit vertex/convert to Polyline/Reverse/Undo/eXit] <eXit>: ");
+}
+
+void SplineEditUiCommand::vertex_options(CommandContext& ctx) {
+    step_ = Step::Vertex;
+    ctx.set_prompt("Enter a vertex editing option [Add/Delete/Elevate order/Move/Weight/eXit] <eXit>: ");
+}
+
+void SplineEditUiCommand::edit(CommandContext& ctx, core::SplineEditCommand::Op op, core::Vec2 p1, core::Vec2 p2,
+                               int precision) {
+    ctx.submit(core::SplineEditCommand{op, pick_, ctx.pick_radius(), p1, p2, precision, ctx.new_group()});
+    ++edits_;
+}
+
+void SplineEditUiCommand::finish(CommandContext& ctx) {
+    ctx.submit(core::SplineEditCommand{core::SplineEditCommand::Op::End, {}, 0.0, {}, {}, 10, 0});
+    done_ = true;
+}
+
+void SplineEditUiCommand::input(CommandContext& ctx, const std::string& text) {
+    using Op = core::SplineEditCommand::Op;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::optional<core::EntityKind> kind = ctx.hovered_kind();
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (ctx.input_is_pick() && kind && *kind != core::EntityKind::Spline) {
+            ctx.echo("The object selected is not a spline.");
+            return;
+        }
+        pick_ = *p;
+        ctx.submit(core::SplineEditCommand{Op::Begin, pick_, ctx.pick_radius(), {}, {}, 10, 0});
+        options(ctx);
+        return;
+    }
+    case Step::Option:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            finish(ctx);
+        } else if (u == "E" || u == "EDIT VERTEX") {
+            vertex_options(ctx);
+        } else if (u == "P" || u == "CONVERT TO POLYLINE") {
+            step_ = Step::Precision;
+            ctx.set_prompt("Specify a precision <10>: ");
+        } else if (u == "R" || u == "REVERSE") {
+            edit(ctx, Op::Reverse);
+            options(ctx);
+        } else if (u == "U" || u == "UNDO") {
+            if (edits_ == 0) {
+                ctx.echo("Nothing to undo.");
+            } else {
+                ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+                --edits_;
+                // The spline as it was is a new object: take it again where it was picked.
+                ctx.submit(core::SplineEditCommand{Op::Begin, pick_, ctx.pick_radius(), {}, {}, 10, 0});
+            }
+            options(ctx);
+        } else if (u == "C" || u == "CLOSE" || u == "J" || u == "JOIN" || u == "F" || u == "FIT DATA") {
+            ctx.echo("That option is not available yet: Edit vertex, convert to Polyline, Reverse and Undo are.");
+            options(ctx);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            options(ctx);
+        }
+        return;
+    case Step::Precision: {
+        double v = 10.0;
+        if (!t.empty() && (!parse_number(t, v) || v < 0.0 || v > 99.0)) {
+            ctx.echo("Requires a precision from 0 to 99.");
+            return;
+        }
+        edit(ctx, Op::ToPolyline, {}, {}, static_cast<int>(v));
+        finish(ctx); // the spline is a polyline now
+        return;
+    }
+    case Step::Vertex:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            options(ctx);
+        } else if (u == "A" || u == "ADD") {
+            step_ = Step::Add;
+            ctx.set_prompt("Specify a control point location on the spline <exit>: ");
+        } else if (u == "D" || u == "DELETE") {
+            step_ = Step::Delete;
+            ctx.set_prompt("Specify control point <exit>: ");
+        } else if (u == "M" || u == "MOVE") {
+            step_ = Step::MoveFrom;
+            ctx.set_prompt("Specify control point to move: ");
+        } else if (u == "E" || u == "ELEVATE ORDER" || u == "W" || u == "WEIGHT") {
+            ctx.echo("Elevate order and Weight are not available yet.");
+            vertex_options(ctx);
+        } else {
+            ctx.echo("Invalid option keyword.");
+            vertex_options(ctx);
+        }
+        return;
+    case Step::Add:
+    case Step::Delete:
+        if (t.empty()) {
+            vertex_options(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            edit(ctx, step_ == Step::Add ? Op::AddVertex : Op::DeleteVertex, *p);
+        }
+        return; // the same prompt, for another
+    case Step::MoveFrom:
+        if (t.empty()) {
+            vertex_options(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            from_ = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::MoveTo;
+            ctx.set_prompt("Specify new location: ");
+        }
+        return;
+    case Step::MoveTo:
+        if (const auto p = read_point(ctx, text)) {
+            edit(ctx, Op::MoveVertex, from_, *p);
+            vertex_options(ctx);
+        }
+        return;
+    }
+}
+
+void SplineEditUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    finish(ctx);
+}
+
+void DimJogLineCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select dimension to add jog or [Remove]: ");
+}
+
+void DimJogLineCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Pick:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "R" || u == "REMOVE") {
+            step_ = Step::Remove;
+            ctx.set_prompt("Select jog to remove: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            step_ = Step::Location;
+            ctx.set_prompt("Specify jog location (or press ENTER): ");
+        }
+        return;
+    case Step::Location: {
+        core::DimJogCommand c{pick_, ctx.pick_radius(), std::nullopt, false, ctx.group_id()};
+        if (!t.empty()) {
+            const auto p = read_point(ctx, text);
+            if (!p) {
+                return;
+            }
+            c.at = *p;
+        }
+        ctx.submit(c);
+        done_ = true;
+        return;
+    }
+    case Step::Remove:
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::DimJogCommand{*p, ctx.pick_radius(), std::nullopt, true, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void DimJogLineCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void NewViewCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        done_ = true;
+        return;
+    }
+    core::Vec2 center;
+    double scale = 0.0;
+    if (ctx.view() == nullptr || !ctx.view()->current_view(center, scale)) {
+        ctx.echo("NEWVIEW needs the drawing window.");
+        done_ = true;
+        return;
+    }
+    ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale}});
+    done_ = true;
+}
+
 void HelpCommand::start(CommandContext& ctx) {
     if (ctx.view() == nullptr || !ctx.view()->open_help()) {
         ctx.echo("The command reference: https://github.com/MusaCAD/MusaCAD/blob/main/docs/COMMANDS.md");
@@ -15987,7 +16819,13 @@ void LayerStateCommand::options(CommandContext& ctx) {
     ctx.set_prompt("Enter an option [?/Save/Restore/Delete/Name]: ");
 }
 
-void LayerStateCommand::start(CommandContext& ctx) { options(ctx); }
+void LayerStateCommand::start(CommandContext& ctx) {
+    if (dialog_ && ctx.view() != nullptr && ctx.view()->layer_states_manager()) {
+        done_ = true; // the Layer States Manager does the rest
+        return;
+    }
+    options(ctx);
+}
 
 void LayerStateCommand::input(CommandContext& ctx, const std::string& text) {
     using Op = core::LayerStateCommand::Op;

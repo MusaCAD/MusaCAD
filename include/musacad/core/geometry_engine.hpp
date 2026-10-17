@@ -386,6 +386,8 @@ private:
     void apply_pedit_vertex(const PeditCommand& c);
     /// ADDSELECTED: the current properties and layer before they were taken from an object.
     std::optional<std::pair<EntityProps, std::uint16_t>> props_saved_{};
+    EntityHandle splinedit_{}; ///< SPLINEDIT's spline
+    void apply_spline_edit(const SplineEditCommand& c);
     EntityHandle pv_handle_{};
     std::size_t pv_index_ = 0;
     std::optional<std::size_t> pv_mark_{};
@@ -579,7 +581,7 @@ private:
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
     void apply_revcloud_reverse(std::uint64_t group);
-    void apply_explode(std::uint64_t group);
+    void apply_explode(std::uint64_t group, bool burst = false);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
