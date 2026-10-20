@@ -549,6 +549,16 @@ std::string serialize_native(const Document& doc) {
         s += ds.name;
         s += '\n';
     }
+    // v41: DIMTFAC idx factor -- a style whose tolerance is not the value's height.
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        if (doc.dimstyles[i].tol_height != 1.0) {
+            s += "DIMTFAC ";
+            append_uint(s, i);
+            s += ' ';
+            append_double(s, doc.dimstyles[i].tol_height);
+            s += '\n';
+        }
+    }
     // v41: DIMTXTDIR idx -- a style whose text reads right to left (View Direction).
     for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
         if (doc.dimstyles[i].text_rtl) {
@@ -2892,6 +2902,14 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.tol_upper = up;
             ds.tol_lower = lo;
             ds.tol_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(prec, 9)) - 1);
+        } else if (key == "DIMTFAC") {
+            std::uint64_t idx = 0;
+            double f = 1.0;
+            if (tok.size() != 3 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size() || !to_double(tok[2], f) ||
+                !(f > 0.0)) {
+                return fail("malformed DIMTFAC");
+            }
+            doc.dimstyles[idx].tol_height = f;
         } else if (key == "DIMTXTDIR") {
             std::uint64_t idx = 0;
             if (tok.size() != 2 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size()) {

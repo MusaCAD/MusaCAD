@@ -18,6 +18,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (`Specify rotation angle <0>:`).
 - **Image grips** -- a grip on each corner, as AutoCAD has them: dragged, the image scales
   about the opposite corner and keeps its proportions.
+- **GRIPHOVER** and **GRIPOBJLIMIT** (#54) -- the colour of a grip under the cursor (a grip
+  grabbed keeps GRIPHOT's), and no grips when more objects than GRIPOBJLIMIT are selected
+  (100; 0 for no limit), as AutoCAD has them.
+- **The dimension style's View Direction and Scaling for height** (#58) -- the Text tab's View
+  Direction (DIMTXTDIRECTION) reads the text right to left; the Tolerances tab's Scaling for
+  height (DIMTFAC) draws a symmetrical tolerance, the deviations and the limits at their own
+  height beside the value, the deviations one over the other. Both kept in the drawing and
+  in DXF; DIMTFAC, DIMTXTDIRECTION and DIMJUST are variables too.
 - **-INSERT's options and previews** -- the block is carried at the cursor;
   `Specify insertion point or [Scale/X/Y/Z/Rotate]:` (those given before the point are not
   asked after it); `Enter X scale factor, specify opposite corner, or [Corner/XYZ] <1>:` sizes

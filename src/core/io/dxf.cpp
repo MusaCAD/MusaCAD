@@ -683,6 +683,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         if (ds.tol_precision >= 0) {
             code_i(s, 272, ds.tol_precision); // DIMTDEC
         }
+        code_d(s, 146, ds.tol_height); // DIMTFAC
     }
     code(s, 0, "ENDTAB");
     // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
@@ -2168,6 +2169,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         ds.tol_upper = tp;
         ds.tol_lower = tm;
         ranged(272, 0, 8, [&](long x) { ds.tol_precision = static_cast<std::int8_t>(x); });
+        if (const double tfac = getd(body, 146, 1.0); tfac > 0.0) {
+            ds.tol_height = tfac; // DIMTFAC
+        }
         if (const std::string* v = find(body, 45); v != nullptr && to_d(*v) >= 0.0) {
             ds.round_off = to_d(*v);
         }

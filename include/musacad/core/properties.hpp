@@ -238,6 +238,9 @@ struct DimStyle {
     double tol_upper = 0.0;
     double tol_lower = 0.0;
     std::int8_t tol_precision = -1;
+    /// The Tolerances tab's Scaling for height (DIMTFAC): the tolerance's text height over
+    /// the value's.
+    double tol_height = 1.0;
     /// The Text tab's View Direction (DIMTXTDIRECTION): the text read right to left (true),
     /// its characters in the other order, or left to right.
     bool text_rtl = false;

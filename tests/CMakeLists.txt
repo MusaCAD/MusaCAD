@@ -224,7 +224,8 @@ set(_musacad_test_files
     test_pedit_vertex.cpp
     test_dwgunits.cpp
     test_measurement_vars.cpp
-    test_attach_scale.cpp)
+    test_attach_scale.cpp
+    test_dim_textdir_tfac.cpp)
 
 set(_musacad_test_binaries "")
 list(LENGTH _musacad_test_files _musacad_n)

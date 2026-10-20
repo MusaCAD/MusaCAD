@@ -17157,6 +17157,7 @@ const char* dim_var_meaning(std::string_view var) {
     if (u == "DIMATFIT") return "Text fit: 0 automatic, 1 inside, 2 outside";
     if (u == "DIMJUST") return "Text along the line: 0 centred, 1 at ext line 1, 2 at ext line 2, 3 over 1, 4 over 2";
     if (u == "DIMTXTDIRECTION") return "Text reading direction: 0 left to right, 1 right to left";
+    if (u == "DIMTFAC") return "Tolerance text height over the dimension text's";
     if (u == "DIMTMOVE") return "Moved text: 0 with its dimension line, 1 with a leader, 2 alone";
     if (u == "DIMLWD") return "Dimension lineweight (1/100 mm)";
     if (u == "DIMCLRD") return "Dimension line and arrowhead colour (ACI, 256 BYLAYER)";

@@ -2589,8 +2589,7 @@ void dim_preview_segments(const core::DimData& d, const core::DimStyle& style,
         seg.push_back(g.arrow_fills[i + 2]);
         seg.push_back(g.arrow_fills[i]);
     }
-    core::text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation,
-                                     g.text_justify, seg);
+    core::append_dim_label_segments(g, seg);
 }
 } // namespace
 

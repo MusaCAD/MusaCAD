@@ -342,11 +342,7 @@ void DimStylePreview::paintEvent(QPaintEvent*) {
         runs.push_back(Run{g.dim_lines, {}, qc(g.dim_color), 1.0});
         runs.push_back(Run{g.arrow_lines, g.arrow_fills, qc(g.arrow_color), 1.0});
         Run txt{{}, {}, qc(g.text_color), 1.1};
-        core::text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation, g.text_justify, txt.lines);
-        if (!g.label2.empty()) {
-            core::text::append_text_segments(g.label2, g.label2_pos, g.text_height, g.text_rotation, g.text_justify,
-                                             txt.lines);
-        }
+        core::append_dim_label_segments(g, txt.lines);
         runs.push_back(std::move(txt));
     }
 
@@ -660,16 +656,23 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     tol_precision->setCurrentIndex(std::clamp(style.tol_precision + 1, 0, 9));
     QDoubleSpinBox* tol_upper = length_box(style.tol_upper, 0.0, this);
     QDoubleSpinBox* tol_lower = length_box(style.tol_lower, 0.0, this);
+    auto* tol_height = new QDoubleSpinBox(this); // DIMTFAC
+    tol_height->setRange(0.1, 10.0);
+    tol_height->setDecimals(4);
+    tol_height->setSingleStep(0.05);
+    tol_height->setValue(style.tol_height);
     QFormLayout* tol = form();
     row(tol, QStringLiteral("Method:"), tol_method);
     row(tol, QStringLiteral("Precision:"), tol_precision);
     row(tol, QStringLiteral("Upper value:"), tol_upper);
     row(tol, QStringLiteral("Lower value:"), tol_lower);
-    const auto tol_enable = [tol_method, tol_precision, tol_upper, tol_lower] {
+    row(tol, QStringLiteral("Scaling for height:"), tol_height);
+    const auto tol_enable = [tol_method, tol_precision, tol_upper, tol_lower, tol_height] {
         const int m = tol_method->currentIndex();
         tol_precision->setEnabled(m != 0 && m != 4);
         tol_upper->setEnabled(m != 0 && m != 4);
         tol_lower->setEnabled(m == 2 || m == 3);
+        tol_height->setEnabled(m >= 1 && m <= 3);
     };
     tol_enable();
     connect(tol_method, &QComboBox::currentIndexChanged, this, tol_enable);
@@ -720,6 +723,7 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.tol_precision = static_cast<std::int8_t>(tol_precision->currentIndex() - 1);
         s.tol_upper = tol_upper->value();
         s.tol_lower = tol_lower->value();
+        s.tol_height = tol_height->value();
         return s;
     };
     const auto refresh_preview = [preview, this] { preview->set_style(read_()); };
@@ -737,7 +741,7 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         fill_alt_precision(alt_precision->currentIndex());
         refresh_preview();
     });
-    for (QDoubleSpinBox* b : {round_off, lfac, alt_factor, alt_round, tol_upper, tol_lower}) {
+    for (QDoubleSpinBox* b : {round_off, lfac, alt_factor, alt_round, tol_upper, tol_lower, tol_height}) {
         connect(b, &QDoubleSpinBox::valueChanged, this, refresh_preview);
     }
     for (QLineEdit* e : {prefix, suffix, alt_prefix, alt_suffix}) {

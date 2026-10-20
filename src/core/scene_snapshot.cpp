@@ -554,14 +554,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         add_lines(g.arrow_color, g.lineweight, g.arrow_lines);
         add_fills(g.arrow_color, g.arrow_fills);
         tseg.clear();
-        text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation,
-                                   g.text_justify, tseg);
-        // The Limits tolerance mode stacks the lower limit under the upper; every other
-        // mode leaves label2 empty, so this is a no-op for them.
-        if (!g.label2.empty()) {
-            text::append_text_segments(g.label2, g.label2_pos, g.text_height, g.text_rotation,
-                                       g.text_justify, tseg);
-        }
+        append_dim_label_segments(g, tseg); // the label (a Limits second line; a DIMTFAC tolerance)
         add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height);
     });
 

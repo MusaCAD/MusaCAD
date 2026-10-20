@@ -295,6 +295,8 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.text_just = static_cast<std::uint8_t>(v);
     } else if (same_var(var, "DIMTXTDIRECTION") && whole(0, 1)) {
         s.text_rtl = v != 0.0;
+    } else if (same_var(var, "DIMTFAC") && v > 0.0) {
+        s.tol_height = v;
     } else if (same_var(var, "DIMTAD") && whole(0, 4)) {
         s.text_above = v != 0.0 && v != 4.0;
         s.text_vpos = v >= 2.0 ? static_cast<std::uint8_t>(v) : std::uint8_t{0};
@@ -414,6 +416,9 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
     }
     if (same_var(var, "DIMTXTDIRECTION")) {
         return s.text_rtl ? 1.0 : 0.0;
+    }
+    if (same_var(var, "DIMTFAC")) {
+        return s.tol_height;
     }
     if (same_var(var, "DIMATFIT")) {
         return s.text_fit;
@@ -754,6 +759,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         // One line: the value, then the deviation. ISO 129-1 writes a single
         // deviation as value ± tol.
         out.line1 = wrap(measured_text(d, style) + " ±" + format_dim_value(std::abs(tol.upper), tstyle));
+        out.tol_from = out.line1.find(" ±");
         break;
     case TolMode::Deviation: {
         // The value, then +upper with -lower stacked under it (AutoCAD's Deviation).
@@ -761,6 +767,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         out.line1 = value + (tol.upper < 0.0 ? " -" : " +") + format_dim_value(std::abs(tol.upper), tstyle);
         out.line2 = (tol.lower > 0.0 ? "+" : "-") + format_dim_value(std::abs(tol.lower), tstyle);
         out.stack_at = value.size() + 1;
+        out.tol_from = value.size();
         break;
     }
     case TolMode::Limits: {
@@ -771,6 +778,7 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         const double lo = std::min(v + tol.upper, v + tol.lower);
         out.line1 = wrap(measured_text_for(d.type, style, hi));
         out.line2 = wrap(measured_text_for(d.type, style, lo));
+        out.tol_from = 0;
         break;
     }
     case TolMode::Basic:
@@ -987,6 +995,31 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                                   : g.text_justify == text::Justify::Right ? xs + w2
                                                                            : xs;
                 g.label2_pos = g.text_pos + ax * x2 - ay * line_gap;
+            }
+        }
+        // DIMTFAC: the tolerance at its own height beside the value -- one line on the value's
+        // middle, or the upper over the lower about it -- drawn as runs.
+        if (const double th = h * style.tol_height;
+            std::abs(style.tol_height - 1.0) > 1e-9 && th > 0.0 && label.tol_from != std::string::npos &&
+            label.tol_from <= g.label.size() && !style.text_rtl && d.inspect == 0) {
+            const std::string head = g.label.substr(0, label.tol_from);
+            const std::string tail = g.label.substr(label.tol_from);
+            const double wh = text::text_width(head, h);
+            const double wt = std::max(text::text_width(tail, th), text::text_width(g.label2, th));
+            const double total = wh + wt;
+            const double x0 = g.text_justify == text::Justify::Center  ? -total * 0.5
+                              : g.text_justify == text::Justify::Right ? -total
+                                                                       : 0.0;
+            if (!head.empty()) {
+                g.runs.push_back({head, g.text_pos + ax * x0, h});
+            }
+            const Vec2 at = g.text_pos + ax * (x0 + wh);
+            if (g.label2.empty()) {
+                g.runs.push_back({tail, at + ay * ((h - th) * 0.5), th});
+            } else {
+                const double gap = th * 0.5;
+                g.runs.push_back({tail, at + ay * (h * 0.5 + gap * 0.5), th});
+                g.runs.push_back({g.label2, at + ay * (h * 0.5 - gap * 0.5 - th), th});
             }
         }
         if (!label.boxed && !insp_framed) {
@@ -1588,6 +1621,19 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         }
     }
     return g;
+}
+
+void append_dim_label_segments(const DimGeometry& g, std::vector<Vec2>& out) {
+    if (!g.runs.empty()) {
+        for (const DimGeometry::TextRun& r : g.runs) {
+            text::append_text_segments(r.text, r.pos, r.height, g.text_rotation, text::Justify::Left, out);
+        }
+        return;
+    }
+    text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation, g.text_justify, out);
+    if (!g.label2.empty()) {
+        text::append_text_segments(g.label2, g.label2_pos, g.text_height, g.text_rotation, g.text_justify, out);
+    }
 }
 
 } // namespace musacad::core

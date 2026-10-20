@@ -7313,10 +7313,17 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
             lines_from_pairs(g.dim_lines, d->props);
             lines_from_pairs(g.arrow_lines, d->props);
             solids_from_tris(g.arrow_fills, d->props);
-            text(g.label, g.text_pos, g.text_height, g.text_rotation,
-                 static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
-            text(g.label2, g.label2_pos, g.text_height, g.text_rotation,
-                 static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+            if (!g.runs.empty()) {
+                for (const DimGeometry::TextRun& r : g.runs) { // a DIMTFAC tolerance: each piece a text
+                    text(r.text, r.pos, r.height, g.text_rotation, static_cast<std::uint8_t>(text::Justify::Left),
+                         std::string{}, d->props);
+                }
+            } else {
+                text(g.label, g.text_pos, g.text_height, g.text_rotation,
+                     static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+                text(g.label2, g.label2_pos, g.text_height, g.text_rotation,
+                     static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+            }
             break;
         }
         case EntityKind::Leader: {
