@@ -535,6 +535,8 @@ public:
     /// The kind of entity under the cursor (from the published snapshot, cached
     /// UI-side), or nullopt over empty space. Used by the smart DIM preview.
     [[nodiscard]] virtual std::optional<core::EntityKind> hovered_kind() const { return std::nullopt; }
+    /// The object under the cursor is a closed polyline (PEDIT offers Open, else Close).
+    [[nodiscard]] virtual bool hovered_closed() const { return false; }
 
     [[nodiscard]] virtual ViewControl* view() = 0;
     /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.

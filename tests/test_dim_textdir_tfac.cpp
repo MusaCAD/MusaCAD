@@ -12,6 +12,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
@@ -123,4 +124,23 @@ TEST_CASE("The grip under the cursor is told from the one grabbed") {
     REQUIRE(wait_until(engine, [](const auto& s) { return s.hot_grip >= 0; }));
     REQUIRE(engine.snapshot().hot_grip_hover);
     engine.stop();
+}
+
+TEST_CASE("PEDIT offers Close for an open polyline and Open for a closed one") {
+    struct Out : musacad::command::CommandOutput {
+        std::string prompt;
+        void append_line(const std::string&) override {}
+        void set_prompt(const std::string& p) override { prompt = p; }
+    } out;
+    musacad::command::CommandProcessor proc{[](Command) {}, nullptr, out};
+    proc.set_hovered_kind(EntityKind::Polyline);
+    proc.set_hovered_closed(true);
+    proc.submit_line("PEDIT");
+    proc.pick_point({5, 0}, std::nullopt);
+    REQUIRE(out.prompt == "Enter an option [Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+    proc.submit_line("O");
+    REQUIRE(out.prompt == "Enter an option [Close/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+    proc.submit_line("");
+    proc.set_hovered_kind(std::nullopt);
+    proc.set_hovered_closed(false);
 }

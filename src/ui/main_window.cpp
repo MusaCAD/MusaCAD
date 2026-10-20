@@ -569,6 +569,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             processor_->set_mspace_active(viewport_->mspace_active());
         }
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
+        processor_->set_hovered_closed(viewport_->hovered_closed()); // PEDIT's Close or Open
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
         }

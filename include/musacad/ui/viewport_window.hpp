@@ -456,6 +456,8 @@ public:
     /// The kind of entity under the cursor in the last snapshot, encoded as its
     /// EntityKind value + 1 (0 = nothing hovered). The smart DIM command reads this
     /// (via the processor) to preview the dimension type it will create.
+    /// The object under the cursor is a closed polyline.
+    [[nodiscard]] bool hovered_closed() const noexcept { return hovered_closed_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::optional<core::EntityKind> hovered_kind() const noexcept {
         const int v = hovered_kind_.load(std::memory_order_relaxed);
         return v == 0 ? std::nullopt
@@ -913,6 +915,7 @@ private:
     std::atomic<int> grip_preview_count_{0};
     std::atomic<double> grip_preview_max_x_{0.0};
     std::atomic<int> hovered_kind_{0}; // EntityKind+1, or 0 for nothing hovered
+    std::atomic<bool> hovered_closed_{false};
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
 

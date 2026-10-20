@@ -20166,6 +20166,7 @@ void GeometryEngine::rebuild_and_publish() {
     // Rollover (hover) candidate: the entity under the cursor's pick-box. Same
     // pick query as a single click; render-side highlight, no extra handoff.
     buf.has_hover = false;
+    buf.hover_closed = false;
     buf.hover = EntityHandle{};
     buf.hover_line_vertices.clear();
     if (pick_radius_ > 0.0) {
@@ -20173,6 +20174,9 @@ void GeometryEngine::rebuild_and_publish() {
         if (!hv.is_null() && !sel_contains(hv)) { // don't hover-highlight selected entities
             buf.hover = hv;
             buf.has_hover = true;
+            if (const PolylineData* pl = hv.kind == EntityKind::Polyline ? store_.polyline(hv) : nullptr) {
+                buf.hover_closed = pl->closed;
+            }
             std::vector<Vec2> tess;
             kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
             if (hv.kind == EntityKind::Insert || hv.kind == EntityKind::Dimension) { // disjoint pairs

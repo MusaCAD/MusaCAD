@@ -6784,9 +6784,11 @@ void FieldCommand::input(CommandContext& ctx, const std::string& text) {
 // PEDIT
 // ---------------------------------------------------------------------------
 void PeditCommand::prompt_option(CommandContext& ctx) const {
-    ctx.set_prompt(multiple_
-                       ? "Enter an option [Close/Open/Join/Width/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: "
-                       : "Enter an option [Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+    // AutoCAD offers Close for an open polyline and Open for a closed one (both for several).
+    const std::string ends = multiple_ || !closed_ ? "Close/Open" : *closed_ ? "Open" : "Close";
+    ctx.set_prompt(multiple_ ? "Enter an option [" + ends + "/Join/Width/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: "
+                             : "Enter an option [" + ends +
+                                   "/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
 }
 
 void PeditCommand::selection_gesture(CommandContext& ctx) {
@@ -6849,6 +6851,12 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick_ = *p;
             ctx.set_last_point(*p);
+            closed_.reset();
+            if (ctx.input_is_pick() && ctx.hovered_kind() == core::EntityKind::Polyline) {
+                closed_ = ctx.hovered_closed();
+            } else if (ctx.input_is_pick() && ctx.hovered_kind().has_value()) {
+                closed_ = false; // a line or an arc to become a polyline: open
+            }
             // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one).
             if (s_peditaccept_ == 0 && ctx.input_is_pick() &&
                 (ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc)) {
@@ -6932,8 +6940,10 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "C" || u == "CLOSE") {
             op(0);
+            closed_ = closed_ ? std::optional<bool>(true) : std::nullopt;
         } else if (u == "O" || u == "OPEN") {
             op(1);
+            closed_ = closed_ ? std::optional<bool>(false) : std::nullopt;
         } else if ((u == "J" || u == "JOIN") && multiple_) {
             // The ends within the fuzz distance of each other are joined.
             state_ = State::Fuzz;

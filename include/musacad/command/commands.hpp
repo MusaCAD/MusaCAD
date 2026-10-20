@@ -2679,6 +2679,7 @@ private:
     void prompt_option(CommandContext& ctx) const;
     void prompt_vertex(CommandContext& ctx) const;
     State state_ = State::Select;
+    std::optional<bool> closed_; ///< the polyline picked is closed (only Open offered) or open (only Close)
     core::Vec2 pick_{};
     bool straighten_ = false; ///< the vertex editor's Go straightens (else it breaks)
     std::vector<core::Vec2> join_picks_;

@@ -194,8 +194,8 @@ TEST_CASE("PEDIT's prompts: Multiple, Fit, the fuzz distance, and turning a line
     REQUIRE(h.out.prompt == "Select polyline or [Multiple]: ");
     h.proc.pick_point({5, 0}, std::nullopt);
     h.proc.submit_line("");
-    REQUIRE(h.out.prompt ==
-            "Enter an option [Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+    // The line, turned into a polyline, is open: Close is offered, not Open.
+    REQUIRE(h.out.prompt == "Enter an option [Close/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
     h.proc.submit_line("F");
     REQUIRE(h.last<PeditCommand>()->op == 10);
     REQUIRE_FALSE(h.last<PeditCommand>()->selection);
