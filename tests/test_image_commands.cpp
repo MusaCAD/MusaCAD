@@ -93,13 +93,13 @@ std::string write_file(const std::filesystem::path& p, std::size_t bytes) {
 }
 } // namespace
 
-TEST_CASE("#10 IMAGEATTACH: embed, place at pixel size, publish the definition; IMAGEFRAME; the embed limit") {
+TEST_CASE("#10 IMAGEATTACH: embed, place one unit wide at scale 1, publish the definition; IMAGEFRAME; the embed limit") {
     const StubDecoder decoder;
     GeometryEngine engine;
     engine.set_image_decoder(&decoder);
     engine.start();
     const std::string small = write_file(temp_dir() / "logo.png", 100);
-    engine.submit(AttachImageCommand{small, true, {10, 20}, 2.5, 0.0, 1});
+    engine.submit(AttachImageCommand{small, true, {10, 20}, 10.0, 0.0, 1});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.images.size() == 1; }));
     {
         const RenderSnapshot& s = engine.snapshot();
@@ -107,7 +107,8 @@ TEST_CASE("#10 IMAGEATTACH: embed, place at pixel size, publish the definition; 
         CHECK(s.image_defs[0].bytes != nullptr);   // embedded payload, shared by pointer
         CHECK(s.image_defs[0].bytes->size() == 100);
         CHECK(s.image_defs[0].source.empty());
-        // 4 x 2 pixels at scale 2.5 -> 10 x 5 units from (10, 20).
+        // A file that says no resolution: one unit wide at scale 1 (AutoCAD's rule), its
+        // height by its 4 x 2 pixels -- at scale 10, 10 x 5 units from (10, 20).
         CHECK(std::abs(s.images[0].quad[0].x - 10.0) < 1e-9);
         CHECK(std::abs(s.images[0].quad[1].x - 20.0) < 1e-9);
         CHECK(std::abs(s.images[0].quad[2].y - 25.0) < 1e-9);
@@ -149,8 +150,8 @@ TEST_CASE("#10 IMAGECLIP: a rectangular boundary in image fractions through the 
     engine.set_image_decoder(&decoder);
     engine.start();
     const std::string small = write_file(temp_dir() / "logo2.png", 64);
-    // 4 x 2 px at scale 10 -> a 40 x 20 image from (0, 0).
-    engine.submit(AttachImageCommand{small, true, {0, 0}, 10.0, 0.0, 1});
+    // 4 x 2 px, one unit wide at scale 1: at scale 40, a 40 x 20 image from (0, 0).
+    engine.submit(AttachImageCommand{small, true, {0, 0}, 40.0, 0.0, 1});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.images.size() == 1; }));
     engine.submit(SetImageClipCommand{{20, 10}, 1.0, SetImageClipCommand::Mode::NewRect, {10, 5}, {30, 20}, 2});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.images.size() == 1 && s.images[0].uv[0] > 0.2; }));

@@ -8520,13 +8520,26 @@ void GeometryEngine::apply_attach_image(const AttachImageCommand& c) {
     }
     def.pixel_w = img.width;
     def.pixel_h = img.height;
+    // AutoCAD's size at scale 1: the true size when the drawing has a unit and the file says
+    // its resolution, else one unit wide -- so the scale factor is the image's width.
+    std::optional<Vec2> dpi;
+    if (embed) {
+        dpi = image_resolution(def.bytes);
+    } else {
+        std::ifstream head(c.path, std::ios::binary);
+        std::vector<std::uint8_t> buf(512 * 1024);
+        head.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+        buf.resize(static_cast<std::size_t>(std::max<std::streamsize>(head.gcount(), 0)));
+        dpi = image_resolution(buf);
+    }
+    const Vec2 base = image_base_size(img.width, img.height, dpi, store_.units().insunits);
     const std::uint16_t di = store_.add_image_def(def);
     const double scale = c.scale > 0.0 ? c.scale : 1.0;
     AddImageCommand add;
     add.def = di;
     add.pos = c.pos;
-    add.width = static_cast<double>(img.width) * scale;
-    add.height = static_cast<double>(img.height) * scale;
+    add.width = base.x * scale;
+    add.height = base.y * scale;
     add.rotation = c.rotation;
     const Command cmd = add;
     const EntityHandle nh = create_indexed(cmd);
@@ -19735,12 +19748,17 @@ void GeometryEngine::rebuild_and_publish() {
     // only when the blocks (or the drawing in front) change.
     {
         const std::uint64_t doc = active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].id : 0;
-        if (!block_previews_ || block_previews_serial_ != store_.blocks_serial() || block_previews_doc_ != doc) {
+        if (!block_previews_ || block_previews_serial_ != store_.blocks_serial() || block_previews_doc_ != doc ||
+            block_previews_units_ != store_.units().insunits) {
             auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
             std::vector<InsertSeg> segs;
+            const std::uint8_t target = store_.units().insunits != 0 ? store_.units().insunits : insunits_def_target_;
             for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
                 InsertData ins{};
                 ins.block = bi;
+                // At the size INSERT puts it in at scale 1: the block's units to the drawing's.
+                ins.scale_x = units::insunits_factor(store_.block(bi)->units, target);
+                ins.scale_y = ins.scale_x;
                 segs.clear();
                 resolve_insert(store_, ins, kDefaultTessTolerance, segs);
                 std::vector<Vec2> pairs;
@@ -19755,6 +19773,7 @@ void GeometryEngine::rebuild_and_publish() {
             block_previews_ = std::move(previews);
             block_previews_serial_ = store_.blocks_serial();
             block_previews_doc_ = doc;
+            block_previews_units_ = store_.units().insunits;
         }
         buf.block_previews = block_previews_;
     }

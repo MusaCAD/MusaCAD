@@ -3358,7 +3358,41 @@ void ViewportWindow::rebuild_overlay() {
             break;
         }
         case command::PreviewKind::Outline:
-            // An outline carried at the cursor (TABLE's grid at its insertion point).
+            if (pv.outline_anchor) {
+                // Sized by the cursor about its anchor: the distance is the factor (shown at
+                // the cursor, as SCALE's), or the corner gives X and Y.
+                const core::Vec2 a = *pv.outline_anchor;
+                if (pv.outline_rotate) {
+                    const double ang = std::atan2(cur.y - a.y, cur.x - a.x);
+                    const double c = std::cos(ang);
+                    const double s = std::sin(ang);
+                    for (const core::Vec2& q : pts) {
+                        seg.push_back(a + core::Vec2{q.x * c - q.y * s, q.x * s + q.y * c});
+                    }
+                    seg.push_back(a);
+                    seg.push_back(cur);
+                    live_value_ = ang;
+                    live_kind_ = 2;
+                    break;
+                }
+                core::Vec2 f = cur - a;
+                if (!pv.outline_corner) {
+                    const double d = core::distance(a, cur);
+                    const double s = pv.ref_length > 0.0 ? d / pv.ref_length : d;
+                    f = {s, s};
+                    live_value_ = s;
+                    live_kind_ = 1;
+                }
+                for (std::size_t i = 0; i + 1 < pts.size(); i += 2) {
+                    seg.push_back(a + core::Vec2{pts[i].x * f.x, pts[i].y * f.y});
+                    seg.push_back(a + core::Vec2{pts[i + 1].x * f.x, pts[i + 1].y * f.y});
+                }
+                seg.push_back(a);
+                seg.push_back(cur);
+                break;
+            }
+            // An outline carried at the cursor (TABLE's grid, an image or a block at its
+            // insertion point).
             for (std::size_t i = 0; i + 1 < pts.size(); i += 2) {
                 seg.push_back(cur + pts[i]);
                 seg.push_back(cur + pts[i + 1]);

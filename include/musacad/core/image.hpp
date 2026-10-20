@@ -4,6 +4,8 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 #include <string>
@@ -42,6 +44,24 @@ using ImageQuad = std::array<Vec2, 4>;
 [[nodiscard]] std::vector<Vec2> image_uv_to_world(const ImageData& img, std::span<const Vec2> uv);
 /// Point-in-polygon (even-odd) for a world polygon.
 [[nodiscard]] bool point_in_polygon(std::span<const Vec2> poly, Vec2 p);
+
+/// The resolution a raster file records, in dots per inch along x and y: PNG's pHYs (per
+/// metre), JPEG's JFIF density or EXIF resolution (per inch or per centimetre), BMP's pixels
+/// per metre, TIFF's resolution tags. Nullopt when the file records none (or only an aspect
+/// ratio).
+[[nodiscard]] std::optional<Vec2> image_resolution(std::span<const std::uint8_t> bytes);
+
+/// A raster file's size in pixels (width, height) from its header -- PNG, JPEG, BMP, GIF and
+/// TIFF -- without decoding it. Nullopt for anything else.
+[[nodiscard]] std::optional<std::array<std::uint32_t, 2>> image_pixel_size(std::span<const std::uint8_t> bytes);
+
+/// AutoCAD's base size of an attached image, in drawing units -- its size at scale 1: in a
+/// drawing with a unit (INSUNITS not 0) and a file that records its resolution, its true size
+/// (pixels over dots per inch, in the drawing's unit); otherwise 1 unit wide, the height
+/// following the pixels. The scale factor multiplies it, so with no resolution the scale is
+/// the image's width.
+[[nodiscard]] Vec2 image_base_size(std::uint32_t pixel_w, std::uint32_t pixel_h, std::optional<Vec2> dpi,
+                                   std::uint8_t insunits);
 
 /// Resolve an image definition's external `source` against the directory of the drawing
 /// that referenced it, refusing anything that escapes that directory.

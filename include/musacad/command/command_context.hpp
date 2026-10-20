@@ -108,6 +108,15 @@ struct PreviewSpec {
     /// the value at the cursor.
     double ref_angle = 0.0;
     double ref_length = 1.0;
+    /// PreviewKind::Outline anchored at a point and sized by the cursor -- IMAGEATTACH's and
+    /// INSERT's scale: `points` are segment pairs at scale 1 about the anchor, scaled by the
+    /// cursor's distance from it (AutoCAD's factor, over `ref_length`), or, `outline_corner`,
+    /// by the cursor's X and Y offsets from it (INSERT's opposite corner), or, `outline_rotate`,
+    /// turned by the cursor's bearing from it (the rotation angle). Unset: the outline is
+    /// carried at the cursor.
+    std::optional<core::Vec2> outline_anchor{};
+    bool outline_corner = false;
+    bool outline_rotate = false;
     /// CIRCLE (PreviewKind::Circle): 0 centre + radius to the cursor, 1 centre + diameter
     /// to the cursor, 2 the cursor is the other end of the diameter from points[0], 3 the
     /// circle through points[0], points[1] and the cursor.
@@ -565,6 +574,12 @@ public:
     [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
+    /// A block's geometry as segment pairs about its base point, at the size INSERT puts it in
+    /// at scale 1 (its units to the drawing's) -- INSERT's preview. Empty when not known.
+    [[nodiscard]] virtual std::vector<core::Vec2> block_preview(const std::string& name) const {
+        (void)name;
+        return {};
+    }
     /// The linetypes loaded beyond the built-in four (Linetype kFirstLoadedLinetype + i).
     [[nodiscard]] virtual std::vector<core::LinetypeDef> linetypes() const { return {}; }
     /// The layout names (LAYOUT ?, Set) and the active space (0 = model).

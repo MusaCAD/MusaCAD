@@ -541,6 +541,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_mleader_styles(viewport_->mleader_styles(), viewport_->current_mleader_style());
         processor_->set_current_props(viewport_->current_props());
         processor_->set_block_names(viewport_->block_names());
+        processor_->set_block_previews(viewport_->block_previews());
         {
             std::vector<core::LinetypeDef> loaded = viewport_->linetypes();
             if (properties_panel_ != nullptr) {

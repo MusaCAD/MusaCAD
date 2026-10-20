@@ -145,7 +145,7 @@ TEST_CASE("#10 IMAGECLIP Polygonal through the engine and the command; native v3
     GeometryEngine engine;
     engine.set_image_decoder(&decoder);
     engine.start();
-    engine.submit(AttachImageCommand{temp_image(), true, {0, 0}, 10.0, 0.0, 1}); // 40 x 20
+    engine.submit(AttachImageCommand{temp_image(), true, {0, 0}, 40.0, 0.0, 1}); // one unit wide at 1: 40 x 20
     REQUIRE(wait_until(engine, [](const auto& s) { return s.images.size() == 1; }));
     engine.submit(SetImagePolyClipCommand{{20, 10}, 1.0, {{0, 0}, {40, 0}, {20, 20}}, 2});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.images.size() == 1 && !s.images[0].clip_world.empty(); }));

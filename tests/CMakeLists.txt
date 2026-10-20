@@ -223,7 +223,8 @@ set(_musacad_test_files
     test_find_text.cpp
     test_pedit_vertex.cpp
     test_dwgunits.cpp
-    test_measurement_vars.cpp)
+    test_measurement_vars.cpp
+    test_attach_scale.cpp)
 
 set(_musacad_test_binaries "")
 list(LENGTH _musacad_test_files _musacad_n)

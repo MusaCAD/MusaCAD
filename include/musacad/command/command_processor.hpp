@@ -299,6 +299,18 @@ public:
     void set_current_props(const core::EntityProps& p) { current_props_ = p; }
     [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
+    /// The blocks' geometry, in block_names order (RenderSnapshot::block_previews).
+    void set_block_previews(std::shared_ptr<const std::vector<std::vector<core::Vec2>>> p) {
+        block_previews_ = std::move(p);
+    }
+    [[nodiscard]] std::vector<core::Vec2> block_preview(const std::string& name) const override {
+        for (std::size_t i = 0; block_previews_ && i < block_names_.size() && i < block_previews_->size(); ++i) {
+            if (block_names_[i] == name) {
+                return (*block_previews_)[i];
+            }
+        }
+        return {};
+    }
     void set_linetypes(std::vector<core::LinetypeDef> v) { linetypes_ = std::move(v); }
     [[nodiscard]] std::vector<core::LinetypeDef> linetypes() const override { return linetypes_; }
     void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
@@ -485,6 +497,7 @@ private:
     std::uint16_t current_mleader_style_ = 0;
     core::EntityProps current_props_{};
     std::vector<std::string> block_names_;
+    std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews_;
     std::vector<core::LinetypeDef> linetypes_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;
