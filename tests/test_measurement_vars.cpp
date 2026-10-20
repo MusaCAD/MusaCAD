@@ -483,7 +483,11 @@ TEST_CASE("JOIN: splines end to end make one spline; only ends that meet chain; 
         REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
         doc = dump(engine, "musacad_jointype.musa");
         REQUIRE(doc.polylines.size() == 1);
-        const std::vector<Vec2>& v = doc.polylines[0].points;
+        // Either way round: which line the chain starts from is the selection's order.
+        std::vector<Vec2> v = doc.polylines[0].points;
+        if (!v.empty() && v.front() != Vec2{0, 0}) {
+            std::reverse(v.begin(), v.end());
+        }
         if (type == 0) {
             REQUIRE(v == std::vector<Vec2>{{0, 0}, {11, 0}, {11, 10}});
         } else {
