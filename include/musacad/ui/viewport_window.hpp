@@ -581,6 +581,9 @@ public:
     void set_properties_toggle_callback(std::function<void()> cb) {
         properties_toggle_callback_ = std::move(cb);
     }
+    /// DYNMODE turned Dynamic Input on or off: the MainWindow (which owns the F12 toggle)
+    /// follows.
+    void set_dyn_toggle_callback(std::function<void(bool)> cb) { dyn_toggle_callback_ = std::move(cb); }
     /// DWGIN/DWGOUT command -> the MainWindow (which owns the file dialogs + converter)
     /// runs the import/export. ViewControl::import_dwg/export_dwg forward to these.
     void set_dwg_import_callback(std::function<void()> cb) { dwg_import_callback_ = std::move(cb); }
@@ -786,6 +789,13 @@ private:
     // rebuilt into the overlay each frame; a typed value also pins that DOF in the
     // rubber-band (apply_dyn_lock) so the preview reflects it.
     bool dyn_enabled_ = false;
+    /// DYNMODE's parts (1 pointer input, 2 dimensional input), DYNPROMPT (the prompt shown at
+    /// the cursor) and DYNPIFORMAT (a next point's coordinates shown polar 0, Cartesian 1).
+    std::atomic<int> dyn_bits_{3};
+    std::atomic<int> dynprompt_{1};
+    std::atomic<int> dynpiformat_{0};
+    /// The cursor where the next point would go, in world (snaps and constraints applied).
+    [[nodiscard]] core::Vec2 cursor_world_now();
     int dyn_active_slot_ = 0;
     std::array<std::string, 2> dyn_buf_{};
     core::Vec2 dyn_cursor_{}; // last constrained cursor (world)
@@ -951,6 +961,7 @@ private:
     core::Vec2 bounds_max_{};
     bool has_bounds_ = false;
     std::function<void()> properties_toggle_callback_;
+    std::function<void(bool)> dyn_toggle_callback_;
     std::function<void()> dwg_import_callback_;
     std::function<void()> dwg_export_callback_;
     std::function<void()> plot_dialog_callback_;

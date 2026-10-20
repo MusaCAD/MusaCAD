@@ -327,6 +327,9 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
     if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
     if (name == "GRIPHOVER") return griphover_.load() == 0 ? 11 : griphover_.load();
+    if (name == "DYNMODE") return dyn_enabled_ ? dyn_bits_.load() : -dyn_bits_.load();
+    if (name == "DYNPROMPT") return dynprompt_.load();
+    if (name == "DYNPIFORMAT") return dynpiformat_.load();
     if (name == "GRIPOBJLIMIT") return gripobjlimit_.load();
     if (name == "TRANSPARENCYDISPLAY") return transparencydisplay_.load();
     if (name == "UCSICON") return ucsicon_.load();
@@ -362,6 +365,24 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         griphot_ = value;
     } else if (name == "GRIPHOVER" && in(1, 255)) {
         griphover_ = value;
+    } else if (name == "DYNMODE" && in(-3, 3)) {
+        // 1 pointer input, 2 dimensional input, 3 both; 0 off; negative: off, the parts kept
+        // for F12 to turn back on.
+        if (value != 0) {
+            dyn_bits_ = value < 0 ? -value : value;
+        }
+        const bool on = value > 0;
+        if (on != dyn_enabled_) {
+            if (dyn_toggle_callback_) {
+                dyn_toggle_callback_(on);
+            } else {
+                set_dyn_enabled(on);
+            }
+        }
+    } else if (name == "DYNPROMPT" && in(0, 1)) {
+        dynprompt_ = value;
+    } else if (name == "DYNPIFORMAT" && in(0, 1)) {
+        dynpiformat_ = value;
     } else if (name == "GRIPOBJLIMIT" && in(0, 32767)) {
         gripobjlimit_ = value;
     } else if (name == "TRANSPARENCYDISPLAY" && in(0, 1)) {
@@ -2821,7 +2842,7 @@ void ViewportWindow::rebuild_overlay() {
         const auto& pts = pv.points;
         // On-canvas Dynamic Input: a typed field pins that dimension -- the preview
         // draws to the locked point while the cursor drives the unlocked DOF.
-        const bool dim = dyn_enabled_ && dyn_dimensional();
+        const bool dim = dyn_enabled_ && (dyn_bits_.load() & 2) != 0 && dyn_dimensional();
         std::optional<double> dyn_prim;
         std::optional<double> dyn_sec;
         if (dim) {
@@ -3623,7 +3644,8 @@ int ViewportWindow::dyn_field_count() const {
 }
 
 bool ViewportWindow::dyn_capturing() const {
-    return dyn_enabled_ && processor_ != nullptr && processor_->has_active_command() &&
+    // DYNMODE without its dimensional input part: no length and angle fields.
+    return dyn_enabled_ && (dyn_bits_.load() & 2) != 0 && processor_ != nullptr && processor_->has_active_command() &&
            dyn_dimensional();
 }
 
@@ -3950,7 +3972,21 @@ bool ViewportWindow::sub_prompt_active() const {
     // A command is running but not in a dimensional rubber-band (those use the value
     // fields). This step's input surface is the at-cursor prompt cell.
     return dyn_enabled_ && processor_ != nullptr && processor_->has_active_command() &&
-           !dyn_dimensional();
+           !(dyn_dimensional() && (dyn_bits_.load() & 2) != 0);
+}
+
+core::Vec2 ViewportWindow::cursor_world_now() {
+    core::Vec2 raw;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        raw = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                 cursor_px_y_.load(std::memory_order_relaxed)});
+    }
+    std::optional<core::Vec2> snap;
+    if (snap_has_.load(std::memory_order_relaxed)) {
+        snap = core::Vec2{snap_x_.load(std::memory_order_relaxed), snap_y_.load(std::memory_order_relaxed)};
+    }
+    return processor_ != nullptr ? processor_->resolve_pick(raw, snap) : raw;
 }
 
 bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
@@ -3962,13 +3998,32 @@ bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
         return false; // the caller cancels the command
     case Qt::Key_Return:
     case Qt::Key_Enter: {
-        const std::string v = sub_entry_;
+        std::string v = sub_entry_;
         sub_entry_.clear();
         sync_selection_to_processor();
+        // A coordinate typed for a next point (a rubber band from the point before): pointer
+        // input takes it relative unless DYNPICOORDS is 1; `#` absolute, `@` relative.
+        const command::PreviewSpec& pv = processor_->preview();
+        const bool next = pv.kind != command::PreviewKind::None && !pv.points.empty();
+        if (const std::optional<std::string> pointer = command::dyn_pointer_input(v, next)) {
+            v = *pointer;
+        }
         processor_->submit_line(v); // empty -> the command's default (accept <0>, end LINE, ...)
         rebuild_overlay();
         return true;
     }
+    case Qt::Key_Tab:
+        // Pointer input: Tab keeps the X typed (or the cursor's) and goes on to Y.
+        if ((dyn_bits_.load() & 1) != 0 && !processor_->wants_free_text() &&
+            command::prompt_asks_point(processor_->current_prompt()) && sub_entry_.find(',') == std::string::npos) {
+            if (sub_entry_.empty()) {
+                sub_entry_ = core::units::format_length(cursor_world_now().x, processor_->units());
+            }
+            sub_entry_ += ',';
+            rebuild_overlay();
+            return true;
+        }
+        return false;
     case Qt::Key_Backspace:
         if (sub_entry_.empty()) {
             return false;
@@ -3991,7 +4046,7 @@ bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
         const QChar c = text.at(0);
         if (c.isLetterOrNumber() || c == QLatin1Char('.') || c == QLatin1Char('-') ||
             c == QLatin1Char(',') || c == QLatin1Char('@') || c == QLatin1Char('<') ||
-            c == QLatin1Char('/')) {
+            c == QLatin1Char('/') || c == QLatin1Char('#')) {
             sub_entry_ += c.toLatin1();
             rebuild_overlay();
             return true;
@@ -4013,15 +4068,33 @@ void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
                    ? cmd_advance(s, h)
                    : static_cast<double>(s.size()) * h * 0.55;
     };
-    const std::string label = processor_ != nullptr ? processor_->current_prompt() : std::string{};
+    const std::string prompt = processor_ != nullptr ? processor_->current_prompt() : std::string{};
+    const std::string label = dynprompt_.load() != 0 ? prompt : std::string{}; // DYNPROMPT 0: no prompt
     // The field: what has been typed, else the live value of a ROTATE / SCALE band (the
     // angle or the factor the cursor stands for, in the drawing's units -- AutoCAD's
-    // Dynamic Input shows it the same way, and typing replaces it).
+    // Dynamic Input shows it the same way, and typing replaces it), else pointer input's:
+    // the cursor's coordinates where a point is asked, or, for a next point, how far it is
+    // from the point before (polar, or Cartesian with DYNPIFORMAT 1).
     std::string value = sub_entry_;
     if (value.empty() && live_kind_ != 0 && processor_ != nullptr) {
         const core::DrawingUnits u = processor_->units();
         value = live_kind_ == 1 ? core::units::format_length(live_value_, u)
                                 : core::units::format_angle(live_value_, u);
+    } else if (value.empty() && processor_ != nullptr && (dyn_bits_.load() & 1) != 0 &&
+               !processor_->wants_free_text() && command::prompt_asks_point(prompt)) {
+        const core::DrawingUnits u = processor_->units();
+        const core::Vec2 at = cursor_world_now();
+        const command::PreviewSpec& pv = processor_->preview();
+        if (pv.kind != command::PreviewKind::None && !pv.points.empty()) {
+            const core::Vec2 from = pv.kind == command::PreviewKind::Polyline ? pv.points.back() : pv.points[0];
+            const core::Vec2 d = at - from;
+            value = dynpiformat_.load() == 1
+                        ? core::units::format_length(d.x, u) + "," + core::units::format_length(d.y, u)
+                        : core::units::format_length(core::length(d), u) + "<" +
+                              core::units::format_angle(std::atan2(d.y, d.x), u);
+        } else {
+            value = core::units::format_length(at.x, u) + "," + core::units::format_length(at.y, u);
+        }
     }
     const double lw = adv(label);
     const double gap = value.empty() ? 0.0 : 6.0 * dpr;

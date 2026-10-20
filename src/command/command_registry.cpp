@@ -644,6 +644,12 @@ CommandRegistry CommandRegistry::make_default() {
         "The colour of a grip under the cursor, an AutoCAD colour number (1 to 255).");
     reg({"GRIPOBJLIMIT"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPOBJLIMIT"); }, "",
         "No grips when more objects than this are selected (0: grips however many).");
+    reg({"DYNMODE"}, [] { return std::make_unique<SelectionSettingCommand>("DYNMODE"); }, "",
+        "Dynamic Input: 1 pointer input, 2 dimensional input, 3 both, 0 off (negative: off, F12 turns it back on).");
+    reg({"DYNPROMPT"}, [] { return std::make_unique<SelectionSettingCommand>("DYNPROMPT"); }, "",
+        "Dynamic Input shows the command's prompt at the cursor (1) or only the value (0).");
+    reg({"DYNPIFORMAT"}, [] { return std::make_unique<SelectionSettingCommand>("DYNPIFORMAT"); }, "",
+        "Pointer input shows a next point polar (0, distance<angle) or Cartesian (1, x,y).");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
         "Check the drawing for bad references and structure; optionally fix them.");
     reg({"FILL"}, [] { return std::make_unique<FillCommand>(false); }, "",

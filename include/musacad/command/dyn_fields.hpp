@@ -65,4 +65,9 @@ struct DynField {
 /// and `@` relative, either way. Nullopt for what is not a coordinate (`x,y` or `dist<angle`).
 [[nodiscard]] std::optional<std::string> dyn_pointer_input(std::string_view typed, bool next);
 
+/// A prompt asking for a point (`Specify first point:`, `Specify center point for circle`,
+/// `Specify insertion point`, `Specify first corner point`): Dynamic Input's pointer input
+/// shows the cursor's coordinates there.
+[[nodiscard]] bool prompt_asks_point(std::string_view prompt);
+
 } // namespace musacad::command

@@ -3,7 +3,8 @@
 //
 // The dimension style's View Direction (DIMTXTDIRECTION) and the Tolerances tab's Scaling for
 // height (DIMTFAC), DIMJUST as a variable, both kept in the drawing and in DXF (#58); a grip
-// under the cursor told from one grabbed (GRIPHOVER, #54).
+// under the cursor told from one grabbed (GRIPHOVER, #54); PEDIT's Close or Open (#52); the
+// prompts Dynamic Input's pointer input shows coordinates at (#65).
 
 #include <chrono>
 #include <string>
@@ -13,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "musacad/command/command_processor.hpp"
+#include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
@@ -143,4 +145,15 @@ TEST_CASE("PEDIT offers Close for an open polyline and Open for a closed one") {
     proc.submit_line("");
     proc.set_hovered_kind(std::nullopt);
     proc.set_hovered_closed(false);
+}
+
+TEST_CASE("Pointer input knows a prompt that asks for a point") {
+    using musacad::command::prompt_asks_point;
+    REQUIRE(prompt_asks_point("Specify first point: "));
+    REQUIRE(prompt_asks_point("Specify center point for circle or [3P/2P/Ttr (tan tan radius)]: "));
+    REQUIRE(prompt_asks_point("Specify insertion point or [Scale/X/Y/Z/Rotate]: "));
+    REQUIRE(prompt_asks_point("Specify first corner point or [Chamfer/Elevation/Fillet/Thickness/Width]: "));
+    REQUIRE_FALSE(prompt_asks_point("Specify fillet radius <0.0000>: "));
+    REQUIRE_FALSE(prompt_asks_point("Select objects: "));
+    REQUIRE_FALSE(prompt_asks_point("Enter an option [Close/Open/Join]: ")); // the options are not read
 }

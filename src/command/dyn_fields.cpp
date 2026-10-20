@@ -3,6 +3,8 @@
 
 #include "musacad/command/dyn_fields.hpp"
 
+#include <cctype>
+
 #include <cmath>
 
 namespace musacad::command {
@@ -183,6 +185,22 @@ std::optional<std::string> dyn_pointer_input(std::string_view typed, bool next) 
         return std::string(typed);
     }
     return "@" + std::string(typed); // relative to the point before, AutoCAD's default
+}
+
+bool prompt_asks_point(std::string_view prompt) {
+    std::string p;
+    for (const char c : prompt.substr(0, prompt.find('['))) {
+        p += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (p.rfind("specify", 0) != 0 && p.rfind("pick", 0) != 0) {
+        return false;
+    }
+    for (const char* word : {"point", "corner", "center", "centre", "location", "position", "vertex"}) {
+        if (p.find(word) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace musacad::command

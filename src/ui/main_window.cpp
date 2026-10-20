@@ -631,6 +631,9 @@ MainWindow::~MainWindow() {
         settings.setValue(QStringLiteral("sysvar/HPSEPARATE"), command::hpseparate() ? 1 : 0);
         settings.setValue(QStringLiteral("sysvar/MEASUREINIT"), command::measureinit());
         settings.setValue(QStringLiteral("sysvar/DYNPICOORDS"), command::dynpicoords());
+        settings.setValue(QStringLiteral("sysvar/DYNBITS"), std::abs(viewport_->selection_setting("DYNMODE")));
+        settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), viewport_->selection_setting("DYNPROMPT"));
+        settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), viewport_->selection_setting("DYNPIFORMAT"));
     }
     if (restore_dyn_pref_) {
         // A harness run leaves the saved Dynamic Input preference exactly as it found it
@@ -1244,6 +1247,12 @@ void MainWindow::build_status_bar() {
         command::hpseparate() = value("HPSEPARATE", 0) != 0;
         command::measureinit() = value("MEASUREINIT", 1);
         command::dynpicoords() = value("DYNPICOORDS", 0);
+        // DYNMODE's parts (on or off is F12's own preference), DYNPROMPT and DYNPIFORMAT.
+        const int bits = std::clamp(saved ? s.value(QStringLiteral("sysvar/DYNBITS"), 3).toInt() : 3, 1, 3);
+        viewport_->set_selection_setting("DYNMODE", dyn_action_->isChecked() ? bits : -bits); // the parts only
+        viewport_->set_selection_setting("DYNPROMPT", value("DYNPROMPT", 1));
+        viewport_->set_selection_setting("DYNPIFORMAT", value("DYNPIFORMAT", 0));
+        viewport_->set_dyn_toggle_callback([this](bool on) { dyn_action_->setChecked(on); });
         core::DimAssocCommand init;
         init.op = core::DimAssocCommand::Op::MeasureInitNow;
         init.value = static_cast<std::uint8_t>(command::measureinit());

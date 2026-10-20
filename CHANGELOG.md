@@ -18,6 +18,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   (`Specify rotation angle <0>:`).
 - **Image grips** -- a grip on each corner, as AutoCAD has them: dragged, the image scales
   about the opposite corner and keeps its proportions.
+- **Dynamic Input's pointer input** (#65) -- where a point is asked, the value at the cursor is
+  the cursor's coordinates, and Tab keeps the X and goes on to Y; for a next point, how far
+  it is from the point before, polar (`distance<angle`) or, with **DYNPIFORMAT** 1, Cartesian.
+  A coordinate typed there is taken as AutoCAD takes it -- relative to the point before unless
+  DYNPICOORDS is 1, `#` absolute. **DYNMODE** (1 pointer input, 2 dimensional input, 3 both,
+  0 off, negative off until F12) and **DYNPROMPT** (the prompt shown at the cursor or not); the
+  three are kept between runs.
 - **GRIPHOVER** and **GRIPOBJLIMIT** (#54) -- the colour of a grip under the cursor (a grip
   grabbed keeps GRIPHOT's), and no grips when more objects than GRIPOBJLIMIT are selected
   (100; 0 for no limit), as AutoCAD has them.

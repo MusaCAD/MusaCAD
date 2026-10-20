@@ -8854,7 +8854,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNPICOORDS",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
