@@ -702,6 +702,8 @@ private:
     /// Unset: Musa CAD's former definitions, unitless.
     std::optional<std::uint8_t> measureinit_;
     void apply_measureinit(std::uint8_t m);
+    /// REVCLOUD Modify (RevcloudObjectCommand::modify).
+    void apply_revcloud_modify(const RevcloudObjectCommand& c);
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;

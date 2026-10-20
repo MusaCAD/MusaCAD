@@ -100,6 +100,12 @@ struct PreviewSpec {
     /// A hot grip's STRETCH (GripModeCommand): the viewport streams the resolved cursor to
     /// the engine's grip drag (GripDragCommand Move), which previews the object edited.
     bool grip_hot = false;
+    /// A hot grip's STRETCH measured from the object, as AutoCAD's grip dimensions are: a
+    /// line's other end, the polyline vertex before, a circle's or an arc's centre (with
+    /// `grip_radius`). Dynamic Input's fields are then the length change, the resulting
+    /// length (or radius) and the angles DYNDIGRIP asks for; `points[0]` stays the grip.
+    std::optional<core::Vec2> grip_anchor{};
+    bool grip_radius = false;
     /// ROTATE / SCALE (PreviewKind::Rotate / Scale): points[0] is the base point. The
     /// live angle is the cursor's bearing from it minus `ref_angle` (radians; ROTATE
     /// Reference), the live factor the cursor's distance from it divided by
@@ -537,6 +543,8 @@ public:
     [[nodiscard]] virtual std::optional<core::EntityKind> hovered_kind() const { return std::nullopt; }
     /// The object under the cursor is a closed polyline (PEDIT offers Open, else Close).
     [[nodiscard]] virtual bool hovered_closed() const { return false; }
+    /// The selected dimensions' definition points (DIMREASSOCIATE asks for them one by one).
+    [[nodiscard]] virtual std::vector<core::SelectedDim> selected_dims() const { return {}; }
 
     [[nodiscard]] virtual ViewControl* view() = 0;
     /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.

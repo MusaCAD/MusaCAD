@@ -244,7 +244,7 @@ TEST_CASE("REVCLOUD: Calligraphy lobes taper; the type is remembered and the pro
     h.proc.submit_line("REVCLOUD");
     h.proc.submit_line("F");
     REQUIRE(h.out.prompt ==
-            "Specify first point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] <Object>: ");
+            "Specify first point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style/Modify] <Object>: ");
     h.proc.submit_line("S");
     REQUIRE(h.out.prompt == "Select arc style [Normal/Calligraphy] <Normal>: ");
     h.proc.submit_line("C");
@@ -253,7 +253,7 @@ TEST_CASE("REVCLOUD: Calligraphy lobes taper; the type is remembered and the pro
     h.proc.submit_line("25");
     h.proc.submit_line("R");
     REQUIRE(h.out.prompt ==
-            "Specify first corner point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] <Object>: ");
+            "Specify first corner point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style/Modify] <Object>: ");
     h.proc.submit_line("0,0");
     REQUIRE(h.out.prompt == "Specify opposite corner: ");
     h.proc.submit_line("100,50");

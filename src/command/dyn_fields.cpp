@@ -3,9 +3,12 @@
 
 #include "musacad/command/dyn_fields.hpp"
 
+#include <array>
 #include <cctype>
 
 #include <cmath>
+
+#include "musacad/core/grips.hpp"
 
 namespace musacad::command {
 
@@ -34,9 +37,178 @@ bool dyn_segment_like(const PreviewSpec& pv) noexcept {
            (pv.kind == PreviewKind::Polyline && pv.pline_dyn && !pv.points.empty());
 }
 
+namespace {
+// A hot grip's fields, in the order shown: 0 the length change, 1 the resulting length (or
+// radius), 2 the absolute angle, 3 the angle change -- as many as DYNDIVIS shows of those
+// DYNDIGRIP asks for.
+std::vector<int> grip_roles(const PreviewSpec& pv) {
+    const int bits = dyndigrip();
+    std::vector<int> roles;
+    if ((bits & 2) != 0) {
+        roles.push_back(0);
+    }
+    if ((bits & (pv.grip_radius ? 1 | 16 : 1)) != 0) {
+        roles.push_back(1);
+    }
+    if (!pv.grip_radius) {
+        if ((bits & 4) != 0) {
+            roles.push_back(2);
+        }
+        if ((bits & 8) != 0) {
+            roles.push_back(3);
+        }
+    }
+    const int divis = dyndivis();
+    const std::size_t shown = divis <= 0 ? 1 : divis == 1 ? 2 : roles.size();
+    if (roles.size() > shown) {
+        roles.resize(shown);
+    }
+    return roles;
+}
+
+double turn_deg(double d) {
+    while (d > 180.0) {
+        d -= 360.0;
+    }
+    while (d <= -180.0) {
+        d += 360.0;
+    }
+    return d;
+}
+
+void grip_fields(const PreviewSpec& pv, core::Vec2 cursor, std::vector<DynField>& out) {
+    const core::Vec2 a = *pv.grip_anchor;
+    const core::Vec2 g = pv.points[0];
+    const double len = core::distance(a, cursor);
+    const double len0 = core::distance(a, g);
+    const double ang0 = std::atan2(g.y - a.y, g.x - a.x) * kRadToDeg;
+    const double ang = len > 1e-12 ? std::atan2(cursor.y - a.y, cursor.x - a.x) * kRadToDeg : ang0;
+    const core::Vec2 u = len > 1e-12 ? (cursor - a) * (1.0 / len) : core::Vec2{1.0, 0.0};
+    const core::Vec2 was = a + u * len0; // the old length along the new direction
+    const std::vector<int> roles = grip_roles(pv);
+    for (std::size_t i = 0; i < roles.size(); ++i) {
+        const int slot = static_cast<int>(i);
+        switch (roles[i]) {
+        case 0:
+            out.push_back({pv.grip_radius ? "Radius change" : "Length change", (was + cursor) * 0.5, len - len0,
+                           false, slot});
+            break;
+        case 1:
+            out.push_back({pv.grip_radius ? "Radius" : "Length", (a + cursor) * 0.5, len, false, slot});
+            break;
+        case 2:
+            out.push_back({"Angle", cursor, ang, true, slot});
+            break;
+        default:
+            out.push_back({"Angle change", a + (cursor - a) * 0.25, turn_deg(ang - ang0), true, slot});
+            break;
+        }
+    }
+}
+} // namespace
+
+bool dyn_grip_measured(const PreviewSpec& pv) noexcept {
+    return pv.grip_hot && pv.grip_anchor.has_value() && !pv.points.empty();
+}
+
+core::Vec2 grip_dyn_point(const PreviewSpec& pv, core::Vec2 cursor, std::span<const std::optional<double>> typed) {
+    if (!dyn_grip_measured(pv)) {
+        return cursor;
+    }
+    const core::Vec2 a = *pv.grip_anchor;
+    const core::Vec2 g = pv.points[0];
+    const double len0 = core::distance(a, g);
+    const double ang0 = std::atan2(g.y - a.y, g.x - a.x);
+    double len = core::distance(a, cursor);
+    double ang = len > 1e-12 ? std::atan2(cursor.y - a.y, cursor.x - a.x) : ang0;
+    const std::vector<int> roles = grip_roles(pv);
+    bool any = false;
+    std::array<std::optional<double>, 4> v{};
+    for (std::size_t i = 0; i < roles.size() && i < typed.size(); ++i) {
+        if (typed[i]) {
+            v[static_cast<std::size_t>(roles[i])] = typed[i];
+            any = true;
+        }
+    }
+    if (!any) {
+        return cursor;
+    }
+    if (v[1]) {
+        len = *v[1];
+    } else if (v[0]) {
+        len = len0 + *v[0];
+    }
+    if (v[2]) {
+        ang = *v[2] * kDegToRad;
+    } else if (v[3]) {
+        ang = ang0 + *v[3] * kDegToRad;
+    }
+    return {a.x + len * std::cos(ang), a.y + len * std::sin(ang)};
+}
+
+std::string compose_grip_submit(const PreviewSpec& pv, core::Vec2 cursor, std::span<const std::optional<double>> typed) {
+    bool any = false;
+    for (const std::optional<double>& v : typed) {
+        any = any || v.has_value();
+    }
+    if (!any || !dyn_grip_measured(pv)) {
+        return {};
+    }
+    const core::Vec2 p = grip_dyn_point(pv, cursor, typed);
+    return "#" + num(p.x) + "," + num(p.y);
+}
+
+std::optional<core::Vec2> grip_dyn_anchor(std::span<const core::GripInfo> grips, core::EntityHandle h,
+                                          std::uint32_t index, bool& radius) {
+    radius = false;
+    const auto at = [&](std::uint32_t i) -> std::optional<core::Vec2> {
+        for (const core::GripInfo& g : grips) {
+            if (g.handle == h && g.index == i) {
+                return g.pos;
+            }
+        }
+        return std::nullopt;
+    };
+    switch (h.kind) {
+    case core::EntityKind::Line:
+        return index <= 1 ? at(1 - index) : std::nullopt;
+    case core::EntityKind::Circle:
+        radius = index >= 1 && index <= 4;
+        return radius ? at(0) : std::nullopt;
+    case core::EntityKind::Arc:
+        radius = index == 3;
+        return radius ? at(0) : std::nullopt;
+    case core::EntityKind::Polyline: {
+        if (index >= core::kSegmentGripBase) {
+            return std::nullopt;
+        }
+        std::uint32_t verts = 0;
+        std::uint32_t segs = 0;
+        for (const core::GripInfo& g : grips) {
+            if (g.handle == h) {
+                (g.index >= core::kSegmentGripBase ? segs : verts) += 1;
+            }
+        }
+        if (verts < 2) {
+            return std::nullopt;
+        }
+        if (index > 0) {
+            return at(index - 1);
+        }
+        return segs == verts ? at(verts - 1) : at(1); // closed: the last; open: the next
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
 std::vector<DynField> dyn_fields(const PreviewSpec& pv, core::Vec2 cursor) {
     std::vector<DynField> out;
     if (pv.points.empty()) {
+        return out;
+    }
+    if (dyn_grip_measured(pv)) {
+        grip_fields(pv, cursor, out);
         return out;
     }
     const core::Vec2 a = anchor_of(pv);
@@ -160,6 +332,16 @@ core::Vec2 apply_dyn_lock(const PreviewSpec& pv, core::Vec2 cursor, std::optiona
 
 int& dynpicoords() noexcept {
     static int value = 0;
+    return value;
+}
+
+int& dyndigrip() noexcept {
+    static int value = 31;
+    return value;
+}
+
+int& dyndivis() noexcept {
+    static int value = 1;
     return value;
 }
 

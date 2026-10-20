@@ -259,6 +259,11 @@ std::uint16_t ViewportWindow::current_mleader_style() {
     return current_mleader_style_;
 }
 
+std::vector<core::SelectedDim> ViewportWindow::selected_dims() {
+    std::scoped_lock lock(layers_mutex_);
+    return selected_dims_;
+}
+
 std::vector<std::string> ViewportWindow::block_names() {
     std::scoped_lock lock(layers_mutex_);
     return block_names_;
@@ -1646,6 +1651,10 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 kinds |= 1u << (static_cast<unsigned>(h.kind) & 31u);
             }
             selection_kinds_.store(kinds, std::memory_order_relaxed);
+            if ((kinds & (1u << static_cast<unsigned>(core::EntityKind::Dimension))) != 0 || !selected_dims_.empty()) {
+                std::scoped_lock dims_lock(layers_mutex_);
+                selected_dims_ = snap.selected_dims;
+            }
             selection_w_.store(snap.selection_size.x, std::memory_order_relaxed);
             block_editor_.store(snap.block_editor, std::memory_order_relaxed);
             selection_h_.store(snap.selection_size.y, std::memory_order_relaxed);
@@ -2422,7 +2431,9 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         if (core::length(rel_screen - grip_press_screen_) < 4.0 * dpr) {
             // A click, not a drag: the grip is hot and the grip modes take over (the
             // engine's drag stays under way for STRETCH).
-            processor_->start_grip_mode(grip_begin_, grip_pressed_.pos);
+            bool radius = false;
+            const std::optional<core::Vec2> anchor = grip_anchor_of(grip_pressed_, radius);
+            processor_->start_grip_mode(grip_begin_, grip_pressed_.pos, anchor, radius);
             rebuild_overlay();
             return;
         }
@@ -2631,7 +2642,10 @@ void ViewportWindow::show_polyline_grip_menu(const core::GripInfo& grip, QPoint 
     if (chosen == stretch) {
         engine_.submit(core::GripDragCommand{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0});
         processor_->set_last_point(grip.pos);
-        processor_->start_grip_mode(grip.handle, grip.index, grip.pos);
+        bool radius = false;
+        const std::optional<core::Vec2> anchor = grip_anchor_of(grip, radius);
+        processor_->start_grip_mode(core::GripDragCommand{core::GripDragCommand::Phase::Begin, grip.handle, grip.index, {}, 0},
+                                    grip.pos, anchor, radius);
         rebuild_overlay();
         return;
     }
@@ -2690,7 +2704,9 @@ void ViewportWindow::show_curve_grip_menu(const core::GripInfo& grip, QPoint glo
     begin.variant = static_cast<std::uint8_t>(chosen == stretch ? 0 : grip.index == 3 ? 2 : 1);
     engine_.submit(begin);
     processor_->set_last_point(grip.pos);
-    processor_->start_grip_mode(begin, grip.pos);
+    bool radius = false;
+    const std::optional<core::Vec2> anchor = grip_anchor_of(grip, radius);
+    processor_->start_grip_mode(begin, grip.pos, anchor, radius);
     rebuild_overlay();
 }
 
@@ -2771,7 +2787,7 @@ void ViewportWindow::rebuild_overlay() {
 
     // Drop any typed Dynamic-Input value once the command/rubber-band ends, so a new
     // command never inherits stale field text.
-    if (!dyn_capturing() && (!dyn_buf_[0].empty() || !dyn_buf_[1].empty() || dyn_active_slot_ != 0)) {
+    if (!dyn_capturing() && (dyn_any_typed() || dyn_active_slot_ != 0)) {
         dyn_reset();
     }
 
@@ -2843,13 +2859,16 @@ void ViewportWindow::rebuild_overlay() {
         // On-canvas Dynamic Input: a typed field pins that dimension -- the preview
         // draws to the locked point while the cursor drives the unlocked DOF.
         const bool dim = dyn_enabled_ && (dyn_bits_.load() & 2) != 0 && dyn_dimensional();
-        std::optional<double> dyn_prim;
-        std::optional<double> dyn_sec;
+        std::array<std::optional<double>, 4> dyn_typed{};
         if (dim) {
-            dyn_prim = dyn_parse(dyn_buf_[0]);
-            dyn_sec = dyn_parse(dyn_buf_[1]);
+            for (std::size_t i = 0; i < dyn_buf_.size(); ++i) {
+                dyn_typed[i] = dyn_parse(dyn_buf_[i]);
+            }
         }
-        const core::Vec2 cur_eff = command::apply_dyn_lock(pv, cur, dyn_prim, dyn_sec);
+        // A hot grip's stretch measured from the object: its length, angle and their changes.
+        const core::Vec2 cur_eff = command::dyn_grip_measured(pv)
+                                       ? command::grip_dyn_point(pv, cur, dyn_typed)
+                                       : command::apply_dyn_lock(pv, cur, dyn_typed[0], dyn_typed[1]);
         // Live STRETCH: stream the (ortho/snap/DYN-resolved) cursor delta to the geometry
         // thread, which previews the whole selection stretched by it. Only on change, so
         // a redraw that did not move the cursor does not resubmit the same preview.
@@ -3445,7 +3464,8 @@ void ViewportWindow::rebuild_overlay() {
         // drift). The shown value is the typed buffer if any, else the live value.
         if (dim) {
             const bool seg_like = command::dyn_segment_like(pv);
-            const core::Vec2 a = pts.empty() ? core::Vec2{0, 0}
+            const core::Vec2 a = command::dyn_grip_measured(pv) ? *pv.grip_anchor
+                                 : pts.empty()                     ? core::Vec2{0, 0}
                                  : (pv.kind == command::PreviewKind::Polyline ? pts.back() : pts[0]);
             const core::Vec2 b = cur_eff;
             const auto unit = [](core::Vec2 v) -> core::Vec2 {
@@ -3461,13 +3481,13 @@ void ViewportWindow::rebuild_overlay() {
                 if (pv.kind == command::PreviewKind::Rectangle) {
                     label.out = unit(f.anchor - rcenter);
                 } else if (seg_like) {
-                    label.out = (f.slot == 0) ? unit({-(b.y - a.y), b.x - a.x}) // Length: aside
-                                              : unit(b - a);                    // Angle: ahead
+                    label.out = !f.is_angle ? unit({-(b.y - a.y), b.x - a.x}) // Length: aside
+                                            : unit(b - a);                    // Angle: ahead
                 } else { // Circle radius: beside the radius line
                     label.out = unit({-(b.y - a.y), b.x - a.x});
                 }
                 const std::string& buf =
-                    (f.slot >= 0 && f.slot < 2) ? dyn_buf_[static_cast<std::size_t>(f.slot)]
+                    (f.slot >= 0 && f.slot < static_cast<int>(dyn_buf_.size())) ? dyn_buf_[static_cast<std::size_t>(f.slot)]
                                                 : std::string{};
                 label.text = buf.empty() ? dyn_format(f.value) : buf;
                 label.focused = (f.slot == dyn_active_slot_);
@@ -3629,6 +3649,9 @@ int ViewportWindow::dyn_field_count() const {
         return 0;
     }
     using command::PreviewKind;
+    if (command::dyn_grip_measured(processor_->preview())) {
+        return static_cast<int>(command::dyn_fields(processor_->preview(), dyn_cursor_).size());
+    }
     if (command::dyn_segment_like(processor_->preview())) {
         return 2;
     }
@@ -3643,6 +3666,11 @@ int ViewportWindow::dyn_field_count() const {
     }
 }
 
+std::optional<core::Vec2> ViewportWindow::grip_anchor_of(const core::GripInfo& grip, bool& radius) {
+    std::scoped_lock lock(grips_mutex_);
+    return command::grip_dyn_anchor(grips_cache_, grip.handle, grip.index, radius);
+}
+
 bool ViewportWindow::dyn_capturing() const {
     // DYNMODE without its dimensional input part: no length and angle fields.
     return dyn_enabled_ && (dyn_bits_.load() & 2) != 0 && processor_ != nullptr && processor_->has_active_command() &&
@@ -3650,11 +3678,11 @@ bool ViewportWindow::dyn_capturing() const {
 }
 
 bool ViewportWindow::dyn_typing() const {
-    return dyn_capturing() && (!dyn_buf_[0].empty() || !dyn_buf_[1].empty());
+    return dyn_capturing() && dyn_any_typed();
 }
 
 std::string ViewportWindow::dyn_value(int slot) const {
-    if (slot < 0 || slot >= 2) {
+    if (slot < 0 || slot >= static_cast<int>(dyn_buf_.size())) {
         return {};
     }
     return dyn_buf_[static_cast<std::size_t>(slot)];
@@ -3681,9 +3709,14 @@ bool ViewportWindow::dyn_commit() {
             return true;
         }
     }
-    const std::string line = command::compose_dyn_submit(processor_->preview(), dyn_cursor_,
-                                                         dyn_parse(dyn_buf_[0]),
-                                                         dyn_parse(dyn_buf_[1]));
+    std::array<std::optional<double>, 4> typed{};
+    for (std::size_t i = 0; i < dyn_buf_.size(); ++i) {
+        typed[i] = dyn_parse(dyn_buf_[i]);
+    }
+    const command::PreviewSpec& pv = processor_->preview();
+    const std::string line = command::dyn_grip_measured(pv)
+                                 ? command::compose_grip_submit(pv, dyn_cursor_, typed)
+                                 : command::compose_dyn_submit(pv, dyn_cursor_, typed[0], typed[1]);
     if (line.empty()) {
         return false;
     }

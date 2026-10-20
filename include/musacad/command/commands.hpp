@@ -1472,8 +1472,11 @@ public:
     }
     /// `begin`: the drag as it began (Shift's other hot grips, a grip menu's Lengthen or text
     /// movement), begun again so for each copy.
-    GripModeCommand(const core::GripDragCommand& begin, core::Vec2 pos)
-        : handle_(begin.handle), index_(begin.grip), base_(pos), begin_(begin) {}
+    /// `anchor`: what the stretch is measured from (command::grip_dyn_anchor), `radius` when it
+    /// sets a radius -- Dynamic Input's grip dimensions.
+    GripModeCommand(const core::GripDragCommand& begin, core::Vec2 pos, std::optional<core::Vec2> anchor = std::nullopt,
+                    bool radius = false)
+        : handle_(begin.handle), index_(begin.grip), base_(pos), begin_(begin), anchor_(anchor), radius_(radius) {}
     std::string name() const override { return "GRIP"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
@@ -1489,6 +1492,8 @@ private:
     std::uint32_t index_ = 0;
     core::Vec2 base_{};
     core::GripDragCommand begin_{};
+    std::optional<core::Vec2> anchor_{};
+    bool radius_ = false;
     Mode mode_ = Mode::Stretch;
     bool copy_ = false;
     bool asking_base_ = false;
@@ -3374,28 +3379,18 @@ private:
 };
 
 /// DIMDISASSOCIATE: `Select dimensions to disassociate:` -- they no longer follow the objects
-/// their points are on. DIMREASSOCIATE: `Select dimensions to reassociate:` -- they follow
-/// them again.
+/// their points are on. DIMREASSOCIATE: `Select dimensions to reassociate:`, then, dimension by
+/// dimension as AutoCAD asks, each definition point (`Specify first extension line origin or
+/// [Select object] <next>:`, `Specify second extension line origin <next>:`; an angular one's
+/// vertex and endpoints; `Select arc or circle <next>:` for a radial one; an ordinate one's
+/// feature), Enter keeping it: the dimension follows the objects the new points are on.
 class DimDisassociateCommand final : public ICommand {
 public:
     explicit DimDisassociateCommand(bool reassociate = false) : reassociate_(reassociate) {}
     std::string name() const override { return reassociate_ ? "DIMREASSOCIATE" : "DIMDISASSOCIATE"; }
-    void start(CommandContext& ctx) override {
-        if (ctx.has_selection()) {
-            after(ctx);
-            return;
-        }
-        select_.begin(ctx, reassociate_ ? "Select dimensions to reassociate: " : "Select dimensions to disassociate: ");
-    }
-    void input(CommandContext& ctx, const std::string& text) override {
-        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
-            after(ctx);
-        }
-    }
-    void cancel(CommandContext& ctx) override {
-        ctx.echo("*Cancel*");
-        done_ = true;
-    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
     bool in_selection_phase() const override { return !done_ && select_.active(); }
     bool selection_removing() const override { return select_.removing(); }
@@ -3406,17 +3401,17 @@ public:
     }
 
 private:
-    void after(CommandContext& ctx) {
-        if (ctx.has_selection()) {
-            core::DimAssocCommand c;
-            c.op = reassociate_ ? core::DimAssocCommand::Op::Reassociate : core::DimAssocCommand::Op::Disassociate;
-            c.group = ctx.group_id();
-            ctx.submit(std::move(c));
-        }
-        done_ = true;
-    }
+    void after(CommandContext& ctx);
+    void ask(CommandContext& ctx);     ///< the prompt for the point in hand
+    void next_dim(CommandContext& ctx); ///< the dimension in hand is done: the next one
     bool reassociate_ = false;
     SelectObjectsPhase select_;
+    std::vector<core::SelectedDim> dims_; ///< DIMREASSOCIATE: the dimensions, one by one
+    std::size_t dim_ = 0;
+    std::size_t point_ = 0;
+    std::vector<core::Vec2> points_; ///< the dimension in hand's points so far
+    bool changed_ = false;
+    bool picking_object_ = false; ///< Select object: a line or an arc gives both origins
     bool done_ = false;
 };
 
@@ -4123,7 +4118,9 @@ private:
 /// REVCLOUD (AutoCAD). Arc length, Object (with Reverse direction), Rectangular,
 /// Polygonal, and Freehand: a press and drag draws the cloud along the cursor (closed when
 /// it ends back near its start), or the path is clicked point by point and Enter closes
-/// it. Style: Normal or Calligraphy; Modify is not offered. The lobes come from
+/// it. Style: Normal or Calligraphy. Modify redraws a stretch of a cloud: the vertex nearest
+/// the pick starts it, the points follow and Enter brings it back at the vertex nearest the
+/// last, and a closed one asks which side to erase. The lobes come from
 /// core::polyline_ops::revcloud_from_path, so an Object conversion and a drawn cloud
 /// produce identical arcs.
 class RevcloudCommand final : public ICommand {
@@ -4148,8 +4145,13 @@ private:
         ObjectPick,
         ObjectReverse,
         Style,
+        ModifyPick,
+        ModifyNext,
+        ModifySide,
+        ModifyReverse,
     };
     void main_prompt(CommandContext& ctx);
+    void submit_modify(CommandContext& ctx, bool reverse);
     void emit_cloud(CommandContext& ctx, const std::vector<core::Vec2>& path, bool closed);
     [[nodiscard]] double arc_len() const { return 0.5 * (min_arc_ + max_arc_); }
 
@@ -4162,6 +4164,8 @@ private:
     State state_ = State::Main;
     core::Vec2 first_{};
     std::vector<core::Vec2> path_;
+    bool modify_closed_ = true; ///< Modify: the polyline picked is closed (asks for a side)
+    core::Vec2 side_{};
     bool done_ = false;
 };
 

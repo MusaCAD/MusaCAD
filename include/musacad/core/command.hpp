@@ -43,6 +43,13 @@ struct RevcloudObjectCommand {
     double arc_len = 0.5;
     std::uint64_t group = 0;
     bool calligraphy = false; ///< the Calligraphy style: tapered lobes (calligraphy_widths)
+    /// Modify: the polyline at `pick` gets a new stretch of cloud along `path`, from the vertex
+    /// nearest its first point to the vertex nearest its last; the section between them on the
+    /// side of `side` goes. `reverse` turns every arc of the cloud the other way.
+    bool modify = false;
+    std::vector<Vec2> path{};
+    Vec2 side{};
+    bool reverse = false;
 };
 
 /// REVCLOUD's "Reverse direction": flip every lobe of the selected cloud polylines
@@ -931,10 +938,18 @@ struct DimAssocCommand {
         HatchVariable, ///< HPASSOC: whether new hatches follow their boundaries (1) or not (0)
         MeasureInit,   ///< MEASUREINIT: the MEASUREMENT new drawings start with (and their linetypes)
         MeasureInitNow, ///< the same at start-up, for the empty drawing open then too
+        /// DIMREASSOCIATE point by point: `dim`'s definition points become `points` (as
+        /// RenderSnapshot::SelectedDim lists them), or, `pick` set, a radial one measures the
+        /// circle or arc picked there; it follows the objects they are on.
+        Points,
     };
     Op op = Op::Variable;
     std::uint8_t value = 2;
     std::uint64_t group = 0;
+    EntityHandle dim{};
+    std::vector<Vec2> points{};
+    std::optional<Vec2> pick{};
+    double pick_radius = 0.0;
 };
 
 /// MIRRTEXT: whether MIRROR reflects text (1) or keeps it readable (0, the default).

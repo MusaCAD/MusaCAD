@@ -5,6 +5,7 @@
 
 #include "musacad/core/threading/jthread.hpp"
 
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <cstdint>
@@ -494,6 +495,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_selection_count(sel);
         processor_->set_selection_kinds(viewport_->selection_kinds());
         processor_->set_selection_size(viewport_->selection_size());
+        processor_->set_selected_dims(viewport_->selected_dims()); // DIMREASSOCIATE
         processor_->set_named_views(viewport_->named_views());
         processor_->set_custom_patterns(viewport_->custom_patterns());
         {
@@ -631,6 +633,8 @@ MainWindow::~MainWindow() {
         settings.setValue(QStringLiteral("sysvar/HPSEPARATE"), command::hpseparate() ? 1 : 0);
         settings.setValue(QStringLiteral("sysvar/MEASUREINIT"), command::measureinit());
         settings.setValue(QStringLiteral("sysvar/DYNPICOORDS"), command::dynpicoords());
+        settings.setValue(QStringLiteral("sysvar/DYNDIGRIP"), command::dyndigrip());
+        settings.setValue(QStringLiteral("sysvar/DYNDIVIS"), command::dyndivis());
         settings.setValue(QStringLiteral("sysvar/DYNBITS"), std::abs(viewport_->selection_setting("DYNMODE")));
         settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), viewport_->selection_setting("DYNPROMPT"));
         settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), viewport_->selection_setting("DYNPIFORMAT"));
@@ -1247,6 +1251,10 @@ void MainWindow::build_status_bar() {
         command::hpseparate() = value("HPSEPARATE", 0) != 0;
         command::measureinit() = value("MEASUREINIT", 1);
         command::dynpicoords() = value("DYNPICOORDS", 0);
+        if (saved) {
+            command::dyndigrip() = std::clamp(s.value(QStringLiteral("sysvar/DYNDIGRIP"), 31).toInt(), 0, 31);
+            command::dyndivis() = std::clamp(s.value(QStringLiteral("sysvar/DYNDIVIS"), 1).toInt(), 0, 2);
+        }
         // DYNMODE's parts (on or off is F12's own preference), DYNPROMPT and DYNPIFORMAT.
         const int bits = std::clamp(saved ? s.value(QStringLiteral("sysvar/DYNBITS"), 3).toInt() : 3, 1, 3);
         viewport_->set_selection_setting("DYNMODE", dyn_action_->isChecked() ? bits : -bits); // the parts only
@@ -3535,9 +3543,10 @@ int MainWindow::open_field_dialog(std::string& code) {
     return 1;
 }
 
-// TOLERANCE: AutoCAD's Geometric Tolerance window -- the characteristic symbol, two
-// tolerances (each with a diameter symbol and a material condition) and three datums
-// (each with its material condition); OK goes on to `Enter tolerance location:`.
+// TOLERANCE: AutoCAD's Geometric Tolerance window -- two rows (the second for a composite
+// frame) of the characteristic symbol, two tolerances (each with a diameter symbol and a
+// material condition) and three datums (each with its material condition); OK goes on to
+// `Enter tolerance location:`.
 int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
     static const std::pair<const char*, const char*> kSymbols[] = {
         {"\\U+2316", "Position"},          {"\\U+25CE", "Concentricity"},   {"\\U+232F", "Symmetry"},
@@ -3582,44 +3591,53 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
     };
     std::vector<std::pair<const char*, const char*>> sym_choices{{"", "None"}};
     sym_choices.insert(sym_choices.end(), std::begin(kSymbols), std::end(kSymbols));
-    QToolButton* sym = picker(sym_choices, QStringLiteral("The characteristic symbol"));
-    sym->setObjectName(QStringLiteral("ToleranceSym"));
-    grid->addWidget(sym, 1, 0, Qt::AlignHCenter);
     struct Tol {
         QToolButton* dia;
         QLineEdit* value;
         QToolButton* mc;
     };
-    std::vector<Tol> tols;
-    for (int i = 0; i < 2; ++i) {
-        auto* box = new QHBoxLayout;
-        auto* dia = new QToolButton(&dlg);
-        dia->setCheckable(true);
-        dia->setFixedSize(34, 34);
-        dia->setIconSize(QSize(24, 24));
-        dia->setIcon(gdt_icon("%%c", ink));
-        dia->setToolTip(QStringLiteral("A diameter symbol before the value"));
-        auto* value = new QLineEdit(&dlg);
-        value->setObjectName(QStringLiteral("ToleranceValue%1").arg(i + 1));
-        value->setMinimumWidth(70);
-        QToolButton* mc = picker(kConditions, QStringLiteral("Material condition"));
-        box->addWidget(dia);
-        box->addWidget(value);
-        box->addWidget(mc);
-        grid->addLayout(box, 1, 1 + i);
-        tols.push_back({dia, value, mc});
-    }
-    std::vector<std::pair<QLineEdit*, QToolButton*>> datums;
-    for (int i = 0; i < 3; ++i) {
-        auto* box = new QHBoxLayout;
-        auto* value = new QLineEdit(&dlg);
-        value->setObjectName(QStringLiteral("ToleranceDatum%1").arg(i + 1));
-        value->setMaximumWidth(60);
-        QToolButton* mc = picker(kConditions, QStringLiteral("Material condition"));
-        box->addWidget(value);
-        box->addWidget(mc);
-        grid->addLayout(box, 1, 3 + i);
-        datums.emplace_back(value, mc);
+    // Two rows, as AutoCAD's window has them: the second makes a composite frame.
+    struct Row {
+        QToolButton* sym = nullptr;
+        std::vector<Tol> tols;
+        std::vector<std::pair<QLineEdit*, QToolButton*>> datums;
+    };
+    std::array<Row, 2> rows;
+    for (int r = 0; r < 2; ++r) {
+        Row& row = rows[static_cast<std::size_t>(r)];
+        const QString suffix = r == 0 ? QString() : QStringLiteral("Row2");
+        row.sym = picker(sym_choices, QStringLiteral("The characteristic symbol"));
+        row.sym->setObjectName(QStringLiteral("ToleranceSym") + suffix);
+        grid->addWidget(row.sym, 1 + r, 0, Qt::AlignHCenter);
+        for (int i = 0; i < 2; ++i) {
+            auto* box = new QHBoxLayout;
+            auto* dia = new QToolButton(&dlg);
+            dia->setCheckable(true);
+            dia->setFixedSize(34, 34);
+            dia->setIconSize(QSize(24, 24));
+            dia->setIcon(gdt_icon("%%c", ink));
+            dia->setToolTip(QStringLiteral("A diameter symbol before the value"));
+            auto* value = new QLineEdit(&dlg);
+            value->setObjectName(QStringLiteral("ToleranceValue%1").arg(i + 1) + suffix);
+            value->setMinimumWidth(70);
+            QToolButton* mc = picker(kConditions, QStringLiteral("Material condition"));
+            box->addWidget(dia);
+            box->addWidget(value);
+            box->addWidget(mc);
+            grid->addLayout(box, 1 + r, 1 + i);
+            row.tols.push_back({dia, value, mc});
+        }
+        for (int i = 0; i < 3; ++i) {
+            auto* box = new QHBoxLayout;
+            auto* value = new QLineEdit(&dlg);
+            value->setObjectName(QStringLiteral("ToleranceDatum%1").arg(i + 1) + suffix);
+            value->setMaximumWidth(60);
+            QToolButton* mc = picker(kConditions, QStringLiteral("Material condition"));
+            box->addWidget(value);
+            box->addWidget(mc);
+            grid->addLayout(box, 1 + r, 3 + i);
+            row.datums.emplace_back(value, mc);
+        }
     }
     // The second row (a projected tolerance zone's height and its symbol) and the datum
     // identifier, each drawn as a row under the frame.
@@ -3648,23 +3666,33 @@ int MainWindow::open_tolerance_dialog(std::vector<std::string>& cells) {
     }
     const auto raw_of = [](const QToolButton* b) { return b->property("raw").toString().toStdString(); };
     cells.clear();
-    if (const std::string s = raw_of(sym); !s.empty()) {
-        cells.push_back(s);
-    }
-    for (const Tol& t : tols) {
-        const std::string v = t.value->text().trimmed().toStdString();
-        const std::string m = raw_of(t.mc);
-        if (v.empty() && !t.dia->isChecked() && m.empty()) {
+    for (const Row& row : rows) {
+        std::vector<std::string> row_cells;
+        if (const std::string s = raw_of(row.sym); !s.empty()) {
+            row_cells.push_back(s);
+        }
+        for (const Tol& t : row.tols) {
+            const std::string v = t.value->text().trimmed().toStdString();
+            const std::string m = raw_of(t.mc);
+            if (v.empty() && !t.dia->isChecked() && m.empty()) {
+                continue;
+            }
+            row_cells.push_back((t.dia->isChecked() ? "%%c" : "") + v + (m.empty() ? "" : (v.empty() ? "" : " ") + m));
+        }
+        for (const auto& [value, mc] : row.datums) {
+            const std::string v = value->text().trimmed().toUpper().toStdString();
+            const std::string m = raw_of(mc);
+            if (!v.empty() || !m.empty()) {
+                row_cells.push_back(v + m);
+            }
+        }
+        if (row_cells.empty()) {
             continue;
         }
-        cells.push_back((t.dia->isChecked() ? "%%c" : "") + v + (m.empty() ? "" : (v.empty() ? "" : " ") + m));
-    }
-    for (const auto& [value, mc] : datums) {
-        const std::string v = value->text().trimmed().toUpper().toStdString();
-        const std::string m = raw_of(mc);
-        if (!v.empty() || !m.empty()) {
-            cells.push_back(v + m);
+        if (!cells.empty()) {
+            cells.push_back("^J"); // the composite frame's second row
         }
+        cells.insert(cells.end(), row_cells.begin(), row_cells.end());
     }
     const std::string hv = height->text().trimmed().toStdString();
     if (!hv.empty() || projected->isChecked()) {
