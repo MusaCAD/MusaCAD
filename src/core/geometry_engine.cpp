@@ -19939,6 +19939,7 @@ void GeometryEngine::rebuild_and_publish() {
     // a drag, else the one nearest the cursor within the pick aperture).
     buf.grips.clear();
     buf.hot_grip = -1;
+    buf.hot_grip_hover = false;
     {
         std::vector<Grip> gs;
         for (const EntityHandle h : selection_) {
@@ -19968,6 +19969,7 @@ void GeometryEngine::rebuild_and_publish() {
                     buf.hot_grip = static_cast<int>(i);
                 }
             }
+            buf.hot_grip_hover = buf.hot_grip >= 0;
         }
     }
 

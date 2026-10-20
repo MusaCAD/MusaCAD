@@ -639,7 +639,11 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"GRIPCOLOR"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPCOLOR"); }, "",
         "The colour of the grips, an AutoCAD colour number (1 to 255).");
     reg({"GRIPHOT"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPHOT"); }, "",
-        "The colour of a grip picked or under the cursor, an AutoCAD colour number (1 to 255).");
+        "The colour of a grip picked, an AutoCAD colour number (1 to 255).");
+    reg({"GRIPHOVER"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPHOVER"); }, "",
+        "The colour of a grip under the cursor, an AutoCAD colour number (1 to 255).");
+    reg({"GRIPOBJLIMIT"}, [] { return std::make_unique<SelectionSettingCommand>("GRIPOBJLIMIT"); }, "",
+        "No grips when more objects than this are selected (0: grips however many).");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
         "Check the drawing for bad references and structure; optionally fix them.");
     reg({"FILL"}, [] { return std::make_unique<FillCommand>(false); }, "",

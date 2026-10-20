@@ -8846,7 +8846,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNPICOORDS",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
-        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
+        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
@@ -17155,6 +17155,8 @@ const char* dim_var_meaning(std::string_view var) {
     if (u == "DIMEXE") return "Extension beyond the dimension line";
     if (u == "DIMTAD") return "Text above the dimension line (0 centred)";
     if (u == "DIMATFIT") return "Text fit: 0 automatic, 1 inside, 2 outside";
+    if (u == "DIMJUST") return "Text along the line: 0 centred, 1 at ext line 1, 2 at ext line 2, 3 over 1, 4 over 2";
+    if (u == "DIMTXTDIRECTION") return "Text reading direction: 0 left to right, 1 right to left";
     if (u == "DIMTMOVE") return "Moved text: 0 with its dimension line, 1 with a leader, 2 alone";
     if (u == "DIMLWD") return "Dimension lineweight (1/100 mm)";
     if (u == "DIMCLRD") return "Dimension line and arrowhead colour (ACI, 256 BYLAYER)";

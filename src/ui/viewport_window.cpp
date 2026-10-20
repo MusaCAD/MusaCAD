@@ -326,6 +326,8 @@ int ViewportWindow::selection_setting(const std::string& name) const {
     if (name == "GRIPSIZE") return gripsize_.load();
     if (name == "GRIPCOLOR") return gripcolor_.load() == 0 ? 150 : gripcolor_.load();
     if (name == "GRIPHOT") return griphot_.load() == 0 ? 12 : griphot_.load();
+    if (name == "GRIPHOVER") return griphover_.load() == 0 ? 11 : griphover_.load();
+    if (name == "GRIPOBJLIMIT") return gripobjlimit_.load();
     if (name == "TRANSPARENCYDISPLAY") return transparencydisplay_.load();
     if (name == "UCSICON") return ucsicon_.load();
     if (name == "LWDISPLAY") return lwdisplay_.load();
@@ -358,6 +360,10 @@ bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
         gripcolor_ = value;
     } else if (name == "GRIPHOT" && in(1, 255)) {
         griphot_ = value;
+    } else if (name == "GRIPHOVER" && in(1, 255)) {
+        griphover_ = value;
+    } else if (name == "GRIPOBJLIMIT" && in(0, 32767)) {
+        gripobjlimit_ = value;
     } else if (name == "TRANSPARENCYDISPLAY" && in(0, 1)) {
         transparencydisplay_ = value;
     } else if (name == "UCSICON" && in(0, 3)) {
@@ -1659,9 +1665,14 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                                                                          : snap.dimstyles[0];
         }
         {
-            // Cache grips for GUI-thread hit-testing (grab on press).
+            // Cache grips for GUI-thread hit-testing (grab on press) -- none over GRIPOBJLIMIT.
             std::scoped_lock lock(grips_mutex_);
-            grips_cache_ = snap.grips;
+            const int limit = gripobjlimit_.load();
+            if (limit > 0 && snap.selection.size() > static_cast<std::size_t>(limit)) {
+                grips_cache_.clear();
+            } else {
+                grips_cache_ = snap.grips;
+            }
             text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
             attrib_targets_ = snap.attrib_edit_targets; // EATTEDIT / double-click
             selection_summary_ = snap.selection_summary; // PR palette
@@ -1798,8 +1809,11 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 const std::uint32_t v = (std::uint32_t{c.r} << 16) | (std::uint32_t{c.g} << 8) | c.b;
                 return v == 0 ? 1 : v; // black stays black, not "the theme's"
             };
-            renderer.set_grip_style(grips_on_.load() == 0 ? 0.0 : static_cast<double>(gripsize_.load()),
-                                    rgb_of(gripcolor_.load()), rgb_of(griphot_.load()));
+            // GRIPOBJLIMIT: more objects selected than that, no grips (0: no limit).
+            const int limit = gripobjlimit_.load();
+            const bool over = limit > 0 && snap.selection.size() > static_cast<std::size_t>(limit);
+            renderer.set_grip_style(grips_on_.load() == 0 || over ? 0.0 : static_cast<double>(gripsize_.load()),
+                                    rgb_of(gripcolor_.load()), rgb_of(griphot_.load()), rgb_of(griphover_.load()));
             renderer.set_transparency_display(transparencydisplay_.load() != 0);
             renderer.set_ucs_icon(ucsicon_.load(), snap.active_space != 0);
         }

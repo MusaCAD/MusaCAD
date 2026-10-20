@@ -856,6 +856,8 @@ private:
     std::atomic<int> gripsize_{5}; // AutoCAD's default
     std::atomic<int> gripcolor_{0};
     std::atomic<int> griphot_{0};
+    std::atomic<int> griphover_{0};      ///< GRIPHOVER (0: the hot colour)
+    std::atomic<int> gripobjlimit_{100}; ///< GRIPOBJLIMIT: no grips with more selected (0: no limit)
     std::atomic<int> transparencydisplay_{1}; ///< TRANSPARENCYDISPLAY / TPY: layer transparency shown
     std::atomic<int> ucsicon_{3};             ///< UCSICON: bit 1 on, bit 2 at the origin
     std::atomic<int> lwdisplay_{1};           ///< LWDISPLAY as the drawing has it (from the snapshot)

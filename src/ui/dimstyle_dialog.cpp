@@ -477,9 +477,13 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     horizontal->addItems({QStringLiteral("Centered"), QStringLiteral("At Ext Line 1"), QStringLiteral("At Ext Line 2"),
                           QStringLiteral("Over Ext Line 1"), QStringLiteral("Over Ext Line 2")});
     horizontal->setCurrentIndex(style.text_just); // DIMJUST's order
+    auto* direction = new QComboBox(this);
+    direction->addItems({QStringLiteral("Left-to-Right"), QStringLiteral("Right-to-Left")});
+    direction->setCurrentIndex(style.text_rtl ? 1 : 0); // DIMTXTDIRECTION
     QFormLayout* tp = form();
     row(tp, QStringLiteral("Vertical:"), vertical);
     row(tp, QStringLiteral("Horizontal:"), horizontal);
+    row(tp, QStringLiteral("View Direction:"), direction);
     tabs->addTab(page(tabs, {group(QStringLiteral("Text appearance"), ta, this),
                              group(QStringLiteral("Text placement"), tp, this)}),
                  QStringLiteral("Text"));
@@ -688,6 +692,7 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
         s.text_vpos = vertical->currentIndex() >= 2 ? static_cast<std::uint8_t>(vertical->currentIndex())
                                                     : std::uint8_t{0};
         s.text_just = static_cast<std::uint8_t>(std::max(horizontal->currentIndex(), 0));
+        s.text_rtl = direction->currentIndex() == 1;
         s.text_fit = static_cast<std::uint8_t>(std::max(0, fits->checkedId()));
         s.text_move = static_cast<std::uint8_t>(std::max(0, moves->checkedId()));
         s.precision = static_cast<std::uint8_t>(std::max(0, precision->currentIndex()));
@@ -719,8 +724,9 @@ DimStyleEditor::DimStyleEditor(const core::DimStyle& style, const QString& title
     };
     const auto refresh_preview = [preview, this] { preview->set_style(read_()); };
     refresh_preview();
-    for (QComboBox* c : {dim_color, lineweight, ext_color, arrow_type, arrow_color, text_color, vertical, precision,
-                         fraction, angle_unit, angle_precision, alt_precision, tol_method, tol_precision}) {
+    for (QComboBox* c : {dim_color, lineweight, ext_color, arrow_type, arrow_color, text_color, vertical, horizontal,
+                         direction, precision, fraction, angle_unit, angle_precision, alt_precision, tol_method,
+                         tol_precision}) {
         connect(c, &QComboBox::currentIndexChanged, this, refresh_preview);
     }
     connect(unit, &QComboBox::currentIndexChanged, this, [=] {

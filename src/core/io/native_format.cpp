@@ -549,6 +549,14 @@ std::string serialize_native(const Document& doc) {
         s += ds.name;
         s += '\n';
     }
+    // v41: DIMTXTDIR idx -- a style whose text reads right to left (View Direction).
+    for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
+        if (doc.dimstyles[i].text_rtl) {
+            s += "DIMTXTDIR ";
+            append_uint(s, i);
+            s += '\n';
+        }
+    }
     // v40: DIMJUST idx just -- a style whose text is not centred along its line.
     for (std::size_t i = 0; i < doc.dimstyles.size(); ++i) {
         if (doc.dimstyles[i].text_just != 0) {
@@ -2884,6 +2892,12 @@ IoResult parse_native(std::string_view text, Document& out) {
             ds.tol_upper = up;
             ds.tol_lower = lo;
             ds.tol_precision = static_cast<std::int8_t>(static_cast<int>(std::min<std::uint64_t>(prec, 9)) - 1);
+        } else if (key == "DIMTXTDIR") {
+            std::uint64_t idx = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], idx) || idx >= doc.dimstyles.size()) {
+                return fail("malformed DIMTXTDIR");
+            }
+            doc.dimstyles[idx].text_rtl = true;
         } else if (key == "DIMJUST") {
             std::uint64_t idx = 0;
             std::uint64_t v = 0;

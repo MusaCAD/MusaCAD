@@ -646,6 +646,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 44, ds.ext_extension); // DIMEXE
         code_i(s, 77, dim_text_vpos(ds)); // DIMTAD
         code_i(s, 280, ds.text_just);      // DIMJUST
+        code_i(s, 294, ds.text_rtl ? 1 : 0); // DIMTXTDIRECTION
         code_i(s, 78, ds.zero_suppression);   // DIMZIN
         code_i(s, 271, ds.precision);   // DIMDEC
         code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
@@ -2114,6 +2115,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (const std::string* v = find(body, 280)) {
             const long just = to_l(*v);
             ds.text_just = just >= 0 && just <= 4 ? static_cast<std::uint8_t>(just) : std::uint8_t{0};
+        }
+        if (const std::string* v = find(body, 294)) {
+            ds.text_rtl = to_l(*v) != 0; // DIMTXTDIRECTION
         }
         if (const std::string* v = find(body, 77)) {
             const long tad = to_l(*v);

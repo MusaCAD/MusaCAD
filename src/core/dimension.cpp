@@ -293,6 +293,8 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
         s.ext_extension = v;
     } else if (same_var(var, "DIMJUST") && whole(0, 4)) {
         s.text_just = static_cast<std::uint8_t>(v);
+    } else if (same_var(var, "DIMTXTDIRECTION") && whole(0, 1)) {
+        s.text_rtl = v != 0.0;
     } else if (same_var(var, "DIMTAD") && whole(0, 4)) {
         s.text_above = v != 0.0 && v != 4.0;
         s.text_vpos = v >= 2.0 ? static_cast<std::uint8_t>(v) : std::uint8_t{0};
@@ -409,6 +411,9 @@ std::optional<double> dim_var_value(const DimStyle& s, std::string_view var) {
     }
     if (same_var(var, "DIMJUST")) {
         return s.text_just;
+    }
+    if (same_var(var, "DIMTXTDIRECTION")) {
+        return s.text_rtl ? 1.0 : 0.0;
     }
     if (same_var(var, "DIMATFIT")) {
         return s.text_fit;
@@ -886,6 +891,31 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const DimLabel label = compose_dim_label(d, style, parts);
     g.label = label.line1;
     g.label2 = label.line2;
+    // View Direction right to left (DIMTXTDIRECTION 1): the characters in the other order --
+    // a stacked deviation then reads from its other end, so it is not stacked under the value.
+    std::size_t stack_at = label.stack_at;
+    if (style.text_rtl) {
+        const auto reversed = [](const std::string& s) {
+            std::vector<std::string> cps;
+            for (std::size_t i = 0; i < s.size();) {
+                std::size_t n = 1;
+                while (i + n < s.size() && (static_cast<unsigned char>(s[i + n]) & 0xC0) == 0x80) {
+                    ++n; // the continuation bytes of one UTF-8 character
+                }
+                cps.push_back(s.substr(i, n));
+                i += n;
+            }
+            std::string out;
+            out.reserve(s.size());
+            for (auto it = cps.rbegin(); it != cps.rend(); ++it) {
+                out += *it;
+            }
+            return out;
+        };
+        g.label = reversed(g.label);
+        g.label2 = reversed(g.label2);
+        stack_at = std::string::npos;
+    }
     // DIMINSPECT: the label, the value and the inspection rate side by side, two spaces
     // apart -- one line, so the layout below fits and centres them as one, and finish_label
     // frames them with a divider in each gap.
@@ -945,14 +975,14 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         }
         if (!g.label2.empty()) {
             g.label2_pos = g.text_pos - ay * line_gap; // the lower limit sits under the upper
-            if (label.stack_at != std::string::npos && label.stack_at <= g.label.size()) {
+            if (stack_at != std::string::npos && stack_at <= g.label.size()) {
                 // Deviation: the -lower value starts where the +upper one does.
                 const double w1 = text::text_width(g.label, h);
                 const double w2 = text::text_width(g.label2, h);
                 const double x1 = g.text_justify == text::Justify::Center  ? -w1 * 0.5
                                   : g.text_justify == text::Justify::Right ? -w1
                                                                            : 0.0;
-                const double xs = x1 + text::text_width(g.label.substr(0, label.stack_at), h);
+                const double xs = x1 + text::text_width(g.label.substr(0, stack_at), h);
                 const double x2 = g.text_justify == text::Justify::Center  ? xs + w2 * 0.5
                                   : g.text_justify == text::Justify::Right ? xs + w2
                                                                            : xs;

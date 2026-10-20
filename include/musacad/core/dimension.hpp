@@ -150,7 +150,7 @@ inline constexpr const char* kDimVars[] = {"DIMTXT",  "DIMASZ",   "DIMBLK",  "DI
                                            "DIMEXO",  "DIMEXE",   "DIMTAD",  "DIMATFIT", "DIMTMOVE", "DIMLWD",
                                            "DIMCLRD", "DIMCLRE",  "DIMCLRT", "DIMLUNIT", "DIMFRAC",  "DIMRND",
                                            "DIMLFAC", "DIMAUNIT", "DIMADEC", "DIMALT",   "DIMALTU",  "DIMALTD",
-                                           "DIMALTF", "DIMALTRND"};
+                                           "DIMALTF", "DIMALTRND", "DIMJUST", "DIMTXTDIRECTION"};
 
 /// Sets `var` (one of kDimVars, any case) on `style`; false for an unknown variable or a
 /// value out of its range, `style` then unchanged.

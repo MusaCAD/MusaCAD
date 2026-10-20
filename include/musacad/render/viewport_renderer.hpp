@@ -113,12 +113,14 @@ public:
     /// TRANSPARENCYDISPLAY / TPY: layer transparency drawn (on) or every batch opaque.
     void set_transparency_display(bool on) { transparency_display_ = on; }
 
-    /// The grips (GRIPS, GRIPSIZE, GRIPCOLOR, GRIPHOT): their half size in logical pixels
-    /// (0: not drawn) and their colours, packed 0xRRGGBB (0: the theme's).
-    void set_grip_style(double half_px, std::uint32_t normal_rgb, std::uint32_t hot_rgb) {
+    /// The grips (GRIPS, GRIPSIZE, GRIPCOLOR, GRIPHOT, GRIPHOVER): their half size in logical
+    /// pixels (0: not drawn) and their colours, packed 0xRRGGBB (0: the theme's) -- a grip
+    /// grabbed in the hot colour, one under the cursor in the hover colour.
+    void set_grip_style(double half_px, std::uint32_t normal_rgb, std::uint32_t hot_rgb, std::uint32_t hover_rgb = 0) {
         grip_half_px_ = half_px;
         grip_rgb_ = normal_rgb;
         hot_grip_rgb_ = hot_rgb;
+        hover_grip_rgb_ = hover_rgb;
     }
 
     /// Transient interaction overlay (preview, selection rect, ghost), composed
@@ -189,6 +191,7 @@ private:
     }
     std::uint32_t grip_rgb_ = 0;             // GRIPCOLOR as 0xRRGGBB, 0 = the theme's
     std::uint32_t hot_grip_rgb_ = 0;         // GRIPHOT
+    std::uint32_t hover_grip_rgb_ = 0;       // GRIPHOVER
     std::shared_ptr<const RenderOverlay> overlay_ptr_;
     [[nodiscard]] const RenderOverlay& overlay() const {
         static const RenderOverlay kEmpty{};
