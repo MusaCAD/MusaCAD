@@ -306,24 +306,21 @@ TEST_CASE("Capture -> recreate preserves the placement and the clip") {
     REQUIRE(b->clip_v1 == Approx(0.7));
 }
 
-TEST_CASE("Grips: insertion moves, the opposite corner scales in the image's own frame") {
+TEST_CASE("Grips: one on each corner, scaling the image about the opposite corner in proportion") {
     GeometryStore store;
     const EntityHandle h = store.add_image(0, {0.0, 0.0}, 10.0, 5.0, 0.0);
     std::vector<Grip> grips;
     grips_of(store, h, grips);
-    REQUIRE(grips.size() == 2);
+    REQUIRE(grips.size() == 4);
+    REQUIRE(grips[0].pos == Vec2{0.0, 0.0});
 
-    GeometryStore moved;
-    const EntityHandle m =
-        add_command_to_store(moved, edit_for_grip_drag(store, h, 0, {3.0, 4.0}), EntityProps{});
-    REQUIRE(moved.image(m)->pos == Vec2{3.0, 4.0});
-
+    // Dragged off the diagonal: the size follows the drag along it, the proportions kept.
     GeometryStore scaled;
     const EntityHandle sc =
-        add_command_to_store(scaled, edit_for_grip_drag(store, h, 1, {20.0, 12.0}), EntityProps{});
-    REQUIRE(scaled.image(sc)->width == Approx(20.0));
-    REQUIRE(scaled.image(sc)->height == Approx(12.0));
-    REQUIRE(scaled.image(sc)->pos == Vec2{0.0, 0.0}); // the insertion point did not move
+        add_command_to_store(scaled, edit_for_grip_drag(store, h, 2, {20.0, 12.0}), EntityProps{});
+    REQUIRE(scaled.image(sc)->width == Approx(20.8));
+    REQUIRE(scaled.image(sc)->height == Approx(10.4));
+    REQUIRE(scaled.image(sc)->pos == Vec2{0.0, 0.0}); // the opposite corner did not move
 }
 
 TEST_CASE("Struct sizes: images live in a cold arena, hot structs untouched") {

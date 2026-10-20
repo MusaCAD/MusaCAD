@@ -16193,11 +16193,13 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
             reverse_join(e.verts, e.bulges);
             append_tail(cv, cb, e);
         } else if (approx(e.verts.back(), cv.front())) {
+            // At the chain's start: the chain turned round, its start is the tail, and `e`
+            // runs on from there end first.
             reverse_join(cv, cb);
+            reverse_join(e.verts, e.bulges);
             append_tail(cv, cb, e);
         } else if (approx(e.verts.front(), cv.front())) {
             reverse_join(cv, cb);
-            reverse_join(e.verts, e.bulges);
             append_tail(cv, cb, e);
         } else {
             return false;
