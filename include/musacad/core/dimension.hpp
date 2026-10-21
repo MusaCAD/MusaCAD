@@ -53,7 +53,20 @@ struct DimGeometry {
     /// where the connector leader starts from.
     Vec2 derived_text_pos{};
     bool text_moved = false;
+    /// With a tolerance at its own height (DIMTFAC not 1): the label as drawn, piece by piece
+    /// -- the value at text_height, the tolerance at DIMTFAC's -- each from its own point,
+    /// left-justified, at text_rotation. Empty otherwise: `label` and `label2` are drawn.
+    struct TextRun {
+        std::string text;
+        Vec2 pos{};
+        double height = 0.0;
+    };
+    std::vector<TextRun> runs;
 };
+
+/// A dimension's text as stroke segments: its runs (a tolerance at DIMTFAC's height), or
+/// its one or two label lines.
+void append_dim_label_segments(const DimGeometry& g, std::vector<Vec2>& out);
 
 /// The composed, code-expanded label of a dimension: one line, or two when the
 /// tolerance mode is `Limits`. `boxed` requests the ASME Y14.5 basic-dimension frame.
@@ -64,6 +77,9 @@ struct DimLabel {
     /// Deviation: where in line1 the +upper deviation starts -- line2 (the -lower one) stands
     /// under it. npos for the other modes.
     std::size_t stack_at = std::string::npos;
+    /// Where in line1 the tolerance starts (drawn at DIMTFAC's height, as line2 is): the
+    /// deviations and the symmetric one after the value, all of a Limits label. npos: none.
+    std::size_t tol_from = std::string::npos;
 };
 
 /// Builds a dimension's visible label from its MEASURED value plus its decoration.
@@ -150,7 +166,7 @@ inline constexpr const char* kDimVars[] = {"DIMTXT",  "DIMASZ",   "DIMBLK",  "DI
                                            "DIMEXO",  "DIMEXE",   "DIMTAD",  "DIMATFIT", "DIMTMOVE", "DIMLWD",
                                            "DIMCLRD", "DIMCLRE",  "DIMCLRT", "DIMLUNIT", "DIMFRAC",  "DIMRND",
                                            "DIMLFAC", "DIMAUNIT", "DIMADEC", "DIMALT",   "DIMALTU",  "DIMALTD",
-                                           "DIMALTF", "DIMALTRND"};
+                                           "DIMALTF", "DIMALTRND", "DIMJUST", "DIMTXTDIRECTION", "DIMTFAC"};
 
 /// Sets `var` (one of kDimVars, any case) on `style`; false for an unknown variable or a
 /// value out of its range, `style` then unchanged.

@@ -1507,7 +1507,7 @@ TEST_CASE("BASE asks for the base point; INSERT takes a drawing file in place of
     REQUIRE(h.last<LoadBlockFileCommand>()->path == "/tmp/parts/bracket.dxf");
     REQUIRE(h.last<LoadBlockFileCommand>()->name == "bracket");
     REQUIRE_FALSE(h.last<LoadBlockFileCommand>()->redefine);
-    REQUIRE(h.out.prompt == "Specify insertion point or [Scale/Rotate]: ");
+    REQUIRE(h.out.prompt == "Specify insertion point or [Scale/X/Y/Z/Rotate]: ");
     h.run({"0,0", "", "", ""});
     REQUIRE(h.last<InsertBlockCommand>()->name == "bracket");
 }

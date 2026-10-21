@@ -7313,10 +7313,17 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
             lines_from_pairs(g.dim_lines, d->props);
             lines_from_pairs(g.arrow_lines, d->props);
             solids_from_tris(g.arrow_fills, d->props);
-            text(g.label, g.text_pos, g.text_height, g.text_rotation,
-                 static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
-            text(g.label2, g.label2_pos, g.text_height, g.text_rotation,
-                 static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+            if (!g.runs.empty()) {
+                for (const DimGeometry::TextRun& r : g.runs) { // a DIMTFAC tolerance: each piece a text
+                    text(r.text, r.pos, r.height, g.text_rotation, static_cast<std::uint8_t>(text::Justify::Left),
+                         std::string{}, d->props);
+                }
+            } else {
+                text(g.label, g.text_pos, g.text_height, g.text_rotation,
+                     static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+                text(g.label2, g.label2_pos, g.text_height, g.text_rotation,
+                     static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+            }
             break;
         }
         case EntityKind::Leader: {
@@ -8520,13 +8527,26 @@ void GeometryEngine::apply_attach_image(const AttachImageCommand& c) {
     }
     def.pixel_w = img.width;
     def.pixel_h = img.height;
+    // AutoCAD's size at scale 1: the true size when the drawing has a unit and the file says
+    // its resolution, else one unit wide -- so the scale factor is the image's width.
+    std::optional<Vec2> dpi;
+    if (embed) {
+        dpi = image_resolution(def.bytes);
+    } else {
+        std::ifstream head(c.path, std::ios::binary);
+        std::vector<std::uint8_t> buf(512 * 1024);
+        head.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+        buf.resize(static_cast<std::size_t>(std::max<std::streamsize>(head.gcount(), 0)));
+        dpi = image_resolution(buf);
+    }
+    const Vec2 base = image_base_size(img.width, img.height, dpi, store_.units().insunits);
     const std::uint16_t di = store_.add_image_def(def);
     const double scale = c.scale > 0.0 ? c.scale : 1.0;
     AddImageCommand add;
     add.def = di;
     add.pos = c.pos;
-    add.width = static_cast<double>(img.width) * scale;
-    add.height = static_cast<double>(img.height) * scale;
+    add.width = base.x * scale;
+    add.height = base.y * scale;
     add.rotation = c.rotation;
     const Command cmd = add;
     const EntityHandle nh = create_indexed(cmd);
@@ -15901,11 +15921,13 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
             reverse_join(e.verts, e.bulges);
             append_tail(cv, cb, e);
         } else if (approx(e.verts.back(), cv.front())) {
+            // At the chain's start: the chain turned round, its start is the tail, and `e`
+            // runs on from there end first.
             reverse_join(cv, cb);
+            reverse_join(e.verts, e.bulges);
             append_tail(cv, cb, e);
         } else if (approx(e.verts.front(), cv.front())) {
             reverse_join(cv, cb);
-            reverse_join(e.verts, e.bulges);
             append_tail(cv, cb, e);
         } else {
             return false;
@@ -19735,12 +19757,17 @@ void GeometryEngine::rebuild_and_publish() {
     // only when the blocks (or the drawing in front) change.
     {
         const std::uint64_t doc = active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].id : 0;
-        if (!block_previews_ || block_previews_serial_ != store_.blocks_serial() || block_previews_doc_ != doc) {
+        if (!block_previews_ || block_previews_serial_ != store_.blocks_serial() || block_previews_doc_ != doc ||
+            block_previews_units_ != store_.units().insunits) {
             auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
             std::vector<InsertSeg> segs;
+            const std::uint8_t target = store_.units().insunits != 0 ? store_.units().insunits : insunits_def_target_;
             for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
                 InsertData ins{};
                 ins.block = bi;
+                // At the size INSERT puts it in at scale 1: the block's units to the drawing's.
+                ins.scale_x = units::insunits_factor(store_.block(bi)->units, target);
+                ins.scale_y = ins.scale_x;
                 segs.clear();
                 resolve_insert(store_, ins, kDefaultTessTolerance, segs);
                 std::vector<Vec2> pairs;
@@ -19755,6 +19782,7 @@ void GeometryEngine::rebuild_and_publish() {
             block_previews_ = std::move(previews);
             block_previews_serial_ = store_.blocks_serial();
             block_previews_doc_ = doc;
+            block_previews_units_ = store_.units().insunits;
         }
         buf.block_previews = block_previews_;
     }
@@ -19920,6 +19948,7 @@ void GeometryEngine::rebuild_and_publish() {
     // a drag, else the one nearest the cursor within the pick aperture).
     buf.grips.clear();
     buf.hot_grip = -1;
+    buf.hot_grip_hover = false;
     {
         std::vector<Grip> gs;
         for (const EntityHandle h : selection_) {
@@ -19949,6 +19978,7 @@ void GeometryEngine::rebuild_and_publish() {
                     buf.hot_grip = static_cast<int>(i);
                 }
             }
+            buf.hot_grip_hover = buf.hot_grip >= 0;
         }
     }
 
@@ -20138,6 +20168,7 @@ void GeometryEngine::rebuild_and_publish() {
     // Rollover (hover) candidate: the entity under the cursor's pick-box. Same
     // pick query as a single click; render-side highlight, no extra handoff.
     buf.has_hover = false;
+    buf.hover_closed = false;
     buf.hover = EntityHandle{};
     buf.hover_line_vertices.clear();
     if (pick_radius_ > 0.0) {
@@ -20145,6 +20176,9 @@ void GeometryEngine::rebuild_and_publish() {
         if (!hv.is_null() && !sel_contains(hv)) { // don't hover-highlight selected entities
             buf.hover = hv;
             buf.has_hover = true;
+            if (const PolylineData* pl = hv.kind == EntityKind::Polyline ? store_.polyline(hv) : nullptr) {
+                buf.hover_closed = pl->closed;
+            }
             std::vector<Vec2> tess;
             kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
             if (hv.kind == EntityKind::Insert || hv.kind == EntityKind::Dimension) { // disjoint pairs

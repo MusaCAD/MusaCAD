@@ -649,12 +649,14 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         break;
     }
     case EntityKind::Image: {
-        // Insertion point moves; the opposite corner scales. Both are parameters of the
-        // placement, so the quad stays derived rather than becoming a stored polygon.
+        // A grip on each corner, as AutoCAD has them: dragged, the image scales about the
+        // opposite corner and keeps its proportions. The placement stays the parameters, so
+        // the quad stays derived rather than becoming a stored polygon.
         const ImageData* im = store.image(h);
         const ImageQuad q = resolve_image_quad(*im);
-        push(out, q[0], GripKind::Move, 0);
-        push(out, q[2], GripKind::Vertex, 1);
+        for (std::uint32_t k = 0; k < 4; ++k) {
+            push(out, q[k], GripKind::Vertex, k);
+        }
         break;
     }
     case EntityKind::Table: {
@@ -1026,22 +1028,29 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     }
                 }
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
-                if (grip_index == 0) {
-                    x.pos = newpos;
-                } else {
-                    // Opposite corner -> resize, measured in the image's own frame so a
-                    // rotated image scales along its own axes.
-                    const double cs = std::cos(x.rotation);
-                    const double sn = std::sin(x.rotation);
-                    const Vec2 d = newpos - x.pos;
-                    const double lx = d.x * cs + d.y * sn;
-                    const double ly = -d.x * sn + d.y * cs;
-                    if (lx > 1e-9) {
-                        x.width = lx;
-                    }
-                    if (ly > 1e-9) {
-                        x.height = ly;
-                    }
+                // A corner dragged: the image scaled about the opposite corner, its
+                // proportions kept (AutoCAD's image grips) -- by how far along the diagonal
+                // the corner went.
+                ImageData im{};
+                im.pos = x.pos;
+                im.width = x.width;
+                im.height = x.height;
+                im.rotation = x.rotation;
+                im.clipped = x.clipped;
+                im.clip_u0 = x.clip_u0;
+                im.clip_v0 = x.clip_v0;
+                im.clip_u1 = x.clip_u1;
+                im.clip_v1 = x.clip_v1;
+                const ImageQuad q = resolve_image_quad(im);
+                const std::size_t k = grip_index % 4;
+                const Vec2 o = q[(k + 2) % 4];
+                const Vec2 diag = q[k] - o;
+                const double len2 = dot(diag, diag);
+                const double s = len2 > 1e-18 ? dot(newpos - o, diag) / len2 : 1.0;
+                if (s > 1e-9) {
+                    x.pos = o + (x.pos - o) * s;
+                    x.width *= s;
+                    x.height *= s;
                 }
             } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
                 x.pos = newpos; // one grip: move the frame

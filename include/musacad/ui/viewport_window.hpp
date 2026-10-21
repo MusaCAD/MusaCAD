@@ -456,6 +456,8 @@ public:
     /// The kind of entity under the cursor in the last snapshot, encoded as its
     /// EntityKind value + 1 (0 = nothing hovered). The smart DIM command reads this
     /// (via the processor) to preview the dimension type it will create.
+    /// The object under the cursor is a closed polyline.
+    [[nodiscard]] bool hovered_closed() const noexcept { return hovered_closed_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::optional<core::EntityKind> hovered_kind() const noexcept {
         const int v = hovered_kind_.load(std::memory_order_relaxed);
         return v == 0 ? std::nullopt
@@ -579,6 +581,9 @@ public:
     void set_properties_toggle_callback(std::function<void()> cb) {
         properties_toggle_callback_ = std::move(cb);
     }
+    /// DYNMODE turned Dynamic Input on or off: the MainWindow (which owns the F12 toggle)
+    /// follows.
+    void set_dyn_toggle_callback(std::function<void(bool)> cb) { dyn_toggle_callback_ = std::move(cb); }
     /// DWGIN/DWGOUT command -> the MainWindow (which owns the file dialogs + converter)
     /// runs the import/export. ViewControl::import_dwg/export_dwg forward to these.
     void set_dwg_import_callback(std::function<void()> cb) { dwg_import_callback_ = std::move(cb); }
@@ -784,6 +789,13 @@ private:
     // rebuilt into the overlay each frame; a typed value also pins that DOF in the
     // rubber-band (apply_dyn_lock) so the preview reflects it.
     bool dyn_enabled_ = false;
+    /// DYNMODE's parts (1 pointer input, 2 dimensional input), DYNPROMPT (the prompt shown at
+    /// the cursor) and DYNPIFORMAT (a next point's coordinates shown polar 0, Cartesian 1).
+    std::atomic<int> dyn_bits_{3};
+    std::atomic<int> dynprompt_{1};
+    std::atomic<int> dynpiformat_{0};
+    /// The cursor where the next point would go, in world (snaps and constraints applied).
+    [[nodiscard]] core::Vec2 cursor_world_now();
     int dyn_active_slot_ = 0;
     std::array<std::string, 2> dyn_buf_{};
     core::Vec2 dyn_cursor_{}; // last constrained cursor (world)
@@ -856,6 +868,8 @@ private:
     std::atomic<int> gripsize_{5}; // AutoCAD's default
     std::atomic<int> gripcolor_{0};
     std::atomic<int> griphot_{0};
+    std::atomic<int> griphover_{0};      ///< GRIPHOVER (0: the hot colour)
+    std::atomic<int> gripobjlimit_{100}; ///< GRIPOBJLIMIT: no grips with more selected (0: no limit)
     std::atomic<int> transparencydisplay_{1}; ///< TRANSPARENCYDISPLAY / TPY: layer transparency shown
     std::atomic<int> ucsicon_{3};             ///< UCSICON: bit 1 on, bit 2 at the origin
     std::atomic<int> lwdisplay_{1};           ///< LWDISPLAY as the drawing has it (from the snapshot)
@@ -911,6 +925,7 @@ private:
     std::atomic<int> grip_preview_count_{0};
     std::atomic<double> grip_preview_max_x_{0.0};
     std::atomic<int> hovered_kind_{0}; // EntityKind+1, or 0 for nothing hovered
+    std::atomic<bool> hovered_closed_{false};
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
 
@@ -946,6 +961,7 @@ private:
     core::Vec2 bounds_max_{};
     bool has_bounds_ = false;
     std::function<void()> properties_toggle_callback_;
+    std::function<void(bool)> dyn_toggle_callback_;
     std::function<void()> dwg_import_callback_;
     std::function<void()> dwg_export_callback_;
     std::function<void()> plot_dialog_callback_;

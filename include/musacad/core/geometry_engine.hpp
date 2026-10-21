@@ -732,6 +732,7 @@ private:
     std::shared_ptr<const std::vector<std::vector<Vec2>>> block_previews_;
     std::uint64_t block_previews_serial_ = 0;
     std::uint64_t block_previews_doc_ = 0;
+    std::uint8_t block_previews_units_ = 0; ///< the INSUNITS the previews were sized for
     bool any_hidden_ = false;
     RefEditSession refedit_;
 

@@ -17,6 +17,7 @@
 #include "musacad/command/calc.hpp"
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
+#include "musacad/core/image.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/dimension.hpp"
@@ -6783,9 +6784,11 @@ void FieldCommand::input(CommandContext& ctx, const std::string& text) {
 // PEDIT
 // ---------------------------------------------------------------------------
 void PeditCommand::prompt_option(CommandContext& ctx) const {
-    ctx.set_prompt(multiple_
-                       ? "Enter an option [Close/Open/Join/Width/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: "
-                       : "Enter an option [Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+    // AutoCAD offers Close for an open polyline and Open for a closed one (both for several).
+    const std::string ends = multiple_ || !closed_ ? "Close/Open" : *closed_ ? "Open" : "Close";
+    ctx.set_prompt(multiple_ ? "Enter an option [" + ends + "/Join/Width/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: "
+                             : "Enter an option [" + ends +
+                                   "/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
 }
 
 void PeditCommand::selection_gesture(CommandContext& ctx) {
@@ -6848,6 +6851,12 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick_ = *p;
             ctx.set_last_point(*p);
+            closed_.reset();
+            if (ctx.input_is_pick() && ctx.hovered_kind() == core::EntityKind::Polyline) {
+                closed_ = ctx.hovered_closed();
+            } else if (ctx.input_is_pick() && ctx.hovered_kind().has_value()) {
+                closed_ = false; // a line or an arc to become a polyline: open
+            }
             // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one).
             if (s_peditaccept_ == 0 && ctx.input_is_pick() &&
                 (ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc)) {
@@ -6931,8 +6940,10 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "C" || u == "CLOSE") {
             op(0);
+            closed_ = closed_ ? std::optional<bool>(true) : std::nullopt;
         } else if (u == "O" || u == "OPEN") {
             op(1);
+            closed_ = closed_ ? std::optional<bool>(false) : std::nullopt;
         } else if ((u == "J" || u == "JOIN") && multiple_) {
             // The ends within the fuzz distance of each other are joined.
             state_ = State::Fuzz;
@@ -7256,10 +7267,98 @@ void InsertCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void InsertCommand::point_prompt(CommandContext& ctx) {
+    state_ = State::Point;
+    ghost(ctx);
+    ctx.set_prompt("Specify insertion point or [Scale/X/Y/Z/Rotate]: ");
+}
+
+void InsertCommand::ghost(CommandContext& ctx, bool anchored, bool corner, bool turn) {
+    const std::vector<core::Vec2> pairs = ctx.block_preview(name_);
+    if (pairs.empty()) {
+        ctx.set_preview({});
+        return;
+    }
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Outline;
+    const double c = std::cos(rot_);
+    const double s = std::sin(rot_);
+    pv.points.reserve(pairs.size());
+    for (const core::Vec2& q : pairs) {
+        // At the cursor: the scale and angle so far. Sized by the cursor: at scale 1 (the
+        // cursor gives it), turned as asked. Turned by the cursor: scaled, not yet turned.
+        const core::Vec2 sc = anchored && !turn ? q : core::Vec2{q.x * sx_, q.y * sy_};
+        const double cc = turn ? 1.0 : c;
+        const double ss = turn ? 0.0 : s;
+        pv.points.push_back({sc.x * cc - sc.y * ss, sc.x * ss + sc.y * cc});
+    }
+    if (anchored) {
+        pv.outline_anchor = pos_;
+        pv.outline_corner = corner;
+        pv.outline_rotate = turn;
+    }
+    ctx.set_preview(pv);
+}
+
+void InsertCommand::after_point(CommandContext& ctx) {
+    if (!preset_scale_) {
+        state_ = State::ScaleX;
+        ghost(ctx, true, true);
+        ctx.set_prompt("Enter X scale factor, specify opposite corner, or [Corner/XYZ] <1>: ");
+        return;
+    }
+    rotation_prompt(ctx);
+}
+
+void InsertCommand::rotation_prompt(CommandContext& ctx) {
+    if (preset_rot_) {
+        ctx.set_preview({});
+        // Attributes: every value starts at its default; the ones that are neither
+        // Constant nor Preset are asked for, as AutoCAD does with ATTDIA off.
+        attdefs_ = ctx.block_attdefs(name_);
+        values_.clear();
+        for (const core::BlockAttDefInfo& a : attdefs_) {
+            values_.push_back(a.def);
+        }
+        attrib_index_ = 0;
+        if (!attdefs_.empty()) {
+            ctx.echo("Enter attribute values");
+        }
+        next_attrib_or_finish(ctx);
+        return;
+    }
+    state_ = State::Rotation;
+    ghost(ctx, true, false, true);
+    ctx.set_prompt("Specify rotation angle <0>: ");
+}
+
 void InsertCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     double v = 0.0;
+    // A scale factor typed: a number, not 0.
+    const auto factor = [&](double& out) {
+        if (t.empty()) {
+            return true;
+        }
+        if (!parse_number(t, v) || v == 0.0) {
+            ctx.echo("Enter a non-zero scale factor.");
+            return false;
+        }
+        out = v;
+        return true;
+    };
+    // The opposite corner: the block's X and Y scale from the insertion point.
+    const auto corner = [&](core::Vec2 p) {
+        const core::Vec2 d = p - pos_;
+        if (std::abs(d.x) < 1e-12 || std::abs(d.y) < 1e-12) {
+            ctx.echo("The corner is in line with the insertion point: a scale of 0.");
+            return false;
+        }
+        sx_ = d.x;
+        sy_ = d.y;
+        return true;
+    };
     switch (state_) {
     case State::Name:
         if (u == "?") {
@@ -7287,8 +7386,7 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
             ctx.submit(core::LoadBlockFileCommand{file_, name_, false});
-            state_ = State::Point;
-            ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+            point_prompt(ctx);
             return;
         }
         name_ = t.empty() ? s_last_ : t;
@@ -7302,8 +7400,7 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
                 return;
             }
         }
-        state_ = State::Point;
-        ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+        point_prompt(ctx);
         return;
     case State::Redefine:
         if (!u.empty() && u != "Y" && u != "YES" && u != "N" && u != "NO") {
@@ -7311,69 +7408,153 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         ctx.submit(core::LoadBlockFileCommand{file_, name_, u == "Y" || u == "YES"});
-        state_ = State::Point;
-        ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+        point_prompt(ctx);
         return;
     case State::Point:
         if (u == "S" || u == "SCALE") {
-            state_ = State::ScaleX;
-            ctx.set_prompt("Enter scale factor for XY axes <1>: ");
+            state_ = State::PresetScale;
+            ctx.set_prompt("Specify scale factor for XYZ axes <1>: ");
+            return;
+        }
+        if (u == "X" || u == "Y" || u == "Z") {
+            state_ = u == "X" ? State::PresetX : u == "Y" ? State::PresetY : State::PresetZ;
+            ctx.set_prompt("Specify " + u + " scale factor <1>: ");
             return;
         }
         if (u == "R" || u == "ROTATE") {
-            state_ = State::Rotation;
+            state_ = State::PresetRot;
             ctx.set_prompt("Specify rotation angle <0>: ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
             pos_ = *p;
             ctx.set_last_point(*p);
-            state_ = State::ScaleX;
-            ctx.set_prompt("Enter X scale factor or [Corner/XYZ] <1>: ");
+            after_point(ctx);
         }
         return;
-    case State::ScaleX:
-        if (!t.empty()) {
-            if (!parse_number(t, v) || v == 0.0) {
-                ctx.echo("Enter a non-zero scale factor.");
-                return;
-            }
-            sx_ = v;
-            sy_ = v;
+    case State::PresetScale:
+    case State::PresetX:
+    case State::PresetY:
+    case State::PresetZ: {
+        double f = 1.0;
+        if (!factor(f)) {
+            return;
         }
-        state_ = State::ScaleY;
-        ctx.set_prompt("Enter Y scale factor <use X scale factor>: ");
-        return;
-    case State::ScaleY:
-        if (!t.empty()) {
-            if (!parse_number(t, v) || v == 0.0) {
-                ctx.echo("Enter a non-zero scale factor.");
-                return;
-            }
-            sy_ = v;
+        if (state_ == State::PresetScale || state_ == State::PresetX) {
+            sx_ = f;
         }
-        state_ = State::Rotation;
-        ctx.set_prompt("Specify rotation angle <0>: ");
+        if (state_ == State::PresetScale || state_ == State::PresetY) {
+            sy_ = f;
+        }
+        preset_scale_ = preset_scale_ || state_ != State::PresetZ; // Z: a 2D block keeps its own
+        point_prompt(ctx);
         return;
-    case State::Rotation: {
+    }
+    case State::PresetRot: {
         double deg = 0.0;
         if (!t.empty() && !parse_number(t, deg)) {
             ctx.echo("Enter an angle in degrees.");
             return;
         }
         rot_ = core::to_radians(deg);
-        // Attributes: every value starts at its default; the ones that are neither
-        // Constant nor Preset are asked for, as AutoCAD does with ATTDIA off.
-        attdefs_ = ctx.block_attdefs(name_);
-        values_.clear();
-        for (const core::BlockAttDefInfo& a : attdefs_) {
-            values_.push_back(a.def);
+        preset_rot_ = true;
+        point_prompt(ctx);
+        return;
+    }
+    case State::ScaleX:
+        if (u == "C" || u == "CORNER") {
+            state_ = State::Corner;
+            ctx.set_prompt("Specify opposite corner: ");
+            return;
         }
-        attrib_index_ = 0;
-        if (!attdefs_.empty()) {
-            ctx.echo("Enter attribute values");
+        if (u == "XYZ") {
+            state_ = State::XyzX;
+            ghost(ctx, true, false);
+            ctx.set_prompt("Specify X scale factor or [Corner] <1>: ");
+            return;
         }
-        next_attrib_or_finish(ctx);
+        if (!t.empty() && !parse_number(t, v)) {
+            if (const auto p = read_point(ctx, text)) {
+                if (corner(*p)) {
+                    rotation_prompt(ctx);
+                }
+            }
+            return;
+        }
+        if (!factor(sx_)) {
+            return;
+        }
+        sy_ = sx_;
+        state_ = State::ScaleY;
+        ctx.set_preview({});
+        ctx.set_prompt("Enter Y scale factor <use X scale factor>: ");
+        return;
+    case State::Corner:
+        if (const auto p = read_point(ctx, text)) {
+            if (corner(*p)) {
+                rotation_prompt(ctx);
+            }
+        }
+        return;
+    case State::XyzX:
+        if (u == "C" || u == "CORNER") {
+            state_ = State::Corner;
+            ghost(ctx, true, true);
+            ctx.set_prompt("Specify opposite corner: ");
+            return;
+        }
+        if (!t.empty() && !parse_number(t, v)) {
+            if (const auto p = read_point(ctx, text)) {
+                sx_ = core::distance(pos_, *p); // dragged: the distance is the factor
+                sy_ = sx_;
+                state_ = State::XyzY;
+                ctx.set_preview({});
+                ctx.set_prompt("Specify Y scale factor or <use X scale factor>: ");
+            }
+            return;
+        }
+        if (!factor(sx_)) {
+            return;
+        }
+        sy_ = sx_;
+        state_ = State::XyzY;
+        ctx.set_preview({});
+        ctx.set_prompt("Specify Y scale factor or <use X scale factor>: ");
+        return;
+    case State::XyzY:
+        if (!factor(sy_)) {
+            return;
+        }
+        state_ = State::XyzZ;
+        ctx.set_prompt("Specify Z scale factor or <use X scale factor>: ");
+        return;
+    case State::XyzZ: {
+        double z = 1.0;
+        if (!factor(z)) {
+            return; // Z: taken and left, a 2D block has no depth
+        }
+        rotation_prompt(ctx);
+        return;
+    }
+    case State::ScaleY:
+        if (!factor(sy_)) {
+            return;
+        }
+        rotation_prompt(ctx);
+        return;
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            if (const auto p = read_point(ctx, text)) {
+                rot_ = std::atan2(p->y - pos_.y, p->x - pos_.x); // the angle shown
+                preset_rot_ = true;
+                rotation_prompt(ctx);
+            }
+            return;
+        }
+        rot_ = core::to_radians(deg);
+        preset_rot_ = true;
+        rotation_prompt(ctx);
         return;
     }
     case State::Attrib:
@@ -7615,7 +7796,42 @@ void ImageAttachCommand::start(CommandContext& ctx) {
 
 void ImageAttachCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    ctx.set_preview({});
     done_ = true;
+}
+
+void ImageAttachCommand::read_base(CommandContext& ctx) {
+    base_.reset();
+    std::ifstream in(path_, std::ios::binary);
+    if (!in) {
+        return;
+    }
+    std::vector<std::uint8_t> head(512 * 1024);
+    in.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(std::max<std::streamsize>(in.gcount(), 0)));
+    if (const auto px = core::image_pixel_size(head); px && (*px)[0] > 0 && (*px)[1] > 0) {
+        base_ = core::image_base_size((*px)[0], (*px)[1], core::image_resolution(head), ctx.units().insunits);
+    }
+}
+
+void ImageAttachCommand::frame(CommandContext& ctx, bool anchored, bool turn) {
+    if (!base_) {
+        ctx.set_preview({});
+        return;
+    }
+    // At the cursor: its size so far. Sized by the cursor: at scale 1, the cursor's distance
+    // the factor. Turned by the cursor: at its scale.
+    const double s = anchored && !turn ? 1.0 : scale_;
+    const double w = base_->x * s;
+    const double h = base_->y * s;
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Outline;
+    pv.points = {{0, 0}, {w, 0}, {w, 0}, {w, h}, {w, h}, {0, h}, {0, h}, {0, 0}, {0, 0}, {w, h}, {w, 0}, {0, h}};
+    if (anchored) {
+        pv.outline_anchor = pos_;
+        pv.outline_rotate = turn;
+    }
+    ctx.set_preview(pv);
 }
 
 void ImageAttachCommand::ask_embed(CommandContext& ctx) {
@@ -7642,6 +7858,7 @@ void ImageAttachCommand::input(CommandContext& ctx, const std::string& text) {
         } else {
             path_ = t;
         }
+        read_base(ctx);
         ask_embed(ctx);
         return;
     case State::Embed:
@@ -7652,6 +7869,7 @@ void ImageAttachCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         state_ = State::Point;
+        frame(ctx);
         ctx.set_prompt("Specify insertion point <0,0>: ");
         return;
     case State::Point:
@@ -7663,30 +7881,56 @@ void ImageAttachCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         ctx.set_last_point(pos_);
+        if (base_) {
+            // AutoCAD's -IMAGEATTACH says the size at scale 1, in the drawing's unit.
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), "Base image size: Width: %f, Height: %f, %s", base_->x, base_->y,
+                          core::units::insunits_name(ctx.units().insunits));
+            ctx.echo(buf);
+        }
         state_ = State::Scale;
+        frame(ctx, true);
         ctx.set_prompt("Specify scale factor <1>: ");
         return;
     case State::Scale: {
         if (!t.empty()) {
             double v = 0.0;
-            if (!parse_number(t, v) || v <= 0.0) {
-                ctx.echo("Enter a scale factor greater than 0.");
+            if (parse_number(t, v)) {
+                if (v <= 0.0) {
+                    ctx.echo("Enter a scale factor greater than 0.");
+                    return;
+                }
+                scale_ = v;
+            } else if (const auto p = read_point(ctx, text)) {
+                const double d = core::distance(pos_, *p); // dragged: the distance is the factor
+                if (d <= 0.0) {
+                    ctx.echo("Enter a scale factor greater than 0.");
+                    return;
+                }
+                scale_ = d;
+            } else {
                 return;
             }
-            scale_ = v;
         }
         state_ = State::Rotation;
-        ctx.set_prompt("Specify rotation <0>: ");
+        frame(ctx, true, true);
+        ctx.set_prompt("Specify rotation angle <0>: ");
         return;
     }
     case State::Rotation: {
-        double deg = 0.0;
-        if (!t.empty() && !parse_number(t, deg)) {
-            ctx.echo("Enter an angle in degrees.");
-            return;
+        double rad = 0.0;
+        if (!t.empty()) {
+            double deg = 0.0;
+            if (parse_number(t, deg)) {
+                rad = core::to_radians(deg);
+            } else if (const auto p = read_point(ctx, text)) {
+                rad = std::atan2(p->y - pos_.y, p->x - pos_.x); // the angle shown
+            } else {
+                return;
+            }
         }
-        ctx.submit(core::AttachImageCommand{path_, embed_, pos_, scale_, core::to_radians(deg),
-                                            ctx.group_id()});
+        ctx.set_preview({});
+        ctx.submit(core::AttachImageCommand{path_, embed_, pos_, scale_, rad, ctx.group_id()});
         done_ = true;
         return;
     }
@@ -8610,9 +8854,9 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNPICOORDS",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
-        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT",
+        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
@@ -16921,6 +17165,9 @@ const char* dim_var_meaning(std::string_view var) {
     if (u == "DIMEXE") return "Extension beyond the dimension line";
     if (u == "DIMTAD") return "Text above the dimension line (0 centred)";
     if (u == "DIMATFIT") return "Text fit: 0 automatic, 1 inside, 2 outside";
+    if (u == "DIMJUST") return "Text along the line: 0 centred, 1 at ext line 1, 2 at ext line 2, 3 over 1, 4 over 2";
+    if (u == "DIMTXTDIRECTION") return "Text reading direction: 0 left to right, 1 right to left";
+    if (u == "DIMTFAC") return "Tolerance text height over the dimension text's";
     if (u == "DIMTMOVE") return "Moved text: 0 with its dimension line, 1 with a leader, 2 alone";
     if (u == "DIMLWD") return "Dimension lineweight (1/100 mm)";
     if (u == "DIMCLRD") return "Dimension line and arrowhead colour (ACI, 256 BYLAYER)";

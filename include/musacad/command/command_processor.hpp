@@ -266,6 +266,8 @@ public:
     /// it changes while a command is active, the command's hover() hook fires (the
     /// smart DIM preview). nullopt means the cursor is over empty space.
     void set_hovered_kind(std::optional<core::EntityKind> kind);
+    void set_hovered_closed(bool closed) noexcept { hovered_closed_ = closed; }
+    [[nodiscard]] bool hovered_closed() const override { return hovered_closed_; }
     void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
     void set_custom_patterns(std::vector<std::string> v) { custom_patterns_ = std::move(v); }
     void set_support_paths(std::vector<std::string> v) { support_paths_ = std::move(v); }
@@ -299,6 +301,18 @@ public:
     void set_current_props(const core::EntityProps& p) { current_props_ = p; }
     [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
+    /// The blocks' geometry, in block_names order (RenderSnapshot::block_previews).
+    void set_block_previews(std::shared_ptr<const std::vector<std::vector<core::Vec2>>> p) {
+        block_previews_ = std::move(p);
+    }
+    [[nodiscard]] std::vector<core::Vec2> block_preview(const std::string& name) const override {
+        for (std::size_t i = 0; block_previews_ && i < block_names_.size() && i < block_previews_->size(); ++i) {
+            if (block_names_[i] == name) {
+                return (*block_previews_)[i];
+            }
+        }
+        return {};
+    }
     void set_linetypes(std::vector<core::LinetypeDef> v) { linetypes_ = std::move(v); }
     [[nodiscard]] std::vector<core::LinetypeDef> linetypes() const override { return linetypes_; }
     void set_purge_candidates(core::RenderSnapshot::PurgeCandidates p) { purge_ = std::move(p); }
@@ -485,6 +499,7 @@ private:
     std::uint16_t current_mleader_style_ = 0;
     core::EntityProps current_props_{};
     std::vector<std::string> block_names_;
+    std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews_;
     std::vector<core::LinetypeDef> linetypes_;
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     std::vector<std::string> layout_names_;
@@ -528,6 +543,7 @@ private:
     std::uint32_t selection_kinds_ = ~0u; ///< bit per EntityKind; all bits: not known
     core::Vec2 selection_size_{};         ///< the selection's extents (0, 0: not known)
     std::optional<core::EntityKind> hovered_kind_;
+    bool hovered_closed_ = false;
     PreviewSpec preview_;
     core::RenderSnapshot::PurgeCandidates purge_;
     double ltscale_ = 1.0;

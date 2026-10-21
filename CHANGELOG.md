@@ -9,6 +9,35 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **An attached image's size as AutoCAD gives it** -- one unit wide at scale 1, so the scale
+  factor is the image's width; or, in a drawing with a unit (INSUNITS), its true size from the
+  resolution the file records (PNG, JPEG, BMP, TIFF): a 300 dpi scan of an A4 sheet comes in at
+  210 x 297 mm. It used to be one unit per pixel, thousands of units wide. -IMAGEATTACH says the
+  `Base image size`, shows the image's frame at the cursor, then sizes it by the cursor's
+  distance from the insertion point (AutoCAD's scale factor) and turns it with the cursor
+  (`Specify rotation angle <0>:`).
+- **Image grips** -- a grip on each corner, as AutoCAD has them: dragged, the image scales
+  about the opposite corner and keeps its proportions.
+- **Dynamic Input's pointer input** (#65) -- where a point is asked, the value at the cursor is
+  the cursor's coordinates, and Tab keeps the X and goes on to Y; for a next point, how far
+  it is from the point before, polar (`distance<angle`) or, with **DYNPIFORMAT** 1, Cartesian.
+  A coordinate typed there is taken as AutoCAD takes it -- relative to the point before unless
+  DYNPICOORDS is 1, `#` absolute. **DYNMODE** (1 pointer input, 2 dimensional input, 3 both,
+  0 off, negative off until F12) and **DYNPROMPT** (the prompt shown at the cursor or not); the
+  three are kept between runs.
+- **GRIPHOVER** and **GRIPOBJLIMIT** (#54) -- the colour of a grip under the cursor (a grip
+  grabbed keeps GRIPHOT's), and no grips when more objects than GRIPOBJLIMIT are selected
+  (100; 0 for no limit), as AutoCAD has them.
+- **The dimension style's View Direction and Scaling for height** (#58) -- the Text tab's View
+  Direction (DIMTXTDIRECTION) reads the text right to left; the Tolerances tab's Scaling for
+  height (DIMTFAC) draws a symmetrical tolerance, the deviations and the limits at their own
+  height beside the value, the deviations one over the other. Both kept in the drawing and
+  in DXF; DIMTFAC, DIMTXTDIRECTION and DIMJUST are variables too.
+- **-INSERT's options and previews** -- the block is carried at the cursor;
+  `Specify insertion point or [Scale/X/Y/Z/Rotate]:` (those given before the point are not
+  asked after it); `Enter X scale factor, specify opposite corner, or [Corner/XYZ] <1>:` sizes
+  the block by the corner as the cursor moves, **Corner** and **XYZ** as in AutoCAD; the
+  rotation turns with the cursor.
 - **MEASUREMENT and MEASUREINIT** (#81, #41, #68) -- as in AutoCAD, a drawing is imperial (0)
   or metric (1). A new hatch takes its standard pattern from acad.pat or, metric, acadiso.pat
   -- the same patterns 25.4 times as large -- and keeps it: what is already drawn does not

@@ -1272,14 +1272,15 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
         const double hpx = grip_half_px_ * device_pixel_ratio_; // physical-consistent
         std::vector<core::Vec2> normal;
         std::vector<core::Vec2> hot;
+        std::vector<core::Vec2> hover;
         for (std::size_t i = 0; i < snapshot.grips.size(); ++i) {
             const core::Vec2 s = camera.world_to_screen(snapshot.grips[i].pos);
             const std::vector<core::Vec2>& shift_hot = overlay().hot_grips;
-            std::vector<core::Vec2>& dst =
-                (static_cast<int>(i) == snapshot.hot_grip ||
-                 std::find(shift_hot.begin(), shift_hot.end(), snapshot.grips[i].pos) != shift_hot.end())
-                    ? hot
-                    : normal;
+            const bool shifted = std::find(shift_hot.begin(), shift_hot.end(), snapshot.grips[i].pos) != shift_hot.end();
+            const bool at = static_cast<int>(i) == snapshot.hot_grip;
+            std::vector<core::Vec2>& dst = shifted || (at && !snapshot.hot_grip_hover) ? hot
+                                           : at                                       ? hover
+                                                                                      : normal;
             const core::Vec2 a{s.x - hpx, s.y - hpx};
             const core::Vec2 b{s.x + hpx, s.y - hpx};
             const core::Vec2 c{s.x + hpx, s.y + hpx};
@@ -1318,8 +1319,12 @@ void ViewportRenderer::draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width,
         };
         float normal_col[4];
         float hot_col[4];
+        float hover_col[4];
         draw_squares(normal, rgba(grip_rgb_, kGripColor, normal_col));
         draw_squares(hot, rgba(hot_grip_rgb_, kHotGripColor, hot_col));
+        // GRIPHOVER when set; else the hot colour (GRIPHOT's, or the theme's).
+        draw_squares(hover, hover_grip_rgb_ != 0 ? rgba(hover_grip_rgb_, kHotGripColor, hover_col)
+                                                 : rgba(hot_grip_rgb_, kHotGripColor, hover_col));
     }
 }
 

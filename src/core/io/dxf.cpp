@@ -646,6 +646,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 44, ds.ext_extension); // DIMEXE
         code_i(s, 77, dim_text_vpos(ds)); // DIMTAD
         code_i(s, 280, ds.text_just);      // DIMJUST
+        code_i(s, 294, ds.text_rtl ? 1 : 0); // DIMTXTDIRECTION
         code_i(s, 78, ds.zero_suppression);   // DIMZIN
         code_i(s, 271, ds.precision);   // DIMDEC
         code_i(s, 278, static_cast<unsigned char>(ds.decimal_separator)); // DIMDSEP
@@ -682,6 +683,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         if (ds.tol_precision >= 0) {
             code_i(s, 272, ds.tol_precision); // DIMTDEC
         }
+        code_d(s, 146, ds.tol_height); // DIMTFAC
     }
     code(s, 0, "ENDTAB");
     // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
@@ -2115,6 +2117,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             const long just = to_l(*v);
             ds.text_just = just >= 0 && just <= 4 ? static_cast<std::uint8_t>(just) : std::uint8_t{0};
         }
+        if (const std::string* v = find(body, 294)) {
+            ds.text_rtl = to_l(*v) != 0; // DIMTXTDIRECTION
+        }
         if (const std::string* v = find(body, 77)) {
             const long tad = to_l(*v);
             ds.text_above = tad != 0 && tad != 4;
@@ -2164,6 +2169,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         ds.tol_upper = tp;
         ds.tol_lower = tm;
         ranged(272, 0, 8, [&](long x) { ds.tol_precision = static_cast<std::int8_t>(x); });
+        if (const double tfac = getd(body, 146, 1.0); tfac > 0.0) {
+            ds.tol_height = tfac; // DIMTFAC
+        }
         if (const std::string* v = find(body, 45); v != nullptr && to_d(*v) >= 0.0) {
             ds.round_off = to_d(*v);
         }

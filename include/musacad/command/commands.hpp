@@ -2679,6 +2679,7 @@ private:
     void prompt_option(CommandContext& ctx) const;
     void prompt_vertex(CommandContext& ctx) const;
     State state_ = State::Select;
+    std::optional<bool> closed_; ///< the polyline picked is closed (only Open offered) or open (only Close)
     core::Vec2 pick_{};
     bool straighten_ = false; ///< the vertex editor's Go straightens (else it breaks)
     std::vector<core::Vec2> join_picks_;
@@ -2742,7 +2743,14 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Name, Redefine, Point, ScaleX, ScaleY, Rotation, Attrib } state_ = State::Name;
+    /// AutoCAD's -INSERT: `Specify insertion point or [Scale/X/Y/Z/Rotate]:` (those set before
+    /// the point are not asked after it), `Enter X scale factor, specify opposite corner, or
+    /// [Corner/XYZ] <1>:`, `Enter Y scale factor <use X scale factor>:`, `Specify rotation
+    /// angle <0>:` -- the block carried at the cursor, then scaled and turned with it.
+    enum class State {
+        Name, Redefine, Point, PresetScale, PresetX, PresetY, PresetZ, PresetRot,
+        ScaleX, Corner, XyzX, XyzY, XyzZ, ScaleY, Rotation, Attrib
+    } state_ = State::Name;
     inline static std::string s_last_;
     std::string name_;
     std::string file_; ///< the drawing file being inserted, if any
@@ -2750,6 +2758,15 @@ private:
     double sx_ = 1.0;
     double sy_ = 1.0;
     double rot_ = 0.0;
+    bool preset_scale_ = false; ///< Scale, X or Y given before the point
+    bool preset_rot_ = false;   ///< Rotate given before the point
+    void point_prompt(CommandContext& ctx);
+    void after_point(CommandContext& ctx);
+    void rotation_prompt(CommandContext& ctx);
+    /// The block's outline: at the cursor (its scale and angle so far), or about the
+    /// insertion point sized (`corner`: by the cursor's corner; else by its distance) or
+    /// turned (`turn`) by the cursor.
+    void ghost(CommandContext& ctx, bool anchored = false, bool corner = false, bool turn = false);
     // Attribute values: one prompt per attribute that is neither Constant nor Preset.
     std::vector<core::BlockAttDefInfo> attdefs_;
     std::vector<std::string> values_;
@@ -2837,10 +2854,18 @@ public:
 private:
     enum class State { File, Embed, Point, Scale, Rotation } state_ = State::File;
     void ask_embed(CommandContext& ctx);
+    /// The image's size at scale 1 (AutoCAD's base size: its true size in a drawing with a
+    /// unit when the file says its resolution, else one unit wide), read from the file's
+    /// header; unset when the header is not one read here.
+    void read_base(CommandContext& ctx);
+    /// The image's frame: at the cursor, or about the insertion point sized (distance) or
+    /// turned by the cursor.
+    void frame(CommandContext& ctx, bool anchored = false, bool turn = false);
     std::string path_;
     bool embed_ = false;
     core::Vec2 pos_{};
     double scale_ = 1.0;
+    std::optional<core::Vec2> base_;
     bool done_ = false;
 };
 
