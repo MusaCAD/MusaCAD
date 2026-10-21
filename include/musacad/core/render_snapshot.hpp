@@ -128,6 +128,16 @@ struct ImageInstance {
     std::vector<Vec2> tri_uv;
 };
 
+/// A selected dimension's definition points, for DIMREASSOCIATE's prompts point by point: a
+/// linear or aligned one's two extension-line origins, an angular one's vertex and the points
+/// on its two lines, a radial one's centre and the point on the curve, an ordinate one's
+/// feature.
+struct SelectedDim {
+    EntityHandle handle;
+    DimType type = DimType::Linear;
+    std::vector<Vec2> points;
+};
+
 /// A grip handle published for the selected set: its world position plus the
 /// (handle, index) the UI sends back to begin a drag, and its role for colouring.
 struct GripInfo {
@@ -289,6 +299,7 @@ struct RenderSnapshot {
     // are those entities' segments, for the highlight and move/mirror ghosts.
     // Interaction state, not part of the checksum.
     std::vector<EntityHandle> selection;
+    std::vector<SelectedDim> selected_dims; ///< the dimensions among them
     Vec2 selection_size{}; ///< the selection's extents, width and height
     std::vector<Vec2> selected_line_vertices;
     // Filled (SOLID hatch) triangles of the selection, overlaid in the highlight
@@ -451,6 +462,7 @@ struct RenderSnapshot {
         snap_point = {};
         snap_type = SnapType::None;
         selection.clear();
+        selected_dims.clear();
         selection_size = {};
         selected_line_vertices.clear();
         selected_fill_vertices.clear();

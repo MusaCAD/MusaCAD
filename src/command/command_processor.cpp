@@ -676,7 +676,8 @@ void CommandProcessor::start_grip_mode(core::EntityHandle handle, std::uint32_t 
     start_grip_mode(begin, pos);
 }
 
-void CommandProcessor::start_grip_mode(const core::GripDragCommand& begin, core::Vec2 pos) {
+void CommandProcessor::start_grip_mode(const core::GripDragCommand& begin, core::Vec2 pos,
+                                       std::optional<core::Vec2> anchor, bool radius) {
     drop_point_modifiers();
     if (active_) {
         active_->cancel(*this);
@@ -685,7 +686,7 @@ void CommandProcessor::start_grip_mode(const core::GripDragCommand& begin, core:
     }
     current_group_ = ++group_counter_;
     command_group_ = current_group_;
-    active_ = std::make_unique<GripModeCommand>(begin, pos);
+    active_ = std::make_unique<GripModeCommand>(begin, pos, anchor, radius);
     active_->start(*this);
     finalize_if_done();
 }

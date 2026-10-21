@@ -44,7 +44,9 @@ public:
     /// start on it. The press already began the engine's grip drag.
     void start_grip_mode(core::EntityHandle handle, std::uint32_t index, core::Vec2 pos);
     /// The same, for a drag begun as `begin` says (Shift's hot grips, a grip menu's choice).
-    void start_grip_mode(const core::GripDragCommand& begin, core::Vec2 pos);
+    /// `anchor`, `radius`: what a stretch is measured from (command::grip_dyn_anchor).
+    void start_grip_mode(const core::GripDragCommand& begin, core::Vec2 pos,
+                         std::optional<core::Vec2> anchor = std::nullopt, bool radius = false);
 
     /// Cancels the active command (ESC).
     void cancel();
@@ -268,6 +270,8 @@ public:
     void set_hovered_kind(std::optional<core::EntityKind> kind);
     void set_hovered_closed(bool closed) noexcept { hovered_closed_ = closed; }
     [[nodiscard]] bool hovered_closed() const override { return hovered_closed_; }
+    void set_selected_dims(std::vector<core::SelectedDim> v) { selected_dims_ = std::move(v); }
+    [[nodiscard]] std::vector<core::SelectedDim> selected_dims() const override { return selected_dims_; }
     void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
     void set_custom_patterns(std::vector<std::string> v) { custom_patterns_ = std::move(v); }
     void set_support_paths(std::vector<std::string> v) { support_paths_ = std::move(v); }
@@ -544,6 +548,7 @@ private:
     core::Vec2 selection_size_{};         ///< the selection's extents (0, 0: not known)
     std::optional<core::EntityKind> hovered_kind_;
     bool hovered_closed_ = false;
+    std::vector<core::SelectedDim> selected_dims_;
     PreviewSpec preview_;
     core::RenderSnapshot::PurgeCandidates purge_;
     double ltscale_ = 1.0;

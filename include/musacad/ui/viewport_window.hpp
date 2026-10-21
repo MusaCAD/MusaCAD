@@ -84,6 +84,8 @@ public:
     std::vector<core::MLeaderStyle> mleader_styles();
     std::uint16_t current_mleader_style();
     std::vector<std::string> block_names();
+    /// The selected dimensions' definition points (DIMREASSOCIATE).
+    std::vector<core::SelectedDim> selected_dims();
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
     /// Per block (as block_names): its geometry as segment pairs (the Insert gallery).
     std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews();
@@ -797,15 +799,27 @@ private:
     /// The cursor where the next point would go, in world (snaps and constraints applied).
     [[nodiscard]] core::Vec2 cursor_world_now();
     int dyn_active_slot_ = 0;
-    std::array<std::string, 2> dyn_buf_{};
+    std::array<std::string, 4> dyn_buf_{}; ///< by field slot (a hot grip's stretch has up to four)
     core::Vec2 dyn_cursor_{}; // last constrained cursor (world)
     [[nodiscard]] bool dyn_dimensional() const; ///< the live preview has on-canvas fields
     bool dyn_commit();                          ///< Enter: compose + submit; false if nothing typed
     void dyn_reset() noexcept {
-        dyn_buf_[0].clear();
-        dyn_buf_[1].clear();
+        for (std::string& b : dyn_buf_) {
+            b.clear();
+        }
         dyn_active_slot_ = 0;
     }
+    [[nodiscard]] bool dyn_any_typed() const noexcept {
+        for (const std::string& b : dyn_buf_) {
+            if (!b.empty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /// The anchor a hot grip's stretch is measured from (command::grip_dyn_anchor), from the
+    /// selection's grips.
+    [[nodiscard]] std::optional<core::Vec2> grip_anchor_of(const core::GripInfo& grip, bool& radius);
 
     // On-canvas command entry (idle): the typed command text + autocomplete state. Built
     // into overlay_.command_ui each frame; keystrokes routed via the app-wide filter.
@@ -1056,6 +1070,7 @@ private:
     std::uint16_t current_mleader_style_ = 0;
     std::uint16_t current_table_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
+    std::vector<core::SelectedDim> selected_dims_; ///< under layers_mutex_ (written on the render thread)
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
     std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews_; ///< under layers_mutex_
     std::vector<core::LinetypeDef> linetypes_; ///< under layers_mutex_

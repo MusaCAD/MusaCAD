@@ -2323,6 +2323,90 @@ void GeometryEngine::apply_dim_assoc(const DimAssocCommand& c) {
         }
         return;
     }
+    if (c.op == Op::Points) {
+        const DimData* d = c.dim.kind == EntityKind::Dimension && store_.is_valid(c.dim) ? store_.dimension(c.dim) : nullptr;
+        if (d == nullptr || !editable_entity(c.dim)) {
+            report("That dimension is no longer there.");
+            return;
+        }
+        const Command original = capture_entity(c.dim);
+        Command edited = original;
+        auto& ad = std::get<AddDimensionCommand>(edited);
+        const auto type = static_cast<DimType>(ad.type);
+        if (c.pick && (type == DimType::Linear || type == DimType::Aligned)) {
+            // Select object: a line's ends, or an arc's.
+            const EntityHandle oh = pick_nearest(*c.pick, c.pick_radius);
+            if (const LineData* l = oh.kind == EntityKind::Line ? store_.line(oh) : nullptr; l != nullptr) {
+                ad.a = l->a;
+                ad.b = l->b;
+            } else if (const ArcData* a = oh.kind == EntityKind::Arc ? store_.arc(oh) : nullptr; a != nullptr) {
+                ad.a = a->center + Vec2{std::cos(a->start_angle), std::sin(a->start_angle)} * a->radius;
+                ad.b = a->center + Vec2{std::cos(a->end_angle), std::sin(a->end_angle)} * a->radius;
+            } else {
+                report("Select a line or an arc.");
+                return;
+            }
+        } else if (c.pick) {
+            // A radial dimension measures the circle or arc picked: its centre, and the point
+            // on it the way the dimension pointed.
+            const EntityHandle ch = pick_nearest(*c.pick, c.pick_radius);
+            Vec2 center;
+            double r = 0.0;
+            double start = 0.0;
+            double end = 0.0;
+            bool is_arc = false;
+            if (const CircleData* circle = ch.kind == EntityKind::Circle ? store_.circle(ch) : nullptr; circle != nullptr) {
+                center = circle->center;
+                r = circle->radius;
+            } else if (const ArcData* arc = ch.kind == EntityKind::Arc ? store_.arc(ch) : nullptr; arc != nullptr) {
+                center = arc->center;
+                r = arc->radius;
+                start = arc->start_angle;
+                end = arc->end_angle;
+                is_arc = true;
+            }
+            if (r <= 0.0 || (type == DimType::ArcLength && !is_arc)) {
+                report(type == DimType::ArcLength ? "Select an arc." : "Select an arc or a circle.");
+                return;
+            }
+            const Vec2 shift = center - ad.a;
+            if (type == DimType::ArcLength) {
+                ad.b = center + Vec2{std::cos(start), std::sin(start)} * r;
+                ad.aux = end;
+            } else {
+                const Vec2 dir = ad.b - ad.a;
+                const double len = length(dir);
+                ad.b = center + (len > 1e-12 ? dir * (r / len) : Vec2{r, 0.0});
+            }
+            ad.a = center;
+            ad.line_pt = ad.line_pt + shift;
+        } else {
+            if (!c.points.empty()) {
+                ad.a = c.points[0];
+            }
+            if (c.points.size() > 1 && type != DimType::Ordinate) {
+                ad.b = c.points[1];
+            }
+            if (c.points.size() > 2 && type == DimType::Angular) {
+                ad.line_pt = c.points[2];
+            }
+        }
+        ad.unassoc = false;
+        remove_indexed(c.dim);
+        push_erase_item(c.group, c.dim, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        for (EntityHandle& s : selection_) {
+            if (s == c.dim) {
+                s = nh;
+            }
+        }
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+        report("Dimension reassociated.");
+        return;
+    }
     prune_selection();
     const bool to = c.op == Op::Disassociate;
     std::size_t n = 0;
@@ -6802,6 +6886,10 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
 }
 
 void GeometryEngine::apply_revcloud_object(const RevcloudObjectCommand& c) {
+    if (c.modify) {
+        apply_revcloud_modify(c);
+        return;
+    }
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     if (h.is_null()) {
         report("Revision cloud: no object under the pick.");
@@ -11797,6 +11885,190 @@ int circle_circle_hits(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0, Vec2& p
 }
 
 } // namespace
+
+void GeometryEngine::apply_revcloud_modify(const RevcloudObjectCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    const PolylineData* pl = h.kind == EntityKind::Polyline ? store_.polyline(h) : nullptr;
+    if (pl == nullptr || !editable_entity(h)) {
+        report("Revision cloud: select a polyline to modify.");
+        return;
+    }
+    if (c.path.size() < 2) {
+        report("Revision cloud: the new stretch needs two points or more.");
+        return;
+    }
+    const std::span<const Vec2> vs = store_.vertices_of(*pl);
+    const std::vector<Vec2> v(vs.begin(), vs.end());
+    if (v.size() < 2) {
+        report("Revision cloud: that polyline has no length.");
+        return;
+    }
+    std::vector<double> b(v.size(), 0.0);
+    if (const std::span<const double> bl = store_.bulges_of(*pl); bl.size() == v.size()) {
+        b.assign(bl.begin(), bl.end());
+    }
+    const bool closed = pl->closed;
+    const double m = static_cast<double>(closed ? v.size() : v.size() - 1);
+    // Where the new stretch leaves the polyline and where it comes back to it: as AutoCAD has
+    // it, the vertex nearest the pick and the vertex nearest the stretch's last point.
+    const auto nearest_vertex = [&](Vec2 p) {
+        std::size_t best = 0;
+        for (std::size_t i = 1; i < v.size(); ++i) {
+            if (length_squared(v[i] - p) < length_squared(v[best] - p)) {
+                best = i;
+            }
+        }
+        return static_cast<double>(best);
+    };
+    const double qs = nearest_vertex(c.path.front());
+    const double qe = nearest_vertex(c.path.back());
+    if (std::abs(qs - qe) < 1e-9) {
+        report("Revision cloud: the new stretch starts and ends at the same vertex.");
+        return;
+    }
+    // The stretch starts and ends on those vertices.
+    std::vector<Vec2> stretch = c.path;
+    stretch.front() = v[static_cast<std::size_t>(qs)];
+    stretch.back() = v[static_cast<std::size_t>(qe)];
+    // Chains of points with a bulge each (the last unused): the second runs on from the
+    // first's last point.
+    const auto join = [](std::vector<Vec2>& pts, std::vector<double>& bul, const std::vector<Vec2>& p2,
+                         const std::vector<double>& b2) {
+        if (!pts.empty()) {
+            pts.pop_back();
+            bul.pop_back();
+        }
+        pts.insert(pts.end(), p2.begin(), p2.end());
+        bul.insert(bul.end(), b2.begin(), b2.end());
+    };
+    const auto cloud = [&](std::vector<Vec2> path, std::vector<Vec2>& cv, std::vector<double>& cb) {
+        polyline_ops::revcloud_from_path(path, false, c.arc_len, false, cv, cb);
+        return cv.size() >= 2;
+    };
+    std::vector<Vec2> pts;
+    std::vector<double> bul;
+    if (closed) {
+        // The loop from the start to the end and from the end back to the start: the one on
+        // the side picked goes, and the new stretch runs on from the other.
+        std::vector<Vec2> fwd;
+        std::vector<double> fwd_b;
+        std::vector<Vec2> back;
+        std::vector<double> back_b;
+        polyline_sub(v, b, qs, qe >= qs ? qe : qe + m, fwd, fwd_b);  // start -> end
+        polyline_sub(v, b, qe, qs >= qe ? qs : qs + m, back, back_b); // end -> start
+        const auto away = [&](const std::vector<Vec2>& p, const std::vector<double>& pb) {
+            std::vector<Vec2> sampled;
+            chain_points(p, pb, sampled);
+            double best = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i + 1 < sampled.size(); ++i) {
+                const Vec2 d = sampled[i + 1] - sampled[i];
+                const double len2 = length_squared(d);
+                const double f = len2 > 0.0 ? std::clamp(dot(c.side - sampled[i], d) / len2, 0.0, 1.0) : 0.0;
+                best = std::min(best, length(c.side - (sampled[i] + d * f)));
+            }
+            return best;
+        };
+        const bool keep_back = away(fwd, fwd_b) <= away(back, back_b); // the side picked is near `fwd`
+        std::vector<Vec2> path = stretch;
+        if (!keep_back) {
+            std::reverse(path.begin(), path.end()); // after start -> end, the stretch runs end -> start
+        }
+        std::vector<Vec2> cv;
+        std::vector<double> cb;
+        if (!cloud(path, cv, cb)) {
+            report("Revision cloud: the arc length is too large for the new stretch.");
+            return;
+        }
+        pts = keep_back ? back : fwd;
+        bul = keep_back ? back_b : fwd_b;
+        const std::size_t kept = pts.size() - 1; // the stretch's bulges start here
+        join(pts, bul, cv, cb);
+        pts.pop_back(); // the stretch ends where the kept piece starts: the loop closes there
+        bul.pop_back();
+        // The lobes face outward: away from the loop's inside, whichever way it runs.
+        double area2 = 0.0;
+        for (std::size_t i = 0; i < pts.size(); ++i) {
+            const Vec2& p0 = pts[i];
+            const Vec2& p1 = pts[(i + 1) % pts.size()];
+            area2 += p0.x * p1.y - p1.x * p0.y;
+        }
+        if (area2 < 0.0) {
+            for (std::size_t i = kept; i < bul.size(); ++i) {
+                bul[i] = -bul[i];
+            }
+        }
+    } else {
+        // Open: the polyline up to the first of the two points, the new stretch, and on from
+        // the second -- the stretch between them goes.
+        std::vector<Vec2> head;
+        std::vector<double> head_b;
+        std::vector<Vec2> tail;
+        std::vector<double> tail_b;
+        polyline_sub(v, b, 0.0, std::min(qs, qe), head, head_b);
+        polyline_sub(v, b, std::max(qs, qe), m, tail, tail_b);
+        std::vector<Vec2> path = stretch;
+        if (qs > qe) {
+            std::reverse(path.begin(), path.end());
+        }
+        std::vector<Vec2> cv;
+        std::vector<double> cb;
+        if (!cloud(path, cv, cb)) {
+            report("Revision cloud: the arc length is too large for the new stretch.");
+            return;
+        }
+        // The lobes face out of the bump the stretch makes: away from the polyline.
+        double area2 = 0.0;
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            const Vec2& p0 = path[i];
+            const Vec2& p1 = path[(i + 1) % path.size()];
+            area2 += p0.x * p1.y - p1.x * p0.y;
+        }
+        if (area2 < 0.0) {
+            for (double& x : cb) {
+                x = -x;
+            }
+        }
+        pts = head;
+        bul = head_b;
+        join(pts, bul, cv, cb);
+        join(pts, bul, tail, tail_b);
+    }
+    if (c.reverse) {
+        // Reverse direction: every arc of the cloud turned the other way.
+        for (double& x : bul) {
+            x = -x;
+        }
+    }
+    AddPolylineCommand edited = std::get<AddPolylineCommand>(capture_entity(h));
+    edited.points = std::move(pts);
+    edited.bulges = std::move(bul);
+    edited.bulges.resize(edited.points.size(), 0.0);
+    edited.widths.clear();
+    if (c.calligraphy) {
+        // The lobes drawn with the broad pen; the straight stretches kept as they were drawn.
+        edited.widths = polyline_ops::calligraphy_widths(edited.points, edited.closed);
+        for (std::size_t i = 0; i < edited.bulges.size() && 2 * i + 1 < edited.widths.size(); ++i) {
+            if (edited.bulges[i] == 0.0) {
+                edited.widths[2 * i] = 0.0;
+                edited.widths[2 * i + 1] = 0.0;
+            }
+        }
+    }
+    if (std::all_of(edited.bulges.begin(), edited.bulges.end(), [](double x) { return x == 0.0; })) {
+        edited.bulges.clear();
+    }
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, h, original);
+    const Command made = edited;
+    const EntityHandle nh = create_indexed(made);
+    push_create_item(c.group, nh, made);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Revision cloud modified.");
+}
 
 namespace {
 /// The properties a fillet arc or chamfer line takes: those of the objects when both
@@ -19919,6 +20191,26 @@ void GeometryEngine::rebuild_and_publish() {
     }
     if (buf.copied_selection_build != sel_cache_build_) {
         buf.selection = selection_;
+        buf.selected_dims.clear();
+        for (const EntityHandle h : selection_) {
+            const DimData* d = h.kind == EntityKind::Dimension && store_.is_valid(h) ? store_.dimension(h) : nullptr;
+            if (d == nullptr) {
+                continue;
+            }
+            SelectedDim sd{h, d->type, {}};
+            switch (d->type) {
+            case DimType::Angular:
+                sd.points = {d->a, d->b, d->line_pt};
+                break;
+            case DimType::Ordinate:
+                sd.points = {d->a};
+                break;
+            default:
+                sd.points = {d->a, d->b};
+                break;
+            }
+            buf.selected_dims.push_back(std::move(sd));
+        }
         // The selection's extents' size (the default spacing of a rectangular array).
         buf.selection_size = {};
         {

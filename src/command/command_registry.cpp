@@ -431,6 +431,12 @@ CommandRegistry CommandRegistry::make_default() {
     var("DYNPICOORDS", "Dynamic Input's second and next points as relative (0) or absolute (1) coordinates.",
         {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(dynpicoords()); },
          [](CommandContext&, double v) { dynpicoords() = static_cast<int>(v); }});
+    var("DYNDIGRIP", "The fields a grip's stretch shows: 1 the resulting length, 2 the length change, 4 the absolute angle, 8 the angle change, 16 an arc's radius (31).",
+        {"", false, 0.0, 31.0, [](CommandContext&) { return static_cast<double>(dyndigrip()); },
+         [](CommandContext&, double v) { dyndigrip() = static_cast<int>(v); }});
+    var("DYNDIVIS", "How many of a grip's fields show: 0 the length change, 1 it and the resulting length, 2 all DYNDIGRIP asks for.",
+        {"", false, 0.0, 2.0, [](CommandContext&) { return static_cast<double>(dyndivis()); },
+         [](CommandContext&, double v) { dyndivis() = static_cast<int>(v); }});
     var("PEDITACCEPT", "Whether PEDIT turns a line or arc picked into a polyline without asking (1) or asks (0).",
         {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(PeditCommand::s_peditaccept_); },
          [](CommandContext&, double v) { PeditCommand::s_peditaccept_ = static_cast<int>(v); }});

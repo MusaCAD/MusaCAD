@@ -8854,7 +8854,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
@@ -11161,6 +11161,165 @@ void XlineCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// DIMDISASSOCIATE / DIMREASSOCIATE
+// ---------------------------------------------------------------------------
+void DimDisassociateCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        after(ctx);
+        return;
+    }
+    select_.begin(ctx, reassociate_ ? "Select dimensions to reassociate: " : "Select dimensions to disassociate: ");
+}
+
+void DimDisassociateCommand::after(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    dims_ = reassociate_ ? ctx.selected_dims() : std::vector<core::SelectedDim>{};
+    if (dims_.empty()) {
+        // DIMDISASSOCIATE, or dimensions whose points are not known here: each follows the
+        // objects its points are on.
+        core::DimAssocCommand c;
+        c.op = reassociate_ ? core::DimAssocCommand::Op::Reassociate : core::DimAssocCommand::Op::Disassociate;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    dim_ = 0;
+    point_ = 0;
+    points_ = dims_[0].points;
+    changed_ = false;
+    ask(ctx);
+}
+
+void DimDisassociateCommand::ask(CommandContext& ctx) {
+    using core::DimType;
+    const core::SelectedDim& d = dims_[dim_];
+    const bool radial = d.type == DimType::Radius || d.type == DimType::Diameter || d.type == DimType::Jogged ||
+                        d.type == DimType::ArcLength;
+    // A rubber band from the point there is now, as AutoCAD marks it.
+    const core::Vec2 from = radial ? points_[1] : points_[point_];
+    ctx.set_last_point(from);
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Segment;
+    pv.points = {from};
+    ctx.set_preview(std::move(pv));
+    if (picking_object_) {
+        ctx.set_prompt("Select object <next>: ");
+        return;
+    }
+    switch (d.type) {
+    case DimType::Radius:
+    case DimType::Diameter:
+    case DimType::Jogged:
+        ctx.set_prompt("Select arc or circle <next>: ");
+        return;
+    case DimType::ArcLength:
+        ctx.set_prompt("Select arc <next>: ");
+        return;
+    case DimType::Ordinate:
+        ctx.set_prompt("Specify feature location <next>: ");
+        return;
+    case DimType::Angular: {
+        static constexpr const char* kAngular[] = {"Specify angle vertex <next>: ", "Specify first angle endpoint <next>: ",
+                                                   "Specify second angle endpoint <next>: "};
+        ctx.set_prompt(kAngular[std::min<std::size_t>(point_, 2)]);
+        return;
+    }
+    default:
+        ctx.set_prompt(point_ == 0 ? "Specify first extension line origin or [Select object] <next>: "
+                                   : "Specify second extension line origin <next>: ");
+        return;
+    }
+}
+
+void DimDisassociateCommand::next_dim(CommandContext& ctx) {
+    if (changed_) {
+        core::DimAssocCommand c;
+        c.op = core::DimAssocCommand::Op::Points;
+        c.group = ctx.group_id();
+        c.dim = dims_[dim_].handle;
+        c.points = points_;
+        ctx.submit(std::move(c));
+    }
+    picking_object_ = false;
+    changed_ = false;
+    point_ = 0;
+    if (++dim_ >= dims_.size()) {
+        ctx.clear_preview();
+        done_ = true;
+        return;
+    }
+    points_ = dims_[dim_].points;
+    ask(ctx);
+}
+
+void DimDisassociateCommand::input(CommandContext& ctx, const std::string& text) {
+    if (select_.active()) {
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    }
+    if (dims_.empty() || dim_ >= dims_.size()) {
+        return;
+    }
+    using core::DimType;
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const core::SelectedDim& d = dims_[dim_];
+    const bool radial = d.type == DimType::Radius || d.type == DimType::Diameter || d.type == DimType::Jogged ||
+                        d.type == DimType::ArcLength;
+    const bool linear = d.type == DimType::Linear || d.type == DimType::Aligned;
+    if (t.empty()) {
+        // <next>: this point stays as it is (Select object's: the next dimension).
+        if (radial || picking_object_ || ++point_ >= points_.size()) {
+            next_dim(ctx);
+            return;
+        }
+        ask(ctx);
+        return;
+    }
+    if (linear && point_ == 0 && !picking_object_ && (u == "S" || u == "SELECT" || u == "SELECT OBJECT")) {
+        picking_object_ = true;
+        ask(ctx);
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (radial || picking_object_) {
+        // The object picked: the engine finds it and measures it.
+        core::DimAssocCommand c;
+        c.op = core::DimAssocCommand::Op::Points;
+        c.group = ctx.group_id();
+        c.dim = d.handle;
+        c.pick = *p;
+        c.pick_radius = ctx.pick_radius();
+        ctx.submit(std::move(c));
+        changed_ = false;
+        next_dim(ctx);
+        return;
+    }
+    points_[point_] = *p;
+    changed_ = true;
+    if (++point_ >= points_.size()) {
+        next_dim(ctx);
+        return;
+    }
+    ask(ctx);
+}
+
+void DimDisassociateCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // REVCLOUD
 // ---------------------------------------------------------------------------
 void RevcloudCommand::main_prompt(CommandContext& ctx) {
@@ -11171,7 +11330,23 @@ void RevcloudCommand::main_prompt(CommandContext& ctx) {
     static constexpr const char* kFirst[] = {"Specify first corner point", "Specify start point",
                                              "Specify first point"};
     ctx.set_prompt(std::string(kFirst[s_type_]) +
-                   " or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] <Object>: ");
+                   " or [Arc length/Object/Rectangular/Polygonal/Freehand/Style/Modify] <Object>: ");
+}
+
+void RevcloudCommand::submit_modify(CommandContext& ctx, bool reverse) {
+    core::RevcloudObjectCommand cmd;
+    cmd.pick = path_.front();
+    cmd.pick_radius = ctx.pick_radius();
+    cmd.arc_len = arc_len();
+    cmd.group = ctx.group_id();
+    cmd.calligraphy = s_calligraphy_;
+    cmd.modify = true;
+    cmd.path = path_;
+    cmd.side = side_;
+    cmd.reverse = reverse;
+    ctx.clear_preview();
+    ctx.submit(std::move(cmd));
+    done_ = true;
 }
 
 void RevcloudCommand::start(CommandContext& ctx) {
@@ -11258,7 +11433,8 @@ void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "M" || u == "MODIFY") {
-            ctx.echo("Modify is not supported yet; draw a new cloud.");
+            state_ = State::ModifyPick;
+            ctx.set_prompt("Select polyline: ");
             return;
         }
         // A point at the main prompt starts the type in force: a rectangle's first corner,
@@ -11363,6 +11539,63 @@ void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.submit(core::RevcloudReverseCommand{ctx.group_id()});
         }
         done_ = true;
+        return;
+    case State::ModifyPick:
+        // Where the polyline is picked is where the new stretch leaves it.
+        if (const auto p = read_point(ctx, text)) {
+            modify_closed_ = !ctx.input_is_pick() || ctx.hovered_closed();
+            path_ = {*p};
+            ctx.set_last_point(*p);
+            state_ = State::ModifyNext;
+            ctx.set_preview(PreviewSpec{PreviewKind::Polyline, path_});
+            ctx.set_prompt("Specify next point or [Undo]: ");
+        }
+        return;
+    case State::ModifyNext: {
+        if (t.empty()) {
+            // Enter: the last point is where the stretch comes back onto the polyline.
+            if (path_.size() < 2) {
+                ctx.echo("Specify a point for the new stretch first.");
+                return;
+            }
+            if (modify_closed_) {
+                state_ = State::ModifySide;
+                ctx.set_prompt("Pick a side to erase: ");
+            } else {
+                state_ = State::ModifyReverse;
+                ctx.set_prompt("Reverse direction [Yes/No] <No>: ");
+            }
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (path_.size() > 1) {
+                path_.pop_back();
+            }
+            ctx.set_preview(PreviewSpec{PreviewKind::Polyline, path_});
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            path_.push_back(*p);
+            ctx.set_last_point(*p);
+            ctx.set_preview(PreviewSpec{PreviewKind::Polyline, path_});
+        }
+        return;
+    }
+    case State::ModifySide:
+        if (const auto p = read_point(ctx, text)) {
+            side_ = *p;
+            state_ = State::ModifyReverse;
+            ctx.set_prompt("Reverse direction [Yes/No] <No>: ");
+        }
+        return;
+    case State::ModifyReverse:
+        if (u == "Y" || u == "YES") {
+            submit_modify(ctx, true);
+        } else if (t.empty() || u == "N" || u == "NO") {
+            submit_modify(ctx, false);
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
         return;
     case State::Style:
         if (u == "C" || u == "CALLIGRAPHY") {
@@ -19275,6 +19508,11 @@ void GripModeCommand::enter(CommandContext& ctx, Mode m) {
     case Mode::Stretch:
         pv.kind = PreviewKind::Segment;
         pv.grip_hot = true;
+        // One grip of one object, stretched as itself: measured from the object.
+        if (begin_.also.empty() && begin_.variant == 0 && begin_.text_move < 0) {
+            pv.grip_anchor = anchor_;
+            pv.grip_radius = radius_;
+        }
         break;
     case Mode::Move:
         pv.kind = PreviewKind::Move;

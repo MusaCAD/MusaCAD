@@ -9,6 +9,26 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Grip dimensions** (#65) -- a hot grip's stretch shows the length change and the resulting
+  length, measured from the line's other end, the polyline vertex before or, for a circle's or
+  an arc's radius grip, the centre; a value typed there sets it, and Tab moves between them.
+  **DYNDIVIS** (how many show: 0, 1 or 2 for all) and **DYNDIGRIP** (which: the resulting
+  length, the length change, the absolute angle, the angle change, an arc's radius), kept
+  between runs.
+- **DIMREASSOCIATE point by point** (#59) -- after the selection, each dimension's points are
+  asked in turn, as AutoCAD does: `Specify first extension line origin or [Select object]
+  <next>:` (a line or an arc picked gives both), `Specify second extension line origin
+  <next>:`, an angular dimension's vertex and endpoints, `Select arc or circle <next>:` for a
+  radius or a diameter; Enter keeps a point. The dimension then follows the objects the new
+  points are on.
+- **A composite feature control frame** (#62) -- the Geometric Tolerance window has AutoCAD's
+  second row (symbol, two tolerances, three datums), drawn as the frame's second line.
+- **REVCLOUD Modify** (#40) -- redraw a stretch of a cloud, as AutoCAD does it: the vertex
+  nearest where the cloud is picked starts the section replaced, the points clicked make the
+  new stretch, and Enter brings it back at the vertex nearest the last one; on a closed cloud,
+  pick the side to erase. The new stretch gets lobes of the arc length in force, facing out;
+  Reverse direction turns every arc of the cloud the other way. On an open polyline, the part
+  between the two vertices goes.
 - **An attached image's size as AutoCAD gives it** -- one unit wide at scale 1, so the scale
   factor is the image's width; or, in a drawing with a unit (INSUNITS), its true size from the
   resolution the file records (PNG, JPEG, BMP, TIFF): a 300 dpi scan of an A4 sheet comes in at
@@ -529,6 +549,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   hatch, where it used to start a hatch of its own.
 - JOIN chains into a polyline only ends that meet, as in AutoCAD; ends a pick's width apart
   were joined.
+- JOIN and PEDIT's Join kept every piece of the chain: one that met the start of the chain
+  lost its far end, depending on which object the selection began with.
 - **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now
   list the setups saved with the drawing; they were saved but never shown.
 - DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other

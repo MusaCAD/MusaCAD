@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -53,6 +55,32 @@ struct DynField {
 [[nodiscard]] core::Vec2 apply_dyn_lock(const PreviewSpec& pv, core::Vec2 cursor,
                                         std::optional<double> primary,
                                         std::optional<double> secondary);
+
+/// DYNDIGRIP: the fields a hot grip's stretch shows -- 1 the resulting length (a circle's
+/// radius), 2 the length change, 4 the absolute angle, 8 the angle change, 16 an arc's radius
+/// (31, all). DYNDIVIS: how many at a time -- 0 the length change only, 1 it and the resulting
+/// length (the default), 2 all DYNDIGRIP asks for. Kept for the session, and by the UI in its
+/// settings.
+[[nodiscard]] int& dyndigrip() noexcept;
+[[nodiscard]] int& dyndivis() noexcept;
+
+/// What a hot grip's stretch is measured from: a line's other end, the polyline vertex before
+/// (after, for an open polyline's first), the centre for a circle's or an arc's radius grip
+/// (`radius` set). Nullopt for the other grips. `grips`: the selection's grips.
+[[nodiscard]] std::optional<core::Vec2> grip_dyn_anchor(std::span<const core::GripInfo> grips,
+                                                        core::EntityHandle h, std::uint32_t index,
+                                                        bool& radius);
+
+/// A hot grip's stretch measured from the object (PreviewSpec::grip_anchor; dyn_fields numbers
+/// its fields' slots in the order shown).
+[[nodiscard]] bool dyn_grip_measured(const PreviewSpec& pv) noexcept;
+/// Where the grip goes with the values typed in its fields (by slot; nullopt follows the
+/// cursor): a length or a length change keeps the cursor's direction, an angle the length.
+[[nodiscard]] core::Vec2 grip_dyn_point(const PreviewSpec& pv, core::Vec2 cursor,
+                                        std::span<const std::optional<double>> typed);
+/// The absolute point (`#x,y`) that puts it there; "" with nothing typed.
+[[nodiscard]] std::string compose_grip_submit(const PreviewSpec& pv, core::Vec2 cursor,
+                                              std::span<const std::optional<double>> typed);
 
 /// DYNPICOORDS: Dynamic Input's pointer input takes a second or next point as relative (0,
 /// AutoCAD's default) or absolute (1) coordinates. Kept for the session, and by the UI in its
