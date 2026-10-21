@@ -19862,6 +19862,12 @@ void GeometryEngine::apply_one(const Command& command) {
                     report("Multileader style " + quoted + " deleted.");
                 }
             }
+            if constexpr (std::is_same_v<T, MLineStyleCommand>) {
+                apply_mline_style(c);
+            }
+            if constexpr (std::is_same_v<T, MLineEditCommand>) {
+                apply_mline_edit(c);
+            }
             if constexpr (std::is_same_v<T, ExtrimCommand>) {
                 apply_extrim(c);
             }

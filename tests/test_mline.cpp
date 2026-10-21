@@ -378,3 +378,39 @@ TEST_CASE("Multilines and their styles kept in the drawing file and in DXF") {
     REQUIRE(dxf.current_mline_style == 1);
     REQUIRE(dxf.cmlscale == Approx(250.0));
 }
+
+TEST_CASE("MLSTYLE's styles and MLINE's settings reach the drawing") {
+    GeometryEngine engine;
+    engine.start();
+    MLineStyle st;
+    st.name = "Cavity";
+    st.elements = {MLineElement{0.5}, MLineElement{0.1}, MLineElement{-0.5}};
+    MLineStyleCommand define;
+    define.op = MLineStyleCommand::Op::Define;
+    define.style = st;
+    engine.submit(define);
+    MLineStyleCommand current;
+    current.op = MLineStyleCommand::Op::SetCurrent;
+    current.name = "cavity"; // any case
+    engine.submit(current);
+    MLineStyleCommand just;
+    just.op = MLineStyleCommand::Op::Justification;
+    just.justification = 2;
+    engine.submit(just);
+    MLineStyleCommand scale;
+    scale.op = MLineStyleCommand::Op::Scale;
+    scale.scale = 300.0;
+    engine.submit(scale);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.mline.scale == 300.0; }));
+    const MLineSettings& ms = engine.snapshot().mline;
+    REQUIRE(ms.styles.size() == 2);
+    REQUIRE(ms.current == 1);
+    REQUIRE(ms.justification == 2);
+    // STANDARD and the current style cannot be deleted; a style in no use can.
+    MLineStyleCommand del;
+    del.op = MLineStyleCommand::Op::Delete;
+    del.name = "Cavity";
+    engine.submit(del);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("cannot be deleted") != std::string::npos; }));
+    engine.stop();
+}
