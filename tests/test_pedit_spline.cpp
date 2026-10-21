@@ -200,21 +200,21 @@ TEST_CASE("A spline-fit polyline: Close and Reverse on the frame, the vertex edi
     REQUIRE(doc.polylines[0].frame == std::vector<Vec2>(kZigzag.rbegin(), kZigzag.rend()));
     REQUIRE(near(doc.polylines[0].points.front(), {30, 10}));
 
-    // The vertex editor walks the frame: the second vertex placed (20, 0) moved to (20, -10).
+    // The vertex editor walks the frame: the second vertex placed (20, 0) moved to (20, -30).
     engine.submit(PeditCommand{{5, 5}, 5.0, 11, {}, {}, 0});
     engine.submit(PeditCommand{{5, 5}, 5.0, 12, {}, {}, 0});
-    engine.submit(PeditCommand{{5, 5}, 5.0, 19, {20, -10}, {}, 6});
+    engine.submit(PeditCommand{{5, 5}, 5.0, 19, {20, -30}, {}, 6});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Vertex moved."; }));
     doc = dump(engine, "musacad_spline_vertex.musa");
     REQUIRE(doc.polylines[0].fit == 6);
     REQUIRE(doc.polylines[0].frame.size() == 4);
-    REQUIRE(doc.polylines[0].frame[1] == Vec2{20, -10});
+    REQUIRE(doc.polylines[0].frame[1] == Vec2{20, -30});
     REQUIRE(doc.polylines[0].points.size() == 25);
     double lowest = 0.0;
     for (const Vec2& p : doc.polylines[0].points) {
         lowest = std::min(lowest, p.y);
     }
-    REQUIRE(lowest < -1.0); // the curve follows the frame down
+    REQUIRE(lowest < -5.0); // the curve follows the frame down (about -7.9)
     engine.stop();
 }
 
