@@ -549,6 +549,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   hatch, where it used to start a hatch of its own.
 - JOIN chains into a polyline only ends that meet, as in AutoCAD; ends a pick's width apart
   were joined.
+- JOIN and PEDIT's Join kept every piece of the chain: one that met the start of the chain
+  lost its far end, depending on which object the selection began with.
 - **Saved page setups** (#74) -- the Plot window's page setups and the Page Setup Manager now
   list the setups saved with the drawing; they were saved but never shown.
 - DIMCONTINUE and DIMBASELINE put the new dimension on DIMLAYER's layer, as every other
