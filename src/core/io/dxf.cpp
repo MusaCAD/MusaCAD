@@ -937,7 +937,81 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 50, to_degrees(a.start_angle));
         code_d(s, 51, to_degrees(a.end_angle));
     }
+    // A fitted polyline (PEDIT Fit or Spline) or one with a vertex tangent goes out as a
+    // POLYLINE: an LWPOLYLINE keeps neither its frame nor its tangents. Spline-fit: the frame
+    // (vertex flag 16) then the curve (8); curve-fit: the polyline's own vertices and the ones
+    // Fit added (1) in order; a tangent set: flag 2, code 50.
+    const auto emit_heavy_polyline = [&](const DocPolyline& p) {
+        const auto tangent = [&](std::size_t i) {
+            return i < p.tangents.size() && !std::isnan(p.tangents[i]) ? p.tangents[i]
+                                                                       : std::numeric_limits<double>::quiet_NaN();
+        };
+        const bool spline = p.fit == 5 || p.fit == 6;
+        code(s, 0, "POLYLINE");
+        emit_props(s, doc, p.props);
+        if (p.celtscale != 1.0) {
+            code_d(s, 48, p.celtscale);
+        }
+        code_i(s, 66, 1);
+        code_d(s, 10, 0.0);
+        code_d(s, 20, 0.0);
+        code_d(s, 30, p.elevation);
+        if (p.thickness != 0.0) {
+            code_d(s, 39, p.thickness);
+        }
+        code_i(s, 70, (p.closed ? 1 : 0) | (p.fit == 1 ? 2 : 0) | (spline ? 4 : 0) | (p.ltype_gen ? 128 : 0));
+        if (spline) {
+            code_i(s, 75, p.fit);
+        }
+        const bool has_bulge = p.bulges.size() == p.points.size();
+        const bool has_width = p.widths.size() == 2 * p.points.size();
+        const auto vertex = [&](Vec2 at, long flags, double bulge, double w0, double w1, double tan) {
+            code(s, 0, "VERTEX");
+            emit_props(s, doc, p.props);
+            code_d(s, 10, at.x);
+            code_d(s, 20, at.y);
+            code_d(s, 30, p.elevation);
+            if (w0 != 0.0 || w1 != 0.0) {
+                code_d(s, 40, w0);
+                code_d(s, 41, w1);
+            }
+            if (bulge != 0.0) {
+                code_d(s, 42, bulge);
+            }
+            code_i(s, 70, flags | (std::isnan(tan) ? 0 : 2));
+            if (!std::isnan(tan)) {
+                code_d(s, 50, to_degrees(tan));
+            }
+        };
+        const double none = std::numeric_limits<double>::quiet_NaN();
+        if (spline) {
+            for (std::size_t i = 0; i < p.frame.size(); ++i) {
+                vertex(p.frame[i], 16, 0.0, 0.0, 0.0, tangent(i));
+            }
+        }
+        std::size_t k = 0; // the next of the frame a curve-fit vertex can be
+        for (std::size_t i = 0; i < p.points.size(); ++i) {
+            const double b = has_bulge ? p.bulges[i] : 0.0;
+            const double w0 = has_width ? p.widths[2 * i] : 0.0;
+            const double w1 = has_width ? p.widths[2 * i + 1] : 0.0;
+            if (spline) {
+                vertex(p.points[i], 8, b, w0, w1, none);
+            } else if (p.fit == 1) {
+                const bool own = k < p.frame.size() && length(p.points[i] - p.frame[k]) < 1e-9;
+                vertex(p.points[i], own ? 0 : 1, b, w0, w1, own ? tangent(k) : none);
+                k += own ? 1 : 0;
+            } else {
+                vertex(p.points[i], 0, b, w0, w1, tangent(i));
+            }
+        }
+        code(s, 0, "SEQEND");
+        emit_props(s, doc, p.props);
+    };
     for (const DocPolyline& p : doc.polylines) {
+        if ((p.fit != 0 && p.frame.size() >= 2) || !p.tangents.empty()) {
+            emit_heavy_polyline(p);
+            continue;
+        }
         code(s, 0, "LWPOLYLINE");
         emit_props(s, doc, p.props);
         if (p.celtscale != 1.0) {
@@ -2879,6 +2953,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             double default_start = constant;
             double default_end = constant;
             bool any_width = constant > 0.0;
+            double frame_x = 0.0;
             for (const Pair& p : body) {
                 if (p.code == 10) {
                     x = to_d(p.value);
@@ -2901,7 +2976,26 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 } else if (p.code == 41 && !pl.points.empty()) {
                     pl.widths.back() = to_d(p.value);
                     any_width = any_width || to_d(p.value) > 0.0;
+                } else if (p.code == 2070) { // from a POLYLINE: PEDIT Fit (1) or Spline (5, 6)
+                    pl.fit = static_cast<std::uint8_t>(std::clamp(to_l(p.value), 0L, 6L));
+                } else if (p.code == 2011) { // ... a vertex placed, and its tangent
+                    frame_x = to_d(p.value);
+                } else if (p.code == 2021) {
+                    pl.frame.push_back({frame_x, to_d(p.value)});
+                } else if (p.code == 2050) {
+                    pl.tangents.push_back(p.value == "nan" ? std::numeric_limits<double>::quiet_NaN()
+                                                           : to_radians(to_d(p.value)));
                 }
+            }
+            if (pl.fit != 1 && pl.fit != 5 && pl.fit != 6) {
+                pl.fit = 0;
+            }
+            if (pl.fit == 0 || pl.frame.size() < 2) {
+                pl.fit = 0;
+                pl.frame.clear();
+            }
+            if (std::all_of(pl.tangents.begin(), pl.tangents.end(), [](double a) { return std::isnan(a); })) {
+                pl.tangents.clear();
             }
             if (!any_bulge) {
                 pl.bulges.clear(); // all straight -> store none
@@ -3075,6 +3169,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     std::vector<Pair> legacy_poly;
     bool in_legacy_poly = false;
     bool legacy_poly_skip = false;
+    long legacy_fit = 0; // PEDIT Fit (1) or Spline (5, 6) of the POLYLINE being read
     const auto legacy_polyline = [&](Sink& sink, const std::string& type,
                                      const std::vector<Pair>& body) {
         if (type == "POLYLINE") {
@@ -3082,6 +3177,15 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             const std::string* hf = find(body, 70);
             const long flags = hf != nullptr ? to_l(*hf) : 0;
             legacy_poly_skip = (flags & (8 | 16 | 64)) != 0;
+            // Fitted: 4 a spline-fit polyline (its curve type 75: 5 quadratic, 6 cubic), 2 a
+            // curve-fit one; kept as pseudo-pairs the LWPOLYLINE reading below takes.
+            legacy_fit = 0;
+            if ((flags & 4) != 0) {
+                const std::string* ct = find(body, 75);
+                legacy_fit = ct != nullptr && to_l(*ct) == 5 ? 5 : 6;
+            } else if ((flags & 2) != 0) {
+                legacy_fit = 1;
+            }
             if (legacy_poly_skip) {
                 ++skipped["POLYLINE (3D/mesh)"];
             }
@@ -3090,6 +3194,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 if (q.code != 10 && q.code != 20 && q.code != 30 && q.code != 66) {
                     legacy_poly.push_back(q);
                 }
+            }
+            if (legacy_fit != 0) {
+                legacy_poly.push_back(Pair{2070, std::to_string(legacy_fit)});
             }
             in_legacy_poly = true;
             return true;
@@ -3100,6 +3207,18 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         if (type == "VERTEX") {
             const std::string* vf = find(body, 70);
             const long flags = vf != nullptr ? to_l(*vf) : 0;
+            // A vertex placed -- a spline-fit polyline's frame (16), a curve-fit one's own vertex
+            // (not one Fit added, 1), any vertex of a plain one -- with its tangent (2, code 50):
+            // pseudo-pairs 2011 / 2021 / 2050 (past DXF's last code, 1071: never an XDATA pair).
+            const bool placed = (flags & 16) != 0 || (legacy_fit == 1 && (flags & 1) == 0) || legacy_fit == 0;
+            if (!legacy_poly_skip && placed) {
+                const std::string* px = find(body, 10);
+                const std::string* py = find(body, 20);
+                const std::string* ta = (flags & 2) != 0 ? find(body, 50) : nullptr;
+                legacy_poly.push_back(Pair{2011, px != nullptr ? *px : std::string("0")});
+                legacy_poly.push_back(Pair{2021, py != nullptr ? *py : std::string("0")});
+                legacy_poly.push_back(Pair{2050, ta != nullptr ? *ta : std::string("nan")});
+            }
             if (!legacy_poly_skip && (flags & 16) == 0) {
                 const std::string* px = find(body, 10);
                 const std::string* py = find(body, 20);

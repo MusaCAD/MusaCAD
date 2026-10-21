@@ -71,7 +71,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 42;
+inline constexpr std::uint32_t kFormatVersion = 43;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -154,7 +154,29 @@ struct DocPolyline {
     double elevation = 0.0;          ///< DXF 38 (v37)
     double thickness = 0.0;          ///< DXF 39 (v37)
     bool ltype_gen = true;           ///< v40: the dash pattern runs on across the vertices
-    friend bool operator==(const DocPolyline&, const DocPolyline&) = default;
+    std::uint8_t fit = 0;            ///< v43: PEDIT Fit (1) / Spline (5, 6); `points` are the fit's
+    std::vector<Vec2> frame = {};    ///< v43: the vertices placed of a fitted polyline
+    std::vector<double> tangents = {}; ///< v43: PEDIT Tangent per vertex placed (NaN none)
+    friend bool operator==(const DocPolyline& a, const DocPolyline& b) {
+        // NaN tangents compare equal (none is none).
+        const auto same_tangents = [&] {
+            if (a.tangents.size() != b.tangents.size()) {
+                return false;
+            }
+            for (std::size_t i = 0; i < a.tangents.size(); ++i) {
+                const bool an = a.tangents[i] != a.tangents[i];
+                const bool bn = b.tangents[i] != b.tangents[i];
+                if (an != bn || (!an && a.tangents[i] != b.tangents[i])) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        return a.points == b.points && a.closed == b.closed && a.props == b.props && a.bulges == b.bulges &&
+               a.celtscale == b.celtscale && a.widths == b.widths && a.elevation == b.elevation &&
+               a.thickness == b.thickness && a.ltype_gen == b.ltype_gen && a.fit == b.fit && a.frame == b.frame &&
+               same_tangents();
+    }
 };
 struct DocSpline {
     std::vector<Vec2> control_points;

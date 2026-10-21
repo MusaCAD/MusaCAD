@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/spline_eval.hpp"
 
 // Corner and lobe operations on polylines, shared by every command that rounds,
 // chamfers or clouds a vertex chain: the FILLET/CHAMFER commands (on a picked corner),
@@ -308,8 +310,10 @@ inline Biarc biarc(Vec2 p0, Vec2 t0, Vec2 p1, Vec2 t1) {
 /// each vertex along the bisector of its two segments (an open end's tangent mirrors its
 /// neighbour's across the end segment), so the curve passes every vertex smoothly. A joint
 /// vertex goes in on each segment; `widths` (two per vertex) taper half way at it. False
-/// for a chain too short to fit (an open one needs three vertices).
-inline bool fit_arcs(std::vector<Vec2>& pts, std::vector<double>& bulges, std::vector<double>& widths, bool closed) {
+/// for a chain too short to fit (an open one needs three vertices). A vertex's `tangents`
+/// (radians; NaN for none -- PEDIT Edit vertex Tangent) sets its direction instead.
+inline bool fit_arcs(std::vector<Vec2>& pts, std::vector<double>& bulges, std::vector<double>& widths, bool closed,
+                     std::span<const double> tangents = {}) {
     const std::size_t n = pts.size();
     if (n < 3) {
         return false;
@@ -351,11 +355,21 @@ inline bool fit_arcs(std::vector<Vec2>& pts, std::vector<double>& bulges, std::v
         const Vec2 t = in + out;
         tan[i] = dot(t, t) > 1e-18 ? unit(t) : out;
     }
+    for (std::size_t i = 0; i < n && i < tangents.size(); ++i) {
+        if (!std::isnan(tangents[i]) && (closed || (i > 0 && i + 1 < n))) {
+            tan[i] = {std::cos(tangents[i]), std::sin(tangents[i])};
+        }
+    }
     if (!closed) {
         const Vec2 c0 = unit(pts[1] - pts[0]);
         tan[0] = c0 * (2.0 * dot(tan[1], c0)) - tan[1];
         const Vec2 c1 = unit(pts[n - 1] - pts[n - 2]);
         tan[n - 1] = c1 * (2.0 * dot(tan[n - 2], c1)) - tan[n - 2];
+        for (const std::size_t i : {std::size_t{0}, n - 1}) {
+            if (i < tangents.size() && !std::isnan(tangents[i])) {
+                tan[i] = {std::cos(tangents[i]), std::sin(tangents[i])};
+            }
+        }
     }
     std::vector<Vec2> nv;
     std::vector<double> nb;
@@ -387,6 +401,80 @@ inline bool fit_arcs(std::vector<Vec2>& pts, std::vector<double>& bulges, std::v
     pts = std::move(nv);
     bulges = std::move(nb);
     widths = std::move(nw);
+    return true;
+}
+
+/// PEDIT Spline: the B-spline of `degree` (2 quadratic, 3 cubic) with the frame as its control
+/// polygon -- from the first vertex to the last, or round when closed -- as `segs` straight
+/// pieces a frame segment (SPLINESEGS). Closed, the last point is not repeated.
+inline std::vector<Vec2> spline_fit(const std::vector<Vec2>& frame, bool closed, int degree, int segs) {
+    std::vector<Vec2> out;
+    const int n = static_cast<int>(frame.size());
+    segs = std::max(segs, 1);
+    if (n < 2) {
+        return frame;
+    }
+    if (!closed) {
+        const int deg = spline::effective_degree(n, degree);
+        const int total = segs * (n - 1);
+        for (int k = 0; k <= total; ++k) {
+            out.push_back(spline::evaluate(frame, deg, static_cast<double>(k) / static_cast<double>(total)));
+        }
+        return out;
+    }
+    // Round: a periodic B-spline, the first `degree` vertices again at the end.
+    const int deg = std::clamp(degree, 1, std::max(1, n - 1));
+    std::vector<Vec2> ctrl = frame;
+    for (int k = 0; k < deg; ++k) {
+        ctrl.push_back(frame[static_cast<std::size_t>(k)]);
+    }
+    const int m = static_cast<int>(ctrl.size());
+    std::vector<double> knots(static_cast<std::size_t>(m + deg + 1));
+    for (std::size_t k = 0; k < knots.size(); ++k) {
+        knots[k] = static_cast<double>(k);
+    }
+    const int total = segs * n;
+    for (int k = 0; k < total; ++k) {
+        const double u = static_cast<double>(deg) + static_cast<double>(m - deg) * static_cast<double>(k) /
+                                                        static_cast<double>(total);
+        const int span = std::clamp(static_cast<int>(std::floor(u)), deg, m - 1);
+        out.push_back(spline::de_boor(span, u, deg, knots, ctrl));
+    }
+    return out;
+}
+
+/// The pieces a frame segment a fitted polyline was drawn with (SPLINESEGS when it was).
+inline int fit_segments(std::size_t drawn, std::size_t frame, bool closed) {
+    const std::size_t spans = closed ? frame : (frame > 0 ? frame - 1 : 0);
+    if (spans == 0) {
+        return 8;
+    }
+    const std::size_t pieces = closed ? drawn : (drawn > 0 ? drawn - 1 : 0);
+    return std::max(1, static_cast<int>(std::lround(static_cast<double>(pieces) / static_cast<double>(spans))));
+}
+
+/// A fitted polyline drawn again from its frame: Fit's arcs (`fit` 1, with the vertices'
+/// `tangents`) or the B-spline (5 quadratic, 6 cubic) in `segs` pieces a frame segment. A
+/// width the polyline has runs all along it. False when the frame is too short to fit.
+inline bool refit(std::uint8_t fit, const std::vector<Vec2>& frame, bool closed, std::span<const double> tangents, int segs,
+                  std::vector<Vec2>& pts, std::vector<double>& bulges, std::vector<double>& widths) {
+    const double w = widths.empty() ? 0.0 : widths.front();
+    if (fit == 1) {
+        pts = frame;
+        bulges.assign(frame.size(), 0.0);
+        std::vector<double> fw(2 * frame.size(), w);
+        if (!fit_arcs(pts, bulges, fw, closed, tangents)) {
+            return false;
+        }
+        widths = w > 0.0 ? fw : std::vector<double>{};
+        return true;
+    }
+    if (frame.size() < (closed ? 3u : 2u)) {
+        return false;
+    }
+    pts = spline_fit(frame, closed, fit == 5 ? 2 : 3, segs);
+    bulges.assign(pts.size(), 0.0);
+    widths = w > 0.0 ? std::vector<double>(2 * pts.size(), w) : std::vector<double>{};
     return true;
 }
 

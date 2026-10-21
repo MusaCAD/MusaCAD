@@ -90,6 +90,18 @@ struct PolylineData {
     /// Linetype generation (PEDIT Ltype gen, DXF 70 bit 128): the dash pattern runs on
     /// across the vertices; off, it starts again at each one. On unless set off.
     bool ltype_gen = true;
+    /// PEDIT Fit or Spline (DXF POLYLINE 70 bits 2 and 4, curve type 75): 0 none, 1 Fit's
+    /// arcs, 5 a quadratic and 6 a cubic B-spline. The vertices drawn are the fit's; the frame
+    /// -- the vertices placed -- is kept (`frame_count` from `frame_offset` in the vertex pool)
+    /// for Decurve, the grips and the vertex editor.
+    std::uint8_t fit = 0;
+    static constexpr std::uint32_t kNoFrame = 0xFFFFFFFFu;
+    std::uint32_t frame_offset = kNoFrame;
+    std::uint32_t frame_count = 0;
+    /// PEDIT Edit vertex Tangent: a direction (radians; NaN for none) per vertex placed -- the
+    /// frame's when fitted -- from `tangent_offset` in the tangent pool, or kNoTangents.
+    static constexpr std::uint32_t kNoTangents = 0xFFFFFFFFu;
+    std::uint32_t tangent_offset = kNoTangents;
 };
 
 struct SplineData {
@@ -602,6 +614,11 @@ public:
     /// DIMINSPECT: the frame (DimData::inspect, 0 = none), the label and the rate.
     bool set_dim_inspect(EntityHandle h, std::uint8_t shape, std::string_view label, std::string_view rate);
     bool set_polyline_ltype_gen(EntityHandle h, bool on) noexcept;
+    /// PEDIT Fit / Spline: the polyline's fit (PolylineData::fit) and its frame (0 and an empty
+    /// frame: none). The vertices drawn are set separately (add_polyline).
+    bool set_polyline_fit(EntityHandle h, std::uint8_t fit, std::span<const Vec2> frame);
+    /// PEDIT Edit vertex Tangent: one direction per vertex placed (NaN for none); empty for none.
+    bool set_polyline_tangents(EntityHandle h, std::span<const double> tangents);
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},
@@ -1118,6 +1135,10 @@ public:
     [[nodiscard]] std::span<const double> bulges_of(const PolylineData& pl) const noexcept;
     /// The widths of a polyline (two per vertex), or an empty span for a plain one.
     [[nodiscard]] std::span<const double> widths_of(const PolylineData& pl) const noexcept;
+    /// A fitted polyline's frame (PolylineData::fit), or an empty span.
+    [[nodiscard]] std::span<const Vec2> frame_of(const PolylineData& pl) const noexcept;
+    /// The tangent directions of the vertices placed, or an empty span.
+    [[nodiscard]] std::span<const double> tangents_of(const PolylineData& pl) const noexcept;
     [[nodiscard]] std::span<const Vec2> control_points_of(const SplineData& sp) const noexcept;
     /// A spline's own knots, or an empty span for the clamped uniform ones.
     [[nodiscard]] std::span<const double> knots_of(const SplineData& sp) const noexcept;
@@ -1472,6 +1493,7 @@ private:
     std::vector<Vec2> dim_break_pool_; // DIMBREAK
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges
     std::vector<double> width_pool_; // polyline widths, two per vertex
+    std::vector<double> tangent_pool_; // polyline vertex tangents (PEDIT Tangent), NaN for none
     std::vector<Vec2> spline_pool_;
     std::vector<double> spline_knot_pool_; // splines' own knots
     std::vector<char> string_pool_; // text content

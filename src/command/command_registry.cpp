@@ -461,6 +461,12 @@ CommandRegistry CommandRegistry::make_default() {
     var("DYNDIVIS", "How many of a grip's fields show: 0 the length change, 1 it and the resulting length, 2 all DYNDIGRIP asks for.",
         {"", false, 0.0, 2.0, [](CommandContext&) { return static_cast<double>(dyndivis()); },
          [](CommandContext&, double v) { dyndivis() = static_cast<int>(v); }});
+    var("SPLINETYPE", "PEDIT Spline's curve: 5 a quadratic, 6 a cubic B-spline.",
+        {"", false, 5.0, 6.0, [](CommandContext&) { return static_cast<double>(PeditCommand::s_splinetype_); },
+         [](CommandContext&, double v) { PeditCommand::s_splinetype_ = static_cast<int>(v); }});
+    var("SPLINESEGS", "The straight pieces a segment of a spline-fit polyline is drawn with (PEDIT Spline).",
+        {"", false, 1.0, 32767.0, [](CommandContext&) { return static_cast<double>(PeditCommand::s_splinesegs_); },
+         [](CommandContext&, double v) { PeditCommand::s_splinesegs_ = static_cast<int>(v); }});
     var("PEDITACCEPT", "Whether PEDIT turns a line or arc picked into a polyline without asking (1) or asks (0).",
         {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(PeditCommand::s_peditaccept_); },
          [](CommandContext&, double v) { PeditCommand::s_peditaccept_ = static_cast<int>(v); }});

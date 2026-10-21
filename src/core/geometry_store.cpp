@@ -6,6 +6,8 @@
 #include "musacad/core/spline_eval.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <cctype>
 
 namespace musacad::core {
@@ -38,6 +40,42 @@ bool GeometryStore::set_polyline_ltype_gen(EntityHandle h, bool on) noexcept {
         return true;
     }
     return false;
+}
+
+bool GeometryStore::set_polyline_fit(EntityHandle h, std::uint8_t fit, std::span<const Vec2> frame) {
+    PolylineData* p = h.kind == EntityKind::Polyline ? polylines_.get(h.index, h.generation) : nullptr;
+    if (p == nullptr) {
+        return false;
+    }
+    if (fit == 0 || frame.size() < 2) {
+        p->fit = 0;
+        p->frame_offset = PolylineData::kNoFrame;
+        p->frame_count = 0;
+        return true;
+    }
+    p->fit = fit;
+    p->frame_offset = static_cast<std::uint32_t>(polyline_pool_.size());
+    p->frame_count = static_cast<std::uint32_t>(frame.size());
+    polyline_pool_.insert(polyline_pool_.end(), frame.begin(), frame.end());
+    return true;
+}
+
+bool GeometryStore::set_polyline_tangents(EntityHandle h, std::span<const double> tangents) {
+    PolylineData* p = h.kind == EntityKind::Polyline ? polylines_.get(h.index, h.generation) : nullptr;
+    if (p == nullptr) {
+        return false;
+    }
+    const bool any = std::any_of(tangents.begin(), tangents.end(), [](double a) { return !std::isnan(a); });
+    if (!any) {
+        p->tangent_offset = PolylineData::kNoTangents;
+        return true;
+    }
+    p->tangent_offset = static_cast<std::uint32_t>(tangent_pool_.size());
+    const std::size_t want = p->fit != 0 ? p->frame_count : p->count;
+    for (std::size_t i = 0; i < want; ++i) {
+        tangent_pool_.push_back(i < tangents.size() ? tangents[i] : std::numeric_limits<double>::quiet_NaN());
+    }
+    return true;
 }
 
 bool GeometryStore::set_dim_jog(EntityHandle h, double jog) noexcept {
@@ -886,6 +924,7 @@ void GeometryStore::clear() noexcept {
     polyline_pool_.clear();
     bulge_pool_.clear();
     width_pool_.clear();
+    tangent_pool_.clear();
     spline_pool_.clear();
     spline_knot_pool_.clear();
     string_pool_.clear();
@@ -1159,6 +1198,18 @@ std::span<const double> GeometryStore::bulges_of(const PolylineData& pl) const n
         return {};
     }
     return std::span<const double>(bulge_pool_).subspan(pl.bulge_offset, pl.count);
+}
+std::span<const Vec2> GeometryStore::frame_of(const PolylineData& pl) const noexcept {
+    if (pl.fit == 0 || pl.frame_offset == PolylineData::kNoFrame) {
+        return {};
+    }
+    return std::span<const Vec2>(polyline_pool_).subspan(pl.frame_offset, pl.frame_count);
+}
+std::span<const double> GeometryStore::tangents_of(const PolylineData& pl) const noexcept {
+    if (pl.tangent_offset == PolylineData::kNoTangents) {
+        return {};
+    }
+    return std::span<const double>(tangent_pool_).subspan(pl.tangent_offset, pl.fit != 0 ? pl.frame_count : pl.count);
 }
 std::span<const double> GeometryStore::widths_of(const PolylineData& pl) const noexcept {
     if (pl.width_offset == PolylineData::kNoWidths) {

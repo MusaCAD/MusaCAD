@@ -9,6 +9,15 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Spline-fit polylines** (#52) -- PEDIT's **Spline** makes the polyline a spline-fit one, as
+  AutoCAD does: the quadratic or cubic B-spline (SPLINETYPE 5 or 6) on its vertices, drawn in
+  SPLINESEGS pieces a segment, and the vertices kept as its frame. A Fit or Spline polyline
+  shows its grips on the vertices placed; dragging one, the vertex editor's Insert, Move and
+  Delete, Close, Open and Reverse work on them and fit the curve again; **Decurve** brings
+  them back. The vertex editor's **Tangent** (an angle or a point) sets the direction a Fit
+  leaves the vertex in. SPLINE's Object turns a spline-fit polyline into the same curve as a
+  SPLINE. All of it is kept in the drawing and in DXF (a POLYLINE with its frame vertices,
+  read from AutoCAD's spline-fit and curve-fit polylines too).
 - **A view's boundary** (#72) -- the View Manager's New View has AutoCAD's Boundary: the
   display as it is, or Define window, a window picked in the drawing that the view is saved to
   show.

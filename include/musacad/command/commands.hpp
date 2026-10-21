@@ -2652,6 +2652,8 @@ public:
     /// `multiple`: MPEDIT (Express Tools) -- PEDIT's Multiple from the start.
     /// PEDITACCEPT: a line or arc picked becomes a polyline without the question (1), or asks (0).
     inline static int s_peditaccept_ = 0;
+    inline static int s_splinetype_ = 6; ///< SPLINETYPE: 5 quadratic, 6 cubic (PEDIT Spline)
+    inline static int s_splinesegs_ = 8; ///< SPLINESEGS: the pieces a segment of a spline-fit polyline
     explicit PeditCommand(bool multiple = false) : mpedit_(multiple) {}
     std::string name() const override { return mpedit_ ? "MPEDIT" : "PEDIT"; }
     void start(CommandContext& ctx) override;

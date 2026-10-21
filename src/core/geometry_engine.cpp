@@ -1322,8 +1322,23 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
                 pull(x.a);
                 pull(x.b);
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
-                for (Vec2& v : x.points) {
-                    pull(v);
+                if (x.fit != 0 && !x.frame.empty()) {
+                    // A fitted polyline: its frame vertices in the window move, and it is
+                    // fitted again.
+                    const int segs = polyline_ops::fit_segments(x.points.size(), x.frame.size(), x.closed);
+                    const bool before = moved;
+                    moved = false;
+                    for (Vec2& v : x.frame) {
+                        pull(v);
+                    }
+                    if (moved) {
+                        polyline_ops::refit(x.fit, x.frame, x.closed, x.tangents, segs, x.points, x.bulges, x.widths);
+                    }
+                    moved = moved || before;
+                } else {
+                    for (Vec2& v : x.points) {
+                        pull(v);
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddArcCommand>) {
                 // An arc's stretch points are its two ENDPOINTS. Both inside -> it moves
@@ -1445,6 +1460,9 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.center += d;
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 for (Vec2& p : x.points) {
+                    p += d;
+                }
+                for (Vec2& p : x.frame) {
                     p += d;
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
@@ -1582,6 +1600,12 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                 for (double& b : x.bulges) {
                     b = -b; // reflection flips arc orientation
                 }
+                for (Vec2& p : x.frame) {
+                    p = refl(p);
+                }
+                for (double& a : x.tangents) {
+                    a = std::isnan(a) ? a : refl_ang(a);
+                }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 mirror_text(x.text);
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
@@ -1707,6 +1731,12 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 for (Vec2& p : x.points) {
                     p = rot(p);
+                }
+                for (Vec2& p : x.frame) {
+                    p = rot(p);
+                }
+                for (double& a : x.tangents) {
+                    a = std::isnan(a) ? a : a + ang;
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos = rot(x.text.pos);
@@ -1891,6 +1921,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 }
                 for (double& w : x.widths) {
                     w *= std::abs(f);
+                }
+                for (Vec2& p : x.frame) {
+                    p = scl(p);
                 }
             } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
                 x.text.pos = scl(x.text.pos);
@@ -3449,6 +3482,12 @@ void reverse_polyline(AddPolylineCommand& p) {
         p.widths = std::move(rw);
     } else if (p.widths.size() == 2) {
         std::swap(p.widths[0], p.widths[1]); // the one taper every segment has
+    }
+    // A fitted polyline's frame runs the other way too, its tangents turned round.
+    std::reverse(p.frame.begin(), p.frame.end());
+    std::reverse(p.tangents.begin(), p.tangents.end());
+    for (double& t : p.tangents) {
+        t = std::isnan(t) ? t : t + kPi;
     }
 }
 
@@ -14399,14 +14438,27 @@ void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
         return;
     }
     const PolylineData* pl = store_.polyline(pv_handle_);
-    std::vector<Vec2> v(store_.vertices_of(*pl).begin(), store_.vertices_of(*pl).end());
+    // A fitted polyline is edited by the vertices placed (its frame), and fitted again.
+    const std::span<const Vec2> placed = store_.frame_of(*pl);
+    const bool fitted = !placed.empty();
+    const std::uint8_t fit_kind = fitted ? pl->fit : std::uint8_t{0};
+    const int fit_segs = fitted ? polyline_ops::fit_segments(pl->count, placed.size(), pl->closed) : 8;
+    const double uniform_w = store_.widths_of(*pl).empty() ? 0.0 : store_.widths_of(*pl).front();
+    std::vector<Vec2> v = fitted ? std::vector<Vec2>(placed.begin(), placed.end())
+                                 : std::vector<Vec2>(store_.vertices_of(*pl).begin(), store_.vertices_of(*pl).end());
     const std::size_t n = v.size();
     std::vector<double> b(n, 0.0);
-    if (const auto bs = store_.bulges_of(*pl); !bs.empty()) {
+    if (const auto bs = store_.bulges_of(*pl); !bs.empty() && !fitted) {
         std::copy(bs.begin(), bs.begin() + static_cast<std::ptrdiff_t>(std::min(bs.size(), n)), b.begin());
     }
-    std::vector<double> w(store_.widths_of(*pl).begin(), store_.widths_of(*pl).end());
+    std::vector<double> w = fitted ? std::vector<double>(2 * n, uniform_w)
+                                   : std::vector<double>(store_.widths_of(*pl).begin(), store_.widths_of(*pl).end());
     w.resize(2 * n, 0.0);
+    std::vector<double> tangents(store_.tangents_of(*pl).begin(), store_.tangents_of(*pl).end());
+    if (!tangents.empty()) {
+        tangents.resize(n, std::numeric_limits<double>::quiet_NaN());
+    }
+    bool refit_after = fitted; // the pieces fitted again (a width of a segment of the fit's own: not)
     const bool closed = pl->closed;
     if (n == 0) {
         return;
@@ -14438,7 +14490,17 @@ void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
     std::size_t next_index = pv_index_;
     const std::size_t i = pv_index_;
     switch (c.op) {
+    case 23: { // Tangent: a direction for the current vertex, which a Fit then takes
+        const double angle = c.p1.y != 0.0 ? std::atan2(c.p2.y - v[i].y, c.p2.x - v[i].x) : c.p1.x;
+        tangents.resize(n, std::numeric_limits<double>::quiet_NaN());
+        tangents[i] = angle; // a Fit already made follows it at once
+        report("Tangent set.");
+        break;
+    }
     case 18: { // Insert after the current vertex
+        if (!tangents.empty()) {
+            tangents.insert(tangents.begin() + static_cast<std::ptrdiff_t>(i + 1), std::numeric_limits<double>::quiet_NaN());
+        }
         v.insert(v.begin() + static_cast<std::ptrdiff_t>(i + 1), c.p1);
         b[i] = 0.0;
         b.insert(b.begin() + static_cast<std::ptrdiff_t>(i + 1), 0.0);
@@ -14459,6 +14521,19 @@ void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
             report("PEDIT: a width cannot be negative.");
             return;
         }
+        if (fitted) { // a segment of the fit's own: the fit is dropped, the drawn polyline kept
+            v.assign(store_.vertices_of(*pl).begin(), store_.vertices_of(*pl).end());
+            b.assign(v.size(), 0.0);
+            if (const auto bs = store_.bulges_of(*pl); bs.size() == v.size()) {
+                b.assign(bs.begin(), bs.end());
+            }
+            w.assign(store_.widths_of(*pl).begin(), store_.widths_of(*pl).end());
+            w.resize(2 * v.size(), uniform_w);
+            tangents.clear();
+            refit_after = false;
+            report("PEDIT: the width is set on the polyline as drawn; it is no longer fitted.");
+            break;
+        }
         w[2 * i] = c.p2.x;
         w[2 * i + 1] = c.p2.y;
         report("Segment width set.");
@@ -14478,6 +14553,10 @@ void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
             }
             v.erase(v.begin() + static_cast<std::ptrdiff_t>(a + 1), v.begin() + static_cast<std::ptrdiff_t>(z));
             b.erase(b.begin() + static_cast<std::ptrdiff_t>(a + 1), b.begin() + static_cast<std::ptrdiff_t>(z));
+            if (tangents.size() >= z) {
+                tangents.erase(tangents.begin() + static_cast<std::ptrdiff_t>(a + 1),
+                               tangents.begin() + static_cast<std::ptrdiff_t>(z));
+            }
             b[a] = 0.0;
             w.erase(w.begin() + static_cast<std::ptrdiff_t>(2 * (a + 1)), w.begin() + static_cast<std::ptrdiff_t>(2 * z));
             next_index = a;
@@ -14553,15 +14632,37 @@ void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
         for (const double bb : pieces_b[k]) {
             any_bulge = any_bulge || std::abs(bb) > 1e-12;
         }
-        const Command made = AddPolylineCommand{pieces_v[k],
+        std::vector<Vec2> draw_v = pieces_v[k];
+        std::vector<double> draw_b = any_bulge ? pieces_b[k] : std::vector<double>{};
+        std::vector<double> draw_w = pline::has_width(pieces_w[k]) ? pieces_w[k] : std::vector<double>{};
+        std::uint8_t piece_fit = 0;
+        std::vector<Vec2> piece_frame;
+        // One piece keeps the tangents (the vertices placed are the same ones).
+        const std::vector<double> piece_tangents = pieces_v.size() == 1 ? tangents : std::vector<double>{};
+        if (refit_after) {
+            std::vector<double> fw(2 * pieces_v[k].size(), uniform_w);
+            if (polyline_ops::refit(fit_kind, pieces_v[k], piece_closed, piece_tangents, fit_segs, draw_v, draw_b, fw)) {
+                piece_fit = fit_kind;
+                piece_frame = pieces_v[k];
+                draw_w = pline::has_width(fw) ? fw : std::vector<double>{};
+            } else {
+                draw_v = pieces_v[k];
+                draw_b.clear();
+            }
+        }
+        const Command made = AddPolylineCommand{draw_v,
                                                 piece_closed,
                                                 0,
                                                 keep.props,
-                                                any_bulge ? pieces_b[k] : std::vector<double>{},
+                                                draw_b,
                                                 cts,
-                                                pline::has_width(pieces_w[k]) ? pieces_w[k] : std::vector<double>{},
+                                                draw_w,
                                                 keep.elevation,
-                                                keep.thickness};
+                                                keep.thickness,
+                                                keep.ltype_gen,
+                                                piece_fit,
+                                                piece_frame,
+                                                piece_tangents};
         const EntityHandle nh = create_indexed(made);
         push_create_item(c.group, nh, made);
         if (first.is_null()) {
@@ -14578,7 +14679,7 @@ void GeometryEngine::apply_pedit_vertex(const PeditCommand& c) {
 }
 
 void GeometryEngine::apply_pedit(const PeditCommand& c) {
-    if (c.op >= 11 && c.op <= 21 && !c.selection) {
+    if (((c.op >= 11 && c.op <= 21) || c.op == 23) && !c.selection) {
         apply_pedit_vertex(c);
         return;
     }
@@ -14628,11 +14729,19 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
     EntityProps props{};
     double cts = 1.0;
     bool converted = false;
+    std::uint8_t fit = 0;        // PolylineData::fit
+    std::vector<Vec2> frame;     // a fitted polyline's vertices placed
+    std::vector<double> tangents; // PEDIT Edit vertex Tangent, per vertex placed
     if (h.kind == EntityKind::Polyline) {
         const PolylineData* pl = store_.polyline(h);
         const auto vs = store_.vertices_of(*pl);
         const auto bs = store_.bulges_of(*pl);
         const auto ws = store_.widths_of(*pl);
+        const auto fr = store_.frame_of(*pl);
+        const auto tg = store_.tangents_of(*pl);
+        frame.assign(fr.begin(), fr.end());
+        fit = frame.empty() ? std::uint8_t{0} : pl->fit;
+        tangents.assign(tg.begin(), tg.end());
         v.assign(vs.begin(), vs.end());
         b.assign(v.size(), 0.0);
         if (!bs.empty()) {
@@ -14670,8 +14779,22 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         say("PEDIT: select a polyline (or a line or arc to convert).");
         return EntityHandle::null();
     }
+    // A fitted polyline: Close, Open, Reverse and the vertex edits work on the vertices placed
+    // (its frame), and it is fitted again after them, in as many pieces as before.
+    const bool fitted = fit != 0 && !frame.empty();
+    const int fit_segs = fitted ? polyline_ops::fit_segments(v.size(), frame.size(), closed) : 8;
+    const double uniform_w = w.empty() ? 0.0 : w.front();
+    const bool on_frame = fitted && (c.op <= 2 || (c.op >= 5 && c.op <= 7));
+    if (on_frame) {
+        v = frame;
+        b.assign(v.size(), 0.0);
+        w.assign(2 * v.size(), uniform_w);
+    }
     const std::size_t n = v.size();
     w.resize(2 * n, 0.0);
+    if (!tangents.empty()) {
+        tangents.resize(fitted ? frame.size() : n, std::numeric_limits<double>::quiet_NaN());
+    }
     std::optional<Command> replacement;
     std::string what;
     const auto nearest_vertex = [&](Vec2 p) {
@@ -14714,26 +14837,63 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         v = std::move(rv);
         b = std::move(rb);
         w = std::move(rw);
+        std::reverse(tangents.begin(), tangents.end()); // each the other way round
+        for (double& a : tangents) {
+            a = std::isnan(a) ? a : a + kPi;
+        }
         what = "Reversed.";
         break;
     }
-    case 3: // Decurve
-        std::fill(b.begin(), b.end(), 0.0);
+    case 3: // Decurve: a fitted polyline back to the vertices placed, the arcs straightened
+        if (fitted) {
+            v = frame;
+            b.assign(v.size(), 0.0);
+            w.assign(2 * v.size(), uniform_w);
+            fit = 0;
+            frame.clear();
+        } else {
+            std::fill(b.begin(), b.end(), 0.0);
+        }
         what = "Decurved.";
         break;
-    case 4: { // Spline: a fit spline through the vertices (back to the first when closed)
-        std::vector<Vec2> fit = v;
-        if (closed && n >= 2) {
-            fit.push_back(v.front());
-        }
-        if (fit.size() < 2) {
+    case 4: { // Spline: a spline-fit polyline on the vertices placed (SPLINETYPE, SPLINESEGS)
+        std::vector<Vec2> base = fitted ? frame : v;
+        const std::uint8_t kind = c.p1.x == 5.0 ? std::uint8_t{5} : std::uint8_t{6};
+        const int segs = c.p1.y >= 1.0 ? static_cast<int>(c.p1.y) : 8;
+        std::vector<Vec2> nv;
+        std::vector<double> nb;
+        std::vector<double> nw(2 * base.size(), uniform_w);
+        if (!polyline_ops::refit(kind, base, closed, tangents, segs, nv, nb, nw)) {
             say("PEDIT: not enough vertices for a spline.");
             return EntityHandle::null();
         }
+        fit = kind;
+        frame = std::move(base);
+        v = std::move(nv);
+        b = std::move(nb);
+        w = nw.empty() ? std::vector<double>(2 * v.size(), 0.0) : std::move(nw);
+        what = "Spline fit.";
+        break;
+    }
+    case 25: { // SPLINE Object: a spline in its place (a spline-fit one's frame its control points)
         AddSplineCommand sp;
-        sp.control_points = spline::fit_or_fallback(fit, 3, spline::FitParam::Chord);
-        sp.degree = 3;
         sp.props = props;
+        if (fitted && (fit == 5 || fit == 6) && !closed) {
+            // The same curve exactly: the frame is the B-spline's control polygon.
+            sp.control_points = frame;
+            sp.degree = fit == 5 ? 2 : 3;
+        } else {
+            std::vector<Vec2> through = v;
+            if (closed && n >= 2) {
+                through.push_back(v.front());
+            }
+            if (through.size() < 2) {
+                say("PEDIT: not enough vertices for a spline.");
+                return EntityHandle::null();
+            }
+            sp.control_points = spline::fit_or_fallback(through, 3, spline::FitParam::Chord);
+            sp.degree = 3;
+        }
         replacement = sp;
         what = "Converted to a spline.";
         break;
@@ -14746,6 +14906,10 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         const std::size_t at = std::min(seg + 1, n);
         v.insert(v.begin() + static_cast<std::ptrdiff_t>(at), c.p1);
         b.insert(b.begin() + static_cast<std::ptrdiff_t>(at), 0.0);
+        if (!tangents.empty()) {
+            tangents.insert(tangents.begin() + static_cast<std::ptrdiff_t>(std::min(at, tangents.size())),
+                            std::numeric_limits<double>::quiet_NaN());
+        }
         if (seg < b.size()) {
             b[seg] = 0.0; // the split segment becomes straight on both sides
         }
@@ -14768,6 +14932,9 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         const std::size_t i = nearest_vertex(c.p1);
         v.erase(v.begin() + static_cast<std::ptrdiff_t>(i));
         b.erase(b.begin() + static_cast<std::ptrdiff_t>(i));
+        if (i < tangents.size()) {
+            tangents.erase(tangents.begin() + static_cast<std::ptrdiff_t>(i));
+        }
         if (i > 0 && i - 1 < b.size()) {
             b[i - 1] = 0.0; // the segment bridging the gap is straight
         }
@@ -14805,6 +14972,11 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         const std::size_t i = nearest_vertex(c.p1);
         w[2 * i] = c.p2.x;
         w[2 * i + 1] = c.p2.y;
+        if (fitted) { // a segment of the fit's own: the polyline is no longer fitted
+            fit = 0;
+            frame.clear();
+            tangents.clear();
+        }
         what = "Segment width set.";
         break;
     }
@@ -14812,17 +14984,46 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         ltype_gen = c.p1.x != 0.0;
         what = ltype_gen ? "Linetype generation on." : "Linetype generation off.";
         break;
-    case 10: { // Fit: arcs through the vertices, smooth at each (two per segment)
-        if (!polyline_ops::fit_arcs(v, b, w, closed)) {
-            say("PEDIT: Fit needs three vertices.");
-            return EntityHandle::null();
+    case 10: { // Fit: arcs through the vertices placed, smooth at each (two per segment)
+        std::vector<Vec2> base = fitted ? frame : v;
+        std::vector<Vec2> nv;
+        std::vector<double> nb;
+        std::vector<double> nw = fitted ? std::vector<double>(2 * base.size(), uniform_w) : w;
+        if (fitted) {
+            if (!polyline_ops::refit(1, base, closed, tangents, 0, nv, nb, nw)) {
+                say("PEDIT: Fit needs three vertices.");
+                return EntityHandle::null();
+            }
+        } else {
+            nv = base;
+            nb = b;
+            if (!polyline_ops::fit_arcs(nv, nb, nw, closed, tangents)) {
+                say("PEDIT: Fit needs three vertices.");
+                return EntityHandle::null();
+            }
         }
+        fit = 1;
+        frame = std::move(base);
+        v = std::move(nv);
+        b = std::move(nb);
+        w = nw.empty() ? std::vector<double>(2 * v.size(), 0.0) : std::move(nw);
         what = "Fit.";
         break;
     }
     default:
         say("PEDIT: unknown option.");
         return EntityHandle::null();
+    }
+    if (on_frame && !replacement) {
+        frame = v;
+        std::vector<double> fw(2 * frame.size(), uniform_w);
+        if (!polyline_ops::refit(fit, frame, closed, tangents, fit_segs, v, b, fw)) {
+            fit = 0; // too few vertices left to fit: the vertices placed, straight
+            frame.clear();
+            b.assign(v.size(), 0.0);
+        }
+        w = fw.empty() ? std::vector<double>(2 * v.size(), 0.0) : fw;
+        w.resize(2 * v.size(), uniform_w);
     }
     if (!replacement) {
         bool any_bulge = false;
@@ -14838,7 +15039,10 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
                                          pline::has_width(w) ? w : std::vector<double>{},
                                          elevation,
                                          thickness,
-                                         ltype_gen};
+                                         ltype_gen,
+                                         frame.empty() ? std::uint8_t{0} : fit,
+                                         frame,
+                                         tangents};
     }
     const Command original = capture_entity(h);
     remove_indexed(h);
@@ -21107,7 +21311,9 @@ void GeometryEngine::rebuild_and_publish() {
     }
     // PEDIT's vertex editor: an X on the current vertex, eight pixels across.
     if (store_.is_valid(pv_handle_) && pv_handle_.kind == EntityKind::Polyline) {
-        const auto vs = store_.vertices_of(*store_.polyline(pv_handle_));
+        // The vertices placed: a fitted polyline's frame.
+        const PolylineData* pv_pl = store_.polyline(pv_handle_);
+        const auto vs = store_.frame_of(*pv_pl).empty() ? store_.vertices_of(*pv_pl) : store_.frame_of(*pv_pl);
         if (!vs.empty()) {
             const Vec2 p = vs[std::min(pv_index_, vs.size() - 1)];
             const double r = 4.0 * view_world_per_px_;

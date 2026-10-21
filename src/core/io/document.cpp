@@ -298,11 +298,15 @@ Document document_from_store(const GeometryStore& store) {
             const std::span<const Vec2> v = store.vertices_of(p);
             const std::span<const double> b = store.bulges_of(p);
             const std::span<const double> w = store.widths_of(p);
+            const std::span<const Vec2> fr = store.frame_of(p);
+            const std::span<const double> tg = store.tangents_of(p);
             doc.polylines.push_back(DocPolyline{
                 std::vector<Vec2>(v.begin(), v.end()), p.closed, p.props,
                 std::vector<double>(b.begin(), b.end()),
                 store.celtscale(EntityHandle{i, plines.generations()[i], EntityKind::Polyline}),
-                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness, p.ltype_gen});
+                std::vector<double>(w.begin(), w.end()), p.elevation, p.thickness, p.ltype_gen,
+                fr.empty() ? std::uint8_t{0} : p.fit, std::vector<Vec2>(fr.begin(), fr.end()),
+                std::vector<double>(tg.begin(), tg.end())});
         }
     }
     const auto& splines = store.splines();
@@ -780,6 +784,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
             store.add_polyline(p.points, p.bulges, p.closed, p.props, p.widths, p.elevation, p.thickness);
         store.set_celtscale(ph, p.celtscale);
         store.set_polyline_ltype_gen(ph, p.ltype_gen);
+        store.set_polyline_fit(ph, p.fit, p.frame);
+        store.set_polyline_tangents(ph, p.tangents);
     }
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props, s.knots);
