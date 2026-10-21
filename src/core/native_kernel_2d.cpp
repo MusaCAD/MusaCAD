@@ -213,6 +213,18 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::Xline:
         break; // infinite: no finite tessellation (drawn clipped to the view instead)
+    case EntityKind::MLine: {
+        // Segment PAIRS, as a block reference's: every element's pieces and the caps.
+        const MLineData* m = store.mline(entity);
+        const MLineStyle* st = store.mline_style(m->style);
+        const mline::Geometry g = mline::geometry(*m, st != nullptr ? *st : MLineStyle{});
+        for (const mline::Geometry::Piece& p : g.pieces) {
+            out.push_back(p.a);
+            out.push_back(p.b);
+        }
+        out.insert(out.end(), g.caps.begin(), g.caps.end());
+        break;
+    }
     case EntityKind::Ellipse:
         ellipse::tessellate(*store.ellipse(entity), tolerance, out);
         break;
@@ -423,6 +435,12 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         return false;
     }
     switch (entity.kind) {
+    case EntityKind::MLine: {
+        // Its lines as drawn: the element pieces and the caps (segment pairs).
+        std::vector<Vec2> segs;
+        tessellate(store, entity, 0.0, segs);
+        return nearest_on_segments(segs, query, out_point);
+    }
     case EntityKind::Point: {
         out_point = store.point(entity)->p;
         return true;
@@ -1137,6 +1155,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Image:  // ... nor a raster image
     case EntityKind::Viewport:
     case EntityKind::Table:  // ... nor a table
+    case EntityKind::MLine:  // ... nor a multiline (AutoCAD does not offset one either)
         break;
     }
     return false;
@@ -1188,8 +1207,11 @@ void NativeKernel2D::intersect(const GeometryStore& store, EntityHandle a, Entit
         return; // point-like entities produce no intersection segments
     }
     Vec2 hit{};
-    for (std::size_t i = 1; i < pa.size(); ++i) {
-        for (std::size_t j = 1; j < pb.size(); ++j) {
+    // A multiline's lines come as separate pairs; everything else as one chain.
+    const std::size_t step_a = a.kind == EntityKind::MLine ? 2 : 1;
+    const std::size_t step_b = b.kind == EntityKind::MLine ? 2 : 1;
+    for (std::size_t i = 1; i < pa.size(); i += step_a) {
+        for (std::size_t j = 1; j < pb.size(); j += step_b) {
             if (segment_intersection(pa[i - 1], pa[i], pb[j - 1], pb[j], hit)) {
                 push_unique(out, base, hit);
             }

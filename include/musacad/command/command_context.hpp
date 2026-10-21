@@ -106,6 +106,12 @@ struct PreviewSpec {
     /// length (or radius) and the angles DYNDIGRIP asks for; `points[0]` stays the grip.
     std::optional<core::Vec2> grip_anchor{};
     bool grip_radius = false;
+    /// MLINE (PreviewKind::Polyline): the path drawn as the multiline -- its elements at these
+    /// offsets from it (justified and scaled), the ends at these angles (degrees). Empty: the
+    /// path alone.
+    std::vector<double> mline_offsets{};
+    double mline_start_angle = 90.0;
+    double mline_end_angle = 90.0;
     /// ROTATE / SCALE (PreviewKind::Rotate / Scale): points[0] is the base point. The
     /// live angle is the cursor's bearing from it minus `ref_angle` (radians; ROTATE
     /// Reference), the live factor the cursor's distance from it divided by
@@ -579,6 +585,8 @@ public:
     /// MLEADERSTYLE: the multileader styles and the current one (MLEADER draws with it).
     [[nodiscard]] virtual std::vector<core::MLeaderStyle> mleader_styles() const { return {core::MLeaderStyle{}}; }
     [[nodiscard]] virtual std::uint16_t current_mleader_style() const { return 0; }
+    /// MLINE's settings: the drawing's multiline styles, CMLSTYLE, CMLJUST and CMLSCALE.
+    [[nodiscard]] virtual core::MLineSettings mline_settings() const { return {}; }
     /// The colour, linetype and lineweight new objects take (CECOLOR, CELTYPE, CELWEIGHT),
     /// as last published; COLOR, LINETYPE and LWEIGHT change them.
     [[nodiscard]] virtual core::EntityProps current_props() const { return {}; }

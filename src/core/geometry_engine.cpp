@@ -321,6 +321,7 @@ std::vector<EntityHandle> GeometryEngine::all_live_in(const GeometryStore& store
     collect(store.images(), EntityKind::Image);
     collect(store.viewports(), EntityKind::Viewport);
     collect(store.tables(), EntityKind::Table);
+    collect(store.mlines(), EntityKind::MLine);
     return live;
 }
 
@@ -601,7 +602,7 @@ bool GeometryEngine::entity_hits_polygon(EntityHandle h, const std::vector<Vec2>
     if (tess.empty()) {
         return false;
     }
-    const bool pairs = h.kind == EntityKind::Insert;
+    const bool pairs = h.kind == EntityKind::Insert || h.kind == EntityKind::MLine;
     const std::span<const Vec2> ring(poly.data(), poly.size());
     bool any_inside = false;
     bool all_inside = true;
@@ -629,7 +630,7 @@ bool GeometryEngine::entity_hits_fence(EntityHandle h, const std::vector<Vec2>& 
     }
     std::vector<Vec2> tess;
     kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
-    const bool pairs = h.kind == EntityKind::Insert;
+    const bool pairs = h.kind == EntityKind::Insert || h.kind == EntityKind::MLine;
     Vec2 hit{};
     const auto seg_hits = [&](Vec2 a, Vec2 b) {
         for (std::size_t f = 1; f < fence.size(); ++f) {
@@ -679,7 +680,7 @@ void GeometryEngine::select_preview(const SelectPreviewCommand& c) {
         }
         std::vector<Vec2> tess;
         kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
-        if (h.kind == EntityKind::Insert) {
+        if (h.kind == EntityKind::Insert || h.kind == EntityKind::MLine) {
             for (std::size_t i = 0; i + 1 < tess.size(); i += 2) {
                 preview_lines_.push_back(tess[i]);
                 preview_lines_.push_back(tess[i + 1]);
@@ -707,6 +708,7 @@ void GeometryEngine::select_similar(std::uint32_t mode) {
         case EntityKind::Leader: return store_.leader(h)->style;
         case EntityKind::MLeader: return store_.mleader(h)->style;
         case EntityKind::Table: return store_.table(h)->style;
+        case EntityKind::MLine: return store_.mline(h)->style;
         default: return -1;
         }
     };
@@ -1145,8 +1147,8 @@ bool GeometryEngine::entity_hits_rect(EntityHandle h, Vec2 mn, Vec2 mx, bool cro
         return false;
     }
     // An INSERT tessellates to disjoint segment PAIRS (no phantom connectors);
-    // crossing must test pair (2i, 2i+1), not consecutive points.
-    const bool pairs = h.kind == EntityKind::Insert;
+    // crossing must test pair (2i, 2i+1), not consecutive points. So does a multiline.
+    const bool pairs = h.kind == EntityKind::Insert || h.kind == EntityKind::MLine;
     if (crossing) {
         if (pairs) {
             for (std::size_t i = 0; i + 1 < tess.size(); i += 2) {
@@ -1304,6 +1306,10 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 pull(x.p);
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                for (Vec2& p : x.points) {
+                    pull(p); // the vertices inside the window move, as AutoCAD stretches one
+                }
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 pull(x.base);
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
@@ -1418,6 +1424,10 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.pos += d;
             } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p += d;
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                for (Vec2& p : x.points) {
+                    p += d;
+                }
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base += d;
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
@@ -1522,6 +1532,13 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
                 x.rotation = refl_ang(x.rotation);
             } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = refl(x.p);
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                // A reflection turns the left side right: the elements keep their places
+                // mirrored with the scale's sign turned, as AutoCAD's own does.
+                for (Vec2& p : x.points) {
+                    p = refl(p);
+                }
+                x.scale = -x.scale;
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 const Vec2 tip = refl(x.base + x.dir);
                 x.base = refl(x.base);
@@ -1662,6 +1679,10 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 x.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = rot(x.p);
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                for (Vec2& p : x.points) {
+                    p = rot(p);
+                }
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 const Vec2 tip = rot(x.base + x.dir);
                 x.base = rot(x.base);
@@ -1780,6 +1801,8 @@ Vec2 command_anchor(const Command& c) {
                 out = x.pos;
             } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 out = x.p;
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                out = x.points.empty() ? Vec2{0.0, 0.0} : x.points.front();
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 out = x.base;
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
@@ -1832,6 +1855,18 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.height *= f;
             } else if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = scl(x.p);
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                for (Vec2& p : x.points) {
+                    p = scl(p);
+                }
+                x.scale *= f; // the elements as far apart as the rest grows
+                for (auto& seg : x.breaks) {
+                    for (auto& el : seg) {
+                        for (double& g : el) {
+                            g *= f;
+                        }
+                    }
+                }
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base = scl(x.base);
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
@@ -4493,6 +4528,15 @@ std::string GeometryEngine::list_geometry(EntityHandle h) const {
         const TableData* t = store_.table(h);
         out += ",  " + std::to_string(t->rows) + " rows x " + std::to_string(t->cols) +
                " columns";
+        break;
+    }
+    case EntityKind::MLine: {
+        const MLineData* m = store_.mline(h);
+        const MLineStyle* st = store_.mline_style(m->style);
+        static constexpr const char* kJust[] = {"Top", "Zero", "Bottom"};
+        out += ",  style " + (st != nullptr ? st->name : std::string("?")) + ",  scale " + fmt_len(m->scale) +
+               ",  justification " + kJust[std::min<std::size_t>(m->justification, 2)] + ",  " +
+               std::to_string(m->vertices.size()) + " vertices" + (m->closed ? ",  closed" : "");
         break;
     }
     case EntityKind::Viewport: {
@@ -7255,6 +7299,37 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
         }
         const std::size_t before = parts.size();
         switch (h.kind) {
+        case EntityKind::MLine: {
+            // Lines for the elements (each in its colour and linetype: ByLayer and ByBlock as
+            // the multiline's own), lines and arcs for the caps and joints.
+            const MLineData* m = store_.mline(h);
+            static const MLineStyle kStandard{};
+            const MLineStyle* st = store_.mline_style(m->style);
+            const MLineStyle& style = st != nullptr ? *st : kStandard;
+            const mline::Geometry g = mline::geometry(*m, style);
+            for (const mline::Geometry::Piece& piece : g.pieces) {
+                const MLineElement& el = style.elements[piece.element];
+                EntityProps pr = m->props;
+                if (el.color_mode == 0) {
+                    pr.color = el.color;
+                    pr.set_color_by_layer(false);
+                } else if (el.color_mode == 1) {
+                    pr.set_color_by_layer(true);
+                }
+                if (el.linetype_mode == 0) {
+                    pr.linetype = el.linetype;
+                    pr.set_linetype_by_layer(false);
+                } else if (el.linetype_mode == 1) {
+                    pr.set_linetype_by_layer(true);
+                }
+                line(piece.a, piece.b, pr);
+            }
+            lines_from_pairs(g.lines, m->props);
+            for (const mline::Geometry::Arc& a : g.arcs) {
+                parts.push_back(AddArcCommand{a.center, a.radius, a.start, a.end, 0, m->props});
+            }
+            break;
+        }
         case EntityKind::Polyline: {
             const PolylineData* pl = store_.polyline(h);
             const std::span<const Vec2> v = store_.vertices_of(*pl);
@@ -7983,6 +8058,7 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
         case EntityKind::Table:
         case EntityKind::Xline:
         case EntityKind::Ellipse:
+        case EntityKind::MLine:
             ++skipped; // the block content cannot hold this kind yet: left in place
             continue;
         }
@@ -10575,6 +10651,9 @@ void GeometryEngine::apply_audit(bool fix) {
         case EntityKind::Table:
             bad_ref = store_.table(h)->style >= ntstyles;
             break;
+        case EntityKind::MLine:
+            bad_ref = store_.mline(h)->style >= store_.mline_styles().size();
+            break;
         case EntityKind::Insert:
             erase = store_.insert(h)->block >= nblocks;
             break;
@@ -11889,6 +11968,574 @@ int circle_circle_hits(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0, Vec2& p
 }
 
 } // namespace
+
+namespace {
+// ---------------------------------------------------------------------------
+// MLEDIT helpers: the elements as chains of points, where a point falls on one, and the gaps
+// (MLineData::breaks: per segment and element, pairs of distances from where the element
+// starts on the segment).
+// ---------------------------------------------------------------------------
+const MLineStyle& mline_style_or_standard(const GeometryStore& st, const MLineData& m) {
+    static const MLineStyle kStandard{};
+    const MLineStyle* s = st.mline_style(m.style);
+    return s != nullptr ? *s : kStandard;
+}
+
+std::vector<Vec2> mline_chain(const MLineData& m, const MLineStyle& st, std::size_t e) {
+    const std::vector<Vec2> w = mline::miters(m.vertices, m.closed, st.start_angle, st.end_angle);
+    const std::vector<double> d = mline::offsets(st, m.scale, m.justification);
+    std::vector<Vec2> out;
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        out.push_back(m.vertices[i] + w[i] * (e < d.size() ? d[e] : 0.0));
+    }
+    if (m.closed && !out.empty()) {
+        out.push_back(out.front());
+    }
+    return out;
+}
+
+std::vector<Vec2> mline_path(const MLineData& m) {
+    std::vector<Vec2> out = m.vertices;
+    if (m.closed && !out.empty()) {
+        out.push_back(out.front());
+    }
+    return out;
+}
+
+struct ChainSpot {
+    std::size_t seg = 0;
+    double s = 0.0; ///< along the segment from its start
+    double dist = std::numeric_limits<double>::infinity();
+};
+
+ChainSpot chain_spot(const std::vector<Vec2>& c, Vec2 p) {
+    ChainSpot best;
+    for (std::size_t i = 0; i + 1 < c.size(); ++i) {
+        const Vec2 d = c[i + 1] - c[i];
+        const double len = length(d);
+        const double s = len > 1e-12 ? std::clamp(dot(p - c[i], d) / len, 0.0, len) : 0.0;
+        const Vec2 q = len > 1e-12 ? c[i] + d * (s / len) : c[i];
+        const double dist = length(p - q);
+        if (dist < best.dist) {
+            best = {i, s, dist};
+        }
+    }
+    return best;
+}
+
+double seg_len(const std::vector<Vec2>& c, std::size_t i) {
+    return i + 1 < c.size() ? length(c[i + 1] - c[i]) : 0.0;
+}
+
+// The gaps of one element on one segment, `[s0, s1]` added (or, `cut` false, taken away).
+void edit_gap(MLineData& m, std::size_t seg, std::size_t e, std::size_t elements, double s0, double s1, bool cut) {
+    if (s1 < s0) {
+        std::swap(s0, s1);
+    }
+    if (s1 - s0 < 1e-9) {
+        return;
+    }
+    const std::size_t segs = mline::segment_count(m);
+    if (m.breaks.size() < segs) {
+        m.breaks.resize(segs);
+    }
+    if (seg >= m.breaks.size()) {
+        return;
+    }
+    if (m.breaks[seg].size() < elements) {
+        m.breaks[seg].resize(elements);
+    }
+    std::vector<double>& g = m.breaks[seg][e];
+    std::vector<std::pair<double, double>> spans;
+    for (std::size_t k = 0; k + 1 < g.size(); k += 2) {
+        spans.emplace_back(std::min(g[k], g[k + 1]), std::max(g[k], g[k + 1]));
+    }
+    std::vector<std::pair<double, double>> out;
+    if (cut) {
+        spans.emplace_back(s0, s1);
+        std::sort(spans.begin(), spans.end());
+        for (const auto& sp : spans) {
+            if (!out.empty() && sp.first <= out.back().second + 1e-9) {
+                out.back().second = std::max(out.back().second, sp.second);
+            } else {
+                out.push_back(sp);
+            }
+        }
+    } else {
+        for (const auto& sp : spans) {
+            if (sp.second <= s0 || sp.first >= s1) {
+                out.push_back(sp);
+                continue;
+            }
+            if (sp.first < s0) {
+                out.emplace_back(sp.first, s0);
+            }
+            if (sp.second > s1) {
+                out.emplace_back(s1, sp.second);
+            }
+        }
+    }
+    g.clear();
+    for (const auto& [a, b] : out) {
+        g.push_back(a);
+        g.push_back(b);
+    }
+}
+
+// The element cut (or welded) along its chain from one spot to another.
+void edit_gap_between(MLineData& m, const std::vector<Vec2>& chain, std::size_t e, std::size_t elements, ChainSpot a,
+                      ChainSpot b, bool cut) {
+    if (b.seg < a.seg || (b.seg == a.seg && b.s < a.s)) {
+        std::swap(a, b);
+    }
+    if (a.seg == b.seg) {
+        edit_gap(m, a.seg, e, elements, a.s, b.s, cut);
+        return;
+    }
+    edit_gap(m, a.seg, e, elements, a.s, seg_len(chain, a.seg), cut);
+    for (std::size_t s = a.seg + 1; s < b.seg; ++s) {
+        edit_gap(m, s, e, elements, 0.0, seg_len(chain, s), cut);
+    }
+    edit_gap(m, b.seg, e, elements, 0.0, b.s, cut);
+}
+
+// Where the infinite line through `a0`, `a1` meets the one through `b0`, `b1`, as a distance
+// along the first from `a0`; nullopt when they are parallel.
+std::optional<double> along_to(Vec2 a0, Vec2 a1, Vec2 b0, Vec2 b1) {
+    Vec2 hit{};
+    if (!NativeKernel2D::line_line_intersection(a0, a1, b0, b1, hit)) {
+        return std::nullopt;
+    }
+    const double len = length(a1 - a0);
+    return len > 1e-12 ? std::optional<double>(dot(hit - a0, (a1 - a0) * (1.0 / len))) : std::nullopt;
+}
+
+// The elements with the largest and the smallest offset: the outer lines.
+std::pair<std::size_t, std::size_t> mline_outer(const MLineData& m, const MLineStyle& st) {
+    const std::vector<double> d = mline::offsets(st, m.scale, m.justification);
+    std::size_t hi = 0;
+    std::size_t lo = 0;
+    for (std::size_t e = 1; e < d.size(); ++e) {
+        hi = d[e] > d[hi] ? e : hi;
+        lo = d[e] < d[lo] ? e : lo;
+    }
+    return {hi, lo};
+}
+
+// Element `e` of `cut` broken where it passes between the outer lines of `by` (on `by`'s
+// segment `seg_by`), on `cut`'s segment `seg`.
+void gap_inside(MLineData& cut, const MLineStyle& cs, std::size_t seg, std::size_t e, const MLineData& by,
+                const MLineStyle& bs, std::size_t seg_by) {
+    const auto [hi, lo] = mline_outer(by, bs);
+    const std::vector<Vec2> top = mline_chain(by, bs, hi);
+    const std::vector<Vec2> bottom = mline_chain(by, bs, lo);
+    const std::vector<Vec2> ce = mline_chain(cut, cs, e);
+    if (seg + 1 >= ce.size() || seg_by + 1 >= top.size()) {
+        return;
+    }
+    const std::optional<double> s0 = along_to(ce[seg], ce[seg + 1], top[seg_by], top[seg_by + 1]);
+    const std::optional<double> s1 = along_to(ce[seg], ce[seg + 1], bottom[seg_by], bottom[seg_by + 1]);
+    if (s0 && s1) {
+        const double len = seg_len(ce, seg);
+        edit_gap(cut, seg, e, cs.elements.size(), std::clamp(*s0, 0.0, len), std::clamp(*s1, 0.0, len), true);
+    }
+}
+
+// Is the style's set of offsets the same mirrored (so the multiline can run the other way)?
+bool mline_symmetric(const MLineStyle& st) {
+    std::vector<double> a;
+    for (const MLineElement& e : st.elements) {
+        a.push_back(e.offset);
+    }
+    std::sort(a.begin(), a.end());
+    const double mid = a.empty() ? 0.0 : (a.front() + a.back()) * 0.5; // about the middle
+    for (std::size_t k = 0; k < a.size(); ++k) {
+        if (std::abs((a[k] - mid) + (a[a.size() - 1 - k] - mid)) > 1e-9) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The same multiline drawn the other way: Top and Bottom change places (exact for a style
+// symmetric about its middle).
+MLineData mline_reversed(const MLineData& m) {
+    MLineData r = m;
+    std::reverse(r.vertices.begin(), r.vertices.end());
+    r.justification = m.justification == 0 ? 2 : m.justification == 2 ? 0 : 1;
+    r.breaks.clear();
+    std::swap(r.no_start_caps, r.no_end_caps);
+    return r;
+}
+
+// The multiline's path cut at `x` on segment `seg`, the part with `keep` kept.
+MLineData mline_cut_at(const MLineData& m, std::size_t seg, Vec2 x, Vec2 keep) {
+    MLineData r = m;
+    r.closed = false;
+    const std::vector<Vec2>& v = m.vertices;
+    const Vec2 p0 = v[seg];
+    const Vec2 p1 = v[(seg + 1) % v.size()];
+    const Vec2 u = p1 - p0;
+    const double tx = dot(x - p0, u);
+    const double tk = dot(keep - p0, u);
+    if (tk <= tx) { // keep the start: up to x
+        r.vertices.assign(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(seg) + 1);
+        r.vertices.push_back(x);
+        if (r.breaks.size() > seg + 1) {
+            r.breaks.resize(seg + 1);
+        }
+    } else { // keep the end: from x
+        r.vertices.assign(1, x);
+        r.vertices.insert(r.vertices.end(), v.begin() + static_cast<std::ptrdiff_t>(seg) + 1, v.end());
+        if (!m.breaks.empty()) {
+            // The segment cut loses its gaps; those after it keep theirs, one place on.
+            const std::size_t from = std::min(seg + 1, m.breaks.size());
+            std::vector<std::vector<std::vector<double>>> rest(1 + (m.breaks.size() - from));
+            std::copy(m.breaks.begin() + static_cast<std::ptrdiff_t>(from), m.breaks.end(), rest.begin() + 1);
+            r.breaks = std::move(rest);
+        }
+    }
+    return r;
+}
+} // namespace
+
+EntityHandle GeometryEngine::pick_mline(Vec2 p, double radius) const {
+    std::vector<EntityHandle> cands;
+    grid_.query({p.x - radius, p.y - radius}, {p.x + radius, p.y + radius}, cands);
+    EntityHandle best;
+    double bd = std::numeric_limits<double>::infinity();
+    for (const EntityHandle h : cands) {
+        if (h.kind != EntityKind::MLine || !editable_entity(h)) {
+            continue;
+        }
+        Vec2 q;
+        if (kernel_.closest_point(store_, h, p, q)) {
+            const double d = length(q - p);
+            if (d <= radius && d < bd) {
+                bd = d;
+                best = h;
+            }
+        }
+    }
+    return best;
+}
+
+void GeometryEngine::apply_mline_style(const MLineStyleCommand& c) {
+    using Op = MLineStyleCommand::Op;
+    const std::string name = c.op == Op::Define ? c.style.name : c.name;
+    const std::uint16_t i = store_.mline_style_index(name);
+    const std::string quoted = "\"" + name + "\"";
+    switch (c.op) {
+    case Op::Define:
+        if (c.style.name.empty()) {
+            report("A multiline style needs a name.");
+            return;
+        }
+        if (c.style.elements.empty()) {
+            report("A multiline style needs at least one element.");
+            return;
+        }
+        store_.define_mline_style(c.style);
+        geom_dirty_ = true; // the multilines in it are drawn again
+        report("Multiline style " + quoted + (i == 0xFFFF ? " added." : " changed."));
+        return;
+    case Op::Delete:
+        if (i == 0xFFFF) {
+            report("Multiline style " + quoted + " not found.");
+        } else if (!store_.remove_mline_style(i)) {
+            report("Multiline style " + quoted + " cannot be deleted: it is STANDARD, the current style or in use.");
+        } else {
+            report("Multiline style " + quoted + " deleted.");
+        }
+        return;
+    case Op::Rename:
+        if (i == 0xFFFF) {
+            report("Multiline style " + quoted + " not found.");
+        } else if (!store_.rename_mline_style(i, c.new_name)) {
+            report("Multiline style " + quoted + " cannot be renamed to \"" + c.new_name + "\".");
+        } else {
+            report("Multiline style " + quoted + " renamed to \"" + c.new_name + "\".");
+        }
+        return;
+    case Op::SetCurrent:
+        if (i == 0xFFFF) {
+            report("Multiline style " + quoted + " not found.");
+        } else {
+            store_.set_current_mline_style(i);
+            report("\"" + store_.mline_styles()[i].name + "\" is now the current multiline style.");
+        }
+        return;
+    case Op::Justification:
+        store_.set_cmljust(c.justification);
+        return;
+    case Op::Scale:
+        store_.set_cmlscale(c.scale);
+        return;
+    }
+}
+
+void GeometryEngine::apply_mline_edit(const MLineEditCommand& c) {
+    using Op = MLineEditCommand::Op;
+    const EntityHandle ha = pick_mline(c.pick, c.pick_radius);
+    if (ha.is_null()) {
+        report("MLEDIT: select a multiline.");
+        return;
+    }
+    MLineData ma = *store_.mline(ha);
+    const MLineStyle sa = mline_style_or_standard(store_, ma);
+    const std::size_t na = sa.elements.size();
+    const auto replace = [&](EntityHandle h, const MLineData& m) {
+        const Command original = capture_entity(h);
+        Command edited = original;
+        auto& am = std::get<AddMLineCommand>(edited);
+        am.points = m.vertices;
+        am.breaks = m.breaks;
+        am.closed = m.closed;
+        am.justification = m.justification;
+        am.no_start_caps = m.no_start_caps;
+        am.no_end_caps = m.no_end_caps;
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(c.group, nh, edited);
+        return nh;
+    };
+    const auto done = [&](const std::string& message) {
+        selection_.clear();
+        redo_.clear();
+        geom_dirty_ = true;
+        report(message);
+    };
+    const std::vector<Vec2> path_a = mline_path(ma);
+
+    if (c.op == Op::AddVertex) {
+        const ChainSpot sp = chain_spot(path_a, c.pick);
+        const double len = seg_len(path_a, sp.seg);
+        if (len < 1e-12 || sp.s < len * 1e-6 || sp.s > len * (1.0 - 1e-6)) {
+            report("MLEDIT: there is a vertex there already.");
+            return;
+        }
+        const Vec2 u = (path_a[sp.seg + 1] - path_a[sp.seg]) * (1.0 / len);
+        const Vec2 p = path_a[sp.seg] + u * sp.s;
+        // Each element's gaps on the segment, split where the new vertex parts it.
+        if (sp.seg < ma.breaks.size()) {
+            const std::vector<double> d = mline::offsets(sa, ma.scale, ma.justification);
+            std::vector<std::vector<double>> first(ma.breaks[sp.seg].size());
+            std::vector<std::vector<double>> second(ma.breaks[sp.seg].size());
+            for (std::size_t e = 0; e < ma.breaks[sp.seg].size() && e < d.size(); ++e) {
+                const std::vector<Vec2> ch = mline_chain(ma, sa, e);
+                const double split = dot(p + Vec2{-u.y, u.x} * d[e] - ch[sp.seg], u);
+                const std::vector<double>& g = ma.breaks[sp.seg][e];
+                for (std::size_t k = 0; k + 1 < g.size(); k += 2) {
+                    const double s0 = std::min(g[k], g[k + 1]);
+                    const double s1 = std::max(g[k], g[k + 1]);
+                    if (s0 < split) {
+                        first[e].push_back(s0);
+                        first[e].push_back(std::min(s1, split));
+                    }
+                    if (s1 > split) {
+                        second[e].push_back(std::max(s0, split) - split);
+                        second[e].push_back(s1 - split);
+                    }
+                }
+            }
+            ma.breaks[sp.seg] = first;
+            ma.breaks.insert(ma.breaks.begin() + static_cast<std::ptrdiff_t>(sp.seg) + 1, second);
+        }
+        ma.vertices.insert(ma.vertices.begin() + static_cast<std::ptrdiff_t>(sp.seg) + 1, p);
+        replace(ha, ma);
+        done("Vertex added.");
+        return;
+    }
+    if (c.op == Op::DeleteVertex) {
+        if (ma.vertices.size() <= (ma.closed ? 3u : 2u)) {
+            report("MLEDIT: a multiline keeps two vertices at least (three when closed).");
+            return;
+        }
+        std::size_t k = 0;
+        for (std::size_t i = 1; i < ma.vertices.size(); ++i) {
+            if (length(ma.vertices[i] - c.pick) < length(ma.vertices[k] - c.pick)) {
+                k = i;
+            }
+        }
+        ma.vertices.erase(ma.vertices.begin() + static_cast<std::ptrdiff_t>(k));
+        if (ma.closed || k >= ma.breaks.size() + 1) {
+            ma.breaks.clear();
+        } else if (k == 0) {
+            ma.breaks.erase(ma.breaks.begin());
+        } else {
+            // The two segments either side become one, without the gaps they had.
+            ma.breaks.erase(ma.breaks.begin() + static_cast<std::ptrdiff_t>(k - 1),
+                            ma.breaks.begin() + static_cast<std::ptrdiff_t>(std::min(k + 1, ma.breaks.size())));
+            if (k - 1 <= ma.breaks.size()) {
+                ma.breaks.insert(ma.breaks.begin() + static_cast<std::ptrdiff_t>(k - 1), std::vector<std::vector<double>>{});
+            }
+        }
+        replace(ha, ma);
+        done("Vertex deleted.");
+        return;
+    }
+    if (c.op == Op::CutSingle || c.op == Op::CutAll || c.op == Op::WeldAll) {
+        std::vector<std::size_t> elements;
+        if (c.op == Op::CutSingle) {
+            std::size_t best = 0;
+            double bd = std::numeric_limits<double>::infinity();
+            for (std::size_t e = 0; e < na; ++e) {
+                const double dist = chain_spot(mline_chain(ma, sa, e), c.pick).dist;
+                if (dist < bd) {
+                    bd = dist;
+                    best = e;
+                }
+            }
+            elements.push_back(best);
+        } else {
+            for (std::size_t e = 0; e < na; ++e) {
+                elements.push_back(e);
+            }
+        }
+        for (const std::size_t e : elements) {
+            const std::vector<Vec2> ch = mline_chain(ma, sa, e);
+            edit_gap_between(ma, ch, e, na, chain_spot(ch, c.pick), chain_spot(ch, c.pick2), c.op != Op::WeldAll);
+        }
+        replace(ha, ma);
+        done(c.op == Op::WeldAll ? "Multiline welded." : "Multiline cut.");
+        return;
+    }
+
+    // The tools that take two multilines.
+    const EntityHandle hb = pick_mline(c.pick2, c.pick_radius);
+    if (hb.is_null() || hb == ha) {
+        report("MLEDIT: select a second multiline.");
+        return;
+    }
+    MLineData mb = *store_.mline(hb);
+    const MLineStyle sb = mline_style_or_standard(store_, mb);
+    const std::size_t nb = sb.elements.size();
+    const std::vector<Vec2> path_b = mline_path(mb);
+
+    if (c.op == Op::ClosedCross || c.op == Op::OpenCross || c.op == Op::MergedCross) {
+        // Where the paths cross, nearest the first pick.
+        std::size_t ia = 0;
+        std::size_t ib = 0;
+        double best = std::numeric_limits<double>::infinity();
+        Vec2 hit{};
+        for (std::size_t i = 0; i + 1 < path_a.size(); ++i) {
+            for (std::size_t j = 0; j + 1 < path_b.size(); ++j) {
+                if (segment_intersection(path_a[i], path_a[i + 1], path_b[j], path_b[j + 1], hit) &&
+                    length(hit - c.pick) < best) {
+                    best = length(hit - c.pick);
+                    ia = i;
+                    ib = j;
+                }
+            }
+        }
+        if (!std::isfinite(best)) {
+            report("MLEDIT: the multilines do not cross.");
+            return;
+        }
+        const auto [a_hi, a_lo] = mline_outer(ma, sa);
+        const auto [b_hi, b_lo] = mline_outer(mb, sb);
+        const MLineData a_before = ma;
+        for (std::size_t e = 0; e < na; ++e) {
+            if (c.op != Op::MergedCross || e == a_hi || e == a_lo) {
+                gap_inside(ma, sa, ia, e, mb, sb, ib);
+            }
+        }
+        if (c.op != Op::ClosedCross) {
+            for (const std::size_t e : {b_hi, b_lo}) {
+                gap_inside(mb, sb, ib, e, a_before, sa, ia);
+            }
+            replace(hb, mb);
+        }
+        replace(ha, ma);
+        done(c.op == Op::ClosedCross ? "Closed cross made." : c.op == Op::OpenCross ? "Open cross made." : "Merged cross made.");
+        return;
+    }
+
+    // Tees and the corner: the first multiline's segment under its pick, the second's under
+    // its own.
+    const ChainSpot spa = chain_spot(path_a, c.pick);
+    const ChainSpot spb = chain_spot(path_b, c.pick2);
+    if (spa.seg + 1 >= path_a.size() || spb.seg + 1 >= path_b.size()) {
+        report("MLEDIT: select the multilines along their lines.");
+        return;
+    }
+    if (c.op == Op::CornerJoint) {
+        const std::optional<double> ta =
+            along_to(path_a[spa.seg], path_a[spa.seg + 1], path_b[spb.seg], path_b[spb.seg + 1]);
+        if (!ta) {
+            report("MLEDIT: the multilines are parallel.");
+            return;
+        }
+        const Vec2 ua = (path_a[spa.seg + 1] - path_a[spa.seg]) * (1.0 / std::max(seg_len(path_a, spa.seg), 1e-12));
+        const Vec2 x = path_a[spa.seg] + ua * *ta;
+        MLineData a2 = mline_cut_at(ma, spa.seg, x, c.pick);
+        MLineData b2 = mline_cut_at(mb, spb.seg, x, c.pick2);
+        // One multiline round the corner when they are drawn alike: the first running into x,
+        // the second on from it.
+        const bool a_ends = length(a2.vertices.back() - x) < 1e-9;
+        const bool b_starts = length(b2.vertices.front() - x) < 1e-9;
+        const bool alike = ma.style == mb.style && std::abs(ma.scale - mb.scale) < 1e-12;
+        const bool turn_a = !a_ends && mline_symmetric(sa);
+        const bool turn_b = !b_starts && mline_symmetric(sb);
+        if (!a_ends && turn_a) {
+            a2 = mline_reversed(a2);
+        }
+        if (!b_starts && turn_b) {
+            b2 = mline_reversed(b2);
+        }
+        const bool joinable = alike && (a_ends || turn_a) && (b_starts || turn_b) && a2.justification == b2.justification;
+        if (joinable) {
+            MLineData joined = a2;
+            joined.vertices.insert(joined.vertices.end(), b2.vertices.begin() + 1, b2.vertices.end());
+            joined.breaks.clear();
+            joined.no_end_caps = b2.no_end_caps;
+            const Command gone = capture_entity(hb);
+            remove_indexed(hb);
+            push_erase_item(c.group, hb, gone);
+            replace(ha, joined);
+            done("Corner joint made.");
+            return;
+        }
+        replace(ha, a2);
+        replace(hb, b2);
+        done("The multilines meet at the corner (they are drawn differently: not joined into one).");
+        return;
+    }
+    // Tees: the first (the stem) trimmed or extended to the second's outer line on its side.
+    const Vec2 ub = path_b[spb.seg + 1] - path_b[spb.seg];
+    const bool left = cross(ub, c.pick - path_b[spb.seg]) > 0.0;
+    const auto [b_hi, b_lo] = mline_outer(mb, sb);
+    const std::size_t near = left ? b_hi : b_lo;
+    const std::vector<Vec2> near_line = mline_chain(mb, sb, near);
+    const std::optional<double> te =
+        along_to(path_a[spa.seg], path_a[spa.seg + 1], near_line[spb.seg], near_line[spb.seg + 1]);
+    if (!te) {
+        report("MLEDIT: the multilines are parallel.");
+        return;
+    }
+    const Vec2 ua = (path_a[spa.seg + 1] - path_a[spa.seg]) * (1.0 / std::max(seg_len(path_a, spa.seg), 1e-12));
+    const Vec2 e_pt = path_a[spa.seg] + ua * *te;
+    MLineData stem = mline_cut_at(ma, spa.seg, e_pt, c.pick);
+    if (c.op == Op::OpenTee || c.op == Op::MergedTee) {
+        // The second's near line opened where the stem's outer lines meet it.
+        const auto [a_hi, a_lo] = mline_outer(stem, sa);
+        const std::vector<Vec2> top = mline_chain(stem, sa, a_hi);
+        const std::vector<Vec2> bottom = mline_chain(stem, sa, a_lo);
+        const std::size_t end_seg = length(stem.vertices.back() - e_pt) < 1e-9 ? stem.vertices.size() - 2 : 0;
+        const std::optional<double> s0 =
+            along_to(near_line[spb.seg], near_line[spb.seg + 1], top[end_seg], top[end_seg + 1]);
+        const std::optional<double> s1 =
+            along_to(near_line[spb.seg], near_line[spb.seg + 1], bottom[end_seg], bottom[end_seg + 1]);
+        if (s0 && s1) {
+            const double len = seg_len(near_line, spb.seg);
+            edit_gap(mb, spb.seg, near, nb, std::clamp(*s0, 0.0, len), std::clamp(*s1, 0.0, len), true);
+            replace(hb, mb);
+        }
+    }
+    replace(ha, stem);
+    done(c.op == Op::ClosedTee ? "Closed tee made." : c.op == Op::OpenTee ? "Open tee made." : "Merged tee made.");
+}
 
 void GeometryEngine::apply_revcloud_modify(const RevcloudObjectCommand& c) {
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
@@ -13261,7 +13908,7 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
                           std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddDimensionCommand> ||
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
                           std::is_same_v<T, AddMLeaderCommand> || std::is_same_v<T, AddViewportCommand> ||
-                          std::is_same_v<T, AddInsertCommand>) {
+                          std::is_same_v<T, AddInsertCommand> || std::is_same_v<T, AddMLineCommand>) {
                 if (!x.props) {
                     x.props = EntityProps{};
                 }
@@ -16653,7 +17300,7 @@ void GeometryEngine::apply_one(const Command& command) {
                           std::is_same_v<T, AddHatchCommand> || std::is_same_v<T, AddFcfCommand> ||
                           std::is_same_v<T, AddDatumCommand> ||
                           std::is_same_v<T, AddImageCommand> || std::is_same_v<T, AddViewportCommand> ||
-                          std::is_same_v<T, AddTableCommand>) {
+                          std::is_same_v<T, AddTableCommand> || std::is_same_v<T, AddMLineCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();
@@ -19215,6 +19862,12 @@ void GeometryEngine::apply_one(const Command& command) {
                     report("Multileader style " + quoted + " deleted.");
                 }
             }
+            if constexpr (std::is_same_v<T, MLineStyleCommand>) {
+                apply_mline_style(c);
+            }
+            if constexpr (std::is_same_v<T, MLineEditCommand>) {
+                apply_mline_edit(c);
+            }
             if constexpr (std::is_same_v<T, ExtrimCommand>) {
                 apply_extrim(c);
             }
@@ -19594,6 +20247,7 @@ void GeometryEngine::apply_measureinit(std::uint8_t m) {
     u.insunits = m == 1 ? 4 : 1;
     store_.set_units(u);
     store_.set_builtin_linetypes(standard_builtin_linetypes(m == 1));
+    store_.set_cmlscale(m == 1 ? 20.0 : 1.0); // CMLSCALE: acadiso's 20, acad's 1
     geom_dirty_ = true;
 }
 
@@ -19970,6 +20624,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.current_table_style = store_.current_table_style();
     buf.page_setups = store_.page_setups(); // PAGESETUP, the Plot window's saved setups
     buf.mleader_styles = store_.mleader_styles(); // MLEADERSTYLE
+    buf.mline = MLineSettings{store_.mline_styles(), store_.current_mline_style(), store_.cmljust(), store_.cmlscale()};
     buf.current_mleader_style = store_.current_mleader_style();
     buf.insbase = store_.insbase();       // BASE
     buf.block_editor = refedit_.active && refedit_.bedit; // BEDIT: the Block Editor tab
@@ -20147,7 +20802,7 @@ void GeometryEngine::rebuild_and_publish() {
             // A block reference's and a dimension's lines come as disjoint pairs: joined up
             // they would draw phantom connectors (a radius dimension's centre mark to its
             // arrow, say).
-            if (h.kind == EntityKind::Insert || h.kind == EntityKind::Dimension) {
+            if (h.kind == EntityKind::Insert || h.kind == EntityKind::Dimension || h.kind == EntityKind::MLine) {
                 for (std::size_t t = 0; t + 1 < tess.size(); t += 2) {
                     sel_cache_lines_.push_back(tess[t]);
                     sel_cache_lines_.push_back(tess[t + 1]);
@@ -20477,7 +21132,8 @@ void GeometryEngine::rebuild_and_publish() {
             }
             std::vector<Vec2> tess;
             kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
-            if (hv.kind == EntityKind::Insert || hv.kind == EntityKind::Dimension) { // disjoint pairs
+            if (hv.kind == EntityKind::Insert || hv.kind == EntityKind::Dimension ||
+                hv.kind == EntityKind::MLine) { // disjoint pairs
                 for (std::size_t s = 0; s + 1 < tess.size(); s += 2) {
                     buf.hover_line_vertices.push_back(tess[s]);
                     buf.hover_line_vertices.push_back(tess[s + 1]);

@@ -268,6 +268,8 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
     file_cmd({"MLEADERSTYLE", "MLS"}, "MLEADERSTYLE", "assets/ribbon/leader.svg",
              "Open the Multileader Style Manager: the styles new multileaders take.");
+    file_cmd({"MLSTYLE"}, "MLSTYLE", "",
+             "Open the Multiline Style window: the styles multilines are drawn in -- their lines, ends, joints and fill.");
     file_cmd({"CUI"}, "CUI", "assets/ribbon/settings.svg",
              "Customize the user interface: keyboard shortcuts of your own for any command, and command aliases.");
     file_cmd({"TOOLPALETTES", "TP"}, "TOOLPALETTES", "assets/ribbon/settings.svg",
@@ -342,6 +344,12 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/break.svg", "Break a curve between two points.");
     reg({"BREAKATPOINT"}, [] { return std::make_unique<BreakCommand>(true); },
         "assets/ribbon/break.svg", "Split a curve at one point, leaving no gap.");
+    reg({"ML", "MLINE"}, [] { return std::make_unique<MlineCommand>(); }, "",
+        "Draw a multiline: parallel lines along a path, in a multiline style ([Justification/Scale/STyle]).");
+    reg({"MLEDIT"}, [] { return std::make_unique<MleditCommand>(false); }, "",
+        "Edit multilines: crosses, tees, a corner joint, vertices added or deleted, cuts and welds.");
+    reg({"-MLEDIT"}, [] { return std::make_unique<MleditCommand>(true); }, "",
+        "MLEDIT on the command line: [CC/OC/MC/CT/OT/MT/CJ/AV/DV/CS/CA/WA].");
     reg({"XL", "XLINE"}, [] { return std::make_unique<XlineCommand>(false); },
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
@@ -431,6 +439,22 @@ CommandRegistry CommandRegistry::make_default() {
     var("DYNPICOORDS", "Dynamic Input's second and next points as relative (0) or absolute (1) coordinates.",
         {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(dynpicoords()); },
          [](CommandContext&, double v) { dynpicoords() = static_cast<int>(v); }});
+    var("CMLJUST", "MLINE's justification: 0 Top, 1 Zero, 2 Bottom.",
+        {"", false, 0.0, 2.0, [](CommandContext& ctx) { return static_cast<double>(ctx.mline_settings().justification); },
+         [](CommandContext& ctx, double v) {
+             core::MLineStyleCommand c;
+             c.op = core::MLineStyleCommand::Op::Justification;
+             c.justification = static_cast<std::uint8_t>(v);
+             ctx.submit(std::move(c));
+         }});
+    var("CMLSCALE", "MLINE's scale: the multiline style's offsets times it (negative: the other way round).",
+        {"", true, -1e9, 1e9, [](CommandContext& ctx) { return ctx.mline_settings().scale; },
+         [](CommandContext& ctx, double v) {
+             core::MLineStyleCommand c;
+             c.op = core::MLineStyleCommand::Op::Scale;
+             c.scale = v;
+             ctx.submit(std::move(c));
+         }});
     var("DYNDIGRIP", "The fields a grip's stretch shows: 1 the resulting length, 2 the length change, 4 the absolute angle, 8 the angle change, 16 an arc's radius (31).",
         {"", false, 0.0, 31.0, [](CommandContext&) { return static_cast<double>(dyndigrip()); },
          [](CommandContext&, double v) { dyndigrip() = static_cast<int>(v); }});

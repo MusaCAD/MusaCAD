@@ -19,6 +19,7 @@
 #include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
+#include "musacad/core/mline.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -126,6 +127,15 @@ struct ImageInstance {
     std::vector<Vec2> clip_world;
     std::vector<Vec2> tri_world;
     std::vector<Vec2> tri_uv;
+};
+
+/// MLINE's settings as the command line and MLSTYLE need them: the drawing's multiline styles,
+/// the current one (CMLSTYLE), CMLJUST and CMLSCALE.
+struct MLineSettings {
+    std::vector<MLineStyle> styles{MLineStyle{}};
+    std::uint16_t current = 0;
+    std::uint8_t justification = 0;
+    double scale = 20.0;
 };
 
 /// A selected dimension's definition points, for DIMREASSOCIATE's prompts point by point: a
@@ -267,6 +277,7 @@ struct RenderSnapshot {
     std::vector<TableStyle> table_styles;  // TABLESTYLE (TABLE, the Table Style window)
     std::uint16_t current_table_style = 0;
     std::vector<MLeaderStyle> mleader_styles; // MLEADERSTYLE (MLEADER, the Multileader Style window)
+    MLineSettings mline;                      // MLSTYLE, CMLSTYLE, CMLJUST, CMLSCALE (MLINE)
     std::uint16_t current_mleader_style = 0;
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and

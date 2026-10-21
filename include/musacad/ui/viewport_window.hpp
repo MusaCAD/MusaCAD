@@ -82,6 +82,8 @@ public:
     std::vector<core::TableStyle> table_styles();
     std::uint16_t current_table_style();
     std::vector<core::MLeaderStyle> mleader_styles();
+    /// The multiline styles, CMLSTYLE, CMLJUST and CMLSCALE (MLINE, MLSTYLE).
+    core::MLineSettings mline_settings();
     std::uint16_t current_mleader_style();
     std::vector<std::string> block_names();
     /// The selected dimensions' definition points (DIMREASSOCIATE).
@@ -1067,6 +1069,7 @@ private:
     std::uint16_t current_dim_style_ = 0;
     std::vector<core::TableStyle> table_styles_; ///< under layers_mutex_
     std::vector<core::MLeaderStyle> mleader_styles_; ///< under layers_mutex_
+    core::MLineSettings mline_settings_;              ///< under layers_mutex_
     std::uint16_t current_mleader_style_ = 0;
     std::uint16_t current_table_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_

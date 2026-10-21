@@ -274,6 +274,24 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         pts.insert(pts.end(), g.fills.begin(), g.fills.end());
         return bounds_of_points(pts, out_min, out_max);
     }
+    case EntityKind::MLine: {
+        const MLineData* m = store.mline(h);
+        if (m == nullptr) {
+            return false;
+        }
+        const MLineStyle* st = store.mline_style(m->style);
+        const mline::Geometry g = mline::geometry(*m, st != nullptr ? *st : MLineStyle{});
+        std::vector<Vec2> pts;
+        for (const mline::Geometry::Piece& p : g.pieces) {
+            pts.push_back(p.a);
+            pts.push_back(p.b);
+        }
+        pts.insert(pts.end(), g.caps.begin(), g.caps.end());
+        if (pts.empty()) {
+            pts = m->vertices;
+        }
+        return bounds_of_points(pts, out_min, out_max);
+    }
     case EntityKind::Table: {
         const TableData* td = store.table(h);
         if (td == nullptr) {

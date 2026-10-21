@@ -29,7 +29,8 @@ add_library(musacad_core STATIC
     block_resolve.cpp
     grips.cpp
     properties_registry.cpp
-    linetype.cpp)
+    linetype.cpp
+    mline.cpp)
 
 add_library(musacad::core ALIAS musacad_core)
 

@@ -32,6 +32,7 @@ enum class EntityKind : std::uint16_t {
     Ellipse, ///< ellipse or elliptical arc (centre, major axis, ratio, param range)
     AttDef,  ///< attribute definition (ATTDEF): text-like, shows its tag; becomes a block attribute
     Viewport, ///< paper-space window onto model space (MVIEW)
+    MLine,    ///< multiline (MLINE): parallel lines along a path, in a multiline style
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -90,6 +91,7 @@ enum class EntityFamily : std::uint8_t {
     case EntityKind::Spline:
     case EntityKind::Xline:
     case EntityKind::Ellipse:
+    case EntityKind::MLine:
         return EntityFamily::SimpleGeometry;
     }
     return EntityFamily::SimpleGeometry;

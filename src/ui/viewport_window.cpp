@@ -249,6 +249,11 @@ std::uint16_t ViewportWindow::current_table_style() {
     return current_table_style_;
 }
 
+core::MLineSettings ViewportWindow::mline_settings() {
+    std::scoped_lock lock(layers_mutex_);
+    return mline_settings_;
+}
+
 std::vector<core::MLeaderStyle> ViewportWindow::mleader_styles() {
     std::scoped_lock lock(layers_mutex_);
     return mleader_styles_;
@@ -1744,6 +1749,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             table_styles_ = snap.table_styles;
             current_table_style_ = snap.current_table_style;
             mleader_styles_ = snap.mleader_styles;
+            mline_settings_ = snap.mline;
             current_mleader_style_ = snap.current_mleader_style;
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
@@ -2896,6 +2902,32 @@ void ViewportWindow::rebuild_overlay() {
             }
             break;
         case command::PreviewKind::Polyline: {
+            if (!pv.mline_offsets.empty() && !pts.empty()) {
+                // MLINE: the multiline the clicks so far and the cursor would make.
+                std::vector<core::Vec2> path = pts;
+                if (core::length(cur_eff - path.back()) > 1e-12) {
+                    path.push_back(cur_eff);
+                }
+                if (path.size() >= 2) {
+                    const std::vector<core::Vec2> w =
+                        core::mline::miters(path, false, pv.mline_start_angle, pv.mline_end_angle);
+                    double hi = pv.mline_offsets.front();
+                    double lo = hi;
+                    for (const double d : pv.mline_offsets) {
+                        hi = std::max(hi, d);
+                        lo = std::min(lo, d);
+                        for (std::size_t i = 1; i < path.size(); ++i) {
+                            seg.push_back(path[i - 1] + w[i - 1] * d);
+                            seg.push_back(path[i] + w[i] * d);
+                        }
+                    }
+                    for (const std::size_t i : {std::size_t{0}, path.size() - 1}) {
+                        seg.push_back(path[i] + w[i] * hi);
+                        seg.push_back(path[i] + w[i] * lo);
+                    }
+                }
+                break;
+            }
             for (std::size_t i = 1; i < pts.size(); ++i) {
                 append_bulge_segment(seg, pts[i - 1], pts[i], i - 1 < pv.bulges.size() ? pv.bulges[i - 1] : 0.0);
             }

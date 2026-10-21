@@ -795,6 +795,98 @@ std::string serialize_native(const Document& doc) {
         append_props(s, x.props);
         s += '\n';
     }
+    // v42: MLSTYLE flags start end fill_mode r g b n [offset color_mode r g b lt_mode lt]... name desc
+    // -- the multiline styles (written when there is more than STANDARD as it starts), then
+    // MLSETTINGS current just scale, then MLINE style scale just flags n x y ... <props7> and
+    // MLBREAKS segment element n d... for the multiline just written.
+    {
+        const auto word = [](const std::string& in) -> std::string {
+            std::string out = in.empty() ? std::string("-") : in;
+            for (char& c : out) {
+                c = c == ' ' ? '\x1f' : c;
+            }
+            return out;
+        };
+        if (!(doc.mline_styles.size() == 1 && doc.mline_styles[0] == MLineStyle{})) {
+            for (const MLineStyle& ms : doc.mline_styles) {
+                s += "MLSTYLE ";
+                append_uint(s, ms.flags);
+                s += ' ';
+                append_double(s, ms.start_angle);
+                s += ' ';
+                append_double(s, ms.end_angle);
+                s += ' ';
+                append_uint(s, ms.fill_mode);
+                for (const std::uint8_t c : {ms.fill_color.r, ms.fill_color.g, ms.fill_color.b}) {
+                    s += ' ';
+                    append_uint(s, c);
+                }
+                s += ' ';
+                append_uint(s, ms.elements.size());
+                for (const MLineElement& e : ms.elements) {
+                    s += ' ';
+                    append_double(s, e.offset);
+                    for (const std::uint64_t v : {std::uint64_t{e.color_mode}, std::uint64_t{e.color.r},
+                                                  std::uint64_t{e.color.g}, std::uint64_t{e.color.b},
+                                                  std::uint64_t{e.linetype_mode},
+                                                  static_cast<std::uint64_t>(e.linetype)}) {
+                        s += ' ';
+                        append_uint(s, v);
+                    }
+                }
+                s += ' ';
+                s += word(ms.name);
+                s += ' ';
+                s += word(ms.description);
+                s += '\n';
+            }
+        }
+        if (doc.current_mline_style != 0 || doc.cmljust != 0 || doc.cmlscale != 20.0) {
+            s += "MLSETTINGS ";
+            append_uint(s, doc.current_mline_style);
+            s += ' ';
+            append_uint(s, doc.cmljust);
+            s += ' ';
+            append_double(s, doc.cmlscale);
+            s += '\n';
+        }
+        for (const DocMLine& m : doc.mlines) {
+            s += "MLINE ";
+            append_uint(s, m.style);
+            s += ' ';
+            append_double(s, m.scale);
+            s += ' ';
+            append_uint(s, m.justification);
+            s += ' ';
+            append_uint(s, (m.closed ? 1u : 0u) | (m.no_start_caps ? 2u : 0u) | (m.no_end_caps ? 4u : 0u));
+            s += ' ';
+            append_uint(s, m.vertices.size());
+            for (const Vec2& v : m.vertices) {
+                s += ' ';
+                append_vec(s, v);
+            }
+            append_props(s, m.props);
+            s += '\n';
+            for (std::size_t seg = 0; seg < m.breaks.size(); ++seg) {
+                for (std::size_t el = 0; el < m.breaks[seg].size(); ++el) {
+                    if (m.breaks[seg][el].empty()) {
+                        continue;
+                    }
+                    s += "MLBREAKS ";
+                    append_uint(s, seg);
+                    s += ' ';
+                    append_uint(s, el);
+                    s += ' ';
+                    append_uint(s, m.breaks[seg][el].size());
+                    for (const double d : m.breaks[seg][el]) {
+                        s += ' ';
+                        append_double(s, d);
+                    }
+                    s += '\n';
+                }
+            }
+        }
+    }
     for (const DocCircle& c : doc.circles) {
         s += "CIRCLE ";
         append_vec(s, c.center);
@@ -1778,6 +1870,7 @@ IoResult parse_native(std::string_view text, Document& out) {
     };
     std::string raw;
     std::vector<double> vals;
+    bool mline_styles_read = false;
     // Reads a fixed-geometry entity: `geom` doubles, then (v2) 7 prop ints.
     const auto read_fixed = [&](const std::vector<std::string_view>& tok, std::size_t geom,
                                 EntityProps& props) -> bool {
@@ -3261,6 +3354,104 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             doc.ellipses.push_back(DocEllipse{
                 {vals[0], vals[1]}, {vals[2], vals[3]}, vals[4], vals[5], vals[6], p});
+        } else if (key == "MLSTYLE") {
+            // flags start end fill_mode r g b n [offset color_mode r g b lt_mode lt]... name desc
+            std::uint64_t flags = 0;
+            std::uint64_t fill_mode = 0;
+            std::uint64_t n = 0;
+            MLineStyle ms;
+            std::uint64_t rgb[3] = {0, 0, 0};
+            if (tok.size() < 9 || !to_uint(tok[1], flags) || !to_double(tok[2], ms.start_angle) ||
+                !to_double(tok[3], ms.end_angle) || !to_uint(tok[4], fill_mode) || !to_uint(tok[5], rgb[0]) ||
+                !to_uint(tok[6], rgb[1]) || !to_uint(tok[7], rgb[2]) || !to_uint(tok[8], n) || tok.size() != 9 + 7 * n + 2) {
+                return fail("malformed MLSTYLE");
+            }
+            ms.flags = static_cast<std::uint16_t>(flags);
+            ms.fill_mode = static_cast<std::uint8_t>(fill_mode);
+            ms.fill_color = {static_cast<std::uint8_t>(rgb[0]), static_cast<std::uint8_t>(rgb[1]),
+                             static_cast<std::uint8_t>(rgb[2])};
+            ms.elements.clear();
+            for (std::size_t k = 0; k < n; ++k) {
+                const std::size_t at = 9 + 7 * k;
+                MLineElement e;
+                std::uint64_t v[6] = {0, 0, 0, 0, 0, 0};
+                if (!to_double(tok[at], e.offset)) {
+                    return fail("malformed MLSTYLE element");
+                }
+                for (std::size_t q = 0; q < 6; ++q) {
+                    if (!to_uint(tok[at + 1 + q], v[q])) {
+                        return fail("malformed MLSTYLE element");
+                    }
+                }
+                e.color_mode = static_cast<std::uint8_t>(v[0]);
+                e.color = {static_cast<std::uint8_t>(v[1]), static_cast<std::uint8_t>(v[2]),
+                           static_cast<std::uint8_t>(v[3])};
+                e.linetype_mode = static_cast<std::uint8_t>(v[4]);
+                e.linetype = static_cast<Linetype>(v[5]);
+                ms.elements.push_back(e);
+            }
+            const auto word = [](std::string_view w) -> std::string {
+                std::string r(w);
+                for (char& c : r) {
+                    c = c == '\x1f' ? ' ' : c;
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            ms.name = word(tok[tok.size() - 2]);
+            ms.description = word(tok[tok.size() - 1]);
+            if (!mline_styles_read) {
+                doc.mline_styles.clear(); // the file's own, STANDARD first
+                mline_styles_read = true;
+            }
+            doc.mline_styles.push_back(std::move(ms));
+        } else if (key == "MLSETTINGS") {
+            std::uint64_t cur = 0;
+            std::uint64_t just = 0;
+            if (tok.size() != 4 || !to_uint(tok[1], cur) || !to_uint(tok[2], just) || !to_double(tok[3], doc.cmlscale)) {
+                return fail("malformed MLSETTINGS");
+            }
+            doc.current_mline_style = static_cast<std::uint16_t>(cur);
+            doc.cmljust = static_cast<std::uint8_t>(just);
+        } else if (key == "MLINE") {
+            // style scale just flags n x y ... <props7>
+            std::uint64_t style = 0;
+            std::uint64_t just = 0;
+            std::uint64_t flags = 0;
+            std::uint64_t n = 0;
+            DocMLine m;
+            vals.clear();
+            if (tok.size() < 6 || !to_uint(tok[1], style) || !to_double(tok[2], m.scale) || !to_uint(tok[3], just) ||
+                !to_uint(tok[4], flags) || !to_uint(tok[5], n) || tok.size() != 6 + 2 * n + 7 ||
+                !parse_doubles(tok, 6, 2 * n, vals) || !parse_props(tok, 6 + 2 * n, m.props)) {
+                return fail("malformed MLINE");
+            }
+            m.style = static_cast<std::uint16_t>(style);
+            m.justification = static_cast<std::uint8_t>(just);
+            m.closed = (flags & 1u) != 0;
+            m.no_start_caps = (flags & 2u) != 0;
+            m.no_end_caps = (flags & 4u) != 0;
+            for (std::size_t k = 0; k + 1 < vals.size(); k += 2) {
+                m.vertices.push_back({vals[k], vals[k + 1]});
+            }
+            doc.mlines.push_back(std::move(m));
+        } else if (key == "MLBREAKS") {
+            std::uint64_t seg = 0;
+            std::uint64_t el = 0;
+            std::uint64_t n = 0;
+            vals.clear();
+            if (doc.mlines.empty() || tok.size() < 4 || !to_uint(tok[1], seg) || !to_uint(tok[2], el) ||
+                !to_uint(tok[3], n) || tok.size() != 4 + n || !parse_doubles(tok, 4, n, vals) || seg > 100000 ||
+                el > 1000) {
+                return fail("malformed MLBREAKS");
+            }
+            auto& br = doc.mlines.back().breaks;
+            if (br.size() <= seg) {
+                br.resize(seg + 1);
+            }
+            if (br[seg].size() <= el) {
+                br[seg].resize(el + 1);
+            }
+            br[seg][el] = vals;
         } else if (key == "XLINE") {
             EntityProps p;
             if (!read_fixed(tok, 5, p)) {

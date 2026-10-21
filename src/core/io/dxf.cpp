@@ -399,6 +399,7 @@ Rgb aci_to_rgb(long aci) {
 thread_local std::uint64_t g_handle = 0x20;
 constexpr std::uint64_t kRootDictHandle = 0x10;
 constexpr std::uint64_t kImageDictHandle = 0x11;
+constexpr std::uint64_t kMlineStyleDictHandle = 0x12;
 
 std::string handle_hex(std::uint64_t h) {
     char buf[20];
@@ -425,6 +426,14 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code(s, 5, handle_hex(handseed));
     code(s, 9, "$LTSCALE");
     code_d(s, 40, doc.ltscale); // global linetype scale
+    // MLINE's current style, justification and scale.
+    code(s, 9, "$CMLSTYLE");
+    code(s, 2, doc.current_mline_style < doc.mline_styles.size() ? doc.mline_styles[doc.current_mline_style].name
+                                                                  : std::string("STANDARD"));
+    code(s, 9, "$CMLJUST");
+    code(s, 70, std::to_string(doc.cmljust));
+    code(s, 9, "$CMLSCALE");
+    code_d(s, 40, doc.cmlscale);
     code(s, 9, "$DIMSTYLE"); // the current dimension style
     code(s, 2, doc.current_dimstyle < doc.dimstyles.size() ? doc.dimstyles[doc.current_dimstyle].name
                                                             : std::string("Standard"));
@@ -744,6 +753,7 @@ void emit_props_body(std::string& s, const Document& doc, const EntityProps& p) 
 struct WriterRefs {
     std::vector<std::uint64_t> layer_handles; ///< LAYER table handles by index (VIEWPORT 331)
     std::vector<std::uint64_t> def_handles;
+    std::vector<std::uint64_t> mlstyle_handles; ///< MLINESTYLE handles by style index
     std::vector<std::pair<std::uint64_t, std::uint64_t>> reactors; ///< (image, reactor)
     std::size_t entities_begin = 0;
     std::size_t blocks_begin = 0;
@@ -758,6 +768,10 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     refs.def_handles.clear();
     for (std::size_t i = 0; i < doc.image_defs.size(); ++i) {
         refs.def_handles.push_back(g_handle++);
+    }
+    refs.mlstyle_handles.clear();
+    for (std::size_t i = 0; i < doc.mline_styles.size(); ++i) {
+        refs.mlstyle_handles.push_back(g_handle++);
     }
 
     refs.entities_begin = s.size();
@@ -822,6 +836,69 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 11, x.dir.x);
         code_d(s, 21, x.dir.y);
         code_d(s, 31, 0.0);
+    }
+    // MLINE: the style (2, and its MLINESTYLE's handle 340), scale 40, justification 70, flags
+    // 71, then per vertex its point (11), the direction of the segment from it (12) and the
+    // mitre direction (13), and per element 74 parameters (41): how far along the mitre the
+    // element starts, then the gaps along the segment from there.
+    for (const DocMLine& m : doc.mlines) {
+        const std::size_t nv = m.vertices.size();
+        if (nv < 2) {
+            continue;
+        }
+        static const MLineStyle kStandard{};
+        const MLineStyle& mst = m.style < doc.mline_styles.size() ? doc.mline_styles[m.style] : kStandard;
+        const std::vector<Vec2> mw = mline::miters(m.vertices, m.closed, mst.start_angle, mst.end_angle);
+        const std::vector<double> md = mline::offsets(mst, m.scale, m.justification);
+        code(s, 0, "MLINE");
+        emit_handle(s);
+        code(s, 100, "AcDbEntity");
+        emit_props_body(s, doc, m.props);
+        code(s, 100, "AcDbMline");
+        code(s, 2, mst.name);
+        if (m.style < refs.mlstyle_handles.size()) {
+            code(s, 340, handle_hex(refs.mlstyle_handles[m.style]));
+        }
+        code_d(s, 40, m.scale);
+        code_i(s, 70, m.justification);
+        code_i(s, 71, 1 | (m.closed ? 2 : 0) | (m.no_start_caps ? 4 : 0) | (m.no_end_caps ? 8 : 0));
+        code_i(s, 72, static_cast<long>(nv));
+        code_i(s, 73, static_cast<long>(md.size()));
+        code_d(s, 10, m.vertices[0].x);
+        code_d(s, 20, m.vertices[0].y);
+        code_d(s, 30, 0.0);
+        code_d(s, 210, 0.0);
+        code_d(s, 220, 0.0);
+        code_d(s, 230, 1.0);
+        for (std::size_t i = 0; i < nv; ++i) {
+            const std::size_t j = i + 1 < nv ? i + 1 : (m.closed ? 0 : i);
+            Vec2 dir = j != i ? m.vertices[j] - m.vertices[i] : m.vertices[i] - m.vertices[i - 1];
+            const double dl = length(dir);
+            dir = dl > 1e-12 ? dir * (1.0 / dl) : Vec2{1.0, 0.0};
+            const double wl = length(mw[i]);
+            const Vec2 miter = wl > 1e-12 ? mw[i] * (1.0 / wl) : Vec2{-dir.y, dir.x};
+            code_d(s, 11, m.vertices[i].x);
+            code_d(s, 21, m.vertices[i].y);
+            code_d(s, 31, 0.0);
+            code_d(s, 12, dir.x);
+            code_d(s, 22, dir.y);
+            code_d(s, 32, 0.0);
+            code_d(s, 13, miter.x);
+            code_d(s, 23, miter.y);
+            code_d(s, 33, 0.0);
+            for (std::size_t e = 0; e < md.size(); ++e) {
+                const std::vector<double>* gaps =
+                    i < m.breaks.size() && e < m.breaks[i].size() ? &m.breaks[i][e] : nullptr;
+                code_i(s, 74, static_cast<long>(1 + (gaps != nullptr ? gaps->size() : 0)));
+                code_d(s, 41, md[e] * wl);
+                if (gaps != nullptr) {
+                    for (const double g : *gaps) {
+                        code_d(s, 41, g);
+                    }
+                }
+                code_i(s, 75, 0);
+            }
+        }
     }
     for (const DocLine& l : doc.lines) {
         code(s, 0, "LINE");
@@ -1496,12 +1573,14 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
 }
 
 void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
-    if (doc.images.empty() && doc.image_defs.empty()) {
+    const bool images = !(doc.images.empty() && doc.image_defs.empty());
+    const bool mlines = !doc.mlines.empty() || !(doc.mline_styles.size() == 1 && doc.mline_styles[0] == MLineStyle{});
+    if (!images && !mlines) {
         return;
     }
     // The named object dictionary, its ACAD_IMAGE_DICT, one IMAGEDEF per definition
     // and one IMAGEDEF_REACTOR per placed image -- the object web AutoCAD expects
-    // around a raster.
+    // around a raster -- and the ACAD_MLINESTYLE dictionary with the multiline styles.
     code(s, 0, "SECTION");
     code(s, 2, "OBJECTS");
     code(s, 0, "DICTIONARY");
@@ -1509,8 +1588,54 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     code(s, 330, "0");
     code(s, 100, "AcDbDictionary");
     code_i(s, 281, 1);
-    code(s, 3, "ACAD_IMAGE_DICT");
-    code(s, 350, handle_hex(kImageDictHandle));
+    if (mlines) {
+        code(s, 3, "ACAD_MLINESTYLE");
+        code(s, 350, handle_hex(kMlineStyleDictHandle));
+    }
+    if (images) {
+        code(s, 3, "ACAD_IMAGE_DICT");
+        code(s, 350, handle_hex(kImageDictHandle));
+    }
+    if (mlines) {
+        code(s, 0, "DICTIONARY");
+        code(s, 5, handle_hex(kMlineStyleDictHandle));
+        code(s, 330, handle_hex(kRootDictHandle));
+        code(s, 100, "AcDbDictionary");
+        code_i(s, 281, 1);
+        for (std::size_t i = 0; i < doc.mline_styles.size() && i < refs.mlstyle_handles.size(); ++i) {
+            code(s, 3, doc.mline_styles[i].name);
+            code(s, 350, handle_hex(refs.mlstyle_handles[i]));
+        }
+        const auto color = [&](std::uint8_t mode, Rgb c) {
+            code_i(s, 62, mode == 1 ? 256 : mode == 2 ? 0 : 7);
+            if (mode == 0) {
+                code_i(s, 420, true_color(c));
+            }
+        };
+        for (std::size_t i = 0; i < doc.mline_styles.size() && i < refs.mlstyle_handles.size(); ++i) {
+            const MLineStyle& ms = doc.mline_styles[i];
+            code(s, 0, "MLINESTYLE");
+            code(s, 5, handle_hex(refs.mlstyle_handles[i]));
+            code(s, 330, handle_hex(kMlineStyleDictHandle));
+            code(s, 100, "AcDbMlineStyle");
+            code(s, 2, ms.name);
+            code_i(s, 70, ms.flags);
+            code(s, 3, ms.description);
+            color(ms.fill_mode, ms.fill_color);
+            code_d(s, 51, ms.start_angle);
+            code_d(s, 52, ms.end_angle);
+            code_i(s, 71, static_cast<long>(ms.elements.size()));
+            for (const MLineElement& e : ms.elements) {
+                code_d(s, 49, e.offset);
+                color(e.color_mode, e.color);
+                code(s, 6, e.linetype_mode == 1 ? "BYLAYER" : e.linetype_mode == 2 ? "BYBLOCK" : linetype_name(e.linetype));
+            }
+        }
+    }
+    if (!images) {
+        code(s, 0, "ENDSEC");
+        return;
+    }
     code(s, 0, "DICTIONARY");
     code(s, 5, handle_hex(kImageDictHandle));
     code(s, 330, handle_hex(kRootDictHandle));
@@ -2212,6 +2337,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocFcf>* fcfs = nullptr;
         std::vector<DocAttDef>* attdefs = nullptr;
         std::vector<std::vector<Pair>>* images = nullptr; ///< IMAGE bodies, resolved at the end
+        std::vector<std::vector<Pair>>* mlines = nullptr; ///< MLINE bodies, resolved once the styles are read
     };
 
     // A text's justification (72 / 73), the point it is justified on (11 / 21) and its
@@ -2717,6 +2843,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             } else {
                 ++skipped[type];
             }
+        } else if (type == "MLINE") {
+            if (sink.mlines != nullptr) {
+                sink.mlines->push_back(body);
+            } else {
+                ++skipped[type];
+            }
         } else if (type == "XLINE" || type == "RAY") {
             if (sink.xlines != nullptr) {
                 const Vec2 dir{getd(body, 11), getd(body, 21)};
@@ -2999,6 +3131,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // Model space writes to every doc vector; block content takes the importable subset
     // (dims/leaders/points inside a block route to the skip catalog).
     std::vector<std::vector<Pair>> image_bodies;
+    std::vector<std::vector<Pair>> mline_bodies;
+    std::vector<MLineStyle> mline_styles_read; // MLINESTYLE objects, in the file's order
+    std::string current_mlstyle_name;          // $CMLSTYLE
     struct ImageDefRecord {
         std::string path;
         double pixel_w = 0.0;
@@ -3008,7 +3143,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
                     &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines, &doc.fcfs,
-                    &doc.attdefs, &image_bodies};
+                    &doc.attdefs, &image_bodies, &mline_bodies};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't
@@ -3033,6 +3168,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 continue;
             }
         }
+        // $CMLSTYLE <2 name>: resolved against the multiline styles once they have been read.
+        if (section == "HEADER" && p.code == 9 && p.value == "$CMLSTYLE") {
+            if (i + 1 < n && pairs[i + 1].code == 2) {
+                current_mlstyle_name = pairs[i + 1].value;
+                i += 2;
+                continue;
+            }
+        }
         // $DIMSTYLE <2 name>: resolved against the DIMSTYLE table once it has been read.
         if (section == "HEADER" && p.code == 9 && p.value == "$DIMSTYLE") {
             if (i + 1 < n && pairs[i + 1].code == 2) {
@@ -3049,7 +3192,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             DrawingUnits& du = doc.display_units;
             const auto whole = [&](long lo, long hi) { return std::clamp(to_l(q.value), lo, hi); };
             bool took = true;
-            if (var == "$INSUNITS" && q.code == 70) {
+            if (var == "$CMLJUST" && q.code == 70) {
+                doc.cmljust = static_cast<std::uint8_t>(whole(0, 2));
+            } else if (var == "$CMLSCALE" && q.code == 40) {
+                doc.cmlscale = to_d(q.value);
+            } else if (var == "$INSUNITS" && q.code == 70) {
                 du.insunits = static_cast<std::uint8_t>(whole(0, 20));
             } else if (var == "$MEASUREMENT" && q.code == 70) {
                 du.measurement = static_cast<std::uint8_t>(whole(0, 1));
@@ -3173,6 +3320,76 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 body.push_back(pairs[i]);
                 ++i;
             }
+            if (type == "MLINESTYLE") {
+                // Its name, flags, description, fill colour and end angles, then per element an
+                // offset (49), a colour (62 / 420) and a linetype (6).
+                MLineStyle ms;
+                ms.elements.clear();
+                bool elements = false;
+                const auto set_color = [&](std::uint8_t& mode, Rgb& c, long aci) {
+                    mode = static_cast<std::uint8_t>(aci == 256 ? 1 : aci == 0 ? 2 : 0);
+                    if (mode == 0) {
+                        c = aci_to_rgb(std::labs(aci) > 255 ? 7 : std::labs(aci));
+                    }
+                };
+                for (const Pair& q : body) {
+                    switch (q.code) {
+                    case 2:
+                        ms.name = q.value;
+                        break;
+                    case 70:
+                        ms.flags = static_cast<std::uint16_t>(to_l(q.value));
+                        break;
+                    case 3:
+                        ms.description = q.value;
+                        break;
+                    case 51:
+                        ms.start_angle = to_d(q.value);
+                        break;
+                    case 52:
+                        ms.end_angle = to_d(q.value);
+                        break;
+                    case 71:
+                        elements = true;
+                        break;
+                    case 49:
+                        ms.elements.push_back(MLineElement{to_d(q.value)});
+                        break;
+                    case 62:
+                        if (elements && !ms.elements.empty()) {
+                            set_color(ms.elements.back().color_mode, ms.elements.back().color, to_l(q.value));
+                        } else if (!elements) {
+                            set_color(ms.fill_mode, ms.fill_color, to_l(q.value));
+                        }
+                        break;
+                    case 420:
+                        if (elements && !ms.elements.empty()) {
+                            ms.elements.back().color_mode = 0;
+                            ms.elements.back().color = from_true_color(to_l(q.value));
+                        } else if (!elements) {
+                            ms.fill_mode = 0;
+                            ms.fill_color = from_true_color(to_l(q.value));
+                        }
+                        break;
+                    case 6:
+                        if (!ms.elements.empty()) {
+                            std::string u = q.value;
+                            for (char& ch : u) {
+                                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                            }
+                            MLineElement& e = ms.elements.back();
+                            e.linetype_mode = static_cast<std::uint8_t>(u == "BYLAYER" ? 1 : u == "BYBLOCK" ? 2 : 0);
+                            e.linetype = e.linetype_mode == 0 ? linetype_from(q.value) : Linetype::Continuous;
+                        }
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                if (!ms.name.empty()) {
+                    mline_styles_read.push_back(std::move(ms));
+                }
+            }
             if (type == "IMAGEDEF") {
                 if (const std::string* h = find(body, 5)) {
                     ImageDefRecord rec;
@@ -3237,6 +3454,91 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     if (!saw_section) {
         return IoResult::failure("Not a DXF file (no SECTION found).");
+    }
+
+    // The multiline styles (STANDARD first, as the drawing always has it), then the multilines
+    // in them: the path, scale, justification and flags, and per vertex and element the gaps
+    // (each element's parameters after the first, which is where it starts along the mitre).
+    if (!mline_styles_read.empty()) {
+        const auto upper = [](std::string v) {
+            for (char& ch : v) {
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            }
+            return v;
+        };
+        doc.mline_styles.assign(1, MLineStyle{});
+        for (MLineStyle& ms : mline_styles_read) {
+            if (upper(ms.name) == "STANDARD") {
+                doc.mline_styles[0] = ms;
+            } else {
+                doc.mline_styles.push_back(ms);
+            }
+        }
+    }
+    const auto mline_style_named = [&](const std::string& name) -> std::uint16_t {
+        for (std::size_t k = 0; k < doc.mline_styles.size(); ++k) {
+            const std::string& sn = doc.mline_styles[k].name;
+            if (sn.size() == name.size() && std::equal(sn.begin(), sn.end(), name.begin(), [](char a, char b) {
+                    return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                })) {
+                return static_cast<std::uint16_t>(k);
+            }
+        }
+        return 0;
+    };
+    if (!current_mlstyle_name.empty()) {
+        doc.current_mline_style = mline_style_named(current_mlstyle_name);
+    }
+    for (const std::vector<Pair>& body : mline_bodies) {
+        DocMLine m;
+        m.props = props_of(body);
+        if (const std::string* sn = find(body, 2)) {
+            m.style = mline_style_named(*sn);
+        }
+        m.scale = getd(body, 40, 1.0);
+        if (const std::string* j = find(body, 70)) {
+            m.justification = static_cast<std::uint8_t>(std::clamp(to_l(*j), 0L, 2L));
+        }
+        if (const std::string* f = find(body, 71)) {
+            const long flags = to_l(*f);
+            m.closed = (flags & 2) != 0;
+            m.no_start_caps = (flags & 4) != 0;
+            m.no_end_caps = (flags & 8) != 0;
+        }
+        long element = -1;
+        long params_left = 0;
+        bool first_param = false;
+        for (const Pair& q : body) {
+            if (q.code == 11) {
+                m.vertices.push_back({to_d(q.value), 0.0});
+                element = -1;
+            } else if (q.code == 21 && !m.vertices.empty()) {
+                m.vertices.back().y = to_d(q.value);
+            } else if (q.code == 74 && !m.vertices.empty()) {
+                ++element;
+                params_left = to_l(q.value);
+                first_param = true;
+            } else if (q.code == 41 && params_left > 0 && element >= 0) {
+                --params_left;
+                if (first_param) {
+                    first_param = false; // where the element starts along the mitre
+                    continue;
+                }
+                const std::size_t seg = m.vertices.size() - 1;
+                if (m.breaks.size() <= seg) {
+                    m.breaks.resize(seg + 1);
+                }
+                if (m.breaks[seg].size() <= static_cast<std::size_t>(element)) {
+                    m.breaks[seg].resize(static_cast<std::size_t>(element) + 1);
+                }
+                m.breaks[seg][static_cast<std::size_t>(element)].push_back(to_d(q.value));
+            }
+        }
+        if (m.vertices.size() >= 2) {
+            doc.mlines.push_back(std::move(m));
+        } else {
+            ++skipped["MLINE"];
+        }
     }
 
     // IMAGE entities: one definition per distinct IMAGEDEF (by handle); the placement

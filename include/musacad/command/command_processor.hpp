@@ -302,6 +302,8 @@ public:
     }
     [[nodiscard]] std::vector<core::MLeaderStyle> mleader_styles() const override { return mleader_styles_; }
     [[nodiscard]] std::uint16_t current_mleader_style() const override { return current_mleader_style_; }
+    void set_mline_settings(core::MLineSettings s) { mline_settings_ = std::move(s); }
+    [[nodiscard]] core::MLineSettings mline_settings() const override { return mline_settings_; }
     void set_current_props(const core::EntityProps& p) { current_props_ = p; }
     [[nodiscard]] core::EntityProps current_props() const override { return current_props_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
@@ -549,6 +551,7 @@ private:
     std::optional<core::EntityKind> hovered_kind_;
     bool hovered_closed_ = false;
     std::vector<core::SelectedDim> selected_dims_;
+    core::MLineSettings mline_settings_;
     PreviewSpec preview_;
     core::RenderSnapshot::PurgeCandidates purge_;
     double ltscale_ = 1.0;

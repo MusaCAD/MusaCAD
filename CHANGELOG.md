@@ -9,6 +9,23 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **A view's boundary** (#72) -- the View Manager's New View has AutoCAD's Boundary: the
+  display as it is, or Define window, a window picked in the drawing that the view is saved to
+  show.
+- **Multilines** (#45) -- **MLINE** (`ML`) as AutoCAD draws it: `Specify start point or
+  [Justification/Scale/STyle]:`, the multiline at the cursor as it will be, Undo and Close;
+  Top, Zero and Bottom justification, the scale and the style (CMLJUST, CMLSCALE, CMLSTYLE).
+  **MLSTYLE**: the Multiline Style window -- the styles, their elements (offset, colour,
+  linetype), caps (line, outer arc, inner arcs, angle), fill and joints. **MLEDIT** and
+  **-MLEDIT**: closed, open and merged crosses and tees, the corner joint, vertices added and
+  deleted, cuts and welds. A multiline is one object -- grips on its vertices, moved, copied,
+  rotated, scaled, mirrored and stretched, listed and exploded -- kept in the drawing and in DXF
+  (MLINE and MLINESTYLE both ways).
+- **Excel's number formats in data links** (#71) -- a workbook's numbers come into the table as
+  their cells show them in Excel: dates and times (`15-Mar-23`, `6:00 PM`, `[h]:mm:ss`),
+  percentages, thousands separators and decimals, scientific notation, fractions, currency
+  symbols and text, negative numbers in brackets or with their own sign, and General (`0.3`,
+  not `0.30000000000000004`).
 - **Grip dimensions** (#65) -- a hot grip's stretch shows the length change and the resulting
   length, measured from the line's other end, the polyline vertex before or, for a circle's or
   an arc's radius grip, the centre; a value typed there sets it, and Tab moves between them.

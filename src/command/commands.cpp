@@ -8854,7 +8854,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
@@ -11613,6 +11613,324 @@ void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
 
 void RevcloudCommand::cancel(CommandContext& ctx) {
     ctx.clear_preview();
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// MLINE
+// ---------------------------------------------------------------------------
+namespace {
+const char* mline_just_name(std::uint8_t j) {
+    return j == 1 ? "Zero" : j == 2 ? "Bottom" : "Top";
+}
+std::string mline_scale_text(double s) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", s);
+    return buf;
+}
+} // namespace
+
+void MlineCommand::settings(CommandContext& ctx) {
+    const std::string style =
+        set_.current < set_.styles.size() ? set_.styles[set_.current].name : std::string("STANDARD");
+    ctx.echo(std::string("Current settings: Justification = ") + mline_just_name(set_.justification) +
+             ", Scale = " + mline_scale_text(set_.scale) + ", Style = " + style);
+}
+
+void MlineCommand::prompt(CommandContext& ctx) {
+    step_ = Step::Points;
+    static const core::MLineStyle kStandard{};
+    const core::MLineStyle& st = set_.current < set_.styles.size() ? set_.styles[set_.current] : kStandard;
+    PreviewSpec pv;
+    pv.kind = PreviewKind::Polyline;
+    pv.points = points_;
+    pv.mline_offsets = core::mline::offsets(st, set_.scale, set_.justification);
+    pv.mline_start_angle = st.start_angle;
+    pv.mline_end_angle = st.end_angle;
+    ctx.set_preview(std::move(pv));
+    if (points_.empty()) {
+        ctx.set_prompt("Specify start point or [Justification/Scale/STyle]: ");
+    } else if (points_.size() == 1) {
+        ctx.set_prompt("Specify next point: ");
+    } else if (points_.size() == 2) {
+        ctx.set_prompt("Specify next point or [Undo]: ");
+    } else {
+        ctx.set_prompt("Specify next point or [Close/Undo]: ");
+    }
+}
+
+void MlineCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    set_ = ctx.mline_settings();
+    if (set_.styles.empty()) {
+        set_.styles.push_back(core::MLineStyle{});
+    }
+    settings(ctx);
+    prompt(ctx);
+}
+
+void MlineCommand::finish(CommandContext& ctx, bool closed) {
+    core::AddMLineCommand c;
+    c.points = points_;
+    c.closed = closed;
+    c.style = set_.current;
+    c.scale = set_.scale;
+    c.justification = set_.justification;
+    c.group = ctx.group_id();
+    ctx.clear_preview();
+    ctx.submit(std::move(c));
+    done_ = true;
+}
+
+void MlineCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Points:
+        if (t.empty()) {
+            if (points_.size() >= 2) {
+                finish(ctx, false);
+            } else {
+                ctx.clear_preview();
+                done_ = true;
+            }
+            return;
+        }
+        if (points_.empty() && (u == "J" || u == "JUSTIFICATION")) {
+            step_ = Step::Justification;
+            std::string def = mline_just_name(set_.justification);
+            def[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(def[0])));
+            ctx.set_prompt("Enter justification type [Top/Zero/Bottom] <" + def + ">: ");
+            return;
+        }
+        if (points_.empty() && (u == "S" || u == "SCALE")) {
+            step_ = Step::Scale;
+            ctx.set_prompt("Enter mline scale <" + mline_scale_text(set_.scale) + ">: ");
+            return;
+        }
+        if (points_.empty() && (u == "ST" || u == "STYLE")) {
+            step_ = Step::Style;
+            ctx.set_prompt("Enter mline style name or [?]: ");
+            return;
+        }
+        if (!points_.empty() && (u == "U" || u == "UNDO")) {
+            points_.pop_back();
+            if (!points_.empty()) {
+                ctx.set_last_point(points_.back());
+            }
+            prompt(ctx);
+            return;
+        }
+        if (points_.size() >= 3 && (u == "C" || u == "CLOSE")) {
+            finish(ctx, true);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            if (!points_.empty() && core::distance(*p, points_.back()) < 1e-12) {
+                return; // the same point again: nothing to draw
+            }
+            points_.push_back(*p);
+            ctx.set_last_point(*p);
+            prompt(ctx);
+        }
+        return;
+    case Step::Justification: {
+        std::uint8_t j = set_.justification;
+        if (u == "T" || u == "TOP") {
+            j = 0;
+        } else if (u == "Z" || u == "ZERO") {
+            j = 1;
+        } else if (u == "B" || u == "BOTTOM") {
+            j = 2;
+        } else if (!t.empty()) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        set_.justification = j;
+        core::MLineStyleCommand c;
+        c.op = core::MLineStyleCommand::Op::Justification;
+        c.justification = j;
+        ctx.submit(std::move(c));
+        settings(ctx);
+        prompt(ctx);
+        return;
+    }
+    case Step::Scale: {
+        double s = set_.scale;
+        if (!t.empty() && !parse_number(t, s)) {
+            ctx.echo("Requires a number.");
+            return;
+        }
+        set_.scale = s;
+        core::MLineStyleCommand c;
+        c.op = core::MLineStyleCommand::Op::Scale;
+        c.scale = s;
+        ctx.submit(std::move(c));
+        settings(ctx);
+        prompt(ctx);
+        return;
+    }
+    case Step::Style:
+        if (t == "?") {
+            ctx.echo("Loaded multiline styles:");
+            for (const core::MLineStyle& st : set_.styles) {
+                ctx.echo("  " + st.name + (st.description.empty() ? std::string() : "  " + st.description));
+            }
+            ctx.set_prompt("Enter mline style name or [?]: ");
+            return;
+        }
+        if (!t.empty()) {
+            std::size_t found = set_.styles.size();
+            for (std::size_t i = 0; i < set_.styles.size(); ++i) {
+                if (upper(set_.styles[i].name) == u) {
+                    found = i;
+                }
+            }
+            if (found == set_.styles.size()) {
+                ctx.echo("Cannot find multiline style \"" + t + "\".");
+                ctx.set_prompt("Enter mline style name or [?]: ");
+                return;
+            }
+            set_.current = static_cast<std::uint16_t>(found);
+            core::MLineStyleCommand c;
+            c.op = core::MLineStyleCommand::Op::SetCurrent;
+            c.name = set_.styles[found].name;
+            ctx.submit(std::move(c));
+        }
+        settings(ctx);
+        prompt(ctx);
+        return;
+    }
+}
+
+void MlineCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// MLEDIT
+// ---------------------------------------------------------------------------
+namespace {
+// The tools in the Multilines Edit Tools' order, with -MLEDIT's abbreviations.
+struct MleditTool {
+    const char* key;
+    const char* name;
+    core::MLineEditCommand::Op op;
+};
+constexpr MleditTool kMleditTools[] = {
+    {"CC", "Closed Cross", core::MLineEditCommand::Op::ClosedCross},
+    {"OC", "Open Cross", core::MLineEditCommand::Op::OpenCross},
+    {"MC", "Merged Cross", core::MLineEditCommand::Op::MergedCross},
+    {"CT", "Closed Tee", core::MLineEditCommand::Op::ClosedTee},
+    {"OT", "Open Tee", core::MLineEditCommand::Op::OpenTee},
+    {"MT", "Merged Tee", core::MLineEditCommand::Op::MergedTee},
+    {"CJ", "Corner Joint", core::MLineEditCommand::Op::CornerJoint},
+    {"AV", "Add Vertex", core::MLineEditCommand::Op::AddVertex},
+    {"DV", "Delete Vertex", core::MLineEditCommand::Op::DeleteVertex},
+    {"CS", "Cut Single", core::MLineEditCommand::Op::CutSingle},
+    {"CA", "Cut All", core::MLineEditCommand::Op::CutAll},
+    {"WA", "Weld All", core::MLineEditCommand::Op::WeldAll},
+};
+bool mledit_two_mlines(int tool) {
+    return tool <= 6; // the crosses, the tees and the corner
+}
+bool mledit_two_points(int tool) {
+    return tool >= 9; // the cuts and the weld
+}
+} // namespace
+
+bool MleditCommand::choose(CommandContext& ctx, const std::string& option) {
+    const std::string u = upper(trimmed(option));
+    for (std::size_t i = 0; i < sizeof(kMleditTools) / sizeof(kMleditTools[0]); ++i) {
+        if (u == kMleditTools[i].key || u == upper(kMleditTools[i].name)) {
+            tool_ = static_cast<int>(i);
+            second_ = false;
+            ask(ctx);
+            return true;
+        }
+    }
+    (void)ctx;
+    return false;
+}
+
+void MleditCommand::ask(CommandContext& ctx) {
+    const bool undo = !groups_.empty();
+    if (second_) {
+        ctx.set_prompt(mledit_two_mlines(tool_) ? "Select second mline: " : "Select second point: ");
+        return;
+    }
+    ctx.set_prompt(std::string(mledit_two_mlines(tool_) ? "Select first mline" : "Select mline") +
+                   (undo ? " or [Undo]: " : ": "));
+}
+
+void MleditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (!dash_ && ctx.view() != nullptr) {
+        std::vector<std::string> names;
+        for (const MleditTool& tool : kMleditTools) {
+            names.emplace_back(tool.name);
+        }
+        std::string chosen;
+        const int r = ctx.view()->choose_dialog("Multilines Edit Tools", names, chosen);
+        if (r == 0) {
+            done_ = true;
+            return;
+        }
+        if (r == 1 && choose(ctx, chosen)) {
+            return;
+        }
+    }
+    ctx.set_prompt("Enter mline editing option [CC/OC/MC/CT/OT/MT/CJ/AV/DV/CS/CA/WA]: ");
+}
+
+void MleditCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (tool_ < 0) {
+        if (t.empty()) {
+            done_ = true;
+        } else if (!choose(ctx, t)) {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    }
+    if (t.empty()) {
+        done_ = true; // Enter: done
+        return;
+    }
+    if (!second_ && !groups_.empty() && (u == "U" || u == "UNDO")) {
+        ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+        groups_.pop_back();
+        ask(ctx);
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    core::MLineEditCommand c;
+    c.op = kMleditTools[tool_].op;
+    c.pick_radius = ctx.pick_radius();
+    if ((mledit_two_mlines(tool_) || mledit_two_points(tool_)) && !second_) {
+        first_ = *p;
+        second_ = true;
+        ctx.set_last_point(*p);
+        ask(ctx);
+        return;
+    }
+    c.pick = second_ ? first_ : *p;
+    c.pick2 = *p;
+    c.group = ctx.new_group();
+    groups_.push_back(c.group);
+    ctx.submit(std::move(c));
+    second_ = false;
+    ask(ctx);
+}
+
+void MleditCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

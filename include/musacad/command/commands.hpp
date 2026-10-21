@@ -4169,6 +4169,54 @@ private:
     bool done_ = false;
 };
 
+/// MLINE (ML): `Current settings: Justification = Top, Scale = 20.00, Style = STANDARD`, then
+/// `Specify start point or [Justification/Scale/STyle]:`, the next points (`[Undo]`, `[Close/Undo]`
+/// from the third) and Enter. The multiline is drawn at the cursor as it will be. Justification,
+/// Scale and STyle set CMLJUST, CMLSCALE and CMLSTYLE.
+class MlineCommand final : public ICommand {
+public:
+    std::string name() const override { return "MLINE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Points, Justification, Scale, Style };
+    void settings(CommandContext& ctx);
+    void prompt(CommandContext& ctx);
+    void finish(CommandContext& ctx, bool closed);
+    Step step_ = Step::Points;
+    std::vector<core::Vec2> points_;
+    core::MLineSettings set_{};
+    bool done_ = false;
+};
+
+/// MLEDIT (the Multilines Edit Tools, chosen from a list) and -MLEDIT (`Enter mline editing
+/// option [CC/OC/MC/CT/OT/MT/CJ/AV/DV/CS/CA/WA]:`): the crosses and tees (`Select first mline:`,
+/// `Select second mline:`), Corner Joint, Add Vertex and Delete Vertex (`Select mline:`), Cut
+/// Single, Cut All and Weld All (`Select mline:`, `Select second point:`), again and again until
+/// Enter; Undo takes the last one back.
+class MleditCommand final : public ICommand {
+public:
+    explicit MleditCommand(bool dash) : dash_(dash) {}
+    std::string name() const override { return dash_ ? "-MLEDIT" : "MLEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    void ask(CommandContext& ctx);
+    bool choose(CommandContext& ctx, const std::string& option);
+    bool dash_ = false;
+    int tool_ = -1; ///< core::MLineEditCommand::Op, -1 while not chosen
+    bool second_ = false;
+    core::Vec2 first_{};
+    std::vector<std::uint64_t> groups_; ///< each edit's undo group (Undo)
+    bool done_ = false;
+};
+
 /// EXPLODE (AutoCAD X). "Select objects:" then Enter, or a pre-selected set; the engine
 /// decides what each kind becomes and reports what it could not break.
 class ExplodeCommand final : public ICommand {

@@ -680,6 +680,40 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             ConstructionLineView{x->base, x->dir, x->ray, r.color, r.lineweight});
     });
 
+    // Multilines: each element in its own colour and linetype (ByLayer: the layer's; ByBlock:
+    // the multiline's own), the caps and joints in the multiline's, the fill under them.
+    for_each_live(store.mlines(), EntityKind::MLine, [&](EntityHandle h) {
+        const MLineData* m = store.mline(h);
+        if (!visible(store, m->props)) {
+            return;
+        }
+        static const MLineStyle kStandard{};
+        const MLineStyle* st = store.mline_style(m->style);
+        const MLineStyle& style = st != nullptr ? *st : kStandard;
+        const ResolvedProps r = entity_resolved(store, m->props);
+        EntityProps layer_props = m->props;
+        layer_props.flags |= EntityProps::kColorByLayer | EntityProps::kLinetypeByLayer;
+        const ResolvedProps by_layer = entity_resolved(store, layer_props);
+        const auto color_of = [&](std::uint8_t mode, Rgb own) {
+            return mode == 0 ? own : mode == 1 ? by_layer.color : r.color;
+        };
+        const mline::Geometry g = mline::geometry(*m, style);
+        if (!g.fill.empty() && store.fillmode()) {
+            add_fills(color_of(style.fill_mode, style.fill_color), g.fill);
+        }
+        for (const mline::Geometry::Piece& p : g.pieces) {
+            const MLineElement& el = style.elements[p.element];
+            const Linetype lt = el.linetype_mode == 0 ? el.linetype
+                                : el.linetype_mode == 1 ? by_layer.linetype
+                                                        : r.linetype;
+            const std::array<Vec2, 2> seg{p.a, p.b};
+            dashed.clear();
+            dash_polyline(seg, lt, store.builtin_linetypes(), store.linetypes(), ltscale * store.celtscale(h), dashed);
+            add_lines(color_of(el.color_mode, el.color), r.lineweight, dashed);
+        }
+        add_lines(r.color, r.lineweight, g.caps);
+    });
+
     for_each_live(store.datums(), EntityKind::Datum, [&](EntityHandle h) {
         const DatumData* d = store.datum(h);
         if (!visible(store, d->props)) {
