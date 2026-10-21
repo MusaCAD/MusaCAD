@@ -21,6 +21,7 @@
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
+#include "musacad/core/grips.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
 #include "musacad/core/io/native_format.hpp"
