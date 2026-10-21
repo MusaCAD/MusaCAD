@@ -10210,7 +10210,11 @@ void GeometryEngine::apply_data_link_update(const DataLinkUpdateCommand& c) {
     int failed = 0;
     std::vector<EntityHandle> renewed;
     for (const EntityHandle h : targets) {
-        const DataLink link = *linked(h);
+        const DataLink* linked_to = linked(h);
+        if (linked_to == nullptr) {
+            continue;
+        }
+        const DataLink link = *linked_to;
         const Command original = capture_entity(h);
         const auto* was = std::get_if<AddTableCommand>(&original);
         if (was == nullptr) {
