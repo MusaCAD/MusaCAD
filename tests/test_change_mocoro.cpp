@@ -4275,3 +4275,117 @@ TEST_CASE("-HATCH remove Boundaries takes an island out of the hatch just made")
     REQUIRE(x == Approx(33.0).margin(0.01));
     engine.stop();
 }
+
+TEST_CASE("Excel number formats: the cell text as Excel shows it") {
+    using io::format_excel_number;
+    REQUIRE(format_excel_number(1234.5, "#,##0.00") == "1,234.50");
+    REQUIRE(format_excel_number(0.256, "0%") == "26%");
+    REQUIRE(format_excel_number(0.25, "0.00%") == "25.00%");
+    REQUIRE(format_excel_number(-1234.5, "#,##0.00;[Red]-#,##0.00") == "-1,234.50");
+    REQUIRE(format_excel_number(-1234.5, "#,##0.00;(#,##0.00)") == "(1,234.50)");
+    REQUIRE(format_excel_number(-5, "0") == "-5");
+    REQUIRE(format_excel_number(2.5, "0") == "3");     // half away from zero
+    REQUIRE(format_excel_number(1.005, "0.00") == "1.01");
+    REQUIRE(format_excel_number(12345.678, "0.00E+00") == "1.23E+04");
+    REQUIRE(format_excel_number(0.5, "# ?/?") == "1/2");
+    REQUIRE(format_excel_number(1.25, "# ?/?") == "1 1/4");
+    REQUIRE(format_excel_number(1234.5, "\"Rs\" #,##0.00") == "Rs 1,234.50");
+    REQUIRE(format_excel_number(1234.5, "[$\xE2\x82\xB9-4009] #,##0.00") == "\xE2\x82\xB9 1,234.50");
+    REQUIRE(format_excel_number(0.1 + 0.2, "General") == "0.3");
+    REQUIRE(format_excel_number(123456789012.0, "General") == "1.23457E+11");
+    REQUIRE(format_excel_number(1234567, "#,##0,") == "1,235"); // thousands
+    REQUIRE(format_excel_number(0, "0.00;-0.00;\"-\"") == "-");  // the zero section
+    REQUIRE(format_excel_number(5, "000-00-0000") == "000-00-0005");
+    REQUIRE(format_excel_number(0.5, "#.00") == ".50");
+    REQUIRE(format_excel_number(3, "0.0#") == "3.0");
+    // Dates and times from the serial day number.
+    REQUIRE(format_excel_number(45000, "d-mmm-yy") == "15-Mar-23");
+    REQUIRE(format_excel_number(45000, "dd/mm/yyyy") == "15/03/2023");
+    REQUIRE(format_excel_number(45000, io::excel_builtin_format(14)) == "3/15/2023");
+    REQUIRE(format_excel_number(45000, "dddd, mmmm d, yyyy") == "Wednesday, March 15, 2023");
+    REQUIRE(format_excel_number(45000.75, "h:mm AM/PM") == "6:00 PM");
+    REQUIRE(format_excel_number(45000.75, "hh:mm") == "18:00");
+    REQUIRE(format_excel_number(1.5, "[h]:mm:ss") == "36:00:00");
+    REQUIRE(format_excel_number(60, "yyyy-mm-dd") == "1900-02-29"); // Excel's own 29 February 1900
+    REQUIRE(format_excel_number(61, "yyyy-mm-dd") == "1900-03-01");
+    REQUIRE(format_excel_number(0, "yyyy-mm-dd", true) == "1904-01-01");
+}
+
+namespace {
+// A zip of stored entries (what zip_entry reads; no checksums asked).
+std::string stored_zip(const std::vector<std::pair<std::string, std::string>>& files) {
+    std::string out;
+    std::string central;
+    const auto u16 = [](std::string& s, std::uint32_t v) {
+        s += static_cast<char>(v & 0xff);
+        s += static_cast<char>((v >> 8) & 0xff);
+    };
+    const auto u32 = [&](std::string& s, std::uint32_t v) {
+        u16(s, v & 0xffff);
+        u16(s, v >> 16);
+    };
+    for (const auto& [name, data] : files) {
+        const auto offset = static_cast<std::uint32_t>(out.size());
+        const auto size = static_cast<std::uint32_t>(data.size());
+        const auto nlen = static_cast<std::uint32_t>(name.size());
+        u32(out, 0x04034b50u);
+        u16(out, 20);
+        u16(out, 0);
+        u16(out, 0); // stored
+        u32(out, 0);
+        u32(out, 0);
+        u32(out, size);
+        u32(out, size);
+        u16(out, nlen);
+        u16(out, 0);
+        out += name;
+        out += data;
+        u32(central, 0x02014b50u);
+        u16(central, 20);
+        u16(central, 20);
+        u16(central, 0);
+        u16(central, 0);
+        u32(central, 0);
+        u32(central, 0);
+        u32(central, size);
+        u32(central, size);
+        u16(central, nlen);
+        u16(central, 0);
+        u16(central, 0);
+        u16(central, 0);
+        u16(central, 0);
+        u32(central, 0);
+        u32(central, offset);
+        central += name;
+    }
+    const auto cd_offset = static_cast<std::uint32_t>(out.size());
+    out += central;
+    u32(out, 0x06054b50u);
+    u16(out, 0);
+    u16(out, 0);
+    u16(out, static_cast<std::uint32_t>(files.size()));
+    u16(out, static_cast<std::uint32_t>(files.size()));
+    u32(out, static_cast<std::uint32_t>(central.size()));
+    u32(out, cd_offset);
+    u16(out, 0);
+    return out;
+}
+} // namespace
+
+TEST_CASE("A workbook's numbers come into a data link as their cells show them") {
+    const std::string zip = stored_zip({
+        {"xl/workbook.xml", R"(<workbook><workbookPr/><sheets><sheet name="S" sheetId="1"/></sheets></workbook>)"},
+        {"xl/styles.xml",
+         R"(<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;Rs&quot; #,##0.00"/></numFmts>)"
+         R"(<cellStyleXfs><xf numFmtId="0"/></cellStyleXfs>)"
+         R"(<cellXfs count="4"><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="164"/><xf numFmtId="10"/></cellXfs></styleSheet>)"},
+        {"xl/worksheets/sheet1.xml",
+         R"(<worksheet><sheetData><row r="1"><c r="A1" s="1"><v>45000</v></c><c r="B1" s="2"><v>1234.5</v></c>)"
+         R"(<c r="C1" s="3"><v>0.125</v></c><c r="D1"><v>0.30000000000000004</v></c></row></sheetData></worksheet>)"},
+    });
+    std::vector<std::vector<std::string>> rows;
+    std::string error;
+    REQUIRE(io::parse_xlsx(zip, rows, error));
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows[0] == std::vector<std::string>{"3/15/2023", "Rs 1,234.50", "12.50%", "0.3"});
+}
