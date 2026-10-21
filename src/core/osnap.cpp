@@ -363,6 +363,18 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
             break;
         case EntityKind::Table:
             break; // no object-snap points (nearest, if any, handled below)
+        case EntityKind::MLine: {
+            // Each element's ends and middles along its pieces.
+            const MLineData* m = store.mline(h);
+            const MLineStyle* st = store.mline_style(m->style);
+            const mline::Geometry g = mline::geometry(*m, st != nullptr ? *st : MLineStyle{});
+            for (const mline::Geometry::Piece& p : g.pieces) {
+                consider(SnapType::Endpoint, p.a);
+                consider(SnapType::Endpoint, p.b);
+                consider(SnapType::Midpoint, (p.a + p.b) * 0.5);
+            }
+            break;
+        }
         }
 
         // Nearest applies to any curve-like entity.

@@ -1307,6 +1307,8 @@ const char* kind_name(EntityKind k) noexcept {
         return "Block Reference";
     case EntityKind::Hatch:
         return "Hatch";
+    case EntityKind::MLine:
+        return "MLine";
     }
     return "Entity";
 }
@@ -1360,6 +1362,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Image;
             } else if constexpr (std::is_same_v<T, AddTableCommand>) {
                 k = EntityKind::Table;
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                k = EntityKind::MLine;
             }
         },
         c);

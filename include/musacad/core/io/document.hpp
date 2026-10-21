@@ -12,6 +12,7 @@
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/mline.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/named_view.hpp"
 #include "musacad/core/tiled_viewport.hpp"
@@ -70,7 +71,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 41;
+inline constexpr std::uint32_t kFormatVersion = 42;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -105,6 +106,20 @@ struct DocXline {
     bool ray = false;
     EntityProps props{};
     friend bool operator==(const DocXline&, const DocXline&) = default;
+};
+/// A multiline (MLINE, v42): its path, style (an index into `mline_styles`), scale,
+/// justification and the gaps MLEDIT cut.
+struct DocMLine {
+    std::vector<Vec2> vertices;
+    std::vector<std::vector<std::vector<double>>> breaks{};
+    std::uint16_t style = 0;
+    double scale = 1.0;
+    std::uint8_t justification = 0;
+    bool closed = false;
+    bool no_start_caps = false;
+    bool no_end_caps = false;
+    EntityProps props{};
+    friend bool operator==(const DocMLine&, const DocMLine&) = default;
 };
 struct DocLine {
     Vec2 a;
@@ -441,6 +456,11 @@ struct Document {
     std::vector<DocImage> images;         ///< placed raster images (v18)
     std::vector<DocViewport> viewports;   ///< paper-space viewports (v31)
     std::vector<DocTable> tables;         ///< tables (v20)
+    std::vector<DocMLine> mlines;         ///< multilines (v42)
+    std::vector<MLineStyle> mline_styles{MLineStyle{}}; ///< v42: MLSTYLE ([0] STANDARD; not in entity_count)
+    std::uint16_t current_mline_style = 0; ///< v42: CMLSTYLE
+    std::uint8_t cmljust = 0;              ///< v42: CMLJUST
+    double cmlscale = 20.0;                ///< v42: CMLSCALE
     std::vector<TableStyle> table_styles; ///< table-style table (not in entity_count)
     std::vector<DataLink> data_links;     ///< v40: DATALINK
     std::vector<DocImageDef> image_defs;  ///< image-definition table (not in entity_count)
@@ -453,7 +473,7 @@ struct Document {
                polylines.size() +
                splines.size() + texts.size() + attdefs.size() + dims.size() + leaders.size() + mtexts.size() +
                mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +
-               images.size() + viewports.size() + tables.size();
+               images.size() + viewports.size() + tables.size() + mlines.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

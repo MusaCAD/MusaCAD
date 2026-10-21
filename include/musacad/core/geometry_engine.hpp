@@ -704,6 +704,10 @@ private:
     void apply_measureinit(std::uint8_t m);
     /// REVCLOUD Modify (RevcloudObjectCommand::modify).
     void apply_revcloud_modify(const RevcloudObjectCommand& c);
+    void apply_mline_style(const MLineStyleCommand& c);
+    void apply_mline_edit(const MLineEditCommand& c);
+    /// The multiline nearest `p` within `radius` (null when there is none).
+    [[nodiscard]] EntityHandle pick_mline(Vec2 p, double radius) const;
     std::uint8_t insunits_def_source_ = 4; ///< INSUNITSDEFSOURCE (millimetres)
     std::uint8_t insunits_def_target_ = 4; ///< INSUNITSDEFTARGET
     SpatialGrid grid_;

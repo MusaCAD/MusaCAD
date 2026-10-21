@@ -157,6 +157,68 @@ bool GeometryStore::set_dim_aux(EntityHandle h, double aux) noexcept {
     return false;
 }
 
+EntityHandle GeometryStore::add_mline(MLineData m) {
+    if (m.style >= mline_styles_.size()) {
+        m.style = 0;
+    }
+    const auto slot = mlines_.insert(std::move(m));
+    return EntityHandle{slot.index, slot.generation, EntityKind::MLine};
+}
+
+const MLineData* GeometryStore::mline(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::MLine ? mlines_.get(h.index, h.generation) : nullptr;
+}
+
+MLineData* GeometryStore::mutable_mline(EntityHandle h) noexcept {
+    return h.kind == EntityKind::MLine ? mlines_.get(h.index, h.generation) : nullptr;
+}
+
+std::uint16_t GeometryStore::define_mline_style(const MLineStyle& s) {
+    const std::uint16_t i = mline_style_index(s.name);
+    if (i != 0xFFFF) {
+        const std::string name = i == 0 ? mline_styles_[0].name : mline_styles_[i].name;
+        mline_styles_[i] = s;
+        mline_styles_[i].name = name;
+        return i;
+    }
+    mline_styles_.push_back(s);
+    return static_cast<std::uint16_t>(mline_styles_.size() - 1);
+}
+
+void GeometryStore::set_mline_style_table(std::vector<MLineStyle> styles) {
+    mline_styles_ = std::move(styles);
+    if (mline_styles_.empty()) {
+        mline_styles_.push_back(MLineStyle{});
+    }
+    if (current_mline_style_ >= mline_styles_.size()) {
+        current_mline_style_ = 0;
+    }
+}
+
+std::uint16_t GeometryStore::mline_style_index(std::string_view name) const noexcept {
+    const auto lower = [](char ch) { return static_cast<char>(std::tolower(static_cast<unsigned char>(ch))); };
+    for (std::size_t i = 0; i < mline_styles_.size(); ++i) {
+        const std::string& n = mline_styles_[i].name;
+        if (n.size() == name.size() &&
+            std::equal(n.begin(), n.end(), name.begin(), [&](char a, char b) { return lower(a) == lower(b); })) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    return 0xFFFF;
+}
+
+bool GeometryStore::rename_mline_style(std::uint16_t index, const std::string& name) {
+    if (index == 0 || index >= mline_styles_.size() || name.empty()) {
+        return false;
+    }
+    const std::uint16_t clash = mline_style_index(name);
+    if (clash != 0xFFFF && clash != index) {
+        return false;
+    }
+    mline_styles_[index].name = name;
+    return true;
+}
+
 EntityHandle GeometryStore::add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props) {
     const double len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
     const Vec2 unit = len > 1e-12 ? Vec2{dir.x / len, dir.y / len} : Vec2{1.0, 0.0};
@@ -725,6 +787,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return viewports_.erase(h.index, h.generation);
     case EntityKind::Table:
         return tables_.erase(h.index, h.generation);
+    case EntityKind::MLine:
+        return mlines_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -773,6 +837,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return viewports_.is_valid(h.index, h.generation);
     case EntityKind::Table:
         return tables_.is_valid(h.index, h.generation);
+    case EntityKind::MLine:
+        return mlines_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -783,12 +849,17 @@ std::size_t GeometryStore::live_count() const noexcept {
            texts_.live_count() + dims_.live_count() + leaders_.live_count() +
            mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count() +
            hatches_.live_count() + fcfs_.live_count() + datums_.live_count() +
-           images_.live_count() + tables_.live_count();
+           images_.live_count() + tables_.live_count() + mlines_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
     points_.clear();
     xlines_.clear();
+    mlines_.clear();
+    mline_styles_.assign(1, MLineStyle{});
+    current_mline_style_ = 0;
+    cmljust_ = 0;
+    cmlscale_ = 20.0;
     ellipses_.clear();
     lines_.clear();
     circles_.clear();
@@ -1216,6 +1287,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::MLine:
+        if (const MLineData* d = mline(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -1344,6 +1420,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Table:
         if (TableData* d = tables_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::MLine:
+        if (MLineData* d = mlines_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -1539,6 +1621,7 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(tables_, check);
     for_each_live_const(inserts_, check);
     for_each_live_const(xlines_, check);
+    for_each_live_const(mlines_, check);
     for_each_live_const(ellipses_, check);
     // An object inside a block definition uses its layer too.
     for (const BlockDef& b : blocks_) {
@@ -1579,6 +1662,7 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(tables_, fix);
     for_each_live_mut(inserts_, fix);
     for_each_live_mut(xlines_, fix);
+    for_each_live_mut(mlines_, fix);
     for_each_live_mut(ellipses_, fix);
     for (BlockDef& b : blocks_) {
         BlockContent& bc = b.content;
@@ -1765,6 +1849,32 @@ bool GeometryStore::remove_text_style(std::uint16_t index) {
     if (current_text_style_ > index) {
         --current_text_style_;
     }
+    return true;
+}
+
+bool GeometryStore::mline_style_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    for_each_live_const(mlines_, [&](const MLineData& m) {
+        if (m.style == index) {
+            used = true;
+        }
+    });
+    return used;
+}
+
+bool GeometryStore::remove_mline_style(std::uint16_t index) {
+    if (index == 0 || index >= mline_styles_.size() || index == current_mline_style_ || mline_style_in_use(index)) {
+        return false;
+    }
+    mline_styles_.erase(mline_styles_.begin() + index);
+    if (current_mline_style_ > index) {
+        --current_mline_style_;
+    }
+    for_each_live_mut(mlines_, [&](MLineData& m) {
+        if (m.style > index) {
+            --m.style;
+        }
+    });
     return true;
 }
 

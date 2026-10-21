@@ -240,6 +240,20 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const XlineData* x = store.xline(h);
         return AddXlineCommand{x->base, x->dir, x->ray, 0, x->props};
     }
+    case EntityKind::MLine: {
+        const MLineData* m = store.mline(h);
+        AddMLineCommand c;
+        c.points = m->vertices;
+        c.closed = m->closed;
+        c.style = m->style;
+        c.scale = m->scale;
+        c.justification = m->justification;
+        c.props = m->props;
+        c.breaks = m->breaks;
+        c.no_start_caps = m->no_start_caps;
+        c.no_end_caps = m->no_end_caps;
+        return c;
+    }
     case EntityKind::Ellipse: {
         const EllipseData* e = store.ellipse(h);
         return AddEllipseCommand{e->center, e->major, e->ratio, e->start, e->end, 0, e->props};
@@ -265,6 +279,18 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_point(c.p, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 handle = store.add_xline(c.base, c.dir, c.ray, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                MLineData m;
+                m.vertices = c.points;
+                m.closed = c.closed;
+                m.style = c.style;
+                m.scale = c.scale;
+                m.justification = c.justification;
+                m.props = props_of(c.props);
+                m.breaks = c.breaks;
+                m.no_start_caps = c.no_start_caps;
+                m.no_end_caps = c.no_end_caps;
+                handle = store.add_mline(std::move(m));
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 handle = store.add_ellipse(c.center, c.major, c.ratio, c.start, c.end,
                                            props_of(c.props));
@@ -463,6 +489,14 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         // One grip at the root (base point): it moves the whole construction line. The
         // line is infinite, so there is no endpoint to grip; re-aiming is ROTATE's job.
         push(out, store.xline(h)->base, GripKind::Move, 0);
+        break;
+    }
+    case EntityKind::MLine: {
+        // A grip on each vertex of the path, as AutoCAD has them: dragged, the vertex moves.
+        const MLineData* m = store.mline(h);
+        for (std::uint32_t i = 0; i < m->vertices.size(); ++i) {
+            push(out, m->vertices[i], GripKind::Vertex, i);
+        }
         break;
     }
     case EntityKind::Line: {
@@ -763,6 +797,10 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base = newpos; // the root grip moves the whole construction line
+            } else if constexpr (std::is_same_v<T, AddMLineCommand>) {
+                if (grip_index < x.points.size()) {
+                    x.points[grip_index] = newpos;
+                }
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
                 if (grip_index < x.control_points.size()) {
                     x.control_points[grip_index] = newpos;

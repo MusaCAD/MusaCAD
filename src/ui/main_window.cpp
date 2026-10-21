@@ -6,6 +6,7 @@
 #include "musacad/core/threading/jthread.hpp"
 
 #include <array>
+#include <optional>
 #include <cmath>
 #include <numbers>
 #include <cstdint>
@@ -342,6 +343,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_mleader_style_dialog);
             return true;
         }
+        if (action == "MLSTYLE") {
+            QTimer::singleShot(0, this, &MainWindow::open_mline_style_dialog);
+            return true;
+        }
         if (action == "CUI") {
             QTimer::singleShot(0, this, &MainWindow::open_cui_dialog);
             return true;
@@ -541,6 +546,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_dim_styles(viewport_->dim_styles(), viewport_->current_dim_style());
         processor_->set_table_styles(viewport_->table_styles(), viewport_->current_table_style());
         processor_->set_mleader_styles(viewport_->mleader_styles(), viewport_->current_mleader_style());
+        processor_->set_mline_settings(viewport_->mline_settings());
         processor_->set_current_props(viewport_->current_props());
         processor_->set_block_names(viewport_->block_names());
         processor_->set_block_previews(viewport_->block_previews());
@@ -3277,6 +3283,35 @@ void MainWindow::open_view_manager() {
         }
         form->addRow(QStringLiteral("View name:"), name_edit);
         form->addRow(QStringLiteral("View category:"), category);
+        // Boundary, as AutoCAD's New View has it: the display as it is, or a window picked in
+        // the drawing (the windows close while it is picked).
+        auto* current_display = new QRadioButton(QStringLiteral("Current display"), &nv);
+        auto* define_window = new QRadioButton(QStringLiteral("Define window"), &nv);
+        auto* pick_window = new QPushButton(QStringLiteral("Define View Window"), &nv);
+        pick_window->setObjectName(QStringLiteral("NewViewDefineWindow"));
+        current_display->setChecked(true);
+        auto* boundary = new QHBoxLayout;
+        boundary->addWidget(current_display);
+        boundary->addWidget(define_window);
+        boundary->addWidget(pick_window);
+        form->addRow(QStringLiteral("Boundary:"), boundary);
+        std::optional<std::pair<core::Vec2, core::Vec2>> window;
+        connect(pick_window, &QPushButton::clicked, &nv, [this, &nv, d, &window, define_window, current_display] {
+            nv.hide();
+            d.dlg->hide();
+            QEventLoop loop;
+            viewport_->begin_plot_window_pick([&](bool picked, core::Vec2 mn, core::Vec2 mx) {
+                if (picked && mx.x - mn.x > 1e-9 && mx.y - mn.y > 1e-9) {
+                    window = std::make_pair(mn, mx);
+                }
+                loop.quit();
+            });
+            command_widget_->append_line("Specify first corner, then the opposite corner of the view.");
+            loop.exec();
+            (window ? define_window : current_display)->setChecked(true);
+            d.dlg->show();
+            nv.show();
+        });
         form->addRow(snapshot);
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &nv);
         connect(buttons, &QDialogButtonBox::accepted, &nv, &QDialog::accept);
@@ -3286,7 +3321,15 @@ void MainWindow::open_view_manager() {
         const QString name = name_edit->text().trimmed();
         core::Vec2 center;
         double scale = 0.0;
-        if (ok && !name.isEmpty() && viewport_->current_view(center, scale)) {
+        if (ok && !name.isEmpty() && define_window->isChecked() && window) {
+            // The window's centre, at the scale that fits it in the drawing window.
+            int w = 0;
+            int h = 0;
+            center = (window->first + window->second) * 0.5;
+            const core::Vec2 size = window->second - window->first;
+            scale = viewport_->viewport_size(w, h) ? std::min(w / size.x, h / size.y) : 0.0;
+        }
+        if (ok && !name.isEmpty() && (scale > 0.0 || viewport_->current_view(center, scale))) {
             core::NamedView v{name.toStdString(), center, scale};
             if (snapshot->isChecked()) {
                 v.layer_state = "*VIEW|" + v.name;
@@ -4303,6 +4346,282 @@ void MainWindow::open_mleader_style_dialog() {
         const QString name = current_name(d);
         if (!name.isEmpty()) {
             engine_->submit(core::MLeaderStyleCommand{Op::Delete, name.toStdString(), {}});
+            later();
+        }
+    });
+    connect(close, &QPushButton::clicked, d.dlg, &QDialog::close);
+    refill();
+    d.dlg->resize(420, 320);
+    d.dlg->show();
+}
+
+// MLSTYLE: AutoCAD's Multiline Style window -- the styles, Set Current, New (from the style
+// picked), Modify, Rename and Delete; New and Modify open the style's own window: the
+// description, the caps at each end (a line, the outer arc, the inner arcs, the angle), the
+// fill, the joints, and the elements (offset, colour, linetype), Add and Delete.
+void MainWindow::open_mline_style_dialog() {
+    const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Multiline Style"));
+    d.dlg->setObjectName(QStringLiteral("MLineStyleDialog"));
+    const auto refill = [this, d] {
+        const QString keep = current_name(d);
+        const core::MLineSettings ms = viewport_->mline_settings();
+        d.list->clear();
+        for (const core::MLineStyle& st : ms.styles) {
+            d.list->addItem(QString::fromStdString(st.name));
+        }
+        const QList<QListWidgetItem*> found = d.list->findItems(keep, Qt::MatchExactly);
+        d.list->setCurrentItem(found.isEmpty() ? d.list->item(ms.current < ms.styles.size() ? ms.current : 0)
+                                               : found.front());
+        d.status->setText(ms.current < ms.styles.size()
+                              ? QStringLiteral("Current multiline style: %1").arg(QString::fromStdString(ms.styles[ms.current].name))
+                              : QString());
+    };
+    const auto later = [refill, d] { QTimer::singleShot(250, d.dlg, refill); }; // after the engine has it
+    const auto style_named = [this](const QString& name) {
+        for (const core::MLineStyle& st : viewport_->mline_settings().styles) {
+            if (QString::fromStdString(st.name).compare(name, Qt::CaseInsensitive) == 0) {
+                return st;
+            }
+        }
+        return core::MLineStyle{};
+    };
+    const auto edit = [](QWidget* parent, const QString& title, core::MLineStyle& st) {
+        QDialog dlg(parent);
+        dlg.setWindowTitle(title);
+        dlg.setObjectName(QStringLiteral("MLineStyleEdit"));
+        auto* lay = new QVBoxLayout(&dlg);
+        auto* desc = new QLineEdit(QString::fromStdString(st.description), &dlg);
+        auto* form = new QFormLayout;
+        form->addRow(QStringLiteral("Description:"), desc);
+        lay->addLayout(form);
+        // Caps: start and end, each a line, the outer arc and the inner arcs, and its angle.
+        auto* caps = new QGroupBox(QStringLiteral("Caps"), &dlg);
+        auto* cg = new QGridLayout(caps);
+        cg->addWidget(new QLabel(QStringLiteral("Start"), caps), 0, 1);
+        cg->addWidget(new QLabel(QStringLiteral("End"), caps), 0, 2);
+        const QStringList rows{QStringLiteral("Line:"), QStringLiteral("Outer arc:"), QStringLiteral("Inner arcs:")};
+        const std::uint16_t start_bits[3] = {core::MLineStyle::kStartLine, core::MLineStyle::kStartOuterArc,
+                                             core::MLineStyle::kStartInnerArcs};
+        const std::uint16_t end_bits[3] = {core::MLineStyle::kEndLine, core::MLineStyle::kEndOuterArc,
+                                           core::MLineStyle::kEndInnerArcs};
+        std::vector<std::pair<QCheckBox*, std::uint16_t>> bits;
+        for (int r = 0; r < 3; ++r) {
+            cg->addWidget(new QLabel(rows[r], caps), r + 1, 0);
+            auto* s = new QCheckBox(caps);
+            auto* e = new QCheckBox(caps);
+            s->setChecked((st.flags & start_bits[r]) != 0);
+            e->setChecked((st.flags & end_bits[r]) != 0);
+            cg->addWidget(s, r + 1, 1);
+            cg->addWidget(e, r + 1, 2);
+            bits.emplace_back(s, start_bits[r]);
+            bits.emplace_back(e, end_bits[r]);
+        }
+        cg->addWidget(new QLabel(QStringLiteral("Angle:"), caps), 4, 0);
+        auto* sa = new QDoubleSpinBox(caps);
+        auto* ea = new QDoubleSpinBox(caps);
+        for (QDoubleSpinBox* b : {sa, ea}) {
+            b->setRange(10.0, 170.0);
+            b->setDecimals(2);
+        }
+        sa->setValue(st.start_angle);
+        ea->setValue(st.end_angle);
+        cg->addWidget(sa, 4, 1);
+        cg->addWidget(ea, 4, 2);
+        lay->addWidget(caps);
+        // Fill and joints.
+        auto* fill_form = new QFormLayout;
+        auto* fill = new QComboBox(&dlg);
+        fill->addItems({QStringLiteral("None"), QStringLiteral("ByLayer"), QStringLiteral("ByBlock"), QStringLiteral("Red"),
+                        QStringLiteral("Yellow"), QStringLiteral("Green"), QStringLiteral("Cyan"), QStringLiteral("Blue"),
+                        QStringLiteral("Magenta"), QStringLiteral("White")});
+        const core::Rgb kColors[] = {{255, 0, 0}, {255, 255, 0}, {0, 255, 0}, {0, 255, 255},
+                                     {0, 0, 255}, {255, 0, 255}, {255, 255, 255}};
+        if ((st.flags & core::MLineStyle::kFill) == 0) {
+            fill->setCurrentIndex(0);
+        } else if (st.fill_mode == 1 || st.fill_mode == 2) {
+            fill->setCurrentIndex(st.fill_mode);
+        } else {
+            for (int k = 0; k < 7; ++k) {
+                if (kColors[k] == st.fill_color) {
+                    fill->setCurrentIndex(3 + k);
+                }
+            }
+        }
+        auto* joints = new QCheckBox(&dlg);
+        joints->setChecked((st.flags & core::MLineStyle::kJoints) != 0);
+        fill_form->addRow(QStringLiteral("Fill color:"), fill);
+        fill_form->addRow(QStringLiteral("Display joints:"), joints);
+        lay->addLayout(fill_form);
+        // Elements: offset, colour, linetype.
+        auto* elems = new QGroupBox(QStringLiteral("Elements"), &dlg);
+        auto* eg = new QVBoxLayout(elems);
+        auto* table = new QTableWidget(0, 3, elems);
+        table->setObjectName(QStringLiteral("MLineStyleElements"));
+        table->setHorizontalHeaderLabels({QStringLiteral("Offset"), QStringLiteral("Color"), QStringLiteral("Ltype")});
+        table->horizontalHeader()->setStretchLastSection(true);
+        const QStringList color_names{QStringLiteral("BYLAYER"), QStringLiteral("BYBLOCK"), QStringLiteral("Red"),
+                                      QStringLiteral("Yellow"), QStringLiteral("Green"), QStringLiteral("Cyan"),
+                                      QStringLiteral("Blue"), QStringLiteral("Magenta"), QStringLiteral("White")};
+        const QStringList lt_names{QStringLiteral("BYLAYER"), QStringLiteral("BYBLOCK"), QStringLiteral("Continuous"),
+                                   QStringLiteral("DASHED"), QStringLiteral("CENTER"), QStringLiteral("HIDDEN")};
+        const auto add_row = [&, table](const core::MLineElement& e) {
+            const int r = table->rowCount();
+            table->insertRow(r);
+            auto* off = new QDoubleSpinBox(table);
+            off->setRange(-1e6, 1e6);
+            off->setDecimals(4);
+            off->setValue(e.offset);
+            table->setCellWidget(r, 0, off);
+            auto* col = new QComboBox(table);
+            col->addItems(color_names);
+            int ci = e.color_mode == 1 ? 0 : e.color_mode == 2 ? 1 : 8;
+            if (e.color_mode == 0) {
+                for (int k = 0; k < 7; ++k) {
+                    if (kColors[k] == e.color) {
+                        ci = 2 + k;
+                    }
+                }
+            }
+            col->setCurrentIndex(ci);
+            table->setCellWidget(r, 1, col);
+            auto* lt = new QComboBox(table);
+            lt->addItems(lt_names);
+            lt->setCurrentIndex(e.linetype_mode == 1   ? 0
+                                : e.linetype_mode == 2 ? 1
+                                                       : std::min(2 + static_cast<int>(e.linetype), 5));
+            table->setCellWidget(r, 2, lt);
+        };
+        for (const core::MLineElement& e : st.elements) {
+            add_row(e);
+        }
+        eg->addWidget(table);
+        auto* row_buttons = new QHBoxLayout;
+        auto* add = new QPushButton(QStringLiteral("Add"), elems);
+        auto* del = new QPushButton(QStringLiteral("Delete"), elems);
+        row_buttons->addWidget(add);
+        row_buttons->addWidget(del);
+        row_buttons->addStretch(1);
+        eg->addLayout(row_buttons);
+        lay->addWidget(elems);
+        QObject::connect(add, &QPushButton::clicked, &dlg, [add_row] { add_row(core::MLineElement{0.0}); });
+        QObject::connect(del, &QPushButton::clicked, &dlg, [table] {
+            if (table->rowCount() > 1 && table->currentRow() >= 0) {
+                table->removeRow(table->currentRow());
+            }
+        });
+        auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        lay->addWidget(box);
+        QObject::connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        if (dlg.exec() != QDialog::Accepted) {
+            return false;
+        }
+        st.description = desc->text().toStdString();
+        std::uint16_t flags = 0;
+        for (const auto& [cb, bit] : bits) {
+            flags = cb->isChecked() ? static_cast<std::uint16_t>(flags | bit) : flags;
+        }
+        if (joints->isChecked()) {
+            flags = static_cast<std::uint16_t>(flags | core::MLineStyle::kJoints);
+        }
+        const int fi = fill->currentIndex();
+        if (fi > 0) {
+            flags = static_cast<std::uint16_t>(flags | core::MLineStyle::kFill);
+            st.fill_mode = static_cast<std::uint8_t>(fi <= 2 ? fi : 0);
+            if (fi > 2) {
+                st.fill_color = kColors[fi - 3];
+            }
+        }
+        st.flags = flags;
+        st.start_angle = sa->value();
+        st.end_angle = ea->value();
+        st.elements.clear();
+        for (int r = 0; r < table->rowCount(); ++r) {
+            core::MLineElement e;
+            e.offset = static_cast<QDoubleSpinBox*>(table->cellWidget(r, 0))->value();
+            const int ci = static_cast<QComboBox*>(table->cellWidget(r, 1))->currentIndex();
+            e.color_mode = static_cast<std::uint8_t>(ci == 0 ? 1 : ci == 1 ? 2 : 0);
+            if (ci >= 2) {
+                e.color = kColors[ci - 2];
+            }
+            const int li = static_cast<QComboBox*>(table->cellWidget(r, 2))->currentIndex();
+            e.linetype_mode = static_cast<std::uint8_t>(li == 0 ? 1 : li == 1 ? 2 : 0);
+            e.linetype = li >= 2 ? static_cast<core::Linetype>(li - 2) : core::Linetype::Continuous;
+            st.elements.push_back(e);
+        }
+        return true;
+    };
+    auto* set_current = new QPushButton(QStringLiteral("Set Current"), d.dlg);
+    auto* add = new QPushButton(QStringLiteral("New..."), d.dlg);
+    auto* modify = new QPushButton(QStringLiteral("Modify..."), d.dlg);
+    auto* rename = new QPushButton(QStringLiteral("Rename"), d.dlg);
+    auto* remove = new QPushButton(QStringLiteral("Delete"), d.dlg);
+    auto* close = new QPushButton(QStringLiteral("Close"), d.dlg);
+    for (QPushButton* b : {set_current, add, modify, rename, remove}) {
+        d.buttons->addWidget(b);
+    }
+    d.buttons->addStretch(1);
+    d.buttons->addWidget(close);
+    using Op = core::MLineStyleCommand::Op;
+    const auto submit = [this](Op op, const std::string& name, const std::string& new_name, const core::MLineStyle& st) {
+        core::MLineStyleCommand c;
+        c.op = op;
+        c.name = name;
+        c.new_name = new_name;
+        c.style = st;
+        engine_->submit(std::move(c));
+    };
+    connect(set_current, &QPushButton::clicked, d.dlg, [d, later, submit] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            submit(Op::SetCurrent, name.toStdString(), {}, {});
+            later();
+        }
+    });
+    connect(add, &QPushButton::clicked, d.dlg, [d, later, style_named, edit, submit] {
+        bool ok = false;
+        const QString base = current_name(d);
+        const QString name = QInputDialog::getText(d.dlg, QStringLiteral("Create New Multiline Style"),
+                                                   QStringLiteral("New style name (starting from %1):").arg(base),
+                                                   QLineEdit::Normal, QString(), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty()) {
+            return;
+        }
+        core::MLineStyle st = style_named(base);
+        st.name = name.toStdString();
+        if (edit(d.dlg, QStringLiteral("New Multiline Style: %1").arg(name), st)) {
+            submit(Op::Define, {}, {}, st);
+            later();
+        }
+    });
+    connect(modify, &QPushButton::clicked, d.dlg, [d, later, style_named, edit, submit] {
+        const QString name = current_name(d);
+        if (name.isEmpty()) {
+            return;
+        }
+        core::MLineStyle st = style_named(name);
+        if (edit(d.dlg, QStringLiteral("Modify Multiline Style: %1").arg(name), st)) {
+            submit(Op::Define, {}, {}, st);
+            later();
+        }
+    });
+    connect(d.list, &QListWidget::itemDoubleClicked, modify, &QPushButton::click);
+    connect(rename, &QPushButton::clicked, d.dlg, [d, later, submit] {
+        const QString name = current_name(d);
+        bool ok = false;
+        const QString to = QInputDialog::getText(d.dlg, QStringLiteral("Rename Multiline Style"),
+                                                 QStringLiteral("New name for %1:").arg(name), QLineEdit::Normal, name, &ok)
+                               .trimmed();
+        if (ok && !to.isEmpty() && to != name) {
+            submit(Op::Rename, name.toStdString(), to.toStdString(), {});
+            later();
+        }
+    });
+    connect(remove, &QPushButton::clicked, d.dlg, [d, later, submit] {
+        const QString name = current_name(d);
+        if (!name.isEmpty()) {
+            submit(Op::Delete, name.toStdString(), {}, {});
             later();
         }
     });

@@ -25,6 +25,7 @@
 #include "musacad/core/tiled_viewport.hpp"
 #include "musacad/core/layout.hpp"
 #include "musacad/core/linetype.hpp"
+#include "musacad/core/mline.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
@@ -556,6 +557,7 @@ public:
     EntityHandle add_point(Vec2 p, EntityProps props = {});
     /// A construction line through `base` along unit `dir`; `ray` = semi-infinite.
     EntityHandle add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props = {});
+    EntityHandle add_mline(MLineData m);
     /// An ellipse / elliptical arc; ratio is clamped to (0,1], a full range is 0..2pi.
     EntityHandle add_ellipse(Vec2 center, Vec2 major, double ratio, double start, double end,
                              EntityProps props = {});
@@ -796,6 +798,8 @@ public:
     // --- typed accessors (nullptr if invalid or wrong kind) -----------------
     [[nodiscard]] const PointData* point(EntityHandle h) const noexcept;
     [[nodiscard]] const XlineData* xline(EntityHandle h) const noexcept;
+    [[nodiscard]] const MLineData* mline(EntityHandle h) const noexcept;
+    [[nodiscard]] MLineData* mutable_mline(EntityHandle h) noexcept;
     [[nodiscard]] const EllipseData* ellipse(EntityHandle h) const noexcept;
     [[nodiscard]] const LineData* line(EntityHandle h) const noexcept;
     [[nodiscard]] const CircleData* circle(EntityHandle h) const noexcept;
@@ -876,6 +880,7 @@ public:
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
     [[nodiscard]] const GenerationalArena<XlineData>& xlines() const noexcept { return xlines_; }
+    [[nodiscard]] const GenerationalArena<MLineData>& mlines() const noexcept { return mlines_; }
     [[nodiscard]] const GenerationalArena<EllipseData>& ellipses() const noexcept {
         return ellipses_;
     }
@@ -1005,6 +1010,31 @@ public:
     /// drawing that places one logo ten times holds one definition.
     std::uint16_t add_image_def(const ImageDef& def);
     void set_image_def_table(std::vector<ImageDef> defs);
+
+    // --- multiline styles (MLSTYLE), and MLINE's current style, justification and scale ---
+    [[nodiscard]] const std::vector<MLineStyle>& mline_styles() const noexcept { return mline_styles_; }
+    [[nodiscard]] const MLineStyle* mline_style(std::uint16_t i) const noexcept {
+        return i < mline_styles_.size() ? &mline_styles_[i] : nullptr;
+    }
+    /// The style named `name` (any case) replaced, else added; its index.
+    std::uint16_t define_mline_style(const MLineStyle& s);
+    void set_mline_style_table(std::vector<MLineStyle> styles);
+    /// The index of the style named `name` (any case), or 0xFFFF.
+    [[nodiscard]] std::uint16_t mline_style_index(std::string_view name) const noexcept;
+    [[nodiscard]] bool mline_style_in_use(std::uint16_t index) const noexcept;
+    /// Deletes an unused style that is neither STANDARD nor current; false otherwise.
+    bool remove_mline_style(std::uint16_t index);
+    /// Renames the style at `index` (not STANDARD, and not to a name in use); false otherwise.
+    bool rename_mline_style(std::uint16_t index, const std::string& name);
+    /// CMLSTYLE, CMLJUST (0 Top, 1 Zero, 2 Bottom) and CMLSCALE.
+    [[nodiscard]] std::uint16_t current_mline_style() const noexcept { return current_mline_style_; }
+    void set_current_mline_style(std::uint16_t i) noexcept {
+        current_mline_style_ = i < mline_styles_.size() ? i : 0;
+    }
+    [[nodiscard]] std::uint8_t cmljust() const noexcept { return cmljust_; }
+    void set_cmljust(std::uint8_t j) noexcept { cmljust_ = j <= 2 ? j : 0; }
+    [[nodiscard]] double cmlscale() const noexcept { return cmlscale_; }
+    void set_cmlscale(double s) noexcept { cmlscale_ = s; }
 
     // --- table-style table (parallel to the layer / dimstyle tables) ---
     [[nodiscard]] const std::vector<TableStyle>& table_styles() const noexcept {
@@ -1402,6 +1432,11 @@ private:
 
     GenerationalArena<PointData> points_;
     GenerationalArena<XlineData> xlines_;
+    GenerationalArena<MLineData> mlines_;
+    std::vector<MLineStyle> mline_styles_{MLineStyle{}}; // index 0: STANDARD, always there
+    std::uint16_t current_mline_style_ = 0;
+    std::uint8_t cmljust_ = 0;
+    double cmlscale_ = 20.0; // a metric drawing's (acadiso): an imperial one's is 1
     GenerationalArena<EllipseData> ellipses_;
     GenerationalArena<LineData> lines_;
     GenerationalArena<CircleData> circles_;

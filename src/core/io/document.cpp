@@ -87,6 +87,8 @@ std::uint32_t doc_index_of(const GeometryStore& store, EntityHandle h) {
         return alive_before(store.viewports(), h.index);
     case EntityKind::Table:
         return alive_before(store.tables(), h.index);
+    case EntityKind::MLine:
+        return alive_before(store.mlines(), h.index);
     }
     return 0;
 }
@@ -164,6 +166,9 @@ std::vector<EntityHandle> handles_of_kind(const GeometryStore& store, EntityKind
     case EntityKind::Table:
         collect(store.tables(), EntityKind::Table);
         break;
+    case EntityKind::MLine:
+        collect(store.mlines(), EntityKind::MLine);
+        break;
     }
     return out;
 }
@@ -239,6 +244,19 @@ Document document_from_store(const GeometryStore& store) {
             doc.xlines.push_back(DocXline{x.base, x.dir, x.ray, x.props});
         }
     }
+    const auto& mlines = store.mlines();
+    for (std::uint32_t i = 0; i < mlines.slot_count(); ++i) {
+        if (mlines.alive(i)) {
+            const MLineData& m = mlines.data()[i];
+            doc.mlines.push_back(DocMLine{m.vertices, m.breaks, m.style, m.scale, m.justification, m.closed,
+                                          m.no_start_caps, m.no_end_caps, m.props});
+            mline::trim_breaks(doc.mlines.back().breaks);
+        }
+    }
+    doc.mline_styles = store.mline_styles();
+    doc.current_mline_style = store.current_mline_style();
+    doc.cmljust = store.cmljust();
+    doc.cmlscale = store.cmlscale();
     const auto& ellipses = store.ellipses();
     for (std::uint32_t i = 0; i < ellipses.slot_count(); ++i) {
         if (ellipses.alive(i)) {
@@ -734,6 +752,15 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocXline& x : doc.xlines) {
         store.add_xline(x.base, x.dir, x.ray, x.props);
+    }
+    // The multiline styles before the multilines that use them.
+    store.set_mline_style_table(doc.mline_styles);
+    store.set_current_mline_style(doc.current_mline_style);
+    store.set_cmljust(doc.cmljust);
+    store.set_cmlscale(doc.cmlscale);
+    for (const DocMLine& m : doc.mlines) {
+        store.add_mline(MLineData{m.vertices, m.breaks, m.style, m.scale, m.justification, m.closed, m.no_start_caps,
+                                  m.no_end_caps, m.props});
     }
     for (const DocEllipse& e : doc.ellipses) {
         store.add_ellipse(e.center, e.major, e.ratio, e.start, e.end, e.props);

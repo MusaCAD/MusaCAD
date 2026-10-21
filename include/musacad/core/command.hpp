@@ -23,6 +23,7 @@
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/mline.hpp"
 
 namespace musacad::core {
 
@@ -288,6 +289,59 @@ struct AddXlineCommand {
     bool ray = false;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+};
+
+/// A multiline (MLINE): its path, the style (an index into the drawing's multiline styles),
+/// scale and justification (0 Top, 1 Zero, 2 Bottom), and the gaps MLEDIT cut (see
+/// MLineData::breaks).
+struct AddMLineCommand {
+    std::vector<Vec2> points;
+    bool closed = false;
+    std::uint16_t style = 0;
+    double scale = 1.0;
+    std::uint8_t justification = 0;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+    std::vector<std::vector<std::vector<double>>> breaks{};
+    bool no_start_caps = false;
+    bool no_end_caps = false;
+};
+
+/// MLSTYLE and MLINE's settings: a style defined (added, or replaced by name), deleted,
+/// renamed (`name` to `new_name`) or made current, and CMLJUST / CMLSCALE.
+struct MLineStyleCommand {
+    enum class Op : std::uint8_t { Define, Delete, Rename, SetCurrent, Justification, Scale };
+    Op op = Op::Define;
+    MLineStyle style{};
+    std::string name;
+    std::string new_name;
+    std::uint8_t justification = 0;
+    double scale = 1.0;
+};
+
+/// MLEDIT's tools on the multilines at `pick` (and `pick2`): Closed / Open / Merged Cross and
+/// Tee (the first multiline picked, then the second), Corner Joint, Add Vertex and Delete Vertex
+/// (at `pick`), Cut Single and Cut All (between `pick` and `pick2` on one multiline), Weld All.
+struct MLineEditCommand {
+    enum class Op : std::uint8_t {
+        ClosedCross,
+        OpenCross,
+        MergedCross,
+        ClosedTee,
+        OpenTee,
+        MergedTee,
+        CornerJoint,
+        AddVertex,
+        DeleteVertex,
+        CutSingle,
+        CutAll,
+        WeldAll,
+    };
+    Op op = Op::AddVertex;
+    Vec2 pick;
+    Vec2 pick2;
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
 };
 
 /// XLINE [Offset]: a construction line parallel to the line under `pick` (a line,
@@ -2483,7 +2537,8 @@ using Command =
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
-                 AddDatumCommand, AddImageCommand, AddTableCommand,
+                 AddDatumCommand, AddImageCommand, AddTableCommand, AddMLineCommand,
+                 MLineStyleCommand, MLineEditCommand,
                  StretchSelectionCommand, AreaQueryCommand, ListQueryCommand,
                  SelectFenceCommand, SelectPolygonCommand, SelectLastCommand,
                  SelectPreviousCommand, SelectGroupCommand, SelectUndoCommand,
