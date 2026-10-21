@@ -12187,10 +12187,12 @@ MLineData mline_cut_at(const MLineData& m, std::size_t seg, Vec2 x, Vec2 keep) {
     } else { // keep the end: from x
         r.vertices.assign(1, x);
         r.vertices.insert(r.vertices.end(), v.begin() + static_cast<std::ptrdiff_t>(seg) + 1, v.end());
-        if (!r.breaks.empty()) {
-            r.breaks.erase(r.breaks.begin(),
-                           r.breaks.begin() + static_cast<std::ptrdiff_t>(std::min(seg + 1, r.breaks.size())));
-            r.breaks.insert(r.breaks.begin(), std::vector<std::vector<double>>{});
+        if (!m.breaks.empty()) {
+            // The segment cut loses its gaps; those after it keep theirs, one place on.
+            const std::size_t from = std::min(seg + 1, m.breaks.size());
+            std::vector<std::vector<std::vector<double>>> rest(1 + (m.breaks.size() - from));
+            std::copy(m.breaks.begin() + static_cast<std::ptrdiff_t>(from), m.breaks.end(), rest.begin() + 1);
+            r.breaks = std::move(rest);
         }
     }
     return r;
