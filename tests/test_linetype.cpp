@@ -180,9 +180,10 @@ TEST_CASE("CELTSCALE: per-entity scale feeds the dash renderer (effective = LTSC
 
 TEST_CASE("CELTSCALE is sparse storage: hot structs are not fattened") {
     // A double celtscale field on EntityProps/LineData would add 8 bytes; the sparse
-    // side-map keeps them unchanged. (< 16 / < 48 prove no double was inlined.)
-    REQUIRE(sizeof(EntityProps) < 16);
-    REQUIRE(sizeof(LineData) < 48);
+    // side-map keeps them unchanged. (<= 16 / <= 48 -- the 16-byte EntityProps of the draw
+    // order, transparency and ByBlock -- prove no double was inlined.)
+    REQUIRE(sizeof(EntityProps) <= 16);
+    REQUIRE(sizeof(LineData) <= 48);
     REQUIRE(sizeof(CircleData) < 48);
 }
 

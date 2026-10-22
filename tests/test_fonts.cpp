@@ -66,7 +66,7 @@ TEST_CASE("text entity + font field stay compact") {
     // (DimOverrides, ~40 B) inline -- the same way DimData carries its overrides.
     // TextData grew by its second point and width factor (#42: Align / Fit, 24 B) -- a
     // text is one per string, not a per-vertex struct.
-    REQUIRE(sizeof(TextData) <= 80);
+    REQUIRE(sizeof(TextData) <= 88); // and 8 B more for the draw order, transparency and ByBlock
     REQUIRE(sizeof(MTextBlock) <= 72);
     REQUIRE(sizeof(LeaderData) <= 112);
     REQUIRE(sizeof(MLeaderData) <= 152);

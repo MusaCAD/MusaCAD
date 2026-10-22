@@ -89,6 +89,7 @@ bool segment_intersection(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2& out) {
 // The draw order an Add* command carries (defined with modify_cmd_props).
 std::uint32_t cmd_order(const Command& c);
 void set_cmd_order(Command& c, std::uint32_t order);
+void as_new_object(Command& c);
 } // namespace
 
 void GeometryEngine::start() {

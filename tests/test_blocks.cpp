@@ -52,11 +52,11 @@ bool has_seg(const std::vector<InsertSeg>& segs, Vec2 a, Vec2 b, double tol = 1e
 
 TEST_CASE("hot entity structs stay compact; new block structs are reported") {
     // The new INSERT entity must not fatten the per-primitive hot path.
-    REQUIRE(sizeof(LineData) <= 40);
+    REQUIRE(sizeof(LineData) <= 48); // a 16 B EntityProps (draw order, transparency, ByBlock)
     REQUIRE(sizeof(CircleData) <= 40);
     // InsertData is a small transform + a definition index; report it.
     INFO("sizeof(InsertData)=" << sizeof(InsertData) << " sizeof(BlockDef)=" << sizeof(BlockDef));
-    REQUIRE(sizeof(InsertData) <= 64);
+    REQUIRE(sizeof(InsertData) <= 72);
 }
 
 TEST_CASE("INSERT geometry lives once in the definition, not per-instance in the store") {

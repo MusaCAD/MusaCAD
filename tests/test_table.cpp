@@ -405,11 +405,11 @@ TEST_CASE("#22: v20 round-trips tables and the style table; v19 loads with none"
 }
 
 TEST_CASE("#22: struct sizes -- tables live in a cold arena, hot structs untouched") {
-    static_assert(sizeof(LineData) == 40, "hot struct: LineData must stay 40 B");
-    static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
-    static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
+    static_assert(sizeof(LineData) == 48, "hot struct: LineData must stay 48 B");
+    static_assert(sizeof(CircleData) == 40, "hot struct: CircleData must stay 40 B");
+    static_assert(sizeof(EntityProps) == 16, "hot struct: EntityProps must stay 16 B");
     static_assert(sizeof(TableCell) == 16, "TableCell is a pooled record -- keep it small");
-    static_assert(sizeof(TableData) == 56, "TableData size changed -- update the docs too");
+    static_assert(sizeof(TableData) == 64, "TableData size changed -- update the docs too");
     SUCCEED();
 }
 

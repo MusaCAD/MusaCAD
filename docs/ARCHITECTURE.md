@@ -960,9 +960,20 @@ A cross-cutting addition: the layer table and the ByLayer/override property mode
   per-property ByLayer flags + override values; `Layer` holds name/colour/linetype/
   lineweight + on/frozen/locked. `resolve(EntityProps, Layer)` is the conceptual
   core: an explicit override wins, else the value is inherited from the layer.
-  `EntityProps` is deliberately **8 bytes** (packed flags byte + `uint8`
+  `EntityProps` was deliberately **8 bytes** (packed flags byte + `uint8`
   hundredths-mm lineweight, no `double`) so it's cheap on every entity -- the
-  initial 24-byte version regressed inserts and was slimmed.
+  initial 24-byte version regressed inserts and was slimmed. It is now **16 bytes**,
+  grown once and on purpose: an object's own transparency (`uint8`, 0-90 percent,
+  255 ByLayer, 254 ByBlock), the ByBlock bits for colour / linetype / lineweight, and
+  the `uint32` draw order (DRAWORDER). The order is not part of equality; the store
+  stamps it as an object is added (`stamped`, from `kFirstOrder` in `kOrderStep`s, so
+  Back has room below and Above / Under room between), an edit carries it in the
+  captured command, a copy clears it (`as_new_object`). The scene turns each object's
+  order into a depth (its rank, 0 on top .. 1 under; a layout's own objects in the
+  nearer half, its viewports' model in the farther), carried per segment, point and
+  fill vertex; the viewport writes depth for fills, wipeouts and images and only tests
+  it for strokes, and PLOT paints everything sorted by it. The drawing file keeps the
+  extras in trailing `XPROPS` and `DRAWORDER` records, leaving the 7 prop tokens alone.
 * **Store.** Each Data struct gains an `EntityProps` column; the store owns the
   layer table (`layer 0` permanent at index 0) and the current layer. Layer CRUD
   is geometry-thread. **Delete rule (AutoCAD):** layer 0, the current layer, and
@@ -2684,7 +2695,7 @@ AutoCAD measured from, or QDIM's datumPoint), which takes `DimData` to **256 B**
 rotating, scaling and mirroring carry the origin with the other definition points, so the
 value stays; a stretch moves it when it is in the window. A `DIMORIGIN x y` record follows
 the `DIM` record when the origin is not 0,0. A DXF ordinate whose 10 is its 14 (as Musa CAD
-wrote them before) measures from 0,0.
+wrote them before) measures from 0,0. (With the 16-byte `EntityProps`, `DimData` is **264 B**.)
 
 TABLESTYLE: the store keeps `current_table_style_` beside the table-style table (PURGE and
 delete leave the current one alone; clearing the store resets both), saved as the native
