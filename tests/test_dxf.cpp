@@ -77,11 +77,11 @@ TEST_CASE("DXF import skips unsupported entities and reports a summary") {
 
 TEST_CASE("DXF import treats negative/invalid lineweights as inherit, not fat lines") {
     // DXF code 370 < 0 is ByLayer(-1)/ByBlock(-2)/Default(-3); a naive uint8 cast turns
-    // -2 into 254 (a 2.54mm line) and fattens the whole import. Entities with such codes
-    // must stay ByLayer; only 0..211 are real widths.
+    // -2 into 254 (a 2.54mm line) and fattens the whole import. -1 and out-of-range codes
+    // stay ByLayer, -2 is ByBlock (the block reference's); only 0..211 are real widths.
     const std::string dxf =
         "0\nSECTION\n2\nENTITIES\n"
-        "0\nLINE\n8\n0\n370\n-2\n10\n0\n20\n0\n11\n5\n21\n5\n" // ByBlock -> inherit
+        "0\nLINE\n8\n0\n370\n-2\n10\n0\n20\n0\n11\n5\n21\n5\n" // ByBlock
         "0\nLINE\n8\n0\n370\n-1\n10\n0\n20\n0\n11\n5\n21\n5\n" // ByLayer -> inherit
         "0\nLINE\n8\n0\n370\n50\n10\n0\n20\n0\n11\n5\n21\n5\n"  // 0.50mm -> explicit
         "0\nLINE\n8\n0\n370\n330\n10\n0\n20\n0\n11\n5\n21\n5\n" // out of range -> inherit
@@ -90,7 +90,8 @@ TEST_CASE("DXF import treats negative/invalid lineweights as inherit, not fat li
     const IoResult r = parse_dxf(dxf, out);
     REQUIRE(r.ok);
     REQUIRE(out.lines.size() == 4);
-    REQUIRE(out.lines[0].props.lineweight_by_layer()); // -2 stays ByLayer
+    REQUIRE(out.lines[0].props.lineweight_by_block()); // -2 is ByBlock, never a 2.54 mm line
+    REQUIRE(out.lines[0].props.lineweight == 25);
     REQUIRE(out.lines[1].props.lineweight_by_layer()); // -1 stays ByLayer
     REQUIRE_FALSE(out.lines[2].props.lineweight_by_layer()); // 50 is an explicit override
     REQUIRE(out.lines[2].props.lineweight == 50);
