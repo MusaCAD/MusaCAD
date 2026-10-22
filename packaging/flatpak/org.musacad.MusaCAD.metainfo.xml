@@ -67,27 +67,27 @@
   <screenshots>
     <screenshot type="default">
       <caption>The ribbon, drawing tabs and Properties palette with a wall of a house plan selected</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/overview.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/742295f64885ebd8def047324627ca6aab29d7c8/assets/screenshots/overview.png</image>
     </screenshot>
     <screenshot>
       <caption>Commands typed at the cursor, with their matches offered as you type</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/command-entry.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/742295f64885ebd8def047324627ca6aab29d7c8/assets/screenshots/command-entry.png</image>
     </screenshot>
     <screenshot>
       <caption>Drawing a wide polyline with its length and angle at the cursor and polar tracking</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/dynamic-input.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/742295f64885ebd8def047324627ca6aab29d7c8/assets/screenshots/dynamic-input.png</image>
     </screenshot>
     <screenshot>
       <caption>A house plan with its south elevation and room schedule</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/architectural-plan.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/742295f64885ebd8def047324627ca6aab29d7c8/assets/screenshots/architectural-plan.png</image>
     </screenshot>
     <screenshot>
       <caption>A dimensioned flange with a section view and geometric tolerances</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/mechanical-detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/742295f64885ebd8def047324627ca6aab29d7c8/assets/screenshots/mechanical-detail.png</image>
     </screenshot>
     <screenshot>
       <caption>The Hatch Editor on a wall and footing construction detail</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/89bfbb5023d9362ee5f860eed530c175df63848d/assets/screenshots/hatch-section.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/MusaCAD/MusaCAD/742295f64885ebd8def047324627ca6aab29d7c8/assets/screenshots/hatch-section.png</image>
     </screenshot>
   </screenshots>
 
