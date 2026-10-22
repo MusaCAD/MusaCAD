@@ -385,6 +385,25 @@ struct EntityProps {
     std::uint8_t lineweight = 25;       ///< override, hundredths of a mm
     std::uint8_t flags = kAllByLayer;   ///< which properties are ByLayer
 
+    /// The object's own transparency (the Properties palette's Transparency, CETRANSPARENCY):
+    /// 0 to 90 percent, or ByLayer (its layer's) or ByBlock (the block reference's).
+    static constexpr std::uint8_t kTransparencyByLayer = 255;
+    static constexpr std::uint8_t kTransparencyByBlock = 254;
+    std::uint8_t transparency = kTransparencyByLayer;
+    /// ByBlock: the colour, linetype or lineweight of the block reference the object is drawn
+    /// in (white, Continuous and the default lineweight outside one). A property set ByBlock
+    /// is neither ByLayer nor an override of its own.
+    static constexpr std::uint8_t kColorByBlock = 1u << 0;
+    static constexpr std::uint8_t kLinetypeByBlock = 1u << 1;
+    static constexpr std::uint8_t kLineweightByBlock = 1u << 2;
+    std::uint8_t by_block = 0;
+    /// Draw order (DRAWORDER): an object of a larger order is drawn over one of a smaller.
+    /// 0 until the store gives the object the next one as it is added: the first is
+    /// kFirstOrder + kOrderStep, with room below for Back and between two for Above / Under.
+    static constexpr std::uint32_t kFirstOrder = 1u << 30;
+    static constexpr std::uint32_t kOrderStep = 1024;
+    std::uint32_t order = 0;
+
     [[nodiscard]] bool color_by_layer() const noexcept { return (flags & kColorByLayer) != 0; }
     [[nodiscard]] bool linetype_by_layer() const noexcept {
         return (flags & kLinetypeByLayer) != 0;
@@ -392,9 +411,35 @@ struct EntityProps {
     [[nodiscard]] bool lineweight_by_layer() const noexcept {
         return (flags & kLineweightByLayer) != 0;
     }
-    void set_color_by_layer(bool v) noexcept { set_flag(kColorByLayer, v); }
-    void set_linetype_by_layer(bool v) noexcept { set_flag(kLinetypeByLayer, v); }
-    void set_lineweight_by_layer(bool v) noexcept { set_flag(kLineweightByLayer, v); }
+    /// ByLayer (true) or an override of its own (false); either way no longer ByBlock.
+    void set_color_by_layer(bool v) noexcept {
+        set_flag(kColorByLayer, v);
+        set_by_block(kColorByBlock, false);
+    }
+    void set_linetype_by_layer(bool v) noexcept {
+        set_flag(kLinetypeByLayer, v);
+        set_by_block(kLinetypeByBlock, false);
+    }
+    void set_lineweight_by_layer(bool v) noexcept {
+        set_flag(kLineweightByLayer, v);
+        set_by_block(kLineweightByBlock, false);
+    }
+    [[nodiscard]] bool color_by_block() const noexcept { return (by_block & kColorByBlock) != 0; }
+    [[nodiscard]] bool linetype_by_block() const noexcept { return (by_block & kLinetypeByBlock) != 0; }
+    [[nodiscard]] bool lineweight_by_block() const noexcept { return (by_block & kLineweightByBlock) != 0; }
+    /// ByBlock (true), or back to ByLayer (false).
+    void set_color_by_block(bool v) noexcept {
+        set_flag(kColorByLayer, !v);
+        set_by_block(kColorByBlock, v);
+    }
+    void set_linetype_by_block(bool v) noexcept {
+        set_flag(kLinetypeByLayer, !v);
+        set_by_block(kLinetypeByBlock, v);
+    }
+    void set_lineweight_by_block(bool v) noexcept {
+        set_flag(kLineweightByLayer, !v);
+        set_by_block(kLineweightByBlock, v);
+    }
     [[nodiscard]] bool hidden() const noexcept { return (flags & kHidden) != 0; }
     void set_hidden(bool v) noexcept { set_flag(kHidden, v); }
 
@@ -409,7 +454,12 @@ struct EntityProps {
         flags = static_cast<std::uint8_t>((flags & 0x0Fu) | ((s & 0x0Fu) << kSpaceShift));
     }
 
-    friend bool operator==(const EntityProps&, const EntityProps&) = default;
+    /// The same properties. The draw order is where an object is drawn, not what it is drawn
+    /// with: two objects alike are equal whichever is above.
+    friend bool operator==(const EntityProps& a, const EntityProps& b) noexcept {
+        return a.layer == b.layer && a.color == b.color && a.linetype == b.linetype && a.lineweight == b.lineweight &&
+               a.flags == b.flags && a.transparency == b.transparency && a.by_block == b.by_block;
+    }
 
 private:
     void set_flag(std::uint8_t bit, bool v) noexcept {
@@ -418,6 +468,9 @@ private:
         } else {
             flags = static_cast<std::uint8_t>(flags & ~bit);
         }
+    }
+    void set_by_block(std::uint8_t bit, bool v) noexcept {
+        by_block = static_cast<std::uint8_t>(v ? (by_block | bit) : (by_block & ~bit));
     }
 };
 
@@ -436,6 +489,17 @@ struct ResolvedProps {
     out.color = e.color_by_layer() ? layer.color : e.color;
     out.linetype = e.linetype_by_layer() ? layer.linetype : e.linetype;
     out.lineweight = e.lineweight_by_layer() ? layer.lineweight : e.lineweight;
+    // ByBlock outside a block reference: white, Continuous, the default lineweight (in one,
+    // the reference's -- block_resolve's member_props).
+    if (e.color_by_block()) {
+        out.color = Rgb{255, 255, 255};
+    }
+    if (e.linetype_by_block()) {
+        out.linetype = Linetype::Continuous;
+    }
+    if (e.lineweight_by_block()) {
+        out.lineweight = 25;
+    }
     return out;
 }
 

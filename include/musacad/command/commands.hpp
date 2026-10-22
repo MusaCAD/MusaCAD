@@ -1966,6 +1966,58 @@ private:
     static inline double s_offset_ = 0.35;
 };
 
+/// DRAWORDER: `Select objects:`, then `Enter object ordering option [Above objects/Under
+/// objects/Front/Back] <Back>:`; Above and Under ask `Select reference objects:` and put the
+/// objects just over or under them.
+class DrawOrderUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "DRAWORDER"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override {
+        return !done_ && (step_ == Step::Select || step_ == Step::Reference) && select_.active();
+    }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Option, Reference };
+    void after(CommandContext& ctx);
+    void options(CommandContext& ctx);
+    /// An option as a whole word: Front / Back submitted, Above / Under on to the reference
+    /// objects. False when it is none.
+    bool choose(CommandContext& ctx, const std::string& u);
+    Step step_ = Step::Select;
+    core::DrawOrderCommand::Op op_ = core::DrawOrderCommand::Op::Back;
+    std::string preset_; ///< an option given before the selection (the ribbon's Draw Order menu)
+    SelectObjectsPhase select_;
+    bool done_ = false;
+};
+
+/// TEXTTOFRONT: `Bring to front [Text/Dimensions/Leaders/All] <All>:` -- those objects of the
+/// drawing drawn over everything else. HATCHTOBACK: every hatch (and wipeout) under it.
+class TextToFrontCommand final : public ICommand {
+public:
+    explicit TextToFrontCommand(bool hatches) : hatches_(hatches) {}
+    std::string name() const override { return hatches_ ? "HATCHTOBACK" : "TEXTTOFRONT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    bool hatches_;
+    bool done_ = false;
+};
+
 /// DIMINSPECT and -DIMINSPECT: `Select dimensions:` (or the ones selected), then the
 /// Inspection Dimension window where there is one; otherwise, and always for -DIMINSPECT,
 /// `Add inspection data or [Remove] <Add>:`, `Enter shape option [Round/Angular/None]
@@ -2949,7 +3001,7 @@ private:
 /// Manager; -LINETYPE asks `Enter an option [?/Create/Load/Set]:`, CELTYPE the name.
 class CurrentPropCommand final : public ICommand {
 public:
-    enum class Kind : std::uint8_t { Color, Linetype, Lineweight };
+    enum class Kind : std::uint8_t { Color, Linetype, Lineweight, Transparency };
     CurrentPropCommand(Kind kind, std::string name, bool dialog) : kind_(kind), name_(std::move(name)), dialog_(dialog) {}
     std::string name() const override { return name_; }
     void start(CommandContext& ctx) override;

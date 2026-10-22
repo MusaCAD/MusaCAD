@@ -55,9 +55,16 @@ Rgb unpack_rgb(std::uint32_t v) {
 // renderer can give it a heavier on-screen weight, never merged with same-colour geometry);
 // the height bucket (1/8-unit quanta, 0 for non-text) further splits text by cap height so the
 // renderer can taper that weight to the glyph's on-screen size.
-/// The opacity the entity being emitted takes from its layer's transparency, set by
-/// visible() as each entity is checked (255 = opaque).
+/// The opacity of the entity being emitted -- its own transparency, else its layer's -- set
+/// by visible() as each entity is checked (255 = opaque).
 thread_local std::uint8_t t_alpha = 255;
+/// The draw order of the entity being emitted as a depth, 0 on top to 1 underneath, set by
+/// visible() from its order's rank among `t_orders` (every live object's, sorted); a layout
+/// build puts its own objects in the nearer half, the model seen through its viewports in
+/// the farther (`t_depth_scale` 0.5).
+thread_local float t_depth = 0.5f;
+thread_local const std::vector<std::uint32_t>* t_orders = nullptr;
+thread_local float t_depth_scale = 1.0f;
 /// Bits 49-56 of a line key, bits 24-31 of a colour key: the transparency (255 - alpha),
 /// so an opaque batch keeps the key it always had.
 std::uint64_t line_key(Rgb c, std::uint8_t lw, bool is_text, std::uint64_t height_bucket) {
@@ -90,8 +97,18 @@ bool vp_frozen(std::uint16_t layer) {
 }
 bool visible(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
+    if (t_orders != nullptr && !t_orders->empty()) {
+        const auto at = std::lower_bound(t_orders->begin(), t_orders->end(), p.order);
+        const double rank = static_cast<double>(at - t_orders->begin());
+        const double n = static_cast<double>(t_orders->size());
+        t_depth = static_cast<float>(static_cast<double>(t_depth_scale) * (1.0 - (rank + 1.0) / (n + 1.0)));
+    }
     if (l != nullptr) {
-        t_alpha = static_cast<std::uint8_t>(std::lround(255.0 * (100.0 - std::min<int>(l->transparency, 90)) / 100.0));
+        // Its own (0 to 90 percent), or ByLayer the layer's; ByBlock outside a reference: none.
+        const int percent = p.transparency <= 90                                     ? p.transparency
+                            : p.transparency == EntityProps::kTransparencyByBlock ? 0
+                                                                                   : l->transparency;
+        t_alpha = static_cast<std::uint8_t>(std::lround(255.0 * (100.0 - std::min<int>(percent, 90)) / 100.0));
     }
     return l != nullptr && l->on && !l->frozen && !p.hidden() && p.space() == t_build_space &&
            !vp_frozen(p.layer);
@@ -183,6 +200,49 @@ std::vector<Vec2> clip_polygon(std::vector<Vec2> poly, double x0, double y0, dou
     return poly;
 }
 
+// Every live object's draw order, sorted (the ranks visible() turns into depths).
+std::vector<std::uint32_t> live_orders(const GeometryStore& store) {
+    std::vector<std::uint32_t> out;
+    const auto add = [&](const auto& arena) {
+        const auto data = arena.data();
+        for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+            if (!arena.alive(i)) {
+                continue;
+            }
+            if constexpr (requires { data[i].props.order; }) {
+                out.push_back(data[i].props.order);
+            } else if constexpr (requires { data[i].text.props.order; }) {
+                out.push_back(data[i].text.props.order);
+            }
+        }
+    };
+    add(store.points());
+    add(store.xlines());
+    add(store.ellipses());
+    add(store.lines());
+    add(store.circles());
+    add(store.arcs());
+    add(store.polylines());
+    add(store.splines());
+    add(store.texts());
+    add(store.attdefs());
+    add(store.dimensions());
+    add(store.leaders());
+    add(store.mtexts());
+    add(store.mleaders());
+    add(store.hatches());
+    add(store.fcfs());
+    add(store.datums());
+    add(store.images());
+    add(store.viewports());
+    add(store.tables());
+    add(store.mlines());
+    add(store.inserts());
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 ResolvedProps entity_resolved(const GeometryStore& store, const EntityProps& p) {
     const Layer* l = store.layer(p.layer);
     return l != nullptr ? resolve(p, *l) : ResolvedProps{};
@@ -216,6 +276,12 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                               std::uint8_t space, bool with_viewports) {
     t_build_space = space;
     t_alpha = 255;
+    // Draw order: a layout's own objects over the model seen through its viewports.
+    const std::vector<std::uint32_t> orders = live_orders(store);
+    const float depth_scale = with_viewports && space != 0 ? 0.5f : 1.0f;
+    t_orders = &orders;
+    t_depth_scale = depth_scale;
+    t_depth = 0.5f;
     const IFontEngine* fonts = store.font_engine();
     out.points.clear();
     out.line_vertices.clear();
@@ -225,6 +291,10 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
     out.fill_vertices.clear();
     out.fill_batches.clear();
     out.wipeout_vertices.clear();
+    out.line_depth.clear();
+    out.point_depth.clear();
+    out.fill_depth.clear();
+    out.wipeout_depth.clear();
     out.images.clear();
     out.text_edit_targets.clear();
     out.attrib_edit_targets.clear();
@@ -247,26 +317,39 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                                          l.page.landscape});
     }
 
-    // Lines group by (colour, lineweight); points and fills by colour.
-    std::map<std::uint64_t, std::vector<Vec2>> line_groups;
-    std::map<std::uint32_t, std::vector<Vec2>> point_groups;
-    std::map<std::uint32_t, std::vector<Vec2>> fill_groups;
-    std::map<std::uint32_t, std::vector<Vec2>> gradient_groups; // computed colours (GRADIENT bands)
+    // Lines group by (colour, lineweight); points and fills by colour. Each keeps the depth
+    // of what it holds: per segment, per point, per fill vertex.
+    struct Group {
+        std::vector<Vec2> v;
+        std::vector<float> d;
+    };
+    std::map<std::uint64_t, Group> line_groups;
+    std::map<std::uint32_t, Group> point_groups;
+    std::map<std::uint32_t, Group> fill_groups;
+    std::map<std::uint32_t, Group> gradient_groups; // computed colours (GRADIENT bands)
 
     const auto add_line = [&](Rgb c, std::uint8_t lw, Vec2 a, Vec2 b, bool is_text = false,
                               double text_height = 0.0) {
-        auto& v = line_groups[line_key(c, lw, is_text, height_bucket(text_height))];
-        v.push_back(a);
-        v.push_back(b);
+        Group& g = line_groups[line_key(c, lw, is_text, height_bucket(text_height))];
+        g.v.push_back(a);
+        g.v.push_back(b);
+        g.d.push_back(t_depth);
     };
     const auto add_lines = [&](Rgb c, std::uint8_t lw, const std::vector<Vec2>& segs,
                                bool is_text = false, double text_height = 0.0) {
-        auto& v = line_groups[line_key(c, lw, is_text, height_bucket(text_height))];
-        v.insert(v.end(), segs.begin(), segs.end());
+        Group& g = line_groups[line_key(c, lw, is_text, height_bucket(text_height))];
+        g.v.insert(g.v.end(), segs.begin(), segs.end());
+        g.d.insert(g.d.end(), segs.size() / 2, t_depth);
     };
     const auto add_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
-        auto& v = fill_groups[color_key(c)];
-        v.insert(v.end(), tris.begin(), tris.end());
+        Group& g = fill_groups[color_key(c)];
+        g.v.insert(g.v.end(), tris.begin(), tris.end());
+        g.d.insert(g.d.end(), tris.size(), t_depth);
+    };
+    const auto add_point = [&](Rgb c, Vec2 p) {
+        Group& g = point_groups[color_key(c)];
+        g.v.push_back(p);
+        g.d.push_back(t_depth);
     };
     // A paragraph's layout in its colour, the runs a format code colours (\C, \c) in theirs.
     std::vector<Vec2> mtext_part;
@@ -299,8 +382,9 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         emit(c, seg, lay.segments.size(), fill, lay.fills.size());
     };
     const auto add_gradient_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
-        auto& v = gradient_groups[color_key(c)];
-        v.insert(v.end(), tris.begin(), tris.end());
+        Group& g = gradient_groups[color_key(c)];
+        g.v.insert(g.v.end(), tris.begin(), tris.end());
+        g.d.insert(g.d.end(), tris.size(), t_depth);
     };
 
     // The two coexisting text paths share one layout; only the per-glyph geometry source
@@ -347,7 +431,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             return;
         }
         if (shape == 0 && (pdmode & 96) == 0) {
-            point_groups[color_key(r.color)].push_back(d->p);
+            add_point(r.color, d->p);
             return;
         }
         marker.clear();
@@ -632,6 +716,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             inst.tri_uv = uv_tris;
             inst.tri_world = image_uv_to_world(*im, uv_tris);
         }
+        inst.depth = t_depth;
         out.images.push_back(inst);
         if (store.image_frame() != 0) {
             // IMAGEFRAME: the clip boundary's outline in the entity's colour.
@@ -864,6 +949,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             htris.clear();
             hatch::triangulate_filled(store.hatch_loops(*hd), htris);
             out.wipeout_vertices.insert(out.wipeout_vertices.end(), htris.begin(), htris.end());
+            out.wipeout_depth.insert(out.wipeout_depth.end(), htris.size(), t_depth);
             if (store.wipeout_frames()) {
                 for (const auto& loop : store.hatch_loops(*hd)) {
                     for (std::size_t i = 0; i < loop.size(); ++i) {
@@ -978,10 +1064,9 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             add_line(s.color, s.lineweight, s.a, s.b);
         }
         for (const InsertFill& f : ifills) {
-            auto& v = fill_groups[color_key(f.color)];
-            v.push_back(f.a);
-            v.push_back(f.b);
-            v.push_back(f.c);
+            Group& g = fill_groups[color_key(f.color)];
+            g.v.insert(g.v.end(), {f.a, f.b, f.c});
+            g.d.insert(g.d.end(), 3, t_depth);
         }
         // A reference with attributes is an editor target (EATTEDIT / double-click): its
         // extent for the hit-test and its values, defaults filled in.
@@ -1020,7 +1105,8 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             RenderSnapshot model;
             build_render_snapshot_in(store, kernel, model, tolerance, ltscale, 0, false);
             t_build_space = space; // the model build switched it
-            std::vector<Vec2> segs;
+            t_orders = &orders;
+            t_depth_scale = depth_scale;
             std::vector<Vec2> tris;
             std::vector<Vec2> poly;
             for (const EntityHandle h : vps) {
@@ -1038,6 +1124,8 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                                              ps_scaled ? ltscale / v->scale : ltscale, 0, false);
                     t_vp_frozen = nullptr;
                     t_build_space = space;
+                    t_orders = &orders;
+                    t_depth_scale = depth_scale;
                     model_src = &own;
                 }
                 const RenderSnapshot& mdl = *model_src;
@@ -1059,20 +1147,19 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     return Vec2{v->center.x + (m.x - v->view_center.x) * sc,
                                 v->center.y + (m.y - v->view_center.y) * sc};
                 };
+                // The model's draw order behind the sheet's own objects (the farther half).
+                const auto model_depth = [](const std::vector<float>& d, std::size_t i) {
+                    return 0.5f + 0.5f * (i < d.size() ? d[i] : 0.5f);
+                };
                 for (const ColorBatch& b : mdl.line_batches) {
                     t_alpha = b.alpha; // the model's own transparency, through the viewport
-                    segs.clear();
-                    for_each_line_segment(mdl, b, [&](const Vec2& ma, const Vec2& mb) {
-                        Vec2 a = to_paper(ma);
-                        Vec2 c = to_paper(mb);
+                    for (std::uint32_t s = b.first; s < b.first + b.count; ++s) {
+                        Vec2 a = to_paper(mdl.line_vertices[2 * static_cast<std::size_t>(s)]);
+                        Vec2 c = to_paper(mdl.line_vertices[2 * static_cast<std::size_t>(s) + 1]);
                         if (clip_segment(a, c, x0, y0, x1, y1)) {
-                            segs.push_back(a);
-                            segs.push_back(c);
+                            t_depth = model_depth(mdl.line_depth, s);
+                            add_line(b.color, b.lineweight, a, c, b.is_text, static_cast<double>(b.text_height) * sc);
                         }
-                    });
-                    if (!segs.empty()) {
-                        add_lines(b.color, b.lineweight, segs, b.is_text,
-                                  static_cast<double>(b.text_height) * sc);
                     }
                 }
                 for (const ColorBatch& b : mdl.point_batches) {
@@ -1080,42 +1167,45 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     for (std::uint32_t i = b.first; i < b.first + b.count; ++i) {
                         const Vec2 p = to_paper(mdl.points[i]);
                         if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
-                            point_groups[color_key(b.color)].push_back(p);
+                            t_depth = model_depth(mdl.point_depth, i);
+                            add_point(b.color, p);
                         }
                     }
                 }
-                const auto clipped_tris = [&](const std::vector<Vec2>& src, std::uint32_t first,
-                                              std::uint32_t count, std::vector<Vec2>& dst) {
+                // Each triangle mapped and clipped, at its own depth.
+                const auto clipped_tri = [&](const std::vector<Vec2>& src, std::uint32_t i, std::vector<Vec2>& dst) {
                     dst.clear();
-                    for (std::uint32_t i = first; i + 2 < first + count; i += 3) {
-                        poly = {to_paper(src[i]), to_paper(src[i + 1]), to_paper(src[i + 2])};
-                        poly = clip_polygon(poly, x0, y0, x1, y1);
-                        for (std::size_t j = 1; j + 1 < poly.size(); ++j) {
-                            dst.push_back(poly[0]);
-                            dst.push_back(poly[j]);
-                            dst.push_back(poly[j + 1]);
-                        }
+                    poly = {to_paper(src[i]), to_paper(src[i + 1]), to_paper(src[i + 2])};
+                    poly = clip_polygon(poly, x0, y0, x1, y1);
+                    for (std::size_t j = 1; j + 1 < poly.size(); ++j) {
+                        dst.push_back(poly[0]);
+                        dst.push_back(poly[j]);
+                        dst.push_back(poly[j + 1]);
                     }
                 };
                 for (const ColorBatch& b : mdl.fill_batches) {
                     t_alpha = b.alpha;
-                    clipped_tris(mdl.fill_vertices, b.first, b.count, tris);
-                    if (tris.empty()) {
-                        continue;
-                    }
-                    if (b.computed_color) {
-                        add_gradient_fills(b.color, tris);
-                    } else {
-                        add_fills(b.color, tris);
+                    for (std::uint32_t i = b.first; i + 2 < b.first + b.count; i += 3) {
+                        clipped_tri(mdl.fill_vertices, i, tris);
+                        if (tris.empty()) {
+                            continue;
+                        }
+                        t_depth = model_depth(mdl.fill_depth, i);
+                        if (b.computed_color) {
+                            add_gradient_fills(b.color, tris);
+                        } else {
+                            add_fills(b.color, tris);
+                        }
                     }
                 }
-                if (!mdl.wipeout_vertices.empty()) {
-                    clipped_tris(mdl.wipeout_vertices, 0,
-                                 static_cast<std::uint32_t>(mdl.wipeout_vertices.size()), tris);
+                for (std::uint32_t i = 0; i + 2 < mdl.wipeout_vertices.size(); i += 3) {
+                    clipped_tri(mdl.wipeout_vertices, i, tris);
                     out.wipeout_vertices.insert(out.wipeout_vertices.end(), tris.begin(), tris.end());
+                    out.wipeout_depth.insert(out.wipeout_depth.end(), tris.size(), model_depth(mdl.wipeout_depth, i));
                 }
                 for (const ImageInstance& im : mdl.images) {
                     ImageInstance inst = im;
+                    inst.depth = 0.5f + 0.5f * im.depth;
                     bool inside = true;
                     for (Vec2& q : inst.quad) {
                         q = to_paper(q);
@@ -1131,38 +1221,43 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
 
     // Flatten groups into contiguous batches over the payload arrays.
     const auto alpha_of = [](std::uint64_t transparency) { return static_cast<std::uint8_t>(255 - (transparency & 0xFFu)); };
-    for (auto& [key, verts] : line_groups) {
+    for (auto& [key, g] : line_groups) {
         ColorBatch b{unpack_rgb(static_cast<std::uint32_t>((key >> 9) & 0xFFFFFFu)),
                      static_cast<std::uint32_t>(out.line_vertices.size() / 2),
-                     static_cast<std::uint32_t>(verts.size() / 2),
+                     static_cast<std::uint32_t>(g.v.size() / 2),
                      static_cast<std::uint8_t>(key & 0xff), ((key >> 8) & 1u) != 0,
                      static_cast<float>((key >> 33) & 0xFFFFu) / 8.0f};
         b.alpha = alpha_of(key >> 49);
         out.line_batches.push_back(b);
-        out.line_vertices.insert(out.line_vertices.end(), verts.begin(), verts.end());
+        out.line_vertices.insert(out.line_vertices.end(), g.v.begin(), g.v.end());
+        out.line_depth.insert(out.line_depth.end(), g.d.begin(), g.d.end());
     }
-    for (auto& [key, pts] : point_groups) {
+    for (auto& [key, g] : point_groups) {
         ColorBatch b{unpack_rgb(key & 0xFFFFFFu), static_cast<std::uint32_t>(out.points.size()),
-                     static_cast<std::uint32_t>(pts.size()), 0};
+                     static_cast<std::uint32_t>(g.v.size()), 0};
         b.alpha = alpha_of(key >> 24);
         out.point_batches.push_back(b);
-        out.points.insert(out.points.end(), pts.begin(), pts.end());
+        out.points.insert(out.points.end(), g.v.begin(), g.v.end());
+        out.point_depth.insert(out.point_depth.end(), g.d.begin(), g.d.end());
     }
-    for (auto& [key, verts] : fill_groups) {
+    for (auto& [key, g] : fill_groups) {
         ColorBatch b{unpack_rgb(key & 0xFFFFFFu), static_cast<std::uint32_t>(out.fill_vertices.size()),
-                     static_cast<std::uint32_t>(verts.size()), 0};
+                     static_cast<std::uint32_t>(g.v.size()), 0};
         b.alpha = alpha_of(key >> 24);
         out.fill_batches.push_back(b);
-        out.fill_vertices.insert(out.fill_vertices.end(), verts.begin(), verts.end());
+        out.fill_vertices.insert(out.fill_vertices.end(), g.v.begin(), g.v.end());
+        out.fill_depth.insert(out.fill_depth.end(), g.d.begin(), g.d.end());
     }
-    for (auto& [key, verts] : gradient_groups) {
+    for (auto& [key, g] : gradient_groups) {
         ColorBatch b{unpack_rgb(key & 0xFFFFFFu), static_cast<std::uint32_t>(out.fill_vertices.size()),
-                     static_cast<std::uint32_t>(verts.size()), 0};
+                     static_cast<std::uint32_t>(g.v.size()), 0};
         b.alpha = alpha_of(key >> 24);
         b.computed_color = true;
         out.fill_batches.push_back(b);
-        out.fill_vertices.insert(out.fill_vertices.end(), verts.begin(), verts.end());
+        out.fill_vertices.insert(out.fill_vertices.end(), g.v.begin(), g.v.end());
+        out.fill_depth.insert(out.fill_depth.end(), g.d.begin(), g.d.end());
     }
+    t_orders = nullptr; // `orders` ends here (a nested build's caller points it back)
 
     // World-space bounds of live geometry (for ZOOM extents).
     out.has_bounds = false;

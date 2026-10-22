@@ -139,8 +139,20 @@ void GlCommandBuffer::set_scissor(int x, int y, int width, int height) {
 
 void GlCommandBuffer::clear_scissor() { gl_->glDisable(GL_SCISSOR_TEST); }
 
+void GlCommandBuffer::set_depth(bool test, bool write) {
+    if (test) {
+        gl_->glEnable(GL_DEPTH_TEST);
+        gl_->glDepthFunc(GL_LEQUAL);
+    } else {
+        gl_->glDisable(GL_DEPTH_TEST);
+    }
+    gl_->glDepthMask(write ? GL_TRUE : GL_FALSE);
+}
+
 void GlCommandBuffer::clear(ClearColor color) {
     gl_->glClearColor(color.r, color.g, color.b, color.a);
+    gl_->glDepthMask(GL_TRUE); // the depth buffer is cleared only while it may be written
+    gl_->glClearDepth(1.0);
     gl_->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 

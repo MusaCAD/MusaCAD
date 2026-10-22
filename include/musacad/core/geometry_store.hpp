@@ -1165,6 +1165,24 @@ public:
     /// Replaces an entity's property attributes. Returns false if invalid.
     bool set_props(EntityHandle h, const EntityProps& props) noexcept;
 
+    // --- draw order (DRAWORDER) --------------------------------------------------
+    /// The orders a new object is given (EntityProps::kFirstOrder, kOrderStep).
+    static constexpr std::uint32_t kFirstOrder = EntityProps::kFirstOrder;
+    static constexpr std::uint32_t kOrderStep = EntityProps::kOrderStep;
+    /// `p` with the next draw order when it has none (a new object is drawn over the rest);
+    /// an order it has is kept, and the next one given stays above it.
+    [[nodiscard]] EntityProps stamped(EntityProps p) noexcept {
+        if (p.order == 0) {
+            next_order_ = next_order_ <= 0xFFFFFFFFu - kOrderStep ? next_order_ + kOrderStep : next_order_;
+            p.order = next_order_;
+        } else if (p.order > next_order_) {
+            next_order_ = p.order;
+        }
+        return p;
+    }
+    /// The order the next new object will be drawn above.
+    [[nodiscard]] std::uint32_t top_order() const noexcept { return next_order_; }
+
     // --- layer table --------------------------------------------------------
     // Layer 0 always exists at index 0. Layers are few; a contiguous vector is
     // plenty. Indices are stable for a session's lifetime (no mid-session
@@ -1511,6 +1529,7 @@ private:
     std::vector<Vec2> spline_pool_;
     std::vector<double> spline_knot_pool_; // splines' own knots
     std::vector<SplineFit> spline_fits_;    // splines' fit data (SplineData::fit_index)
+    std::uint32_t next_order_ = kFirstOrder; // the draw order the last new object was given
     std::vector<char> string_pool_; // text content
     std::vector<Vec2> hatch_vtx_pool_;            // hatch boundary-loop vertices (all loops)
     std::vector<std::uint32_t> hatch_loop_lens_;  // per-loop vertex counts

@@ -122,6 +122,7 @@ struct ImageInstance {
     std::uint16_t def = 0;
     std::uint32_t def_version = 0;
     EntityHandle handle;         ///< so pick/highlight can map back
+    float depth = 0.5f;          ///< draw order, as the scene's depths (see RenderSnapshot::line_depth)
     /// A polygonal clip: the boundary in world space, and the same region as textured
     /// triangles (3 vertices each; `tri_uv` in image fractions). Empty = the quad.
     std::vector<Vec2> clip_world;
@@ -220,6 +221,13 @@ struct RenderSnapshot {
     std::vector<Vec2> line_vertices; // 2 entries per segment, ordered by colour batch
     std::vector<ConstructionLineView> construction_lines; // XLINE/RAY: clipped per-frame
     std::vector<Vec2> wipeout_vertices; // WIPEOUT masks: triangles drawn in the background colour
+    /// Draw order as depth, 0 (on top) to 1 (underneath): one per segment of line_vertices,
+    /// per point, per vertex of fill_vertices and of wipeout_vertices. The viewport draws
+    /// fills over or under each other, and lines over or under them, by it (DRAWORDER).
+    std::vector<float> line_depth;
+    std::vector<float> point_depth;
+    std::vector<float> fill_depth;
+    std::vector<float> wipeout_depth;
     std::uint8_t active_space = 0;      // 0 model space, else the active layout's id
     std::vector<LayoutInfo> layouts;    // the layout tabs (name, sheet size)
     MspaceInfo mspace;                  // MSPACE: editing model space through a viewport
@@ -428,6 +436,10 @@ struct RenderSnapshot {
         line_vertices.clear();
         construction_lines.clear();
         wipeout_vertices.clear();
+        line_depth.clear();
+        point_depth.clear();
+        fill_depth.clear();
+        wipeout_depth.clear();
         active_space = 0;
         layouts.clear();
         mspace = MspaceInfo{};

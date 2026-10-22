@@ -38,6 +38,9 @@ public:
     virtual void set_scissor(int x, int y, int width, int height) = 0;
     virtual void clear_scissor() = 0;
     virtual void clear(ClearColor color) = 0;
+    /// Depth testing (nearer or equal passes) and depth writes for the draws that follow: the
+    /// scene's draw order (DRAWORDER). Off for both until set.
+    virtual void set_depth(bool test, bool write) = 0;
 
     virtual void bind_pipeline(const GpuPipeline& pipeline) = 0;
     virtual void bind_vertex_buffer(std::uint32_t binding, const GpuBuffer& buffer,

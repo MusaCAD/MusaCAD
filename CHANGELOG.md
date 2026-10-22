@@ -9,6 +9,20 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Draw order** (#55) -- every object has its place in the draw order: a new one over the
+  rest, a copy over its source, an edit where it was. **DRAWORDER** (`DR`, Home > Modify >
+  Draw Order) brings objects to the front, sends them to the back, or puts them above or under
+  others; **TEXTTOFRONT** brings text, dimensions or leaders over everything and
+  **HATCHTOBACK** sends the hatches under it. Fills, hatches, wipeouts and images hide what is
+  under them and not what is over them, on screen and when plotted; TEXTMASK's mask goes just
+  under its text. Kept in the drawing; a DXF's own order is its draw order.
+- **Transparency on single objects** (#68, #69) -- the Properties palette's Transparency
+  (ByLayer, ByBlock or 0 to 90 percent) and **CETRANSPARENCY** for new objects; kept in the
+  drawing and in DXF.
+- **ByBlock** (#68) -- colour, linetype and lineweight ByBlock: an object in a block is drawn
+  in the block reference's (outside one, white, Continuous and the default lineweight). In the
+  Properties palette, CECOLOR, CELTYPE and CELWEIGHT; AutoCAD's ByBlock objects come in from
+  DXF so and go out so.
 - **Wipeouts as objects of their own** (#40) -- a wipeout is a Wipeout in the Properties
   palette, LIST, the selection cycling list and Quick Select (which has the type), not a hatch
   to HATCHEDIT, Select Similar or Match Properties; EXPLODE leaves the lines of its frame. DXF

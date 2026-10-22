@@ -742,16 +742,29 @@ void emit_props_body(std::string& s, const Document& doc, const EntityProps& p) 
     const std::string layer =
         p.layer < doc.layers.size() ? doc.layers[p.layer].name : std::string("0");
     code(s, 8, layer);
-    if (p.color_by_layer()) {
+    if (p.color_by_block()) {
+        code_i(s, 62, 0); // ByBlock
+    } else if (p.color_by_layer()) {
         code_i(s, 62, 256); // ByLayer
     } else {
         code_i(s, 420, true_color(p.color));
     }
-    if (!p.linetype_by_layer()) {
+    if (p.linetype_by_block()) {
+        code(s, 6, "BYBLOCK");
+    } else if (!p.linetype_by_layer()) {
         code(s, 6, linetype_name(p.linetype));
     }
-    if (!p.lineweight_by_layer()) {
+    if (p.lineweight_by_block()) {
+        code_i(s, 370, -2);
+    } else if (!p.lineweight_by_layer()) {
         code_i(s, 370, p.lineweight);
+    }
+    // Transparency (440): 0x02000000 with the opacity (0 clear .. 255 opaque) in the low
+    // byte, or 0x01000000 for ByBlock; none for ByLayer.
+    if (p.transparency == EntityProps::kTransparencyByBlock) {
+        code_i(s, 440, 0x01000000L);
+    } else if (p.transparency <= 90) {
+        code_i(s, 440, 0x02000000L | std::lround(255.0 * (100.0 - p.transparency) / 100.0));
     }
     if (p.space() != 0) {
         code_i(s, 67, 1); // paper space (the layouts are written as one paper space)
@@ -2348,6 +2361,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
     };
 
+    std::uint32_t dxf_order = EntityProps::kFirstOrder;
     const auto props_of = [&](const std::vector<Pair>& body) {
         EntityProps p;
         const std::string* layer = find(body, 8);
@@ -2359,10 +2373,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             p.set_color_by_layer(false);
             p.color = from_true_color(to_l(*tc));
         } else if (const std::string* aci = find(body, 62)) {
-            // 0=ByBlock, 256=ByLayer both inherit; 1..255 is a concrete colour override.
+            // 256=ByLayer, 0=ByBlock (the reference's); 1..255 is a concrete colour override.
             if (const long v = to_l(*aci); v >= 1 && v <= 255) {
                 p.set_color_by_layer(false);
                 p.color = aci_to_rgb(v);
+            } else if (v == 0) {
+                p.set_color_by_block(true);
             }
         }
         if (const std::string* lt = find(body, 6)) {
@@ -2370,20 +2386,37 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             for (char& ch : u) {
                 ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
             }
-            if (u != "BYLAYER" && u != "BYBLOCK") { // those are the layer's
+            if (u == "BYBLOCK") {
+                p.set_linetype_by_block(true);
+            } else if (u != "BYLAYER") { // that is the layer's
                 p.set_linetype_by_layer(false);
                 p.linetype = linetype_from(*lt);
             }
         }
         if (const std::string* lw = find(body, 370)) {
-            // 0..211 = an explicit width; -1/-2/-3 (ByLayer/ByBlock/Default) or anything
+            // 0..211 = an explicit width; -2 ByBlock; -1/-3 (ByLayer/Default) or anything
             // out of range means "inherit", so leave the ByLayer default rather than
-            // casting -2 to 254 (a 2.54mm line) and fattening the whole import.
+            // casting -3 to 253 (a 2.53mm line) and fattening the whole import.
             if (const long w = to_l(*lw); w >= 0 && w <= 211) {
                 p.set_lineweight_by_layer(false);
                 p.lineweight = static_cast<std::uint8_t>(w);
+            } else if (w == -2) {
+                p.set_lineweight_by_block(true);
             }
         }
+        if (const std::string* tr = find(body, 440)) { // 0x02000000 | opacity, 0x01000000 ByBlock
+            const long v = to_l(*tr);
+            if ((v & 0x01000000L) != 0 && (v & 0x02000000L) == 0) {
+                p.transparency = EntityProps::kTransparencyByBlock;
+            } else if ((v & 0x02000000L) != 0) {
+                const double opacity = static_cast<double>(v & 0xFFL) / 255.0;
+                p.transparency = static_cast<std::uint8_t>(std::clamp(std::lround(100.0 * (1.0 - opacity)), 0L, 90L));
+            }
+        }
+        // The file's order is the draw order (the first drawn first), as AutoCAD draws a
+        // drawing without a sort table.
+        dxf_order += EntityProps::kOrderStep;
+        p.order = dxf_order;
         return p;
     };
 

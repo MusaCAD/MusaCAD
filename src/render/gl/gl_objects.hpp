@@ -84,6 +84,7 @@ public:
     void set_scissor(int x, int y, int width, int height) override;
     void clear_scissor() override;
     void clear(ClearColor color) override;
+    void set_depth(bool test, bool write) override;
     void bind_pipeline(const GpuPipeline& pipeline) override;
     void bind_vertex_buffer(std::uint32_t binding, const GpuBuffer& buffer,
                             std::size_t offset) override;

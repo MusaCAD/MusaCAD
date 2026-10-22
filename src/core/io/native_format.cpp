@@ -11,6 +11,7 @@
 #include <charconv>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace musacad::core::io {
 
@@ -1842,6 +1843,49 @@ std::string serialize_native(const Document& doc) {
         s += d.letter;
         s += '\n';
     }
+    // v45: the objects' own transparency and ByBlock properties, where they have any --
+    // XPROPS <scope: - or a block's index> <list> <index> <transparency> <ByBlock bits> --
+    // and the draw order, bottom first: DRAWORDER <count>, then <list> <index> per object.
+    const auto xprops = [&](const std::string& scope, const auto& d) {
+        for_each_entity_props(d, [&](const char* list, std::size_t i, const EntityProps& p) {
+            if (p.transparency != EntityProps::kTransparencyByLayer || p.by_block != 0) {
+                s += "XPROPS " + scope + ' ' + list + ' ';
+                append_uint(s, i);
+                s += ' ';
+                append_uint(s, p.transparency);
+                s += ' ';
+                append_uint(s, p.by_block);
+                s += '\n';
+            }
+        });
+    };
+    xprops("-", doc);
+    for (std::size_t b = 0; b < doc.block_defs.size(); ++b) {
+        xprops(std::to_string(b), doc.block_defs[b]);
+    }
+    struct Drawn {
+        std::uint32_t order;
+        const char* list;
+        std::size_t index;
+    };
+    std::vector<Drawn> drawn;
+    bool ordered = false;
+    for_each_entity_props(doc, [&](const char* list, std::size_t i, const EntityProps& p) {
+        drawn.push_back(Drawn{p.order, list, i});
+        ordered = ordered || p.order != 0;
+    });
+    if (ordered) {
+        std::stable_sort(drawn.begin(), drawn.end(), [](const Drawn& a, const Drawn& b) { return a.order < b.order; });
+        s += "DRAWORDER ";
+        append_uint(s, drawn.size());
+        for (const Drawn& d : drawn) {
+            s += ' ';
+            s += d.list;
+            s += ' ';
+            append_uint(s, d.index);
+        }
+        s += '\n';
+    }
 
     s += "END\n";
     return s;
@@ -1849,6 +1893,15 @@ std::string serialize_native(const Document& doc) {
 
 IoResult parse_native(std::string_view text, Document& out) {
     Document doc;
+    struct XProps {
+        std::string scope; ///< "-" the drawing, else a block's index
+        std::string list;
+        std::size_t index = 0;
+        std::uint8_t transparency = EntityProps::kTransparencyByLayer;
+        std::uint8_t by_block = 0;
+    };
+    std::vector<XProps> xprops;                               // v45
+    std::vector<std::pair<std::string, std::size_t>> drawn; // v45: bottom first
     doc.layers.clear();     // built from the file (or defaulted below for v1)
     doc.dimstyles.clear();  // built from DIMSTYLE records (defaulted below if none)
     bool header_seen = false;
@@ -2744,6 +2797,28 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             for (std::uint64_t i = 0; i < n; ++i) {
                 doc.mleaders.back().extra_tips.push_back({vals[i * 2], vals[i * 2 + 1]});
+            }
+        } else if (key == "XPROPS") {
+            std::uint64_t idx = 0;
+            std::uint64_t tr = 0;
+            std::uint64_t bb = 0;
+            if (tok.size() != 6 || !to_uint(tok[3], idx) || !to_uint(tok[4], tr) || !to_uint(tok[5], bb) || tr > 255 ||
+                bb > 7) {
+                return fail("malformed XPROPS");
+            }
+            xprops.push_back(XProps{std::string(tok[1]), std::string(tok[2]), static_cast<std::size_t>(idx),
+                                    static_cast<std::uint8_t>(tr), static_cast<std::uint8_t>(bb)});
+        } else if (key == "DRAWORDER") {
+            std::uint64_t n = 0;
+            if (tok.size() < 2 || !to_uint(tok[1], n) || tok.size() != 2 + n * 2) {
+                return fail("malformed DRAWORDER");
+            }
+            for (std::uint64_t i = 0; i < n; ++i) {
+                std::uint64_t idx = 0;
+                if (!to_uint(tok[3 + i * 2], idx)) {
+                    return fail("malformed DRAWORDER");
+                }
+                drawn.emplace_back(std::string(tok[2 + i * 2]), static_cast<std::size_t>(idx));
             }
         } else if (key == "SPLINEFIT") {
             // knots tolerance closed (0 | 1 tx ty) (0 | 1 tx ty) n x y ...
@@ -3817,6 +3892,35 @@ IoResult parse_native(std::string_view text, Document& out) {
         doc.dimstyles.push_back(DimStyle{"Standard"});
     }
     doc.dimstyles[0].name = "Standard";
+    // XPROPS and DRAWORDER, now that every object is read.
+    for (const XProps& x : xprops) {
+        const auto apply = [&](auto& d) {
+            for_each_entity_props(d, [&](const char* list, std::size_t i, EntityProps& p) {
+                if (i == x.index && x.list == list) {
+                    p.transparency = x.transparency;
+                    p.by_block = x.by_block;
+                }
+            });
+        };
+        std::uint64_t b = 0;
+        if (x.scope == "-") {
+            apply(doc);
+        } else if (to_uint(x.scope, b) && b < doc.block_defs.size()) {
+            apply(doc.block_defs[b]);
+        }
+    }
+    if (!drawn.empty()) {
+        std::unordered_map<std::string, std::vector<EntityProps*>> lists;
+        for_each_entity_props(doc, [&](const char* list, std::size_t, EntityProps& p) { lists[list].push_back(&p); });
+        std::uint32_t order = EntityProps::kFirstOrder;
+        for (const auto& [list, index] : drawn) {
+            const auto it = lists.find(list);
+            if (it != lists.end() && index < it->second.size()) {
+                order += EntityProps::kOrderStep;
+                it->second[index]->order = order;
+            }
+        }
+    }
     out = std::move(doc);
     return IoResult::success("Opened " + std::to_string(out.entity_count()) + " entities.");
 }

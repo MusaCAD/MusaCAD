@@ -557,10 +557,17 @@ const Desc kDescs[] = {
          PropertyValue v;
          v.flag = p.color_by_layer();
          v.color = p.color;
+         if (p.color_by_block()) {
+             v.text = "ByBlock";
+         }
          return v;
      },
      [](Command& c, const PropertyValue& v) {
          with_props(c, [&](EntityProps& p) {
+             if (v.text == "ByBlock") {
+                 p.set_color_by_block(true);
+                 return;
+             }
              p.set_color_by_layer(v.flag);
              if (!v.flag) {
                  p.color = v.color;
@@ -573,10 +580,17 @@ const Desc kDescs[] = {
          PropertyValue v;
          v.flag = p.linetype_by_layer();
          v.choice = static_cast<int>(p.linetype);
+         if (p.linetype_by_block()) {
+             v.text = "ByBlock";
+         }
          return v;
      },
      [](Command& c, const PropertyValue& v) {
          with_props(c, [&](EntityProps& p) {
+             if (v.text == "ByBlock") {
+                 p.set_linetype_by_block(true);
+                 return;
+             }
              p.set_linetype_by_layer(v.flag);
              if (!v.flag) {
                  p.linetype = static_cast<Linetype>(v.choice);
@@ -596,14 +610,41 @@ const Desc kDescs[] = {
          PropertyValue v;
          v.flag = p.lineweight_by_layer();
          v.num = static_cast<double>(p.lineweight);
+         if (p.lineweight_by_block()) {
+             v.text = "ByBlock";
+         }
          return v;
      },
      [](Command& c, const PropertyValue& v) {
          with_props(c, [&](EntityProps& p) {
+             if (v.text == "ByBlock") {
+                 p.set_lineweight_by_block(true);
+                 return;
+             }
              p.set_lineweight_by_layer(v.flag);
              if (!v.flag) {
                  p.lineweight = static_cast<std::uint8_t>(v.num);
              }
+         });
+     }},
+    // The object's own transparency: ByLayer, ByBlock, or 0 to 90 percent.
+    {PropertyId::Transparency, "General", "Transparency", PropEditor::TransparencyCombo, any_kind,
+     [](const Command& c) {
+         const EntityProps p = get_props(c);
+         PropertyValue v;
+         v.flag = p.transparency == EntityProps::kTransparencyByLayer;
+         if (p.transparency == EntityProps::kTransparencyByBlock) {
+             v.text = "ByBlock";
+         } else if (p.transparency <= 90) {
+             v.num = p.transparency;
+         }
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_props(c, [&](EntityProps& p) {
+             p.transparency = v.flag                ? EntityProps::kTransparencyByLayer
+                              : v.text == "ByBlock" ? EntityProps::kTransparencyByBlock
+                                                    : static_cast<std::uint8_t>(std::clamp(std::lround(v.num), 0L, 90L));
          });
      }},
 
@@ -1406,6 +1447,8 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
         return MatchSlot::Layer;
     case PropertyId::Lineweight:
         return MatchSlot::Lineweight;
+    case PropertyId::Transparency:
+        return MatchSlot::Transparency;
     case PropertyId::Linetype:
         return MatchSlot::Linetype;
     case PropertyId::Celtscale:

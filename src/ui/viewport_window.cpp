@@ -125,6 +125,7 @@ ViewportWindow::ViewportWindow(core::GeometryEngine& engine, QWindow* parent)
     fmt.setRenderableType(QSurfaceFormat::OpenGL);
     fmt.setVersion(4, 5);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
+    fmt.setDepthBufferSize(24); // the scene's draw order (DRAWORDER) is drawn by depth
     fmt.setSwapInterval(1); // vsync
     setFormat(fmt);
 }

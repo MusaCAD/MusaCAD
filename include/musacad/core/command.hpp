@@ -1242,6 +1242,18 @@ struct ReplaceBlockCommand {
     std::uint64_t group = 0;
 };
 
+/// DRAWORDER and its relatives: the selection drawn over everything (Front) or under it
+/// (Back); Keep notes the selection as the objects to move, and Above / Under then put them
+/// just over / under the objects selected now (the reference objects). TEXTTOFRONT brings the
+/// drawing's text (`kinds` 1), dimensions (2) and leaders (4) to the front; HATCHTOBACK sends
+/// its hatches (wipeouts too) to the back. Each one undo step.
+struct DrawOrderCommand {
+    enum class Op : std::uint8_t { Front, Back, Keep, Above, Under, TextToFront, HatchToBack };
+    Op op = Op::Front;
+    std::uint8_t kinds = 7;
+    std::uint64_t group = 0;
+};
+
 /// ATTSYNC: every reference of `block` (a name; `*` or a wild card for several; empty, the
 /// block of the reference under `pick`) given its block's attributes as they are now -- the
 /// values it has kept, a default for an attribute it lacks, none past the last.
@@ -2549,7 +2561,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, SetLayerFiltersCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
