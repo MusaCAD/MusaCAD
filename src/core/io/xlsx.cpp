@@ -3,10 +3,11 @@
 
 #include "musacad/core/io/xlsx.hpp"
 
+#include "musacad/core/text/parse_double.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -15,7 +16,6 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
-#include <system_error>
 #include <utility>
 
 namespace musacad::core::io {
@@ -408,8 +408,7 @@ namespace {
 // A number as a workbook writes it (always with a point), whatever the locale.
 std::optional<double> read_number(std::string_view s) {
     double v = 0.0;
-    const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
-    if (ec != std::errc{} || end != s.data() + s.size()) {
+    if (!parse_double_all(s, v)) {
         return std::nullopt;
     }
     return v;
