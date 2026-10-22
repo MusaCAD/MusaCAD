@@ -21,4 +21,19 @@ namespace musacad::command {
     return value;
 }
 
+/// 3DOSMODE: the 3D object snaps -- 2 vertex, 4 midpoint on an edge, 8 centre of a face, 16
+/// knot, 32 perpendicular to a face, 64 nearest to a face; 1 turns them all off (F4). A 2D
+/// drawing has no faces or edges of solids for them to find.
+[[nodiscard]] inline int& threedosmode() noexcept {
+    static int value = 11;
+    return value;
+}
+
+/// UCSDETECT: Dynamic UCS (F6) on (1) or off (0) -- the UCS following the face of a solid
+/// under the cursor, which a 2D drawing has none of.
+[[nodiscard]] inline int& ucsdetect() noexcept {
+    static int value = 1;
+    return value;
+}
+
 } // namespace musacad::command

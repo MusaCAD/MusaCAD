@@ -5672,31 +5672,26 @@ void SplineCommand::finish(CommandContext& ctx, bool close, std::optional<core::
         done_ = true;
         return;
     }
-    std::vector<core::Vec2> through = pts_;
-    std::optional<core::Vec2> seam; // Close: the same direction leaving and arriving at the start
-    if (close) {
-        through.push_back(pts_.front()); // back to the start
-        if (fit_ && pts_.size() >= 3) {
-            seam = pts_[1] - pts_.back(); // the curve smooth across its seam, not a corner there
-        }
-    }
     std::vector<core::Vec2> ctrl;
+    core::SplineFit fit; // a spline by fit points keeps them, and how it was fitted to them
     if (fit_) {
-        if (tolerance_ > 0.0 && !close && !start_tangent_ && !end_tangent) {
-            ctrl = core::spline::fit_within(through, degree_, static_cast<core::spline::FitParam>(knots_), tolerance_);
-        }
-        if (ctrl.empty()) {
-            ctrl = core::spline::fit_or_fallback(through, degree_, static_cast<core::spline::FitParam>(knots_),
-                                                 close ? seam : start_tangent_, close ? seam : end_tangent);
-        }
+        // Closed, the curve is smooth across its seam, not a corner there.
+        ctrl = core::spline::fit_spline(pts_, degree_, static_cast<core::spline::FitParam>(knots_), tolerance_, close,
+                                        start_tangent_, end_tangent);
+        fit.points = pts_;
+        fit.knots = static_cast<std::uint8_t>(knots_);
+        fit.tolerance = tolerance_;
+        fit.closed = close;
+        fit.start_tangent = close ? std::nullopt : start_tangent_;
+        fit.end_tangent = close ? std::nullopt : end_tangent;
     } else {
-        ctrl = std::move(through);
-    }
-    if (close && ctrl.size() >= 2) {
-        ctrl.back() = ctrl.front(); // closed exactly, whatever the fit's rounding
+        ctrl = pts_;
+        if (close) {
+            ctrl.push_back(pts_.front()); // back to the start
+        }
     }
     ctx.submit(core::AddSplineCommand{std::move(ctrl), static_cast<std::uint32_t>(degree_),
-                                      ctx.group_id(), {}});
+                                      ctx.group_id(), {}, {}, std::move(fit)});
     ctx.set_preview({});
     done_ = true;
 }
@@ -7202,6 +7197,108 @@ void AttRedefCommand::input(CommandContext& ctx, const std::string& text) {
             c.attredef = true;
             ctx.submit(std::move(c));
             done_ = true;
+        }
+        return;
+    }
+}
+
+void AttSyncCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const std::vector<std::string> names = ctx.block_names();
+    // ?: the blocks with attributes.
+    const auto list = [&] {
+        int n = 0;
+        for (const std::string& b : names) {
+            if (!ctx.block_attdefs(b).empty()) {
+                ctx.echo("  " + b);
+                ++n;
+            }
+        }
+        ctx.echo(n == 0 ? "No block has attributes." : std::to_string(n) + " block(s) with attributes.");
+    };
+    const auto ask_confirm = [&](const std::string& block) {
+        block_ = block;
+        state_ = State::Confirm;
+        ctx.set_prompt("ATTSYNC block " + block_ + "? [Yes/No] <Yes>: ");
+    };
+    switch (state_) {
+    case State::Option:
+        if (t.empty() || u == "S" || u == "SELECT") {
+            state_ = State::Select;
+            ctx.set_prompt("Select a block: ");
+        } else if (u == "N" || u == "NAME") {
+            state_ = State::Name;
+            ctx.set_prompt("Enter name of block to sync or [?]: ");
+        } else if (u == "?") {
+            list();
+            ctx.set_prompt("Enter an option [?/Name/Select] <Select>: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+            ctx.set_prompt("Enter an option [?/Name/Select] <Select>: ");
+        }
+        return;
+    case State::Name: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            list();
+            ctx.set_prompt("Enter name of block to sync or [?]: ");
+            return;
+        }
+        if (t.find_first_of("*?") != std::string::npos) { // every block the wild card names
+            ctx.submit(core::AttSyncCommand{t, {}, 0.0, ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        const auto it = std::find_if(names.begin(), names.end(), [&](const std::string& n) { return upper(n) == u; });
+        if (!names.empty() && it == names.end()) {
+            ctx.echo("Block \"" + t + "\" does not exist.");
+            return;
+        }
+        const std::string block = it != names.end() ? *it : t;
+        if (!names.empty() && ctx.block_attdefs(block).empty()) {
+            ctx.echo("Block \"" + block + "\" has no attributes.");
+            ctx.set_prompt("Enter name of block to sync or [?]: ");
+            return;
+        }
+        ask_confirm(block);
+        return;
+    }
+    case State::Select: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const std::optional<std::string> hovered = ctx.input_is_pick() ? ctx.hovered_block() : std::nullopt;
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (hovered) {
+            if (ctx.block_attdefs(*hovered).empty()) {
+                ctx.echo("Block \"" + *hovered + "\" has no attributes.");
+                ctx.set_prompt("Select a block: ");
+                return;
+            }
+            ask_confirm(*hovered);
+            return;
+        }
+        // A point typed (or nothing known under it here): the engine finds the reference.
+        ctx.submit(core::AttSyncCommand{"", *p, ctx.pick_radius(), ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    case State::Confirm:
+        if (t.empty() || u == "Y" || u == "YES") {
+            ctx.submit(core::AttSyncCommand{block_, {}, 0.0, ctx.group_id()});
+            done_ = true;
+        } else if (u == "N" || u == "NO") {
+            done_ = true;
+        } else {
+            ctx.set_prompt("ATTSYNC block " + block_ + "? [Yes/No] <Yes>: ");
         }
         return;
     }
@@ -8868,6 +8965,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "SPLINESEGS", "SPLINETYPE", "TRIMMODE",
+        "3DOSMODE",   "UCSDETECT",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
@@ -16455,6 +16553,7 @@ void MLeaderCommand::start(CommandContext& ctx) {
     const std::vector<core::MLeaderStyle> styles = ctx.mleader_styles();
     const std::uint16_t cur = ctx.current_mleader_style();
     style_ = cur < styles.size() ? styles[cur] : core::MLeaderStyle{};
+    style_index_ = cur < styles.size() ? cur : std::uint16_t{0};
     s_max_points_ = style_.max_points;
     s_content_ = style_.text;
     s_landing_ = style_.landing;
@@ -16514,6 +16613,7 @@ void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     using F = core::LeaderForm;
     c.leader_flags = static_cast<std::uint8_t>((s_leader_type_ == 1 ? F::kSpline : s_leader_type_ == 2 ? F::kNoLine : 0) |
                                                (s_landing_ ? F::kLanding : 0));
+    c.mlstyle = style_index_;
     ctx.submit(std::move(c));
     ctx.echo("Multileader placed.");
     done_ = true;
@@ -21162,12 +21262,92 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "LA" || u == "LAYER") {
             step_ = Step::Layer;
             ctx.set_prompt("Enter layer name or [. (use current)] <use current>: ");
+        } else if (u == "O" || u == "ORIGIN") {
+            step_ = Step::Origin;
+            ctx.set_prompt("[Use current origin/Set new origin/Default to boundary extents] <Use current origin>: ");
+        } else if (u == "AD" || u == "ADD BOUNDARIES" || u == "ADD") {
+            step_ = Step::AddPick;
+            ctx.set_prompt("Pick internal point or [Select objects/remove Boundaries]: ");
+        } else if (u == "R" || u == "REMOVE BOUNDARIES" || u == "REMOVE") {
+            step_ = Step::RemovePick;
+            ctx.set_prompt("Select Objects or [Add boundaries]: ");
         } else {
-            ctx.echo("That option is not available yet; Disassociate, Properties, recreate Boundary, separate Hatches, "
-                     "hatch COlor and LAyer are.");
+            ctx.echo("That option is not available yet; Disassociate, Properties, ADd and Remove boundaries, recreate "
+                     "Boundary, separate Hatches, Origin, hatch COlor and LAyer are.");
             options(ctx);
         }
         return;
+    case Step::Origin:
+        if (u == "S" || u == "SET" || u == "SET NEW ORIGIN") {
+            step_ = Step::OriginPoint;
+            ctx.set_prompt("Specify origin point: ");
+        } else if (u == "D" || u == "DEFAULT" || u == "DEFAULT TO BOUNDARY EXTENTS") {
+            step_ = Step::OriginCorner;
+            ctx.set_prompt("[Bottomleft/bottomRight/topLeft/topRight/Center] <Bottomleft>: ");
+        } else if (t.empty() || u == "U" || u == "USE" || u == "USE CURRENT ORIGIN") {
+            done_ = true; // the origin as it is
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    case Step::OriginPoint:
+        if (const auto p = read_point(ctx, text)) {
+            core::HatchEditCommand c{core::HatchEditCommand::Op::Origin, {}, true, {}, ctx.group_id()};
+            c.origin = *p;
+            ctx.submit(std::move(c));
+            done_ = true;
+        }
+        return;
+    case Step::OriginCorner: {
+        static constexpr std::pair<const char*, std::uint8_t> kCorners[] = {
+            {"B", 1}, {"BOTTOMLEFT", 1}, {"R", 2}, {"BOTTOMRIGHT", 2}, {"L", 3}, {"TOPLEFT", 3},
+            {"T", 4}, {"TOPRIGHT", 4}, {"C", 5}, {"CENTER", 5}};
+        std::uint8_t corner = t.empty() ? 1 : 0;
+        for (const auto& [k, v] : kCorners) {
+            corner = u == k ? v : corner;
+        }
+        if (corner == 0) {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        core::HatchEditCommand c{core::HatchEditCommand::Op::Origin, {}, true, {}, ctx.group_id()};
+        c.origin_corner = corner;
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    case Step::AddPick:
+    case Step::RemovePick: {
+        // Each point an area added round it, or the hatch's boundary under it taken out, as
+        // it is given; Enter ends. Both in the command's one undo step.
+        const bool adding = step_ == Step::AddPick;
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (adding && (u == "B" || u == "REMOVE BOUNDARIES")) {
+            step_ = Step::RemovePick;
+            ctx.set_prompt("Select Objects or [Add boundaries]: ");
+            return;
+        }
+        if (!adding && (u == "A" || u == "ADD BOUNDARIES")) {
+            step_ = Step::AddPick;
+            ctx.set_prompt("Pick internal point or [Select objects/remove Boundaries]: ");
+            return;
+        }
+        if (adding && (u == "S" || u == "SELECT OBJECTS")) {
+            ctx.echo("Pick a point inside each area to add.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            core::HatchEditCommand c{adding ? core::HatchEditCommand::Op::AddAreas : core::HatchEditCommand::Op::RemoveBoundaries,
+                                     {}, true, {}, ctx.group_id()};
+            c.points = {*p};
+            c.radius = ctx.pick_radius();
+            ctx.submit(std::move(c));
+        }
+        return;
+    }
     case Step::Color: {
         core::HatchEditCommand c{core::HatchEditCommand::Op::Color, {}, true, {}, ctx.group_id()};
         if (!(t.empty() || t == "." || u == "BYLAYER")) {

@@ -417,6 +417,12 @@ CommandRegistry CommandRegistry::make_default() {
         spec.name = name;
         reg({name}, [spec] { return std::make_unique<SysVarCommand>(spec); }, "", help);
     };
+    var("3DOSMODE", "The 3D object snaps: 2 vertex, 4 midpoint on edge, 8 centre of face, 16 knot, 32 perpendicular, 64 nearest to face; 1 all off (F4).",
+        {"", false, 0.0, 127.0, [](CommandContext&) { return static_cast<double>(threedosmode()); },
+         [](CommandContext&, double v) { threedosmode() = static_cast<int>(v); }});
+    var("UCSDETECT", "Dynamic UCS on (1) or off (0) (F6).",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return static_cast<double>(ucsdetect()); },
+         [](CommandContext&, double v) { ucsdetect() = v != 0.0 ? 1 : 0; }});
     var("HPSEPARATE", "Whether one HATCH makes one hatch of the areas picked or selected (0), or one each (1).",
         {"", false, 0.0, 1.0, [](CommandContext&) { return hpseparate() ? 1.0 : 0.0; },
          [](CommandContext&, double v) { hpseparate() = v != 0.0; }});
@@ -498,6 +504,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
     reg({"ATTREDEF"}, [] { return std::make_unique<AttRedefCommand>(); }, "assets/ribbon/insert.svg",
         "Redefine a block from objects with attribute definitions; its references keep their values by tag.");
+    reg({"ATTSYNC"}, [] { return std::make_unique<AttSyncCommand>(); }, "assets/ribbon/insert.svg",
+        "Give a block's references its attributes as they are now; the values they have are kept.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
     reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); },

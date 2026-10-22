@@ -800,4 +800,31 @@ inline std::vector<Vec2> fit_or_fallback(std::span<const Vec2> fit, int degree, 
     return std::vector<Vec2>(fit.begin(), fit.end());
 }
 
+/// SPLINE's Fit method -- the one rule for the command and for a fitted spline drawn again
+/// from its fit points: the control points of the spline through `pts` (closed: round to the
+/// first again, smooth across that seam), within `tolerance` of them when above 0 (open,
+/// without end tangents), leaving and arriving along `start_dir` / `end_dir` when given.
+inline std::vector<Vec2> fit_spline(std::span<const Vec2> pts, int degree, FitParam mode, double tolerance,
+                                    bool closed, std::optional<Vec2> start_dir, std::optional<Vec2> end_dir) {
+    std::vector<Vec2> through(pts.begin(), pts.end());
+    std::optional<Vec2> seam; // closed: the same direction leaving and arriving at the start
+    if (closed && !pts.empty()) {
+        through.push_back(pts.front());
+        if (pts.size() >= 3) {
+            seam = pts[1] - pts.back();
+        }
+    }
+    std::vector<Vec2> ctrl;
+    if (tolerance > 0.0 && !closed && !start_dir && !end_dir) {
+        ctrl = fit_within(through, degree, mode, tolerance);
+    }
+    if (ctrl.empty()) {
+        ctrl = fit_or_fallback(through, degree, mode, closed ? seam : start_dir, closed ? seam : end_dir);
+    }
+    if (closed && ctrl.size() >= 2) {
+        ctrl.back() = ctrl.front(); // closed exactly, whatever the fit's rounding
+    }
+    return ctrl;
+}
+
 } // namespace musacad::core::spline

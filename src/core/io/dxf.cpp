@@ -400,6 +400,7 @@ thread_local std::uint64_t g_handle = 0x20;
 constexpr std::uint64_t kRootDictHandle = 0x10;
 constexpr std::uint64_t kImageDictHandle = 0x11;
 constexpr std::uint64_t kMlineStyleDictHandle = 0x12;
+constexpr std::uint64_t kWipeoutVarsHandle = 0x13;
 
 std::string handle_hex(std::uint64_t h) {
     char buf[20];
@@ -470,10 +471,16 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code(s, 0, "ENDSEC");
 }
 
-// The classes the raster IMAGE objects belong to (AutoCAD reads IMAGE, IMAGEDEF and
-// IMAGEDEF_REACTOR only when the CLASSES section declares them).
+bool has_wipeouts(const Document& doc) {
+    return std::any_of(doc.hatches.begin(), doc.hatches.end(),
+                       [](const DocHatch& h) { return h.pattern_name == "WIPEOUT"; });
+}
+
+// The classes the raster IMAGE and WIPEOUT objects belong to (AutoCAD reads IMAGE, IMAGEDEF,
+// IMAGEDEF_REACTOR, WIPEOUT and WIPEOUTVARIABLES only when the CLASSES section declares them).
 void emit_classes(std::string& s, const Document& doc) {
-    if (doc.images.empty()) {
+    const bool wipeouts = has_wipeouts(doc);
+    if (doc.images.empty() && !wipeouts) {
         return;
     }
     code(s, 0, "SECTION");
@@ -482,14 +489,21 @@ void emit_classes(std::string& s, const Document& doc) {
         code(s, 0, "CLASS");
         code(s, 1, name);
         code(s, 2, cpp);
-        code(s, 3, "ISM");
+        code(s, 3, std::string_view(name).starts_with("WIPEOUT") ? "WipeOut|AutoCAD Express Tool|expresstools@autodesk.com"
+                                                                   : "ISM");
         code_i(s, 90, flags);
         code_i(s, 280, 0);
         code_i(s, 281, is_entity);
     };
-    cls("IMAGE", "AcDbRasterImage", 127, 1);
-    cls("IMAGEDEF", "AcDbRasterImageDef", 0, 0);
-    cls("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, 0);
+    if (!doc.images.empty()) {
+        cls("IMAGE", "AcDbRasterImage", 127, 1);
+        cls("IMAGEDEF", "AcDbRasterImageDef", 0, 0);
+        cls("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, 0);
+    }
+    if (wipeouts) {
+        cls("WIPEOUT", "AcDbWipeout", 127, 1);
+        cls("WIPEOUTVARIABLES", "AcDbWipeoutVariables", 0, 0);
+    }
     code(s, 0, "ENDSEC");
 }
 
@@ -810,13 +824,32 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         const int deg = spline::effective_degree(n, static_cast<int>(sp.degree));
         const std::vector<double> knots =
             spline::usable_knots(sp.knots, n, deg) ? sp.knots : spline::clamped_knots(n, deg);
+        // A spline by fit points carries them (11, a closed one's first again at the end), the
+        // fit tolerance (44) and the end tangents (12, 13), as AutoCAD writes its fit data.
+        std::vector<Vec2> fit_pts = sp.fit.points;
+        if (sp.fit.closed && !fit_pts.empty()) {
+            fit_pts.push_back(fit_pts.front());
+        }
         code(s, 0, "SPLINE");
         emit_props(s, doc, sp.props);
         code(s, 70, "8");
         code(s, 71, std::to_string(deg).c_str());
         code(s, 72, std::to_string(knots.size()).c_str());
         code(s, 73, std::to_string(n).c_str());
-        code(s, 74, "0");
+        code(s, 74, std::to_string(fit_pts.size()).c_str());
+        if (!fit_pts.empty()) {
+            code_d(s, 44, sp.fit.tolerance);
+            if (sp.fit.start_tangent) {
+                code_d(s, 12, sp.fit.start_tangent->x);
+                code_d(s, 22, sp.fit.start_tangent->y);
+                code_d(s, 32, 0.0);
+            }
+            if (sp.fit.end_tangent) {
+                code_d(s, 13, sp.fit.end_tangent->x);
+                code_d(s, 23, sp.fit.end_tangent->y);
+                code_d(s, 33, 0.0);
+            }
+        }
         for (const double k : knots) {
             code_d(s, 40, k);
         }
@@ -824,6 +857,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code_d(s, 10, p.x);
             code_d(s, 20, p.y);
             code_d(s, 30, 0.0);
+        }
+        for (const Vec2& p : fit_pts) {
+            code_d(s, 11, p.x);
+            code_d(s, 21, p.y);
+            code_d(s, 31, 0.0);
         }
     }
     // XLINE / RAY: DXF code 10 = base (first) point, code 11 = unit direction vector.
@@ -1294,28 +1332,74 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     }
     // HATCH: AutoCAD-standard codes. Each boundary loop is emitted as a polyline path
     // (code 92 bit 2 = polyline); the outer (loop 0) also sets the external bit (1).
+    // WIPEOUT: AutoCAD's wipeout, a raster image of one pixel clipped to the polygon -- the
+    // insertion point at the polygon's lower-left corner, the U and V vectors its width and
+    // height, the clip boundary in that pixel's coordinates (-0.5 to 0.5, v down), closed.
+    // One per boundary.
     for (const DocHatch& h : doc.hatches) {
-        const bool wipeout = h.pattern_name == "WIPEOUT";
+        if (h.pattern_name != "WIPEOUT") {
+            continue;
+        }
+        for (const std::vector<Vec2>& loop : h.loops) {
+            if (loop.size() < 3) {
+                continue;
+            }
+            Vec2 lo = loop.front();
+            Vec2 hi = loop.front();
+            for (const Vec2& v : loop) {
+                lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+                hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+            }
+            const double w = std::max(hi.x - lo.x, 1e-9);
+            const double ht = std::max(hi.y - lo.y, 1e-9);
+            code(s, 0, "WIPEOUT");
+            emit_handle(s);
+            code(s, 100, "AcDbEntity");
+            emit_props_body(s, doc, h.props);
+            code(s, 100, "AcDbWipeout");
+            code_i(s, 90, 0);
+            code_d(s, 10, lo.x);
+            code_d(s, 20, lo.y);
+            code_d(s, 30, 0.0);
+            code_d(s, 11, w);
+            code_d(s, 21, 0.0);
+            code_d(s, 31, 0.0);
+            code_d(s, 12, 0.0);
+            code_d(s, 22, ht);
+            code_d(s, 32, 0.0);
+            code_d(s, 13, 1.0);
+            code_d(s, 23, 1.0);
+            code(s, 340, "0");
+            code_i(s, 70, 7); // shown, shown when not aligned, clipped
+            code_i(s, 280, 1);
+            code_i(s, 281, 50);
+            code_i(s, 282, 50);
+            code_i(s, 283, 0);
+            code(s, 360, "0");
+            code_i(s, 71, 2);
+            code_i(s, 91, static_cast<long>(loop.size() + 1));
+            for (std::size_t i = 0; i <= loop.size(); ++i) {
+                const Vec2& v = loop[i % loop.size()];
+                code_d(s, 14, (v.x - lo.x) / w - 0.5);
+                code_d(s, 24, 0.5 - (v.y - lo.y) / ht);
+            }
+        }
+    }
+    for (const DocHatch& h : doc.hatches) {
+        if (h.pattern_name == "WIPEOUT") {
+            continue; // written as a WIPEOUT above
+        }
         const bool gradient = h.pattern_name == "GRADIENT";
         code(s, 0, "HATCH");
-        if (wipeout) {
-            // A wipeout has no hatch form: written as a solid in colour 7, which every
-            // AutoCAD background renders in its own contrast (white on black, black on
-            // white) -- the closest a plain HATCH gets to a mask.
-            emit_handle(s);
-            code(s, 8, h.props.layer < doc.layers.size() ? doc.layers[h.props.layer].name : std::string("0"));
-            code_i(s, 62, 7);
-        } else {
-            emit_props(s, doc, h.props);
-        }
+        emit_props(s, doc, h.props);
         code_d(s, 10, 0.0); // elevation point + normal (planar at z=0)
         code_d(s, 20, 0.0);
         code_d(s, 30, 0.0);
         code_d(s, 210, 0.0);
         code_d(s, 220, 0.0);
         code_d(s, 230, 1.0);
-        code(s, 2, (wipeout || gradient) ? std::string("SOLID") : h.pattern_name);
-        code_i(s, 70, (h.pattern_name == "SOLID" || wipeout || gradient) ? 1 : 0); // solid-fill flag
+        code(s, 2, gradient ? std::string("SOLID") : h.pattern_name);
+        code_i(s, 70, (h.pattern_name == "SOLID" || gradient) ? 1 : 0); // solid-fill flag
         code_i(s, 71, 0);                                  // non-associative
         code_i(s, 91, static_cast<long>(h.loops.size()));  // boundary path count
         for (std::size_t i = 0; i < h.loops.size(); ++i) {
@@ -1649,7 +1733,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
 void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     const bool images = !(doc.images.empty() && doc.image_defs.empty());
     const bool mlines = !doc.mlines.empty() || !(doc.mline_styles.size() == 1 && doc.mline_styles[0] == MLineStyle{});
-    if (!images && !mlines) {
+    const bool wipeouts = has_wipeouts(doc);
+    if (!images && !mlines && !wipeouts) {
         return;
     }
     // The named object dictionary, its ACAD_IMAGE_DICT, one IMAGEDEF per definition
@@ -1669,6 +1754,10 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     if (images) {
         code(s, 3, "ACAD_IMAGE_DICT");
         code(s, 350, handle_hex(kImageDictHandle));
+    }
+    if (wipeouts) {
+        code(s, 3, "ACAD_WIPEOUT_VARS");
+        code(s, 350, handle_hex(kWipeoutVarsHandle));
     }
     if (mlines) {
         code(s, 0, "DICTIONARY");
@@ -1705,6 +1794,13 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
                 code(s, 6, e.linetype_mode == 1 ? "BYLAYER" : e.linetype_mode == 2 ? "BYBLOCK" : linetype_name(e.linetype));
             }
         }
+    }
+    if (wipeouts) { // WIPEOUTFRAME: 0 frames hidden, 1 shown, 2 shown but not plotted
+        code(s, 0, "WIPEOUTVARIABLES");
+        code(s, 5, handle_hex(kWipeoutVarsHandle));
+        code(s, 330, handle_hex(kRootDictHandle));
+        code(s, 100, "AcDbWipeoutVariables");
+        code_i(s, 70, !doc.wipeout_frames ? 0 : doc.wipeout_frames_plot ? 1 : 2);
     }
     if (!images) {
         code(s, 0, "ENDSEC");
@@ -2522,6 +2618,56 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             sink.texts->push_back(std::move(t));
             return;
         }
+        if (type == "WIPEOUT") {
+            // A wipeout: a raster image of one pixel clipped to its polygon. A clip vertex
+            // (14, 24) is in pixels from the top-left pixel's centre, v down: in the drawing,
+            // insertion + U (x + 0.5) + V (height - y - 0.5).
+            if (sink.hatches == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            const Vec2 ins{getd(body, 10), getd(body, 20)};
+            const Vec2 u{getd(body, 11, 1.0), getd(body, 21)};
+            const Vec2 v{getd(body, 12), getd(body, 22, 1.0)};
+            const double pw = getd(body, 13, 1.0);
+            const double ph = getd(body, 23, 1.0);
+            std::vector<Vec2> clip;
+            std::optional<double> cx;
+            for (const Pair& q : body) {
+                if (q.code == 14) {
+                    cx = to_d(q.value);
+                } else if (q.code == 24 && cx) {
+                    clip.push_back({*cx, to_d(q.value)});
+                    cx.reset();
+                }
+            }
+            if (getd(body, 280, 1.0) == 0.0 || clip.size() < 2) { // not clipped: the whole image
+                clip = {{-0.5, -0.5}, {pw - 0.5, ph - 0.5}};
+            }
+            if (clip.size() == 2) { // a rectangle by two corners
+                const Vec2 a0 = clip[0];
+                const Vec2 a1 = clip[1];
+                clip = {a0, {a1.x, a0.y}, a1, {a0.x, a1.y}};
+            }
+            if (clip.size() > 3 && std::abs(clip.front().x - clip.back().x) < 1e-12 &&
+                std::abs(clip.front().y - clip.back().y) < 1e-12) {
+                clip.pop_back(); // the boundary closed by its first vertex again
+            }
+            DocHatch h;
+            h.props = props_of(body);
+            h.pattern_name = "WIPEOUT";
+            std::vector<Vec2> loop;
+            for (const Vec2& c : clip) {
+                loop.push_back(ins + u * (c.x + 0.5) + v * (ph - c.y - 0.5));
+            }
+            if (loop.size() < 3) {
+                ++skipped[type];
+                return;
+            }
+            h.loops.push_back(std::move(loop));
+            sink.hatches->push_back(std::move(h));
+            return;
+        }
         if (type == "IMAGE") {
             // Resolved after the whole file is read: the IMAGEDEF it points to (340)
             // lives in the OBJECTS section, which follows the entities.
@@ -3036,18 +3182,46 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     knots.push_back(to_d(p.value));
                 }
             }
+            // The fit data (11/21 fit points, 44 tolerance, 12/22 and 13/23 end tangents): a spline
+            // by fit points keeps them; without control points they define it.
             std::vector<Vec2> fit;
-            if (ctrl.empty()) { // no control points: the FIT points (11/21) define it
-                have_x = false;
+            have_x = false;
+            for (const Pair& p : body) {
+                if (p.code == 11) {
+                    x = to_d(p.value);
+                    have_x = true;
+                } else if (p.code == 21 && have_x) {
+                    fit.push_back({x, to_d(p.value)});
+                    have_x = false;
+                }
+            }
+            if (ctrl.empty()) {
                 knots.clear();
-                for (const Pair& p : body) {
-                    if (p.code == 11) {
-                        x = to_d(p.value);
-                        have_x = true;
-                    } else if (p.code == 21 && have_x) {
-                        fit.push_back({x, to_d(p.value)});
-                        have_x = false;
+            }
+            SplineFit fit_data;
+            if (fit.size() >= 2) {
+                fit_data.points = fit;
+                // AutoCAD writes a fit tolerance of 1e-10 for "through the points".
+                const double tol = getd(body, 44, 0.0);
+                fit_data.tolerance = tol > 1e-6 ? tol : 0.0;
+                if (find(body, 12) != nullptr) {
+                    fit_data.start_tangent = Vec2{getd(body, 12), getd(body, 22)};
+                }
+                if (find(body, 13) != nullptr) {
+                    fit_data.end_tangent = Vec2{getd(body, 13), getd(body, 23)};
+                }
+                // Closed: flagged so (70 bit 1), or round to its first point again.
+                const std::string* sf = find(body, 70);
+                const bool flagged = sf != nullptr && (to_l(*sf) & 1) != 0;
+                const bool round = fit_data.points.size() >= 4 &&
+                                   length(fit_data.points.front() - fit_data.points.back()) < 1e-9;
+                if ((flagged || round) && fit_data.points.size() >= 3) {
+                    if (round) {
+                        fit_data.points.pop_back();
                     }
+                    fit_data.closed = true;
+                    fit_data.start_tangent.reset();
+                    fit_data.end_tangent.reset();
                 }
             }
             if (sink.splines != nullptr) {
@@ -3077,10 +3251,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 };
                 if (ctrl.empty() && fit.size() >= 2) {
                     DocSpline sp;
-                    sp.control_points =
-                        spline::fit_or_fallback(fit, degree, spline::FitParam::Chord);
+                    sp.control_points = spline::fit_spline(fit_data.points, degree, spline::FitParam::Chord,
+                                                           fit_data.tolerance, fit_data.closed, fit_data.start_tangent,
+                                                           fit_data.end_tangent);
                     sp.degree = static_cast<std::uint32_t>(degree);
                     sp.props = props_of(body);
+                    sp.fit = fit_data;
                     sink.splines->push_back(std::move(sp));
                     return;
                 }
@@ -3095,6 +3271,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     if (own) {
                         sp.knots = knots;
                     }
+                    sp.fit = fit_data; // drawn by its control points; dragged by its fit points
                     sink.splines->push_back(std::move(sp));
                     return;
                 }
@@ -3508,6 +3685,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 if (!ms.name.empty()) {
                     mline_styles_read.push_back(std::move(ms));
                 }
+            }
+            if (type == "WIPEOUTVARIABLES") { // WIPEOUTFRAME: 0 hidden, 1 shown, 2 not plotted
+                const std::string* frame = find(body, 70);
+                const long f = frame != nullptr ? to_l(*frame) : 1L;
+                doc.wipeout_frames = f != 0;
+                doc.wipeout_frames_plot = f != 2;
             }
             if (type == "IMAGEDEF") {
                 if (const std::string* h = find(body, 5)) {

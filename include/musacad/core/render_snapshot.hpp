@@ -324,6 +324,7 @@ struct RenderSnapshot {
     EntityHandle hover;
     bool has_hover = false;
     bool hover_closed = false; ///< the object under the cursor is a closed polyline (PEDIT's Close or Open)
+    int hover_block = -1;      ///< the block of the reference under the cursor (ATTSYNC's Select), -1 none
     std::vector<Vec2> hover_line_vertices;
     /// SELECTIONPREVIEW: the objects the window / crossing / lasso being dragged would
     /// select, highlighted while the drag lasts (SelectPreviewCommand).
@@ -480,6 +481,7 @@ struct RenderSnapshot {
         hover = EntityHandle{};
         has_hover = false;
         hover_closed = false;
+        hover_block = -1;
         hover_line_vertices.clear();
         preview_line_vertices.clear();
         pick_candidates.clear();

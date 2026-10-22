@@ -1934,7 +1934,8 @@ public:
     bool free_text() const override { return step_ == Step::Layer; } // a layer name may have spaces
 
 private:
-    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble, Color, Layer };
+    enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble, Color, Layer,
+                                     Origin, OriginPoint, OriginCorner, AddPick, RemovePick };
     double user_angle_ = 0.0;   ///< User defined: the lines' angle, degrees
     double user_spacing_ = 1.0; ///< and the distance between them
     void options(CommandContext& ctx);
@@ -2718,6 +2719,28 @@ public:
 private:
     enum class State : std::uint8_t { Name, Select, Base } state_ = State::Name;
     std::string name_;
+    bool done_ = false;
+};
+
+/// ATTSYNC: a block's references given its attributes as they are now (the values kept).
+class AttSyncCommand final : public ICommand {
+public:
+    std::string name() const override { return "ATTSYNC"; }
+    void start(CommandContext& ctx) override {
+        ctx.clear_last_point();
+        state_ = State::Option;
+        ctx.set_prompt("Enter an option [?/Name/Select] <Select>: ");
+    }
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override {
+        ctx.echo("*Cancel*");
+        done_ = true;
+    }
+    bool done() const override { return done_; }
+
+private:
+    enum class State : std::uint8_t { Option, Name, Select, Confirm } state_ = State::Option;
+    std::string block_;
     bool done_ = false;
 };
 
@@ -4930,6 +4953,7 @@ private:
     static inline bool s_landing_ = true;
     static inline int s_leader_type_ = 0; ///< Leader type: 0 Straight, 1 sPline, 2 None
     core::MLeaderStyle style_{}; ///< the current multileader style, taken at the start
+    std::uint16_t style_index_ = 0; ///< ... and which it is (the multileader follows it)
 };
 
 /// MTEXT (MT/T): pick two corners (insertion + wrap width), then enter paragraph

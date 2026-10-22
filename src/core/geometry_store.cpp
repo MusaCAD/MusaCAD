@@ -661,8 +661,17 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     b.str_len = static_cast<std::uint32_t>(content.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot = mleaders_.insert(MLeaderData{
-        voff, static_cast<std::uint32_t>(vertices.size()), style, 0, 0, 0, b, props, overrides});
+        voff, static_cast<std::uint32_t>(vertices.size()), style, 0, 0, 0, b, props, overrides, 0});
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
+}
+
+bool GeometryStore::set_mleader_mlstyle(EntityHandle h, std::uint16_t style) noexcept {
+    MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+    if (m == nullptr) {
+        return false;
+    }
+    m->mlstyle = style;
+    return true;
 }
 
 bool GeometryStore::set_mleader_extra(EntityHandle h, std::span<const Vec2> tips) {
@@ -927,6 +936,7 @@ void GeometryStore::clear() noexcept {
     tangent_pool_.clear();
     spline_pool_.clear();
     spline_knot_pool_.clear();
+    spline_fits_.clear();
     string_pool_.clear();
     hatch_vtx_pool_.clear();
     hatch_loop_lens_.clear();
@@ -1140,6 +1150,13 @@ std::vector<std::string_view> GeometryStore::fcf_cell_text(const FcfData& f) con
     }
     return out;
 }
+bool GeometryStore::is_wipeout(EntityHandle h) const noexcept {
+    if (h.kind != EntityKind::Hatch || !is_valid(h)) {
+        return false;
+    }
+    const HatchData* hd = hatch(h);
+    return hd != nullptr && string_of(*hd) == "WIPEOUT";
+}
 std::vector<std::vector<Vec2>> GeometryStore::hatch_loops(const HatchData& h) const {
     std::vector<std::vector<Vec2>> loops;
     loops.reserve(h.loop_count);
@@ -1219,6 +1236,22 @@ std::span<const double> GeometryStore::widths_of(const PolylineData& pl) const n
 }
 std::span<const Vec2> GeometryStore::control_points_of(const SplineData& sp) const noexcept {
     return std::span<const Vec2>(spline_pool_).subspan(sp.offset, sp.count);
+}
+const SplineFit* GeometryStore::fit_of(const SplineData& sp) const noexcept {
+    return sp.fit_index < spline_fits_.size() ? &spline_fits_[sp.fit_index] : nullptr;
+}
+bool GeometryStore::set_spline_fit(EntityHandle h, SplineFit fit) {
+    SplineData* s = h.kind == EntityKind::Spline ? splines_.get(h.index, h.generation) : nullptr;
+    if (s == nullptr) {
+        return false;
+    }
+    if (fit.points.size() < 2) {
+        s->fit_index = SplineData::kNoFit;
+        return true;
+    }
+    s->fit_index = static_cast<std::uint32_t>(spline_fits_.size());
+    spline_fits_.push_back(std::move(fit));
+    return true;
 }
 std::span<const double> GeometryStore::knots_of(const SplineData& sp) const noexcept {
     if (sp.knot_offset == SplineData::kNoKnots) {

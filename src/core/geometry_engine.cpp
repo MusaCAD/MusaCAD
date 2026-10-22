@@ -753,7 +753,7 @@ void GeometryEngine::select_similar(std::uint32_t mode) {
             continue;
         }
         for (const EntityHandle sd : seeds) {
-            if (sd.kind == h.kind && similar(sd, h)) {
+            if (sd.kind == h.kind && store_.is_wipeout(sd) == store_.is_wipeout(h) && similar(sd, h)) {
                 sel_add(h);
                 ++found;
                 break;
@@ -882,7 +882,11 @@ void GeometryEngine::select_filter(const SelectFilterCommand& c) {
         return v;
     };
     const auto matches = [&](EntityHandle h) {
-        if (c.kind >= 0 && static_cast<int>(h.kind) != c.kind) {
+        if (c.kind == SelectFilterCommand::kWipeout) {
+            if (!store_.is_wipeout(h)) {
+                return false;
+            }
+        } else if (c.kind >= 0 && (static_cast<int>(h.kind) != c.kind || store_.is_wipeout(h))) {
             return false;
         }
         double num = 0.0;
@@ -1315,8 +1319,19 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 pull(x.center); // rigid, like a circle: moves whole when its centre is caught
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
-                for (Vec2& p : x.control_points) {
-                    pull(p); // control points inside the window move, the rest stay
+                if (!x.fit.empty()) {
+                    // A spline by fit points: those inside the window move, and it is fitted again.
+                    for (Vec2& p : x.fit.points) {
+                        pull(p);
+                    }
+                    x.control_points = spline::fit_spline(x.fit.points, static_cast<int>(x.degree),
+                                                          static_cast<spline::FitParam>(x.fit.knots), x.fit.tolerance,
+                                                          x.fit.closed, x.fit.start_tangent, x.fit.end_tangent);
+                    x.knots.clear();
+                } else {
+                    for (Vec2& p : x.control_points) {
+                        pull(p); // control points inside the window move, the rest stay
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 pull(x.a);
@@ -1451,6 +1466,9 @@ void translate_cmd(Command& c, Vec2 d) {
                 for (Vec2& p : x.control_points) {
                     p += d;
                 }
+                for (Vec2& p : x.fit.points) {
+                    p += d;
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a += d;
                 x.b += d;
@@ -1564,6 +1582,14 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B, bool mirrtext = false) {
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
                 for (Vec2& p : x.control_points) {
                     p = refl(p);
+                }
+                for (Vec2& p : x.fit.points) {
+                    p = refl(p);
+                }
+                for (std::optional<Vec2>* t : {&x.fit.start_tangent, &x.fit.end_tangent}) {
+                    if (*t) {
+                        *t = refl(**t) - refl(Vec2{}); // a direction: its reflection
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 // Reflection reverses orientation: the mirrored curve is the ellipse with
@@ -1718,6 +1744,14 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
                 for (Vec2& p : x.control_points) {
                     p = rot(p);
+                }
+                for (Vec2& p : x.fit.points) {
+                    p = rot(p);
+                }
+                for (std::optional<Vec2>* t : {&x.fit.start_tangent, &x.fit.end_tangent}) {
+                    if (*t) {
+                        *t = rot(**t) - rot(Vec2{}); // a direction: turned
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = rot(x.a);
@@ -1904,6 +1938,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.major = x.major * f;
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
                 for (Vec2& p : x.control_points) {
+                    p = scl(p);
+                }
+                for (Vec2& p : x.fit.points) {
                     p = scl(p);
                 }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
@@ -2548,6 +2585,147 @@ void GeometryEngine::redefine_block_by_tags(std::uint16_t index, const BlockDef&
     }
 }
 
+namespace {
+// A multileader drawn again as its style now is: the arrowhead and its size, the text height,
+// the landing (there or not, its length and the gap to the text) and the leader type. The
+// leader's own points stay; the text follows the landing.
+AddMLeaderCommand mleader_restyled(AddMLeaderCommand m, const MLeaderStyle& st) {
+    using F = LeaderForm;
+    m.overrides.arrow_type = st.arrow;
+    m.overrides.arrow_size = st.arrow_size;
+    m.overrides.set(DimOverrides::kArrowType, true);
+    m.overrides.set(DimOverrides::kArrowSize, true);
+    if (st.text_height > 0.0) {
+        m.block.height = st.text_height;
+    }
+    std::vector<Vec2>& v = m.vertices;
+    if (v.size() >= 2) {
+        const std::size_t n = v.size();
+        const bool had_landing = (m.leader_flags & F::kLanding) != 0 ||
+                                 (n >= 3 && std::abs(v[n - 1].y - v[n - 2].y) < 1e-9);
+        const double side = v[n - 1].x >= v[n - 2].x ? 1.0 : -1.0;
+        if (had_landing) {
+            v.pop_back(); // back to where the landing starts
+        }
+        if (st.landing) {
+            v.push_back(v.back() + Vec2{side * st.landing_distance, 0.0});
+        }
+        m.block.pos = v.back() + Vec2{side * st.landing_gap, 0.0};
+    }
+    const auto kept = static_cast<std::uint8_t>(m.leader_flags & ~(F::kSpline | F::kNoLine | F::kLanding));
+    m.leader_flags = static_cast<std::uint8_t>(kept | (st.leader_type == 1 ? F::kSpline : st.leader_type == 2 ? F::kNoLine : 0) |
+                                               (st.landing ? F::kLanding : 0));
+    return m;
+}
+} // namespace
+
+bool GeometryEngine::mleader_style_in_use(std::uint16_t style) const {
+    for (const EntityHandle h : all_live()) {
+        const MLeaderData* m = h.kind == EntityKind::MLeader ? store_.mleader(h) : nullptr;
+        if (m != nullptr && m->mlstyle == style) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int GeometryEngine::restyle_mleaders(std::uint16_t style, std::uint64_t group) {
+    if (style >= store_.mleader_styles().size()) {
+        return 0;
+    }
+    const MLeaderStyle st = store_.mleader_styles()[style];
+    std::vector<EntityHandle> drawn;
+    for (const EntityHandle h : all_live()) {
+        const MLeaderData* m = h.kind == EntityKind::MLeader ? store_.mleader(h) : nullptr;
+        if (m != nullptr && m->mlstyle == style) {
+            drawn.push_back(h);
+        }
+    }
+    for (const EntityHandle h : drawn) {
+        const Command original = capture_entity(h);
+        const Command made = mleader_restyled(std::get<AddMLeaderCommand>(original), st);
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        push_create_item(group, create_indexed(made), made);
+    }
+    if (!drawn.empty()) {
+        prune_selection();
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    return static_cast<int>(drawn.size());
+}
+
+void GeometryEngine::apply_attsync(const AttSyncCommand& c) {
+    // The blocks to sync: by name (a wild card too), or the one the reference picked shows.
+    std::vector<std::uint16_t> wanted;
+    if (c.block.empty()) {
+        const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+        if (const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr) {
+            wanted.push_back(in->block);
+        } else {
+            report("ATTSYNC: that is not a block reference.");
+            return;
+        }
+    } else {
+        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+            if (glob_match(c.block, store_.block(i)->name)) {
+                wanted.push_back(i);
+            }
+        }
+        if (wanted.empty()) {
+            report("Block \"" + c.block + "\" not found.");
+            return;
+        }
+    }
+    std::size_t with_attributes = 0;
+    std::size_t synced = 0;
+    for (const std::uint16_t bi : wanted) {
+        const BlockDef* def = store_.block(bi);
+        if (def == nullptr || def->content.attdefs.empty()) {
+            continue;
+        }
+        ++with_attributes;
+        const std::vector<BlockAttDef>& defs = def->content.attdefs;
+        for (const EntityHandle h : all_live()) {
+            const InsertData* in = h.kind == EntityKind::Insert ? store_.insert(h) : nullptr;
+            if (in == nullptr || in->block != bi) {
+                continue;
+            }
+            const std::vector<std::string> before = store_.insert_attribs(*in);
+            if (before.empty() || before.size() == defs.size()) {
+                continue; // in step (none kept: every attribute at its default)
+            }
+            std::vector<std::string> after = before;
+            for (std::size_t i = after.size(); i < defs.size(); ++i) {
+                after.push_back(defs[i].def);
+            }
+            after.resize(defs.size());
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(c.group, h, original);
+            AddInsertCommand nc = std::get<AddInsertCommand>(original);
+            nc.attribs = after;
+            const Command add = nc;
+            push_create_item(c.group, create_indexed(add), add);
+            ++synced;
+        }
+    }
+    if (with_attributes == 0) {
+        report(wanted.size() == 1 ? "Block \"" + store_.block(wanted.front())->name + "\" has no attributes."
+                                  : "No block of that name has attributes.");
+        return;
+    }
+    if (synced > 0) {
+        selection_.clear();
+        redo_.clear();
+        geom_dirty_ = true;
+        dirty_ = true;
+    }
+    report("ATTSYNC complete.");
+}
+
 void GeometryEngine::apply_replace_block(const ReplaceBlockCommand& c) {
     const auto lower = [](std::string s) {
         for (char& ch : s) {
@@ -2686,8 +2864,8 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     std::vector<EntityHandle> keep;
     int edited = 0;
     for (const EntityHandle h : selection_) {
-        if (h.kind != EntityKind::Hatch || !store_.is_valid(h) || !selectable(h)) {
-            keep.push_back(h);
+        if (h.kind != EntityKind::Hatch || !store_.is_valid(h) || !selectable(h) || store_.is_wipeout(h)) {
+            keep.push_back(h); // a wipeout is not a hatch
             continue;
         }
         const Command original = capture_entity(h);
@@ -2712,6 +2890,65 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
             x.props = props;
             made.push_back(x);
             break;
+        case Op::Origin: {
+            HatchExtras ex;
+            if (c.origin_corner == 0) {
+                ex.origin = c.origin;
+            } else {
+                ex.origin_corner = c.origin_corner;
+            }
+            apply_hatch_extras(x, ex);
+            made.push_back(x);
+            break;
+        }
+        case Op::AddAreas: {
+            std::size_t added = 0;
+            for (const Vec2 p : c.points) {
+                if (const std::optional<std::vector<std::vector<Vec2>>> loops = boundary_loops(p)) {
+                    x.loops.insert(x.loops.end(), loops->begin(), loops->end());
+                    ++added;
+                }
+            }
+            if (added == 0) {
+                keep.push_back(h);
+                continue;
+            }
+            made.push_back(x);
+            break;
+        }
+        case Op::RemoveBoundaries: {
+            const auto to_edge = [](Vec2 q, Vec2 a, Vec2 b) {
+                const Vec2 ab = b - a;
+                const double l2 = dot(ab, ab);
+                const double t = l2 > 0.0 ? std::clamp(dot(q - a, ab) / l2, 0.0, 1.0) : 0.0;
+                return length(q - (a + ab * t));
+            };
+            std::size_t removed = 0;
+            for (const Vec2 q : c.points) {
+                std::size_t best = x.loops.size();
+                double best_d = std::max(c.radius, 1e-9);
+                for (std::size_t i = 0; i < x.loops.size() && x.loops.size() > 1; ++i) {
+                    const std::vector<Vec2>& loop = x.loops[i];
+                    for (std::size_t k = 0; k < loop.size(); ++k) {
+                        const double d = to_edge(q, loop[k], loop[(k + 1) % loop.size()]);
+                        if (d <= best_d) {
+                            best = i;
+                            best_d = d;
+                        }
+                    }
+                }
+                if (best < x.loops.size()) {
+                    x.loops.erase(x.loops.begin() + static_cast<std::ptrdiff_t>(best));
+                    ++removed;
+                }
+            }
+            if (removed == 0) {
+                keep.push_back(h);
+                continue;
+            }
+            made.push_back(x);
+            break;
+        }
         case Op::Separate: {
             // Each outer loop, with the loops one level in from it as its islands, a hatch.
             for (std::vector<std::vector<Vec2>>& area : hatch_areas(x.loops)) {
@@ -2738,7 +2975,10 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     }
     selection_ = keep;
     if (edited == 0) {
-        report(c.op == Op::Separate ? "Nothing to separate: the hatch has one area." : "No hatch selected.");
+        report(c.op == Op::Separate           ? "Nothing to separate: the hatch has one area."
+               : c.op == Op::AddAreas         ? "Valid hatch boundary not found."
+               : c.op == Op::RemoveBoundaries ? "No boundary of the hatch there."
+                                              : "No hatch selected.");
         return;
     }
     redo_.clear();
@@ -2746,6 +2986,12 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     dirty_ = true;
     if (c.op == Op::Separate) {
         report(std::to_string(edited) + (edited == 1 ? " hatch" : " hatches") + " separated.");
+    } else if (c.op == Op::AddAreas) {
+        report("Boundaries added.");
+    } else if (c.op == Op::RemoveBoundaries) {
+        report("Boundaries removed.");
+    } else if (c.op == Op::Origin) {
+        report("Hatch origin set.");
     }
 }
 
@@ -3491,6 +3737,22 @@ void reverse_polyline(AddPolylineCommand& p) {
     }
 }
 
+// A spline's fit data the other way round: the points from the last to the first (closed:
+// still from the first, the rest backwards) and the end tangents swapped and turned round.
+void reverse_fit(SplineFit& f) {
+    if (f.points.size() < 2) {
+        return;
+    }
+    if (f.closed) {
+        std::reverse(f.points.begin() + 1, f.points.end());
+    } else {
+        std::reverse(f.points.begin(), f.points.end());
+    }
+    const std::optional<Vec2> start = f.start_tangent;
+    f.start_tangent = f.end_tangent ? std::optional<Vec2>(*f.end_tangent * -1.0) : std::nullopt;
+    f.end_tangent = start ? std::optional<Vec2>(*start * -1.0) : std::nullopt;
+}
+
 Vec2 rotated(Vec2 v, double a) {
     const double cs = std::cos(a);
     const double sn = std::sin(a);
@@ -3515,6 +3777,7 @@ void GeometryEngine::apply_reverse(const ReverseSelectionCommand& c) {
         } else if (auto* s = std::get_if<AddSplineCommand>(&changed)) {
             std::reverse(s->control_points.begin(), s->control_points.end());
             s->knots = spline::reversed_knots(s->knots);
+            reverse_fit(s->fit);
         } else {
             out.push_back(h);
             continue;
@@ -4605,7 +4868,7 @@ std::string GeometryEngine::list_block(EntityHandle h) const {
     const EntityProps* pr = store_.props(h);
     const std::string layer =
         pr != nullptr && pr->layer < store_.layers().size() ? store_.layers()[pr->layer].name : "?";
-    std::string kind = kind_name(h.kind);
+    std::string kind = store_.is_wipeout(h) ? "Wipeout" : kind_name(h.kind);
     for (char& ch : kind) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     }
@@ -7586,6 +7849,13 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                                                  hd->pattern_origin, segs);
                 for (const hatch::Segment& sg : segs) {
                     line(sg.a, sg.b, hd->props);
+                }
+            } else if (pname == "WIPEOUT") {
+                // A wipeout: the lines of its frame, as AutoCAD leaves them.
+                for (const std::vector<Vec2>& loop : loops) {
+                    for (std::size_t i = 0; i < loop.size() && loop.size() >= 2; ++i) {
+                        line(loop[i], loop[(i + 1) % loop.size()], hd->props);
+                    }
                 }
             } else {
                 // A filled region has no lines to hand back; its boundary is what remains.
@@ -14320,6 +14590,9 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
     };
     std::optional<Command> replacement;
     std::string what;
+    if (c.op == Op::AddVertex || c.op == Op::DeleteVertex || c.op == Op::MoveVertex) {
+        sp->fit = {}; // its control vertices edited: a spline by fit points no longer
+    }
     switch (c.op) {
     case Op::AddVertex: {
         if (!sp->knots.empty()) {
@@ -14377,6 +14650,7 @@ void GeometryEngine::apply_spline_edit(const SplineEditCommand& c) {
     case Op::Reverse:
         std::reverse(cp.begin(), cp.end());
         sp->knots = spline::reversed_knots(sp->knots);
+        reverse_fit(sp->fit);
         what = "Spline reversed.";
         break;
     case Op::ToPolyline: {
@@ -17634,7 +17908,8 @@ void GeometryEngine::apply_one(const Command& command) {
                         const EntityProps* p = store_.props(h);
                         const std::string layer =
                             p != nullptr && p->layer < store_.layers().size() ? store_.layers()[p->layer].name : "";
-                        pick_candidates_.push_back({h, std::string(kind_name(h.kind)) + " (" + layer + ")"});
+                        pick_candidates_.push_back(
+                            {h, std::string(store_.is_wipeout(h) ? "Wipeout" : kind_name(h.kind)) + " (" + layer + ")"});
                     }
                     if (pick_candidates_.size() < 2) {
                         pick_candidates_.clear(); // one object is no choice
@@ -17862,6 +18137,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ReplaceBlockCommand>) {
                 apply_replace_block(c);
+            }
+            if constexpr (std::is_same_v<T, AttSyncCommand>) {
+                apply_attsync(c);
             }
             if constexpr (std::is_same_v<T, SetLayerFiltersCommand>) {
                 store_.set_layer_filters(c.filters);
@@ -20049,7 +20327,9 @@ void GeometryEngine::apply_one(const Command& command) {
                         }
                         store_.set_mleader_styles(std::move(styles));
                         dirty_ = true;
-                        report("Multileader style \"" + store_.mleader_styles()[i].name + "\" changed.");
+                        const int n = restyle_mleaders(i, c.group); // the multileaders drawn with it follow
+                        report("Multileader style \"" + store_.mleader_styles()[i].name + "\" changed." +
+                               (n > 0 ? " " + std::to_string(n) + (n == 1 ? " multileader" : " multileaders") + " updated." : ""));
                     }
                 } else if (c.op == Op::SetCurrent) {
                     store_.set_current_mleader_style(i);
@@ -20057,11 +20337,19 @@ void GeometryEngine::apply_one(const Command& command) {
                     report("\"" + store_.mleader_styles()[i].name + "\" is now the current multileader style.");
                 } else if (i == 0 || i == store_.current_mleader_style()) {
                     report("Multileader style " + quoted + " cannot be deleted: it is Standard or the current style.");
+                } else if (mleader_style_in_use(i)) {
+                    report("Multileader style " + quoted + " cannot be deleted: multileaders are drawn with it.");
                 } else {
                     const std::uint16_t cur = store_.current_mleader_style();
                     styles.erase(styles.begin() + i);
                     store_.set_mleader_styles(std::move(styles));
                     store_.set_current_mleader_style(cur > i ? static_cast<std::uint16_t>(cur - 1) : cur);
+                    for (const EntityHandle h : all_live()) { // the styles after it move up one
+                        const MLeaderData* m = h.kind == EntityKind::MLeader ? store_.mleader(h) : nullptr;
+                        if (m != nullptr && m->mlstyle > i) {
+                            store_.set_mleader_mlstyle(h, static_cast<std::uint16_t>(m->mlstyle - 1));
+                        }
+                    }
                     dirty_ = true;
                     report("Multileader style " + quoted + " deleted.");
                 }
@@ -21326,6 +21614,7 @@ void GeometryEngine::rebuild_and_publish() {
     // pick query as a single click; render-side highlight, no extra handoff.
     buf.has_hover = false;
     buf.hover_closed = false;
+    buf.hover_block = -1;
     buf.hover = EntityHandle{};
     buf.hover_line_vertices.clear();
     if (pick_radius_ > 0.0) {
@@ -21335,6 +21624,9 @@ void GeometryEngine::rebuild_and_publish() {
             buf.has_hover = true;
             if (const PolylineData* pl = hv.kind == EntityKind::Polyline ? store_.polyline(hv) : nullptr) {
                 buf.hover_closed = pl->closed;
+            }
+            if (const InsertData* in = hv.kind == EntityKind::Insert ? store_.insert(hv) : nullptr) {
+                buf.hover_block = in->block;
             }
             std::vector<Vec2> tess;
             kernel_.tessellate(store_, hv, kDefaultTessTolerance, tess);
