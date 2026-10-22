@@ -6,7 +6,7 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.0 - 2026-10-23
 
 ### Added
 - **Draw order** (#55) -- every object has its place in the draw order: a new one over the
