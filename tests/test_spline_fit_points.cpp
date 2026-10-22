@@ -6,6 +6,7 @@
 // fits the spline again; MOVE, ROTATE and REVERSE take them along, an edit of the control
 // vertices drops them; the drawing file and DXF keep them (AutoCAD's 11, 44, 12 and 13).
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -99,13 +100,16 @@ AddSplineCommand fitted(std::uint64_t group, std::optional<Vec2> start = std::nu
     return s;
 }
 
-// Whether the curve of `ctrl` passes through `p`.
+// Whether the curve of `ctrl` passes through `p`: near enough to its tessellation's segments.
 bool passes(const std::vector<Vec2>& ctrl, Vec2 p) {
     std::vector<Vec2> curve;
     spline::tessellate(ctrl, 3, curve);
     double best = 1e30;
-    for (const Vec2& c : curve) {
-        best = std::min(best, distance(c, p));
+    for (std::size_t i = 0; i + 1 < curve.size(); ++i) {
+        const Vec2 ab = curve[i + 1] - curve[i];
+        const double l2 = dot(ab, ab);
+        const double t = l2 > 0.0 ? std::clamp(dot(p - curve[i], ab) / l2, 0.0, 1.0) : 0.0;
+        best = std::min(best, distance(curve[i] + ab * t, p));
     }
     return best < 0.05;
 }
@@ -164,7 +168,7 @@ TEST_CASE("MOVE, ROTATE and REVERSE take a spline's fit data along; SPLINEDIT on
     engine.submit(MoveSelectionCommand{{5, 5}, 2});
     engine.submit(RotateSelectionCommand{{5, 5}, kPi / 2.0, 3});
     doc = dump(engine, "musacad_splinefit2.musa");
-    const SplineFit& f = doc.splines[0].fit;
+    const SplineFit f = doc.splines[0].fit; // a copy: `doc` is read again below
     REQUIRE(near(f.points[0], {5, 5}));
     REQUIRE(near(f.points[1], {-5, 15}, 1e-9)); // (15, 15) turned a quarter about (5, 5)
     REQUIRE(f.start_tangent);

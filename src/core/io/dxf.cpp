@@ -3720,7 +3720,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 }
             }
             if (type == "WIPEOUTVARIABLES") { // WIPEOUTFRAME: 0 hidden, 1 shown, 2 not plotted
-                const long f = to_l(find(body, 70) != nullptr ? *find(body, 70) : std::string("1"));
+                const std::string* frame = find(body, 70);
+                const long f = frame != nullptr ? to_l(*frame) : 1L;
                 doc.wipeout_frames = f != 0;
                 doc.wipeout_frames_plot = f != 2;
             }
