@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/ui/layer_dialog.hpp"
+#include "musacad/core/io/dxf.hpp"
 
 #include <QCheckBox>
 #include <QColor>
@@ -44,6 +45,7 @@ enum Col {
     kVpFreeze,
     kDescription,
     kTransparency, // 0..90 percent
+    kPlotStyle,    // colour-dependent: Color_N, as the layer's colour plots (read only)
     kColCount
 };
 
@@ -117,7 +119,8 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
 
     table_ = new QTableWidget(0, kColCount, this);
     table_->setHorizontalHeaderLabels({"Name", "On", "Frozen", "Locked", "Color", "Linetype",
-                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description", "Transparency"});
+                                       "Lineweight", "Plot", "New VP Freeze", "VP Freeze", "Description", "Transparency",
+                                       "Plot Style"});
     table_->horizontalHeader()->setStretchLastSection(false);
     table_->horizontalHeader()->setSectionResizeMode(kName, QHeaderView::Stretch);
     table_->verticalHeader()->setVisible(false);
@@ -495,6 +498,24 @@ void LayerDialog::rebuild_table(const std::vector<core::Layer>& layers, std::uin
             }
         });
         table_->setCellWidget(row, kTransparency, tpy);
+
+        // Plot Style: a drawing's plot styles are colour-dependent, so a layer plots as its
+        // colour does -- AutoCAD's greyed Color_N (the nearest index colour).
+        int aci = 7;
+        long best = -1;
+        for (int i = 1; i <= 255; ++i) {
+            const core::Rgb c = core::io::dxf_aci_to_rgb(i);
+            const long d = (c.r - l.color.r) * (c.r - l.color.r) + (c.g - l.color.g) * (c.g - l.color.g) +
+                           (c.b - l.color.b) * (c.b - l.color.b);
+            if (best < 0 || d < best) {
+                best = d;
+                aci = i;
+            }
+        }
+        auto* style = new QTableWidgetItem(QStringLiteral("Color_%1").arg(aci));
+        style->setFlags(Qt::ItemIsSelectable);
+        style->setToolTip(QStringLiteral("Colour-dependent plot styles: the layer plots as its colour does."));
+        table_->setItem(row, kPlotStyle, style);
     }
     building_ = false;
     apply_filter(); // a rebuilt table keeps the search
