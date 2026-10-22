@@ -564,6 +564,11 @@ struct AddPolylineCommand {
     double elevation = 0.0; ///< DXF 38
     double thickness = 0.0; ///< DXF 39
     bool ltype_gen = true;  ///< PolylineData::ltype_gen
+    /// PEDIT Fit / Spline (PolylineData::fit): `points` are the fit's, `frame` the vertices
+    /// placed; `tangents` (PEDIT Edit vertex Tangent) one per vertex placed, NaN for none.
+    std::uint8_t fit = 0;
+    std::vector<Vec2> frame = {};
+    std::vector<double> tangents = {};
 };
 
 struct AddCircleCommand {

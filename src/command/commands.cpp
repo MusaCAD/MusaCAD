@@ -5648,10 +5648,10 @@ void SplineCommand::selection_gesture(CommandContext& ctx) {
 
 void SplineCommand::convert_selection(CommandContext& ctx) {
     if (ctx.has_selection()) {
-        // PEDIT's Spline on each: the polyline's vertices fitted by a spline, which takes
-        // its place (one undo step).
+        // A spline in each polyline's place -- a spline-fit one's the same curve (one undo
+        // step).
         core::PeditCommand c;
-        c.op = 4;
+        c.op = 25;
         c.selection = true;
         c.group = ctx.group_id();
         ctx.submit(std::move(c));
@@ -6966,9 +6966,9 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "F" || u == "FIT") {
             op(10);
         } else if (u == "S" || u == "SPLINE") {
-            op(4);
-            done_ = true; // the polyline is a spline now
-            return;
+            // A spline-fit polyline (SPLINETYPE 5 quadratic, 6 cubic; SPLINESEGS pieces a
+            // segment); Decurve takes it back to its vertices.
+            op(4, {static_cast<double>(s_splinetype_), static_cast<double>(s_splinesegs_)});
         } else if (u == "D" || u == "DECURVE") {
             op(3);
         } else if (u == "L" || u == "LTYPE GEN" || u == "LTYPE") {
@@ -7064,13 +7064,25 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         }
         ctx.set_prompt("Enter an option [Next/Previous/Go/eXit] <N>: ");
         return;
-    case State::VTangent:
-        if (!t.empty()) {
-            ctx.echo("Vertex tangents are not kept; Fit makes its own.");
+    case State::VTangent: {
+        // A direction: an angle typed, or a point (from the current vertex towards it).
+        double deg = 0.0;
+        if (t.empty()) {
+            state_ = State::Vertex;
+            prompt_vertex(ctx);
+            return;
+        }
+        if (t.find(',') == std::string::npos && !ctx.input_is_pick() && parse_number(t, deg)) {
+            op(23, {core::to_radians(deg), 0.0});
+        } else if (const auto p = read_point(ctx, text)) {
+            op(23, {0.0, 1.0}, *p);
+        } else {
+            return;
         }
         state_ = State::Vertex;
         prompt_vertex(ctx);
         return;
+    }
     case State::WidthVal: {
         double w = 0.0;
         if (t.empty()) {
@@ -8855,7 +8867,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
-        "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "TRIMMODE",
+        "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "SPLINESEGS", "SPLINETYPE", "TRIMMODE",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",

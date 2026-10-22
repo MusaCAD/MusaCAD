@@ -4,6 +4,7 @@
 #include "musacad/core/grips.hpp"
 #include "musacad/core/text/justify.hpp"
 #include "musacad/core/polyline_width.hpp"
+#include "musacad/core/polyline_ops.hpp"
 
 #include "musacad/core/ellipse.hpp"
 
@@ -39,6 +40,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const auto verts = store.vertices_of(*p);
         const auto bulges = store.bulges_of(*p);
         const auto widths = store.widths_of(*p);
+        const auto frame = store.frame_of(*p);
+        const auto tangents = store.tangents_of(*p);
         return AddPolylineCommand{std::vector<Vec2>(verts.begin(), verts.end()),
                                   p->closed,
                                   0,
@@ -48,7 +51,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                   std::vector<double>(widths.begin(), widths.end()),
                                   p->elevation,
                                   p->thickness,
-                                  p->ltype_gen};
+                                  p->ltype_gen,
+                                  frame.empty() ? std::uint8_t{0} : p->fit,
+                                  std::vector<Vec2>(frame.begin(), frame.end()),
+                                  std::vector<double>(tangents.begin(), tangents.end())};
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
@@ -308,6 +314,8 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                             c.elevation, c.thickness);
                 store.set_celtscale(handle, c.celtscale);
                 store.set_polyline_ltype_gen(handle, c.ltype_gen);
+                store.set_polyline_fit(handle, c.fit, c.frame);
+                store.set_polyline_tangents(handle, c.tangents);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 handle = store.add_circle(c.center, c.radius, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -539,6 +547,14 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     }
     case EntityKind::Polyline: {
         const PolylineData* p = store.polyline(h);
+        // A fitted polyline (PEDIT Fit / Spline): a grip on each vertex placed, its frame, as
+        // AutoCAD shows them; dragged, the curve is fitted again.
+        if (const auto frame = store.frame_of(*p); !frame.empty()) {
+            for (std::uint32_t i = 0; i < frame.size(); ++i) {
+                push(out, frame[i], GripKind::Vertex, i);
+            }
+            break;
+        }
         const auto verts = store.vertices_of(*p);
         const auto bulges = store.bulges_of(*p);
         for (std::uint32_t i = 0; i < verts.size(); ++i) {
@@ -762,6 +778,15 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
 Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint32_t grip_index,
                            Vec2 newpos, int text_move, int variant) {
     Command c = capture_entity(store, h);
+    if (auto* pl = std::get_if<AddPolylineCommand>(&c); pl != nullptr && pl->fit != 0 && !pl->frame.empty()) {
+        // A frame vertex moves and the curve is fitted again, in as many pieces as before.
+        if (grip_index < pl->frame.size()) {
+            const int segs = polyline_ops::fit_segments(pl->points.size(), pl->frame.size(), pl->closed);
+            pl->frame[grip_index] = newpos;
+            polyline_ops::refit(pl->fit, pl->frame, pl->closed, pl->tangents, segs, pl->points, pl->bulges, pl->widths);
+        }
+        return c;
+    }
     if (auto* ln = std::get_if<AddLineCommand>(&c); ln != nullptr && variant == 1 && grip_index <= 1) {
         // Lengthen: the end slides along the line (never past the other end).
         const Vec2 fixed = grip_index == 0 ? ln->b : ln->a;

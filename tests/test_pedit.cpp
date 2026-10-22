@@ -106,7 +106,7 @@ TEST_CASE("PEDIT: Close/Open, vertex Insert/Delete/Move, Reverse and Decurve, ea
     engine.stop();
 }
 
-TEST_CASE("PEDIT: Reverse flips bulge signs so the arc stays put; Decurve straightens; Spline makes a fit spline") {
+TEST_CASE("PEDIT: Reverse flips bulge signs so the arc stays put; Decurve straightens; Spline makes a spline-fit polyline") {
     GeometryEngine engine;
     engine.start();
     // (0,0)->(10,0) as a lower semicircle (bulge 1), then (10,0)->(10,10) straight.
@@ -134,11 +134,11 @@ TEST_CASE("PEDIT: Reverse flips bulge signs so the arc stays put; Decurve straig
     REQUIRE(min_y(engine.snapshot()) == Approx(0.0).margin(1e-6));
     REQUIRE(has_segment(engine.snapshot(), {10, 0}, {0, 0}));
 
-    engine.submit(PeditCommand{{10, 5}, 1.0, 4, {}, {}, 4}); // Spline
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Converted to a spline."; }));
+    engine.submit(PeditCommand{{10, 5}, 1.0, 4, {6.0, 8.0}, {}, 4}); // Spline: a spline-fit polyline
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "Spline fit."; }));
     engine.consume_snapshot();
     REQUIRE(engine.snapshot().selection.size() == 1);
-    REQUIRE(engine.snapshot().selection[0].kind == EntityKind::Spline);
+    REQUIRE(engine.snapshot().selection[0].kind == EntityKind::Polyline);
     engine.stop();
 }
 

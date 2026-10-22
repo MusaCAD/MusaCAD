@@ -2137,7 +2137,7 @@ TEST_CASE("SPLINE's Object makes the polylines picked into splines") {
     h.run({""});
     const auto* c = h.last<PeditCommand>();
     REQUIRE(c != nullptr);
-    REQUIRE(c->op == 4);
+    REQUIRE(c->op == 25); // the spline-fit polyline's own curve, its frame the control points
     REQUIRE(c->selection);
     REQUIRE_FALSE(h.proc.has_active_command());
 }

@@ -6,6 +6,8 @@
 #include "musacad/core/text/parse_double.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <charconv>
 #include <fstream>
 #include <sstream>
@@ -926,6 +928,32 @@ std::string serialize_native(const Document& doc) {
         }
         append_polyline_extras(s, p);
         s += '\n';
+        // v43: PLFIT fit n x y ... -- PEDIT Fit / Spline's vertices placed; PLTAN n t ... -- the
+        // vertex tangents (radians, "-" for none), of the POLYLINE just written.
+        if (p.fit != 0 && !p.frame.empty()) {
+            s += "PLFIT ";
+            append_uint(s, p.fit);
+            s += ' ';
+            append_uint(s, p.frame.size());
+            for (const Vec2& v : p.frame) {
+                s += ' ';
+                append_vec(s, v);
+            }
+            s += '\n';
+        }
+        if (!p.tangents.empty()) {
+            s += "PLTAN ";
+            append_uint(s, p.tangents.size());
+            for (const double a : p.tangents) {
+                s += ' ';
+                if (std::isnan(a)) {
+                    s += '-';
+                } else {
+                    append_double(s, a);
+                }
+            }
+            s += '\n';
+        }
     }
     for (const DocSpline& sp : doc.splines) {
         s += "SPLINE ";
@@ -3541,6 +3569,34 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("POLYLINE record malformed");
             }
             t_polylines->push_back(std::move(pl));
+        } else if (key == "PLFIT") {
+            std::uint64_t fit = 0;
+            std::uint64_t n = 0;
+            vals.clear();
+            if (t_polylines->empty() || tok.size() < 3 || !to_uint(tok[1], fit) || !to_uint(tok[2], n) ||
+                tok.size() != 3 + 2 * n || !parse_doubles(tok, 3, 2 * n, vals) || (fit != 1 && fit != 5 && fit != 6)) {
+                return fail("malformed PLFIT");
+            }
+            DocPolyline& pl = t_polylines->back();
+            pl.fit = static_cast<std::uint8_t>(fit);
+            pl.frame.clear();
+            for (std::size_t k = 0; k + 1 < vals.size(); k += 2) {
+                pl.frame.push_back({vals[k], vals[k + 1]});
+            }
+        } else if (key == "PLTAN") {
+            std::uint64_t n = 0;
+            if (t_polylines->empty() || tok.size() < 2 || !to_uint(tok[1], n) || tok.size() != 2 + n) {
+                return fail("malformed PLTAN");
+            }
+            DocPolyline& pl = t_polylines->back();
+            pl.tangents.clear();
+            for (std::size_t k = 0; k < n; ++k) {
+                double a = std::numeric_limits<double>::quiet_NaN();
+                if (tok[2 + k] != "-" && !to_double(tok[2 + k], a)) {
+                    return fail("malformed PLTAN value");
+                }
+                pl.tangents.push_back(a);
+            }
         } else if (key == "SPLINE") {
             std::uint64_t degree = 0;
             std::uint64_t n = 0;

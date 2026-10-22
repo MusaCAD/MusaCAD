@@ -226,7 +226,8 @@ set(_musacad_test_files
     test_measurement_vars.cpp
     test_attach_scale.cpp
     test_dimtext_grips_dyn.cpp
-    test_mline.cpp)
+    test_mline.cpp
+    test_pedit_spline.cpp)
 
 set(_musacad_test_binaries "")
 list(LENGTH _musacad_test_files _musacad_n)
