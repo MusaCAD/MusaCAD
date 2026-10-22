@@ -6,7 +6,7 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.0 - 2026-10-23
 
 ### Added
 - **Draw order** (#55) -- every object has its place in the draw order: a new one over the
@@ -16,6 +16,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   **HATCHTOBACK** sends the hatches under it. Fills, hatches, wipeouts and images hide what is
   under them and not what is over them, on screen and when plotted; TEXTMASK's mask goes just
   under its text. Kept in the drawing; a DXF's own order is its draw order.
+- **The Layer Properties Manager's Plot Style column** (#69) -- Color_N, greyed: a drawing's
+  plot styles are colour-dependent, so a layer plots as its colour does.
 - **Transparency on single objects** (#68, #69) -- the Properties palette's Transparency
   (ByLayer, ByBlock or 0 to 90 percent) and **CETRANSPARENCY** for new objects; kept in the
   drawing and in DXF.
