@@ -9,6 +9,30 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Wipeouts as objects of their own** (#40) -- a wipeout is a Wipeout in the Properties
+  palette, LIST, the selection cycling list and Quick Select (which has the type), not a hatch
+  to HATCHEDIT, Select Similar or Match Properties; EXPLODE leaves the lines of its frame. DXF
+  reads AutoCAD's WIPEOUT entities -- they were dropped before -- and writes wipeouts as
+  WIPEOUTs, WIPEOUTFRAME with them, instead of a colour-7 solid hatch.
+- **Splines keep their fit points** (#39) -- a spline drawn with SPLINE's Fit method keeps the
+  points it passes through, its knots, tolerance and end tangents: its grips are on those
+  points, and dragging one fits the spline through the new place. MOVE, ROTATE, SCALE, MIRROR,
+  STRETCH and REVERSE take them along; editing its control vertices (SPLINEDIT) makes it a
+  spline by control vertices, as in AutoCAD. Kept in the drawing and in DXF, where AutoCAD's
+  splines bring their fit points with them.
+- **HATCHEDIT's ADd boundaries, Remove boundaries and Origin** (#41) -- areas picked inside
+  join the hatch; a boundary of the hatch picked is taken out; the pattern's origin set to a
+  point, a corner of the boundary's extents or its centre. Each one undo step.
+- **ATTSYNC** (#75) -- `Enter an option [?/Name/Select] <Select>:`, the block by a reference
+  picked or by name (wild cards too), `ATTSYNC block X? [Yes/No] <Yes>:`: each reference gets
+  its block's attributes as they are now, keeping its values. Insert > Block Definition >
+  Synchronize.
+- **Multileaders follow their style** (#61) -- a multileader keeps the multileader style it
+  was drawn with; modifying the style in the Multileader Style Manager changes the arrowhead,
+  text height, landing and leader type of the multileaders drawn with it, as one undo step.
+  A style multileaders are drawn with is not deleted.
+- **F4 and F6** (#65) -- 3D Object Snap (3DOSMODE) and Dynamic UCS (UCSDETECT) switch and are
+  kept between runs; the mode keys say what they switched (`<Ortho on>`, `<Osnap off>` ...).
 - **Spline-fit polylines** (#52) -- PEDIT's **Spline** makes the polyline a spline-fit one, as
   AutoCAD does: the quadratic or cubic B-spline (SPLINETYPE 5 or 6) on its vertices, drawn in
   SPLINESEGS pieces a segment, and the vertices kept as its frame. A Fit or Spline polyline

@@ -227,7 +227,10 @@ set(_musacad_test_files
     test_attach_scale.cpp
     test_dimtext_grips_dyn.cpp
     test_mline.cpp
-    test_pedit_spline.cpp)
+    test_pedit_spline.cpp
+    test_wipeout_attsync.cpp
+    test_mleader_restyle.cpp
+    test_spline_fit_points.cpp)
 
 set(_musacad_test_binaries "")
 list(LENGTH _musacad_test_files _musacad_n)

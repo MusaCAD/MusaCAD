@@ -1676,6 +1676,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         hovered_kind_.store(snap.has_hover ? static_cast<int>(snap.hover.kind) + 1 : 0,
                             std::memory_order_relaxed);
         hovered_closed_.store(snap.has_hover && snap.hover_closed, std::memory_order_relaxed);
+        hovered_block_.store(snap.has_hover ? snap.hover_block : -1, std::memory_order_relaxed);
         dirty_.store(snap.dirty, std::memory_order_relaxed);
         document_version_.store(snap.document_version, std::memory_order_relaxed);
         current_layer_.store(snap.current_layer, std::memory_order_relaxed);

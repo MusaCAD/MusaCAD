@@ -270,6 +270,14 @@ public:
     void set_hovered_kind(std::optional<core::EntityKind> kind);
     void set_hovered_closed(bool closed) noexcept { hovered_closed_ = closed; }
     [[nodiscard]] bool hovered_closed() const override { return hovered_closed_; }
+    /// The block index (as set_block_names lists them) of the reference under the cursor, -1 none.
+    void set_hovered_block(int index) noexcept { hovered_block_ = index; }
+    [[nodiscard]] std::optional<std::string> hovered_block() const override {
+        if (hovered_block_ < 0 || static_cast<std::size_t>(hovered_block_) >= block_names_.size()) {
+            return std::nullopt;
+        }
+        return block_names_[static_cast<std::size_t>(hovered_block_)];
+    }
     void set_selected_dims(std::vector<core::SelectedDim> v) { selected_dims_ = std::move(v); }
     [[nodiscard]] std::vector<core::SelectedDim> selected_dims() const override { return selected_dims_; }
     void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
@@ -550,6 +558,7 @@ private:
     core::Vec2 selection_size_{};         ///< the selection's extents (0, 0: not known)
     std::optional<core::EntityKind> hovered_kind_;
     bool hovered_closed_ = false;
+    int hovered_block_ = -1;
     std::vector<core::SelectedDim> selected_dims_;
     core::MLineSettings mline_settings_;
     PreviewSpec preview_;

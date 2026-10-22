@@ -20,6 +20,7 @@
 #include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
+#include "musacad/core/spline_fit.hpp"
 #include "musacad/core/table_types.hpp"
 
 namespace musacad::core {
@@ -71,7 +72,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 43;
+inline constexpr std::uint32_t kFormatVersion = 44;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -183,6 +184,7 @@ struct DocSpline {
     std::uint32_t degree = 3;
     EntityProps props{};
     std::vector<double> knots{}; ///< its own knots, or empty for the clamped uniform ones
+    SplineFit fit{};             ///< v44: a spline by fit points -- them, and how it was fitted
     friend bool operator==(const DocSpline&, const DocSpline&) = default;
 };
 struct DocText {
@@ -272,6 +274,7 @@ struct DocMLeader {
     DimOverrides overrides{}; ///< per-leader arrow override (v13+; no overrides => ByStyle)
     std::uint8_t leader_flags = 0; ///< v40: MLeaderData::leader_flags
     std::vector<Vec2> extra_tips{}; ///< v40: MLEADEREDIT's added leaders, by their arrowheads
+    std::uint16_t mlstyle = 0;      ///< v44: the multileader style it follows (MLeaderData::mlstyle)
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 

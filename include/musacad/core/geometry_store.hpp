@@ -30,6 +30,7 @@
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/properties.hpp"
+#include "musacad/core/spline_fit.hpp"
 
 namespace musacad::core {
 
@@ -114,6 +115,9 @@ struct SplineData {
     /// keeps its knots, and so does each piece of a trimmed or broken one.
     static constexpr std::uint32_t kNoKnots = 0xFFFFFFFFu;
     std::uint32_t knot_offset = kNoKnots;
+    /// A spline by fit points: its fit data (GeometryStore::fit_of), or kNoFit.
+    static constexpr std::uint32_t kNoFit = 0xFFFFFFFFu;
+    std::uint32_t fit_index = kNoFit;
 };
 
 /// Single-line text. The string lives in a shared char pool (offset, len) like
@@ -270,6 +274,7 @@ struct MLeaderData {
     MTextBlock text;              ///< the attached label (computed layout)
     EntityProps props{};
     DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
+    std::uint16_t mlstyle = 0; ///< the multileader style it was drawn with (MLEADERSTYLE): a changed style redraws it
 };
 
 /// Where a multileader's added leaders meet it: the start of its landing (its last segment,
@@ -605,6 +610,8 @@ public:
     bool set_mleader_flags(EntityHandle h, std::uint8_t flags) noexcept;
     /// MLEADEREDIT: the multileader's added leaders, by their arrowhead points (at most 255).
     bool set_mleader_extra(EntityHandle h, std::span<const Vec2> tips);
+    /// The multileader style a multileader follows (an index into mleader_styles()).
+    bool set_mleader_mlstyle(EntityHandle h, std::uint16_t style) noexcept;
     bool set_hatch_unassoc(EntityHandle h, bool unassoc) noexcept;
     bool set_hatch_iso(EntityHandle h, bool iso) noexcept;
     /// The scale a hatch's pattern is drawn at: its own, times 25.4 for a standard pattern
@@ -882,6 +889,9 @@ public:
     [[nodiscard]] std::span<const Vec2> extra_tips_of(const MLeaderData& m) const noexcept;
     /// A hatch's pattern name (in the string pool; "SOLID" = filled).
     [[nodiscard]] std::string_view string_of(const HatchData& h) const noexcept;
+    /// A wipeout (WIPEOUT, TEXTMASK): kept as a hatch of the pattern WIPEOUT, an object of
+    /// its own to the user -- named so, chosen so, written to DXF as a WIPEOUT.
+    [[nodiscard]] bool is_wipeout(EntityHandle h) const noexcept;
     [[nodiscard]] std::string_view string_of(const FcfCell& c) const noexcept;
     [[nodiscard]] std::string_view string_of(const DatumData& d) const noexcept;
     /// The frame's cells as a contiguous span into the shared cell pool.
@@ -1142,6 +1152,10 @@ public:
     [[nodiscard]] std::span<const Vec2> control_points_of(const SplineData& sp) const noexcept;
     /// A spline's own knots, or an empty span for the clamped uniform ones.
     [[nodiscard]] std::span<const double> knots_of(const SplineData& sp) const noexcept;
+    /// A spline by fit points: what it was fitted with; nullptr for one by control vertices.
+    [[nodiscard]] const SplineFit* fit_of(const SplineData& sp) const noexcept;
+    /// Keeps (or, empty, drops) a spline's fit data.
+    bool set_spline_fit(EntityHandle h, SplineFit fit);
 
     void reserve_lines(std::size_t n) { lines_.reserve(n); }
 
@@ -1496,6 +1510,7 @@ private:
     std::vector<double> tangent_pool_; // polyline vertex tangents (PEDIT Tangent), NaN for none
     std::vector<Vec2> spline_pool_;
     std::vector<double> spline_knot_pool_; // splines' own knots
+    std::vector<SplineFit> spline_fits_;    // splines' fit data (SplineData::fit_index)
     std::vector<char> string_pool_; // text content
     std::vector<Vec2> hatch_vtx_pool_;            // hatch boundary-loop vertices (all loops)
     std::vector<std::uint32_t> hatch_loop_lens_;  // per-loop vertex counts

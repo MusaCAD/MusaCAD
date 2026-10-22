@@ -24,6 +24,7 @@
 #include "musacad/core/properties_palette.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/mline.hpp"
+#include "musacad/core/spline_fit.hpp"
 
 namespace musacad::core {
 
@@ -389,6 +390,9 @@ struct AddSplineCommand {
     /// The spline's own knots (control points + degree + 1), or empty for the clamped
     /// uniform ones. An edit that changes the number of control points clears them.
     std::vector<double> knots = {};
+    /// A spline by fit points: them and how it was fitted (empty for one by control vertices).
+    /// An edit of its control vertices drops them, as AutoCAD drops a spline's fit data.
+    SplineFit fit = {};
 };
 
 /// VIEW Save: store (or replace) a named view. VIEW Delete: remove one by name.
@@ -738,7 +742,8 @@ struct SelectPreviewCommand {
 struct SelectSimilarCommand {
     std::uint32_t mode = 130;
 };
-/// QSELECT / FILTER: choose by object type and one property. `kind` -1 = any type.
+/// QSELECT / FILTER: choose by object type and one property. `kind` -1 = any type,
+/// kWipeout a wipeout (Hatch, then, is the hatches that are not).
 /// `property`: 0 none (the type alone), 1 colour (`text` "ByLayer" or "r,g,b"), 2 layer
 /// name, 3 linetype name, 4 lineweight (hundredths of a mm), 5 linetype scale, 6
 /// radius, 7 length, 8 text contents, 9 block name, 10 text height, 11 area.
@@ -746,6 +751,7 @@ struct SelectSimilarCommand {
 /// (`*` and `?`). `whole_drawing` false looks at the current selection only;
 /// `include` false keeps everything BUT the matches; `append` adds to the selection.
 struct SelectFilterCommand {
+    static constexpr int kWipeout = 100;
     int kind = -1;
     std::uint8_t property = 0;
     std::uint8_t op = 0;
@@ -1210,12 +1216,20 @@ struct ArrayPathCommand {
 /// its own), hatch COlor (ByLayer when `by_layer`), LAyer (`layer`; empty: the current one).
 /// One undo step.
 struct HatchEditCommand {
-    enum class Op : std::uint8_t { Disassociate, Separate, Color, Layer };
+    /// Origin: `origin`, or with `origin_corner` (1 bottom left, 2 bottom right, 3 top left, 4 top
+    /// right, 5 centre) that point of the boundary's extents. AddAreas: the areas around
+    /// `points` (as HATCH picks them) added; RemoveBoundaries: the boundary of the hatch nearest
+    /// each of `points`, within `radius`, taken out (one is always left).
+    enum class Op : std::uint8_t { Disassociate, Separate, Color, Layer, Origin, AddAreas, RemoveBoundaries };
     Op op = Op::Disassociate;
     Rgb color{};
     bool by_layer = true;
     std::string layer{};
     std::uint64_t group = 0;
+    Vec2 origin{};
+    std::uint8_t origin_corner = 0;
+    std::vector<Vec2> points{};
+    double radius = 0.0;
 };
 
 /// BLOCKREPLACE: every reference of block `from` (nested ones in other blocks too) made a
@@ -1225,6 +1239,16 @@ struct HatchEditCommand {
 struct ReplaceBlockCommand {
     std::string from;
     std::string to;
+    std::uint64_t group = 0;
+};
+
+/// ATTSYNC: every reference of `block` (a name; `*` or a wild card for several; empty, the
+/// block of the reference under `pick`) given its block's attributes as they are now -- the
+/// values it has kept, a default for an attribute it lacks, none past the last.
+struct AttSyncCommand {
+    std::string block;
+    Vec2 pick{};
+    double pick_radius = 0.0;
     std::uint64_t group = 0;
 };
 
@@ -1657,6 +1681,7 @@ struct AddMLeaderCommand {
     DimStyle dim_style = {};      ///< resolved style snapshot for PR display only
     std::uint8_t leader_flags = 0; ///< MLeaderData::leader_flags
     std::vector<Vec2> extra_tips = {}; ///< MLEADEREDIT's added leaders, by their arrowheads
+    std::uint16_t mlstyle = 0;         ///< MLeaderData::mlstyle
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-
@@ -2256,6 +2281,7 @@ struct MLeaderStyleCommand {
     Op op = Op::SetCurrent;
     std::string name;
     MLeaderStyle style{};
+    std::uint64_t group = 0; ///< Modify: the multileaders drawn with the style, redrawn as one undo step
 };
 /// TCOUNT: numbers the selected texts and multiline texts in `sort` order -- by X left to
 /// right, by Y top to bottom, or as they were selected -- from `start` by `step`: the number
@@ -2523,7 +2549,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
-                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, SetLayerFiltersCommand,
+                 XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

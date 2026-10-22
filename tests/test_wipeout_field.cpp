@@ -202,7 +202,7 @@ TEST_CASE("#33 native v27 keeps the second colour and WIPEOUTFRAME; the store ca
     CHECK_FALSE(again.wipeout_frames);
 }
 
-TEST_CASE("#33 DXF: a gradient hatch round-trips through AutoCAD's gradient block; a wipeout exports as a colour-7 solid") {
+TEST_CASE("#33 DXF: a gradient hatch round-trips through AutoCAD's gradient block; a wipeout as a WIPEOUT") {
     Document doc;
     DocHatch g;
     g.loops = {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}};
@@ -217,18 +217,21 @@ TEST_CASE("#33 DXF: a gradient hatch round-trips through AutoCAD's gradient bloc
 
     const std::string dxf = serialize_dxf(doc);
     CHECK(dxf.find("LINEAR") != std::string::npos);
-    CHECK(dxf.find("WIPEOUT") == std::string::npos);
+    CHECK(dxf.find("\nWIPEOUT\n") != std::string::npos);
     CHECK(dxf.find("GRADIENT") == std::string::npos);
     Document rt;
     REQUIRE(parse_dxf(dxf, rt).ok);
     REQUIRE(rt.hatches.size() == 2);
-    CHECK(rt.hatches[0].pattern_name == "GRADIENT");
-    CHECK(rt.hatches[0].color2.r == 0);
-    CHECK(rt.hatches[0].color2.g == 128);
-    CHECK(rt.hatches[0].color2.b == 255);
-    CHECK(std::abs(rt.hatches[0].pattern_angle - 0.75) < 1e-9);
-    CHECK(rt.hatches[0].loops == g.loops);
-    CHECK(rt.hatches[1].pattern_name == "SOLID"); // the mask's DXF stand-in
+    const DocHatch& gr = rt.hatches[0].pattern_name == "GRADIENT" ? rt.hatches[0] : rt.hatches[1];
+    const DocHatch& wo = rt.hatches[0].pattern_name == "GRADIENT" ? rt.hatches[1] : rt.hatches[0];
+    CHECK(gr.pattern_name == "GRADIENT");
+    CHECK(gr.color2.r == 0);
+    CHECK(gr.color2.g == 128);
+    CHECK(gr.color2.b == 255);
+    CHECK(std::abs(gr.pattern_angle - 0.75) < 1e-9);
+    CHECK(gr.loops == g.loops);
+    CHECK(wo.pattern_name == "WIPEOUT");
+    CHECK(wo.loops == g.loops);
 }
 
 TEST_CASE("#33 engine: WIPEOUT [Polyline] masks a closed polyline (optionally erasing it); frames toggle; undo restores") {

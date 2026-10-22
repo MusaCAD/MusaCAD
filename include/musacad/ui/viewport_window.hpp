@@ -462,6 +462,7 @@ public:
     /// (via the processor) to preview the dimension type it will create.
     /// The object under the cursor is a closed polyline.
     [[nodiscard]] bool hovered_closed() const noexcept { return hovered_closed_.load(std::memory_order_relaxed); }
+    [[nodiscard]] int hovered_block() const noexcept { return hovered_block_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::optional<core::EntityKind> hovered_kind() const noexcept {
         const int v = hovered_kind_.load(std::memory_order_relaxed);
         return v == 0 ? std::nullopt
@@ -942,6 +943,7 @@ private:
     std::atomic<double> grip_preview_max_x_{0.0};
     std::atomic<int> hovered_kind_{0}; // EntityKind+1, or 0 for nothing hovered
     std::atomic<bool> hovered_closed_{false};
+    std::atomic<int> hovered_block_{-1};
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> document_version_{0};
 

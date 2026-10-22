@@ -975,6 +975,29 @@ std::string serialize_native(const Document& doc) {
             }
         }
         s += '\n';
+        if (!sp.fit.empty()) {
+            // v44: a spline by fit points -- knots tolerance closed, the start and end tangents
+            // (each 0, or 1 and its direction), then the points.
+            const SplineFit& f = sp.fit;
+            s += "SPLINEFIT ";
+            append_uint(s, f.knots);
+            s += ' ';
+            append_double(s, f.tolerance);
+            s += f.closed ? " 1" : " 0";
+            for (const std::optional<Vec2>& t : {f.start_tangent, f.end_tangent}) {
+                s += t ? " 1 " : " 0";
+                if (t) {
+                    append_vec(s, *t);
+                }
+            }
+            s += ' ';
+            append_uint(s, f.points.size());
+            for (const Vec2& v : f.points) {
+                s += ' ';
+                append_vec(s, v);
+            }
+            s += '\n';
+        }
     }
     // TEXT params then the content on its own (raw) line, preserving spaces.
     for (const DocText& t : doc.texts) {
@@ -1184,6 +1207,11 @@ std::string serialize_native(const Document& doc) {
         if (m.leader_flags != 0) {
             s += "MLEADERFORM "; // v40: the leader's form (spline, no line, no arrowhead, landing)
             append_uint(s, m.leader_flags);
+            s += '\n';
+        }
+        if (m.mlstyle != 0) {
+            s += "MLEADERSTYLEOF "; // v44: the multileader style it follows
+            append_uint(s, m.mlstyle);
             s += '\n';
         }
         if (!m.extra_tips.empty()) {
@@ -2717,6 +2745,49 @@ IoResult parse_native(std::string_view text, Document& out) {
             for (std::uint64_t i = 0; i < n; ++i) {
                 doc.mleaders.back().extra_tips.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
+        } else if (key == "SPLINEFIT") {
+            // knots tolerance closed (0 | 1 tx ty) (0 | 1 tx ty) n x y ...
+            std::uint64_t knots = 0;
+            vals.clear();
+            if (doc.splines.empty() || tok.size() < 7 || !to_uint(tok[1], knots) || knots > 2 ||
+                !parse_doubles(tok, 2, 1, vals) || (tok[3] != "0" && tok[3] != "1")) {
+                return fail("malformed SPLINEFIT");
+            }
+            SplineFit f;
+            f.knots = static_cast<std::uint8_t>(knots);
+            f.tolerance = vals[0];
+            f.closed = tok[3] == "1";
+            std::size_t at = 4;
+            for (std::optional<Vec2>* t : {&f.start_tangent, &f.end_tangent}) {
+                if (at < tok.size() && tok[at] == "1") {
+                    vals.clear();
+                    if (!parse_doubles(tok, at + 1, 2, vals)) {
+                        return fail("malformed SPLINEFIT tangent");
+                    }
+                    *t = Vec2{vals[0], vals[1]};
+                    at += 3;
+                } else if (at < tok.size() && tok[at] == "0") {
+                    at += 1;
+                } else {
+                    return fail("malformed SPLINEFIT tangent");
+                }
+            }
+            std::uint64_t n = 0;
+            vals.clear();
+            if (at >= tok.size() || !to_uint(tok[at], n) || tok.size() != at + 1 + n * 2 ||
+                !parse_doubles(tok, at + 1, n * 2, vals)) {
+                return fail("malformed SPLINEFIT points");
+            }
+            for (std::uint64_t i = 0; i < n; ++i) {
+                f.points.push_back({vals[i * 2], vals[i * 2 + 1]});
+            }
+            doc.splines.back().fit = std::move(f);
+        } else if (key == "MLEADERSTYLEOF") {
+            std::uint64_t v = 0;
+            if (doc.mleaders.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 0xFFFF) {
+                return fail("malformed MLEADERSTYLEOF");
+            }
+            doc.mleaders.back().mlstyle = static_cast<std::uint16_t>(v);
         } else if (key == "MLEADERFORM") {
             std::uint64_t v = 0;
             if (doc.mleaders.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 15) {

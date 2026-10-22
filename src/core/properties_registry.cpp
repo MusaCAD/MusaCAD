@@ -486,6 +486,16 @@ bool is_leader_arrow(EntityKind k) {
     return k == EntityKind::Leader || k == EntityKind::MLeader;
 }
 bool is_hatch(EntityKind k) { return k == EntityKind::Hatch; }
+// A wipeout is kept as a hatch of the pattern WIPEOUT: to the user an object of its own,
+// without a hatch's pattern, scale, angle or origin.
+bool is_wipeout(const Command& c) {
+    const auto* h = std::get_if<AddHatchCommand>(&c);
+    return h != nullptr && h->pattern_name == "WIPEOUT";
+}
+bool hatch_only(PropertyId id) {
+    return id == PropertyId::HatchPattern || id == PropertyId::HatchScale || id == PropertyId::HatchAngle ||
+           id == PropertyId::HatchOrigin;
+}
 bool is_polyline(EntityKind k) { return k == EntityKind::Polyline; }
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
 /// Dimensions AND GD&T. These three properties are what "GD&T annotation matches the
@@ -1463,6 +1473,9 @@ int match_properties(const Command& source, Command& target, const MatchPropFilt
         if (slot == MatchSlot::None || !filter.allows(slot)) {
             continue;
         }
+        if (hatch_only(d.id) && (is_wipeout(source) || is_wipeout(target))) {
+            continue; // a hatch's pattern does not make a wipeout a hatch, nor the other way
+        }
         if (match_slot_universal(slot)) {
             if (!d.applies(tk)) { // universal applies to any kind; guard defensively
                 continue;
@@ -1479,7 +1492,7 @@ int match_properties(const Command& source, Command& target, const MatchPropFilt
     }
     // A hatch's pattern goes over at its size (acad.pat's or acadiso.pat's), as AutoCAD copies
     // the definition with it.
-    if (filter.allows(match_slot_for(PropertyId::HatchPattern))) {
+    if (filter.allows(match_slot_for(PropertyId::HatchPattern)) && !is_wipeout(source) && !is_wipeout(target)) {
         const auto* sh = std::get_if<AddHatchCommand>(&source);
         if (auto* th = std::get_if<AddHatchCommand>(&target); sh != nullptr && th != nullptr) {
             th->iso = sh->iso;
@@ -1496,16 +1509,22 @@ SelectionSummary summarize_selection(const std::vector<Command>& captured) {
     }
     const EntityKind first_kind = kind_of(captured.front());
     const EntityFamily first_family = family_of(first_kind);
+    const bool first_wipeout = is_wipeout(captured.front());
     bool homogeneous = true;
     bool same_family = true;
+    bool any_wipeout = false;
     for (const Command& c : captured) {
         const EntityKind k = kind_of(c);
-        if (k != first_kind) {
+        if (k != first_kind || is_wipeout(c) != first_wipeout) {
             homogeneous = false;
         }
         if (family_of(k) != first_family) {
             same_family = false;
         }
+        any_wipeout = any_wipeout || is_wipeout(c);
+    }
+    if (any_wipeout) {
+        same_family = false; // no Hatch Editor tab for a wipeout
     }
     s.mixed = !homogeneous;
     // Family homogeneity drives the contextual ribbon tabs (e.g. TEXT + MTEXT are both the
@@ -1515,8 +1534,8 @@ SelectionSummary summarize_selection(const std::vector<Command>& captured) {
     }
     if (homogeneous) {
         s.kind_plus1 = static_cast<std::uint8_t>(static_cast<int>(first_kind) + 1);
-        s.type_label = s.count == 1 ? kind_name(first_kind)
-                                    : std::to_string(s.count) + " " + kind_name(first_kind) + "s";
+        const std::string name = first_wipeout ? "Wipeout" : kind_name(first_kind);
+        s.type_label = s.count == 1 ? name : std::to_string(s.count) + " " + name + "s";
     } else {
         s.type_label = "Mixed (" + std::to_string(s.count) + ")";
     }
@@ -1524,7 +1543,7 @@ SelectionSummary summarize_selection(const std::vector<Command>& captured) {
     for (const Desc& d : kDescs) {
         // A field is shown only if it applies to EVERY selected entity (universal
         // ids always do; type fields only for a homogeneous-enough selection).
-        bool applies_all = true;
+        bool applies_all = !(any_wipeout && hatch_only(d.id));
         for (const Command& c : captured) {
             if (!d.applies(kind_of(c))) {
                 applies_all = false;

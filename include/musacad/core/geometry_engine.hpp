@@ -535,6 +535,11 @@ private:
     void apply_dim_grip_menu(const DimGripMenuCommand& c);
     void apply_hatch_edit(const HatchEditCommand& c);
     void apply_replace_block(const ReplaceBlockCommand& c);
+    void apply_attsync(const AttSyncCommand& c);
+    /// MLEADERSTYLE Modify: the multileaders drawn with `style` drawn again as it now is (in
+    /// `group`); how many.
+    int restyle_mleaders(std::uint16_t style, std::uint64_t group);
+    [[nodiscard]] bool mleader_style_in_use(std::uint16_t style) const;
     /// A block given a new definition, the references' attribute values carried by tag into
     /// it (ATTSYNC's job in AutoCAD, done as the definition changes).
     void redefine_block_by_tags(std::uint16_t index, const BlockDef& def);

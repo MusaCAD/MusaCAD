@@ -578,6 +578,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         processor_->set_hovered_closed(viewport_->hovered_closed()); // PEDIT's Close or Open
+        processor_->set_hovered_block(viewport_->hovered_block());   // ATTSYNC's Select
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
         }
@@ -641,6 +642,8 @@ MainWindow::~MainWindow() {
         settings.setValue(QStringLiteral("sysvar/DYNPICOORDS"), command::dynpicoords());
         settings.setValue(QStringLiteral("sysvar/DYNDIGRIP"), command::dyndigrip());
         settings.setValue(QStringLiteral("sysvar/DYNDIVIS"), command::dyndivis());
+        settings.setValue(QStringLiteral("sysvar/3DOSMODE"), command::threedosmode());
+        settings.setValue(QStringLiteral("sysvar/UCSDETECT"), command::ucsdetect());
         settings.setValue(QStringLiteral("sysvar/DYNBITS"), std::abs(viewport_->selection_setting("DYNMODE")));
         settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), viewport_->selection_setting("DYNPROMPT"));
         settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), viewport_->selection_setting("DYNPIFORMAT"));
@@ -1086,6 +1089,41 @@ void MainWindow::build_status_bar() {
     connect(otrack_action_, &QAction::toggled, this, [this](bool on) {
         modes_.otrack = on;
         processor_->set_otrack(on);
+    });
+    // A function key (or the status bar) says what it turned on or off, as AutoCAD does.
+    const auto echo_on_key = [this](QAction* a, const char* label) {
+        connect(a, &QAction::triggered, this, [this, label](bool on) {
+            command_widget_->append_line(std::string("<") + label + (on ? " on>" : " off>"));
+        });
+    };
+    echo_on_key(osnap_action_, "Osnap");
+    echo_on_key(grid_action_, "Grid");
+    echo_on_key(ortho_action_, "Ortho");
+    echo_on_key(snap_action_, "Snap");
+    echo_on_key(polar_action_, "Polar");
+    echo_on_key(otrack_action_, "Object Snap Tracking");
+    // F4 (3DOSMODE's bit 1) and F6 (UCSDETECT): 3D Object Snap and Dynamic UCS. Both act on
+    // the faces and edges of solids; they are switched, and kept, as AutoCAD keeps them.
+    {
+        QSettings s;
+        command::threedosmode() = std::clamp(s.value(QStringLiteral("sysvar/3DOSMODE"), 11).toInt(), 0, 127);
+        command::ucsdetect() = std::clamp(s.value(QStringLiteral("sysvar/UCSDETECT"), 1).toInt(), 0, 1);
+    }
+    QAction* osnap3d = make_mode_action(QStringLiteral("3DOSNAP"), Qt::Key_F4, (command::threedosmode() & 1) == 0,
+                                        QStringLiteral("Snap to the vertices, edges and faces of 3D objects."));
+    connect(osnap3d, &QAction::triggered, this, [this, osnap3d](bool) {
+        command::threedosmode() ^= 1;
+        const bool on = (command::threedosmode() & 1) == 0;
+        osnap3d->setChecked(on);
+        command_widget_->append_line(on ? "<3D Object Snap on>" : "<3D Object Snap off>");
+    });
+    QAction* ducs = make_mode_action(QStringLiteral("DUCS"), Qt::Key_F6, command::ucsdetect() != 0,
+                                     QStringLiteral("Align the UCS with the face of a solid under the cursor "
+                                                    "(Dynamic UCS)."));
+    connect(ducs, &QAction::triggered, this, [this, ducs](bool) {
+        command::ucsdetect() = command::ucsdetect() != 0 ? 0 : 1;
+        ducs->setChecked(command::ucsdetect() != 0);
+        command_widget_->append_line(command::ucsdetect() != 0 ? "<Dynamic UCS on>" : "<Dynamic UCS off>");
     });
     const auto follow = [](QAction* a) {
         return [a](bool on) {
@@ -2395,6 +2433,7 @@ void MainWindow::open_quick_select_dialog(bool filter) {
         {"Multileader", static_cast<int>(core::EntityKind::MLeader)},
         {"Block Reference", static_cast<int>(core::EntityKind::Insert)},
         {"Hatch", static_cast<int>(core::EntityKind::Hatch)},
+        {"Wipeout", core::SelectFilterCommand::kWipeout},
         {"Table", static_cast<int>(core::EntityKind::Table)},
         {"Image", static_cast<int>(core::EntityKind::Image)},
         {"Point", static_cast<int>(core::EntityKind::Point)},
@@ -4337,7 +4376,7 @@ void MainWindow::open_mleader_style_dialog() {
         }
         core::MLeaderStyle st = style_named(name);
         if (edit(d.dlg, QStringLiteral("Modify Multileader Style: %1").arg(name), st)) {
-            engine_->submit(core::MLeaderStyleCommand{Op::Modify, name.toStdString(), st});
+            engine_->submit(core::MLeaderStyleCommand{Op::Modify, name.toStdString(), st, processor_->begin_group()});
             later();
         }
     });

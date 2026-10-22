@@ -5,6 +5,7 @@
 #include "musacad/core/text/justify.hpp"
 #include "musacad/core/polyline_width.hpp"
 #include "musacad/core/polyline_ops.hpp"
+#include "musacad/core/spline_eval.hpp"
 
 #include "musacad/core/ellipse.hpp"
 
@@ -156,7 +157,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                  m->overrides,
                                  mst != nullptr ? *mst : DimStyle{},
                                  m->leader_flags,
-                                 std::vector<Vec2>(store.extra_tips_of(*m).begin(), store.extra_tips_of(*m).end())};
+                                 std::vector<Vec2>(store.extra_tips_of(*m).begin(), store.extra_tips_of(*m).end()),
+                                 m->mlstyle};
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
@@ -268,8 +270,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const SplineData* sp = store.spline(h);
         const std::span<const Vec2> cp = store.control_points_of(*sp);
         const std::span<const double> k = store.knots_of(*sp);
+        const SplineFit* fit = store.fit_of(*sp);
         return AddSplineCommand{std::vector<Vec2>(cp.begin(), cp.end()), sp->degree, 0, sp->props,
-                                std::vector<double>(k.begin(), k.end())};
+                                std::vector<double>(k.begin(), k.end()), fit != nullptr ? *fit : SplineFit{}};
     }
     }
     return AddLineCommand{};
@@ -302,6 +305,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                            props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
                 handle = store.add_spline(c.control_points, c.degree, props_of(c.props), c.knots);
+                if (!c.fit.empty()) {
+                    store.set_spline_fit(handle, c.fit);
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -412,6 +418,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 }
                 if (!c.extra_tips.empty()) {
                     store.set_mleader_extra(handle, c.extra_tips);
+                }
+                if (c.mlstyle != 0) {
+                    store.set_mleader_mlstyle(handle, c.mlstyle);
                 }
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
@@ -764,9 +773,16 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     case EntityKind::Point:
         break; // a point has no grips (as before)
     case EntityKind::Spline: {
-        // A grip on every control point (the AutoCAD CV grips); dragging reshapes.
+        // A grip on every control point (the AutoCAD CV grips); dragging reshapes. A spline by
+        // fit points has its grips on them, as AutoCAD shows a fitted spline.
         const SplineData* sp = store.spline(h);
         std::uint32_t idx = 0;
+        if (const SplineFit* fit = store.fit_of(*sp)) {
+            for (const Vec2& p : fit->points) {
+                push(out, p, GripKind::Vertex, idx++);
+            }
+            break;
+        }
         for (const Vec2& p : store.control_points_of(*sp)) {
             push(out, p, GripKind::Vertex, idx++);
         }
@@ -827,7 +843,16 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.points[grip_index] = newpos;
                 }
             } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
-                if (grip_index < x.control_points.size()) {
+                if (!x.fit.empty()) {
+                    // A fit point moved: the spline fitted to them again.
+                    if (grip_index < x.fit.points.size()) {
+                        x.fit.points[grip_index] = newpos;
+                        x.control_points = spline::fit_spline(x.fit.points, static_cast<int>(x.degree),
+                                                              static_cast<spline::FitParam>(x.fit.knots), x.fit.tolerance,
+                                                              x.fit.closed, x.fit.start_tangent, x.fit.end_tangent);
+                        x.knots.clear();
+                    }
+                } else if (grip_index < x.control_points.size()) {
                     x.control_points[grip_index] = newpos;
                 }
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {

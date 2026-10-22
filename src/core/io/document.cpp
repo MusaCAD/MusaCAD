@@ -315,8 +315,10 @@ Document document_from_store(const GeometryStore& store) {
             const SplineData& s = splines.data()[i];
             const std::span<const Vec2> cp = store.control_points_of(s);
             const std::span<const double> k = store.knots_of(s);
+            const SplineFit* fit = store.fit_of(s);
             doc.splines.push_back(DocSpline{std::vector<Vec2>(cp.begin(), cp.end()), s.degree,
-                                            s.props, std::vector<double>(k.begin(), k.end())});
+                                            s.props, std::vector<double>(k.begin(), k.end()),
+                                            fit != nullptr ? *fit : SplineFit{}});
         }
     }
     doc.dimstyles.assign(store.dimstyles().begin(), store.dimstyles().end());
@@ -388,7 +390,7 @@ Document document_from_store(const GeometryStore& store) {
                                               m.text, std::string(store.string_of(m.text)), m.props,
                                               std::string(store.font_name(m.text.font)),
                                               m.overrides, m.leader_flags,
-                                              std::vector<Vec2>(tips.begin(), tips.end())});
+                                              std::vector<Vec2>(tips.begin(), tips.end()), m.mlstyle});
         }
     }
     const auto& hatch_arena = store.hatches();
@@ -688,6 +690,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
         if (!m.extra_tips.empty()) {
             store.set_mleader_extra(mh, m.extra_tips);
         }
+        if (m.mlstyle != 0 && m.mlstyle < doc.mleader_styles.size()) {
+            store.set_mleader_mlstyle(mh, m.mlstyle);
+        }
     }
     for (const DocHatch& h : doc.hatches) {
         const EntityHandle hh = store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle,
@@ -788,7 +793,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_polyline_tangents(ph, p.tangents);
     }
     for (const DocSpline& s : doc.splines) {
-        store.add_spline(s.control_points, s.degree, s.props, s.knots);
+        const EntityHandle sh = store.add_spline(s.control_points, s.degree, s.props, s.knots);
+        if (!s.fit.empty()) {
+            store.set_spline_fit(sh, s.fit);
+        }
     }
     store.set_named_views(doc.views);
     store.set_layer_states(doc.layer_states);

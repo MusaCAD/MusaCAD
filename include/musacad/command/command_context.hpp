@@ -549,6 +549,8 @@ public:
     [[nodiscard]] virtual std::optional<core::EntityKind> hovered_kind() const { return std::nullopt; }
     /// The object under the cursor is a closed polyline (PEDIT offers Open, else Close).
     [[nodiscard]] virtual bool hovered_closed() const { return false; }
+    /// The block of the reference under the cursor (ATTSYNC's Select), or nullopt.
+    [[nodiscard]] virtual std::optional<std::string> hovered_block() const { return std::nullopt; }
     /// The selected dimensions' definition points (DIMREASSOCIATE asks for them one by one).
     [[nodiscard]] virtual std::vector<core::SelectedDim> selected_dims() const { return {}; }
 
