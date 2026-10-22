@@ -496,16 +496,17 @@ TEST_CASE("Struct sizes: the decoration lands in the COLD dim arena only") {
     // may grow; the hot structs every entity pays for must not. These are the sizes the
     // architecture doc quotes -- assert them so a future field cannot silently fatten
     // the hot path the way the original 24-byte EntityProps regressed inserts.
-    static_assert(sizeof(LineData) == 40, "hot struct: LineData must stay 40 B");
-    static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
-    static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
+    // EntityProps grew to 16 B once, deliberately: the draw order, transparency and ByBlock.
+    static_assert(sizeof(LineData) == 48, "hot struct: LineData must stay 48 B");
+    static_assert(sizeof(CircleData) == 40, "hot struct: CircleData must stay 40 B");
+    static_assert(sizeof(EntityProps) == 16, "hot struct: EntityProps must stay 16 B");
     // Cold, and now carrying the decoration (tolerance + two char-pool ranges) plus the
     // v23 `aux` datum (ordinate axis / jog position / arc end angle): 184 B.
-    static_assert(sizeof(DimData) == 256, "DimData size changed -- update the docs too");
+    static_assert(sizeof(DimData) == 264, "DimData size changed -- update the docs too");
     // The strings live in the shared char pool, NOT inline: two (offset,len) pairs is
     // 16 bytes whatever the text says, so a long fit-class note costs the arena nothing.
     static_assert(sizeof(DimTolerance) == 24, "DimTolerance layout changed");
-    REQUIRE(sizeof(LineData) == 40); // a runtime assertion so the case is not empty
+    REQUIRE(sizeof(LineData) == 48); // a runtime assertion so the case is not empty
 }
 
 TEST_CASE("Basic-dimension frame clears the dimension line") {

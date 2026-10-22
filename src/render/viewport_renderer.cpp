@@ -52,24 +52,37 @@ PipelineDesc make_line_pipeline_desc() {
     return d;
 }
 
+// Scene points: per-instance position and depth (vec3), the depth their draw order.
 PipelineDesc make_point_pipeline_desc() {
     PipelineDesc d;
-    d.vertex_src = shaders::point_vert;
+    d.vertex_src = shaders::point_depth_vert;
     d.fragment_src = shaders::point_frag;
-    d.attributes = {VertexAttribute{0, 0, 2, 0, 1}}; // vec2 per instance
-    d.bindings = {VertexBinding{0, sizeof(float) * 2}};
+    d.attributes = {VertexAttribute{0, 0, 3, 0, 1}}; // vec3 per instance
+    d.bindings = {VertexBinding{0, sizeof(float) * 3}};
     d.topology = Topology::Points;
     return d;
 }
 
-// Thick scene lines: per-instance segment (vec4) expanded to a screen-space quad.
+// Thick scene lines: per-instance segment (vec4) and depth (float), expanded to a
+// screen-space quad.
 PipelineDesc make_thickline_pipeline_desc() {
     PipelineDesc d;
-    d.vertex_src = shaders::thickline_vert;
+    d.vertex_src = shaders::thickline_depth_vert;
     d.fragment_src = shaders::thickline_frag;
-    d.attributes = {VertexAttribute{0, 0, 4, 0, 1}}; // vec4 per instance
-    d.bindings = {VertexBinding{0, sizeof(float) * 4}};
+    d.attributes = {VertexAttribute{0, 0, 4, 0, 1}, VertexAttribute{1, 0, 1, sizeof(float) * 4, 1}};
+    d.bindings = {VertexBinding{0, sizeof(float) * 5}};
     d.topology = Topology::TriangleStrip;
+    return d;
+}
+
+// The scene's filled triangles: per-vertex world position and depth (vec3).
+PipelineDesc make_scene_fill_pipeline_desc() {
+    PipelineDesc d;
+    d.vertex_src = shaders::fill_depth_vert;
+    d.fragment_src = shaders::fill_frag;
+    d.attributes = {VertexAttribute{0, 0, 3, 0, 0}}; // vec3 per vertex
+    d.bindings = {VertexBinding{0, sizeof(float) * 3}};
+    d.topology = Topology::Triangles;
     return d;
 }
 
@@ -283,6 +296,7 @@ ViewportRenderer::ViewportRenderer(GpuDevice& device) : device_(device) {
     point_pipeline_ = device_.create_pipeline(make_point_pipeline_desc());
     thick_pipeline_ = device_.create_pipeline(make_thickline_pipeline_desc());
     fill_pipeline_ = device_.create_pipeline(make_fill_pipeline_desc());
+    scene_fill_pipeline_ = device_.create_pipeline(make_scene_fill_pipeline_desc());
     image_pipeline_ = device_.create_pipeline(make_image_pipeline_desc());
     image_buffer_ = device_.create_buffer(BufferUsage::Stream);
     line_instances_ = device_.create_buffer(BufferUsage::Dynamic);
@@ -297,34 +311,41 @@ ViewportRenderer::ViewportRenderer(GpuDevice& device) : device_(device) {
 }
 
 void ViewportRenderer::upload_scene(const core::RenderSnapshot& snapshot) {
-    line_count_ = pack_segments(snapshot.line_vertices, scratch_);
+    // Each element with its depth, the draw order (DRAWORDER): (ax, ay, bx, by, depth) per
+    // segment, (x, y, depth) per point and per fill vertex.
+    const auto depth_at = [](const std::vector<float>& d, std::size_t i) { return i < d.size() ? d[i] : 0.5f; };
+    const std::size_t segments = snapshot.line_vertices.size() / 2;
+    scratch_.clear();
+    scratch_.reserve(segments * 5);
+    for (std::size_t i = 0; i < segments; ++i) {
+        scratch_.push_back(static_cast<float>(snapshot.line_vertices[2 * i].x));
+        scratch_.push_back(static_cast<float>(snapshot.line_vertices[2 * i].y));
+        scratch_.push_back(static_cast<float>(snapshot.line_vertices[2 * i + 1].x));
+        scratch_.push_back(static_cast<float>(snapshot.line_vertices[2 * i + 1].y));
+        scratch_.push_back(depth_at(snapshot.line_depth, i));
+    }
+    line_count_ = segments;
     line_instances_->upload(scratch_.data(), scratch_.size() * sizeof(float));
     const std::size_t line_bytes = scratch_.size() * sizeof(float);
 
-    scratch_.clear();
-    scratch_.reserve(snapshot.points.size() * 2);
-    for (const core::Vec2& p : snapshot.points) {
-        scratch_.push_back(static_cast<float>(p.x));
-        scratch_.push_back(static_cast<float>(p.y));
-    }
+    const auto pack3 = [&](const std::vector<core::Vec2>& pts, const std::vector<float>& depth) {
+        scratch_.clear();
+        scratch_.reserve(pts.size() * 3);
+        for (std::size_t i = 0; i < pts.size(); ++i) {
+            scratch_.push_back(static_cast<float>(pts[i].x));
+            scratch_.push_back(static_cast<float>(pts[i].y));
+            scratch_.push_back(depth_at(depth, i));
+        }
+    };
+    pack3(snapshot.points, snapshot.point_depth);
     point_count_ = snapshot.points.size();
     point_instances_->upload(scratch_.data(), scratch_.size() * sizeof(float));
 
-    scratch_.clear();
-    scratch_.reserve(snapshot.fill_vertices.size() * 2);
-    for (const core::Vec2& p : snapshot.fill_vertices) {
-        scratch_.push_back(static_cast<float>(p.x));
-        scratch_.push_back(static_cast<float>(p.y));
-    }
+    pack3(snapshot.fill_vertices, snapshot.fill_depth);
     fill_count_ = snapshot.fill_vertices.size();
     fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
 
-    scratch_.clear();
-    scratch_.reserve(snapshot.wipeout_vertices.size() * 2);
-    for (const core::Vec2& p : snapshot.wipeout_vertices) {
-        scratch_.push_back(static_cast<float>(p.x));
-        scratch_.push_back(static_cast<float>(p.y));
-    }
+    pack3(snapshot.wipeout_vertices, snapshot.wipeout_depth);
     wipeout_count_ = snapshot.wipeout_vertices.size();
     if (wipeout_count_ > 0) {
         wipeout_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
@@ -364,6 +385,7 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
         const GpuTexture* texture;
         std::size_t first_byte;
         std::uint32_t vertex_count;
+        float depth; ///< its draw order
     };
     std::vector<float> verts;
     std::vector<Draw> draws;
@@ -401,7 +423,7 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
                 verts.push_back(static_cast<float>(im.tri_uv[i].y));
             }
             draws.push_back({ct.texture.get(), first_byte,
-                             static_cast<std::uint32_t>(im.tri_world.size())});
+                             static_cast<std::uint32_t>(im.tri_world.size()), im.depth});
             continue;
         }
         // Two triangles over the (clipped) quad; the quad's corners run CCW from the
@@ -420,7 +442,7 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
             static_cast<float>(q[3].x), static_cast<float>(q[3].y), u0, v0,
         };
         verts.insert(verts.end(), std::begin(quad), std::end(quad));
-        draws.push_back({ct.texture.get(), first_byte, 6});
+        draws.push_back({ct.texture.get(), first_byte, 6, im.depth});
     }
     if (draws.empty()) {
         return;
@@ -431,6 +453,7 @@ void ViewportRenderer::draw_images(GpuCommandBuffer& cmd, const core::RenderSnap
     cmd.set_uniform_int("u_image", 0);
     for (const Draw& d : draws) {
         cmd.bind_texture(0, *d.texture);
+        cmd.set_uniform_float("u_depth", d.depth);
         cmd.bind_vertex_buffer(0, *image_buffer_, d.first_byte);
         cmd.draw_instanced(d.vertex_count, 1);
         ++stats_.draw_calls;
@@ -593,18 +616,50 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
         cmd_->draw_instanced(2, static_cast<std::uint32_t>(major_count));
         ++stats_.draw_calls;
     }
-    // Raster images first, under all vector geometry (what the plot does too).
+    // The scene in its draw order (DRAWORDER): every element carries a depth, 0 on top .. 1
+    // underneath. What covers -- raster images, fills, wipeout masks -- writes it, so a fill
+    // or a wipeout hides what is under it and not what is over it; lines, text and points
+    // test against it without writing it (their antialiased edges then never cut into each
+    // other). Transparent fills write no depth either and come after the opaque ones.
+    cmd_->set_depth(true, true);
     draw_images(*cmd_, snapshot, view);
+
+    const auto draw_fills = [&](bool opaque) {
+        if (fill_count_ == 0 || fill_batches_.empty()) {
+            return;
+        }
+        cmd_->bind_pipeline(*scene_fill_pipeline_);
+        cmd_->set_uniform_mat3("u_transform", view);
+        for (const core::ColorBatch& b : fill_batches_) {
+            const float alpha = batch_alpha(b);
+            if ((alpha >= 1.0f) != opaque) {
+                continue;
+            }
+            cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
+                                   static_cast<float>(b.color.g) / 255.0f,
+                                   static_cast<float>(b.color.b) / 255.0f, alpha);
+            cmd_->bind_vertex_buffer(0, *fill_buffer_, b.first * sizeof(float) * 3);
+            cmd_->draw_instanced(b.count, 1); // b.count vertices, GL_TRIANGLES
+            ++stats_.draw_calls;
+        }
+    };
+    draw_fills(true);
+
+    // WIPEOUT masks: the background colour, over what is under them in the draw order.
+    if (wipeout_count_ > 0) {
+        cmd_->bind_pipeline(*scene_fill_pipeline_);
+        cmd_->set_uniform_mat3("u_transform", view);
+        cmd_->set_uniform_vec4("u_color", kBackground.r, kBackground.g, kBackground.b, 1.0f);
+        cmd_->bind_vertex_buffer(0, *wipeout_buffer_, 0);
+        cmd_->draw_instanced(static_cast<std::uint32_t>(wipeout_count_), 1);
+        ++stats_.draw_calls;
+    }
+    cmd_->set_depth(true, false);
+    draw_fills(false);
 
     // Scene lines: thick screen-space-expanded quads, one draw per (colour,
     // lineweight) batch. Width is in pixels (zoom-independent). LWDISPLAY off ->
     // a thin default for everything.
-    //
-    // Two passes when the scene holds WIPEOUTs: the geometry batches first, then the
-    // fills, then the wipeout masks in the background colour, then the text batches --
-    // so a wipeout hides the line work and hatching beneath it while a label placed on
-    // it (the point of a wipeout) stays readable. AutoCAD's DRAWORDER is not modelled;
-    // this fixed order covers the "mask under a note" use.
     const auto draw_lines = [&](bool text_pass) {
         if (line_count_ > 0) {
             cmd_->bind_pipeline(*thick_pipeline_);
@@ -642,7 +697,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
                 cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
                                        static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
                                        alpha);
-                cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 4);
+                cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 5);
                 cmd_->draw_instanced(4, count); // 4-vertex triangle strip per segment
                 ++stats_.draw_calls;
             };
@@ -663,49 +718,7 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
         }
     };
     draw_lines(false);
-
-    // Filled arrowheads + SOLID hatches: one draw per colour batch.
-    if (fill_count_ > 0 && !fill_batches_.empty()) {
-        cmd_->bind_pipeline(*fill_pipeline_);
-        cmd_->set_uniform_mat3("u_transform", view);
-        for (const core::ColorBatch& b : fill_batches_) {
-            cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
-                                   static_cast<float>(b.color.g) / 255.0f,
-                                   static_cast<float>(b.color.b) / 255.0f, batch_alpha(b));
-            cmd_->bind_vertex_buffer(0, *fill_buffer_, b.first * sizeof(float) * 2);
-            cmd_->draw_instanced(b.count, 1); // b.count vertices, GL_TRIANGLES
-            ++stats_.draw_calls;
-        }
-    }
-
-    // WIPEOUT masks: the background colour over everything drawn so far.
-    if (wipeout_count_ > 0) {
-        cmd_->bind_pipeline(*fill_pipeline_);
-        cmd_->set_uniform_mat3("u_transform", view);
-        cmd_->set_uniform_vec4("u_color", kBackground.r, kBackground.g, kBackground.b, 1.0f);
-        cmd_->bind_vertex_buffer(0, *wipeout_buffer_, 0);
-        cmd_->draw_instanced(static_cast<std::uint32_t>(wipeout_count_), 1);
-        ++stats_.draw_calls;
-    }
-    draw_lines(true); // text reads over the masks
-
-    // Selected-hatch highlight: tint the picked SOLID fill in the selection colour so a
-    // selected hatch reads as selected (the fill above keeps drawing -- this is a
-    // translucent overlay, computed geometry-side). Uses aux_buffer_ (transient), never
-    // the persistent scene fill_buffer_.
-    if (!snapshot.selected_fill_vertices.empty()) {
-        const std::size_t n = pack_positions(snapshot.selected_fill_vertices, scratch_);
-        if (n > 0) {
-            cmd_->bind_pipeline(*fill_pipeline_);
-            cmd_->set_uniform_mat3("u_transform", view);
-            aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
-            cmd_->set_uniform_vec4("u_color", kSelectColor[0], kSelectColor[1], kSelectColor[2],
-                                   0.40f);
-            cmd_->bind_vertex_buffer(0, *aux_buffer_, 0);
-            cmd_->draw_instanced(static_cast<std::uint32_t>(n), 1);
-            ++stats_.draw_calls;
-        }
-    }
+    draw_lines(true);
 
     if (point_count_ > 0) {
         cmd_->bind_pipeline(*point_pipeline_);
@@ -722,10 +735,29 @@ void ViewportRenderer::render_view(const core::RenderSnapshot& snapshot, const C
                 cmd_->set_uniform_vec4("u_color", static_cast<float>(b.color.r) / 255.0f,
                                        static_cast<float>(b.color.g) / 255.0f,
                                        static_cast<float>(b.color.b) / 255.0f, batch_alpha(b));
-                cmd_->bind_vertex_buffer(0, *point_instances_, b.first * sizeof(float) * 2);
+                cmd_->bind_vertex_buffer(0, *point_instances_, b.first * sizeof(float) * 3);
                 cmd_->draw_instanced(1, b.count);
                 ++stats_.draw_calls;
             }
+        }
+    }
+    cmd_->set_depth(false, false); // the overlays over everything
+
+    // Selected-hatch highlight: tint the picked SOLID fill in the selection colour so a
+    // selected hatch reads as selected (the fill above keeps drawing -- this is a
+    // translucent overlay, computed geometry-side). Uses aux_buffer_ (transient), never
+    // the persistent scene fill_buffer_.
+    if (!snapshot.selected_fill_vertices.empty()) {
+        const std::size_t n = pack_positions(snapshot.selected_fill_vertices, scratch_);
+        if (n > 0) {
+            cmd_->bind_pipeline(*fill_pipeline_);
+            cmd_->set_uniform_mat3("u_transform", view);
+            aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+            cmd_->set_uniform_vec4("u_color", kSelectColor[0], kSelectColor[1], kSelectColor[2],
+                                   0.40f);
+            cmd_->bind_vertex_buffer(0, *aux_buffer_, 0);
+            cmd_->draw_instanced(static_cast<std::uint32_t>(n), 1);
+            ++stats_.draw_calls;
         }
     }
 

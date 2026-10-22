@@ -253,9 +253,12 @@ void PropertiesPanel::rebuild() {
             // dimension element colour (same flag, different label).
             const QString inherit =
                 f.group == "Dimension" ? QStringLiteral("ByStyle") : QStringLiteral("ByLayer");
+            const bool entity_color = f.group != "Dimension";
             auto* btn = new QPushButton();
             if (varies) {
                 btn->setText(QString::fromLatin1(kVaries));
+            } else if (f.value.text == "ByBlock") {
+                btn->setText(QStringLiteral("ByBlock"));
             } else if (f.value.flag) {
                 btn->setText(inherit);
             } else {
@@ -286,6 +289,15 @@ void PropertiesPanel::rebuild() {
             h->setContentsMargins(0, 0, 0, 0);
             h->addWidget(btn);
             h->addWidget(reset);
+            if (entity_color) { // an object's colour may also be the block reference's
+                auto* by_block = new QPushButton(QStringLiteral("ByBlock"));
+                connect(by_block, &QPushButton::clicked, this, [this, id] {
+                    PropertyValue pv;
+                    pv.text = "ByBlock";
+                    emit_edit(id, pv);
+                });
+                h->addWidget(by_block);
+            }
             current_form->addRow(label, row);
             break;
         }
@@ -425,7 +437,8 @@ void PropertiesPanel::rebuild() {
         }
         case PropEditor::LinetypeCombo: {
             auto* e = new QComboBox();
-            e->addItems({QStringLiteral("ByLayer"), QStringLiteral("Continuous"),
+            // ByLayer, ByBlock, then the linetypes (choice = index - 2).
+            e->addItems({QStringLiteral("ByLayer"), QStringLiteral("ByBlock"), QStringLiteral("Continuous"),
                          QStringLiteral("Dashed"), QStringLiteral("Center"),
                          QStringLiteral("Hidden")});
             for (const std::string& nm : linetype_names_) { // the drawing's loaded ones
@@ -435,33 +448,40 @@ void PropertiesPanel::rebuild() {
                 e->addItem(QString::fromLatin1(kVaries));
                 e->setCurrentIndex(e->count() - 1);
             } else {
-                e->setCurrentIndex(f.value.flag ? 0 : f.value.choice + 1);
+                e->setCurrentIndex(f.value.text == "ByBlock" ? 1 : f.value.flag ? 0 : f.value.choice + 2);
             }
             connect(e, &QComboBox::activated, this, [this, id](int index) {
                 PropertyValue pv;
                 pv.flag = (index == 0);
-                pv.choice = index > 0 ? index - 1 : 0;
+                if (index == 1) {
+                    pv.text = "ByBlock";
+                }
+                pv.choice = index > 1 ? index - 2 : 0;
                 emit_edit(id, pv);
             });
             current_form->addRow(label, e);
             break;
         }
         case PropEditor::LineweightCombo: {
+            // ByLayer, ByBlock, then the lineweights (index - 2 into the ladder).
             auto* e = new QComboBox();
             e->addItem(QStringLiteral("ByLayer"));
+            e->addItem(QStringLiteral("ByBlock"));
             for (const int hw : kLwLadder) {
                 e->addItem(lw_label(hw));
             }
             if (varies) {
                 e->addItem(QString::fromLatin1(kVaries));
                 e->setCurrentIndex(e->count() - 1);
+            } else if (f.value.text == "ByBlock") {
+                e->setCurrentIndex(1);
             } else if (f.value.flag) {
                 e->setCurrentIndex(0);
             } else {
-                int idx = 1;
+                int idx = 2;
                 for (std::size_t i = 0; i < kLwLadder.size(); ++i) {
                     if (kLwLadder[i] == static_cast<int>(f.value.num)) {
-                        idx = static_cast<int>(i) + 1;
+                        idx = static_cast<int>(i) + 2;
                     }
                 }
                 e->setCurrentIndex(idx);
@@ -469,11 +489,55 @@ void PropertiesPanel::rebuild() {
             connect(e, &QComboBox::activated, this, [this, id](int index) {
                 PropertyValue pv;
                 pv.flag = (index == 0);
-                if (index > 0 && index <= static_cast<int>(kLwLadder.size())) {
-                    pv.num = kLwLadder[static_cast<std::size_t>(index - 1)];
+                if (index == 1) {
+                    pv.text = "ByBlock";
+                }
+                if (index > 1 && index <= static_cast<int>(kLwLadder.size()) + 1) {
+                    pv.num = kLwLadder[static_cast<std::size_t>(index - 2)];
                 }
                 emit_edit(id, pv);
             });
+            current_form->addRow(label, e);
+            break;
+        }
+        case PropEditor::TransparencyCombo: {
+            // ByLayer, ByBlock, or a percentage typed or picked (0 to 90).
+            auto* e = new QComboBox();
+            e->setEditable(true);
+            e->addItems({QStringLiteral("ByLayer"), QStringLiteral("ByBlock"), QStringLiteral("0"),
+                         QStringLiteral("10"), QStringLiteral("20"), QStringLiteral("30"), QStringLiteral("40"),
+                         QStringLiteral("50"), QStringLiteral("60"), QStringLiteral("70"), QStringLiteral("80"),
+                         QStringLiteral("90")});
+            if (varies) {
+                e->setEditText(QString::fromLatin1(kVaries));
+            } else if (f.value.flag) {
+                e->setCurrentIndex(0);
+            } else if (f.value.text == "ByBlock") {
+                e->setCurrentIndex(1);
+            } else {
+                e->setEditText(QString::number(static_cast<int>(f.value.num)));
+            }
+            const auto apply = [this, id, e] {
+                const QString t = e->currentText().trimmed();
+                PropertyValue pv;
+                if (t.compare(QStringLiteral("ByLayer"), Qt::CaseInsensitive) == 0) {
+                    pv.flag = true;
+                } else if (t.compare(QStringLiteral("ByBlock"), Qt::CaseInsensitive) == 0) {
+                    pv.text = "ByBlock";
+                } else {
+                    bool ok = false;
+                    const int percent = t.toInt(&ok);
+                    if (!ok || percent < 0 || percent > 90) {
+                        return; // "Requires an integer between 0 and 90", as AutoCAD keeps the old one
+                    }
+                    pv.num = percent;
+                }
+                emit_edit(id, pv);
+            };
+            connect(e, &QComboBox::activated, this, apply);
+            if (e->lineEdit() != nullptr) {
+                connect(e->lineEdit(), &QLineEdit::editingFinished, this, apply);
+            }
             current_form->addRow(label, e);
             break;
         }

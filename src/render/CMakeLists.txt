@@ -10,7 +10,10 @@ musacad_embed_shaders("${_shader_header}"
     "${CMAKE_SOURCE_DIR}/shaders/fill.vert"
     "${CMAKE_SOURCE_DIR}/shaders/fill.frag"
     "${CMAKE_SOURCE_DIR}/shaders/image.vert"
-    "${CMAKE_SOURCE_DIR}/shaders/image.frag")
+    "${CMAKE_SOURCE_DIR}/shaders/image.frag"
+    "${CMAKE_SOURCE_DIR}/shaders/thickline_depth.vert"
+    "${CMAKE_SOURCE_DIR}/shaders/fill_depth.vert"
+    "${CMAKE_SOURCE_DIR}/shaders/point_depth.vert")
 
 add_library(musacad_render STATIC
     render_module.cpp

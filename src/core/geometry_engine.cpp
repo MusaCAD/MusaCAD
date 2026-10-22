@@ -86,6 +86,10 @@ bool segment_intersection(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2& out) {
     }
     return false;
 }
+// The draw order an Add* command carries (defined with modify_cmd_props).
+std::uint32_t cmd_order(const Command& c);
+void set_cmd_order(Command& c, std::uint32_t order);
+void as_new_object(Command& c);
 } // namespace
 
 void GeometryEngine::start() {
@@ -328,6 +332,10 @@ std::vector<EntityHandle> GeometryEngine::all_live_in(const GeometryStore& store
 void GeometryEngine::push_create_item(std::uint64_t group, EntityHandle handle, Command data) {
     if (undo_.empty() || undo_.back().id != group) {
         undo_.push_back(Group{group, {}});
+    }
+    // The draw order the store gave it: a redo makes it again in the same place.
+    if (const EntityProps* made = store_.props(handle); made != nullptr && cmd_order(data) == 0) {
+        set_cmd_order(data, made->order);
     }
     // A polyline may have taken its widths from the one it replaces (create_entity):
     // the history keeps what was made, so redo makes the same object again.
@@ -2657,6 +2665,143 @@ int GeometryEngine::restyle_mleaders(std::uint16_t style, std::uint64_t group) {
     return static_cast<int>(drawn.size());
 }
 
+void GeometryEngine::apply_draw_order(const DrawOrderCommand& c) {
+    using Op = DrawOrderCommand::Op;
+    prune_selection();
+    const auto order_of = [&](EntityHandle h) {
+        const EntityProps* p = store_.props(h);
+        return p != nullptr ? p->order : 0u;
+    };
+    if (c.op == Op::Keep) {
+        draworder_moving_ = selection_;
+        return;
+    }
+    // The objects moved: the selection, the ones kept for Above / Under, or the drawing's text
+    // or hatches.
+    std::vector<EntityHandle> moving;
+    if (c.op == Op::Above || c.op == Op::Under) {
+        for (const EntityHandle h : draworder_moving_) {
+            if (store_.is_valid(h) && selectable(h) && !sel_contains(h)) {
+                moving.push_back(h);
+            }
+        }
+    } else if (c.op == Op::TextToFront || c.op == Op::HatchToBack) {
+        for (const EntityHandle h : all_live()) {
+            const bool text = h.kind == EntityKind::Text || h.kind == EntityKind::MText || h.kind == EntityKind::AttDef;
+            const bool dim = h.kind == EntityKind::Dimension;
+            const bool leader = h.kind == EntityKind::Leader || h.kind == EntityKind::MLeader;
+            const bool want = c.op == Op::HatchToBack ? h.kind == EntityKind::Hatch
+                                                       : ((c.kinds & 1) != 0 && text) || ((c.kinds & 2) != 0 && dim) ||
+                                                             ((c.kinds & 4) != 0 && leader);
+            if (want && selectable(h)) {
+                moving.push_back(h);
+            }
+        }
+    } else {
+        for (const EntityHandle h : selection_) {
+            if (store_.is_valid(h) && selectable(h)) {
+                moving.push_back(h);
+            }
+        }
+    }
+    if (moving.empty()) {
+        report(c.op == Op::TextToFront   ? "No text, dimensions or leaders to bring to the front."
+               : c.op == Op::HatchToBack ? "No hatches to send to the back."
+               : c.op == Op::Above || c.op == Op::Under ? "No objects to move: select them first."
+                                                        : "Nothing selected.");
+        return;
+    }
+    std::stable_sort(moving.begin(), moving.end(), [&](EntityHandle a, EntityHandle b) { return order_of(a) < order_of(b); });
+    // Whether an object is one of those moved (a sorted copy, searched): a live object is
+    // one slot of one kind.
+    const auto key = [](EntityHandle h) { return (static_cast<std::uint64_t>(h.kind) << 32) | h.index; };
+    std::vector<std::uint64_t> moving_keys;
+    for (const EntityHandle h : moving) {
+        moving_keys.push_back(key(h));
+    }
+    std::sort(moving_keys.begin(), moving_keys.end());
+    const auto is_moving = [&](EntityHandle h) { return std::binary_search(moving_keys.begin(), moving_keys.end(), key(h)); };
+    // The orders of the rest, to find room above or below.
+    std::vector<std::uint32_t> others;
+    for (const EntityHandle h : all_live()) {
+        if (!is_moving(h)) {
+            others.push_back(order_of(h));
+        }
+    }
+    std::sort(others.begin(), others.end());
+    const std::uint32_t step = EntityProps::kOrderStep;
+    const auto n = static_cast<std::uint32_t>(moving.size());
+    std::vector<std::uint32_t> orders(moving.size());
+    // Between `lo` and `hi` (exclusive), evenly; false when there is no room.
+    const auto between = [&](std::uint64_t lo, std::uint64_t hi) {
+        if (hi <= lo || hi - lo <= n || hi > 0xFFFFFFFFull) {
+            return false;
+        }
+        for (std::uint32_t i = 0; i < n; ++i) {
+            orders[i] = static_cast<std::uint32_t>(lo + (hi - lo) * (i + 1) / (n + 1));
+        }
+        return true;
+    };
+    bool placed = false;
+    if (c.op == Op::Front || c.op == Op::TextToFront) {
+        const std::uint64_t top = std::max<std::uint64_t>(store_.top_order(), others.empty() ? 0 : others.back());
+        placed = between(top, top + static_cast<std::uint64_t>(step) * (n + 1));
+    } else if (c.op == Op::Back || c.op == Op::HatchToBack) {
+        const std::uint64_t bottom = others.empty() ? EntityProps::kFirstOrder : others.front();
+        placed = between(bottom > static_cast<std::uint64_t>(step) * (n + 1) ? bottom - static_cast<std::uint64_t>(step) * (n + 1) : 0,
+                         bottom);
+    } else {
+        // Above or Under the reference objects: just over the topmost of them, or under the
+        // lowest, before the next object of the rest.
+        std::uint32_t ref = c.op == Op::Above ? 0u : 0xFFFFFFFFu;
+        bool any_ref = false;
+        for (const EntityHandle h : selection_) {
+            if (store_.is_valid(h) && !is_moving(h)) {
+                ref = c.op == Op::Above ? std::max(ref, order_of(h)) : std::min(ref, order_of(h));
+                any_ref = true;
+            }
+        }
+        if (!any_ref) {
+            report("No reference objects selected.");
+            return;
+        }
+        const std::uint64_t room = static_cast<std::uint64_t>(step) * (n + 1);
+        if (c.op == Op::Above) {
+            const auto next = std::upper_bound(others.begin(), others.end(), ref);
+            const std::uint64_t hi = next != others.end() ? *next : static_cast<std::uint64_t>(ref) + room;
+            placed = between(ref, hi);
+        } else {
+            const auto prev = std::lower_bound(others.begin(), others.end(), ref);
+            const std::uint64_t lo = prev != others.begin() ? *(prev - 1) : (ref > room ? ref - room : 0);
+            placed = between(lo, ref);
+        }
+    }
+    if (!placed) {
+        report("No room in the draw order there.");
+        return;
+    }
+    for (std::size_t i = 0; i < moving.size(); ++i) {
+        const EntityHandle h = moving[i];
+        const Command original = capture_entity(h);
+        Command moved = original;
+        set_cmd_order(moved, orders[i]);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+        const EntityHandle nh = create_indexed(moved);
+        push_create_item(c.group, nh, moved);
+    }
+    selection_.clear(); // as AutoCAD leaves it
+    draworder_moving_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    if (c.op == Op::TextToFront) {
+        report(std::to_string(moving.size()) + (moving.size() == 1 ? " object" : " objects") + " brought to front.");
+    } else if (c.op == Op::HatchToBack) {
+        report(std::to_string(moving.size()) + (moving.size() == 1 ? " hatch object" : " hatch objects") + " sent to back.");
+    }
+}
+
 void GeometryEngine::apply_attsync(const AttSyncCommand& c) {
     // The blocks to sync: by name (a wild card too), or the one the reference picked shows.
     std::vector<std::uint16_t> wanted;
@@ -3063,6 +3208,8 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
         if (!copy) {
             remove_indexed(h);
             push_erase_item(group, h, original);
+        } else {
+            as_new_object(result);
         }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
@@ -3696,6 +3843,9 @@ EntityProps GeometryEngine::fresh_props() const {
 
 namespace {
 // Defined further down in this file (the props visitor shared with the property edits).
+std::uint32_t cmd_order(const Command& c);
+void set_cmd_order(Command& c, std::uint32_t order);
+void as_new_object(Command& c);
 void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn);
 
 /// A polyline run the other way: vertices backwards, each segment's bulge negated and
@@ -3837,6 +3987,7 @@ void GeometryEngine::apply_copy_to_layer(const CopyToLayerCommand& c) {
         Command copy = capture_entity(h);
         translate_cmd(copy, c.offset);
         modify_cmd_props(copy, [&](EntityProps& p) { p.layer = *layer; });
+        as_new_object(copy);
         const EntityHandle nh = create_indexed(copy);
         push_create_item(c.group, nh, std::move(copy));
         copies.push_back(nh);
@@ -5724,6 +5875,7 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
         if (factor != 1.0) {
             scale_cmd(cmd, about, factor);
         }
+        as_new_object(cmd);
         const EntityHandle nh = create_indexed(cmd);
         push_create_item(group, nh, cmd);
         pasted.push_back(nh);
@@ -5798,6 +5950,8 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
         if (erase_source) {
             remove_indexed(h);
             push_erase_item(group, h, original);
+        } else {
+            as_new_object(mirrored); // the mirror image is a new object
         }
         const EntityHandle nh = create_indexed(mirrored);
         push_create_item(group, nh, mirrored);
@@ -5937,8 +6091,10 @@ void GeometryEngine::emit_copy(const Command& copy, std::uint64_t group) {
         array_sink_->push_back(copy);
         return;
     }
-    const EntityHandle nh = create_indexed(copy);
-    push_create_item(group, nh, copy);
+    Command made = copy;
+    as_new_object(made);
+    const EntityHandle nh = create_indexed(made);
+    push_create_item(group, nh, made);
 }
 
 void GeometryEngine::apply_array_preview(const ArrayPreviewCommand& c) {
@@ -14203,6 +14359,44 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
 namespace {
 /// Applies `fn` to the EntityProps inside an Add* command (engaging the optional
 /// if needed). No-op for non-Add commands.
+// The draw order an Add* command carries, read or set (0: none yet, the store gives the next).
+std::uint32_t cmd_order(const Command& c) {
+    std::uint32_t out = 0;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.props->order; }) {
+                out = x.props ? x.props->order : 0u;
+            } else if constexpr (requires { x.props.order; }) {
+                out = x.props.order;
+            } else if constexpr (requires { x.text.props->order; }) {
+                out = x.text.props ? x.text.props->order : 0u;
+            }
+        },
+        c);
+    return out;
+}
+void set_cmd_order(Command& c, std::uint32_t order) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.props->order; }) {
+                if (x.props) {
+                    x.props->order = order;
+                }
+            } else if constexpr (requires { x.props.order; }) {
+                x.props.order = order;
+            } else if constexpr (requires { x.text.props->order; }) {
+                if (x.text.props) {
+                    x.text.props->order = order;
+                }
+            }
+        },
+        c);
+}
+// A copy is a new object: drawn over the rest, not in its source's place in the draw order.
+void as_new_object(Command& c) {
+    set_cmd_order(c, 0);
+}
+
 void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
     std::visit(
         [&](auto& x) {
@@ -14540,6 +14734,7 @@ void GeometryEngine::apply_offset_cmd(const OffsetPickCommand& c) {
         report(why);
         return;
     }
+    as_new_object(add);
     const EntityHandle nh = create_indexed(add);
     push_create_item(c.group, nh, add);
     if (c.erase_source) {
@@ -18141,6 +18336,9 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, AttSyncCommand>) {
                 apply_attsync(c);
             }
+            if constexpr (std::is_same_v<T, DrawOrderCommand>) {
+                apply_draw_order(c);
+            }
             if constexpr (std::is_same_v<T, SetLayerFiltersCommand>) {
                 store_.set_layer_filters(c.filters);
                 dirty_ = true;
@@ -19266,6 +19464,7 @@ void GeometryEngine::apply_one(const Command& command) {
                     mask.pattern_name = "WIPEOUT";
                     mask.group = c.group;
                     EntityProps mp = *p;
+                    mp.order = p->order > 1 ? p->order - 1 : 0; // just under its text, as AutoCAD puts it
                     mask.props = mp;
                     const Command cmd = mask;
                     push_create_item(c.group, create_indexed(cmd), cmd);
@@ -21062,6 +21261,10 @@ void GeometryEngine::rebuild_and_publish() {
         buf.line_vertices = geom_cache_.line_vertices;
         buf.construction_lines = geom_cache_.construction_lines;
         buf.wipeout_vertices = geom_cache_.wipeout_vertices;
+        buf.line_depth = geom_cache_.line_depth; // draw order
+        buf.point_depth = geom_cache_.point_depth;
+        buf.fill_depth = geom_cache_.fill_depth;
+        buf.wipeout_depth = geom_cache_.wipeout_depth;
         buf.images = geom_cache_.images; // placed rasters (transform + def; the renderer caches textures)
         buf.active_space = geom_cache_.active_space;
         buf.layouts = geom_cache_.layouts;

@@ -72,7 +72,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 44;
+inline constexpr std::uint32_t kFormatVersion = 45;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -506,6 +506,51 @@ struct Document {
 };
 
 /// Reads every live entity out of a store into a Document (geometry thread).
+/// Every entity's properties in a Document (or a DocBlockDef), list by list: `fn(key, index,
+/// props)`, the key naming the list as the drawing file's XPROPS and DRAWORDER records do.
+template <class Doc, class Fn>
+void for_each_entity_props(Doc& doc, Fn&& fn) {
+    const auto each = [&](const char* key, auto& list) {
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if constexpr (requires { list[i].text.props; }) {
+                fn(key, i, list[i].text.props); // an attribute definition's are its text's
+            } else {
+                fn(key, i, list[i].props);
+            }
+        }
+    };
+    if constexpr (requires { doc.points; }) {
+        each("POINT", doc.points);
+        each("XLINE", doc.xlines);
+        each("ELLIPSE", doc.ellipses);
+    }
+    each("LINE", doc.lines);
+    each("CIRCLE", doc.circles);
+    each("ARC", doc.arcs);
+    each("POLYLINE", doc.polylines);
+    if constexpr (requires { doc.splines; }) {
+        each("SPLINE", doc.splines);
+    }
+    each("TEXT", doc.texts);
+    each("ATTDEF", doc.attdefs);
+    if constexpr (requires { doc.dims; }) {
+        each("DIM", doc.dims);
+        each("LEADER", doc.leaders);
+    }
+    each("MTEXT", doc.mtexts);
+    if constexpr (requires { doc.mleaders; }) {
+        each("MLEADER", doc.mleaders);
+        each("HATCH", doc.hatches);
+        each("FCF", doc.fcfs);
+        each("DATUM", doc.datums);
+        each("IMAGE", doc.images);
+        each("VIEWPORT", doc.viewports);
+        each("TABLE", doc.tables);
+        each("MLINE", doc.mlines);
+    }
+    each("INSERT", doc.inserts);
+}
+
 [[nodiscard]] Document document_from_store(const GeometryStore& store);
 
 /// Adds all of a Document's entities to a store. The caller is responsible for

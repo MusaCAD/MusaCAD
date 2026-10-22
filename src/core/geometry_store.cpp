@@ -14,6 +14,7 @@ namespace musacad::core {
 
 EntityHandle GeometryStore::add_ellipse(Vec2 center, Vec2 major, double ratio, double start,
                                         double end, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     ratio = std::clamp(ratio, 1e-6, 1.0);
     const auto slot = ellipses_.insert(EllipseData{center, major, ratio, start, end, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Ellipse};
@@ -196,6 +197,7 @@ bool GeometryStore::set_dim_aux(EntityHandle h, double aux) noexcept {
 }
 
 EntityHandle GeometryStore::add_mline(MLineData m) {
+    m.props = stamped(m.props); // a new object: drawn over the rest
     if (m.style >= mline_styles_.size()) {
         m.style = 0;
     }
@@ -258,6 +260,7 @@ bool GeometryStore::rename_mline_style(std::uint16_t index, const std::string& n
 }
 
 EntityHandle GeometryStore::add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     const double len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
     const Vec2 unit = len > 1e-12 ? Vec2{dir.x / len, dir.y / len} : Vec2{1.0, 0.0};
     const auto slot = xlines_.insert(XlineData{base, unit, ray, props});
@@ -265,34 +268,40 @@ EntityHandle GeometryStore::add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps
 }
 
 EntityHandle GeometryStore::add_point(Vec2 p, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto slot = points_.insert(PointData{p, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Point};
 }
 
 EntityHandle GeometryStore::add_line(Vec2 a, Vec2 b, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto slot = lines_.insert(LineData{a, b, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Line};
 }
 
 EntityHandle GeometryStore::add_circle(Vec2 center, double radius, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto slot = circles_.insert(CircleData{center, radius, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Circle};
 }
 
 EntityHandle GeometryStore::add_arc(Vec2 center, double radius, double start_angle,
                                     double end_angle, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto slot = arcs_.insert(ArcData{center, radius, start_angle, end_angle, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Arc};
 }
 
 EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices, bool closed,
                                          EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     return add_polyline(vertices, {}, closed, props);
 }
 
 EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
                                          std::span<const double> bulges, bool closed,
                                          EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto offset = static_cast<std::uint32_t>(polyline_pool_.size());
     polyline_pool_.insert(polyline_pool_.end(), vertices.begin(), vertices.end());
     // Store bulges only if any are non-zero (keep straight polylines lean).
@@ -312,6 +321,7 @@ EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
                                          std::span<const double> bulges, bool closed,
                                          EntityProps props, std::span<const double> widths,
                                          double elevation, double thickness) {
+    props = stamped(props); // a new object: drawn over the rest
     const EntityHandle h = add_polyline(vertices, bulges, closed, props);
     PolylineData* p = polylines_.get(h.index, h.generation);
     if (p == nullptr) {
@@ -330,6 +340,7 @@ EntityHandle GeometryStore::add_polyline(std::span<const Vec2> vertices,
 
 EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                                        EntityProps props, std::span<const double> knots) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto offset = static_cast<std::uint32_t>(spline_pool_.size());
     spline_pool_.insert(spline_pool_.end(), control_points.begin(), control_points.end());
     SplineData d{offset, static_cast<std::uint32_t>(control_points.size()), degree, props};
@@ -361,6 +372,7 @@ void GeometryStore::set_text_placement(EntityHandle h, Vec2 align, double width_
 EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                                      std::string_view content, EntityProps props,
                                      std::uint16_t font, std::uint16_t style) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot =
@@ -374,6 +386,7 @@ EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 lin
                                           DimOverrides overrides, std::string_view prefix,
                                           std::string_view suffix, DimTolerance tol,
                                           std::string_view text_override, Vec2 text_offset) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto poff = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), prefix.begin(), prefix.end());
     const auto soff = static_cast<std::uint32_t>(string_pool_.size());
@@ -391,6 +404,7 @@ EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 lin
 EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                                        std::string_view content, EntityProps props,
                                        std::uint16_t font, DimOverrides overrides) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot = leaders_.insert(LeaderData{tip, knee, text_height, style, font, offset,
@@ -402,6 +416,7 @@ EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, 
 EntityHandle GeometryStore::add_fcf(const std::vector<std::string>& cells, Vec2 pos,
                                     double rotation, std::uint16_t style, EntityProps props,
                                     DimOverrides overrides) {
+    props = stamped(props); // a new object: drawn over the rest
     // Cells are variable-length, so they live in a shared pool as an (offset, count)
     // view -- the polyline/spline pattern -- and each cell's text goes in the shared
     // char pool like every other string in the store.
@@ -419,6 +434,7 @@ EntityHandle GeometryStore::add_fcf(const std::vector<std::string>& cells, Vec2 
 EntityHandle GeometryStore::add_datum(std::string_view letter, Vec2 tip, Vec2 pos, double rotation,
                                       std::uint16_t style, EntityProps props,
                                       DimOverrides overrides) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), letter.begin(), letter.end());
     const auto slot = datums_.insert(DatumData{tip, pos, rotation, style, offset,
@@ -430,6 +446,7 @@ EntityHandle GeometryStore::add_datum(std::string_view letter, Vec2 tip, Vec2 po
 EntityHandle GeometryStore::add_viewport(Vec2 center, double width, double height,
                                         Vec2 view_center, double scale, bool on,
                                         EntityProps props, std::vector<std::uint16_t> frozen_layers) {
+    props = stamped(props); // a new object: drawn over the rest
     ViewportData d;
     d.center = center;
     d.width = width;
@@ -445,6 +462,7 @@ EntityHandle GeometryStore::add_viewport(Vec2 center, double width, double heigh
 
 EntityHandle GeometryStore::add_image(std::uint16_t def, Vec2 pos, double width, double height,
                                      double rotation, EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     ImageData d;
     d.def = def;
     d.pos = pos;
@@ -479,6 +497,7 @@ EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
                                      const std::vector<double>& row_heights, Vec2 pos,
                                      double rotation, std::uint16_t style, bool has_title,
                                      bool has_header, EntityProps props, std::uint16_t link) {
+    props = stamped(props); // a new object: drawn over the rest
     // Cells and sizes are variable-length, so they live in shared pools as (offset,count)
     // views -- the polyline/spline/FCF pattern. Cell TEXT is already in the char pool.
     const auto cell_offset = static_cast<std::uint32_t>(table_cell_pool_.size());
@@ -643,6 +662,7 @@ std::vector<TableCellView> GeometryStore::table_cell_views(const TableData& t) c
 
 EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view content,
                                       EntityProps props) {
+    props = stamped(props); // a new object: drawn over the rest
     MTextBlock b = block;
     b.str_offset = static_cast<std::uint32_t>(string_pool_.size());
     b.str_len = static_cast<std::uint32_t>(content.size());
@@ -654,6 +674,7 @@ EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view 
 EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
                                         const MTextBlock& text, std::string_view content,
                                         EntityProps props, DimOverrides overrides) {
+    props = stamped(props); // a new object: drawn over the rest
     const auto voff = static_cast<std::uint32_t>(polyline_pool_.size());
     polyline_pool_.insert(polyline_pool_.end(), vertices.begin(), vertices.end());
     MTextBlock b = text;
@@ -702,6 +723,7 @@ std::string pack_attribs(const std::vector<std::string>& values) {
 EntityHandle GeometryStore::add_insert(std::uint16_t block, Vec2 pos, double scale_x,
                                        double scale_y, double rotation, EntityProps props,
                                        const std::vector<std::string>& attribs) {
+    props = stamped(props); // a new object: drawn over the rest
     InsertData d{block, pos, scale_x, scale_y, rotation, props};
     if (!attribs.empty()) {
         const std::string packed = pack_attribs(attribs);
@@ -749,6 +771,7 @@ EntityHandle GeometryStore::add_attdef(Vec2 pos, double height, double rotation,
                                        std::string_view prompt, std::string_view def,
                                        std::uint8_t flags, EntityProps props, std::uint16_t font,
                                        std::uint16_t style) {
+    props = stamped(props); // a new object: drawn over the rest
     AttDefData a;
     const auto toff = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), tag.begin(), tag.end());
@@ -768,6 +791,7 @@ EntityHandle GeometryStore::add_attdef(Vec2 pos, double height, double rotation,
 EntityHandle GeometryStore::add_hatch(const std::vector<std::vector<Vec2>>& loops,
                                       std::string_view pattern, double scale, double angle,
                                       Vec2 origin, EntityProps props, Rgb color2) {
+    props = stamped(props); // a new object: drawn over the rest
     HatchData d;
     d.vtx_offset = static_cast<std::uint32_t>(hatch_vtx_pool_.size());
     d.loop_offset = static_cast<std::uint32_t>(hatch_loop_lens_.size());
@@ -900,6 +924,7 @@ std::size_t GeometryStore::live_count() const noexcept {
 }
 
 void GeometryStore::clear() noexcept {
+    next_order_ = kFirstOrder;
     points_.clear();
     xlines_.clear();
     mlines_.clear();

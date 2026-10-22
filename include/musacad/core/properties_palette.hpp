@@ -89,6 +89,8 @@ enum class PropertyId : std::uint16_t {
     PlineWidth,
     PlineElevation,
     PlineThickness,
+    // General: the object's own transparency (0..90 percent, ByLayer, ByBlock).
+    Transparency,
 };
 
 /// How the UI renders + edits a field. The UI is generic over these.
@@ -115,6 +117,7 @@ enum class PropEditor : std::uint8_t {
     DimPlacementCombo, ///< value.choice: 0=ByStyle, 1=Above, 2=Centered
     DimTolModeCombo,   ///< value.choice = TolMode (0=None..4=Reference); NOT a ByStyle combo
     DimTextFitCombo,   ///< value.choice: 0=ByStyle, 1=Auto, 2=Inside, 3=Outside
+    TransparencyCombo, ///< value.flag = ByLayer; value.text "ByBlock"; else value.num = percent
 };
 
 /// A typed value carried by a field / a SetPropertyCommand. Only the members
@@ -146,12 +149,13 @@ enum class MatchSlot : std::uint8_t {
     Dimension,
     Hatch,
     Polyline,
+    Transparency,
 };
 
 /// True for the universal MATCHPROP slots (copy regardless of entity family).
 [[nodiscard]] constexpr bool match_slot_universal(MatchSlot s) noexcept {
     return s == MatchSlot::Color || s == MatchSlot::Layer || s == MatchSlot::Lineweight ||
-           s == MatchSlot::Linetype || s == MatchSlot::Celtscale;
+           s == MatchSlot::Linetype || s == MatchSlot::Celtscale || s == MatchSlot::Transparency;
 }
 
 /// Which MATCHPROP categories a run copies (the Settings dialog state). All on by
@@ -172,7 +176,7 @@ struct MatchPropFilter {
     bool polyline = true;  ///< a polyline's width (family-scoped, polyline<->polyline)
     // AutoCAD's remaining Property Settings. They are kept (and shown in the dialog)
     // so a saved filter reads the same; the ones without a modelled property are
-    // inert until it exists: transparency and thickness (issue #68), material and
+    // inert until it exists: thickness (issue #68), material and
     // shadow display (3D), the viewport's own properties.
     bool transparency = true;
     bool thickness = true;
@@ -204,6 +208,8 @@ struct MatchPropFilter {
             return hatch;
         case MatchSlot::Polyline:
             return polyline;
+        case MatchSlot::Transparency:
+            return transparency;
         case MatchSlot::None:
             return false;
         }

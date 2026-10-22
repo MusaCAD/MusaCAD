@@ -8271,6 +8271,9 @@ std::vector<core::LinetypeDef> read_lin_file(const CommandContext& ctx, const st
 }
 /// A colour as AutoCAD names it: BYLAYER, a colour name for 1..7, else r,g,b.
 std::string color_text(const core::EntityProps& p) {
+    if (p.color_by_block()) {
+        return "BYBLOCK";
+    }
     if (p.color_by_layer()) {
         return "BYLAYER";
     }
@@ -8282,6 +8285,9 @@ std::string color_text(const core::EntityProps& p) {
     return std::to_string(p.color.r) + "," + std::to_string(p.color.g) + "," + std::to_string(p.color.b);
 }
 std::string lineweight_text(const core::EntityProps& p) {
+    if (p.lineweight_by_block()) {
+        return "BYBLOCK";
+    }
     if (p.lineweight_by_layer()) {
         return "BYLAYER";
     }
@@ -8351,17 +8357,31 @@ void CurrentPropCommand::ask(CommandContext& ctx) {
         step_ = Step::Value;
         if (name_ == "CELWEIGHT") {
             ctx.set_prompt("Enter new value for CELWEIGHT <" +
-                           std::to_string(p.lineweight_by_layer() ? -1 : static_cast<int>(p.lineweight)) + ">: ");
+                           std::to_string(p.lineweight_by_block() ? -2
+                                          : p.lineweight_by_layer() ? -1
+                                                                    : static_cast<int>(p.lineweight)) +
+                           ">: ");
         } else {
             ctx.echo("Current lineweight: " + lineweight_text(p));
             ctx.set_prompt("Enter default lineweight for new objects or [?]: ");
         }
         return;
+    case Kind::Transparency: {
+        step_ = Step::Value;
+        const std::string now = p.transparency == core::EntityProps::kTransparencyByBlock ? "ByBlock"
+                                : p.transparency <= 90 ? std::to_string(p.transparency)
+                                                       : "ByLayer";
+        ctx.set_prompt("Enter new value for CETRANSPARENCY <\"" + now + "\">: ");
+        return;
+    }
     case Kind::Linetype:
         if (name_ == "CELTYPE") {
             step_ = Step::LtSet;
             ctx.set_prompt(std::string("Enter new value for CELTYPE <\"") +
-                           (p.linetype_by_layer() ? std::string("BYLAYER") : linetype_label(ctx, p.linetype)) + "\">: ");
+                           (p.linetype_by_block()   ? std::string("BYBLOCK")
+                            : p.linetype_by_layer() ? std::string("BYLAYER")
+                                                    : linetype_label(ctx, p.linetype)) +
+                           "\">: ");
         } else {
             step_ = Step::LtOption;
             ctx.set_prompt("Enter an option [?/Create/Load/Set]: ");
@@ -8383,6 +8403,27 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
     core::EntityProps p = ctx.current_props();
     switch (step_) {
     case Step::Value:
+        if (kind_ == Kind::Transparency) {
+            // ByLayer, ByBlock or 0 to 90 percent: the transparency new objects take.
+            if (t.empty()) {
+                done_ = true;
+                return;
+            }
+            double n = 0.0;
+            if (u == "BYLAYER") {
+                p.transparency = core::EntityProps::kTransparencyByLayer;
+            } else if (u == "BYBLOCK") {
+                p.transparency = core::EntityProps::kTransparencyByBlock;
+            } else if (parse_number(t, n) && n >= 0.0 && n <= 90.0 && n == std::floor(n)) {
+                p.transparency = static_cast<std::uint8_t>(n);
+            } else {
+                ctx.echo("Requires ByLayer, ByBlock, or an integer between 0 and 90.");
+                return;
+            }
+            set(ctx, p);
+            done_ = true;
+            return;
+        }
         if (kind_ == Kind::Color) {
             if (t.empty()) {
                 done_ = true;
@@ -8400,8 +8441,7 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
             if (u == "BYLAYER") {
                 p.set_color_by_layer(true);
             } else if (u == "BYBLOCK") {
-                ctx.echo("ByBlock is not available yet; the colour stays " + color_text(p) + ".");
-                return;
+                p.set_color_by_block(true);
             } else {
                 long aci = 0;
                 for (long i = 1; i <= 7; ++i) {
@@ -8444,8 +8484,7 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
             p.set_lineweight_by_layer(false);
             p.lineweight = 25; // LWDEFAULT
         } else if (u == "BYBLOCK" || (name_ == "CELWEIGHT" && t == "-2")) {
-            ctx.echo("ByBlock is not available yet.");
-            return;
+            p.set_lineweight_by_block(true);
         } else {
             double n = 0.0;
             const std::optional<double> v = parse_number(t, n) ? std::optional<double>(n) : std::nullopt;
@@ -8620,6 +8659,8 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (u == "BYLAYER") {
             p.set_linetype_by_layer(true);
+        } else if (u == "BYBLOCK") {
+            p.set_linetype_by_block(true);
         } else {
             const std::optional<core::Linetype> found = linetype_named(ctx, t);
             if (!found) {
@@ -8965,7 +9006,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
         "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "SPLINESEGS", "SPLINETYPE", "TRIMMODE",
-        "3DOSMODE",   "UCSDETECT",
+        "3DOSMODE",   "UCSDETECT",      "CETRANSPARENCY",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
         "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
@@ -21477,6 +21518,116 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
 
 void HatchEditUiCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DrawOrderUiCommand::start(CommandContext& ctx) {
+    if (ctx.has_selection()) {
+        options(ctx);
+        return;
+    }
+    step_ = Step::Select;
+    select_.begin(ctx, "Select objects: ");
+}
+
+bool DrawOrderUiCommand::choose(CommandContext& ctx, const std::string& u) {
+    using Op = core::DrawOrderCommand::Op;
+    if (u.empty() || u == "B" || u == "BACK") {
+        ctx.submit(core::DrawOrderCommand{Op::Back, 7, ctx.group_id()});
+        done_ = true;
+    } else if (u == "F" || u == "FRONT") {
+        ctx.submit(core::DrawOrderCommand{Op::Front, 7, ctx.group_id()});
+        done_ = true;
+    } else if (u == "A" || u == "ABOVE" || u == "ABOVE OBJECTS" || u == "U" || u == "UNDER" || u == "UNDER OBJECTS") {
+        op_ = u[0] == 'A' ? Op::Above : Op::Under;
+        ctx.submit(core::DrawOrderCommand{Op::Keep, 7, ctx.group_id()}); // the objects to move
+        ctx.submit(core::ClearSelectionCommand{});
+        step_ = Step::Reference;
+        select_.begin(ctx, "Select reference objects: ");
+    } else {
+        return false;
+    }
+    return true;
+}
+
+void DrawOrderUiCommand::options(CommandContext& ctx) {
+    step_ = Step::Option;
+    ctx.set_prompt("Enter object ordering option [Above objects/Under objects/Front/Back] <Back>: ");
+}
+
+void DrawOrderUiCommand::after(CommandContext& ctx) {
+    if (step_ == Step::Reference) {
+        ctx.submit(core::DrawOrderCommand{op_, 7, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    if (!ctx.has_selection()) {
+        done_ = true;
+        return;
+    }
+    if (!preset_.empty() && choose(ctx, preset_)) {
+        return;
+    }
+    options(ctx);
+}
+
+void DrawOrderUiCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after(ctx);
+    }
+}
+
+void DrawOrderUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    switch (step_) {
+    case Step::Select:
+        // A whole-word option before the objects (FRONT, BACK, ABOVE, UNDER -- none of them a
+        // selection keyword): applied once they are selected.
+        if (u == "FRONT" || u == "BACK" || u == "ABOVE" || u == "UNDER") {
+            preset_ = u;
+            return;
+        }
+        [[fallthrough]];
+    case Step::Reference:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after(ctx);
+        }
+        return;
+    case Step::Option:
+        if (!choose(ctx, u)) {
+            ctx.echo("Invalid option keyword.");
+            options(ctx);
+        }
+        return;
+    }
+}
+
+void TextToFrontCommand::start(CommandContext& ctx) {
+    if (hatches_) {
+        ctx.submit(core::DrawOrderCommand{core::DrawOrderCommand::Op::HatchToBack, 7, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Bring to front [Text/Dimensions/Leaders/All] <All>: ");
+}
+
+void TextToFrontCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    std::uint8_t kinds = 0;
+    if (u.empty() || u == "A" || u == "ALL") {
+        kinds = 7;
+    } else if (u == "T" || u == "TEXT") {
+        kinds = 1;
+    } else if (u == "D" || u == "DIMENSIONS") {
+        kinds = 2;
+    } else if (u == "L" || u == "LEADERS") {
+        kinds = 4;
+    } else {
+        ctx.echo("Invalid option keyword.");
+        ctx.set_prompt("Bring to front [Text/Dimensions/Leaders/All] <All>: ");
+        return;
+    }
+    ctx.submit(core::DrawOrderCommand{core::DrawOrderCommand::Op::TextToFront, kinds, ctx.group_id()});
     done_ = true;
 }
 

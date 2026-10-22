@@ -574,6 +574,19 @@ void MainWindow::build_ribbon() {
         small(modify, c3, QStringLiteral("Match Properties"), "MA");
         small(modify, c3, QStringLiteral("Blend Curves"), "BLEND", "blend");
         small(modify, c3, QStringLiteral("Delete Duplicate Objects"), "OVERKILL", "overkill");
+        // AutoCAD's Draw Order drop-down: the objects selected (or then selected) to the front,
+        // the back, above or under others; the text, dimensions or leaders to the front.
+        QWidget* c4 = modify->add_column_to(out);
+        small_split(modify, c4, QStringLiteral("Draw Order"), "DRAWORDER",
+                    menu_of({macro(QStringLiteral("Bring to Front"), "DRAWORDER", {"FRONT"}),
+                             macro(QStringLiteral("Send to Back"), "DRAWORDER", {"BACK"}),
+                             macro(QStringLiteral("Bring Above Objects"), "DRAWORDER", {"ABOVE"}),
+                             macro(QStringLiteral("Send Under Objects"), "DRAWORDER", {"UNDER"}),
+                             macro(QStringLiteral("Bring Text to Front"), "TEXTTOFRONT", {"T"}),
+                             macro(QStringLiteral("Bring Dimensions to Front"), "TEXTTOFRONT", {"D"}),
+                             macro(QStringLiteral("Bring Leaders to Front"), "TEXTTOFRONT", {"L"}),
+                             macro(QStringLiteral("Bring All Annotations to Front"), "TEXTTOFRONT", {"A"}),
+                             action("HATCHTOBACK", QStringLiteral("Send Hatches to Back"))}));
     }
     // Move / Copy / Mirror / Rotate / Scale / Array ask "Select objects:" when nothing is
     // selected (issue #46), so they stay enabled, as AutoCAD's do.

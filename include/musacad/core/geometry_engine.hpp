@@ -536,6 +536,9 @@ private:
     void apply_hatch_edit(const HatchEditCommand& c);
     void apply_replace_block(const ReplaceBlockCommand& c);
     void apply_attsync(const AttSyncCommand& c);
+    void apply_draw_order(const DrawOrderCommand& c);
+    /// The objects DRAWORDER moves Above or Under the reference objects (Op::Keep).
+    std::vector<EntityHandle> draworder_moving_;
     /// MLEADERSTYLE Modify: the multileaders drawn with `style` drawn again as it now is (in
     /// `group`); how many.
     int restyle_mleaders(std::uint16_t style, std::uint64_t group);

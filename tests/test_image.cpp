@@ -324,9 +324,9 @@ TEST_CASE("Grips: one on each corner, scaling the image about the opposite corne
 }
 
 TEST_CASE("Struct sizes: images live in a cold arena, hot structs untouched") {
-    static_assert(sizeof(LineData) == 40, "hot struct: LineData must stay 40 B");
-    static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
-    static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
-    static_assert(sizeof(ImageData) == 104, "ImageData size changed -- update the docs too");
+    static_assert(sizeof(LineData) == 48, "hot struct: LineData must stay 48 B");
+    static_assert(sizeof(CircleData) == 40, "hot struct: CircleData must stay 40 B");
+    static_assert(sizeof(EntityProps) == 16, "hot struct: EntityProps must stay 16 B");
+    static_assert(sizeof(ImageData) == 112, "ImageData size changed -- update the docs too");
     SUCCEED();
 }

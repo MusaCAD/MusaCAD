@@ -43,24 +43,22 @@ std::size_t curve_segments(double radius, double sweep_abs, double tolerance) {
     return std::clamp(n, std::size_t{1}, kMaxCurveSegments);
 }
 
-/// Resolve a block member's effective props against the store, with a pragmatic
-/// ByBlock approximation: a fully-ByLayer member on layer 0 inherits the placing
-/// insert's resolved props (the common "draw on layer 0, colour by the reference"
-/// convention). Members with explicit layers/overrides keep their own.
+/// Resolve a block member's effective props against the store: ByBlock takes the placing
+/// reference's resolved props, as does ByLayer on layer 0 (AutoCAD's "draw on layer 0,
+/// coloured by the reference"). Members with explicit layers/overrides keep their own.
 ResolvedProps member_props(const GeometryStore& store, const EntityProps& mp,
                            const ResolvedProps& inherited) {
     const Layer* ml = store.layer(mp.layer);
     ResolvedProps r = resolve(mp, ml != nullptr ? *ml : Layer{});
-    if (mp.layer == 0) { // ByBlock-ish: inherit from the insert
-        if (mp.color_by_layer()) {
-            r.color = inherited.color;
-        }
-        if (mp.lineweight_by_layer()) {
-            r.lineweight = inherited.lineweight;
-        }
-        if (mp.linetype_by_layer()) {
-            r.linetype = inherited.linetype;
-        }
+    const bool on_zero = mp.layer == 0;
+    if (mp.color_by_block() || (on_zero && mp.color_by_layer())) {
+        r.color = inherited.color;
+    }
+    if (mp.lineweight_by_block() || (on_zero && mp.lineweight_by_layer())) {
+        r.lineweight = inherited.lineweight;
+    }
+    if (mp.linetype_by_block() || (on_zero && mp.linetype_by_layer())) {
+        r.linetype = inherited.linetype;
     }
     return r;
 }

@@ -504,6 +504,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit a polyline, or several (Multiple): close/open, join, width, vertices, fit, spline, decurve, reverse.");
     reg({"ATTREDEF"}, [] { return std::make_unique<AttRedefCommand>(); }, "assets/ribbon/insert.svg",
         "Redefine a block from objects with attribute definitions; its references keep their values by tag.");
+    reg({"DR", "DRAWORDER"}, [] { return std::make_unique<DrawOrderUiCommand>(); }, "",
+        "Draw the objects selected over or under the rest: Front, Back, or above or under objects you pick.");
+    reg({"TEXTTOFRONT"}, [] { return std::make_unique<TextToFrontCommand>(false); }, "",
+        "Draw the drawing's text, dimensions or leaders over everything else.");
+    reg({"HATCHTOBACK"}, [] { return std::make_unique<TextToFrontCommand>(true); }, "",
+        "Draw every hatch under everything else.");
     reg({"ATTSYNC"}, [] { return std::make_unique<AttSyncCommand>(); }, "assets/ribbon/insert.svg",
         "Give a block's references its attributes as they are now; the values they have are kept.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
@@ -539,7 +545,9 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"-COLOR", "-COL", "-COLOUR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "-COLOR", false); }, "",
         "The colour new objects take, on the command line.");
     reg({"CECOLOR"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Color, "CECOLOR", false); }, "",
-        "The colour new objects take: BYLAYER, a colour number or name.");
+        "The colour new objects take: BYLAYER, BYBLOCK, a colour number or name.");
+    reg({"CETRANSPARENCY"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Transparency, "CETRANSPARENCY", false); }, "",
+        "The transparency new objects take: ByLayer, ByBlock, or 0 to 90 percent.");
     reg({"LW", "LWEIGHT", "LINEWEIGHT"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "LWEIGHT", true); },
         "assets/ribbon/lwt.svg", "The lineweight new objects take, and whether lineweights show: Lineweight Settings.");
     reg({"-LWEIGHT", "-LW"}, [] { return std::make_unique<CurrentPropCommand>(CPK::Lineweight, "-LWEIGHT", false); }, "",
