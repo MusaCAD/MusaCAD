@@ -631,7 +631,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    // The Dynamic Input settings live in the drawing area, which is deleted with the central
+    // widget just below: read them while it is still there (reading them after it was gone
+    // read freed memory on every exit).
+    const int dyn_bits = std::abs(viewport_->selection_setting("DYNMODE"));
+    const int dyn_prompt = viewport_->selection_setting("DYNPROMPT");
+    const int dyn_piformat = viewport_->selection_setting("DYNPIFORMAT");
     delete takeCentralWidget(); // stops the viewport render thread before the engine
+    viewport_ = nullptr;        // it went with the central widget
     if (engine_) {
         engine_->stop();
     }
@@ -644,9 +651,9 @@ MainWindow::~MainWindow() {
         settings.setValue(QStringLiteral("sysvar/DYNDIVIS"), command::dyndivis());
         settings.setValue(QStringLiteral("sysvar/3DOSMODE"), command::threedosmode());
         settings.setValue(QStringLiteral("sysvar/UCSDETECT"), command::ucsdetect());
-        settings.setValue(QStringLiteral("sysvar/DYNBITS"), std::abs(viewport_->selection_setting("DYNMODE")));
-        settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), viewport_->selection_setting("DYNPROMPT"));
-        settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), viewport_->selection_setting("DYNPIFORMAT"));
+        settings.setValue(QStringLiteral("sysvar/DYNBITS"), dyn_bits);
+        settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), dyn_prompt);
+        settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), dyn_piformat);
     }
     if (restore_dyn_pref_) {
         // A harness run leaves the saved Dynamic Input preference exactly as it found it
