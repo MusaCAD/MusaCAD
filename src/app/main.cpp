@@ -128,7 +128,9 @@ int main(int argc, char* argv[]) {
             qputenv("QT_QPA_PLATFORM", "offscreen");
 #endif
         }
-        qputenv("MUSACAD_DUMP_UI", "1"); // the window's developer-hook defaults (no update check)
+        // No developer hook (MUSACAD_*) is set: those run the window with Dynamic Input off for
+        // repeatable tests, and the documentation must show what a fresh install starts with.
+        // The scratch settings are what keep the user's own settings out.
         QStandardPaths::setTestModeEnabled(true);
         QTemporaryDir settings_dir;
         QSettings::setDefaultFormat(QSettings::IniFormat);
