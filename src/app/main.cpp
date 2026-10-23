@@ -10,6 +10,9 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QStringList>
 #include <QTimer>
 
@@ -17,6 +20,7 @@
 
 #include "musacad/app/cli.hpp"
 #include "musacad/app/plot_cli.hpp"
+#include "musacad/app/wiki_data.hpp"
 #include "musacad/app/win_console.hpp"
 #include "musacad/ui/main_window.hpp"
 #include "musacad/ui/theme.hpp"
@@ -105,6 +109,37 @@ int main(int argc, char* argv[]) {
         QGuiApplication gui(pargc, pargv.data());
         std::string error;
         const int rc = run_plot(opts, error);
+        if (rc != kExitOk) {
+            std::fprintf(stderr, "musacad: %s\n", error.c_str());
+        }
+        return rc;
+    }
+    case CliOptions::Mode::DumpWikiData: {
+        // The window is built -- never shown -- to read the ribbon and the shortcuts off it:
+        // on the offscreen platform (no display needed, as for --plot), with settings of its
+        // own in a scratch directory, so nothing a user customised (a shortcut, an alias, the
+        // Quick Access Toolbar) reaches the documentation and nothing is written to theirs.
+        const bool explicit_platform =
+            std::find(opts.qt_args.begin(), opts.qt_args.end(), "-platform") != opts.qt_args.end();
+        if (!explicit_platform) {
+#ifdef Q_OS_WIN
+            qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+#else
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
+        }
+        qputenv("MUSACAD_DUMP_UI", "1"); // the window's developer-hook defaults (no update check)
+        QStandardPaths::setTestModeEnabled(true);
+        QTemporaryDir settings_dir;
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings_dir.path());
+        std::vector<char*> dargv = qt_argv(opts.qt_args);
+        int dargc = static_cast<int>(dargv.size());
+        QApplication app(dargc, dargv.data());
+        QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
+        QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
+        std::string error;
+        const int rc = run_dump_wiki_data(opts, error);
         if (rc != kExitOk) {
             std::fprintf(stderr, "musacad: %s\n", error.c_str());
         }

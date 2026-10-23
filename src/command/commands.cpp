@@ -9001,18 +9001,8 @@ void PlanCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
-    // The system variables there are commands for (each asks `Enter new value for X <..>:`).
-    static constexpr const char* kVariables[] = {
-        "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
-        "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "SPLINESEGS", "SPLINETYPE", "TRIMMODE",
-        "3DOSMODE",   "UCSDETECT",      "CETRANSPARENCY",
-        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
-        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
-        "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
-        "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
-        "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
-        "TEXTEDITMODE", "TEXTSIZE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};
+    // The system variables there are commands for (each asks for its new value).
+    const std::span<const char* const> kVariables = system_variable_names();
     if (sub_) {
         sub_->input(ctx, text);
         done_ = sub_->done();
@@ -9024,7 +9014,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (u == "?") {
-        std::vector<std::string> names(std::begin(kVariables), std::end(kVariables));
+        std::vector<std::string> names(kVariables.begin(), kVariables.end());
         std::sort(names.begin(), names.end());
         std::string list;
         for (const std::string& v : names) {
@@ -9033,7 +9023,7 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.echo(list);
         return;
     }
-    const bool known = std::any_of(std::begin(kVariables), std::end(kVariables), [&](const char* v) { return u == v; });
+    const bool known = std::any_of(kVariables.begin(), kVariables.end(), [&](const char* v) { return u == v; });
     sub_ = known ? ctx.make_command(u) : nullptr;
     if (!sub_) {
         ctx.echo("Unknown variable name.  Type SETVAR ? for a list of variables.");

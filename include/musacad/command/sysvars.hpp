@@ -3,10 +3,30 @@
 
 #pragma once
 
+#include <span>
+
 // System variables AutoCAD keeps in the registry rather than in a drawing: the commands
 // read and set them, and the UI keeps them in Musa CAD's settings between runs.
 
 namespace musacad::command {
+
+/// The system variables SETVAR knows. Each is a command of its own as well, which asks for
+/// the new value; SETVAR names them with `?`, and `musacad --dump-wiki-data` exports the
+/// same list, so the documentation's variable reference cannot disagree with SETVAR.
+[[nodiscard]] inline std::span<const char* const> system_variable_names() noexcept {
+    static constexpr const char* kNames[] = {
+        "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
+        "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "SPLINESEGS", "SPLINETYPE", "TRIMMODE",
+        "3DOSMODE",   "UCSDETECT",      "CETRANSPARENCY",
+        "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
+        "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
+        "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
+        "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
+        "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
+        "TEXTEDITMODE", "TEXTSIZE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};
+    return kNames;
+}
 
 /// HPSEPARATE: one HATCH makes one hatch of the areas picked or selected (false), or one each.
 [[nodiscard]] inline bool& hpseparate() noexcept {

@@ -276,8 +276,8 @@ void MainWindow::build_ribbon() {
     }
 
     // Multi-document and clipboard shortcuts (app-wide).
-    const auto add_app_shortcut = [this](const QKeySequence& seq, auto slot) {
-        auto* act = new QAction(this);
+    const auto add_app_shortcut = [this](const QKeySequence& seq, const QString& what, auto slot) {
+        auto* act = new QAction(what, this); // named, so the key's purpose is on record (CUI, the docs)
         act->setShortcut(seq);
         act->setShortcutContext(Qt::ApplicationShortcut);
         connect(act, &QAction::triggered, this, slot);
@@ -288,12 +288,12 @@ void MainWindow::build_ribbon() {
     const auto clip_copy = [this] { processor_->start_command("COPYCLIP"); };
     const auto clip_cut = [this] { processor_->start_command("CUTCLIP"); };
     const auto clip_paste = [this] { processor_->start_command("PASTECLIP"); };
-    add_app_shortcut(QKeySequence::Copy, clip_copy);
-    add_app_shortcut(QKeySequence::Cut, clip_cut);
-    add_app_shortcut(QKeySequence::Paste, clip_paste);
-    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Tab")), [this] { cycle_document(1); });
-    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Tab")), [this] { cycle_document(-1); });
-    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+W")), [this] {
+    add_app_shortcut(QKeySequence::Copy, QStringLiteral("Copy to the clipboard"), clip_copy);
+    add_app_shortcut(QKeySequence::Cut, QStringLiteral("Cut to the clipboard"), clip_cut);
+    add_app_shortcut(QKeySequence::Paste, QStringLiteral("Paste from the clipboard"), clip_paste);
+    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Tab")), QStringLiteral("Next drawing tab"), [this] { cycle_document(1); });
+    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Tab")), QStringLiteral("Previous drawing tab"), [this] { cycle_document(-1); });
+    add_app_shortcut(QKeySequence(QStringLiteral("Ctrl+W")), QStringLiteral("Close the drawing"), [this] {
         if (viewport_ != nullptr) {
             close_document_tab(viewport_->active_document_id());
         }
@@ -326,8 +326,21 @@ void MainWindow::build_ribbon() {
         return ribbon_icon(QStringLiteral("assets/ribbon/") + QString::fromUtf8(name) + QStringLiteral(".svg"));
     };
     // Binds a button to a typed command: object name, tooltip and the click.
+    // "musacadCommand" (and "musacadMacro" for a macro's input) names the command a control
+    // starts; `musacad --dump-wiki-data` reads them to say where each command is on the ribbon.
+    const auto tag = [](QObject* o, const char* alias, const std::vector<std::string>& tokens = {}) {
+        o->setProperty("musacadCommand", QString::fromUtf8(alias));
+        if (!tokens.empty()) {
+            QStringList t;
+            for (const std::string& k : tokens) {
+                t << QString::fromStdString(k);
+            }
+            o->setProperty("musacadMacro", t);
+        }
+    };
     const auto bind = [&](QToolButton* b, const char* alias) {
         b->setObjectName(QStringLiteral("ribbon.cmd.%1").arg(QString::fromUtf8(alias)));
+        tag(b, alias);
         if (const command::CommandInfo* info = processor_->registry().find(alias); info != nullptr) {
             b->setToolTip(cmd_tooltip(*info));
         }
@@ -350,6 +363,7 @@ void MainWindow::build_ribbon() {
     // A menu entry running a command.
     const auto action = [&](const char* alias, const QString& text, const char* fallback = "") -> QAction* {
         auto* a = new QAction(icon_of(alias, fallback), text, this);
+        tag(a, alias);
         if (const command::CommandInfo* info = processor_->registry().find(alias); info != nullptr) {
             a->setToolTip(cmd_tooltip(*info));
         }
@@ -365,6 +379,7 @@ void MainWindow::build_ribbon() {
                            const char* icon_name = "") -> QAction* {
         auto* a = new QAction(icon_name[0] != '\0' ? asset(icon_name) : icon_of(alias), text, this);
         a->setObjectName(QStringLiteral("ribbon.macro.") + text.toLower().replace(QLatin1Char(' '), QLatin1Char('_')));
+        tag(a, alias, tokens);
         if (const command::CommandInfo* info = processor_->registry().find(alias); info != nullptr) {
             a->setToolTip(QStringLiteral("<b>%1</b><br>%2").arg(text.toHtmlEscaped(),
                                                                  QString::fromStdString(info->description).toHtmlEscaped()));
@@ -445,7 +460,9 @@ void MainWindow::build_ribbon() {
     };
     // A disabled small placeholder for a tool Musa CAD does not have yet (tracked as an issue).
     const auto todo_small = [&](RibbonPanel* panel, QWidget* col, const QString& label, const char* icon_name) {
-        return panel->add_small(col, asset(icon_name), label, /*enabled=*/false);
+        QToolButton* b = panel->add_small(col, asset(icon_name), label, /*enabled=*/false);
+        b->setProperty("musacadPlaceholder", true); // a tool Musa CAD does not have yet
+        return b;
     };
 
     // ================================================================== Home
@@ -764,6 +781,7 @@ void MainWindow::build_ribbon() {
         pick->setToolTip(QStringLiteral("Whether picking one member selects its whole group (PICKSTYLE)."));
         pick->setCheckable(true);
         pick->setChecked(true);
+        tag(pick, "PICKSTYLE");
         connect(pick, &QToolButton::toggled, this, [this](bool on) {
             processor_->start_macro("PICKSTYLE", {on ? "1" : "0"});
         });
@@ -806,6 +824,7 @@ void MainWindow::build_ribbon() {
         copyb->setObjectName(QStringLiteral("ribbon.copybase"));
         copyb->setToolTip(QStringLiteral("<b>COPYBASE</b><br>Copy with a base point: the point a paste puts on "
                                          "the insertion point."));
+        tag(copyb, "COPYBASE");
         connect(copyb, &QToolButton::clicked, this, [this] { processor_->start_command("COPYBASE"); });
         selection_required_buttons_.push_back(cut);
         selection_required_buttons_.push_back(copyc);
@@ -829,6 +848,7 @@ void MainWindow::build_ribbon() {
         QToolButton* fd = iblock->add_small(col2, asset("insert"), QStringLiteral("From Drawing"));
         fd->setObjectName(QStringLiteral("ribbon.insert_drawing"));
         fd->setToolTip(QStringLiteral("<b>INSERT ~</b><br>Insert a drawing file as a block, at its base point."));
+        tag(fd, "-INSERT", {"~"});
         connect(fd, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
             processor_->start_macro("-INSERT", {"~"});
@@ -894,9 +914,11 @@ void MainWindow::build_ribbon() {
         // the tables picked written back to theirs.
         QToolButton* down = data->add_small(col2, asset("table"), QStringLiteral("Download from Source"));
         down->setToolTip(QStringLiteral("<b>DATALINKUPDATE</b><br>Read every linked table again from its file."));
+        tag(down, "DATALINKUPDATE", {"U", "K"});
         connect(down, &QToolButton::clicked, this, [this] { processor_->start_macro("DATALINKUPDATE", {"U", "K"}); });
         QToolButton* up = data->add_small(col2, asset("table"), QStringLiteral("Upload to Source"));
         up->setToolTip(QStringLiteral("<b>DATALINKUPDATE</b><br>Write the tables you pick back to their files."));
+        tag(up, "DATALINKUPDATE", {"W"});
         connect(up, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
             processor_->start_macro("DATALINKUPDATE", {"W"});
@@ -1185,6 +1207,7 @@ void MainWindow::build_ribbon() {
     {
         QToolButton* pp = palettes->add_button(asset("properties"), QStringLiteral("Properties"));
         pp->setObjectName(QStringLiteral("ribbon.cmd.PR"));
+        tag(pp, "PR");
         pp->setToolTip(QStringLiteral("<b>PROPERTIES (PR)</b><br>Show or hide the Properties palette."));
         connect(pp, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
@@ -1269,8 +1292,9 @@ void MainWindow::build_ribbon() {
                 this, &MainWindow::file_export_dxf);
         connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/export.svg")), QStringLiteral("DWG…")), &QAction::triggered,
                 this, &MainWindow::file_export_dwg);
-        connect(m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/plot.svg")), QStringLiteral("PDF…")), &QAction::triggered,
-                this, [this] { processor_->start_command("EXPORTPDF"); });
+        QAction* pdf = m->addAction(ribbon_icon(QStringLiteral("assets/ribbon/plot.svg")), QStringLiteral("PDF…"));
+        tag(pdf, "EXPORTPDF");
+        connect(pdf, &QAction::triggered, this, [this] { processor_->start_command("EXPORTPDF"); });
         QToolButton* b = export_p->add_dropdown(asset("export"), QStringLiteral("Export"), m, /*split=*/false, RibbonTier::Primary);
         b->setObjectName(QStringLiteral("ribbon.export"));
         b->setToolTip(QStringLiteral("Export the drawing to a DXF or DWG file, or plot it to PDF."));
