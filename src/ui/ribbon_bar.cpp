@@ -405,7 +405,21 @@ QToolButton* RibbonPanel::add_button(const QIcon& icon, const QString& label, Ri
 
 QToolButton* RibbonPanel::add_placeholder(const QIcon& icon, const QString& label,
                                           RibbonTier tier) {
-    return make_button(icon, label, false, tier);
+    QToolButton* b = make_button(icon, label, false, tier);
+    b->setProperty("musacadPlaceholder", true); // a tool Musa CAD does not have yet
+    return b;
+}
+
+std::vector<QToolButton*> RibbonPanel::tool_buttons(bool slideout) const {
+    std::vector<QToolButton*> out;
+    QWidget* host = slideout ? expander_widget_ : content_widget_;
+    if (host == nullptr) {
+        return out;
+    }
+    for (QToolButton* b : host->findChildren<QToolButton*>()) {
+        out.push_back(b);
+    }
+    return out;
 }
 
 QToolButton* RibbonPanel::add_dropdown(const QIcon& icon, const QString& label, QMenu* menu,
@@ -959,6 +973,21 @@ int RibbonBar::tab_for_page(int page_index) const {
 bool RibbonBar::is_contextual_page(int page_index) const {
     return std::any_of(contextual_.begin(), contextual_.end(),
                        [&](const Contextual& c) { return c.page_index == page_index; });
+}
+
+std::vector<RibbonBar::TabStructure> RibbonBar::structure() const {
+    std::vector<TabStructure> out;
+    for (int t = 0; t < tabs_->count(); ++t) {
+        const int page = page_of_tab(t);
+        if (page < 0 || is_contextual_page(page)) {
+            continue;
+        }
+        out.push_back(TabStructure{tabs_->tabText(t), false, panels_of(page)});
+    }
+    for (const Contextual& c : contextual_) {
+        out.push_back(TabStructure{c.title, true, panels_of(c.page_index)});
+    }
+    return out;
 }
 
 std::vector<RibbonPanel*> RibbonBar::panels_of(int page_index) const {

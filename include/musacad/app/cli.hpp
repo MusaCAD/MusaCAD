@@ -43,7 +43,7 @@ struct PlotRequest {
 /// The parsed command line. `mode` selects what `main` does; `error` being
 /// non-empty means the line was malformed (print it to stderr, exit kExitUsage).
 struct CliOptions {
-    enum class Mode { Gui, Help, Version, Check, Plot };
+    enum class Mode { Gui, Help, Version, Check, Plot, DumpWikiData };
 
     Mode mode = Mode::Gui;
     std::string input;         ///< drawing to open (Gui), validate (Check) or plot (Plot)
@@ -51,6 +51,7 @@ struct CliOptions {
     PlotRequest plot;          ///< meaningful when mode == Plot (--window also for Check)
     bool check_json = false;   ///< --check --json: the report as JSON on stdout
     bool check_lines = false;  ///< --check --lines: lines through letters are problems too
+    std::string dump_path;     ///< --dump-wiki-data: where the JSON goes ("-" = stdout)
     std::string error;         ///< non-empty => usage error
 
     /// Arguments we did not claim, forwarded verbatim to Qt (single-dash options
@@ -66,6 +67,7 @@ struct CliOptions {
 ///   musacad --check <file>        parse the drawing and exit (validator)
 ///   musacad --plot <file> <out.pdf> [--paper A4] [--portrait|--landscape]
 ///           [--scale 1:5 | --fit] [--window x0,y0,x1,y1 | --extents] [--monochrome]
+///   musacad --dump-wiki-data <out.json>   the documentation's data (commands, ribbon, keys)
 ///   musacad --help | -h
 ///   musacad --version | -v
 [[nodiscard]] CliOptions parse_cli(int argc, const char* const* argv);

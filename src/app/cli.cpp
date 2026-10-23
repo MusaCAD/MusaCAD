@@ -27,7 +27,7 @@ bool is_ours(std::string_view a) {
     return a == "--help" || a == "-h" || a == "--version" || a == "-v" || a == "--check" ||
            a == "--plot" || a == "--paper" || a == "--portrait" || a == "--landscape" ||
            a == "--scale" || a == "--fit" || a == "--window" || a == "--extents" ||
-           a == "--monochrome" || a == "--json" || a == "--lines";
+           a == "--monochrome" || a == "--json" || a == "--lines" || a == "--dump-wiki-data";
 }
 
 /// Parses "1:5" (or "1/5", or a bare "0.2") into plotted-mm per drawing-unit.
@@ -142,6 +142,14 @@ CliOptions parse_cli(int argc, const char* const* argv) {
             want_plot = true;
             continue;
         }
+        if (a == "--dump-wiki-data") {
+            std::string_view v;
+            if (!need_value(i, a, v)) {
+                return o;
+            }
+            o.dump_path = std::string(v);
+            continue;
+        }
         if (a == "--portrait" || a == "--landscape") {
             o.plot.landscape = a == "--landscape";
             continue;
@@ -229,6 +237,14 @@ CliOptions parse_cli(int argc, const char* const* argv) {
         o.error = "--check and --plot are mutually exclusive";
         return o;
     }
+    if (!o.dump_path.empty()) {
+        if (want_check || want_plot || have_input) {
+            o.error = "--dump-wiki-data takes no drawing and goes alone";
+            return o;
+        }
+        o.mode = CliOptions::Mode::DumpWikiData;
+        return o;
+    }
     if ((o.check_json || o.check_lines) && !want_check) {
         o.error = std::string(o.check_json ? "--json" : "--lines") + " goes with --check";
         return o;
@@ -260,6 +276,9 @@ std::string help_text() {
            "                                   read a drawing, check its text, report, exit\n"
            "  musacad --plot <drawing> <out.pdf> [plot options]\n"
            "                                   plot to PDF headlessly (no display needed)\n"
+           "  musacad --dump-wiki-data <out.json>\n"
+           "                                   write the commands, ribbon and keyboard\n"
+           "                                   shortcuts as JSON, for the documentation\n"
            "  musacad --help                   show this help\n"
            "  musacad --version                show the version\n"
            "\n"

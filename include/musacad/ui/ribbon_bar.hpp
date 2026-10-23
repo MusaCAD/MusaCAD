@@ -114,6 +114,11 @@ public:
     void set_title_only(bool on);
     [[nodiscard]] const QString& title() const noexcept { return title_; }
 
+    /// The panel's tool buttons in the order they were added: those on the panel itself, or
+    /// (`slideout`) those on its slide-out. Read by `musacad --dump-wiki-data`, which records
+    /// where each command sits on the ribbon.
+    [[nodiscard]] std::vector<QToolButton*> tool_buttons(bool slideout = false) const;
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override; // click-outside dismiss
 
@@ -206,6 +211,15 @@ public:
     /// i.e. no horizontal scroll bar, so panel titles are not clipped? The collapse fitter must
     /// guarantee this except on a genuinely too-narrow window where even all-collapsed overflows.
     [[nodiscard]] bool active_page_fits() const;
+
+    /// A tab and its panels, left to right.
+    struct TabStructure {
+        QString title;
+        bool contextual = false; ///< shown only while its selection matches (Hatch Editor ...)
+        std::vector<RibbonPanel*> panels;
+    };
+    /// The fixed tabs in order, then the contextual ones. Read by `musacad --dump-wiki-data`.
+    [[nodiscard]] std::vector<TabStructure> structure() const;
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

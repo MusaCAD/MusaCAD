@@ -67,6 +67,10 @@ public:
     /// Every command once, by its name, with its description (CUI's list).
     [[nodiscard]] std::vector<CommandSuggestion> commands() const;
 
+    /// The aliases that start the command named `name` (its full name among them), in the
+    /// order they were registered -- the short form first. Empty for an unknown name.
+    [[nodiscard]] std::vector<std::string> aliases_of(std::string_view name) const;
+
     /// A command alias of the user's own (a PGP line `ALIAS, *COMMAND`): `alias` then
     /// starts what `command` starts -- a command's name or one of its aliases -- in place
     /// of whatever it started before. False when `command` is not known.

@@ -124,6 +124,16 @@ std::vector<CommandSuggestion> CommandRegistry::commands() const {
     return out;
 }
 
+std::vector<std::string> CommandRegistry::aliases_of(std::string_view name) const {
+    std::vector<std::string> out;
+    for (const CommandSuggestion& e : entries_) {
+        if (e.name == name && std::find(out.begin(), out.end(), e.alias) == out.end()) {
+            out.push_back(e.alias);
+        }
+    }
+    return out;
+}
+
 std::vector<CommandSuggestion> CommandRegistry::suggest(std::string_view prefix) const {
     const std::string p = upper(prefix);
     std::vector<CommandSuggestion> out;

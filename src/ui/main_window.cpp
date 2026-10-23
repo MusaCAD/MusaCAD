@@ -631,7 +631,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    // The Dynamic Input settings live in the drawing area, which is deleted with the central
+    // widget just below: read them while it is still there (reading them after it was gone
+    // read freed memory on every exit).
+    const int dyn_bits = std::abs(viewport_->selection_setting("DYNMODE"));
+    const int dyn_prompt = viewport_->selection_setting("DYNPROMPT");
+    const int dyn_piformat = viewport_->selection_setting("DYNPIFORMAT");
     delete takeCentralWidget(); // stops the viewport render thread before the engine
+    viewport_ = nullptr;        // it went with the central widget
     if (engine_) {
         engine_->stop();
     }
@@ -644,9 +651,9 @@ MainWindow::~MainWindow() {
         settings.setValue(QStringLiteral("sysvar/DYNDIVIS"), command::dyndivis());
         settings.setValue(QStringLiteral("sysvar/3DOSMODE"), command::threedosmode());
         settings.setValue(QStringLiteral("sysvar/UCSDETECT"), command::ucsdetect());
-        settings.setValue(QStringLiteral("sysvar/DYNBITS"), std::abs(viewport_->selection_setting("DYNMODE")));
-        settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), viewport_->selection_setting("DYNPROMPT"));
-        settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), viewport_->selection_setting("DYNPIFORMAT"));
+        settings.setValue(QStringLiteral("sysvar/DYNBITS"), dyn_bits);
+        settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), dyn_prompt);
+        settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), dyn_piformat);
     }
     if (restore_dyn_pref_) {
         // A harness run leaves the saved Dynamic Input preference exactly as it found it
@@ -830,6 +837,7 @@ void MainWindow::build_contextual_tabs() {
         QToolButton* reh = hbnd->add_button(ribbon_icon(QStringLiteral("assets/ribbon/hatch.svg")),
                                             QStringLiteral("Re-hatch"), RibbonTier::Primary);
         reh->setToolTip(QStringLiteral("Pick a new internal point to re-detect the boundary."));
+        reh->setProperty("musacadCommand", QStringLiteral("H")); // for --dump-wiki-data
         connect(reh, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
             processor_->start_command("H");
@@ -872,6 +880,7 @@ void MainWindow::build_contextual_tabs() {
         QToolButton* ed = tedit->add_button(ribbon_icon(QStringLiteral("assets/ribbon/text.svg")),
                                             QStringLiteral("Edit\nText"), RibbonTier::Primary);
         ed->setToolTip(QStringLiteral("Edit the contents of the selected text."));
+        ed->setProperty("musacadCommand", QStringLiteral("ED")); // for --dump-wiki-data
         connect(ed, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
             processor_->start_command("ED");
@@ -892,6 +901,7 @@ void MainWindow::build_contextual_tabs() {
         QToolButton* b = bdef->add_button(
             ribbon_icon(info != nullptr ? QString::fromStdString(info->icon) : QString()), label, tier);
         b->setObjectName(QStringLiteral("ribbon.block.%1").arg(QString::fromUtf8(alias)));
+        b->setProperty("musacadCommand", QString::fromUtf8(alias)); // for --dump-wiki-data
         if (info != nullptr) {
             b->setToolTip(QString::fromStdString(info->description));
         }
@@ -919,6 +929,7 @@ void MainWindow::build_contextual_tabs() {
                                                                : QStringLiteral("assets/ribbon/refedit.svg")),
             label, RibbonTier::Primary);
         b->setObjectName(QStringLiteral("ribbon.bedit.%1").arg(QString::fromUtf8(name)));
+        b->setProperty("musacadCommand", QString::fromUtf8(alias)); // for --dump-wiki-data
         if (info != nullptr) {
             b->setToolTip(QString::fromStdString(info->description));
         }

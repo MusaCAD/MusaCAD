@@ -120,6 +120,22 @@ TEST_CASE("parse_cli: malformed plot options are usage errors") {
     REQUIRE_FALSE(parse({"musacad", "--check", "--plot", "a", "b"}).error.empty()); // exclusive
 }
 
+TEST_CASE("parse_cli: --dump-wiki-data takes the output path and goes alone") {
+    const CliOptions o = parse({"musacad", "--dump-wiki-data", "wiki-data.json"});
+    REQUIRE(o.error.empty());
+    REQUIRE(o.mode == CliOptions::Mode::DumpWikiData);
+    REQUIRE(o.dump_path == "wiki-data.json");
+
+    const CliOptions out = parse({"musacad", "--dump-wiki-data", "-"});
+    REQUIRE(out.mode == CliOptions::Mode::DumpWikiData);
+    REQUIRE(out.dump_path == "-"); // stdout
+
+    REQUIRE_FALSE(parse({"musacad", "--dump-wiki-data"}).error.empty());
+    REQUIRE_FALSE(parse({"musacad", "--dump-wiki-data", "a.json", "part.musa"}).error.empty());
+    REQUIRE_FALSE(parse({"musacad", "--check", "part.musa", "--dump-wiki-data", "a.json"}).error.empty());
+    REQUIRE(app::help_text().find("--dump-wiki-data") != std::string::npos);
+}
+
 TEST_CASE("help/version text is non-empty and names the exit codes") {
     const std::string h = app::help_text();
     REQUIRE(h.find("--check") != std::string::npos);

@@ -11,6 +11,7 @@ musacad [<drawing>]              open a drawing in the GUI
 musacad --check <drawing> [--window x0,y0,x1,y1] [--lines] [--json]
                                  read a drawing, check its text, report, exit
 musacad --plot <drawing> <out.pdf> [plot options]
+musacad --dump-wiki-data <out.json>
 musacad --help
 musacad --version
 ```
@@ -191,6 +192,44 @@ done
 `scripts/plot_fixtures.sh` does exactly this over `tests/fixtures/`, writing to
 `artifacts/`; a fixture that needs non-default flags carries a sidecar
 `<name>.plotargs` file.
+
+## The documentation's data
+
+```sh
+musacad --dump-wiki-data wiki-data.json     # or "-" for stdout
+```
+
+`--dump-wiki-data` writes, as one JSON document, the facts the
+[Musa CAD Wiki](https://wiki.musacad.org) generates its reference pages from -- so the
+documentation is read off the program it documents and cannot disagree with it:
+
+| Key | What it holds |
+|---|---|
+| `version`, `formatVersion` | `core::version_string()` and the native format's `kFormatVersion` |
+| `commands` | every command once (`CommandRegistry::commands()`): `name`, `aliases` (`aliases_of`, the short form first), `primaryAlias`, `description`, `icon`, `setvar` (SETVAR knows it), `dimvar` (a `kDimVars` entry), and `opening` -- what the command prints when it starts (`echo`), the `prompt` it then waits at, or `finished` when it is done at once, and the `window` or dialog it asks for |
+| `setvarNames`, `dimVars`, `dimOverrideVars` | `system_variable_names()`, `core::kDimVars`, `core::kDimOverrideVars` |
+| `cli` | `help_text()` and `version_text()` |
+| `ui.ribbon` | every tab (the contextual ones marked) -> panel -> tool, with the command each tool and each of its menu entries starts, the macro input it types, the slide-out tools, and the placeholders for tools Musa CAD does not have yet |
+| `ui.quickAccessToolbar` | what the toolbar can show, and what it shows on a fresh install |
+| `ui.shortcuts` | every action with a keyboard shortcut (the keys as `QKeySequence::PortableText`) |
+| `ui.viewportKeys` | the keys the drawing area reads itself (Ctrl+A, the Shift overrides ...), listed in `src/app/wiki_data.cpp` beside the code that reads them |
+
+How it reads them, so the data is a fresh install's and nothing else:
+
+* The main window is **built and never shown**, on the offscreen platform (no display is
+  needed, as for `--plot`), with **settings of its own** in a scratch directory -- a user's
+  shortcuts, aliases or toolbar never reach the output, and nothing is written to theirs.
+* Each command is **started and cancelled** in a command processor of its own, on an empty
+  drawing. The drawing area it sees is a probe: the settings it reads (the running object
+  snaps, PICKBOX ...) come from the never-shown window, so a default such as
+  `Enter new value for OSMODE <4133>:` is the real one; a window or dialog it asks for is
+  recorded (`opening.window`) and not opened, and the command is told it is not there.
+* Ribbon controls name the command they start through the `musacadCommand` /
+  `musacadMacro` properties (`ribbon_layout.cpp`), placeholders through
+  `musacadPlaceholder`; `RibbonBar::structure()` and `RibbonPanel::tool_buttons()` walk them.
+
+Exit codes: `0`, or `3` when the file cannot be written. `tests/cli_check.cmake` runs it with
+no display and checks the output for its keys.
 
 ## Qt options
 

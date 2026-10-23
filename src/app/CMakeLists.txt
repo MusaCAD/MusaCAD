@@ -13,6 +13,8 @@ add_executable(musacad_app
     # The --plot runner: needs Qt (QPdfWriter via ui::write_plot_pdf), so it lives here
     # rather than in the Qt-free musacad_cli parser library.
     plot_cli.cpp
+    # --dump-wiki-data: needs the window (to read the ribbon off it), so it lives here too.
+    wiki_data.cpp
     # Branding logo embedded as a Qt resource (:/branding/musacad_logo.svg) for the
     # window icon + About dialog. AUTORCC compiles the .qrc.
     ${CMAKE_SOURCE_DIR}/assets/branding/branding.qrc

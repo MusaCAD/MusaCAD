@@ -122,6 +122,23 @@ run(1 plot_bad_paper --plot "${good}" "${WORK}/x.pdf" --paper A9)          # usa
 run(2 plot_bad_input --plot "${WORK}/absent.musa" "${WORK}/x.pdf")         # load
 run(1 plot_no_output --plot "${good}")                                     # usage
 
+# --- 7: --dump-wiki-data writes the documentation's JSON, with no display ------------
+set(wiki "${WORK}/wiki-data.json")
+file(REMOVE "${wiki}")
+run(0 wiki_out --dump-wiki-data "${wiki}")
+if(EXISTS "${wiki}")
+    file(READ "${wiki}" wiki_json)
+    foreach(key "\"commands\"" "\"ribbon\"" "\"shortcuts\"" "\"formatVersion\"" "\"LINE\"")
+        string(FIND "${wiki_json}" "${key}" at)
+        if(at EQUAL -1)
+            list(APPEND failures "--dump-wiki-data output has no ${key}")
+        endif()
+    endforeach()
+else()
+    list(APPEND failures "--dump-wiki-data did not create ${wiki}")
+endif()
+run(1 wiki_no_path --dump-wiki-data)                                        # usage
+
 if(failures)
     string(REPLACE ";" "\n  " pretty "${failures}")
     message(FATAL_ERROR "CLI end-to-end check failed:\n  ${pretty}")

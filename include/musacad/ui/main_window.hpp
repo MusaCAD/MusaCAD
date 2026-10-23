@@ -39,9 +39,11 @@ class QToolBar;
 class QMenu;
 class QListWidget;
 class QPoint;
+class QJsonObject;
 
 namespace musacad::command {
 class CommandProcessor;
+class ViewControl;
 struct InsertTableSettings;
 struct QLeaderSettings;
 }
@@ -71,6 +73,14 @@ public:
     /// Prints the widget tree and fires the Line/Circle ribbon buttons (for
     /// headless structural verification).
     void dump_ui();
+    /// The interface as data, for `musacad --dump-wiki-data`: every ribbon tab, panel and
+    /// tool with the command it starts (placeholders for the tools Musa CAD does not have
+    /// yet), the Quick Access Toolbar, and every keyboard shortcut the window answers to.
+    [[nodiscard]] QJsonObject wiki_ui_data() const;
+    /// The drawing area as the commands see it, for `musacad --dump-wiki-data`: it reads
+    /// the settings a fresh window starts with (the running object snaps, the selection
+    /// settings ...) so the documented defaults are the real ones.
+    [[nodiscard]] command::ViewControl* view_control() const;
     /// Developer capture of the GL viewport's next frame to a PNG (see ViewportWindow).
     void request_viewport_capture(const std::string& png_path);
 
