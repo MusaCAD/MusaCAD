@@ -639,6 +639,7 @@ void MainWindow::build_ribbon() {
         QToolButton* dimstyle_btn = annot->add_small(c1, asset("dim-style"), QStringLiteral("Dimension Style"));
         dimstyle_btn->setObjectName(QStringLiteral("ribbon.dimstyle"));
         dimstyle_btn->setToolTip(QStringLiteral("Create and edit dimension styles."));
+        tag(dimstyle_btn, "D"); // opens what DIMSTYLE opens
         connect(dimstyle_btn, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
         small(annot, c1, QStringLiteral("Text Style"), "ST", "text-style");
         small(annot, c1, QStringLiteral("Edit Text"), "ED", "text");
@@ -655,6 +656,7 @@ void MainWindow::build_ribbon() {
     layers->set_representative_icon(asset("layers"));
     QToolButton* layer_btn = layers->add_button(asset("layer-props"), QStringLiteral("Layer\nProperties"));
     layer_btn->setObjectName(QStringLiteral("ribbon.layer_manager"));
+    tag(layer_btn, "LA"); // opens what LAYER opens
     layer_btn->setToolTip(QStringLiteral("Open the Layer Properties manager."));
     connect(layer_btn, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
     {
@@ -757,6 +759,7 @@ void MainWindow::build_ribbon() {
         small(props, c1, QStringLiteral("List"), "LI");
         QToolButton* lwt_btn = props->add_small(c1, asset("lwt"), QStringLiteral("Lineweight Display"));
         lwt_btn->setObjectName(QStringLiteral("ribbon.lwt"));
+        tag(lwt_btn, "LWDISPLAY");
         lwt_btn->setToolTip(QStringLiteral("Toggle display of lineweights (LWDISPLAY)."));
         lwt_btn->setCheckable(true);
         lwt_btn->setChecked(true); // LWDISPLAY defaults on
@@ -807,16 +810,19 @@ void MainWindow::build_ribbon() {
     {
         QToolButton* paste = clip->add_button(asset("paste"), QStringLiteral("Paste"));
         paste->setObjectName(QStringLiteral("ribbon.paste"));
+        tag(paste, "PASTECLIP");
         paste->setToolTip(QStringLiteral("<b>PASTECLIP (Ctrl+V)</b><br>Paste what the clipboard holds at a point: "
                                          "objects from any Musa CAD window, an image, or text."));
         connect(paste, &QToolButton::clicked, this, clip_paste);
         QWidget* col = clip->add_column(/*icon_only=*/true);
         QToolButton* cut = clip->add_small(col, asset("cut"), QStringLiteral("Cut"));
         cut->setObjectName(QStringLiteral("ribbon.cut"));
+        tag(cut, "CUTCLIP");
         cut->setToolTip(QStringLiteral("<b>CUT (Ctrl+X)</b><br>Move the selection to the clipboard."));
         connect(cut, &QToolButton::clicked, this, clip_cut);
         QToolButton* copyc = clip->add_small(col, asset("copyclip"), QStringLiteral("Copy Clip"));
         copyc->setObjectName(QStringLiteral("ribbon.copyclip"));
+        tag(copyc, "COPYCLIP");
         copyc->setToolTip(QStringLiteral("<b>COPYCLIP (Ctrl+C)</b><br>Copy the selection to the clipboard, as "
                                          "objects for Musa CAD and a picture for other programs."));
         connect(copyc, &QToolButton::clicked, this, clip_copy);
@@ -1001,6 +1007,7 @@ void MainWindow::build_ribbon() {
         QWidget* c2 = dims->add_column_to(out);
         QToolButton* ds = dims->add_small(c2, asset("dim-style"), QStringLiteral("Dimension Style"));
         ds->setObjectName(QStringLiteral("ribbon.dimstyle2"));
+        tag(ds, "D");
         ds->setToolTip(QStringLiteral("Create and edit dimension styles."));
         connect(ds, &QToolButton::clicked, this, [this] { open_dimstyle_dialog(); });
         small(dims, c2, QStringLiteral("Jog Line"), "DJL", "dim");
@@ -1100,6 +1107,7 @@ void MainWindow::build_ribbon() {
     {
         auto* zoom_menu = new QMenu(this);
         QAction* ze = zoom_menu->addAction(asset("zoom-extents"), QStringLiteral("Zoom Extents"));
+        tag(ze, "Z", {"E"});
         connect(ze, &QAction::triggered, this, [this] { viewport_->zoom_extents(); });
         zoom_menu->addAction(macro(QStringLiteral("Zoom All"), "Z", {"A"}));
         zoom_menu->addAction(macro(QStringLiteral("Zoom In"), "Z", {"2"}));
@@ -1107,11 +1115,13 @@ void MainWindow::build_ribbon() {
         zoom_menu->addAction(action("Z", QStringLiteral("Zoom Scale")));
         QToolButton* zoom = nav->add_dropdown(asset("zoom"), QStringLiteral("Zoom"), zoom_menu, /*split=*/true, RibbonTier::Primary);
         zoom->setObjectName(QStringLiteral("ribbon.cmd.Z"));
+        tag(zoom, "Z");
         zoom->setToolTip(QStringLiteral("<b>ZOOM (Z)</b><br>Zoom in or out to change the view magnification."));
         connect(zoom, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
         QWidget* col = nav->add_column();
         QToolButton* zext = nav->add_small(col, asset("zoom-extents"), QStringLiteral("Zoom Extents"));
         zext->setObjectName(QStringLiteral("ribbon.zoom_extents"));
+        tag(zext, "Z", {"E"});
         zext->setToolTip(QStringLiteral("Zoom to show the full drawing extents."));
         connect(zext, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
         small(nav, col, QStringLiteral("Pan"), "P", "pan");
@@ -1148,12 +1158,14 @@ void MainWindow::build_ribbon() {
         navbar_->setVisible(false);
         navbar_toggle_ = vtools->add_button(asset("pan"), QStringLiteral("Navigation\nBar"), RibbonTier::Primary);
         navbar_toggle_->setObjectName(QStringLiteral("ribbon.navbar"));
+        tag(navbar_toggle_, "NAVBAR");
         navbar_toggle_->setCheckable(true);
         navbar_toggle_->setToolTip(QStringLiteral("<b>NAVBAR</b><br>Show or hide the navigation bar: Pan and the Zoom tools at "
                                                   "the drawing's right edge."));
         connect(navbar_toggle_, &QToolButton::toggled, this, [this](bool on) { show_navbar(on); });
         ucsicon_toggle_ = vtools->add_button(asset("view"), QStringLiteral("UCS\nIcon"), RibbonTier::Secondary);
         ucsicon_toggle_->setObjectName(QStringLiteral("ribbon.ucsicon"));
+        tag(ucsicon_toggle_, "UCSICON");
         ucsicon_toggle_->setCheckable(true);
         ucsicon_toggle_->setChecked(true);
         ucsicon_toggle_->setToolTip(QStringLiteral("<b>UCSICON</b><br>Show or hide the UCS icon."));
@@ -1215,10 +1227,12 @@ void MainWindow::build_ribbon() {
         });
         QToolButton* lp = palettes->add_button(asset("layer-props"), QStringLiteral("Layer\nProperties"));
         lp->setObjectName(QStringLiteral("ribbon.layer_manager2"));
+        tag(lp, "LA");
         lp->setToolTip(QStringLiteral("Open the Layer Properties manager."));
         connect(lp, &QToolButton::clicked, this, [this] { open_layer_dialog(); });
         QToolButton* tp = palettes->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
         tp->setObjectName(QStringLiteral("ribbon.tool_palettes"));
+        tag(tp, "TOOLPALETTES");
         tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
         connect(tp, &QToolButton::clicked, this,
                 [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
@@ -1261,6 +1275,7 @@ void MainWindow::build_ribbon() {
     large(customize, QStringLiteral("User\nInterface"), "CUI", "settings");
     {
         QToolButton* tp = customize->add_button(asset("settings"), QStringLiteral("Tool\nPalettes"), RibbonTier::Secondary);
+        tag(tp, "TOOLPALETTES");
         tp->setToolTip(QStringLiteral("<b>TOOLPALETTES (Ctrl+3)</b><br>Show or hide the Tool Palettes."));
         connect(tp, &QToolButton::clicked, this,
                 [this] { show_tool_palettes(tool_palettes_dock_ != nullptr && !tool_palettes_dock_->isVisible()); });
@@ -1277,6 +1292,7 @@ void MainWindow::build_ribbon() {
     {
         QToolButton* p = plot->add_button(asset("plot"), QStringLiteral("Plot"));
         p->setObjectName(QStringLiteral("ribbon.plot"));
+        tag(p, "PLOT"); // opens what PLOT opens
         p->setToolTip(QStringLiteral("<b>PLOT (Ctrl+P)</b><br>Plot or print the drawing to paper or PDF."));
         connect(p, &QToolButton::clicked, this, &MainWindow::open_plot_dialog);
         QWidget* col = plot->add_column();

@@ -837,6 +837,7 @@ void MainWindow::build_contextual_tabs() {
         QToolButton* reh = hbnd->add_button(ribbon_icon(QStringLiteral("assets/ribbon/hatch.svg")),
                                             QStringLiteral("Re-hatch"), RibbonTier::Primary);
         reh->setToolTip(QStringLiteral("Pick a new internal point to re-detect the boundary."));
+        reh->setProperty("musacadCommand", QStringLiteral("H")); // for --dump-wiki-data
         connect(reh, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
             processor_->start_command("H");
@@ -879,6 +880,7 @@ void MainWindow::build_contextual_tabs() {
         QToolButton* ed = tedit->add_button(ribbon_icon(QStringLiteral("assets/ribbon/text.svg")),
                                             QStringLiteral("Edit\nText"), RibbonTier::Primary);
         ed->setToolTip(QStringLiteral("Edit the contents of the selected text."));
+        ed->setProperty("musacadCommand", QStringLiteral("ED")); // for --dump-wiki-data
         connect(ed, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
             processor_->start_command("ED");
@@ -899,6 +901,7 @@ void MainWindow::build_contextual_tabs() {
         QToolButton* b = bdef->add_button(
             ribbon_icon(info != nullptr ? QString::fromStdString(info->icon) : QString()), label, tier);
         b->setObjectName(QStringLiteral("ribbon.block.%1").arg(QString::fromUtf8(alias)));
+        b->setProperty("musacadCommand", QString::fromUtf8(alias)); // for --dump-wiki-data
         if (info != nullptr) {
             b->setToolTip(QString::fromStdString(info->description));
         }
@@ -926,6 +929,7 @@ void MainWindow::build_contextual_tabs() {
                                                                : QStringLiteral("assets/ribbon/refedit.svg")),
             label, RibbonTier::Primary);
         b->setObjectName(QStringLiteral("ribbon.bedit.%1").arg(QString::fromUtf8(name)));
+        b->setProperty("musacadCommand", QString::fromUtf8(alias)); // for --dump-wiki-data
         if (info != nullptr) {
             b->setToolTip(QString::fromStdString(info->description));
         }
