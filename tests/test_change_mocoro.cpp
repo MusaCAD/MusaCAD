@@ -1187,9 +1187,10 @@ TEST_CASE("DATAEXTRACTION counts block references by name and attribute values, 
     const std::string path = (std::filesystem::temp_directory_path() / "musacad_extract.csv").string();
     engine.submit(DataExtractCommand{true, path, Vec2{0, -50}, 10});
     REQUIRE(wait_until(engine, [&](const auto& s) { return s.status == "2 rows extracted to " + path + ", and into a table."; }));
-    std::ifstream f(path);
+    std::ifstream f(path, std::ios::binary); // as written: text mode on Windows drops the \r
     std::string csv((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     REQUIRE(csv == "Count,Name,SIZE\r\n2,BOLT,M6\r\n1,BOLT,M8\r\n");
+    f.close(); // Windows does not remove a file that is still open
     std::filesystem::remove(path);
     const io::Document doc = dump(engine, "musacad_extract.musa");
     REQUIRE(doc.tables.size() == 1);
