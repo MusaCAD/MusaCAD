@@ -6,6 +6,58 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **Ctrl+1** opens and closes the Properties palette, as in AutoCAD.
+- **CHAMMODE** and **OFFSETDIST** as system variables (CHAMFER's method; the distance OFFSET
+  offers, negative for Through).
+
+### Changed
+- ARRAYPATH's default base point is the end of the path curve, as its prompt says: the
+  selection stays where it is as the first item and the copies keep its offset from the
+  path; a base point of your own goes on the path with the selection (#90).
+- A polar array goes round by one base point for the whole selection -- the one given
+  (ARRAY's Base point, -ARRAY's Base), else the centre of the selection -- so items that are
+  not rotated keep their arrangement (#90).
+- ROTATE's typed angles go the way ANGDIR says (#90).
+- Block names are compared without case, as AutoCAD compares them (#92).
+- The selection and grip settings (PICKBOX, PICKADD, PICKDRAG ...) are kept between
+  sessions (#92).
+- The contextual tab for one selected block reference is called **Block Reference**; Block
+  Editor is the tab shown while BEDIT is open (#86). The Hatch Editor tab's **Pick Points**
+  adds areas to the selected hatch (HATCHEDIT Add boundaries) (#92).
+- The [plot-spec] line of each plot goes to stderr, not the command line (#91).
+
+### Fixed
+- **Ctrl+Y** redoes on Linux too (it was Ctrl+Shift+Z only) (#85).
+- Closing the window read the Dynamic Input settings from freed memory (#87).
+- Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
+  Inscribed / Circumscribed, MLEADER's leader type, a dimension's Text, ARRAY's angles (360
+  for a full circle), STRETCH's displacement (the last one); PLINE offers Close only when it
+  can close; ARRAY's Levels take Total; ARC's Continue and Direction read Ctrl (#90).
+- The dimensions made from an object and TEXTEDIT say what happened once, after the engine
+  has checked; the reason a pick cannot be dimensioned names what that dimension takes;
+  CIRCLE Ttr's radius in the drawing's units; LIST says center (#91).
+- CHAMFER and BREAK keep a polyline's arc segments; CHAMFER's Angle method is exact at any
+  corner, not only a square one; FILLET's arc between curves takes the objects' layer;
+  ROTATE and SCALE copies go over the rest; STRETCH stretches what a lasso or crossing
+  polygon catches and takes C and CP (#92).
+- MATCHPROP no longer copies a dimension's overrides under Hatch; its settings window has
+  Transparency and Polyline (#92).
+- The ribbon's Zoom In / Zoom Out zoom by the current view; repeating HATCH with the hatch
+  just made selected asks for points instead of failing; Plot Preview's Plot... keeps the
+  settings previewed, and PLOT keeps an orientation that was chosen (#92).
+- The Layer Properties Manager refuses a name in use and freezing the current layer (#92).
+- FILLET and CHAMFER's Undo takes back each corner of the run; DIMCONTINUE's Undo no longer
+  counts a pick that made nothing; MLEADER's "No limit" maximum points; PEDIT makes the
+  polyline at the Yes; the Dimension Style Manager's Rename checks the characters; DIMZIN
+  keeps its feet-and-inches bits; \P typed at MTEXT is a paragraph break (#92).
+
+### Documentation
+- docs/BUILD.md is a short version of the wiki's Building page (#88); COMMANDS.md,
+  AUTOCAD_CONFIG.md and ROADMAP.md say what the program does now (#89).
+
 ## 0.8.0 - 2026-10-23
 
 ### Added

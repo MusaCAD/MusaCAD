@@ -9037,12 +9037,12 @@ void SetVarCommand::input(CommandContext& ctx, const std::string& text) {
     // The system variables there are commands for (each asks `Enter new value for X <..>:`).
     static constexpr const char* kVariables[] = {
         "ATTDISP",    "AUTOSNAP",       "CECOLOR",   "CELTSCALE",  "CELTYPE",          "CELWEIGHT",
-        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
+        "CHAMFERA",   "CHAMFERB",       "CHAMFERC",  "CHAMFERD",   "CHAMMODE", "CMLJUST", "CMLSCALE", "DYNDIGRIP", "DYNDIVIS", "DYNMODE", "DYNPICOORDS", "DYNPIFORMAT", "DYNPROMPT",
         "FILLETRAD",  "HPSEPARATE",     "MEASUREINIT", "MEASUREMENT", "PEDITACCEPT", "SPLINESEGS", "SPLINETYPE", "TRIMMODE",
         "3DOSMODE",   "UCSDETECT",      "CETRANSPARENCY",
         "DIMASSOC",   "DIMLAYER",   "DIMSTYLE",       "EDGEMODE",  "FILLMODE",   "GRIPCOLOR",        "GRIPHOT", "GRIPHOVER", "GRIPOBJLIMIT",
         "GRIPS",      "GRIPSIZE",       "HIGHLIGHT", "HPASSOC", "IMAGEFRAME", "INSUNITS", "INSUNITSDEFSOURCE", "INSUNITSDEFTARGET", "LAYERPMODE",
-        "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OSMODE",           "PDMODE",
+        "LTSCALE",    "LWDISPLAY",      "MIRRTEXT",  "MSLTSCALE",  "OFFSETDIST", "OSMODE",     "PDMODE",
         "PDSIZE",     "PICKADD",        "PICKAUTO",  "PICKBOX",    "PICKDRAG",         "PICKFIRST",
         "POLARANG",   "PROJMODE",       "PSLTSCALE", "SELECTIONCYCLING", "SELECTIONPREVIEW", "TEMPOVERRIDES",
         "TEXTEDITMODE", "TEXTSIZE", "TRANSPARENCYDISPLAY", "TRIMEXTENDMODE"};

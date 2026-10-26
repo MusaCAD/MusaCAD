@@ -53,7 +53,7 @@ The store already has arenas for splines and points; the *commands* are missing.
 | ~~**STRETCH**~~ | **Done** (#24) | ✅ |
 | ~~**BREAK**, **LENGTHEN**, **ALIGN**~~ | **Done** (#27) ✅ |
 | ~~**DIVIDE / MEASURE**~~ | **Done** (#27) — points at intervals; the Block option is still open. ✅ |
-| ~~**PEDIT**~~ | **Done** (#27) — Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline, Decurve, Reverse, Undo. ✅ |
+| ~~**PEDIT**~~ | **Done** (#27, #52) — Close/Open, Join, Width, Edit vertex (Next/Previous/Break/Insert/Move/Straighten/Tangent/Width), Fit, Spline, Decurve, Ltype gen, Reverse, Undo; a vertex is removed with the grip menu's Remove Vertex. ✅ |
 | ~~TRIM / EXTEND / FILLET on **curve entities**~~ | **Done** (#27) ✅ |
 
 ## E. Block authoring — [#25](https://github.com/MusaCAD/MusaCAD/issues/25)

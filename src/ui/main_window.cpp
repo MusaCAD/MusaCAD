@@ -1085,6 +1085,12 @@ void MainWindow::build_status_bar() {
         help->setShortcutContext(Qt::ApplicationShortcut);
         connect(help, &QAction::triggered, this, [this] { viewport_->open_help(); });
         addAction(help);
+        // Ctrl+1: the Properties palette, as in AutoCAD (PROPERTIES / PR at the prompt).
+        auto* props = new QAction(QStringLiteral("Properties"), this);
+        props->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+        props->setShortcutContext(Qt::ApplicationShortcut);
+        connect(props, &QAction::triggered, this, [this] { toggle_properties(); });
+        addAction(props);
     }
     dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial,
                                    QStringLiteral("Show command input and prompts at the cursor "

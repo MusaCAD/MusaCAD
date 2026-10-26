@@ -436,6 +436,9 @@ public:
     /// OFFSETGAPTYPE: what joins a polyline's straight segments where the offset has
     /// parted them -- 0 carried on to their crossing, 1 an arc, 2 a bevel.
     inline static int s_gap_type_ = 0;
+    /// OFFSETDIST: the distance OFFSET offers (0 here, a negative value for the variable:
+    /// Through).
+    static double& offsetdist() noexcept { return s_distance_; }
 
 private:
     /// AutoCAD's flow: `Specify offset distance or [Through/Erase/Layer] <last>:` (a value,
@@ -524,9 +527,10 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 };
 
-// HATCH / H: fill a closed boundary with a pattern (Part A: SOLID, from selected closed
-// polylines). Noun-verb: with a pre-selection, hatches it immediately; otherwise prompts to
-// pick a closed boundary. The engine extracts the boundary loops (UI never touches the store).
+// HATCH / H: fill closed boundaries with a pattern, a solid fill or a gradient. Noun-verb:
+// with closed objects selected, hatches them at once (hatches alone selected are let go);
+// otherwise it asks for internal points. The engine finds the boundary loops (UI never
+// touches the store).
 /// HATCH: `Pick internal point or [Select objects/Undo/seTtings]:` -- picks fill regions,
 /// Select objects fills closed boundaries, Undo takes the last pick back, seTtings asks the
 /// pattern (`Enter a pattern name or [?/Solid/User defined/Gradient] <ANSI31>:`), its scale
@@ -2666,8 +2670,8 @@ private:
 /// SPLINE (AutoCAD SPL). Method Fit (the curve passes through the picked points; the
 /// Knots option chooses chord / square-root / uniform parameterisation) or CV (the
 /// picked points are the control vertices; Degree 1..10). Undo drops the last point,
-/// Close returns to the first. Tangency, fit tolerance and Object are reported as not
-/// supported rather than silently ignored. Settings persist for the session.
+/// Close returns to the first. start and end Tangency and toLerance shape the fit; Object
+/// turns a spline-fit polyline into the same curve. Settings persist for the session.
 class SplineCommand final : public ICommand {
 public:
     std::string name() const override { return "SPLINE"; }
@@ -2702,9 +2706,9 @@ private:
     bool done_ = false;
 };
 
-/// PEDIT (PE): select a polyline (a line or arc is converted), then AutoCAD's option
-/// menu: Close/Open, Join (through JOIN), Edit vertex (Insert/Delete/Move), Spline,
-/// Decurve, Reverse, Undo. Width, Fit and Ltype gen are reported as not supported.
+/// PEDIT (PE): select a polyline (a line or arc is converted, at the Yes), then AutoCAD's
+/// option menu: Close/Open, Join (through JOIN), Width, Edit vertex, Fit, Spline, Decurve,
+/// Ltype gen, Reverse, Undo.
 class PeditCommand final : public ICommand {
 public:
     /// `multiple`: MPEDIT (Express Tools) -- PEDIT's Multiple from the start.
@@ -4568,7 +4572,7 @@ private:
     bool measure_ = true;
     double path_space_ = 0.0;
     bool path_auto_ = true;
-    int path_items_ = 0; ///< 0: as many as the path holds (Measure), or Divide's 5
+    int path_items_ = 0; ///< 0: as many as the path holds (Measure); Divide makes at least 2
     bool align_ = true;
     std::optional<core::Vec2> base_{};
     bool done_ = false;
@@ -4650,6 +4654,8 @@ public:
     static double& chamferb() noexcept { return s_dist2_; }
     static double& chamferc() noexcept { return s_length_; }
     static double& chamferd() noexcept { return s_angle_; }
+    /// CHAMMODE: 0 the Distance method, 1 the Angle method.
+    static bool& chammode() noexcept { return s_angle_method_; }
 
 private:
     /// AutoCAD's flow: `Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/
