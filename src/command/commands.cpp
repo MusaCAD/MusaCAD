@@ -15957,7 +15957,22 @@ void StretchCommand::start(CommandContext& ctx) {
     }
     mode_ = Mode::Select;
     ctx.echo("Select objects to stretch by crossing-window or crossing-polygon...");
-    ctx.set_prompt("Select objects: ");
+    select_.begin(ctx);
+}
+
+void StretchCommand::after_select(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("Nothing selected.");
+        done_ = true;
+        return;
+    }
+    begin_base(ctx);
+}
+
+void StretchCommand::selection_gesture(CommandContext& ctx) {
+    if (mode_ == Mode::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_select(ctx);
+    }
 }
 
 void StretchCommand::finish(CommandContext& ctx, core::Vec2 delta) {
@@ -15971,30 +15986,14 @@ void StretchCommand::finish(CommandContext& ctx, core::Vec2 delta) {
 void StretchCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     switch (mode_) {
-    case Mode::Select: {
-        // The viewport does the selecting (drags and picks accumulate, announced as
-        // "N found"); this prompt only has to know when the user is done.
-        if (t.empty()) {
-            if (!ctx.has_selection()) {
-                ctx.echo("Nothing selected.");
-                done_ = true;
-                return;
-            }
-            begin_base(ctx);
-            return;
+    case Mode::Select:
+        // Picks, crossing windows and lassos accumulate in the viewport; typed answers
+        // (C, CP, ALL, a point, ...) go through AutoCAD's Select objects step. The engine
+        // keeps each crossing window and crossing polygon: what it caught is stretched.
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_select(ctx);
         }
-        if (upper(t) == "ALL") {
-            ctx.submit(core::SelectAllCommand{});
-            return; // still selecting, as in AutoCAD: Enter finishes
-        }
-        if (const auto p = read_point(ctx, text)) {
-            // A typed coordinate at "Select objects:" is a pick at that point.
-            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
-            return;
-        }
-        ctx.echo("Pick objects, drag a crossing window, type ALL, or press Enter to finish.");
         return;
-    }
     case Mode::Base: {
         const std::string u = upper(t);
         if (t.empty() || u == "D" || u == "DISPLACEMENT") {

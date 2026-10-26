@@ -1294,13 +1294,20 @@ namespace {
 using StretchWindow = std::pair<Vec2, Vec2>;
 
 /// Apply STRETCH's per-kind rule to one captured entity: every "stretch point" (vertex,
-/// endpoint, or the single anchor of a rigid object) that lies inside ANY of `windows`
-/// moves by `d`; the rest stay. Returns false if nothing moved. A point inside two
-/// overlapping windows moves once -- membership is a predicate, not a sum.
-bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
+/// endpoint, or the single anchor of a rigid object) that lies inside ANY of `windows`,
+/// or of the crossing polygons and lassos in `polygons`, moves by `d`; the rest stay.
+/// Returns false if nothing moved. A point inside two overlapping windows moves once --
+/// membership is a predicate, not a sum.
+bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows,
+                 std::span<const std::vector<Vec2>> polygons = {}) {
     const auto inside = [&](Vec2 p) {
         for (const StretchWindow& w : windows) {
             if (p.x >= w.first.x && p.x <= w.second.x && p.y >= w.first.y && p.y <= w.second.y) {
+                return true;
+            }
+        }
+        for (const std::vector<Vec2>& poly : polygons) {
+            if (poly.size() >= 3 && point_in_polygon(poly, p)) {
                 return true;
             }
         }
@@ -5459,11 +5466,13 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
     // the selection since (an edit, a paste, a new document) they are meaningless, and
     // every selected object falls back to moving whole -- which is exactly what AutoCAD
     // does for objects that were not selected by a crossing window.
-    const bool windows_valid = !stretch_windows_.empty() && stretch_windows_sel_ == selection_;
+    const bool windows_valid =
+        (!stretch_windows_.empty() || !stretch_polygons_.empty()) && stretch_windows_sel_ == selection_;
     // "Crossed by a recorded window" does not depend on the drag, so it is classified
     // once per (selection, windows, edit state) and reused for every preview frame.
     if (!(stretch_class_valid_ && stretch_class_serial_ == edit_serial_ &&
-          stretch_class_handles_ == selection_ && stretch_class_windows_ == stretch_windows_)) {
+          stretch_class_handles_ == selection_ && stretch_class_windows_ == stretch_windows_ &&
+          stretch_class_polygons_ == stretch_polygons_)) {
         stretch_class_crossed_.assign(selection_.size(), false);
         if (windows_valid) {
             for (std::size_t i = 0; i < selection_.size(); ++i) {
@@ -5477,10 +5486,16 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
                         break;
                     }
                 }
+                for (const auto& poly : stretch_polygons_) {
+                    if (!stretch_class_crossed_[i] && entity_hits_polygon(h, poly, /*crossing=*/true)) {
+                        stretch_class_crossed_[i] = true;
+                    }
+                }
             }
         }
         stretch_class_handles_ = selection_;
         stretch_class_windows_ = stretch_windows_;
+        stretch_class_polygons_ = stretch_polygons_;
         stretch_class_serial_ = edit_serial_;
         stretch_class_valid_ = true;
     }
@@ -5496,7 +5511,7 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
             // Partly enclosed: only the caught vertices move. A line that merely passes
             // through the window with both ends outside is crossed but unchanged, and
             // AutoCAD leaves it alone too -- `changed` stays false and it is skipped.
-            changed = stretch_cmd(edited, delta, stretch_windows_);
+            changed = stretch_cmd(edited, delta, stretch_windows_, stretch_polygons_);
         } else {
             translate_cmd(edited, delta); // enclosed or picked: moved whole
             changed = true;
@@ -13990,7 +14005,7 @@ void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 
     if (ccw > kPi) {
         std::swap(a1, a2);
     }
-    const Command arc = AddArcCommand{best_c, radius, a1, a2, 0};
+    const Command arc = AddArcCommand{best_c, radius, a1, a2, 0, joining_props(store_, h1, h2)};
 
     // Each curve trimmed/extended to its tangent point on the pick's side.
     const auto trimmed = [&](EntityHandle h, const Curve& cv, Vec2 t, Vec2 pick) -> std::optional<Command> {
@@ -18337,6 +18352,12 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SelectPolygonCommand>) {
                 select_where([&](EntityHandle h) { return entity_hits_polygon(h, c.points, c.crossing); },
                              c.remove, c.announce);
+                // A crossing polygon or lasso is kept for STRETCH, as a crossing window is:
+                // the vertices inside it are the ones caught.
+                if (c.crossing && c.points.size() >= 3) {
+                    stretch_polygons_.push_back(c.points);
+                    note_selection_for_windows();
+                }
             }
             if constexpr (std::is_same_v<T, SelectLastCommand>) {
                 const EntityHandle last = most_recent_live();
@@ -21217,6 +21238,7 @@ void GeometryEngine::park_active(DocState& d) {
     d.grip_pos = grip_pos_;
     d.grip_preview_store = std::move(grip_preview_store_);
     d.stretch_windows = std::move(stretch_windows_);
+    d.stretch_polygons = std::move(stretch_polygons_);
     d.stretch_windows_sel = std::move(stretch_windows_sel_);
     d.stretch_preview_active = stretch_preview_active_;
     d.stretch_preview_delta = stretch_preview_delta_;
@@ -21266,6 +21288,7 @@ void GeometryEngine::load_active(DocState& d) {
     grip_peers_.clear(); // a drag left under way in the other drawing goes on with its own grip only
     grip_preview_store_ = std::move(d.grip_preview_store);
     stretch_windows_ = std::move(d.stretch_windows);
+    stretch_polygons_ = std::move(d.stretch_polygons);
     stretch_windows_sel_ = std::move(d.stretch_windows_sel);
     stretch_preview_active_ = d.stretch_preview_active;
     stretch_preview_delta_ = d.stretch_preview_delta;

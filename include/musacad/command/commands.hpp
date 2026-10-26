@@ -1258,14 +1258,18 @@ public:
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
     bool in_selection_phase() const override { return mode_ == Mode::Select; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
 
 private:
     enum class Mode { Select, Base, Displacement, Second };
     void begin_base(CommandContext& ctx);
+    void after_select(CommandContext& ctx);
     void finish(CommandContext& ctx, core::Vec2 delta);
 
     bool done_ = false;
     Mode mode_ = Mode::Select;
+    SelectObjectsPhase select_; ///< Crossing and CPolygon among its answers
     core::Vec2 base_{};
     inline static core::Vec2 s_displacement_{}; ///< the last one, Enter's at Displacement
 };

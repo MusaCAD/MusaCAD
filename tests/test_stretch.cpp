@@ -114,6 +114,43 @@ TEST_CASE("#24: a crossing window moves only the endpoint it caught") {
     engine.stop();
 }
 
+TEST_CASE("STRETCH: a crossing polygon or lasso catches vertices as a crossing window does") {
+    // The default PICKDRAG drag is a lasso, which reaches the engine as a crossing
+    // polygon: the end inside it moves, the other stays.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
+    engine.submit(SelectPolygonCommand{{{90, -10}, {110, -5}, {105, 10}, {92, 8}}, /*crossing=*/true, false, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(StretchSelectionCommand{{20, 0}, 2});
+    REQUIRE(wait_until(engine, stretched_status));
+    engine.consume_snapshot();
+    REQUIRE(min_x(engine.snapshot()) == Approx(0.0));
+    REQUIRE(max_x(engine.snapshot()) == Approx(120.0));
+    engine.stop();
+}
+
+TEST_CASE("STRETCH takes C and CP at Select objects") {
+    ProcHarness h;
+    h.proc.submit_line("STRETCH");
+    h.proc.submit_line("CP");
+    h.proc.submit_line("90,-10");
+    h.proc.submit_line("110,-10");
+    h.proc.submit_line("100,10");
+    h.proc.submit_line("");
+    const auto* poly = h.last<SelectPolygonCommand>();
+    REQUIRE(poly != nullptr);
+    REQUIRE(poly->crossing);
+    REQUIRE(poly->points.size() == 3);
+    h.proc.submit_line("C");
+    h.proc.submit_line("0,0");
+    h.proc.submit_line("10,10");
+    const auto* win = h.last<SelectWindowCommand>();
+    REQUIRE(win != nullptr);
+    REQUIRE(win->crossing);
+}
+
 TEST_CASE("#24: an object fully enclosed by the crossing window moves whole") {
     GeometryEngine engine;
     engine.start();

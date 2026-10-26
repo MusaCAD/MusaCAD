@@ -177,6 +177,7 @@ private:
         Vec2 grip_pos{};
         GeometryStore grip_preview_store;
         std::vector<std::pair<Vec2, Vec2>> stretch_windows;
+        std::vector<std::vector<Vec2>> stretch_polygons;
         std::vector<EntityHandle> stretch_windows_sel;
         bool stretch_preview_active = false;
         Vec2 stretch_preview_delta{};
@@ -289,6 +290,7 @@ private:
     void note_selection_for_windows() { stretch_windows_sel_ = selection_; }
     void forget_stretch_windows() {
         stretch_windows_.clear();
+        stretch_polygons_.clear();
         stretch_windows_sel_.clear();
     }
 
@@ -842,6 +844,7 @@ private:
     // while `stretch_windows_sel_` still equals `selection_`: any edit that replaces the
     // selection invalidates them without every such site having to know.
     std::vector<std::pair<Vec2, Vec2>> stretch_windows_;
+    std::vector<std::vector<Vec2>> stretch_polygons_; ///< crossing polygons and lassos, the same
     std::vector<EntityHandle> stretch_windows_sel_;
     // The live rubber-band (StretchPreviewCommand): previewed on grip_preview_store_.
     bool stretch_preview_active_ = false;
@@ -873,6 +876,7 @@ private:
     mutable std::uint64_t stretch_class_serial_ = 0;
     mutable std::vector<EntityHandle> stretch_class_handles_;
     mutable std::vector<std::pair<Vec2, Vec2>> stretch_class_windows_;
+    mutable std::vector<std::vector<Vec2>> stretch_class_polygons_;
     mutable std::vector<bool> stretch_class_crossed_;
 
     std::atomic<std::uint64_t> version_{0};
