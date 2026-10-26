@@ -170,7 +170,7 @@ TEST_CASE("PLINE offers Close when it can close") {
     h.proc.cancel();
     // An arc first: a straight segment back closes it into a shape.
     H a;
-    a.run({"PL", "0,0", "A", "10,0", "L"});
+    a.run({"PL", "0,0", "A", "10,10", "L"}); // a quarter circle (from the east), then Line
     REQUIRE(a.out.prompt == "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: ");
     a.run({"C"});
     const auto* p = a.last<AddPolylineCommand>();
