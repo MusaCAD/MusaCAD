@@ -13193,7 +13193,8 @@ void FilletCommand::prompt_first(CommandContext& ctx) {
 namespace {
 /// FILLET / CHAMFER's second-object prompt: what a pick there would make shows under the
 /// cursor.
-void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim, bool chamfer, double d1, double d2) {
+void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim, bool chamfer, double d1, double d2,
+                 double chamfer_angle = -1.0) {
     PreviewSpec pv;
     pv.fillet_hover = true;
     pv.fillet_first = first;
@@ -13202,6 +13203,7 @@ void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim
     pv.fillet_chamfer = chamfer;
     pv.chamfer_d1 = d1;
     pv.chamfer_d2 = d2;
+    pv.chamfer_angle = chamfer_angle;
     ctx.set_preview(std::move(pv));
 }
 } // namespace
@@ -13347,8 +13349,14 @@ double ChamferCommand::dist1() const {
     return s_angle_method_ ? s_length_ : s_dist1_;
 }
 
+// The Angle method's second distance depends on the corner, so the engine works it out
+// from angle() at each one.
 double ChamferCommand::dist2() const {
-    return s_angle_method_ ? s_length_ * std::tan(core::to_radians(s_angle_)) : s_dist2_;
+    return s_angle_method_ ? 0.0 : s_dist2_;
+}
+
+double ChamferCommand::angle() const {
+    return s_angle_method_ ? core::to_radians(s_angle_) : -1.0;
 }
 
 void ChamferCommand::prompt_first(CommandContext& ctx) {
@@ -13385,7 +13393,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (state_ == State::First) {
             prompt_first(ctx);
         } else if (state_ == State::Second) {
-            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2());
+            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2(), angle());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         } else {
             ctx.set_prompt("Select 2D polyline or [Distance/Angle/mEthod]: ");
@@ -13453,7 +13461,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick1_ = *p;
             state_ = State::Second;
-            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2());
+            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2(), angle());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         }
         return;
@@ -13477,8 +13485,10 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
             const bool sharp = ctx.shift_held(); // a clean corner this once
             ctx.set_preview({});
             last_group_ = ctx.group_id();
-            ctx.submit(core::ChamferPickCommand{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
-                                                ctx.pick_radius(), last_group_, s_trim()});
+            core::ChamferPickCommand c{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
+                                       ctx.pick_radius(), last_group_, s_trim()};
+            c.angle = sharp ? -1.0 : angle();
+            ctx.submit(c);
             after_chamfer(ctx);
         }
         return;
@@ -13579,7 +13589,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (const auto p = read_point(ctx, text)) {
             last_group_ = ctx.group_id();
-            ctx.submit(core::ChamferPolylineCommand{*p, dist1(), dist2(), ctx.pick_radius(), last_group_});
+            core::ChamferPolylineCommand c{*p, dist1(), dist2(), ctx.pick_radius(), last_group_};
+            c.angle = angle();
+            ctx.submit(c);
             after_chamfer(ctx);
         }
         return;

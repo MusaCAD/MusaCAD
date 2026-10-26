@@ -1104,6 +1104,7 @@ struct FilletPreviewCommand {
     double d1 = 0.0;
     double d2 = 0.0;
     bool active = false;
+    double chamfer_angle = -1.0; ///< CHAMFER's Angle method (radians): d2 from the corner
 };
 /// TRIM / EXTEND's cutting (boundary) edges: every object (Quick mode, or Enter at
 /// `Select objects or <select all>:`), or the current selection (Standard mode's chosen
@@ -1328,6 +1329,10 @@ struct ChamferPickCommand {
     double pick_radius = 0.0;
     std::uint64_t group = 0;
     bool trim = true; ///< CHAMFER's Trim mode: false keeps the lines and only adds the bevel
+    /// The Angle method (radians, < 0: the Distance method): the bevel leaves the first
+    /// line `dist1` from the corner at this angle to it, and `dist2` is worked out from
+    /// the corner's own angle.
+    double angle = -1.0;
 };
 
 /// CHAMFER [Polyline]: every corner of the polyline under the pick bevelled by the two
@@ -1338,6 +1343,7 @@ struct ChamferPolylineCommand {
     double dist2 = 0.0;
     double pick_radius = 0.0;
     std::uint64_t group = 0;
+    double angle = -1.0; ///< the Angle method, as ChamferPickCommand's
 };
 
 /// Persistence (geometry-thread). `dxf` selects the DXF codec over the native

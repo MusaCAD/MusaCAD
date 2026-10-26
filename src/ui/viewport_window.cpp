@@ -3601,6 +3601,7 @@ void ViewportWindow::rebuild_overlay() {
             c.chamfer = pv.fillet_chamfer;
             c.d1 = sharp ? 0.0 : pv.chamfer_d1;
             c.d2 = sharp ? 0.0 : pv.chamfer_d2;
+            c.chamfer_angle = sharp ? -1.0 : pv.chamfer_angle;
             c.active = true;
             engine_.submit(c);
             last_fillet_at_ = at;

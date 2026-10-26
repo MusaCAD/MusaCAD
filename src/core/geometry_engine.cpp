@@ -11859,65 +11859,114 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
             report("Break: that polyline has no length.");
             return;
         }
+        const std::size_t n = v.size();
+        const std::size_t segs = pl->closed ? n : n - 1;
+        const std::span<const double> bs = store_.bulges_of(*pl);
+        const auto bulge = [&](std::size_t i) { return i < bs.size() ? bs[i] : 0.0; };
         // Position along the polyline as (segment index + fraction), which orders the
-        // two break points even when they fall on different segments.
+        // two break points even when they fall on different segments. On an arc segment
+        // the fraction is of its sweep, so the point is on the arc.
         const auto locate = [&](Vec2 p) {
-            const int si = nearest_pl_segment(v, pl->closed, p);
-            if (si < 0) {
-                return 0.0;
+            double best_u = 0.0;
+            double best_d = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < segs; ++i) {
+                double t = 0.0;
+                double d = 0.0;
+                pline::detail::locate_on_segment(v[i], v[(i + 1) % n], bulge(i), p, t, d);
+                if (d < best_d) {
+                    best_d = d;
+                    best_u = static_cast<double>(i) + t;
+                }
             }
-            const std::size_t i = static_cast<std::size_t>(si);
-            const Vec2 a = v[i];
-            const Vec2 b = v[(i + 1) % v.size()];
-            const Vec2 d = b - a;
-            const double len2 = length_squared(d);
-            const double t = len2 > 1e-18 ? std::clamp(dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
-            return static_cast<double>(si) + t;
+            return best_u;
+        };
+        const auto split = [&](double u, std::size_t& i, double& t) {
+            i = std::min(static_cast<std::size_t>(std::floor(u)), segs - 1);
+            t = std::clamp(u - static_cast<double>(i), 0.0, 1.0);
         };
         const auto point_at = [&](double u) {
-            const std::size_t i = static_cast<std::size_t>(std::floor(u));
-            const double t = u - static_cast<double>(i);
-            const Vec2 a = v[std::min(i, v.size() - 1)];
-            const Vec2 b = v[(i + 1) % v.size()];
-            return a + (b - a) * t;
+            std::size_t i = 0;
+            double t = 0.0;
+            split(u, i, t);
+            const Vec2 a = v[i];
+            const Vec2 b = v[(i + 1) % n];
+            if (std::abs(bulge(i)) <= 1e-12) {
+                return a + (b - a) * t;
+            }
+            const pline::ArcOf arc = pline::arc_of(a, b, bulge(i));
+            const double ang = arc.start + arc.sweep * t;
+            return arc.center + Vec2{std::cos(ang), std::sin(ang)} * arc.radius;
+        };
+        // The bulge of the part of segment i between fractions t0 and t1.
+        const auto part = [&](std::size_t i, double t0, double t1) {
+            const double b = bulge(i);
+            return std::abs(b) <= 1e-12 ? 0.0 : std::tan(4.0 * std::atan(b) * (t1 - t0) / 4.0);
         };
         double u1 = locate(c.p1);
         double u2 = at_point ? u1 : locate(c.p2);
         if (u1 > u2) {
             std::swap(u1, u2);
         }
-        // A closed polyline breaks into ONE open run: the part that survives is the
-        // stretch from the second point round to the first.
-        const auto emit = [&](std::vector<Vec2> pts) {
-            if (pts.size() >= 2) {
+        std::size_t i1 = 0;
+        std::size_t i2 = 0;
+        double t1 = 0.0;
+        double t2 = 0.0;
+        split(u1, i1, t1);
+        split(u2, i2, t2);
+        // One piece: its vertices and the bulge of the segment each one starts; a vertex
+        // on top of the one before (a break at a vertex) is dropped with its empty segment.
+        const auto emit = [&](const std::vector<Vec2>& pts, const std::vector<double>& bul) {
+            std::vector<Vec2> out_pts;
+            std::vector<double> out_bul;
+            for (std::size_t k = 0; k < pts.size(); ++k) {
+                if (!out_pts.empty() && length(pts[k] - out_pts.back()) <= 1e-9) {
+                    out_bul.back() = bul[k];
+                    continue;
+                }
+                out_pts.push_back(pts[k]);
+                out_bul.push_back(bul[k]);
+            }
+            if (out_pts.size() >= 2) {
                 AddPolylineCommand pc;
-                pc.points = std::move(pts);
+                pc.points = std::move(out_pts);
                 pc.closed = false;
                 pc.props = pl->props;
+                if (std::any_of(out_bul.begin(), out_bul.end(), [](double b) { return std::abs(b) > 1e-12; })) {
+                    pc.bulges = std::move(out_bul);
+                }
                 pieces.push_back(std::move(pc));
             }
         };
         if (pl->closed) {
+            // A closed polyline breaks into ONE open run: the part that survives is the
+            // stretch from the second point round to the first.
             std::vector<Vec2> run{point_at(u2)};
-            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1;
-                 k <= static_cast<std::size_t>(std::floor(u1)) + v.size(); ++k) {
-                run.push_back(v[k % v.size()]);
+            std::vector<double> rb{part(i2, t2, 1.0)};
+            for (std::size_t k = i2 + 1; k <= i1 + n; ++k) {
+                run.push_back(v[k % n]);
+                rb.push_back(k == i1 + n ? part(i1, 0.0, t1) : bulge(k % n));
             }
             run.push_back(point_at(u1));
-            emit(std::move(run));
+            rb.push_back(0.0);
+            emit(run, rb);
         } else {
-            std::vector<Vec2> head(v.begin(),
-                                   v.begin() + static_cast<std::ptrdiff_t>(
-                                                   std::floor(u1)) + 1);
+            std::vector<Vec2> head(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(i1) + 1);
+            std::vector<double> hb;
+            for (std::size_t k = 0; k < i1; ++k) {
+                hb.push_back(bulge(k));
+            }
+            hb.push_back(part(i1, 0.0, t1));
             head.push_back(point_at(u1));
-            emit(std::move(head));
+            hb.push_back(0.0);
+            emit(head, hb);
 
             std::vector<Vec2> tail{point_at(u2)};
-            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1; k < v.size();
-                 ++k) {
+            std::vector<double> tb{part(i2, t2, 1.0)};
+            for (std::size_t k = i2 + 1; k < n; ++k) {
                 tail.push_back(v[k]);
+                tb.push_back(k + 1 < n ? bulge(k) : 0.0);
             }
-            emit(std::move(tail));
+            emit(tail, tb);
         }
         break;
     }
@@ -13703,8 +13752,24 @@ void GeometryEngine::apply_fillet_polyline(Vec2 pick, double radius, double pick
                         : "."));
 }
 
+namespace {
+/// CHAMFER's Angle method at one corner: the bevel leaves the first edge (direction `u1`
+/// from the corner) `d1` along it, at `angle` to it, and meets the second edge (`u2`)
+/// d1 sin(angle) / sin(angle + corner) along that one, the corner being the angle between
+/// the two edges. False when the bevel never meets the second edge.
+bool angle_method_d2(double d1, double angle, Vec2 u1, Vec2 u2, double& d2) {
+    const double corner = std::acos(std::clamp(dot(u1, u2), -1.0, 1.0));
+    const double s = std::sin(angle + corner);
+    if (s <= 1e-9) {
+        return false;
+    }
+    d2 = d1 * std::sin(angle) / s;
+    return true;
+}
+} // namespace
+
 void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
-                                            std::uint64_t group) {
+                                            std::uint64_t group, double angle) {
     const EntityHandle h = pick_nearest(pick, pick_radius);
     if (h.is_null() || h.kind != EntityKind::Polyline) {
         report("Chamfer: select a 2D polyline.");
@@ -13713,15 +13778,40 @@ void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist
     const PolylineData* pl = store_.polyline(h);
     const std::span<const Vec2> v = store_.vertices_of(*pl);
     std::vector<Vec2> pts(v.begin(), v.end());
+    const auto bspan = store_.bulges_of(*pl);
+    std::vector<double> bulges(bspan.begin(), bspan.end());
     const bool closed = pl->closed;
     const int n = static_cast<int>(pts.size());
     int done = 0;
     int skipped = 0;
+    int arcs = 0;
+    // Highest index first: an insert never shifts a corner still to be bevelled. A corner
+    // beside an arc segment is left as it is, and the arcs keep their bulges.
     for (int i = n - 1; i >= 0; --i) {
         if (!closed && (i == 0 || i == n - 1)) {
             continue;
         }
-        if ((dist1 > 0.0 || dist2 > 0.0) && polyline_ops::chamfer_corner(pts, closed, i, dist1, dist2)) {
+        const std::size_t corner = static_cast<std::size_t>(i);
+        const std::size_t before = (corner + static_cast<std::size_t>(n) - 1) % static_cast<std::size_t>(n);
+        if ((bulges.size() > corner && std::abs(bulges[corner]) > 1e-12) ||
+            (bulges.size() > before && std::abs(bulges[before]) > 1e-12)) {
+            ++arcs;
+            continue;
+        }
+        double d2 = dist2;
+        if (angle >= 0.0) {
+            // The first distance along the segment into the corner, the second from the
+            // corner's own angle.
+            const std::size_t m = pts.size();
+            const std::size_t at = static_cast<std::size_t>(i);
+            const Vec2 V = pts[at];
+            if (!angle_method_d2(dist1, angle, normalized(pts[(at + m - 1) % m] - V), normalized(pts[(at + 1) % m] - V),
+                                 d2)) {
+                ++skipped;
+                continue;
+            }
+        }
+        if ((dist1 > 0.0 || d2 > 0.0) && polyline_ops::chamfer_corner(pts, bulges, closed, i, dist1, d2)) {
             ++done;
         } else {
             ++skipped;
@@ -13737,13 +13827,15 @@ void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist
     remove_indexed(h);
     push_erase_item(group, h, orig);
     inherit_polyline(orig);
-    const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
+    const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
     geom_dirty_ = true;
     report(std::to_string(done) + (done == 1 ? " line was chamfered" : " lines were chamfered") +
-           (skipped > 0 ? ", " + std::to_string(skipped) + (skipped == 1 ? " was too short." : " were too short.")
-                        : "."));
+           (skipped > 0 ? ", " + std::to_string(skipped) + (skipped == 1 ? " was too short" : " were too short") : "") +
+           (arcs > 0 ? ", " + std::to_string(arcs) + (arcs == 1 ? " corner beside an arc was left" : " corners beside arcs were left")
+                     : "") +
+           ".");
 }
 
 // FILLET between a line and an arc/circle, or two arcs/circles. The fillet circle is
@@ -14313,7 +14405,7 @@ void GeometryEngine::apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pi
 }
 
 void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2,
-                                   double pick_radius, std::uint64_t group, bool trim) {
+                                   double pick_radius, std::uint64_t group, bool trim, double angle) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
     const EntityHandle h2 = pick_nearest(pick2, pick_radius);
     if (h1.is_null() || h2.is_null()) {
@@ -14334,14 +14426,36 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
             return;
         }
         const int prevseg = (sv - 1 + n) % n; // segment joining prev vertex to sv
-        double d_prev = dist2;
+        double second = dist2;
+        if (angle >= 0.0) {
+            const std::size_t at = static_cast<std::size_t>(sv);
+            const std::size_t m = v.size();
+            const Vec2 to_prev = normalized(v[(at + m - 1) % m] - v[at]);
+            const Vec2 to_next = normalized(v[(at + 1) % m] - v[at]);
+            const bool first_is_prev = s1 == prevseg;
+            if (!angle_method_d2(dist1, angle, first_is_prev ? to_prev : to_next, first_is_prev ? to_next : to_prev,
+                                 second)) {
+                report("Chamfer: the angle is too large for that corner.");
+                return;
+            }
+        }
+        double d_prev = second;
         double d_next = dist1;
         if (s1 == prevseg) {
             d_prev = dist1;
-            d_next = dist2;
+            d_next = second;
         }
         std::vector<Vec2> pts(v.begin(), v.end());
-        if (!polyline_ops::chamfer_corner(pts, pl->closed, sv, d_prev, d_next)) {
+        const auto bspan = store_.bulges_of(*pl);
+        std::vector<double> bulges(bspan.begin(), bspan.end());
+        const std::size_t sv_at = static_cast<std::size_t>(sv);
+        const std::size_t prev_at = static_cast<std::size_t>(prevseg);
+        if ((bulges.size() > prev_at && std::abs(bulges[prev_at]) > 1e-12) ||
+            (bulges.size() > sv_at && std::abs(bulges[sv_at]) > 1e-12)) {
+            report("Chamfer: an arc segment cannot be chamfered."); // as AutoCAD says no
+            return;
+        }
+        if (!polyline_ops::chamfer_corner(pts, bulges, pl->closed, sv, d_prev, d_next)) {
             report("Chamfer: distances too large for that corner.");
             return;
         }
@@ -14352,7 +14466,7 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
         remove_indexed(h1);
         push_erase_item(group, h1, orig);
         inherit_polyline(orig);
-        const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
         geom_dirty_ = true;
@@ -14376,8 +14490,13 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
     Vec2 u2{};
     const Vec2 k1 = kept_endpoint(l1, P, pick1, u1);
     const Vec2 k2 = kept_endpoint(l2, P, pick2, u2);
+    double second = dist2;
+    if (angle >= 0.0 && !angle_method_d2(dist1, angle, u1, u2, second)) {
+        report("Chamfer: the angle is too large for that corner.");
+        return;
+    }
     const Vec2 t1 = P + u1 * dist1;
-    const Vec2 t2 = P + u2 * dist2;
+    const Vec2 t2 = P + u2 * second;
 
     const bool bevelled = length_squared(t1 - t2) > 1e-12; // a clean corner has no connector
     if (!trim) {
@@ -18522,13 +18641,13 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group, c.trim);
             }
             if constexpr (std::is_same_v<T, ChamferPickCommand>) {
-                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group, c.trim);
+                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group, c.trim, c.angle);
             }
             if constexpr (std::is_same_v<T, FilletPolylineCommand>) {
                 apply_fillet_polyline(c.pick, c.radius, c.pick_radius, c.group);
             }
             if constexpr (std::is_same_v<T, ChamferPolylineCommand>) {
-                apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group);
+                apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group, c.angle);
             }
             if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
                 apply_object_dimension(c);
@@ -21771,7 +21890,7 @@ void GeometryEngine::rebuild_and_publish() {
                 (void)sim.create_indexed(capture_entity(h2));
             }
             if (fp.chamfer) {
-                sim.apply_chamfer(fp.first, fp.at, fp.d1, fp.d2, fp.pick_radius, 1, fp.trim);
+                sim.apply_chamfer(fp.first, fp.at, fp.d1, fp.d2, fp.pick_radius, 1, fp.trim, fp.chamfer_angle);
             } else {
                 sim.apply_fillet(fp.first, fp.at, fp.radius, fp.pick_radius, 1, fp.trim);
             }

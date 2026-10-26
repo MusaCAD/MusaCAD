@@ -550,7 +550,7 @@ private:
     void explode_new_dimensions();
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
-                                std::uint64_t group);
+                                std::uint64_t group, double angle = -1.0);
     /// One stretched entity: the handle it replaces and the edit that replaces it.
     struct StretchEdit {
         EntityHandle handle;
@@ -678,7 +678,7 @@ private:
     void apply_fillet_join(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
                            std::uint64_t group, bool trim);
     void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
-                       std::uint64_t group, bool trim = true);
+                       std::uint64_t group, bool trim = true, double angle = -1.0);
     // Object-aware dimensioning: resolve the entity(ies) under the pick(s) via the
     // spatial index + selectable() gate and build the matching dimension from their
     // intrinsic geometry. The dimension captures DEF POINTS only (no entity ref), so

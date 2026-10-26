@@ -4670,6 +4670,7 @@ private:
     bool done_ = false;
     [[nodiscard]] double dist1() const;
     [[nodiscard]] double dist2() const;
+    [[nodiscard]] double angle() const; ///< the Angle method's (radians), else -1
     void prompt_first(CommandContext& ctx);
     void after_chamfer(CommandContext& ctx);
 };

@@ -396,7 +396,7 @@ TEST_CASE("CHAMFER: the method is remembered; Angle, mEthod, Trim, Polyline, Und
     const auto* c = h.last<musacad::core::ChamferPickCommand>();
     REQUIRE(c != nullptr);
     REQUIRE(c->dist1 == Approx(4.0));
-    REQUIRE(c->dist2 == Approx(4.0 * std::tan(musacad::core::to_radians(30.0))));
+    REQUIRE(c->angle == Approx(musacad::core::to_radians(30.0))); // the engine works out the rest at the corner
     REQUIRE(!h.proc.has_active_command());
     // The next run reports the Angle method and keeps using it.
     PromptHarness n;
