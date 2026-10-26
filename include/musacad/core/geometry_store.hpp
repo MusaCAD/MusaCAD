@@ -547,6 +547,21 @@ struct BlockContent {
     std::vector<InsertData> inserts; ///< nested block references
 };
 
+/// The names of blocks and layers are compared without regard to case, as AutoCAD compares
+/// them; each keeps the spelling it was made with.
+[[nodiscard]] inline bool same_table_name(std::string_view a, std::string_view b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const auto lower = [](char ch) { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; };
+        if (lower(a[i]) != lower(b[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /// A named block definition + its base point (the local origin INSERTs align to).
 struct BlockDef {
     std::string name;
@@ -1258,10 +1273,10 @@ public:
     bool rename_block(std::string_view from, std::string_view to) {
         BlockDef* hit = nullptr;
         for (BlockDef& b : blocks_) {
-            if (b.name == to) {
-                return false;
+            if (same_table_name(b.name, to) && !same_table_name(b.name, from)) {
+                return false; // taken (a change of case alone is a rename of the same one)
             }
-            hit = b.name == from ? &b : hit;
+            hit = same_table_name(b.name, from) ? &b : hit;
         }
         if (hit == nullptr) {
             return false;

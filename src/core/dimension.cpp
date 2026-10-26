@@ -286,7 +286,7 @@ bool apply_dim_var(DimStyle& s, std::string_view var, double v) {
     } else if (same_var(var, "DIMDSEP") && (v == 46.0 || v == 44.0)) {
         s.decimal_separator = v == 44.0 ? ',' : '.';
     } else if (same_var(var, "DIMZIN") && whole(0, 15)) {
-        s.zero_suppression = static_cast<std::uint8_t>(static_cast<int>(v) & (kDimZinLeading | kDimZinTrailing));
+        s.zero_suppression = static_cast<std::uint8_t>(static_cast<int>(v) & (kDimZinLeading | kDimZinTrailing | kDimZinFeetInches));
     } else if (same_var(var, "DIMEXO") && v >= 0.0) {
         s.ext_offset = v;
     } else if (same_var(var, "DIMEXE") && v >= 0.0) {

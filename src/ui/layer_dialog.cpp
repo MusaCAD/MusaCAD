@@ -155,7 +155,34 @@ LayerDialog::LayerDialog(LayersGetter layers, CurrentGetter current, Submit subm
             }
             return;
         }
-        submit_row(item->row());
+        // As -LAYER does: a name another layer has is refused (names compared without
+        // case), and the current layer cannot be frozen. The row goes back as it was.
+        const int row = item->row();
+        if (row >= 0 && row < static_cast<int>(shown_.size())) {
+            const core::Layer edited = layer_from_row(row);
+            const auto lower = [](const std::string& n) { return QString::fromStdString(n).toLower(); };
+            QString refused;
+            if (item->column() == kName && edited.name != shown_[static_cast<std::size_t>(row)].name) {
+                for (std::size_t i = 0; i < shown_.size(); ++i) {
+                    if (static_cast<int>(i) != row && lower(shown_[i].name) == lower(edited.name)) {
+                        refused = QStringLiteral("A layer named %1 already exists.").arg(QString::fromStdString(edited.name));
+                    }
+                }
+                if (edited.name.empty()) {
+                    refused = QStringLiteral("A layer needs a name.");
+                }
+            }
+            if (item->column() == kFrozen && edited.frozen && row == static_cast<int>(shown_current_)) {
+                refused = QStringLiteral("Cannot freeze the current layer.");
+            }
+            if (!refused.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("Layer Properties Manager"), refused);
+                const std::vector<core::Layer> back = shown_;
+                rebuild_table(back, shown_current_, shown_vp_);
+                return;
+            }
+        }
+        submit_row(row);
     });
 
     rebuild_table(layers_(), current_(), vp_frozen_ ? vp_frozen_() : std::nullopt);

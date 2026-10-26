@@ -692,7 +692,6 @@ private:
     void prompt(CommandContext& ctx);
     bool baseline_ = false;
     State state_ = State::Origin;
-    int added_ = 0;        ///< dimensions this run, for Undo
     double spacing_ = 0.0; ///< Offset (0 = the style's, 1.5 text heights)
     bool done_ = false;
 };

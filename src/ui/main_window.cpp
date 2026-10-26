@@ -630,6 +630,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     title_timer_->start(100);
 }
 
+namespace {
+/// The selection and grip settings kept between sessions (AutoCAD keeps them per user, not
+/// in the drawing).
+constexpr const char* kSavedSelectionVars[] = {"PICKBOX",   "PICKFIRST", "PICKADD",   "PICKAUTO",  "PICKDRAG",
+                                               "HIGHLIGHT", "SELECTIONPREVIEW", "SELECTIONCYCLING", "GRIPS",
+                                               "GRIPSIZE",  "GRIPCOLOR", "GRIPHOT",   "GRIPHOVER", "GRIPOBJLIMIT"};
+} // namespace
+
 MainWindow::~MainWindow() {
     // The Dynamic Input settings live in the drawing area, which is deleted with the central
     // widget just below: read them while it is still there (reading them after it was gone
@@ -637,6 +645,10 @@ MainWindow::~MainWindow() {
     const int dyn_bits = std::abs(viewport_->selection_setting("DYNMODE"));
     const int dyn_prompt = viewport_->selection_setting("DYNPROMPT");
     const int dyn_piformat = viewport_->selection_setting("DYNPIFORMAT");
+    std::vector<std::pair<const char*, int>> selection_vars;
+    for (const char* name : kSavedSelectionVars) {
+        selection_vars.emplace_back(name, viewport_->selection_setting(name));
+    }
     delete takeCentralWidget(); // stops the viewport render thread before the engine
     viewport_ = nullptr;        // it went with the central widget
     if (engine_) {
@@ -654,6 +666,9 @@ MainWindow::~MainWindow() {
         settings.setValue(QStringLiteral("sysvar/DYNBITS"), dyn_bits);
         settings.setValue(QStringLiteral("sysvar/DYNPROMPT"), dyn_prompt);
         settings.setValue(QStringLiteral("sysvar/DYNPIFORMAT"), dyn_piformat);
+        for (const auto& [name, value] : selection_vars) {
+            settings.setValue(QStringLiteral("sysvar/") + QLatin1String(name), value);
+        }
     }
     if (restore_dyn_pref_) {
         // A harness run leaves the saved Dynamic Input preference exactly as it found it
@@ -834,12 +849,14 @@ void MainWindow::build_contextual_tabs() {
     RibbonPanel* hbnd = ribbon_->add_panel(hatch_page, QStringLiteral("Boundary"), 80);
     hbnd->set_representative_icon(ribbon_icon(QStringLiteral("assets/ribbon/rectangle.svg")));
     {
+        // AutoCAD's Pick Points on the Hatch Editor tab: HATCHEDIT's Add boundaries on the
+        // hatch selected, by internal points.
         QToolButton* reh = hbnd->add_button(ribbon_icon(QStringLiteral("assets/ribbon/hatch.svg")),
-                                            QStringLiteral("Re-hatch"), RibbonTier::Primary);
-        reh->setToolTip(QStringLiteral("Pick a new internal point to re-detect the boundary."));
+                                            QStringLiteral("Pick\nPoints"), RibbonTier::Primary);
+        reh->setToolTip(QStringLiteral("Pick internal points to add their areas to the selected hatch."));
         connect(reh, &QToolButton::clicked, this, [this] {
             command_widget_->focus_input();
-            processor_->start_command("H");
+            processor_->start_macro("HATCHEDIT", {"AD"});
         });
     }
 
@@ -1313,6 +1330,14 @@ void MainWindow::build_status_bar() {
         viewport_->set_selection_setting("DYNPROMPT", value("DYNPROMPT", 1));
         viewport_->set_selection_setting("DYNPIFORMAT", value("DYNPIFORMAT", 0));
         viewport_->set_dyn_toggle_callback([this](bool on) { dyn_action_->setChecked(on); });
+        // The selection and grip settings, as AutoCAD keeps them for the user (each one
+        // checked against its range as SETVAR checks it).
+        for (const char* name : kSavedSelectionVars) {
+            const QString key = QStringLiteral("sysvar/") + QLatin1String(name);
+            if (saved && s.contains(key)) {
+                (void)viewport_->set_selection_setting(name, s.value(key).toInt());
+            }
+        }
         core::DimAssocCommand init;
         init.op = core::DimAssocCommand::Op::MeasureInitNow;
         init.value = static_cast<std::uint8_t>(command::measureinit());
@@ -2364,7 +2389,7 @@ void MainWindow::open_matchprop_dialog() {
     QCheckBox* c_lt = add_check(bl, QStringLiteral("Linetype"), cur.linetype, true);
     QCheckBox* c_cts = add_check(bl, QStringLiteral("Linetype Scale"), cur.celtscale, true);
     QCheckBox* c_plot = add_check(bl, QStringLiteral("Plot Style"), cur.plotstyle, false);
-    QCheckBox* c_transp = add_check(bl, QStringLiteral("Transparency"), cur.transparency, false);
+    QCheckBox* c_transp = add_check(bl, QStringLiteral("Transparency"), cur.transparency, true);
     QCheckBox* c_thick = add_check(bl, QStringLiteral("Thickness"), cur.thickness, false);
     outer->addWidget(basic);
 
@@ -2379,12 +2404,12 @@ void MainWindow::open_matchprop_dialog() {
     QCheckBox* c_dim = add_check(sl, QStringLiteral("Dimension"), cur.dimension, true);
     QCheckBox* c_text = add_check(sl, QStringLiteral("Text"), cur.text, true);
     QCheckBox* c_hatch = add_check(sl, QStringLiteral("Hatch"), cur.hatch, true);
-    QCheckBox* c_pline = add_check(sl, QStringLiteral("Polyline"), cur.polyline, false);
+    QCheckBox* c_pline = add_check(sl, QStringLiteral("Polyline"), cur.polyline, true);
     QCheckBox* c_vp = add_check(sl, QStringLiteral("Viewport"), cur.viewport, false);
-    QCheckBox* c_table = add_check(sr, QStringLiteral("Table"), cur.table, true);
+    QCheckBox* c_table = add_check(sr, QStringLiteral("Table"), cur.table, false);
     QCheckBox* c_mat = add_check(sr, QStringLiteral("Material"), cur.material, false);
     QCheckBox* c_shadow = add_check(sr, QStringLiteral("Shadow display"), cur.shadow, false);
-    QCheckBox* c_mld = add_check(sr, QStringLiteral("Multileader"), cur.multileader, true);
+    QCheckBox* c_mld = add_check(sr, QStringLiteral("Multileader"), cur.multileader, false);
     QCheckBox* c_center = add_check(sr, QStringLiteral("Center object"), cur.center_object, false);
     outer->addWidget(special);
 
@@ -5898,6 +5923,7 @@ void MainWindow::open_page_setup_manager() {
         }
         if (!name.empty() && recall_page_setup(name, s)) {
             last_plot_spec_ = s; // what PLOT starts from in model space
+            plot_orientation_chosen_ = true;
             current_page_setup_ = name;
             command_widget_->append_line("Page setup \"" + name + "\" is current: PLOT starts from it in model space.");
             refill();
@@ -12209,10 +12235,11 @@ void MainWindow::open_plot_dialog() {
 PlotSpec MainWindow::current_plot_seed() {
     // Default the paper orientation to the drawing's aspect (a landscape drawing -> a
     // landscape sheet), so a fit plot uses the page well. The dialog still lets the user
-    // override. Only nudge when nothing was deliberately picked (still the default A4).
+    // override. Only nudge when nothing was deliberately picked: once a plot or a page
+    // setup has set the orientation, PLOT starts from it.
     engine_->consume_snapshot();
     const core::RenderSnapshot& live = engine_->snapshot();
-    if (live.has_bounds) {
+    if (live.has_bounds && !plot_orientation_chosen_) {
         const double w = live.bounds_max.x - live.bounds_min.x;
         const double h = live.bounds_max.y - live.bounds_min.y;
         if (w > 0.0 && h > 0.0) {
@@ -12364,6 +12391,7 @@ void MainWindow::open_plot_dialog_seeded(const PlotSpec& seed) {
     });
     connect(dlg, &QDialog::accepted, this, [this, dlg] {
         last_plot_spec_ = dlg->spec();
+        plot_orientation_chosen_ = true;
         do_plot(last_plot_spec_);
     });
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
@@ -12524,9 +12552,11 @@ void MainWindow::plot_preview(const PlotSpec& spec) {
     connect(zoom_in, &QPushButton::clicked, view, [view] { view->scale(1.25, 1.25); });
     connect(zoom_out, &QPushButton::clicked, view, [view] { view->scale(0.8, 0.8); });
     connect(fit, &QPushButton::clicked, view, fit_view);
-    connect(plot, &QPushButton::clicked, this, [this, dlg] {
+    // Plot... goes on with the settings being previewed (the Plot window's Preview passes
+    // its own), not the last plot's.
+    connect(plot, &QPushButton::clicked, this, [this, dlg, spec] {
         dlg->close();
-        open_plot_dialog_seeded(last_plot_spec_);
+        open_plot_dialog_seeded(spec);
     });
     connect(close, &QPushButton::clicked, dlg, &QDialog::close);
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);

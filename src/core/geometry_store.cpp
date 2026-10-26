@@ -1598,7 +1598,7 @@ const BlockDef* GeometryStore::block(std::uint16_t index) const noexcept {
 }
 std::uint16_t GeometryStore::add_block(const BlockDef& def) {
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
-        if (blocks_[i].name == def.name) {
+        if (same_table_name(blocks_[i].name, def.name)) {
             return static_cast<std::uint16_t>(i);
         }
     }

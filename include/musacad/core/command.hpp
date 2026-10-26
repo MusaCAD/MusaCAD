@@ -132,7 +132,8 @@ struct RegenCommand {};
 /// 4 Spline (a fit spline through the vertices), 5 insert a vertex at p1, 6 delete the
 /// vertex nearest p1, 7 move the vertex nearest p1 to p2, 8 Width (p1.x is the new width
 /// of every segment), 9 the widths of the segment leaving the vertex nearest p1 (p2.x the
-/// start width, p2.y the end width). One undo group each.
+/// start width, p2.y the end width). 24 only turns a line or arc there into a polyline
+/// (the Yes to "turn it into one?"). One undo group each.
 struct PeditCommand {
     Vec2 pick{};
     double pick_radius = 0.0;

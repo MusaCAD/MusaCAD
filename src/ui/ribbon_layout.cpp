@@ -1088,8 +1088,8 @@ void MainWindow::build_ribbon() {
         QAction* ze = zoom_menu->addAction(asset("zoom-extents"), QStringLiteral("Zoom Extents"));
         connect(ze, &QAction::triggered, this, [this] { viewport_->zoom_extents(); });
         zoom_menu->addAction(macro(QStringLiteral("Zoom All"), "Z", {"A"}));
-        zoom_menu->addAction(macro(QStringLiteral("Zoom In"), "Z", {"2"}));
-        zoom_menu->addAction(macro(QStringLiteral("Zoom Out"), "Z", {"0.5"}));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom In"), "Z", {"2x"}));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom Out"), "Z", {"0.5x"}));
         zoom_menu->addAction(action("Z", QStringLiteral("Zoom Scale")));
         QToolButton* zoom = nav->add_dropdown(asset("zoom"), QStringLiteral("Zoom"), zoom_menu, /*split=*/true, RibbonTier::Primary);
         zoom->setObjectName(QStringLiteral("ribbon.cmd.Z"));

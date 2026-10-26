@@ -711,7 +711,7 @@ and disappear (returning to the last fixed tab) when it doesn't. Mixed selection
 
 | Contextual tab | Appears when | Controls | Status |
 |---|---|---|---|
-| **Hatch Editor** (green accent) | all selected objects are hatches | Pattern picker, Solid-fill toggle, Scale, Angle, Re-hatch | Implemented |
+| **Hatch Editor** (green accent) | all selected objects are hatches | Pattern picker, Solid-fill toggle, Scale, Angle, Pick Points (HATCHEDIT Add boundaries) | Implemented |
 | **Text Editor** (blue accent) | all selected objects are the Text family (TEXT/MTEXT/leaders) | Font, Height, Edit Text | Implemented |
 | **Block Editor** (amber accent) | a single block reference (INSERT) is selected | Edit Reference (REFEDIT), Edit Attributes (EATTEDIT), Manage Attributes (BATTMAN) | Present |
 

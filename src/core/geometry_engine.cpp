@@ -6006,6 +6006,8 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, 
         if (!copy) {
             remove_indexed(h);
             push_erase_item(group, h, original);
+        } else {
+            as_new_object(result); // a copy goes over the rest, as COPY's does
         }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
@@ -6047,6 +6049,8 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, 
         if (!copy) {
             remove_indexed(h);
             push_erase_item(group, h, original);
+        } else {
+            as_new_object(result); // a copy goes over the rest, as COPY's does
         }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
@@ -8659,7 +8663,7 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
     }
     std::uint16_t bi = 0xFFFF;
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-        if (store_.block(i)->name == c.name) {
+        if (same_table_name(store_.block(i)->name, c.name)) {
             bi = i;
         }
     }
@@ -10124,7 +10128,7 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     std::vector<bool> added(tmp.block_count(), true); // false: one of ours, kept as it is
     const auto find_block = [&](const std::string& n) -> std::uint16_t {
         for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-            if (store_.block(i)->name == n) {
+            if (same_table_name(store_.block(i)->name, n)) {
                 return i;
             }
         }
@@ -10923,7 +10927,7 @@ void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
     }
     const std::string name = fs::path(c.path).stem().string();
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-        if (store_.block(i)->name == name && store_.block(i)->xref_path.empty()) {
+        if (same_table_name(store_.block(i)->name, name) && store_.block(i)->xref_path.empty()) {
             report("XREF: a block named \"" + name + "\" already exists in this drawing.");
             return;
         }
@@ -11007,7 +11011,7 @@ void GeometryEngine::reload_all_xrefs() {
 void GeometryEngine::apply_xref_detach(const XrefDetachCommand& c) {
     std::uint16_t bi = 0xFFFF;
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-        if (store_.block(i)->name == c.name && !store_.block(i)->xref_path.empty()) {
+        if (same_table_name(store_.block(i)->name, c.name) && !store_.block(i)->xref_path.empty()) {
             bi = i;
         }
     }
@@ -11052,7 +11056,7 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     } else {
         const BlockDef* def = nullptr;
         for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-            if (store_.block(i)->name == c.name) {
+            if (same_table_name(store_.block(i)->name, c.name)) {
                 def = store_.block(i);
             }
         }
@@ -15644,6 +15648,11 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         ltype_gen = c.p1.x != 0.0;
         what = ltype_gen ? "Linetype generation on." : "Linetype generation off.";
         break;
+    case 24: // Yes to "turn it into one?": the line or arc becomes a polyline, nothing more
+        if (!converted) {
+            return h.kind == EntityKind::Polyline ? h : EntityHandle::null();
+        }
+        break;
     case 10: { // Fit: arcs through the vertices placed, smooth at each (two per segment)
         std::vector<Vec2> base = fitted ? frame : v;
         std::vector<Vec2> nv;
@@ -15712,7 +15721,7 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
-    say((converted ? "Converted to a polyline. " : "") + what);
+    say(converted ? (what.empty() ? std::string("Converted to a polyline.") : "Converted to a polyline. " + what) : what);
     return nh;
 }
 
@@ -18923,7 +18932,25 @@ void GeometryEngine::apply_one(const Command& command) {
                 report("Layer \"" + c.layer.name + "\" added.");
             }
             if constexpr (std::is_same_v<T, SetLayerCommand>) {
-                store_.set_layer(c.index, c.layer);
+                // As -LAYER refuses them: a name another layer has (compared without case),
+                // and freezing the current layer.
+                Layer l = c.layer;
+                if (const Layer* old = store_.layer(c.index); old != nullptr) {
+                    if (l.name != old->name) {
+                        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.layers().size()); ++i) {
+                            if (i != c.index && same_table_name(store_.layers()[i].name, l.name)) {
+                                report("A layer named \"" + l.name + "\" already exists.");
+                                l.name = old->name;
+                                break;
+                            }
+                        }
+                    }
+                    if (l.frozen && !old->frozen && c.index == store_.current_layer()) {
+                        report("Cannot freeze the current layer.");
+                        l.frozen = false;
+                    }
+                }
+                store_.set_layer(c.index, l);
                 geom_dirty_ = true;
                 prune_selection();
             }
@@ -19192,7 +19219,7 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, InsertBlockCommand>) {
                 std::uint16_t bi = 0xFFFF;
                 for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-                    if (store_.block(i)->name == c.name) {
+                    if (same_table_name(store_.block(i)->name, c.name)) {
                         bi = i;
                     }
                 }

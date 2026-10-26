@@ -474,6 +474,7 @@ private:
     void save_page_setup(const PlotSpec& spec);
     [[nodiscard]] bool recall_page_setup(const std::string& name, PlotSpec& out);
     PlotSpec last_plot_spec_; // remembered between dialog opens
+    bool plot_orientation_chosen_ = false; ///< a plot or page setup set it: PLOT keeps it
     /// Run `work` (a blocking converter call) on a worker thread behind a modal
     /// indeterminate progress dialog while the UI stays responsive. Returns work's
     /// result; fills `err`.

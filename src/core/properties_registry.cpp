@@ -1488,6 +1488,7 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::DimTolMode:
     case PropertyId::DimTolUpper:
     case PropertyId::DimTolLower:
+        return MatchSlot::None;
     case PropertyId::HatchPattern:
     case PropertyId::HatchScale:
     case PropertyId::HatchAngle:

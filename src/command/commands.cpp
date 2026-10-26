@@ -26,6 +26,7 @@
 #include "musacad/core/spline_eval.hpp"
 #include "musacad/core/math/tangent_circle.hpp"
 #include "musacad/core/text/justify.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/polyline_ops.hpp"
 #include "musacad/core/io/dxf.hpp"
@@ -1539,7 +1540,8 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         // The other side from the area of the finished shape: the corner treatment's
-        // cut-outs are added back before dividing.
+        // cut-outs are added back before dividing (both positive, so the side is too; corners
+        // that do not fit the result are left square, as rectangle_outline does).
         const double gross = area_ + corner_loss();
         if (area_by_length_) {
             length_ = v;
@@ -1547,11 +1549,6 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         } else {
             width_ = v;
             length_ = gross / v;
-        }
-        if (!(length_ > 0.0) || !(width_ > 0.0)) {
-            ctx.echo("The area is too small for that side with the current corner treatment.");
-            revert_to_corner();
-            return;
         }
         s_length_ = length_;
         s_width_ = width_;
@@ -2861,8 +2858,12 @@ void HatchCommand::start(CommandContext& ctx) {
         ctx.echo("Pattern: GRADIENT");
     }
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
-    // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
-    if (ctx.has_selection()) {
+    // objects" mode). Otherwise the default is AutoCAD's "Pick internal point". A
+    // selection of hatches alone (the one just made, when HATCH is repeated) has no
+    // boundary to fill: it is let go.
+    if (ctx.has_selection() && ctx.selection_kinds() == (1u << static_cast<unsigned>(core::EntityKind::Hatch))) {
+        ctx.submit(core::ClearSelectionCommand{});
+    } else if (ctx.has_selection()) {
         ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_, extras()});
         done_ = true;
         return;
@@ -6869,13 +6870,23 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             } else if (ctx.input_is_pick() && ctx.hovered_kind().has_value()) {
                 closed_ = false; // a line or an arc to become a polyline: open
             }
-            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one).
-            if (s_peditaccept_ == 0 && ctx.input_is_pick() &&
-                (ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc)) {
-                state_ = State::Accept;
-                ctx.echo("Object selected is not a polyline");
-                ctx.set_prompt("Do you want to turn it into one? <Y> ");
+            const bool line_or_arc =
+                ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc;
+            if (ctx.input_is_pick() && ctx.hovered_kind().has_value() && !line_or_arc &&
+                ctx.hovered_kind() != core::EntityKind::Polyline) {
+                ctx.echo("Object selected is not a polyline, line or arc."); // nothing PEDIT edits
                 return;
+            }
+            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one
+            // at once). Turned into one, it is a polyline from then on, whatever comes next.
+            if (ctx.input_is_pick() && line_or_arc) {
+                if (s_peditaccept_ == 0) {
+                    state_ = State::Accept;
+                    ctx.echo("Object selected is not a polyline");
+                    ctx.set_prompt("Do you want to turn it into one? <Y> ");
+                    return;
+                }
+                op(24);
             }
             state_ = State::Option;
             prompt_option(ctx);
@@ -6883,6 +6894,7 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Accept:
         if (t.empty() || u == "Y" || u == "YES") {
+            op(24); // made a polyline now, as AutoCAD does
             state_ = State::Option;
             prompt_option(ctx);
         } else if (u == "N" || u == "NO") {
@@ -7506,7 +7518,8 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
             }
             name_ = std::filesystem::path(file_).stem().string();
             const std::vector<std::string> names = ctx.block_names();
-            if (std::find(names.begin(), names.end(), name_) != names.end()) {
+            if (std::any_of(names.begin(), names.end(),
+                            [&](const std::string& n) { return core::same_table_name(n, name_); })) {
                 state_ = State::Redefine;
                 ctx.set_prompt("Block \"" + name_ + "\" already exists. Redefine it? [Yes/No] <N>: ");
                 return;
@@ -7519,7 +7532,10 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
         {
             bool known = false;
             for (const std::string& n : ctx.block_names()) {
-                known = known || n == name_;
+                if (!known && core::same_table_name(n, name_)) {
+                    name_ = n; // the block's own spelling: names are compared without case
+                    known = true;
+                }
             }
             if (!known) {
                 ctx.echo("Block \"" + name_ + "\" not found.");
@@ -13234,12 +13250,9 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "U" || u == "UNDO") {
-            if (last_group_ == 0) {
-                ctx.echo("Nothing to undo.");
-                return;
-            }
+            // Each Undo takes back one more of this run's corners; the engine says "Nothing
+            // to undo." once they are all gone.
             ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
-            last_group_ = 0;
             return;
         }
         if (u == "P" || u == "POLYLINE") {
@@ -13423,12 +13436,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "U" || u == "UNDO") {
-            if (last_group_ == 0) {
-                ctx.echo("Nothing to undo.");
-                return;
-            }
+            // Each Undo takes back one more of this run's corners; the engine says "Nothing
+            // to undo." once they are all gone.
             ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
-            last_group_ = 0;
             return;
         }
         if (u == "P" || u == "POLYLINE") {
@@ -15150,16 +15160,14 @@ void ChainDimCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (u == "U" || u == "UNDO") {
-        if (added_ == 0) {
-            ctx.echo("Nothing to undo.");
-        } else {
-            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
-            core::ChainDimensionCommand back;
-            back.op = core::ChainDimensionCommand::Op::Back;
-            back.baseline = baseline_;
-            ctx.submit(back);
-            --added_;
-        }
+        // The last dimension this run made, and the chain back to where it was before it:
+        // the engine knows which picks made one (a refused pick made none) and says
+        // "Nothing to undo." when there is none left.
+        ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+        core::ChainDimensionCommand back;
+        back.op = core::ChainDimensionCommand::Op::Back;
+        back.baseline = baseline_;
+        ctx.submit(back);
         prompt(ctx);
         return;
     }
@@ -15174,7 +15182,6 @@ void ChainDimCommand::input(CommandContext& ctx, const std::string& text) {
         c.spacing = spacing_;
         ctx.submit(c);
         ctx.set_last_point(*p);
-        ++added_;
         // The engine reports success or the honest reason it could not.
         prompt(ctx);
     }
@@ -16969,6 +16976,14 @@ void MTextCommand::input(CommandContext& ctx, const std::string& text) {
                 content += (i > 0 ? "\n" : "") + lines_[i];
             }
         }
+        // \P typed here is AutoCAD's paragraph break, as it is in a DXF's MTEXT. (Text with
+        // other format codes keeps it: the formatted layout reads it there.)
+        if (!core::text::has_mtext_codes(content)) {
+            for (std::size_t at = content.find("\\P"); at != std::string::npos; at = content.find("\\P", at)) {
+                content.replace(at, 2, "\n");
+                ++at;
+            }
+        }
         core::MTextBlock b;
         b.pos = pos_;
         b.width = width_;
@@ -17098,6 +17113,10 @@ void MTextCommand::input(CommandContext& ctx, const std::string& text) {
         if (!t.empty() && u != "A" && u != "AT LEAST" && u != "E" && u != "EXACTLY") {
             ctx.echo("Enter At least or Exactly.");
             return;
+        }
+        if (u == "E" || u == "EXACTLY") {
+            // Said, not taken silently: lines are spaced At least as far apart as asked.
+            ctx.echo("Exactly is not available yet: the lines are spaced At least.");
         }
         state_ = State::Spacing;
         ctx.set_prompt("Enter line spacing factor or distance <" + fmt4(spacing_) + "x>: ");
@@ -21313,6 +21332,12 @@ void ChangeUiCommand::cancel(CommandContext& ctx) {
 
 void HatchEditUiCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    // Noun-verb: one hatch already selected (the Hatch Editor tab's) is the one edited.
+    if (ctx.selection_count() == 1 &&
+        ctx.selection_kinds() == (1u << static_cast<unsigned>(core::EntityKind::Hatch))) {
+        options(ctx);
+        return;
+    }
     ctx.set_prompt("Select hatch object: ");
 }
 
