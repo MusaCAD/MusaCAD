@@ -11912,7 +11912,7 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
             if (std::abs(bulge(i)) <= 1e-12) {
                 return a + (b - a) * t;
             }
-            const pline::ArcOf arc = pline::arc_of(a, b, bulge(i));
+            const pline::detail::ArcOf arc = pline::detail::arc_of(a, b, bulge(i));
             const double ang = arc.start + arc.sweep * t;
             return arc.center + Vec2{std::cos(ang), std::sin(ang)} * arc.radius;
         };
