@@ -12417,7 +12417,8 @@ bool MainWindow::prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2
 }
 
 void MainWindow::do_plot(const PlotSpec& spec) {
-    command_widget_->append_line(describe_plot_spec(spec, "do_plot"));
+    // The resolved spec and the build, for a bug report: on stderr, not the command line.
+    std::fprintf(stderr, "%s\n", describe_plot_spec(spec, "do_plot").c_str());
     core::Vec2 amin;
     core::Vec2 amax;
     if (!prepare_plot(spec, amin, amax)) {

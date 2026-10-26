@@ -14143,8 +14143,7 @@ void LinearDimensionCommand::place(CommandContext& ctx, core::Vec2 at) {
         }
         c.text_override = text_;
         c.text_angle = text_angle_;
-        ctx.submit(std::move(c));
-        ctx.echo("Dimension placed from object.");
+        ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
     } else {
         core::DimData d;
         d.type = type_;
@@ -14363,8 +14362,7 @@ void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text)
                                       ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
     c.text_override = text_;
     c.text_angle = text_angle_;
-    ctx.submit(std::move(c));
-    ctx.echo("Dimension placed.");
+    ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
     done_ = true;
 }
 
@@ -14511,9 +14509,8 @@ void JoggedDimensionCommand::input(CommandContext& ctx, const std::string& text)
                                           ctx.group_id(), override_, *p};
         c.text_override = text_;
         c.text_angle = text_angle_;
-        ctx.submit(std::move(c));
+        ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
         ctx.set_preview({});
-        ctx.echo("Dimension placed.");
         done_ = true;
         return;
     }
@@ -14602,9 +14599,8 @@ void ArcLengthDimensionCommand::input(CommandContext& ctx, const std::string& te
     c.arc_leader = leader_;
     c.partial_from = partial_from_;
     c.partial_to = partial_to_;
-    ctx.submit(std::move(c));
+    ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
     ctx.set_preview({});
-    ctx.echo("Dimension placed.");
     done_ = true;
 }
 
@@ -14749,6 +14745,7 @@ void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text
             c.text_override = text_;
             c.text_angle = text_angle_;
             ctx.submit(std::move(c));
+            ctx.echo("Angular dimension placed.");
         } else {
             core::AddObjectDimensionCommand c{static_cast<std::uint8_t>(core::DimType::Angular), pick1_, pick2_,
                                               ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
@@ -14756,10 +14753,9 @@ void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text
             c.quadrant = quadrant_;
             c.text_override = text_;
             c.text_angle = text_angle_;
-            ctx.submit(std::move(c));
+            ctx.submit(std::move(c)); // the engine says whether the objects could be dimensioned
         }
         ctx.set_preview({});
-        ctx.echo("Angular dimension placed.");
         done_ = true;
         return;
     case State::Text:
@@ -17286,8 +17282,8 @@ void TextEditCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(t);
     switch (state_) {
     case State::Content:
+        // The engine says "Text edited." or why not (no editable text there).
         ctx.submit(core::EditTextContentCommand{at_, radius_, text, ctx.group_id()});
-        ctx.echo("Text edited.");
         ++edits_;
         if (s_single_) {
             done_ = true;

@@ -4906,13 +4906,13 @@ std::string GeometryEngine::list_geometry(EntityHandle h) const {
     }
     case EntityKind::Circle: {
         const CircleData* c = store_.circle(h);
-        out += ",  centre (" + fmt_len(c->center.x) + "," + fmt_len(c->center.y) + "),  radius " +
+        out += ",  center (" + fmt_len(c->center.x) + "," + fmt_len(c->center.y) + "),  radius " +
                fmt_len(c->radius);
         break;
     }
     case EntityKind::Arc: {
         const ArcData* a = store_.arc(h);
-        out += ",  centre (" + fmt_len(a->center.x) + "," + fmt_len(a->center.y) + "),  radius " +
+        out += ",  center (" + fmt_len(a->center.x) + "," + fmt_len(a->center.y) + "),  radius " +
                fmt_len(a->radius) + ",  from " + fmt_ang(a->start_angle) + " to " +
                fmt_ang(a->end_angle);
         break;
@@ -5574,7 +5574,7 @@ void GeometryEngine::apply_circle_tangent(const AddCircleTangentCommand& c) {
     push_create_item(c.group, h, cmd);
     redo_.clear();
     geom_dirty_ = true;
-    report("Circle: radius " + std::to_string(result->radius));
+    report("Circle: radius " + units::format_length(result->radius, store_.units())); // as the other methods say it
 }
 
 void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
@@ -11951,7 +11951,18 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
 void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) {
     DimData d;
     if (!resolve_dim_defs(c.type, c.pick1, c.pick2, c.pick_radius, d, c.pick3, c.pick4)) {
-        report("Could not dimension that object -- select a line, circle, or arc.");
+        // What this kind of dimension can be made from (resolve_dim_defs).
+        const char* what = "select a line, polyline segment or arc";
+        switch (static_cast<DimType>(c.type)) {
+        case DimType::Linear: what = "select a line, polyline segment, arc or circle"; break;
+        case DimType::Radius:
+        case DimType::Diameter:
+        case DimType::Jogged: what = "select a circle, arc or polyline arc segment"; break;
+        case DimType::ArcLength: what = "select an arc or polyline arc segment"; break;
+        case DimType::Angular: what = "select an arc, a circle, or two lines that are not parallel"; break;
+        default: break;
+        }
+        report(std::string("Could not dimension that object -- ") + what + ".");
         return;
     }
     if (static_cast<DimType>(c.type) == DimType::Linear) {
@@ -13687,8 +13698,9 @@ void GeometryEngine::apply_fillet_polyline(Vec2 pick, double radius, double pick
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
     geom_dirty_ = true;
-    report(std::to_string(done) + " lines were filleted" +
-           (skipped > 0 ? ", " + std::to_string(skipped) + " were too short." : "."));
+    report(std::to_string(done) + (done == 1 ? " line was filleted" : " lines were filleted") +
+           (skipped > 0 ? ", " + std::to_string(skipped) + (skipped == 1 ? " was too short." : " were too short.")
+                        : "."));
 }
 
 void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
@@ -13729,8 +13741,9 @@ void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
     geom_dirty_ = true;
-    report(std::to_string(done) + " lines were chamfered" +
-           (skipped > 0 ? ", " + std::to_string(skipped) + " were too short." : "."));
+    report(std::to_string(done) + (done == 1 ? " line was chamfered" : " lines were chamfered") +
+           (skipped > 0 ? ", " + std::to_string(skipped) + (skipped == 1 ? " was too short." : " were too short.")
+                        : "."));
 }
 
 // FILLET between a line and an arc/circle, or two arcs/circles. The fillet circle is
