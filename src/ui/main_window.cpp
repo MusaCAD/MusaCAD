@@ -885,9 +885,10 @@ void MainWindow::build_contextual_tabs() {
         });
     }
 
-    // --- Block Editor (single Insert), pale amber accent: the reference's own commands. ---
+    // --- Block Reference (single Insert), pale amber accent: the reference's own commands
+    // (AutoCAD's name for it; "Block Editor" is the tab shown while BEDIT is open, below). ---
     const int block_page = ribbon_->add_contextual_tab(
-        QStringLiteral("Block Editor"), QColor(225, 180, 110), [](const RibbonSel& s) {
+        QStringLiteral("Block Reference"), QColor(225, 180, 110), [](const RibbonSel& s) {
             return !s.block_editor && s.count == 1 && s.kind_plus1 == static_cast<int>(core::EntityKind::Insert) + 1;
         });
     RibbonPanel* bdef = ribbon_->add_panel(block_page, QStringLiteral("Definition"), 100);
