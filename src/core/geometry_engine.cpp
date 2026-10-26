@@ -6111,8 +6111,9 @@ void GeometryEngine::apply_array_preview(const ArrayPreviewCommand& c) {
         const Vec2 sp = c.rect.auto_spacing ? array_default_spacing() : Vec2{c.rect.dx, c.rect.dy};
         apply_array_rect(c.rect.rows, c.rect.cols, sp.x, sp.y, c.rect.angle, 0);
     } else if (c.type == 2) {
-        apply_array_polar(c.polar.center, c.polar.count, c.polar.total_angle, c.polar.rotate_items, 0,
-                          c.polar.rows, c.polar.row_spacing);
+        ArrayPolarCommand polar = c.polar;
+        polar.group = 0;
+        apply_array_polar(polar);
     } else {
         apply_array_path(c.path);
     }
@@ -6229,41 +6230,39 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
 
     // The selection rides the path by ONE shared base point, so a multi-entity
     // selection keeps its internal arrangement instead of scattering entity by entity.
-    Vec2 base = c.base;
-    if (!c.has_base) {
-        Vec2 lo{0, 0};
-        Vec2 hi{0, 0};
-        bool any = false;
-        for (const EntityHandle h : sel) {
-            Vec2 l;
-            Vec2 g;
-            if (store_.is_valid(h) && entity_aabb(store_, h, l, g)) {
-                lo = any ? Vec2{std::min(lo.x, l.x), std::min(lo.y, l.y)} : l;
-                hi = any ? Vec2{std::max(hi.x, g.x), std::max(hi.y, g.y)} : g;
-                any = true;
-            }
-        }
-        if (!any) {
-            report("Nothing selected to array.");
-            return;
-        }
-        base = {(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5};
-    }
-
+    // AutoCAD's default base point is the end of the path curve: the selection stays where
+    // it is as the first item, and the others keep its offset from the path. A base point
+    // of its own goes on the path, the selection moved to the first station with it.
     double ang0 = 0.0;
     Vec2 p0;
     sampler.at(stations[0], p0, ang0);
+    Vec2 base = c.base;
+    if (!c.has_base) {
+        double a = 0.0;
+        sampler.at(0.0, base, a);
+    }
+    std::vector<std::pair<EntityHandle, Command>> source;
+    for (const EntityHandle h : sel) {
+        if (store_.is_valid(h)) {
+            source.emplace_back(h, capture_entity(h));
+        }
+    }
+    if (source.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
 
     int made = 0;
+    std::vector<EntityHandle> moved;
     for (std::size_t i = 0; i < stations.size(); ++i) {
+        if (i == 0 && !c.has_base && stations[0] < 1e-12) {
+            continue; // the selection itself is the first item, where it is
+        }
         Vec2 p;
         double ang = 0.0;
         sampler.at(stations[i], p, ang);
-        for (const EntityHandle h : sel) {
-            if (!store_.is_valid(h)) {
-                continue;
-            }
-            Command copy = capture_entity(h);
+        for (const auto& [h, original] : source) {
+            Command copy = original;
             if (c.align) {
                 // Turn each copy by how far the tangent has swung since the FIRST
                 // station, about the shared base, so item 0 keeps the orientation the
@@ -6271,9 +6270,22 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
                 rotate_cmd(copy, base, ang - ang0);
             }
             translate_cmd(copy, p - base);
+            if (i == 0 && array_sink_ == nullptr) {
+                // The selection itself onto the path, an edit that keeps its place in the
+                // draw order.
+                remove_indexed(h);
+                push_erase_item(c.group, h, original);
+                const EntityHandle nh = create_indexed(copy);
+                push_create_item(c.group, nh, copy);
+                moved.push_back(nh);
+                continue;
+            }
             emit_copy(copy, c.group);
             ++made;
         }
+    }
+    if (!moved.empty()) {
+        selection_ = moved;
     }
     if (array_sink_ != nullptr) {
         return; // the preview's copies
@@ -6399,8 +6411,14 @@ Vec2 GeometryEngine::array_default_spacing() const {
     return w > 1e-12 ? Vec2{w * 1.5, h * 1.5} : Vec2{1.0, 1.0};
 }
 
-void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
-                                       bool rotate_items, std::uint64_t group, int rows, double row_spacing) {
+void GeometryEngine::apply_array_polar(const ArrayPolarCommand& c) {
+    const Vec2 center = c.center;
+    const int count = c.count;
+    const double total_angle = c.total_angle;
+    const bool rotate_items = c.rotate_items;
+    const std::uint64_t group = c.group;
+    int rows = c.rows;
+    const double row_spacing = c.row_spacing;
     const std::vector<EntityHandle> sel = selection_;
     if (sel.empty()) {
         report("Nothing selected to array.");
@@ -6409,6 +6427,29 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     if (count < 2) {
         report("Polar array: need at least two items.");
         return;
+    }
+    // One base point for the whole selection -- the one given, else the centre of its
+    // extents -- so items that are not rotated, and the rows, keep the selection's
+    // arrangement. -ARRAY without a base point keeps each object's own reference point.
+    std::optional<Vec2> base;
+    if (c.has_base) {
+        base = c.base;
+    } else if (!c.own_anchors) {
+        Vec2 lo{0, 0};
+        Vec2 hi{0, 0};
+        bool any = false;
+        for (const EntityHandle h : sel) {
+            Vec2 l;
+            Vec2 g;
+            if (store_.is_valid(h) && entity_aabb(store_, h, l, g)) {
+                lo = any ? Vec2{std::min(lo.x, l.x), std::min(lo.y, l.y)} : l;
+                hi = any ? Vec2{std::max(hi.x, g.x), std::max(hi.y, g.y)} : g;
+                any = true;
+            }
+        }
+        if (any) {
+            base = (lo + hi) * 0.5;
+        }
     }
     // Full circle distributes count items evenly; a partial fill spans the angle
     // across (count-1) gaps (AutoCAD semantics).
@@ -6429,19 +6470,22 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
                 continue;
             }
             Command copy = capture_entity(h);
+            Vec2 anchor = base.value_or(command_anchor(copy));
             if (row > 0) {
-                // The next ring out: away from the centre, through where the item is.
-                const Vec2 out = command_anchor(copy) - center;
+                // The next ring out: away from the centre, through the base point.
+                const Vec2 out = anchor - center;
                 const double len = length(out);
                 if (len > 1e-12) {
-                    translate_cmd(copy, out * (row_spacing * static_cast<double>(row) / len));
+                    const Vec2 outward = out * (row_spacing * static_cast<double>(row) / len);
+                    translate_cmd(copy, outward);
+                    anchor = anchor + outward;
                 }
             }
             if (rotate_items) {
                 rotate_cmd(copy, center, a);
             } else {
-                // Move the copy around the circle without rotating the entity.
-                const Vec2 anchor = command_anchor(copy);
+                // Move the copy around the circle without rotating the entity: its base
+                // point goes round.
                 const double cs = std::cos(a);
                 const double sn = std::sin(a);
                 const Vec2 d = anchor - center;
@@ -18456,7 +18500,7 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 array_preview_.clear();
-                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group, c.rows, c.row_spacing);
+                apply_array_polar(c);
             }
             if constexpr (std::is_same_v<T, ExtendPickCommand>) {
                 apply_extend(c.pick, c.radius, c.group);

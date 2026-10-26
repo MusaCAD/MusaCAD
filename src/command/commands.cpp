@@ -540,8 +540,14 @@ void PolylineCommand::prompt_next(CommandContext& ctx) {
     }
     state_ = State::Next;
     refresh_preview(ctx, 0);
-    ctx.set_prompt(points_.size() >= 2 ? "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: "
-                                       : "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
+    ctx.set_prompt(can_close() ? "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: "
+                               : "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
+}
+
+// A straight segment back to the start closes the polyline once that makes a shape: from
+// three points, or from two when the first segment is an arc.
+bool PolylineCommand::can_close() const {
+    return points_.size() >= 3 || (points_.size() == 2 && !bulges_.empty() && std::abs(bulges_.front()) > 1e-12);
 }
 
 void PolylineCommand::add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent) {
@@ -660,7 +666,7 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
             prompt_next(ctx);
             return;
         }
-        if ((u == "C" || u == "CLOSE") && points_.size() >= 3) {
+        if ((u == "C" || u == "CLOSE") && can_close()) {
             finish(ctx, true);
             return;
         }
@@ -1180,13 +1186,16 @@ void ArcCommand::input(CommandContext& ctx, const std::string& text) {
             commit(ctx, core::arc_start_end_angle(s_, e_, positive_turn(bearing_of(s_, *p)), ctrl));
         }
         return;
-    case State::EndDirection:
+    case State::EndDirection: {
+        // Ctrl: the other arc of the same circle, which leaves the start the other way.
+        const double flip = ctrl ? core::kPi : 0.0;
         if (parse_number(t, v)) {
-            commit(ctx, core::arc_start_end_direction(s_, e_, core::to_radians(v)));
+            commit(ctx, core::arc_start_end_direction(s_, e_, core::to_radians(v) + flip));
         } else if (const auto p = read_point(ctx, text)) {
-            commit(ctx, core::arc_start_end_direction(s_, e_, bearing_of(s_, *p)));
+            commit(ctx, core::arc_start_end_direction(s_, e_, bearing_of(s_, *p) + flip));
         }
         return;
+    }
     case State::EndRadius:
         if (parse_number(t, v)) {
             commit(ctx, core::arc_start_end_radius(s_, e_, v, ctrl));
@@ -1214,7 +1223,8 @@ void ArcCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::ContinueEnd:
         if (const auto p = read_point(ctx, text)) {
-            commit(ctx, core::arc_start_end_direction(s_, *p, tangent_));
+            // Ctrl: the other arc of the same circle, leaving against the last segment.
+            commit(ctx, core::arc_start_end_direction(s_, *p, tangent_ + (ctrl ? core::kPi : 0.0)));
         }
         return;
     }
@@ -4325,6 +4335,13 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     double deg = 0.0;
+    // Typed angles go the way ANGDIR says, as the line ROTATE starts with tells: the
+    // rotation angle as an amount of turn, the reference and new angles as directions
+    // (from ANGBASE). Picked points are plain bearings.
+    const core::DrawingUnits units = ctx.units();
+    const double sense = units.clockwise ? -1.0 : 1.0;
+    const auto typed_turn = [&](double d) { return sense * core::to_radians(d); };
+    const auto typed_dir = [&](double d) { return units.base_angle + sense * core::to_radians(d); };
     switch (state_) {
     case State::Select:
         if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
@@ -4362,7 +4379,7 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (parse_number(t, deg)) {
-            commit(ctx, core::to_radians(deg)); // a typed number is degrees
+            commit(ctx, typed_turn(deg)); // a typed number is degrees
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -4373,9 +4390,9 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::RefAngle:
         if (t.empty()) {
-            ref_angle_ = 0.0;
+            ref_angle_ = typed_dir(0.0);
         } else if (parse_number(t, deg)) {
-            ref_angle_ = core::to_radians(deg);
+            ref_angle_ = typed_dir(deg);
         } else if (const auto p = read_point(ctx, text)) {
             first_ = *p; // two points define the reference angle
             state_ = State::RefSecond;
@@ -4404,11 +4421,11 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (t.empty()) {
-            commit(ctx, -ref_angle_); // the default new angle, 0
+            commit(ctx, typed_dir(0.0) - ref_angle_); // the default new angle, 0
             return;
         }
         if (parse_number(t, deg)) {
-            commit(ctx, core::to_radians(deg) - ref_angle_);
+            commit(ctx, typed_dir(deg) - ref_angle_);
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -12166,7 +12183,9 @@ void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
             center_ = *p;
             ctx.set_last_point(*p);
             state_ = State::Fit;
-            ctx.set_prompt("Enter an option [Inscribed in circle/Circumscribed about circle] <I>: ");
+            // The default is the last choice, which Enter keeps.
+            ctx.set_prompt(std::string("Enter an option [Inscribed in circle/Circumscribed about circle] <") +
+                           (inscribed_ ? "I" : "C") + ">: ");
         }
         return;
     }
@@ -12475,6 +12494,8 @@ void ArrayCommand::preview(CommandContext& ctx) {
         pv.type = 2;
         pv.polar = core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, 0, polar_rows_,
                                            polar_row_space_};
+        pv.polar.base = base_.value_or(core::Vec2{});
+        pv.polar.has_base = base_.has_value();
         break;
     case Type::Path:
         pv.type = 3;
@@ -12501,10 +12522,14 @@ void ArrayCommand::preview(CommandContext& ctx) {
 
 void ArrayCommand::finish(CommandContext& ctx) {
     switch (type_) {
-    case Type::Polar:
-        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
-                                           polar_rows_, polar_row_space_});
+    case Type::Polar: {
+        core::ArrayPolarCommand c{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
+                                  polar_rows_, polar_row_space_};
+        c.base = base_.value_or(core::Vec2{});
+        c.has_base = base_.has_value();
+        ctx.submit(c);
         break;
+    }
     case Type::Path: {
         core::ArrayPathCommand c;
         c.pick = path_pick_;
@@ -12584,13 +12609,18 @@ void ArrayCommand::ask_next(CommandContext& ctx) {
     case Q::LevelSpace:
         p = "Specify the distance between levels or [Total/Expression] <" + len(ctx, level_space_) + ">: ";
         break;
+    case Q::LevelTotal:
+        p = "Specify the total distance between first and last levels <" + len(ctx, level_space_ * (levels_ - 1)) +
+            ">: ";
+        break;
     case Q::Items: p = "Enter number of items in array or [Expression] <" + n(items_) + ">: "; break;
+    // Amounts of turn in degrees, as they are typed: not directions, so a full circle
+    // shows 360 and neither ANGBASE nor ANGDIR moves them.
     case Q::AngleBetween:
-        p = "Specify angle between items or [EXpression] <" + core::units::format_angle(core::to_radians(angle_between()), ctx.units()) + ">: ";
+        p = "Specify angle between items or [EXpression] <" + degrees_text(core::to_radians(angle_between())) + ">: ";
         break;
     case Q::Fill:
-        p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" +
-            core::units::format_angle(core::to_radians(fill_), ctx.units()) + ">: ";
+        p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" + degrees_text(core::to_radians(fill_)) + ">: ";
         break;
     case Q::RotItems: p = "Rotate arrayed items? [Yes/No] <" + yn(rotate_) + ">: "; break;
     case Q::PolarRows: p = "Enter the number of rows or [Expression] <" + n(polar_rows_) + ">: "; break;
@@ -12640,7 +12670,7 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
     const auto counts = q == Q::Cols || q == Q::Rows || q == Q::Levels || q == Q::Items || q == Q::PolarRows ||
                         q == Q::PathItems || q == Q::PathDivideItems;
     const auto lengths = q == Q::ColSpace || q == Q::RowSpace || q == Q::ColTotal || q == Q::RowTotal ||
-                         q == Q::RowElev || q == Q::LevelSpace || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
+                         q == Q::RowElev || q == Q::LevelSpace || q == Q::LevelTotal || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
                          q == Q::PathSpace || q == Q::AngleBetween || q == Q::Fill;
     if (!have && (counts || lengths) && (u == "E" || u == "EX" || u == "EXPRESSION")) {
         expression_for_ = q;
@@ -12655,9 +12685,12 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
                 ask_next(ctx);
                 return;
             }
-            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace) &&
+            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace || q == Q::LevelSpace) &&
                 !(q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace) && (u == "T" || u == "TOTAL")) {
-                queue_.front() = q == Q::ColSpace ? Q::ColTotal : q == Q::RowSpace ? Q::RowTotal : Q::PolarRowTotal;
+                queue_.front() = q == Q::ColSpace   ? Q::ColTotal
+                                 : q == Q::RowSpace ? Q::RowTotal
+                                 : q == Q::LevelSpace ? Q::LevelTotal
+                                                      : Q::PolarRowTotal;
                 ask_next(ctx);
                 return;
             }
@@ -12733,6 +12766,11 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
         break;
     case Q::LevelSpace:
         level_space_ = have ? v : level_space_;
+        break;
+    case Q::LevelTotal:
+        if (have && levels_ > 1) {
+            level_space_ = v / (levels_ - 1);
+        }
         break;
     case Q::Items:
         items_ = have ? iv : items_;
@@ -13082,8 +13120,9 @@ void ArrayClassicCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
     case State::Base:
-        if (read_point(ctx, text)) {
-            state_ = State::Center; // each item keeps its own place about the centre
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p; // the point of the objects that goes round the centre
+            state_ = State::Center;
             ctx.set_prompt("Specify center point of array: ");
         }
         return;
@@ -13121,11 +13160,15 @@ void ArrayClassicCommand::input(CommandContext& ctx, const std::string& text) {
         state_ = State::Rotate;
         ctx.set_prompt("Rotate arrayed objects? [Yes/No] <Y>: ");
         return;
-    case State::Rotate:
-        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), !(u == "N" || u == "NO"),
-                                           ctx.group_id()});
+    case State::Rotate: {
+        core::ArrayPolarCommand c{center_, items_, core::to_radians(fill_), !(u == "N" || u == "NO"), ctx.group_id()};
+        c.base = base_.value_or(core::Vec2{});
+        c.has_base = base_.has_value();
+        c.own_anchors = true; // without a base point, each object's own reference point
+        ctx.submit(c);
         done_ = true;
         return;
+    }
     }
 }
 
@@ -13264,7 +13307,9 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
     case State::TrimMode:
-        if (t.empty() || u == "T" || u == "TRIM") {
+        if (t.empty()) {
+            // Enter keeps the mode shown in the brackets.
+        } else if (u == "T" || u == "TRIM") {
             s_trim_ = true;
         } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
             s_trim_ = false;
@@ -13507,7 +13552,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         back();
         return;
     case State::TrimMode:
-        if (t.empty() || u == "T" || u == "TRIM") {
+        if (t.empty()) {
+            // Enter keeps the mode shown in the brackets.
+        } else if (u == "T" || u == "TRIM") {
             s_trim() = true;
         } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
             s_trim() = false;
@@ -14136,9 +14183,11 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
         }
         break;
     case State::Text:
-        // The text as typed; `<>` stands for the measurement, and an empty answer keeps
-        // the measurement alone.
-        text_ = t;
+        // The text as typed; `<>` stands for the measurement. Enter keeps what the prompt
+        // shows: the text typed before, or the measurement alone when there is none.
+        if (!t.empty()) {
+            text_ = t;
+        }
         show_preview(ctx);
         place_prompt(ctx);
         return;
@@ -15905,6 +15954,7 @@ void StretchCommand::start(CommandContext& ctx) {
 
 void StretchCommand::finish(CommandContext& ctx, core::Vec2 delta) {
     ctx.clear_preview();
+    s_displacement_ = delta;
     ctx.submit(core::StretchSelectionCommand{delta, ctx.group_id()});
     // The engine reports what it actually did -- how many objects, or why none (Ph10.1).
     done_ = true;
@@ -15941,7 +15991,8 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
         const std::string u = upper(t);
         if (t.empty() || u == "D" || u == "DISPLACEMENT") {
             mode_ = Mode::Displacement;
-            ctx.set_prompt("Specify displacement <0.0000, 0.0000>: ");
+            // The last displacement, in the drawing's units, as MOVE and COPY show theirs.
+            ctx.set_prompt("Specify displacement " + displacement_default(ctx, s_displacement_) + ": ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -15959,8 +16010,12 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
     }
     case Mode::Displacement: {
         if (t.empty()) {
-            ctx.echo("Zero displacement: nothing to stretch.");
-            done_ = true;
+            if (s_displacement_ == core::Vec2{}) {
+                ctx.echo("Zero displacement: nothing to stretch.");
+                done_ = true;
+                return;
+            }
+            finish(ctx, s_displacement_); // Enter: the displacement shown
             return;
         }
         // The value IS the displacement vector, typed as x,y (or a picked point taken
@@ -16620,7 +16675,8 @@ void MLeaderCommand::first_prompt(CommandContext& ctx) {
 void MLeaderCommand::after_points(CommandContext& ctx) {
     ctx.set_preview(PreviewSpec{PreviewKind::Polyline, pts_});
     if (order_ == Order::Arrow) {
-        if (static_cast<int>(pts_.size()) < s_max_points_ - 1) {
+        // A style's 0 is "No limit": next points until Enter, as QLEADER does.
+        if (s_max_points_ == 0 || static_cast<int>(pts_.size()) < s_max_points_ - 1) {
             state_ = State::Next;
             ctx.set_prompt("Specify next point: ");
         } else {
@@ -16761,13 +16817,15 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
             first_prompt(ctx);
         } else if (u == "M" || u == "MAXPOINTS") {
             state_ = State::MaxPoints;
-            ctx.set_prompt("Enter the maximum points for leader line <" + std::to_string(s_max_points_) + ">: ");
+            ctx.set_prompt("Enter the maximum points for leader line (0 for no limit) <" +
+                           (s_max_points_ == 0 ? std::string("No limit") : std::to_string(s_max_points_)) + ">: ");
         } else if (u == "C" || u == "CONTENT TYPE") {
             state_ = State::ContentType;
             ctx.set_prompt(std::string("Select a content type [Mtext/None] <") + (s_content_ ? "Mtext" : "None") + ">: ");
         } else if (u == "L" || u == "LEADER TYPE") {
             state_ = State::LeaderType;
-            ctx.set_prompt("Select a leader type [Straight/sPline/None] <Straight>: ");
+            ctx.set_prompt(std::string("Select a leader type [Straight/sPline/None] <") +
+                           (s_leader_type_ == 1 ? "sPline" : s_leader_type_ == 2 ? "None" : "Straight") + ">: ");
         } else if (u == "A" || u == "LANDING" || u == "LEADER LANDING") {
             state_ = State::UseLanding;
             ctx.set_prompt(std::string("Use landing [Yes/No] <") + (s_landing_ ? "Yes" : "No") + ">: ");
@@ -16780,8 +16838,8 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
     case State::MaxPoints: {
         if (!t.empty()) {
             const std::optional<double> n = parse_number(t);
-            if (!n || *n < 2.0 || *n > 99.0 || *n != std::floor(*n)) {
-                ctx.echo("Requires a whole number from 2 to 99.");
+            if (!n || (*n != 0.0 && *n < 2.0) || *n > 99.0 || *n != std::floor(*n)) {
+                ctx.echo("Requires a whole number from 2 to 99, or 0 for no limit.");
                 return;
             }
             s_max_points_ = static_cast<int>(*n);

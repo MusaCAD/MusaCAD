@@ -3288,14 +3288,14 @@ void ViewportWindow::rebuild_overlay() {
                 arc = core::arc_start_end_angle(a, b, turn(bearing(a, cur)), ctrl);
                 break;
             case 7:
-                arc = core::arc_start_end_direction(a, b, bearing(a, cur));
+                arc = core::arc_start_end_direction(a, b, bearing(a, cur) + (ctrl ? core::kPi : 0.0));
                 break;
             case 8:
                 arc = core::arc_start_end_radius(a, b, core::distance(b, cur), ctrl);
                 band_from = b;
                 break;
             case 9:
-                arc = core::arc_start_end_direction(a, cur, pv.arc_tangent);
+                arc = core::arc_start_end_direction(a, cur, pv.arc_tangent + (ctrl ? core::kPi : 0.0));
                 break;
             default:
                 break;

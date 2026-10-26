@@ -1178,6 +1178,12 @@ struct ArrayRectCommand {
 /// Polar array of the selection: `count` copies around `center` spanning
 /// `total_angle` (radians); `rotate_items` rotates each copy to match. `rows` rings of
 /// them, each `row_spacing` farther out from the centre than the one before (ROWs).
+///
+/// The base point is the point of the selection that goes round the centre when the
+/// items are not rotated, and that the rows move out from: `base` when `has_base`;
+/// otherwise the centre of the selection's extents (ARRAY's <centroid>), or each object's
+/// own reference point when `own_anchors` (-ARRAY and the Array window, AutoCAD's classic
+/// array, without a base point).
 struct ArrayPolarCommand {
     Vec2 center;
     int count = 1;
@@ -1186,6 +1192,9 @@ struct ArrayPolarCommand {
     std::uint64_t group = 0;
     int rows = 1;
     double row_spacing = 0.0;
+    Vec2 base{};
+    bool has_base = false;
+    bool own_anchors = false;
 };
 
 /// Path array of the selection (AutoCAD ARRAYPATH): distribute `count` items along the

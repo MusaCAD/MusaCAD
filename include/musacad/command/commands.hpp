@@ -112,6 +112,7 @@ private:
     void add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent);
     void add_arc(CommandContext& ctx, const std::optional<core::ConstructedArc>& arc);
     void prompt_next(CommandContext& ctx);
+    [[nodiscard]] bool can_close() const;
     void refresh_preview(CommandContext& ctx, int arc_mode = 0);
     void finish(CommandContext& ctx, bool closed);
     void undo_segment(CommandContext& ctx);
@@ -1266,6 +1267,7 @@ private:
     bool done_ = false;
     Mode mode_ = Mode::Select;
     core::Vec2 base_{};
+    inline static core::Vec2 s_displacement_{}; ///< the last one, Enter's at Displacement
 };
 
 /// TABLE (TB) opens the Insert Table window where there is one, then asks `Specify
@@ -4522,7 +4524,7 @@ private:
     /// The questions an option asks, in turn.
     enum class Q {
         Assoc, Base, Cols, Rows, ColSpace, RowSpace, ColTotal, RowTotal, RowElev, Levels, LevelSpace,
-        Items, AngleBetween, Fill, RotItems, PolarRows, PolarRowSpace, PolarRowTotal, Method, PathSpace,
+        LevelTotal, Items, AngleBetween, Fill, RotItems, PolarRows, PolarRowSpace, PolarRowTotal, Method, PathSpace,
         PathItems, PathDivideItems, Align, ZDir, Tangent, CellCorner1, CellCorner2, Expression,
     };
     void begin(CommandContext& ctx);
@@ -4597,6 +4599,7 @@ private:
     double col_space_ = 0.0;
     core::Vec2 corner_{};
     core::Vec2 center_{};
+    std::optional<core::Vec2> base_; ///< Base: the point of the objects that goes round
     int items_ = 0;       ///< 0: not given (Enter), the angle between items decides
     double fill_ = 360.0; ///< degrees
     bool done_ = false;

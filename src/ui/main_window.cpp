@@ -10630,10 +10630,10 @@ void MainWindow::submit_array_from_dialog(const ParameterDialog& dlg) {
     processor_->set_selection_count(viewport_->selection_count());
     const std::uint64_t group = processor_->begin_group();
     if (dlg.choice_value("type") == "Polar") {
-        processor_->submit(core::ArrayPolarCommand{core::Vec2{dlg.number("cx"), dlg.number("cy")},
-                                                   dlg.integer("count"),
-                                                   core::to_radians(dlg.number("fill")),
-                                                   dlg.boolean("rotate"), group});
+        core::ArrayPolarCommand c{core::Vec2{dlg.number("cx"), dlg.number("cy")}, dlg.integer("count"),
+                                  core::to_radians(dlg.number("fill")), dlg.boolean("rotate"), group};
+        c.own_anchors = true; // the classic Array window: each object's own reference point
+        processor_->submit(c);
     } else {
         // Designated, not positional: this struct grew an `angle` before `group`, and a
         // positional list silently fed the group id in as the axis angle.
