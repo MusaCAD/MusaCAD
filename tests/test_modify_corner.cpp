@@ -161,9 +161,10 @@ TEST_CASE("CHAMFER Polyline bevels the corners between straight segments and kee
     engine.consume_snapshot();
     const RenderSnapshot& s = engine.snapshot();
     REQUIRE(has_segment(s, {8, 0}, {10, 2}));
-    const bool apex = std::any_of(s.line_vertices.begin(), s.line_vertices.end(),
-                                  [](Vec2 v) { return length(v - Vec2{5, 15}) < 0.05; });
-    REQUIRE(apex); // the top of the half circle is still drawn
+    const bool on_arc = std::any_of(s.line_vertices.begin(), s.line_vertices.end(), [](Vec2 v) {
+        return std::abs(length(v - Vec2{5, 10}) - 5.0) < 1e-6 && v.y > 12.0;
+    });
+    REQUIRE(on_arc); // the half circle over the top is still drawn
     engine.stop();
 }
 
@@ -447,6 +448,7 @@ TEST_CASE("#50: OFFSET Through, Erase source, the current layer, and Multiple fr
     cur.to_current_layer = true;
     engine.submit(cur);
     REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 9}, {10, 9}); }));
+    engine.submit(SetCurrentLayerCommand{0}); // the current layer can't be frozen
     Layer frozen = walls;
     frozen.frozen = true;
     engine.submit(SetLayerCommand{1, frozen});

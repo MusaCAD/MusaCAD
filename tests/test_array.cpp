@@ -189,9 +189,14 @@ TEST_CASE("ARRAY: by default a path array keeps the selection's offset from the 
     }));
     engine.consume_snapshot();
     const RenderSnapshot& s = engine.snapshot();
+    // A circle round a point on the path (the path's own ends are vertices there too).
+    const auto ring_at = [&s](Vec2 c) {
+        return std::any_of(s.line_vertices.begin(), s.line_vertices.end(),
+                           [c](const Vec2& v) { return std::abs(length(v - c) - 2.0) < 0.05; });
+    };
     for (double x : {0.0, 25.0, 50.0, 75.0, 100.0}) {
         REQUIRE(circles_near(s, {x, 50.0}, 2.05) > 0);
-        REQUIRE(circles_near(s, {x, 0.0}, 2.05) == 0);
+        REQUIRE_FALSE(ring_at({x, 0.0}));
     }
     engine.stop();
 }

@@ -161,13 +161,16 @@ TEST_CASE("ROTATE: a typed angle goes the way ANGDIR says") {
     REQUIRE(r->angle == Approx(-kPi / 2.0)); // clockwise
 }
 
-TEST_CASE("PLINE offers Close when it can close") {
+TEST_CASE("PLINE closes from the first segment, where Close is offered") {
+    // One straight segment: the closing segment runs back over it.
     H h;
     h.run({"PL", "0,0", "10,0"});
-    REQUIRE(h.out.prompt == "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
+    REQUIRE(h.out.prompt == "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: ");
     h.run({"C"});
-    REQUIRE(h.out.said("Need at least 3 points to close."));
-    h.proc.cancel();
+    const auto* s = h.last<AddPolylineCommand>();
+    REQUIRE(s != nullptr);
+    REQUIRE(s->closed);
+    REQUIRE(s->points.size() == 2);
     // An arc first: a straight segment back closes it into a shape.
     H a;
     a.run({"PL", "0,0", "A", "10,10", "L"}); // a quarter circle (from the east), then Line
@@ -177,6 +180,7 @@ TEST_CASE("PLINE offers Close when it can close") {
     REQUIRE(p != nullptr);
     REQUIRE(p->closed);
     REQUIRE(p->points.size() == 2);
+    REQUIRE(p->bulges.size() == 2);
 }
 
 TEST_CASE("HATCH lets go of a selection of hatches; HATCHEDIT takes the one selected") {

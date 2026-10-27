@@ -545,10 +545,10 @@ void PolylineCommand::prompt_next(CommandContext& ctx) {
                                : "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
 }
 
-// A straight segment back to the start closes the polyline once that makes a shape: from
-// three points, or from two when the first segment is an arc.
+// Close is offered from the first segment, as in AutoCAD: after one straight segment the
+// closing segment runs back over it, and after an arc it makes a shape.
 bool PolylineCommand::can_close() const {
-    return points_.size() >= 3 || (points_.size() == 2 && !bulges_.empty() && std::abs(bulges_.front()) > 1e-12);
+    return points_.size() >= 2;
 }
 
 void PolylineCommand::add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent) {
@@ -672,7 +672,7 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "C" || u == "CLOSE") {
-            ctx.echo("Need at least 3 points to close.");
+            ctx.echo("Need at least 2 points to close.");
             return;
         }
         if (u == "L" || u == "LENGTH") {

@@ -112,19 +112,19 @@ TEST_CASE("CHAMFER flow emits ChamferPickCommand with two distances") {
     REQUIRE(c->dist2 == Approx(3.0));
 }
 
-TEST_CASE("CHAMFER Angle method (length + angle, default 45) emits equal distances") {
+TEST_CASE("CHAMFER Angle method (length + angle, default 45) sends the length and the angle") {
     Harness h;
     h.proc.submit_line("CHA");
     h.proc.submit_line("A");    // Angle method
     h.proc.submit_line("5");    // chamfer length on first line
-    h.proc.submit_line("45");   // angle -> dist2 = 5 * tan(45) = 5
+    h.proc.submit_line("45");   // the angle from the first line
     h.proc.submit_line("10,0");
     h.proc.submit_line("0,10");
     REQUIRE(h.cmds.size() == 1);
     const auto* c = std::get_if<musacad::core::ChamferPickCommand>(&h.cmds[0]);
     REQUIRE(c != nullptr);
     REQUIRE(c->dist1 == Approx(5.0));
-    REQUIRE(c->dist2 == Approx(5.0)); // 45 degrees => equal legs
+    REQUIRE(c->angle == Approx(musacad::core::kPi / 4.0)); // the engine works out the second from the corner
 }
 
 TEST_CASE("EXTEND flow emits ExtendPickCommand per pick") {

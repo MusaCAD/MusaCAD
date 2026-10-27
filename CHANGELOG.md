@@ -34,8 +34,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - Closing the window read the Dynamic Input settings from freed memory (#87).
 - Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
   Inscribed / Circumscribed, MLEADER's leader type, a dimension's Text, ARRAY's angles (360
-  for a full circle), STRETCH's displacement (the last one); PLINE offers Close only when it
-  can close; ARRAY's Levels take Total; ARC's Continue and Direction read Ctrl (#90).
+  for a full circle), STRETCH's displacement (the last one); PLINE's Close works from the
+  first segment, where it is offered; ARRAY's Levels take Total; ARC's Continue and Direction
+  read Ctrl (#90).
 - The dimensions made from an object and TEXTEDIT say what happened once, after the engine
   has checked; the reason a pick cannot be dimensioned names what that dimension takes;
   CIRCLE Ttr's radius in the drawing's units; LIST says center (#91).
