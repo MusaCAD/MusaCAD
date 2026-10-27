@@ -98,8 +98,8 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | Reflects selection: nothing / one / many-same / many-mixed | Implemented (Ph22) |
 | **\*VARIES\*** for fields that differ across a multi-selection; edit sets all | Implemented (Ph22) |
 | General: Layer / Color / Linetype / Lineweight (ByLayer or override) | Implemented (Ph22) |
-| Geometry group (line length/ends, circle/arc center+radius, text position) | Implemented (Ph22, read-only) |
-| Geometry numeric editing (type a new radius/length/endpoint) | Planned |
+| Geometry group (line length/ends, circle/arc center+radius, text position) | Implemented (Ph22) |
+| Geometry numeric editing (a radius, a centre, a line's ends, a position typed in) | Implemented (#32); a line's Length is shown, not edited |
 | Text/MTEXT group (contents, height, rotation, justify, width factor, line spacing, defined width, attachment) | Implemented (Ph22) |
 | Font selection field | Implemented (Ph29: PR Font dropdown lists Standard + system TTF/OTF faces; sets the entity font, persists, re-renders) |
 | Dimension group: per-dimension overrides (arrow type/size, dim/ext-line color, text height/color/placement, precision; ByStyle-or-Overridden + reset) | Implemented (Ph24; native round-trip, DXF override-vs-style native-only) |
@@ -113,9 +113,9 @@ Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
 | MTEXT (multi-line paragraph, word-wrap within a defined width) | Implemented (Ph20) |
 | MTEXT attachment point (TL/TC/TR/ML/MC/MR/BL/BC/BR) | Implemented (Ph20) |
 | MTEXT line spacing / width factor / rotation | Implemented (Ph20) |
-| MTEXT inline formatting (bold, mid-string colour/height, stacked fractions) | Planned (Ph20 stub) |
+| MTEXT inline formatting (font, colour, height, width, oblique, tracking, underline/overline, stacked fractions) | Implemented (#43; the format codes are drawn and kept) |
 | Text/font selection (multiple fonts, TTF) | Implemented (Ph29: TTF/OTF as filled glyphs via the fill pipeline; stroke font stays the default/fallback) |
-| Control codes `%%d`/`%%p`/`%%c`/`%%%`/`%%nnn`, `%%o`/`%%u` over/underline; MTEXT `\U+XXXX` | Implemented (stored raw, expanded at render time; over/underline single-line — MTEXT decoration deferred) |
+| Control codes `%%d`/`%%p`/`%%c`/`%%%`/`%%nnn`, `%%o`/`%%u` over/underline; `\U+XXXX` in TEXT and MTEXT | Implemented (stored raw, expanded at render time) |
 
 ## Leader / MLEADER
 
@@ -142,10 +142,10 @@ Typed mid-command as option keywords (the same state-machine pattern as CIRCLE's
 | **Dimensions** (`D`) | length → width, then the cursor quadrant flips placement (NE/NW/SE/SW); click commits | Implemented |
 | **Area** (`A`) | area → `[Length/Width]` → that side; the other = area / side; same quadrant-flip placement | Implemented |
 | **Rotation** (`R`) | angle (degrees); the rectangle is rotated about the first corner | Implemented |
-| First-corner **Chamfer** (`C`) | two chamfer distances applied to each corner | Planned |
-| First-corner **Fillet** (`F`) | fillet radius applied to each corner | Planned |
-| First-corner **Width** (`W`) | polyline line-width for the rectangle | Planned |
-| First-corner **Elevation** (`E`) / **Thickness** (`T`) | Z elevation / 3D thickness | Planned (2D engine; Z staged) |
+| First-corner **Chamfer** (`C`) | two chamfer distances applied to each corner | Implemented |
+| First-corner **Fillet** (`F`) | fillet radius applied to each corner | Implemented |
+| First-corner **Width** (`W`) | polyline line-width for the rectangle | Implemented |
+| First-corner **Elevation** (`E`) / **Thickness** (`T`) | Z elevation / 3D thickness | Implemented (kept on the polyline and in DXF; drawn in plan) |
 
 Notes: a non-numeric entry at a value prompt reverts to the plain other-corner pick (you
 are never trapped); Esc cancels. With Dynamic Input on (the default), each of these steps
@@ -166,13 +166,13 @@ inherits the source entity's layer/properties.
 | Line | Parallel line at ±distance on the picked side | Implemented |
 | Circle / Arc | Concentric (radius ± distance); shrinking past radius 0 fails cleanly | Implemented |
 | **Polyline (open/closed, incl. rectangles & bulged/filleted corners)** | Each segment offset (lines parallel, arcs concentric with the bulge kept), corners **re-mitered** as the intersection of adjacent offset curves — line/line, line/arc, and arc/arc (via the shared line_line / line_circle / circle_circle primitives) — uniform spacing, clean corners (no trapezoid). An over-large inward offset that would fold the shape fails with "Offset distance too large for this polyline." and leaves the geometry unchanged | Implemented |
-| `[Through/Erase/Layer]` options + multiple (repeat) | AutoCAD OFFSET sub-options | Planned (distance + side only today) |
+| `[Through/Erase/Layer]` options + Multiple | AutoCAD OFFSET sub-options; the distance is OFFSETDIST | Implemented |
 
 ## JOIN
 
 | Step | Behaviour | Status |
 |---|---|---|
-| **Select objects, then JOIN** (noun-verb) | Every selected line / arc / open polyline that shares endpoints (within the snap tolerance) merges — each connected chain becomes ONE polyline (arcs → bulged segments), inheriting the source's layer/properties. The merged polyline is a single entity, so moving it or dragging a grip keeps it connected | Implemented |
+| **Select objects, then JOIN** (noun-verb) | Every selected line / arc / open polyline that shares endpoints (ends that meet, within 1e-6) merges — each connected chain becomes ONE polyline (arcs → bulged segments), inheriting the source's layer/properties. The merged polyline is a single entity, so moving it or dragging a grip keeps it connected | Implemented |
 | Multiple chains in one selection | Each connected group becomes its own polyline; an object that connects to nothing else selected stays separate | Implemented |
 | Closed loop | A chain whose ends meet within tolerance becomes a **closed** polyline (which then OFFSETs uniformly) | Implemented |
 | No pre-selection | Falls back to picking a source object, then targets | Implemented |
@@ -206,12 +206,12 @@ matched from a line stays a circle.
 |---|---|---|
 | Boundary: **Pick internal point** | Click inside a region; the engine traces the enclosing boundary from surrounding geometry (planar arrangement, so a partitioning line splits the region) and treats closed entities inside as **islands/holes** | Implemented (Part A) |
 | Boundary: **Select objects** (noun-verb) | Pre-select closed polylines, then HATCH; even-odd makes nested loops holes | Implemented (Part A) |
-| Pattern (HPNAME) | The PR **Pattern** field is a **dropdown** of `SOLID` + every built-in line pattern (the same list the `HATCH ▸ Pattern` option offers). SOLID is a solid colour fill (a pattern *name*, not a separate entity); the default | Implemented |
+| Pattern (HPNAME) | The PR **Pattern** field is a **dropdown** of `SOLID` + every built-in line pattern (the same list the `HATCH ▸ Pattern` option offers). SOLID is a solid colour fill (a pattern *name*, not a separate entity); ANSI31 is the default, as in AutoCAD | Implemented |
 | Pattern scale / angle / origin (HPSCALE / HPANG / HPORIGIN) | Stored per hatch; editable in PR (Scale/Angle; Origin read-only) and MATCHPROP-matchable | Implemented |
 | Line patterns (ANSI31 …, `.PAT`) | Stock pattern library, generated + clipped to the boundary, plotted as vectors | Implemented (Part B) |
 | Gap tolerance (HPGAPTOL) | Bridge small gaps in the boundary when picking a point | Partial (basic endpoint bridging; full HPGAPTOL staged) |
-| Associative hatch (HPASSOC) | Re-fill when the boundary is edited | Planned |
-| GRADIENT | Two-colour / gradient fills | Planned |
+| Associative hatch (HPASSOC) | Re-fill when the boundary is edited | Implemented (#41) |
+| GRADIENT | Two-colour / gradient fills | Implemented (#41) |
 
 Hatch colour/layer/linetype/lineweight follow the universal property model (ByLayer default);
 the fill is **derived at render time** so it plots as PDF vectors with no special case.

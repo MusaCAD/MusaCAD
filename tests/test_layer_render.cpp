@@ -73,6 +73,7 @@ TEST_CASE("Off and frozen layers don't render") {
         REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 2; }));
     }
     SECTION("layer frozen") {
+        engine.submit(SetCurrentLayerCommand{0}); // the current layer can't be frozen
         Layer frozen = make_layer("L", {255, 255, 255});
         frozen.frozen = true;
         engine.submit(SetLayerCommand{1, frozen});

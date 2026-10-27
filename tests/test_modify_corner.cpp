@@ -1,6 +1,7 @@
 // Part B intersection-dependent commands: EXTEND, TRIM (by a curve), FILLET,
 // CHAMFER. Each is one undoable group.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -125,6 +126,45 @@ TEST_CASE("CHAMFER bevels the corner between two lines; undo restores") {
     }));
     engine.submit(UndoLastGroupCommand{});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+    engine.stop();
+}
+
+TEST_CASE("CHAMFER's Angle method meets the second line where the angle says, at any corner") {
+    // A 60-degree corner, 4 along the first line at 30 degrees to it: the bevel meets the
+    // second line 4 sin 30 / sin 90 = 2 from the corner (length x tan would say 2.31).
+    GeometryEngine engine;
+    engine.start();
+    const Vec2 dir{std::cos(kPi / 3.0), std::sin(kPi / 3.0)};
+    engine.submit(AddLineCommand{{0, 0}, {20, 0}, 1});
+    engine.submit(AddLineCommand{{0, 0}, dir * 20.0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+    ChamferPickCommand c{{10, 0}, dir * 10.0, 4.0, 0.0, 1.0, 10};
+    c.angle = kPi / 6.0;
+    engine.submit(c);
+    REQUIRE(wait_until(engine, [&](const auto& s) { return has_segment(s, {4, 0}, dir * 2.0); }));
+    engine.stop();
+}
+
+TEST_CASE("CHAMFER Polyline bevels the corners between straight segments and keeps the arcs") {
+    // (0,0)-(10,0)-(10,10), then a half circle over the top back to (0,10): the corner
+    // at (10,0) is bevelled, the one beside the arc is left, and the arc stays an arc.
+    GeometryEngine engine;
+    engine.start();
+    AddPolylineCommand pc;
+    pc.points = {{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    pc.bulges = {0.0, 0.0, 1.0, 0.0};
+    pc.group = 1;
+    engine.submit(pc);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 10; }));
+    engine.submit(ChamferPolylineCommand{{5, 0}, 2.0, 2.0, 1.0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.rfind("1 line was chamfered", 0) == 0; }));
+    engine.consume_snapshot();
+    const RenderSnapshot& s = engine.snapshot();
+    REQUIRE(has_segment(s, {8, 0}, {10, 2}));
+    const bool on_arc = std::any_of(s.line_vertices.begin(), s.line_vertices.end(), [](Vec2 v) {
+        return std::abs(length(v - Vec2{5, 10}) - 5.0) < 1e-6 && v.y > 12.0;
+    });
+    REQUIRE(on_arc); // the half circle over the top is still drawn
     engine.stop();
 }
 
@@ -408,6 +448,7 @@ TEST_CASE("#50: OFFSET Through, Erase source, the current layer, and Multiple fr
     cur.to_current_layer = true;
     engine.submit(cur);
     REQUIRE(wait_until(engine, [](const auto& s) { return has_segment(s, {0, 9}, {10, 9}); }));
+    engine.submit(SetCurrentLayerCommand{0}); // the current layer can't be frozen
     Layer frozen = walls;
     frozen.frozen = true;
     engine.submit(SetLayerCommand{1, frozen});

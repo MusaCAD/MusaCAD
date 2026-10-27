@@ -263,6 +263,42 @@ TEST_CASE("#27: breaking an open polyline splits it into two runs") {
     engine.stop();
 }
 
+TEST_CASE("Breaking a polyline through an arc segment keeps the part of the arc that stays") {
+    // (0,0) to (10,0) along the lower half of the circle round (5,0), then straight to
+    // (20,0). Broken from 45 degrees round the arc to (15,0): the first piece is still an
+    // arc (points on the circle between its ends), the bottom of the arc is gone.
+    GeometryEngine engine;
+    engine.start();
+    AddPolylineCommand pc;
+    pc.points = {{0, 0}, {10, 0}, {20, 0}};
+    pc.bulges = {1.0, 0.0, 0.0};
+    pc.group = 1;
+    engine.submit(pc);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 6; }));
+
+    const double a = 5.0 * std::sqrt(0.5);
+    BreakCommand c;
+    c.pick = {5.0, -5.0};
+    c.pick_radius = 1.0;
+    c.p1 = {5.0 - a, -a};
+    c.p2 = {15.0, 0.0};
+    c.group = 2;
+    engine.submit(c);
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Broke 1 object into 2.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    const RenderSnapshot& s = engine.snapshot();
+    const bool on_arc = std::any_of(s.line_vertices.begin(), s.line_vertices.end(), [](Vec2 v) {
+        return std::abs(length(v - Vec2{5, 0}) - 5.0) < 1e-6 && v.y < -0.5 && v.x < 5.0 - 5.0 * std::sqrt(0.5) - 0.2;
+    });
+    REQUIRE(on_arc);
+    REQUIRE(!has_vertex_near(s, {5, -5}, 0.5)); // the bottom of the arc is gone
+    REQUIRE(has_vertex_near(s, {15, 0}, 1e-9));
+    REQUIRE(has_vertex_near(s, {20, 0}, 1e-9));
+    engine.stop();
+}
+
 TEST_CASE("#27: breaking a closed polyline leaves one open run") {
     GeometryEngine engine;
     engine.start();

@@ -176,14 +176,14 @@ struct MatchPropFilter {
     bool polyline = true;  ///< a polyline's width (family-scoped, polyline<->polyline)
     // AutoCAD's remaining Property Settings. They are kept (and shown in the dialog)
     // so a saved filter reads the same; the ones without a modelled property are
-    // inert until it exists: thickness (issue #68), material and
-    // shadow display (3D), the viewport's own properties.
-    bool transparency = true;
+    // inert until it exists: thickness (issue #68), material and shadow display (3D),
+    // the viewport's own properties, a multileader's and a table's style.
+    bool transparency = true; ///< an object's own transparency (MatchSlot::Transparency)
     bool thickness = true;
     bool material = true;
     bool shadow = true;
-    bool multileader = true; ///< a multileader's style (family-scoped, with the Text slot)
-    bool table = true;       ///< a table's style (family-scoped, with the Text slot)
+    bool multileader = true;
+    bool table = true;
     bool viewport = true;
     bool center_object = true;
 

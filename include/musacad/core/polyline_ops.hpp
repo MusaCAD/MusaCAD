@@ -150,6 +150,33 @@ inline bool chamfer_corner(std::vector<Vec2>& pts, bool closed, int sv, double d
     return true;
 }
 
+/// chamfer_corner on a polyline that may have arcs: as AutoCAD does, only a corner
+/// between two straight segments is bevelled (false for one beside an arc), and the arcs
+/// elsewhere keep their bulges. `bulges` is empty (all straight) or one per vertex.
+inline bool chamfer_corner(std::vector<Vec2>& pts, std::vector<double>& bulges, bool closed, int sv,
+                           double d_prev, double d_next) {
+    const std::size_t n = pts.size();
+    const std::size_t s = static_cast<std::size_t>(sv);
+    if (n < 3 || sv < 0 || s >= n) {
+        return false;
+    }
+    if (!bulges.empty()) {
+        const std::size_t prev = (s + n - 1) % n;
+        if ((bulges.size() > prev && std::abs(bulges[prev]) > 1e-12) ||
+            (bulges.size() > s && std::abs(bulges[s]) > 1e-12)) {
+            return false; // a corner beside an arc
+        }
+    }
+    if (!chamfer_corner(pts, closed, sv, d_prev, d_next)) {
+        return false;
+    }
+    if (!bulges.empty()) {
+        bulges.resize(n, 0.0);
+        bulges.insert(bulges.begin() + static_cast<std::ptrdiff_t>(s) + 1, 0.0); // the bevel
+    }
+    return true;
+}
+
 /// Revision cloud (AutoCAD REVCLOUD): re-express `path` as a polyline of arcs whose
 /// chords are as close as possible to `arc_len`, every lobe bulging OUTWARD (to the
 /// right of travel on a CCW-oriented path); `reverse` flips them inward, AutoCAD's

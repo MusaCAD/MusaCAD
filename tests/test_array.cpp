@@ -149,6 +149,8 @@ TEST_CASE("ARRAY: a path array spreads N items over the whole path (Divide)") {
     c.count = 5;
     c.spacing = 0.0; // Divide
     c.align = false;
+    c.base = {0.0, 50.0}; // the circle's centre goes on the path
+    c.has_base = true;
     c.group = 4;
     engine.submit(c);
     REQUIRE(wait_until(engine, [](const auto& s) {
@@ -160,6 +162,64 @@ TEST_CASE("ARRAY: a path array spreads N items over the whole path (Divide)") {
     for (double x : {0.0, 25.0, 50.0, 75.0, 100.0}) {
         REQUIRE(circles_near(s, {x, 0.0}, 2.05) > 0);
     }
+    REQUIRE(circles_near(s, {0.0, 50.0}, 2.05) == 0); // the circle itself went onto the path
+    engine.stop();
+}
+
+TEST_CASE("ARRAY: by default a path array keeps the selection's offset from the start of the path") {
+    // AutoCAD's <end of path curve>: the circle stays where it is as the first item, and
+    // the others follow the path 50 above it -- four copies, nothing on the path itself.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
+    engine.submit(AddCircleCommand{{0, 50}, 2.0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 4; }));
+    engine.submit(SelectPickCommand{{0, 52}, 1.0, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+
+    ArrayPathCommand c;
+    c.pick = {50.0, 0.0};
+    c.pick_radius = 1.0;
+    c.count = 5;
+    c.align = false;
+    c.group = 4;
+    engine.submit(c);
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Path array created: 4 copies") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    const RenderSnapshot& s = engine.snapshot();
+    // A circle round a point on the path (the path's own ends are vertices there too).
+    const auto ring_at = [&s](Vec2 c) {
+        return std::any_of(s.line_vertices.begin(), s.line_vertices.end(),
+                           [c](const Vec2& v) { return std::abs(length(v - c) - 2.0) < 0.05; });
+    };
+    for (double x : {0.0, 25.0, 50.0, 75.0, 100.0}) {
+        REQUIRE(circles_near(s, {x, 50.0}, 2.05) > 0);
+        REQUIRE_FALSE(ring_at({x, 0.0}));
+    }
+    engine.stop();
+}
+
+TEST_CASE("ARRAY: a polar array that does not rotate its items moves the selection by one base point") {
+    // Two circles side by side, a quarter turn about the origin: the centre of the
+    // selection (11,0) goes to (0,11), so they stay side by side instead of each going
+    // round by its own centre (which would stack them at (0,10) and (0,12)).
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{10, 0}, 0.5, 1});
+    engine.submit(AddCircleCommand{{12, 0}, 0.5, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 8; }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 2; }));
+    ArrayPolarCommand c{{0, 0}, 4, kTwoPi, false, 3};
+    engine.submit(c);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("Polar array created") != std::string::npos; }));
+    engine.consume_snapshot();
+    const RenderSnapshot& s = engine.snapshot();
+    REQUIRE(circles_near(s, {-1, 11}, 0.55) > 0);
+    REQUIRE(circles_near(s, {1, 11}, 0.55) > 0);
+    REQUIRE(circles_near(s, {0, 12}, 0.55) == 0);
     engine.stop();
 }
 
@@ -179,6 +239,8 @@ TEST_CASE("ARRAY: a closed path gets no duplicate item at the seam") {
     c.pick_radius = 1.0;
     c.count = 4;
     c.align = false;
+    c.base = {0.0, 200.0}; // the item's centre goes on the path
+    c.has_base = true;
     c.group = 4;
     engine.submit(c);
     REQUIRE(wait_until(engine, [](const auto& s) {
@@ -215,6 +277,8 @@ TEST_CASE("ARRAY: Measure steps by distance and stops at the end of the path") {
     c.count = 0; // as many as fit
     c.spacing = 30.0;
     c.align = false;
+    c.base = {0.0, 50.0};
+    c.has_base = true;
     c.group = 4;
     engine.submit(c);
     REQUIRE(wait_until(engine, [](const auto& s) {
@@ -244,6 +308,8 @@ TEST_CASE("ARRAY: Measure honours an item-count cap") {
     c.count = 2; // cap: only 0 and 30, even though 60 and 90 would fit
     c.spacing = 30.0;
     c.align = false;
+    c.base = {0.0, 50.0};
+    c.has_base = true;
     c.group = 4;
     engine.submit(c);
     REQUIRE(wait_until(engine, [](const auto& s) {
@@ -278,6 +344,8 @@ TEST_CASE("ARRAY: aligned items turn with the path; unaligned ones do not") {
         c.pick_radius = 1.0;
         c.count = 3; // stations at 0, 100 (the corner) and 200 (the far end)
         c.align = align;
+        c.base = {0.0, -50.0}; // the item's middle rides the path
+        c.has_base = true;
         c.group = 4;
         engine.submit(c);
         REQUIRE(wait_until(engine, [](const auto& s) {
@@ -447,6 +515,21 @@ TEST_CASE("ARRAY: -ARRAY polar takes the items and the fill, or the angle betwee
         REQUIRE(ap->count == 4);
         REQUIRE(ap->total_angle == Approx(to_radians(90.0)));
         REQUIRE_FALSE(ap->rotate_items);
+        REQUIRE(ap->own_anchors); // no base point: each object's own reference point
+        REQUIRE_FALSE(ap->has_base);
+    }
+    {
+        ProcHarness h;
+        h.proc.set_selection_count(1);
+        for (const char* l : {"-ARRAY", "P", "B", "5,5", "0,0", "4", "", "N"}) { // a base point first
+            h.proc.submit_line(l);
+        }
+        REQUIRE(h.cmds.size() == 1);
+        const auto* ap = std::get_if<ArrayPolarCommand>(&h.cmds[0]);
+        REQUIRE(ap != nullptr);
+        REQUIRE(ap->has_base);
+        REQUIRE(ap->base.x == Approx(5.0));
+        REQUIRE(ap->base.y == Approx(5.0));
     }
 }
 
