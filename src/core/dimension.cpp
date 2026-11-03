@@ -745,6 +745,12 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
         // Control codes expand through the SAME pass every other text uses, so an
         // override can carry %%c and \U+XXXX with no dimension-specific handling.
         out.line1 = text::substitute_text(expanded);
+        // Two lines in the override (DXF's \P): the second goes under the first.
+        if (const std::size_t nl = out.line1.find('\n'); nl != std::string::npos) {
+            out.line2 = out.line1.substr(nl + 1);
+            out.line1.resize(nl);
+            std::replace(out.line2.begin(), out.line2.end(), '\n', ' ');
+        }
         if (tol.mode == TolMode::Basic) {
             out.boxed = true;
         } else if (tol.mode == TolMode::Reference) {

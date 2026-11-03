@@ -30,6 +30,25 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - The [plot-spec] line of each plot goes to stderr, not the command line (#91).
 
 ### Fixed
+- **Opening a DWG or DXF no longer draws lines to the origin** (#93). Radius and diameter
+  dimensions were read from groups that only linear ones have, so each one took (0,0) as its
+  centre and drew a line from the drawing to the origin -- 300 such lines in one production
+  drawing, removable only one dimension at a time. Each dimension type is now read from its
+  own groups: radius (centre and point on the arc), diameter (two opposite points),
+  two-line angular (the vertex where the lines cross, and the sides the arc lies between)
+  and three-point angular. DXF export writes them the same way, so AutoCAD reads Musa CAD's
+  radial and angular dimensions correctly; files written by earlier versions keep their
+  meaning.
+- Dimensions from AutoCAD keep their text -- `<> (TYP)`, `%%C<>`, `AS PER PID`, a second
+  line under the first -- their own text height, arrow size, decimals, colours and
+  tolerances (the DSTYLE overrides), text the author moved, and DIMSCALE (#93).
+- A leader with a bend keeps every vertex; MULTILEADER comes in with its line, landing and
+  text; SOLID and TRACE are filled; MINSERT places its whole grid; arcs, circles, ellipses,
+  polylines, hatches and block references drawn mirrored (a reversed extrusion) land where
+  AutoCAD shows them. Inside a block, a dimension draws as the drawing has it, and a leader
+  or multileader as its lines and text (#93).
+- Opening a drawing no longer loads the blocks AutoCAD keeps for each dimension's drawn
+  form (1,336 blocks down to 337 in one drawing) (#93).
 - **Ctrl+Y** redoes on Linux too (it was Ctrl+Shift+Z only) (#85).
 - Closing the window read the Dynamic Input settings from freed memory (#87).
 - Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
