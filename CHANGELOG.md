@@ -9,6 +9,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Hatches inside blocks** -- fills and patterns in a block definition are drawn wherever
+  the block is inserted, turned and scaled with it, and FILLMODE applies. A DWG or DXF brings
+  them in (445 of them in one production drawing), SOLID inside a block is filled, and
+  BLOCK, EXPLODE, REFEDIT, WBLOCK and copying between drawings carry them. Saved in the
+  drawing (format v46) and in DXF.
 - **Ctrl+1** opens and closes the Properties palette, as in AutoCAD.
 - **CHAMMODE** and **OFFSETDIST** as system variables (CHAMFER's method; the distance OFFSET
   offers, negative for Through).

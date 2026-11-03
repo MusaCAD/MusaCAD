@@ -373,7 +373,7 @@ TEST_CASE("#93 a bent LEADER keeps every vertex, and one vertex draws nothing") 
     CHECK_FALSE(reaches_origin(doc));
 }
 
-TEST_CASE("#93 SOLID draws filled, and as an outline inside a block") {
+TEST_CASE("#93 SOLID draws filled, in model space and inside a block") {
     const std::string solid = "0\nSOLID\n8\n0\n10\n0.0\n20\n0.0\n11\n10.0\n21\n0.0\n12\n0.0\n22\n5.0\n13\n10.0\n23\n5.0\n";
     const std::string tri = "0\nSOLID\n8\n0\n10\n1.0\n20\n1.0\n11\n4.0\n21\n1.0\n12\n2.0\n22\n3.0\n13\n2.0\n23\n3.0\n";
     const std::string blk = "0\nBLOCK\n2\nB\n10\n0\n20\n0\n" + tri + "0\nENDBLK\n";
@@ -385,8 +385,8 @@ TEST_CASE("#93 SOLID draws filled, and as an outline inside a block") {
     check_near(doc.hatches[0].loops[0][3], Vec2{0, 5});
     CHECK(doc.hatches[1].loops[0].size() == 3); // a triangle repeats its last corner
     REQUIRE(doc.block_defs.size() == 1);
-    REQUIRE(doc.block_defs[0].polylines.size() == 1);
-    CHECK(doc.block_defs[0].polylines[0].closed);
+    REQUIRE(doc.block_defs[0].hatches.size() == 1); // a block holds fills too
+    CHECK(doc.block_defs[0].hatches[0].pattern_name == "SOLID");
 }
 
 TEST_CASE("#93 dimension blocks stay out, unless a dimension inside a block draws with one") {

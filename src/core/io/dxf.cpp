@@ -1434,9 +1434,10 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             }
         }
     }
-    for (const DocHatch& h : doc.hatches) {
+    // A hatch, in model space or inside a block definition.
+    const auto emit_hatch = [&](const DocHatch& h) {
         if (h.pattern_name == "WIPEOUT") {
-            continue; // written as a WIPEOUT above
+            return; // written as a WIPEOUT on its own
         }
         const bool gradient = h.pattern_name == "GRADIENT";
         code(s, 0, "HATCH");
@@ -1541,6 +1542,9 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code_i(s, 421, true_color(h.color2));
             code(s, 470, "LINEAR");
         }
+    };
+    for (const DocHatch& h : doc.hatches) {
+        emit_hatch(h);
     }
     // Model-space block references.
     const auto emit_insert = [&](const DocInsert& in) {
@@ -1750,6 +1754,9 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             }
             for (const DocMText& m : b.mtexts) {
                 emit_mtext(m.block, m.content, m.props);
+            }
+            for (const DocHatch& h : b.hatches) {
+                emit_hatch(h);
             }
             for (const DocAttDef& a : b.attdefs) {
                 code(s, 0, "ATTDEF");
@@ -4019,8 +4026,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     DocBlockDef block;
     Sink block_sink{&block.lines,  &block.circles, &block.arcs, &block.polylines, &block.texts,
                     &block.mtexts, nullptr,        nullptr,     nullptr,          &block.inserts,
-                    nullptr,       nullptr,        nullptr,     nullptr,          nullptr,
-                    &block.attdefs, nullptr}; // hatches / images not held inside block definitions
+                    &block.hatches, nullptr,       nullptr,     nullptr,          nullptr,
+                    &block.attdefs, nullptr}; // images are not held inside block definitions
     bool in_block = false;
     // The dimension blocks that dimensions inside other blocks draw with. They can come
     // before or after the block using them, so these are found first.

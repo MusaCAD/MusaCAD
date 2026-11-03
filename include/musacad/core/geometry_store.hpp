@@ -536,6 +536,20 @@ struct BlockAttDef {
 
 /// The geometry of a block definition. Inserts may nest (a block placing other
 /// blocks); resolution composes transforms with a depth guard.
+/// A hatch inside a block definition, in the definition's own coordinates. Held whole
+/// (no pools): a definition is read far more than it changes, and the fill or pattern is
+/// made when the block is drawn, like a model-space hatch's.
+struct BlockHatch {
+    std::vector<std::vector<Vec2>> loops; ///< closed boundaries; loop 0 outer
+    std::string pattern_name = "SOLID";
+    double pattern_scale = 1.0;
+    double pattern_angle = 0.0; ///< radians, CCW
+    Vec2 pattern_origin{};
+    EntityProps props{};
+    Rgb color2{};     ///< GRADIENT: the second colour
+    bool iso = false; ///< HatchData::iso
+};
+
 struct BlockContent {
     std::vector<LineData> lines;
     std::vector<CircleData> circles;
@@ -545,6 +559,7 @@ struct BlockContent {
     std::vector<BlockMText> mtexts;
     std::vector<BlockAttDef> attdefs; ///< attributes (ATTDEF), in prompt order
     std::vector<InsertData> inserts; ///< nested block references
+    std::vector<BlockHatch> hatches; ///< fills and patterns (v46)
 };
 
 /// The names of blocks and layers are compared without regard to case, as AutoCAD compares

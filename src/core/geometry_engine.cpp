@@ -5845,6 +5845,10 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
             e.props.linetype = ensure_linetype(e.props.linetype);
             e.block.font = ensure_font(e.block.font);
         }
+        for (auto& e : def.content.hatches) {
+            e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
+        }
         for (auto& ins : def.content.inserts) {
             ins.block = ensure_block(ins.block); // recursive closure (block tree)
             ins.props.layer = ensure_layer(ins.props.layer);
@@ -7986,6 +7990,25 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                                                  sub.rotation + in->rotation, 0, sub.props,
                                                  store_.insert_attribs(sub)});
             }
+            for (const BlockHatch& bh : def.content.hatches) {
+                AddHatchCommand hc;
+                for (const std::vector<Vec2>& loop : bh.loops) {
+                    std::vector<Vec2> placed;
+                    placed.reserve(loop.size());
+                    for (const Vec2& p : loop) {
+                        placed.push_back(xf(p));
+                    }
+                    hc.loops.push_back(std::move(placed));
+                }
+                hc.pattern_name = bh.pattern_name;
+                hc.pattern_scale = bh.pattern_scale * std::abs(in->scale_x);
+                hc.pattern_angle = bh.pattern_angle + in->rotation;
+                hc.pattern_origin = xf(bh.pattern_origin);
+                hc.props = bh.props;
+                hc.color2 = bh.color2;
+                hc.iso = bh.iso;
+                parts.push_back(std::move(hc));
+            }
             break;
         }
         case EntityKind::Dimension: {
@@ -8545,6 +8568,13 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
                                                           pl->elevation, pl->thickness});
             break;
         }
+        case EntityKind::Hatch: {
+            const HatchData* hd = st.hatch(h);
+            content.hatches.push_back(BlockHatch{st.hatch_loops(*hd), std::string(st.string_of(*hd)),
+                                                 hd->pattern_scale, hd->pattern_angle, hd->pattern_origin,
+                                                 hd->props, hd->color2, hd->iso});
+            break;
+        }
         case EntityKind::Text: {
             const TextData* t = st.text(h);
             content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
@@ -8578,7 +8608,6 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
         case EntityKind::Dimension:
         case EntityKind::Leader:
         case EntityKind::MLeader:
-        case EntityKind::Hatch:
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
@@ -8610,6 +8639,7 @@ std::vector<EntityHandle> block_material(const GeometryStore& st) {
     collect(st.polylines(), EntityKind::Polyline);
     collect(st.mtexts(), EntityKind::MText);
     collect(st.inserts(), EntityKind::Insert);
+    collect(st.hatches(), EntityKind::Hatch);
     for (std::uint32_t i = 0; i < st.texts().slot_count(); ++i) {
         if (st.texts().alive(i) && st.texts().data()[i].props.space() == 0) {
             out.push_back(EntityHandle{i, st.texts().generations()[i], EntityKind::Text});
@@ -11091,6 +11121,24 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
             io::DocMText dm{m.block, m.content, m.props};
             dm.block.pos = m.block.pos - o;
             doc.mtexts.push_back(std::move(dm));
+        }
+        for (const BlockHatch& bh : def->content.hatches) {
+            io::DocHatch dh;
+            for (const std::vector<Vec2>& loop : bh.loops) {
+                std::vector<Vec2> moved;
+                for (const Vec2& p : loop) {
+                    moved.push_back(p - o);
+                }
+                dh.loops.push_back(std::move(moved));
+            }
+            dh.pattern_name = bh.pattern_name;
+            dh.pattern_scale = bh.pattern_scale;
+            dh.pattern_angle = bh.pattern_angle;
+            dh.pattern_origin = bh.pattern_origin - o;
+            dh.props = bh.props;
+            dh.color2 = bh.color2;
+            dh.iso = bh.iso;
+            doc.hatches.push_back(std::move(dh));
         }
         if (!def->content.inserts.empty()) {
             // Nested inserts need their definitions: carry the whole block table.
