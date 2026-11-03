@@ -72,7 +72,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 45;
+inline constexpr std::uint32_t kFormatVersion = 46;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -320,6 +320,7 @@ struct DocBlockDef {
     std::vector<DocMText> mtexts;
     std::vector<DocAttDef> attdefs; ///< attribute definitions (v28)
     std::vector<DocInsert> inserts; ///< nested block references
+    std::vector<DocHatch> hatches;  ///< fills and patterns (v46)
     std::string xref_path;          ///< XREF source drawing (v32); "" for an ordinary block
     std::uint8_t units = 0;         ///< v40: the block unit (an INSUNITS code; 0 unitless)
     friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
