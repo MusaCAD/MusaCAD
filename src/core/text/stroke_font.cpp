@@ -86,8 +86,8 @@ struct Entry {
     const char* strokes;
 };
 constexpr Entry kFont[] = {
-    {'0', "1,2 1,8 5,8 5,2 1,2|2,2 4,8"},
-    {'1', "2,7 3,8 3,2|1,2 5,2"},
+    // '0' is zero_glyph(): its points are off the integer grid.
+    {'1',"2,7 3,8 3,2|1,2 5,2"},
     {'2', "1,7 2,8 4,8 5,7 5,6 1,2 5,2"},
     {'3', "1,8 5,8 3,5|3,5 5,4 5,3 4,2 1,2"},
     {'4', "4,2 4,8 1,4 5,4"},
@@ -188,6 +188,14 @@ constexpr Entry kFont[] = {
     {'z', "1,6 5,6 1,2 5,2"},
 };
 
+// The digit zero: an oval narrower than the O, with longer corners, and no slash. A slashed
+// zero reads as the diameter sign (the O with a slash) on a mechanical drawing -- "1.00" next
+// to "Ø67.85" read "1.ØØ" -- and neither AutoCAD's txt and simplex nor ISO 3098 slash it.
+Glyph zero_glyph() {
+    return Glyph{Stroke{cell(2.4, 2.0), cell(1.6, 3.5), cell(1.6, 6.5), cell(2.4, 8.0), cell(3.6, 8.0),
+                        cell(4.4, 6.5), cell(4.4, 3.5), cell(3.6, 2.0), cell(2.4, 2.0)}};
+}
+
 // Special CAD symbols (Unicode), authored directly in normalised cell points.
 Glyph degree_glyph() {
     Glyph g;
@@ -237,6 +245,7 @@ const std::array<Glyph, 128>& ascii_table() {
         for (const Entry& e : kFont) {
             t[static_cast<std::size_t>(e.ch)] = parse(e.strokes);
         }
+        t['0'] = zero_glyph();
         return t;
     }();
     return table;
@@ -360,7 +369,13 @@ const std::unordered_map<char32_t, Glyph>& symbol_table() {
         t.emplace(0x00B0, degree_glyph());
         t.emplace(0x00B1, plusminus_glyph());
         t.emplace(0x2300, diameter_glyph());
-        t.emplace(0x2014, parse("0,5 6,5"));   // em dash: the hyphen's height, the cell's width
+        // The diameter as drawings spell it: the Latin O with a stroke typed in ("Ø250 THRU"),
+        // and the empty set, which AutoCAD's \U+2205 inserts. The small o with a stroke is the
+        // o's own outline, slashed.
+        t.emplace(0x00D8, diameter_glyph());
+        t.emplace(0x2205, diameter_glyph());
+        t.emplace(0x00F8, parse("1,3 1,5 2,6 4,6 5,5 5,3 4,2 2,2 1,3|1,2 5,6"));
+        t.emplace(0x2014,parse("0,5 6,5"));   // em dash: the hyphen's height, the cell's width
         t.emplace(0x00D7, times_glyph());      // multiplication sign
         t.emplace(0x03A9, omega_glyph());      // Greek capital omega ...
         t.emplace(0x2126, omega_glyph());      // ... and the ohm sign, the same glyph

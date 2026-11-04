@@ -2,6 +2,7 @@
 // lays text out (width, justification, rotation) as world-space segments.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <ios>
 #include <string>
@@ -177,6 +178,57 @@ TEST_CASE("Units and typography: em dash, multiplication sign, omega, micro (#79
     const std::vector<Vec2> dash = strokes(0x2014);
     const std::vector<Vec2> hyphen = strokes('-');
     REQUIRE(std::abs(dash[1].x - dash[0].x) > std::abs(hyphen[1].x - hyphen[0].x));
+}
+
+TEST_CASE("The zero is not the diameter sign: unslashed, narrower than the O (#94)") {
+    const auto strokes = [](char32_t cp) {
+        std::vector<Vec2> s;
+        append_text_segments(utf8(cp), {0, 0}, 2.5, 0.0, Justify::Left, s);
+        return s;
+    };
+    // The ink's width, and how close any stroke comes to the middle of the ink: a slash
+    // runs through it, an outline stays clear of it.
+    const auto width = [](const std::vector<Vec2>& segs) {
+        double lo = 1e9;
+        double hi = -1e9;
+        for (const Vec2& v : segs) {
+            lo = std::min(lo, v.x);
+            hi = std::max(hi, v.x);
+        }
+        return hi - lo;
+    };
+    const auto clearance = [](const std::vector<Vec2>& segs) {
+        Vec2 lo{1e9, 1e9};
+        Vec2 hi{-1e9, -1e9};
+        for (const Vec2& v : segs) {
+            lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+            hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+        }
+        const Vec2 c{(lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0};
+        double best = 1e9;
+        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+            const Vec2 a = segs[i];
+            const Vec2 d{segs[i + 1].x - a.x, segs[i + 1].y - a.y};
+            const double len2 = d.x * d.x + d.y * d.y;
+            const double t =
+                len2 > 0.0 ? std::clamp(((c.x - a.x) * d.x + (c.y - a.y) * d.y) / len2, 0.0, 1.0) : 0.0;
+            best = std::min(best, std::hypot(a.x + t * d.x - c.x, a.y + t * d.y - c.y));
+        }
+        return best;
+    };
+    const std::vector<Vec2> zero = strokes('0');
+    const std::vector<Vec2> letter_o = strokes('O');
+    const std::vector<Vec2> diameter = strokes(0x2300);
+    REQUIRE(clearance(diameter) < 0.05); // the check sees a slash ...
+    REQUIRE(clearance(zero) > 0.25);     // ... and the zero has none
+    REQUIRE(width(zero) < 0.85 * width(letter_o));
+    REQUIRE(text_width("0", 2.5) == Approx(text_width("O", 2.5))); // still monospace
+
+    // Ø typed in, and AutoCAD's \U+2205, draw the diameter sign rather than nothing.
+    REQUIRE(strokes(0x00D8) == diameter);
+    REQUIRE(strokes(0x2205) == diameter);
+    REQUIRE(has_glyph(0x00F8));
+    REQUIRE(clearance(strokes(0x00F8)) < 0.05);
 }
 
 TEST_CASE("has_glyph: what the font draws, and what it would leave blank") {
